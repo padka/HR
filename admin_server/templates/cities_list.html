@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% block title %}Города{% endblock %}
+{% block content %}
+
+<!-- Тулбар: заголовок + поиск + кнопка -->
+<div class="card glass grain" style="margin: 8px 0 16px; padding: 12px;">
+  <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+    <h3 style="margin:0; display:flex; align-items:center; gap:8px;">
+      Города
+      <span class="badge" id="total_count">{{ cities|length }}</span>
+    </h3>
+
+    <!-- Быстрый поиск -->
+    <div class="glass grain" style="margin-left:auto; padding:8px 10px; border-radius:12px; display:flex; align-items:center; gap:10px;">
+      <label for="city_search" class="muted" style="margin:0;">Поиск</label>
+      <input id="city_search" type="text" placeholder="Москва, Novosibirsk, Europe/Moscow…" style="min-width:260px;">
+      <span class="badge" id="found_badge" title="Найдено / всего">{{ cities|length }} / {{ cities|length }}</span>
+      <button id="city_reset" class="btn" type="button" title="Сбросить фильтр">Сбросить</button>
+    </div>
+
+    <a class="btn" href="/cities/new">+ Новый город</a>
+  </div>
+</div>
+
+{% if not cities %}
+  <div class="card glass grain" data-tilt style="padding:16px;">
+    <h4>Пусто</h4>
+    <p class="muted">Пока нет ни одного города. Нажмите «Новый город», чтобы добавить первый.</p>
+    <div style="margin-top:8px;">
+      <a class="btn" href="/cities/new">+ Новый город</a>
+    </div>
+  </div>
+{% else %}
+  <div class="card glass grain" data-tilt style="padding:0;">
+    <table id="cities_table">
+      <thead>
+        <tr>
+          <th style="width: 80px;">ID</th>
+          <th>Название</th>
+          <th style="width: 240px;">Часовой пояс (TZ)</th>
+          <th style="width: 320px;">Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in cities %}
+        {% set tz = c.tz or "Europe/Moscow" %}
+        {% set criteria = c.criteria|default('') %}
+        {% set experts = c.experts|default('') %}
+        {% set plan_week = c.plan_week|default('') %}
+        {% set plan_month = c.plan_month|default('') %}
+        <tr class="city-row"
+            data-id="{{ c.id }}"
+            data-name="{{ c.name|lower }}"
+            data-tz="{{ tz|lower }}"
+            data-criteria="{{ criteria|e }}"
+            data-experts="{{ experts|e }}"
+            data-plan-week="{{ plan_week }}"
+            data-plan-month="{{ plan_month }}">
+          <td style="white-space:nowrap;">
+            <span class="badge">#{{ c.id }}</span>
+          </td>
+          <td>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span>{{ c.name }}</span>
+              {% if not c.tz %}
+                <span class="badge" title="Используется TZ по умолчанию">TZ: Europe/Moscow</span>
+              {% endif %}
+            </div>
+          </td>
+          <td>
+            <code>{{ tz }}</code>
+          </td>
+          <td>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              <button class="btn btn-edit" type="button" title="Редактировать параметры">Редактировать</button>
+              <span class="badge plan-badge">
+                {% if plan_week or plan_month %}
+                  Нед: {{ plan_week or '—' }} · Мес: {{ plan_month or '—' }}
+                {% else %}
+                  Параметры не заданы
+                {% endif %}
+              </span>
+            </div>
+          </td>
+        </tr>
+        <!-- Ряд-редактор для города -->
+        <tr class="city-edit" data-id="{{ c.id }}" style="display:none;">
+          <td colspan="4">
+            <div class="edit-pane glass grain">
+              <form class="city-form" data-id="{{ c.id }}">
+                <div class="grid">
+                  <div class="field">
+                    <label for="crit_{{ c.id }}">Критерии отбора</label>
+                    <textarea id="crit_{{ c.id }}" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…">{{ criteria }}</textarea>
+                  </div>
+                  <div class="field">
+                    <label for="exp_{{ c.id }}">Ресурсы экспертов</label>
+                    <textarea id="exp_{{ c.id }}" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: внутренний реферальный, ярмарки вакансий…">{{ experts }}</textarea>
+                  </div>
+                </div>
+                <div class="grid">
+                  <div class="field">
+                    <label for="pw_{{ c.id }}">План набора (неделя)</label>
+                    <input id="pw_{{ c.id }}" name="plan_week" type="number" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
+                  </div>
+                  <div class="field">
+                    <label for="pm_{{ c.id }}">План набора (месяц)</label>
+                    <input id="pm_{{ c.id }}" name="plan_month" type="number" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
+                  </div>
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <button type="submit" class="btn btn-save">Сохранить</button>
+                  <button type="button" class="btn btn-cancel">Отмена</button>
+                  <span class="badge muted save-status" style="display:none;">Сохранено</span>
+                </div>
+              </form>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+
+<style>
+  .edit-pane { border: 1px solid var(--glass-stroke); border-radius: var(--radius-lg); padding: 12px; margin: 8px 0; background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); }
+  .edit-pane .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  @media (max-width: 860px){ .edit-pane .grid { grid-template-columns: 1fr; } }
+  .edit-pane .field label { display:block; margin-bottom:6px; color: var(--muted); font-weight: 600; }
+  .edit-pane textarea { width:100%; min-height: 92px; resize: vertical; }
+  .save-status.ok { color: var(--ok); display:inline-block !important; }
+  .save-status.err { color: var(--bad); display:inline-block !important; }
+</style>
+
+<script>
+(function(){
+  const $ = (s, r=document)=>r.querySelector(s);
+  const $$ = (s, r=document)=>Array.from(r.querySelectorAll(s));
+
+  const table = $('#cities_table');
+  const search = $('#city_search');
+  const reset = $('#city_reset');
+  const foundBadge = $('#found_badge');
+
+  // Если таблицы нет (пустой список), просто выходим
+  if (!table) return;
+
+  const rows = $$('.city-row', table);
+  const totalCount = rows.length;
+
+  function norm(s){ return (s||'').toString().trim().toLowerCase(); }
+
+  function applyFilter(){
+    const q = norm(search?.value);
+    let visible = 0;
+    rows.forEach(tr => {
+      const name = tr.dataset.name || '';
+      const tz   = tr.dataset.tz || '';
+      const ok = !q || name.includes(q) || tz.includes(q);
+      tr.style.display = ok ? '' : 'none';
+      // синхронно скрываем/показываем редактор ниже
+      const edit = table.querySelector(`tr.city-edit[data-id="${tr.dataset.id}"]`);
+      if (edit) edit.style.display = (ok && edit.classList.contains('open')) ? '' : (ok ? 'none' : 'none');
+      if (ok) visible++;
+    });
+    if (foundBadge) foundBadge.textContent = (visible + ' / ' + totalCount);
+  }
+
+  search && search.addEventListener('input', applyFilter);
+  reset && reset.addEventListener('click', () => {
+    if (search) search.value = '';
+    applyFilter();
+    search && search.focus();
+  });
+
+  // Toggle редактора
+  table.addEventListener('click', (e)=>{
+    const btn = e.target.closest('.btn-edit');
+    if (!btn) return;
+    const tr = e.target.closest('tr.city-row');
+    if (!tr) return;
+    const id = tr.dataset.id;
+    const editRow = table.querySelector(`tr.city-edit[data-id="${CSS.escape(id)}"]`);
+    if (!editRow) return;
+
+    const isOpen = editRow.classList.contains('open');
+    // закрыть все
+    $$('.city-edit.open', table).forEach(r=>{ r.classList.remove('open'); r.style.display='none'; });
+
+    if (!isOpen) {
+      // префилд из data-*
+      const form = editRow.querySelector('form.city-form');
+      if (form) {
+        const criteria = tr.dataset.criteria || '';
+        const experts = tr.dataset.experts || '';
+        const pw = tr.dataset.planWeek || tr.dataset.planWeek || tr.getAttribute('data-plan-week') || '';
+        const pm = tr.dataset.planMonth || tr.getAttribute('data-plan-month') || '';
+        form.querySelector('[name="criteria"]').value = criteria;
+        form.querySelector('[name="experts"]').value = experts;
+        form.querySelector('[name="plan_week"]').value = pw;
+        form.querySelector('[name="plan_month"]').value = pm;
+      }
+      editRow.classList.add('open');
+      editRow.style.display = '';
+    }
+  });
+
+  // Сохранение формы
+  table.addEventListener('submit', async (e)=>{
+    const form = e.target.closest('form.city-form');
+    if (!form) return;
+    e.preventDefault();
+
+    const id = form.getAttribute('data-id');
+    const tr = table.querySelector(`tr.city-row[data-id="${CSS.escape(id)}"]`);
+    const editRow = table.querySelector(`tr.city-edit[data-id="${CSS.escape(id)}"]`);
+
+    const criteria = form.criteria.value.trim();
+    const experts = form.experts.value.trim();
+    const plan_week = form.plan_week.value ? parseInt(form.plan_week.value, 10) : null;
+    const plan_month = form.plan_month.value ? parseInt(form.plan_month.value, 10) : null;
+
+    const status = form.querySelector('.save-status');
+    const badge = tr.querySelector('.plan-badge');
+
+    try {
+      const resp = await fetch('/cities/params/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ city_id: Number(id), criteria, experts, plan_week, plan_month })
+      });
+      const json = await resp.json();
+
+      if (!json || json.ok !== true) throw new Error(json && json.error || 'Ошибка сохранения');
+
+      // обновим data-* и бейдж
+      tr.dataset.criteria = criteria;
+      tr.dataset.experts = experts;
+      tr.setAttribute('data-plan-week', plan_week ?? '');
+      tr.setAttribute('data-plan-month', plan_month ?? '');
+
+      if (badge) {
+        if (plan_week || plan_month) {
+          badge.textContent = `Нед: ${plan_week ?? '—'} · Мес: ${plan_month ?? '—'}`;
+        } else {
+          badge.textContent = 'Параметры не заданы';
+        }
+      }
+
+      if (status) { status.classList.remove('err'); status.classList.add('ok'); status.textContent = 'Сохранено'; }
+      setTimeout(()=>{ if (status){ status.classList.remove('ok'); status.style.display='none'; } }, 1200);
+      // закрыть
+      editRow.classList.remove('open');
+      editRow.style.display='none';
+    } catch (err) {
+      if (status) { status.style.display='inline-block'; status.classList.add('err'); status.textContent = 'Ошибка'; }
+    }
+  });
+
+  // Отмена
+  table.addEventListener('click', (e)=>{
+    const btn = e.target.closest('.btn-cancel');
+    if (!btn) return;
+    const form = btn.closest('form.city-form');
+    const id = form?.getAttribute('data-id');
+    const editRow = id && table.querySelector(`tr.city-edit[data-id="${CSS.escape(id)}"]`);
+    if (editRow) { editRow.classList.remove('open'); editRow.style.display='none'; }
+  });
+
+  // первичный рендер
+  applyFilter();
+})();
+</script>
+{% endblock %}

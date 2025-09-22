@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Рекрутёры{% endblock %}
+{% block content %}
+
+<style>
+  .panel { padding:24px; background:rgba(255,255,255,0.04); border-radius:20px; backdrop-filter:blur(30px); border:1px solid rgba(255,255,255,0.06); }
+  .panel__header { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
+  .panel__title { margin:0; font-size:24px; font-weight:600; }
+  .panel__subtitle { margin:4px 0 0; color:var(--muted,rgba(255,255,255,0.55)); font-size:14px; }
+  .panel__filters { margin:20px 0; display:flex; gap:12px; flex-wrap:wrap; }
+  .field { display:flex; flex-direction:column; gap:6px; min-width:200px; }
+  .field input, .field select { padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.25); color:inherit; }
+  .table-wrapper { overflow:auto; border-radius:16px; border:1px solid rgba(255,255,255,0.05); }
+  table { width:100%; border-collapse:collapse; }
+  th, td { padding:12px 16px; text-align:left; border-bottom:1px solid rgba(255,255,255,0.05); }
+  tbody tr:hover { background:rgba(255,255,255,0.03); }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:rgba(255,255,255,0.06); font-size:12px; }
+  .chip--ok { color:#2ecc71; }
+  .chip--warn { color:#f39c12; }
+  .chip--off { color:#95a5a6; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .button { padding:10px 16px; border-radius:12px; border:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.3); color:inherit; cursor:pointer; text-decoration:none; }
+  .button--primary { background:linear-gradient(135deg,#4f8dfd,#8758ff); border:none; color:#fff; }
+  .button:disabled { opacity:0.4; cursor:not-allowed; }
+  .muted { color:var(--muted,rgba(255,255,255,0.55)); }
+</style>
+
+<section class="panel">
+  <div class="panel__header">
+    <div>
+      <h1 class="panel__title">Рекрутёры</h1>
+      <p class="panel__subtitle">Мониторинг слотов и закреплённых городов</p>
+    </div>
+    <a class="button button--primary" href="/recruiters/new">Добавить рекрутёра</a>
+  </div>
+
+  <div class="panel__filters">
+    <div class="field">
+      <label for="flt_query">Поиск</label>
+      <input id="flt_query" type="text" placeholder="Имя, город или chat_id">
+    </div>
+    <div class="field">
+      <label for="flt_state">Статус</label>
+      <select id="flt_state">
+        <option value="">Все</option>
+        <option value="on">Активные</option>
+        <option value="off">Отключённые</option>
+      </select>
+    </div>
+    <button class="button" type="button" id="flt_reset">Сбросить</button>
+  </div>
+
+  {% if not recruiters %}
+    <p class="muted">Рекрутёров пока нет. Добавьте первого, чтобы запустить процесс.</p>
+  {% else %}
+  <div class="table-wrapper">
+    <table id="recs_table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Имя</th>
+          <th>TZ</th>
+          <th>Города</th>
+          <th>Слоты</th>
+          <th>Ближайший слот</th>
+          <th>Статус</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in recruiters %}
+          {% set r = item.rec %}
+          {% set stats = item.stats %}
+          {% set active = r.active if r.active is not none else False %}
+          <tr data-name="{{ (r.name or '')|lower }}" data-tz="{{ (r.tz or 'Europe/Moscow')|lower }}" data-chat="{{ r.tg_chat_id or '' }}" data-cities="{{ item.cities_text }}" data-active="{{ 'on' if active else 'off' }}">
+            <td>#{{ r.id }}</td>
+            <td>{{ r.name }}</td>
+            <td>{{ r.tz or 'Europe/Moscow' }}</td>
+            <td>
+              {% if item.cities %}
+                {% for cname, ctz in item.cities %}
+                  <span class="chip" title="{{ ctz }}">{{ cname }}</span>
+                {% endfor %}
+              {% else %}
+                <span class="muted">не назначены</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="chip chip--ok">свободно {{ stats.free }}</span>
+              <span class="chip">ожидают {{ stats.pending }}</span>
+              <span class="chip">занято {{ stats.booked }}</span>
+              <span class="chip">всего {{ stats.total }}</span>
+            </td>
+            <td>
+              {% if item.next_free_local %}
+                <span class="chip{% if not item.next_is_future %} chip--warn{% endif %}">{{ item.next_free_local }}</span>
+              {% else %}
+                <span class="muted">нет свободных</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if active %}
+                <span class="chip chip--ok">активен</span>
+              {% else %}
+                <span class="chip chip--off">выкл</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="actions">
+                <button class="button" type="button" data-copy="{{ r.tg_chat_id or '' }}" {% if not r.tg_chat_id %}disabled{% endif %}>Скопировать</button>
+                <a class="button" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
+                <form method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}? Это действие необратимо.');">
+                  <button class="button" type="submit">Удалить</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+<script>
+(() => {
+  const $ = (sel, root=document) => root.querySelector(sel);
+  const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+
+  const q = $('#flt_query');
+  const state = $('#flt_state');
+  const reset = $('#flt_reset');
+  const rows = $$('#recs_table tbody tr');
+
+  const norm = v => (v || '').toString().toLowerCase().trim();
+
+  const apply = () => {
+    const query = norm(q && q.value);
+    const st = (state && state.value) || '';
+    rows.forEach(row => {
+      const matchText = !query ||
+        row.dataset.name?.includes(query) ||
+        row.dataset.tz?.includes(query) ||
+        row.dataset.chat?.includes(query) ||
+        row.dataset.cities?.includes(query);
+      const matchState = !st || row.dataset.active === st;
+      row.style.display = (matchText && matchState) ? '' : 'none';
+    });
+  };
+
+  q && q.addEventListener('input', apply);
+  state && state.addEventListener('change', apply);
+  reset && reset.addEventListener('click', () => {
+    if (q) q.value = '';
+    if (state) state.value = '';
+    apply();
+  });
+  apply();
+
+  $$('.actions .button[data-copy]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const value = btn.getAttribute('data-copy');
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        const prev = btn.textContent;
+        btn.textContent = 'Скопировано';
+        setTimeout(() => btn.textContent = prev, 1200);
+      } catch (err) {
+        alert('Не удалось скопировать chat_id');
+      }
+    });
+  });
+})();
+</script>
+
+{% endblock %}

@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block title %}Ответственные за города{% endblock %}
+{% block content %}
+
+{% if not owner_field_exists %}
+  <div class="card glass grain" data-tilt style="padding:16px;">
+    <h3 style="margin:0 0 8px; display:flex; align-items:center; gap:8px;">
+      Не найдено поле для ответственного
+      <span class="badge">City model</span>
+    </h3>
+    <p class="muted" style="margin:0;">
+      В модели <code>City</code> нет ни одного поддерживаемого поля:
+      <code>responsible_recruiter_id</code>, <code>owner_id</code>, <code>recruiter_id</code>, <code>manager_id</code>.
+      Добавьте одно из них в БД и перезапустите приложение.
+    </p>
+  </div>
+{% else %}
+
+<!-- Панель инструментов -->
+<div class="card glass grain" data-tilt style="margin-bottom:12px; padding:12px;">
+  <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+    <div class="field" style="min-width:260px;">
+      <label for="search">Поиск по городу</label>
+      <input id="search" type="text" placeholder="Начните вводить название города…">
+    </div>
+
+    <label class="badge" style="cursor:pointer; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+      <input id="only_unassigned" type="checkbox">
+      Только без ответственного
+    </label>
+
+    <div class="muted" style="margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <span>Поле в БД: <code>{{ owner_field }}</code></span>
+      <span class="badge" title="Метрики">
+        Города: {{ cities|length }} · Рекрутёры: {{ recruiters|length }}
+      </span>
+    </div>
+  </div>
+  <div class="muted" style="margin-top:8px; font-size:12px;">
+    Подсказка: перетащите карточку города в колонку рекрутёра, чтобы назначить ответственного. Изменения сохраняются автоматически.
+  </div>
+</div>
+
+<!-- Легенда -->
+<div class="card glass grain" style="margin-bottom:12px; padding:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+  <span class="badge" title="Перетаскивание">🖱️ Drag &amp; Drop</span>
+  <span class="badge" title="Поиск">⌘/Ctrl+F — поиск</span>
+  <span class="badge" title="Сохранение">Сохранение: авто</span>
+</div>
+
+<!-- Канбан -->
+<div id="board" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px;">
+  <!-- Колонка "Без ответственного" -->
+  <div class="glass grain column" data-rec="">
+    <div class="card glass grain" data-tilt>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div style="font-weight:700;">Без ответственного</div>
+        <span class="badge count">0</span>
+      </div>
+    </div>
+    <div class="dropzone" style="display:flex; flex-direction:column; gap:8px; min-height:80px;"></div>
+  </div>
+
+  {% for r in recruiters %}
+  <div class="glass grain column" data-rec="{{ r.id }}">
+    <div class="card glass grain" data-tilt>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div style="font-weight:700;">{{ r.name }}</div>
+        <span class="badge count">0</span>
+      </div>
+      <div class="muted" style="font-size:12px;">TZ: {{ r.tz or "Europe/Moscow" }}</div>
+    </div>
+    <div class="dropzone" style="display:flex; flex-direction:column; gap:8px; min-height:80px;"></div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Список карточек (скрытый контейнер-источник) -->
+<div id="cards" style="display:none;">
+  {% for c in cities %}
+    {% set owner = owners.get(c.id) if owners else None %}
+    <div class="card glass grain city-card"
+         draggable="true"
+         data-city="{{ c.id }}"
+         data-name="{{ (c.name or '')|lower|e }}"
+         data-owner="{{ owner if owner is not none else '' }}"
+         title="Перетащите в нужную колонку">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div style="font-weight:600;">{{ c.name }}</div>
+        <span class="badge">{{ c.tz or "Europe/Moscow" }}</span>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<style>
+  /* DnD visuals tuned to Liquid Glass tokens */
+  .dropzone {
+    border: 1px dashed var(--row-sep);
+    border-radius: var(--radius-lg);
+    padding: 8px;
+    transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+    background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.015));
+  }
+  .dropzone.hover {
+    background: rgba(255,255,255,.04);
+    border-color: var(--ring);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 26%, transparent);
+  }
+  .city-card { cursor: grab; }
+  .city-card:active { cursor: grabbing; }
+  .city-card.dragging { opacity: .6; transform: scale(.98); }
+</style>
+
+{% raw %}
+<script>
+(function(){
+  const $ = (s, r=document)=>r.querySelector(s);
+  const $$ = (s, r=document)=>Array.from(r.querySelectorAll(s));
+
+  const board = $('#board');
+  const cardsPool = $('#cards');
+  const search = $('#search');
+  const onlyUn = $('#only_unassigned');
+
+  // Подставим карточки в их колонки
+  function mountCards(){
+    const dzMap = {};
+    $$('.column').forEach(col=>{
+      dzMap[col.dataset.rec] = $('.dropzone', col);
+      dzMap[col.dataset.rec].innerHTML = '';
+    });
+
+    const cards = $$('.city-card', cardsPool);
+    cards.forEach(card=>{
+      const owner = card.dataset.owner || '';
+      const dz = Object.prototype.hasOwnProperty.call(dzMap, owner) ? dzMap[owner] : dzMap[''];
+      dz.appendChild(card);
+    });
+
+    recount();
+    applyFilter();
+  }
+
+  function recount(){
+    $$('.column').forEach(col=>{
+      const visible = $$('.city-card', $('.dropzone', col)).filter(x=>x.style.display!=='none').length;
+      $('.count', col).textContent = String(visible);
+    });
+  }
+
+  // drag & drop
+  let dragging = null;
+  document.addEventListener('dragstart', (e)=>{
+    const card = e.target.closest('.city-card');
+    if (!card) return;
+    dragging = card;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', card.dataset.city);
+    setTimeout(()=> card.classList.add('dragging'), 0);
+  });
+  document.addEventListener('dragend', ()=>{
+    if (dragging) dragging.classList.remove('dragging');
+    dragging = null;
+  });
+
+  $$('.dropzone').forEach(dz=>{
+    dz.addEventListener('dragover', (e)=>{
+      e.preventDefault();
+      dz.classList.add('hover');
+      e.dataTransfer.dropEffect = 'move';
+    });
+    dz.addEventListener('dragleave', ()=> dz.classList.remove('hover'));
+    dz.addEventListener('drop', async (e)=>{
+      e.preventDefault();
+      dz.classList.remove('hover');
+      const cityId = e.dataTransfer.getData('text/plain');
+      if (!cityId) return;
+
+      const col = dz.closest('.column');
+      const recId = col ? (col.dataset.rec || null) : null;
+
+      // переместим в UI сразу
+      const sel = `.city-card[data-city="${CSS.escape(cityId)}"]`;
+      const card = document.querySelector(sel);
+      if (card) {
+        card.dataset.owner = recId || '';
+        dz.appendChild(card);
+        recount();
+        applyFilter();
+      }
+
+      // запрос на бэкенд
+      try{
+        const resp = await fetch('/cities/owners/assign', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({city_id: Number(cityId), recruiter_id: recId ? Number(recId) : null})
+        });
+        const json = await resp.json();
+        if (!json.ok){
+          alert('Ошибка сохранения: ' + (json.error || 'unknown'));
+        }
+      }catch(err){
+        alert('Сеть/сервер недоступен');
+      }
+    });
+  });
+
+  function applyFilter(){
+    const q = (search?.value || '').toLowerCase().trim();
+    const only = !!onlyUn?.checked;
+
+    $$('.city-card').forEach(card=>{
+      const name = (card.dataset.name || '');
+      const unassigned = !card.dataset.owner;
+      const okByText = !q || name.includes(q);
+      const okByOnly = !only || unassigned;
+      card.style.display = (okByText && okByOnly) ? '' : 'none';
+    });
+
+    recount();
+  }
+
+  search?.addEventListener('input', applyFilter);
+  onlyUn?.addEventListener('change', applyFilter);
+
+  // Инициализация
+  mountCards();
+})();
+</script>
+{% endraw %}
+
+{% endif %}
+{% endblock %}

@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% block title %}Слоты{% endblock %}
+{% block content %}
+
+<style>
+  /* sticky tools */
+  .toolbar{position:sticky;top:8px;z-index:5}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid var(--glass-stroke);background:rgba(255,255,255,.06)}
+  .chip.btn-like{cursor:pointer}
+  .chip-free{border-color:rgba(46,204,113,.45)}
+  .chip-pending{border-color:rgba(241,196,15,.55)}
+  .chip-booked{border-color:rgba(52,152,219,.55)}
+
+  /* table */
+  .tbl-wrap{overflow:auto;border-radius:12px}
+  thead th{position:sticky;top:0;background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02));}
+  tbody tr{transition:background .15s ease}
+  .row-free    td{background:rgba(46,204,113,.06)}
+  .row-pending td{background:rgba(241,196,15,.06)}
+  .row-booked  td{background:rgba(52,152,219,.06)}
+  .copyable{cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.35)}
+  .copyable:hover{opacity:.9}
+  .muted-mini{font-size:12px;color:var(--muted)}
+  .hidden-col{display:none}
+
+  /* sorting */
+  th.sortable{cursor:pointer; user-select:none;}
+  th.sortable .dir{opacity:.5; margin-left:4px; font-size:11px}
+  th.sortable.active{color:#fff}
+
+  /* hover focus */
+  tbody tr:hover td{background:rgba(255,255,255,.03)}
+</style>
+
+<h3 class="tilt" data-tilt data-tilt-max="2" data-tilt-speed="1200" data-tilt-scale="1.005" style="margin:0 0 10px 0;">Слоты</h3>
+
+<div class="card tilt toolbar" data-tilt data-tilt-glare data-tilt-max="8" data-tilt-speed="600" data-tilt-scale="1.01" style="margin-bottom:12px;">
+  <form id="flt" method="get" action="/slots" style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+    <div>
+      <label for="recruiter_id">Рекрутёр</label><br>
+      <select id="recruiter_id" name="recruiter_id" style="min-width:240px;">
+        <option value="">— все —</option>
+        {% for r in recruiters %}
+          <option value="{{ r.id }}" {% if filter_recruiter_id and filter_recruiter_id == r.id %}selected{% endif %}>
+            {{ r.name }} ({{ r.tz or "Europe/Moscow" }})
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label for="status">Статус</label><br>
+      <select id="status" name="status">
+        <option value="">— все —</option>
+        <option value="FREE" {% if filter_status == 'FREE' %}selected{% endif %}>FREE</option>
+        <option value="PENDING" {% if filter_status == 'PENDING' %}selected{% endif %}>PENDING</option>
+        <option value="BOOKED" {% if filter_status == 'BOOKED' %}selected{% endif %}>BOOKED</option>
+      </select>
+    </div>
+
+    <div>
+      <label for="per_page">На странице</label><br>
+      <select id="per_page" name="per_page">
+        {% for n in [10,20,50,100] %}
+          <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label for="q">Поиск</label><br>
+      <input id="q" type="text" placeholder="Имя кандидата / рекрутёра / TZ…" style="min-width:220px;">
+    </div>
+
+    <div style="display:flex; gap:8px; align-items:center;">
+      <label class="badge" style="cursor:pointer;">
+        <input id="toggle_cand_tz" type="checkbox" style="margin-right:6px;"> Время кандидата
+      </label>
+      <label class="badge" style="cursor:pointer;">
+        <input id="only_future" type="checkbox" style="margin-right:6px;"> Только будущие
+      </label>
+      <button type="submit">Фильтровать</button>
+      <a class="btn" href="/slots">Сбросить</a>
+      <a class="btn" href="/slots/new">+ Новый слот</a>
+      <button id="btn-export" class="btn" type="button">Экспорт CSV</button>
+    </div>
+  </form>
+
+  <div class="chips" style="margin-top:10px;">
+    <span class="chip chip-free btn-like" data-status="FREE">FREE: <b id="cnt-free">0</b></span>
+    <span class="chip chip-pending btn-like" data-status="PENDING">PENDING: <b id="cnt-pending">0</b></span>
+    <span class="chip chip-booked btn-like" data-status="BOOKED">BOOKED: <b id="cnt-booked">0</b></span>
+    <span class="chip">Всего: <b id="cnt-total">0</b></span>
+  </div>
+</div>
+
+{% if not slots %}
+  <div class="card tilt" data-tilt data-tilt-glare data-tilt-max="6" data-tilt-speed="500">
+    <h4>Пусто</h4>
+    <p>Слотов по выбранным условиям нет.</p>
+  </div>
+{% else %}
+  <div class="card tilt tbl-wrap" data-tilt data-tilt-glare data-tilt-max="6" data-tilt-speed="600">
+    <table id="slots-table">
+      <thead>
+        <tr>
+          <th class="sortable" data-sort="id"     title="Сортировать по ID">ID <span class="dir"></span></th>
+          <th class="sortable" data-sort="rec"    title="Сортировать по рекрутёру">Рекрутёр <span class="dir"></span></th>
+          <th class="sortable" data-sort="utc"    style="width:160px;" title="Сортировать по UTC">UTC <span class="dir"></span></th>
+          <th                                   style="width:210px;">Локальное (TZ рекрутёра)</th>
+          <th style="width:210px;" class="col-cand-tz">Локальное (TZ кандидата)</th>
+          <th class="sortable" data-sort="status" style="width:120px;" title="Сортировать по статусу">Статус <span class="dir"></span></th>
+          <th class="sortable" data-sort="cand"   title="Сортировать по кандидату">Кандидат <span class="dir"></span></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in slots %}
+        {% set st = norm_status(s.status) %}
+        {% set row_cls = 'row-free' if st=='FREE' else ('row-pending' if st=='PENDING' else ('row-booked' if st=='BOOKED' else '')) %}
+        <tr class="{{ row_cls }}" data-st="{{ st or '' }}" data-id="{{ s.id }}" data-utc="{{ s.start_utc.isoformat() }}" data-rec="{{ s.recruiter.name if s.recruiter else '' }}" data-cand="{{ s.candidate_fio or '' }}" data-sto="{{ 0 if st=='FREE' else (1 if st=='PENDING' else (2 if st=='BOOKED' else 9)) }}">
+          <td>
+            <span class="copyable" data-copy="{{ s.id }}" title="Скопировать ID">{{ s.id }}</span>
+          </td>
+          <td>
+            {{ s.recruiter.name if s.recruiter else "—" }}<br>
+            <span class="badge">{{ (s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow") }}</span>
+          </td>
+          <td>
+            <span class="copyable" data-copy="{{ fmt_utc(s.start_utc) }}" title="Скопировать UTC-время" data-utc-iso="{{ s.start_utc.isoformat() }}">
+              {{ fmt_utc(s.start_utc) }}
+            </span>
+            <div class="muted-mini" data-rel></div>
+          </td>
+          <td>
+            {% set tz_rec = (s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow") %}
+            <span class="copyable" data-copy="{{ fmt_local(s.start_utc, tz_rec) }}" title="Скопировать локальное время рекрутёра">
+              {{ fmt_local(s.start_utc, tz_rec) }}
+            </span>
+          </td>
+          <td class="col-cand-tz">
+            {% if s.candidate_tz %}
+              <span class="badge">{{ s.candidate_tz }}</span><br>
+              <span class="copyable" data-copy="{{ fmt_local(s.start_utc, s.candidate_tz) }}" title="Скопировать локальное время кандидата">
+                {{ fmt_local(s.start_utc, s.candidate_tz) }}
+              </span>
+            {% else %}
+              <span class="badge">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if st == "FREE" %}
+              <span class="badge status-chip" data-status="FREE">FREE</span>
+            {% elif st == "PENDING" %}
+              <span class="badge status-chip" data-status="PENDING" style="color:#f1c40f;">PENDING</span>
+            {% elif st == "BOOKED" %}
+              <span class="badge status-chip" data-status="BOOKED" style="color:#2ecc71;">BOOKED</span>
+            {% else %}
+              <span class="badge">{{ st or "—" }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.candidate_fio %}
+              <div>{{ s.candidate_fio }}</div>
+              <div class="badge copyable" data-copy="{{ s.candidate_tg_id or '' }}" title="Скопировать tg_id">tg_id: {{ s.candidate_tg_id or "—" }}</div>
+            {% else %}
+              <span class="badge">—</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- пагинация -->
+  <div class="tilt" data-tilt data-tilt-max="3" data-tilt-speed="800" style="display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap;">
+    {% set qrecr = '&recruiter_id=' ~ filter_recruiter_id if filter_recruiter_id else '' %}
+    {% set qstat = '&status=' ~ filter_status if filter_status else '' %}
+    {% set qpp = '&per_page=' ~ per_page if per_page else '' %}
+
+    <span class="badge">Стр. {{ page }} из {{ pages_total }}</span>
+
+    {% if page > 1 %}
+      <a class="btn" href="/slots?page=1{{ qrecr }}{{ qstat }}{{ qpp }}">« Первая</a>
+      <a class="btn" href="/slots?page={{ page-1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">‹ Назад</a>
+    {% else %}
+      <span class="btn" style="opacity:.4; pointer-events:none;">« Первая</span>
+      <span class="btn" style="opacity:.4; pointer-events:none;">‹ Назад</span>
+    {% endif %}
+
+    {% if page < pages_total %}
+      <a class="btn" href="/slots?page={{ page+1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">Вперёд ›</a>
+      <a class="btn" href="/slots?page={{ pages_total }}{{ qrecr }}{{ qstat }}{{ qpp }}">Последняя »</a>
+    {% else %}
+      <span class="btn" style="opacity:.4; pointer-events:none;">Вперёд ›</span>
+      <span class="btn" style="opacity:.4; pointer-events:none;">Последняя »</span>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% raw %}
+<script>
+(function(){
+  const $ = function(s, r){ return (r||document).querySelector(s); };
+  const $$= function(s, r){ return Array.from((r||document).querySelectorAll(s)); };
+
+  // Copy helper
+  $$('.copyable[data-copy]').forEach(function(el){
+    el.addEventListener('click', function(){
+      var val = el.getAttribute('data-copy') || '';
+      navigator.clipboard.writeText(val).then(function(){
+        var p = el.textContent; el.textContent='Скопировано'; setTimeout(function(){ el.textContent=p; },800);
+      }).catch(function(){ alert('Не удалось скопировать'); });
+    });
+  });
+
+  // State persistence
+  var LS = window.localStorage;
+  function save(k,v){ try{ LS.setItem(k, v); }catch(e){} }
+  function load(k,d){ try{ var v = LS.getItem(k); return v===null? d : v; }catch(e){ return d; } }
+
+  // Search + only future + counters
+  var q = $('#q');
+  var onlyFuture = $('#only_future');
+  var rows = $$('#slots-table tbody tr');
+
+  function norm(s){ return (s||'').toLowerCase(); }
+  function isFuture(tr){
+    var iso = tr.getAttribute('data-utc');
+    if(!iso) return true;
+    var t = Date.parse(iso);
+    return isFinite(t) ? t >= Date.now() : true;
+  }
+
+  function applyFilters(){
+    var text = norm(q ? q.value : '');
+    var fut = !!(onlyFuture && onlyFuture.checked);
+    var cFree=0,cPend=0,cBook=0,cTot=0;
+    rows.forEach(function(tr){
+      var cells = tr.textContent.toLowerCase();
+      var show = (!text || cells.indexOf(text) !== -1) && (!fut || isFuture(tr));
+      tr.style.display = show ? '' : 'none';
+      if (show){
+        cTot++;
+        var st = tr.getAttribute('data-st');
+        if(st==='FREE') cFree++; else if(st==='PENDING') cPend++; else if(st==='BOOKED') cBook++;
+      }
+    });
+    $('#cnt-total').textContent=cTot; $('#cnt-free').textContent=cFree; $('#cnt-pending').textContent=cPend; $('#cnt-booked').textContent=cBook;
+  }
+
+  // Restore persisted UI
+  if (q) { q.value = load('slots.q', ''); }
+  if (onlyFuture){ var of = load('slots.onlyFuture','0')==='1'; onlyFuture.checked = of; }
+  var candTzToggle = $('#toggle_cand_tz');
+  if (candTzToggle){ var vis = load('slots.candTz','0')==='1'; setCandCol(vis); candTzToggle.checked = vis; }
+
+  // Bind search / toggles
+  if(q) q.addEventListener('input', function(){ save('slots.q', q.value); applyFilters(); });
+  if(onlyFuture) onlyFuture.addEventListener('change', function(){ save('slots.onlyFuture', onlyFuture.checked?'1':'0'); applyFilters(); });
+
+  // Relative time now + update every minute
+  function rel(ts){
+    var diff = Math.round((ts - Date.now())/60000);
+    var abs = Math.abs(diff);
+    if(abs<60) return (diff>=0? 'через ':'') + abs + ' мин';
+    var h = Math.round(abs/60);
+    return (diff>=0? 'через ':'') + h + ' ч';
+  }
+  function updateRel(){
+    $$('#slots-table [data-utc-iso]').forEach(function(el){
+      var iso = el.getAttribute('data-utc-iso');
+      var d = iso ? new Date(iso) : null;
+      var holder = el.parentElement.querySelector('[data-rel]');
+      if(d && holder){ holder.textContent = rel(d.getTime()); }
+    });
+  }
+  updateRel();
+  setInterval(updateRel, 60000);
+
+  // Toggle candidate TZ column (persisted)
+  function setCandCol(vis){
+    $$('.col-cand-tz').forEach(function(c){ c.classList.toggle('hidden-col', !vis); });
+  }
+  if(candTzToggle){
+    candTzToggle.addEventListener('change', function(){ setCandCol(candTzToggle.checked); save('slots.candTz', candTzToggle.checked?'1':'0'); });
+  }
+
+  // Quick status chips -> submit server filter
+  $$('.status-chip').forEach(function(ch){ ch.style.cursor='pointer'; });
+  $$('.chip.btn-like[data-status]').forEach(function(chip){
+    chip.addEventListener('click', function(){
+      var v = chip.getAttribute('data-status');
+      var sel = $('#status'); if(sel){ sel.value = v; $('#flt').submit(); }
+    });
+  });
+
+  // Export CSV (visible rows)
+  var exportBtn = $('#btn-export');
+  if(exportBtn){
+    exportBtn.addEventListener('click', function(){
+      var headers = Array.from($('#slots-table thead tr').cells).map(function(th){ return th.textContent.trim(); });
+      var lines = [headers.join(',')];
+      $$('#slots-table tbody tr').forEach(function(tr){
+        if (tr.style.display==='none') return;
+        var cols = Array.from(tr.cells).map(function(td){ return '"'+ td.textContent.replace(/\"/g,'""').trim() +'"'; });
+        lines.push(cols.join(','));
+      });
+      var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a'); a.href = url; a.download = 'slots.csv'; a.click();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+    });
+  }
+
+  // Column sorting (client-side, visible rows)
+  var sortKey = load('slots.sortKey','utc');
+  var sortDir = load('slots.sortDir','asc');
+
+  function applySortIndicator(){
+    $$('#slots-table thead th.sortable').forEach(function(th){ th.classList.remove('active'); var d = th.querySelector('.dir'); if(d) d.textContent=''; });
+    var th = $('#slots-table thead th.sortable[data-sort="'+sortKey+'"]');
+    if (th){
+      th.classList.add('active');
+      var d = th.querySelector('.dir'); if(d) d.textContent = sortDir==='asc' ? '▲' : '▼';
+    }
+  }
+
+  function cmp(a,b){ return a<b?-1:a>b?1:0; }
+  function sortRows(){
+    var tbody = $('#slots-table tbody');
+    var arr = rows.slice();
+    arr.sort(function(tr1, tr2){
+      var v1, v2;
+      if (sortKey==='id'){ v1 = parseInt(tr1.getAttribute('data-id')||'0',10); v2 = parseInt(tr2.getAttribute('data-id')||'0',10); }
+      else if (sortKey==='utc'){ v1 = Date.parse(tr1.getAttribute('data-utc')||''); v2 = Date.parse(tr2.getAttribute('data-utc')||''); }
+      else if (sortKey==='rec'){ v1 = (tr1.getAttribute('data-rec')||'').toLowerCase(); v2 = (tr2.getAttribute('data-rec')||'').toLowerCase(); }
+      else if (sortKey==='cand'){ v1 = (tr1.getAttribute('data-cand')||'').toLowerCase(); v2 = (tr2.getAttribute('data-cand')||'').toLowerCase(); }
+      else if (sortKey==='status'){ v1 = parseInt(tr1.getAttribute('data-sto')||'9',10); v2 = parseInt(tr2.getAttribute('data-sto')||'9',10); }
+      else { v1 = 0; v2 = 0; }
+      var r = cmp(v1,v2);
+      return sortDir==='asc' ? r : -r;
+    });
+    arr.forEach(function(tr){ tbody.appendChild(tr); });
+  }
+
+  $$('#slots-table thead th.sortable').forEach(function(th){
+    th.addEventListener('click', function(){
+      var key = th.getAttribute('data-sort');
+      if (sortKey===key){ sortDir = (sortDir==='asc') ? 'desc' : 'asc'; }
+      else { sortKey = key; sortDir = 'asc'; }
+      save('slots.sortKey', sortKey); save('slots.sortDir', sortDir);
+      applySortIndicator(); sortRows();
+    });
+  });
+
+  // Keyboard: '/' focus search, 't' toggle candidate TZ, 'f' only future, 'esc' clear search
+  document.addEventListener('keydown', function(e){
+    if(e.key==='/' && q){ e.preventDefault(); q.focus(); q.select(); }
+    if(e.key==='t' && candTzToggle){ candTzToggle.checked = !candTzToggle.checked; candTzToggle.dispatchEvent(new Event('change')); }
+    if(e.key==='f' && onlyFuture){ onlyFuture.checked = !onlyFuture.checked; onlyFuture.dispatchEvent(new Event('change')); }
+    if(e.key==='Escape' && q){ q.value=''; q.dispatchEvent(new Event('input')); }
+  });
+
+  // First run
+  applySortIndicator();
+  sortRows();
+  applyFilters();
+})();
+</script>
+{% endraw %}
+
+{% endblock %}

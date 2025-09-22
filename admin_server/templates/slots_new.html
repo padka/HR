@@ -1,0 +1,525 @@
+{% extends "base.html" %}
+{% block title %}Новый слот{% endblock %}
+{% block content %}
+
+<style>
+  /* компактная «яблочная» сегментированная кнопка */
+  .segmented {
+    display:inline-flex; border:1px solid var(--glass-stroke);
+    border-radius:10px; overflow:hidden; backdrop-filter:saturate(1.1);
+  }
+  .segmented button{
+    border:0; background:transparent; padding:8px 12px; cursor:pointer;
+    color:var(--muted);
+  }
+  .segmented button.active{
+    color:var(--fg);
+    background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.03));
+  }
+  .hint { font-size:12px; color:var(--muted); }
+
+  .preview {
+    border:1px solid var(--glass-stroke);
+    border-radius:10px; padding:10px 12px;
+    background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+    font-size:13px; color:var(--muted);
+  }
+  .ok    { color: var(--ok); }
+  .warn  { color: var(--warn); }
+  .bad   { color: var(--bad); }
+  .row2  { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  @media (max-width:720px){ .row2{ grid-template-columns:1fr; } }
+
+  .mini { font-size:12px; padding:6px 9px; }
+  .ghost { background:transparent; border-color:var(--row-sep); }
+
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid var(--glass-stroke); border-radius:999px; font-size:12px; color:var(--muted); background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); }
+  .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; border:1px solid var(--glass-stroke); padding:1px 6px; border-radius:6px; background:rgba(255,255,255,.06); }
+</style>
+
+<div class="tilt" data-tilt data-tilt-max="6" data-tilt-speed="500" style="margin:0 0 10px 0;">
+  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+    <h3 style="margin:0;">➕ Новый слот</h3>
+    <div class="segmented" role="tablist" aria-label="Режим создания">
+      <button id="tab-one" class="active" type="button" role="tab" aria-selected="true" aria-controls="panel-one">Один слот</button>
+      <button id="tab-bulk" type="button" role="tab" aria-selected="false" aria-controls="panel-bulk">Серия</button>
+    </div>
+    <span class="chip" id="now_chip" title="Текущее время в выбранном поясе">⏱️ <span id="now_text">—:—</span></span>
+  </div>
+  <p class="hint" style="margin:6px 0 0;">Локальная дата/время рекрутёра автоматически конвертируются в UTC. Горячие клавиши: <span class="kbd">/</span> фокус на дате, <span class="kbd">⌘/Ctrl+Enter</span> — создать.</p>
+</div>
+
+{% if not recruiters %}
+  <div class="card glass tilt" data-tilt data-tilt-max="8" data-tilt-speed="450">
+    <h4 style="margin:0 0 8px 0;">Нет рекрутёров</h4>
+    <p class="muted" style="margin:0 0 10px 0;">Сначала добавьте рекрутёра, затем создайте слот.</p>
+    <p style="margin:0;"><a class="btn" href="/recruiters/new">+ Добавить рекрутёра</a></p>
+  </div>
+{% else %}
+
+<!-- ==== ПАНЕЛЬ «ОДИН СЛОТ» ==== -->
+<section id="panel-one" class="card glass tilt" data-tilt data-tilt-max="8" data-tilt-speed="450" data-tilt-glare data-tilt-max-glare="0.18" style="margin-bottom:14px;">
+  <form method="post" action="/slots/create" autocomplete="off" id="form-one">
+    <div class="row2">
+      <div class="field">
+        <label for="recruiter_id" style="display:block; margin-bottom:6px;">Рекрутёр</label>
+        <select id="recruiter_id" name="recruiter_id" required>
+          <option value="" disabled>— выберите рекрутёра —</option>
+          {% for r in recruiters %}
+            <option value="{{ r.id }}" data-tz="{{ r.tz or 'Europe/Moscow' }}">{{ r.name }} ({{ r.tz or "Europe/Moscow" }})</option>
+          {% endfor %}
+        </select>
+        <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+          <div class="hint" id="tz_one_hint">TZ рекрутёра: —</div>
+          <span class="chip" id="offset_chip" title="Смещение от UTC">GMT <span id="offset_text">±0</span></span>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label for="date" style="display:block; margin-bottom:6px;">Дата (локальная)</label>
+          <input id="date" type="date" name="date" required>
+          <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="btn mini ghost" type="button" data-quick="today">Сегодня</button>
+            <button class="btn mini ghost" type="button" data-quick="tomorrow">Завтра</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="time" style="display:block; margin-bottom:6px;">Время (локальное)</label>
+          <input id="time" type="time" name="time" required>
+          <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="btn mini ghost" type="button" data-time="next30">+30 мин</button>
+            <button class="btn mini ghost" type="button" data-time="next60">+1 час</button>
+            <button class="btn mini ghost" type="button" data-time="13:00">13:00</button>
+            <button class="btn mini ghost" type="button" data-time="15:00">15:00</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="preview" id="preview-one" aria-live="polite" style="margin-top:10px;">
+      <b>Превью</b><br>
+      Укажите рекрутёра, дату и время — покажем UTC.
+    </div>
+
+    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button id="btn-create-one" type="submit" disabled>Создать</button>
+      <a class="btn" href="/slots">Отмена</a>
+    </div>
+  </form>
+</section>
+
+<!-- ==== ПАНЕЛЬ «СЕРИЯ» ==== -->
+<section id="panel-bulk" class="card glass tilt" data-tilt data-tilt-max="8" data-tilt-speed="450" data-tilt-glare data-tilt-max-glare="0.18" hidden>
+  <form method="post" action="/slots/bulk_create" autocomplete="off" id="form-bulk">
+    <p class="hint" style="margin:0 0 6px;">Создаст слоты каждый будний день с 10:00 до 16:00, перерыв 12:00–13:00, шаг 30 минут. Дубликаты пропускаются.</p>
+
+    <div class="field" style="margin-bottom:8px;">
+      <label for="recruiter_id_bulk" style="display:block; margin-bottom:6px;">Рекрутёр</label>
+      <select id="recruiter_id_bulk" name="recruiter_id" required>
+        <option value="" disabled>— выберите рекрутёра —</option>
+        {% for r in recruiters %}
+          <option value="{{ r.id }}" data-tz="{{ r.tz or 'Europe/Moscow' }}">{{ r.name }} ({{ r.tz or "Europe/Moscow" }})</option>
+        {% endfor %}
+      </select>
+      <div class="hint" id="tz_bulk_hint" style="margin-top:6px;">TZ рекрутёра: —</div>
+    </div>
+
+    <div class="row2">
+      <div class="field">
+        <label for="start_date" style="display:block; margin-bottom:6px;">Дата начала</label>
+        <input id="start_date" type="date" name="start_date" required>
+      </div>
+      <div class="field">
+        <label for="end_date" style="display:block; margin-bottom:6px;">Дата окончания</label>
+        <input id="end_date" type="date" name="end_date" required>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:8px;">
+      <label class="badge" style="cursor:pointer;">
+        <input type="checkbox" id="include_weekends"> Включать выходные
+      </label>
+      <label class="badge" style="cursor:pointer;">
+        <input type="checkbox" id="use_break" checked> Учитывать перерыв 12:00–13:00
+      </label>
+    </div>
+
+    <!-- фиксированные по умолчанию + возможность поправить в «Расширенных» -->
+    <input type="hidden" name="start_time" id="bulk_start_time" value="10:00">
+    <input type="hidden" name="end_time"   id="bulk_end_time"   value="16:00">
+    <input type="hidden" name="break_start" id="bulk_break_start" value="12:00">
+    <input type="hidden" name="break_end"   id="bulk_break_end"   value="13:00">
+    <input type="hidden" name="step_min"    id="bulk_step"        value="30">
+
+    <details style="margin-top:8px;">
+      <summary class="hint" style="cursor:pointer;">Расширенные настройки</summary>
+      <div class="row2" style="margin-top:8px;">
+        <div class="field">
+          <label>Окно (с)</label>
+          <input type="time" id="adv_start_time" value="10:00">
+        </div>
+        <div class="field">
+          <label>Окно (до)</label>
+          <input type="time" id="adv_end_time" value="16:00">
+        </div>
+      </div>
+      <div class="row2" style="margin-top:8px;">
+        <div class="field">
+          <label>Перерыв (с)</label>
+          <input type="time" id="adv_break_start" value="12:00" disabled>
+        </div>
+        <div class="field">
+          <label>Перерыв (до)</label>
+          <input type="time" id="adv_break_end" value="13:00" disabled>
+        </div>
+      </div>
+      <div class="field" style="margin-top:8px; max-width:220px;">
+        <label>Шаг (мин)</label>
+        <input type="number" id="adv_step" min="5" step="5" value="30">
+      </div>
+      <div class="hint" style="margin-top:6px;">Изменения сразу применяются к создаваемой серии.</div>
+    </details>
+
+    <div class="preview" id="preview-bulk" aria-live="polite" style="margin-top:10px;">
+      <b>Превью</b><br>
+      Выберите период — посчитаем примерное количество слотов (только будни).
+    </div>
+
+    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button id="btn-create-bulk" type="submit" disabled>Создать слоты пакетом</button>
+      <a class="btn" href="/slots">Отмена</a>
+    </div>
+  </form>
+</section>
+
+{% endif %}
+
+{% raw %}
+<script>
+(function(){
+  const $ = (s, r=document)=>r.querySelector(s);
+  const $$= (s, r=document)=>Array.from(r.querySelectorAll(s));
+
+  // persist helpers
+  const LS = {
+    tab: 'slots_new.tab',
+    recOne: 'slots_new.recOne',
+    recBulk: 'slots_new.recBulk',
+    date: 'slots_new.date',
+    time: 'slots_new.time'
+  };
+
+  // --- Tabs + persistence
+  const tabOne = $('#tab-one'), tabBulk = $('#tab-bulk');
+  const panelOne = $('#panel-one'), panelBulk = $('#panel-bulk');
+
+  function activate(tab){
+    if (tab === 'one'){
+      tabOne.classList.add('active'); tabOne.setAttribute('aria-selected','true');
+      tabBulk.classList.remove('active'); tabBulk.setAttribute('aria-selected','false');
+      panelOne.hidden = false; panelBulk.hidden = true;
+      localStorage.setItem(LS.tab, 'one');
+    } else {
+      tabBulk.classList.add('active'); tabBulk.setAttribute('aria-selected','true');
+      tabOne.classList.remove('active'); tabOne.setAttribute('aria-selected','false');
+      panelBulk.hidden = false; panelOne.hidden = true;
+      localStorage.setItem(LS.tab, 'bulk');
+    }
+  }
+  tabOne?.addEventListener('click', ()=>activate('one'));
+  tabBulk?.addEventListener('click', ()=>activate('bulk'));
+  activate(localStorage.getItem(LS.tab) || 'one');
+
+  // --- Helpers
+  const fmt2 = (n)=> String(n).padStart(2,'0');
+  function parseISODate(s){ try{ return s ? new Date(s+'T00:00:00') : null; }catch{ return null; } }
+  function parseTime(s){ if(!s) return null; const [h,m] = s.split(':').map(x=>parseInt(x,10)); if(isNaN(h)||isNaN(m)) return null; return {h,m}; }
+
+  // offset label like GMT+3
+  function getOffsetLabel(tz, d){
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour:'2-digit', minute:'2-digit', timeZoneName:'shortOffset' }).formatToParts(d);
+      const name = parts.find(p=>p.type==='timeZoneName');
+      return name ? name.value.replace('GMT','').replace('UTC','').trim() : '±0';
+    } catch { return '±0'; }
+  }
+
+  function tzNowText(tz){
+    try{
+      const d = new Date();
+      const f = new Intl.DateTimeFormat('ru-RU', { timeZone: tz, hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' });
+      return f.format(d);
+    }catch{ return '—:—'; }
+  }
+
+  function toUTCDate(localISO, tz){
+    if (!localISO) return null;
+    try {
+      const dt = new Date(localISO);
+      const z = new Intl.DateTimeFormat('ru-RU', { timeZone: tz,
+        year:'2-digit', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'
+      }).formatToParts(dt).reduce((acc,p)=>{acc[p.type]=p.value; return acc;},{});
+      const localLike = new Date(`20${z.year}-${z.month}-${z.day}T${z.hour}:${z.minute}:00`);
+      return new Date(localLike.getTime() - (localLike.getTimezoneOffset()*60000));
+    } catch { return null; }
+  }
+
+  function fmtHuman(d){ if(!d) return '—'; return `${fmt2(d.getDate())}.${fmt2(d.getMonth()+1)} ${fmt2(d.getHours())}:${fmt2(d.getMinutes())}`; }
+  function toISOZ(d){ if(!d) return ''; const s = d.toISOString(); return s.replace('.000',''); }
+
+  // Now chip updater (top bar)
+  const nowChip = $('#now_text');
+  function updateNowChip(){
+    const tz = currentTZ($('#recruiter_id')) || 'Europe/Moscow';
+    nowChip.textContent = tzNowText(tz);
+  }
+
+  // --- One slot: live preview
+  const selOne = $('#recruiter_id');
+  const dateOne= $('#date');
+  const timeOne= $('#time');
+  const tzOne  = $('#tz_one_hint');
+  const prevOne= $('#preview-one');
+  const btnOne = $('#btn-create-one');
+  const offsetText = $('#offset_text');
+
+  function currentTZ(selectEl){
+    const el = selectEl || selOne;
+    const opt = el ? el.selectedOptions[0] : null;
+    return opt ? (opt.getAttribute('data-tz') || 'Europe/Moscow') : 'Europe/Moscow';
+  }
+
+  function snapToHalfHour(h, m){
+    const minutes = h*60 + m;
+    const snapped = Math.round(minutes / 30) * 30;
+    return { h: Math.floor(snapped/60)%24, m: snapped%60 };
+  }
+
+  function updateOne(){
+    const tz = currentTZ(selOne);
+    tzOne.textContent = `TZ рекрутёра: ${tz}`;
+    offsetText.textContent = getOffsetLabel(tz, new Date());
+    updateNowChip();
+
+    const d = dateOne.value, t = timeOne.value;
+    const ready = !!(selOne.value && d && t);
+    btnOne.disabled = !ready;
+
+    if (!ready){
+      prevOne.innerHTML = '<b>Превью</b><br>Укажите рекрутёра, дату и время — покажем UTC.';
+      return;
+    }
+    const localIso = `${d}T${t}:00`;
+    const local = new Date(localIso);
+    const utc   = toUTCDate(localIso, tz);
+
+    // past/future flag relative to recruiter TZ now
+    let note = '';
+    try {
+      const nowTZ = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
+      if (local < nowTZ) note = ` · <span class="bad">в прошлом</span>`;
+      else note = ` · <span class="ok">в будущем</span>`;
+    } catch {}
+
+    const isoZ = toISOZ(utc);
+    prevOne.innerHTML =
+      `<b>Превью</b><br>Локально (TZ <code>${tz}</code>): <span>${fmtHuman(local)}</span>${note}
+       <br>UTC: <span class="ok">${fmtHuman(utc)}</span>
+       <br><span class="hint">ISO (UTC): <code>${isoZ}</code></span>`;
+
+    // persist
+    localStorage.setItem(LS.recOne, selOne.value || '');
+    localStorage.setItem(LS.date, d);
+    localStorage.setItem(LS.time, t);
+  }
+
+  // quick date
+  $$('#form-one [data-quick]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const now = new Date();
+      if (btn.dataset.quick==='tomorrow') now.setDate(now.getDate()+1);
+      dateOne.value = `${now.getFullYear()}-${fmt2(now.getMonth()+1)}-${fmt2(now.getDate())}`;
+      updateOne();
+    });
+  });
+  // quick time
+  $$('#form-one [data-time]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const kind = btn.getAttribute('data-time');
+      const tz = currentTZ(selOne);
+      let base = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
+      if (dateOne.value){ base = new Date(`${dateOne.value}T${timeOne.value||'09:00'}:00`); }
+      if (kind==='next30') base = new Date(base.getTime() + 30*60000);
+      else if (kind==='next60') base = new Date(base.getTime() + 60*60000);
+      else if (/^\d{2}:\d{2}$/.test(kind)){
+        // set exact time on current date
+        if (!dateOne.value){
+          const now = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
+          dateOne.value = `${now.getFullYear()}-${fmt2(now.getMonth()+1)}-${fmt2(now.getDate())}`;
+        }
+        timeOne.value = kind; updateOne(); return;
+      }
+      const hh = fmt2(base.getHours()), mm = fmt2(base.getMinutes());
+      timeOne.value = `${hh}:${mm}`;
+      if (!dateOne.value){
+        dateOne.value = `${base.getFullYear()}-${fmt2(base.getMonth()+1)}-${fmt2(base.getDate())}`;
+      }
+      updateOne();
+    });
+  });
+
+  // snap on blur to :00/:30
+  timeOne?.addEventListener('blur', ()=>{
+    const t = parseTime(timeOne.value); if(!t) return;
+    const s = snapToHalfHour(t.h, t.m);
+    timeOne.value = `${fmt2(s.h)}:${fmt2(s.m)}`;
+  });
+
+  selOne?.addEventListener('change', ()=>{ updateOne(); localStorage.setItem(LS.recOne, selOne.value||''); });
+  dateOne?.addEventListener('input', updateOne);
+  timeOne?.addEventListener('input', updateOne);
+
+  // restore persisted
+  (function restoreOne(){
+    const r = localStorage.getItem(LS.recOne); if (r) selOne.value = r;
+    const d = localStorage.getItem(LS.date);   if (d) dateOne.value = d;
+    const t = localStorage.getItem(LS.time);   if (t) timeOne.value = t;
+    updateOne();
+  })();
+
+  // --- Bulk: live summary
+  const selBulk = $('#recruiter_id_bulk');
+  const tzBulk  = $('#tz_bulk_hint');
+  const sd = $('#start_date'), ed = $('#end_date');
+  const prevBulk = $('#preview-bulk');
+  const btnBulk = $('#btn-create-bulk');
+  const includeWeekends = $('#include_weekends');
+  const useBreak = $('#use_break');
+
+  // advanced bindings -> hidden
+  const adv = {
+    start:  $('#adv_start_time'),
+    end:    $('#adv_end_time'),
+    bstart: $('#adv_break_start'),
+    bend:   $('#adv_break_end'),
+    step:   $('#adv_step')
+  };
+  const hid = {
+    start:  $('#bulk_start_time'),
+    end:    $('#bulk_end_time'),
+    bstart: $('#bulk_break_start'),
+    bend:   $('#bulk_break_end'),
+    step:   $('#bulk_step')
+  };
+  Object.entries(adv).forEach(([k,el])=>{
+    el?.addEventListener('input', ()=>{
+      hid[k].value = el.value;
+      updateBulk();
+    });
+  });
+
+  includeWeekends?.addEventListener('change', updateBulk);
+  useBreak?.addEventListener('change', ()=>{
+    adv.bstart.disabled = adv.bend.disabled = !useBreak.checked;
+    updateBulk();
+  });
+
+  function weekdaysBetween(a,b, includeWkd){
+    // a,b inclusive
+    let d = new Date(a), cnt = 0;
+    while (d <= b){
+      const w = d.getDay(); // 0..6, 0=Sun
+      if (includeWkd || (w>=1 && w<=5)) cnt++;
+      d.setDate(d.getDate()+1);
+    }
+    return cnt;
+  }
+  function slotsPerDay(start,end,brs,bre,step, useBr){
+    const st = parseTime(start), en = parseTime(end);
+    if (!st||!en) return 0;
+    const toMin = ({h,m})=>h*60+m;
+    const rng = (a,b,step)=> Math.max(0, Math.floor((b-a)/step));
+    if (!useBr){
+      return rng(toMin(st), toMin(en), step);
+    }
+    const bs=parseTime(brs), be=parseTime(bre);
+    if (!bs||!be) return 0;
+    const before = rng(toMin(st), toMin(bs), step);
+    const after  = rng(toMin(be), toMin(en), step);
+    return before + after;
+  }
+
+  function dayTimes(start,end,brs,bre,step,useBr){
+    const out=[]; const st=parseTime(start), en=parseTime(end);
+    if(!st||!en) return out; const toMin=({h,m})=>h*60+m; const fromMin=(x)=>({h:Math.floor(x/60),m:x%60});
+    const s=toMin(st), e=toMin(en), stepm=step;
+    let cur=s;
+    while(cur+stepm <= e){
+      const {h,m}=fromMin(cur);
+      if(!useBr || cur < toMin(parseTime(brs)) || cur >= toMin(parseTime(bre))) out.push(`${fmt2(h)}:${fmt2(m)}`);
+      cur+=stepm;
+    }
+    return out;
+  }
+
+  function updateBulk(){
+    const tz = currentTZ(selBulk);
+    tzBulk.textContent = `TZ рекрутёра: ${tz}`;
+
+    const s = sd.value, e = ed.value;
+    const ready = !!(selBulk.value && s && e);
+    btnBulk.disabled = !ready;
+
+    const st = hid.start.value, en = hid.end.value, bs = hid.bstart.value, be = hid.bend.value, step = parseInt(hid.step.value||'30',10);
+
+    if (!ready){
+      prevBulk.innerHTML = `<b>Превью</b><br>Выберите период — посчитаем примерное количество слотов (только будни).`;
+      return;
+    }
+    const d0 = parseISODate(s), d1 = parseISODate(e);
+    if (!d0 || !d1){ return; }
+    const a = d0 < d1 ? d0 : d1, b = d0 < d1 ? d1 : d0;
+
+    const wd = weekdaysBetween(a,b, !!includeWeekends.checked);
+    const perDay = slotsPerDay(st,en,bs,be,step, !!useBreak.checked);
+    const total = wd * perDay;
+
+    const times = dayTimes(st,en,bs,be,step, !!useBreak.checked);
+    const previewTimes = times.slice(0,6).join(', ') + (times.length>6 ? ` … и ещё ${times.length-6}` : '');
+    const warn = total > 300 ? `<span class="warn">Внимание: ${total} слотов — крупная серия.</span>` : '';
+
+    prevBulk.innerHTML =
+      `<b>Превью</b><br>Дней: <b>${wd}</b> (${includeWeekends.checked ? 'включая выходные' : 'будни'}), слотов в день: <b>${perDay}</b> (шаг ${step} мин)
+       <br>Итого слотов: <b class="${total? 'ok':''}">${total}</b> ${warn ? '· ' + warn : ''}
+       <br><span class="hint">Примеры времени в день: ${previewTimes || '—'}</span>`;
+
+    localStorage.setItem(LS.recBulk, selBulk.value||'');
+  }
+
+  selBulk?.addEventListener('change', updateBulk);
+  sd?.addEventListener('input', ()=>{ if(!ed.value) ed.value = sd.value; updateBulk(); });
+  ed?.addEventListener('input', updateBulk);
+
+  // restore bulk recruiter
+  (function restoreBulk(){ const r = localStorage.getItem(LS.recBulk); if(r) selBulk.value = r; updateBulk(); })();
+
+  // update top now chip each minute
+  updateNowChip(); setInterval(updateNowChip, 60000);
+
+  // Cmd/Ctrl + Enter to submit active form
+  window.addEventListener('keydown', (e)=>{
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase()==='enter'){
+      const activeTab = localStorage.getItem(LS.tab) || 'one';
+      const form = activeTab==='one' ? document.getElementById('form-one') : document.getElementById('form-bulk');
+      if (form){ e.preventDefault(); form.requestSubmit(); }
+    }
+    if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey){
+      e.preventDefault(); (document.getElementById('date')||document.body).focus();
+    }
+  });
+})();
+</script>
+{% endraw %}
+
+{% endblock %}
