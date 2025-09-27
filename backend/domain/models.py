@@ -110,3 +110,31 @@ class Slot(Base):
 
     def __repr__(self) -> str:
         return f"<Slot {self.id} {self.start_utc.isoformat()} {self.status}>"
+
+
+class TestQuestion(Base):
+    __tablename__ = "test_questions"
+    __table_args__ = (
+        UniqueConstraint("test_id", "question_index", name="uq_test_question_index"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    test_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    question_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<TestQuestion {self.test_id}#{self.question_index} active={self.is_active}>"
