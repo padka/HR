@@ -247,6 +247,7 @@
       <a href="/cities/owners" class="{% if request.url.path.startswith('/cities/owners') %}active{% endif %}">Ответственные</a>
       <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">Слоты</a>
       <a href="/templates" class="{% if request.url.path.startswith('/templates') %}active{% endif %}">Шаблоны</a>
+      <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">Вопросы</a>
       <span style="margin-left:auto" class="badge">{{ request.url.hostname or 'localhost' }}</span>
     </nav>
   </header>

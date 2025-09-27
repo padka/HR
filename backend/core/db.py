@@ -3,7 +3,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncIterator, Iterator
 
-from sqlalchemy import create_engine, text, select
+import json
+
+from sqlalchemy import create_engine, text, select, func
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -89,7 +91,8 @@ DEFAULT_RECRUITERS = [
 
 
 async def _seed_defaults() -> None:
-    from backend.domain.models import City, Recruiter
+    from backend.domain.models import City, Recruiter, TestQuestion
+    from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS
 
     async with async_session() as session:
         for city_data in DEFAULT_CITIES:
@@ -101,6 +104,20 @@ async def _seed_defaults() -> None:
             exists = await session.scalar(select(Recruiter).where(Recruiter.name == rec_data["name"]))
             if not exists:
                 session.add(Recruiter(**rec_data))
+
+        existing_questions = await session.scalar(select(func.count()).select_from(TestQuestion))
+        if not existing_questions:
+            for test_id, questions in DEFAULT_TEST_QUESTIONS.items():
+                for idx, question in enumerate(questions, start=1):
+                    title = question.get("prompt") or question.get("text") or f"Вопрос {idx}"
+                    session.add(
+                        TestQuestion(
+                            test_id=test_id,
+                            question_index=idx,
+                            title=title,
+                            payload=json.dumps(question, ensure_ascii=False),
+                        )
+                    )
 
         await session.commit()
 

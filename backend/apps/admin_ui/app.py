@@ -8,7 +8,16 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.core.db import init_models
 from backend.apps.admin_ui.config import STATIC_DIR, register_template_globals
-from backend.apps.admin_ui.routers import api, cities, dashboard, recruiters, slots, system, templates
+from backend.apps.admin_ui.routers import (
+    api,
+    cities,
+    dashboard,
+    recruiters,
+    slots,
+    system,
+    templates,
+    questions,
+)
 
 
 @asynccontextmanager
@@ -30,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(recruiters.router)
     app.include_router(cities.router)
     app.include_router(templates.router)
+    app.include_router(questions.router)
     app.include_router(api.router)
 
     return app
