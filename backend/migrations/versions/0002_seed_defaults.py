@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterable
 
+from datetime import datetime, timezone
+
 import sqlalchemy as sa
 
 from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS
@@ -74,6 +76,8 @@ def upgrade(conn):
         sa.Column("title", sa.String),
         sa.Column("payload", sa.Text),
         sa.Column("is_active", sa.Boolean),
+        sa.Column("created_at", sa.DateTime(timezone=True)),
+        sa.Column("updated_at", sa.DateTime(timezone=True)),
     )
 
     _ensure_entries(conn, cities, unique_field="name", rows=DEFAULT_CITIES)
@@ -93,6 +97,8 @@ def upgrade(conn):
                     title=title,
                     payload=json.dumps(question, ensure_ascii=False),
                     is_active=True,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
                 )
             )
 
