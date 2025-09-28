@@ -2,23 +2,21 @@
 {% block title %}Города{% endblock %}
 {% block content %}
 
-<!-- Тулбар: заголовок + поиск + кнопка -->
-<div class="card glass grain" style="margin: 8px 0 16px; padding: 12px;">
-  <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-    <h3 style="margin:0; display:flex; align-items:center; gap:8px;">
+<div class="card glass grain city-toolbar">
+  <div class="toolbar-top">
+    <h3 class="toolbar-title">
       Города
       <span class="badge" id="total_count">{{ cities|length }}</span>
     </h3>
-
-    <!-- Быстрый поиск -->
-    <div class="glass grain" style="margin-left:auto; padding:8px 10px; border-radius:12px; display:flex; align-items:center; gap:10px;">
-      <label for="city_search" class="muted" style="margin:0;">Поиск</label>
-      <input id="city_search" type="text" placeholder="Москва, Novosibirsk, Europe/Moscow…" style="min-width:260px;">
-      <span class="badge" id="found_badge" title="Найдено / всего">{{ cities|length }} / {{ cities|length }}</span>
-      <button id="city_reset" class="btn" type="button" title="Сбросить фильтр">Сбросить</button>
-    </div>
-
     <a class="btn" href="/cities/new">+ Новый город</a>
+  </div>
+  <div class="toolbar-search">
+    <label for="city_search" class="muted">Поиск</label>
+    <div class="search-input">
+      <input id="city_search" type="search" placeholder="Москва, Novosibirsk, Europe/Moscow…">
+      <button id="city_reset" class="btn btn-ghost" type="button" title="Сбросить фильтр">Сбросить</button>
+    </div>
+    <span class="badge" id="found_badge" title="Найдено / всего">{{ cities|length }} / {{ cities|length }}</span>
   </div>
 </div>
 
@@ -31,163 +29,283 @@
     </div>
   </div>
 {% else %}
-  <div class="card glass grain" data-tilt style="padding:0;">
-    <div class="table-wrap">
-    <table id="cities_table">
-      <thead>
-        <tr>
-          <th style="width: 80px;">ID</th>
-          <th>Название</th>
-          <th style="width: 220px;">Часовой пояс (TZ)</th>
-          <th style="width: 240px;">Ответственный</th>
-          <th style="width: 320px;">Действия</th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for c in cities %}
-        {% set tz = c.tz or "Europe/Moscow" %}
-        {% set criteria = c.criteria|default('') %}
-        {% set experts = c.experts|default('') %}
-        {% set plan_week = c.plan_week|default('') %}
-        {% set plan_month = c.plan_month|default('') %}
-        {% set owner_id = owners.get(c.id) %}
-        {% set owner = rec_map.get(owner_id) if owner_id else None %}
-        <tr class="city-row"
-            data-id="{{ c.id }}"
-            data-name="{{ c.name|lower }}"
-            data-tz="{{ tz|lower }}"
-            data-criteria="{{ criteria|e }}"
-            data-experts="{{ experts|e }}"
-            data-plan-week="{{ plan_week }}"
-            data-plan-month="{{ plan_month }}"
-            data-owner-id="{{ owner_id or '' }}">
-          <td style="white-space:nowrap;">
-            <span class="badge">#{{ c.id }}</span>
-          </td>
-          <td>
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              <span>{{ c.name }}</span>
-              {% if not c.tz %}
-                <span class="badge" title="Используется TZ по умолчанию">TZ: Europe/Moscow</span>
-              {% endif %}
-            </div>
-          </td>
-          <td>
-            <code>{{ tz }}</code>
-          </td>
-          <td>
-            <div class="owner-cell">
+  <div class="city-list" id="cities_list">
+    {% for c in cities %}
+      {% set tz = c.tz or "Europe/Moscow" %}
+      {% set criteria = c.criteria|default('') %}
+      {% set experts = c.experts|default('') %}
+      {% set plan_week = c.plan_week|default('') %}
+      {% set plan_month = c.plan_month|default('') %}
+      {% set owner_id = owners.get(c.id) %}
+      {% set owner = rec_map.get(owner_id) if owner_id else None %}
+      <article class="city-card"
+               data-id="{{ c.id }}"
+               data-name="{{ c.name|lower }}"
+               data-tz="{{ tz|lower }}"
+               data-criteria="{{ criteria|e }}"
+               data-experts="{{ experts|e }}"
+               data-plan-week="{{ plan_week }}"
+               data-plan-month="{{ plan_month }}"
+               data-owner-id="{{ owner_id or '' }}">
+        <div class="city-card__header">
+          <div class="city-card__title">
+            <span class="city-name">{{ c.name }}</span>
+            {% if not c.tz %}
+              <span class="badge" title="Используется TZ по умолчанию">TZ: Europe/Moscow</span>
+            {% endif %}
+          </div>
+          <div class="city-card__meta">
+            <span class="city-tz">TZ: <code>{{ tz }}</code></span>
+            <span class="city-owner {% if not owner %}muted{% endif %}">
               {% if owner %}
-                <span class="owner-name">{{ owner.name }}</span>
+                {{ owner.name }}
               {% else %}
-                <span class="owner-name muted">Не назначен</span>
+                Не назначен
               {% endif %}
+            </span>
+            <span class="badge plan-badge">
+              {% if plan_week or plan_month %}
+                Нед: {{ plan_week or '—' }} · Мес: {{ plan_month or '—' }}
+              {% else %}
+                Параметры не заданы
+              {% endif %}
+            </span>
+          </div>
+          <div class="city-card__actions">
+            <button class="btn btn-edit" type="button" title="Настроить город">Настроить</button>
+          </div>
+        </div>
+        <div class="city-details" hidden>
+          <form class="city-form" data-id="{{ c.id }}">
+            <div class="field">
+              <label for="owner_{{ c.id }}">Ответственный рекрутёр</label>
+              <select id="owner_{{ c.id }}" name="responsible_id" class="responsible-select">
+                <option value="">— Не назначен —</option>
+                {% for r in recruiters %}
+                  <option value="{{ r.id }}" {% if owner_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                {% endfor %}
+              </select>
             </div>
-          </td>
-          <td>
-            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
-              <button class="btn btn-edit" type="button" title="Редактировать параметры">Редактировать</button>
-              <span class="badge plan-badge">
-                {% if plan_week or plan_month %}
-                  Нед: {{ plan_week or '—' }} · Мес: {{ plan_month or '—' }}
-                {% else %}
-                  Параметры не заданы
-                {% endif %}
-              </span>
-            </div>
-          </td>
-        </tr>
-        <!-- Ряд-редактор для города -->
-        <tr class="city-edit" data-id="{{ c.id }}" style="display:none;">
-          <td colspan="4">
-            <div class="edit-pane glass grain">
-              <form class="city-form" data-id="{{ c.id }}">
-                <div class="field">
-                  <label for="owner_{{ c.id }}">Ответственный рекрутёр</label>
-                  <select id="owner_{{ c.id }}" name="responsible_id" class="responsible-select">
-                    <option value="">— Не назначен —</option>
-                    {% for r in recruiters %}
-                      <option value="{{ r.id }}" {% if owner_id == r.id %}selected{% endif %}>{{ r.name }}</option>
-                    {% endfor %}
-                  </select>
-                </div>
-                <div class="grid">
-                  <div class="field">
-                    <label for="crit_{{ c.id }}">Критерии отбора</label>
-                    <textarea id="crit_{{ c.id }}" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…">{{ criteria }}</textarea>
-                  </div>
-                  <div class="field">
-                    <label for="exp_{{ c.id }}">Ресурсы экспертов</label>
-                    <textarea id="exp_{{ c.id }}" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: внутренний реферальный, ярмарки вакансий…">{{ experts }}</textarea>
-                  </div>
-                </div>
-                <div class="grid">
-                  <div class="field">
-                    <label for="pw_{{ c.id }}">План набора (неделя)</label>
-                    <input id="pw_{{ c.id }}" name="plan_week" type="number" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
-                  </div>
-                  <div class="field">
-                    <label for="pm_{{ c.id }}">План набора (месяц)</label>
-                    <input id="pm_{{ c.id }}" name="plan_month" type="number" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
-                  </div>
-                </div>
 
-                <div class="stage-block">
-                  <h4 style="margin:18px 0 8px;">Шаблоны сообщений по шагам</h4>
-                  <p class="muted" style="margin:0 0 12px;">Настройте тексты, которые бот отправит кандидату на каждом этапе. Оставьте поле пустым, чтобы использовать текст по умолчанию.</p>
-                  {% set stages = city_stages.get(c.id, []) %}
-                  {% for stage in stages %}
-                    <div class="field stage-field" data-stage="{{ stage.key }}">
-                      <label for="stage_{{ stage.key }}_{{ c.id }}">{{ stage.title }}</label>
-                      <textarea
-                        id="stage_{{ stage.key }}_{{ c.id }}"
-                        name="stage__{{ stage.key }}"
-                        data-stage="{{ stage.key }}"
-                        data-default="{{ stage.default|e }}"
-                        rows="6"
-                        placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-                      <div class="stage-controls">
-                        <button type="button" class="btn mini ghost stage-default-btn" data-stage="{{ stage.key }}">Вставить текст по умолчанию</button>
-                        <span class="muted" style="flex:1;">{{ stage.description }}</span>
-                      </div>
-                    </div>
-                  {% endfor %}
-                  <p class="muted" style="margin:12px 0 0;">
-                    {% raw %}
-                    Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
-                    {% endraw %}
-                  </p>
-                </div>
-
-                <div style="display:flex; gap:8px;">
-                  <button type="submit" class="btn btn-save">Сохранить</button>
-                  <button type="button" class="btn btn-cancel">Отмена</button>
-                  <span class="badge muted save-status" style="display:none;">Сохранено</span>
-                </div>
-              </form>
+            <div class="form-grid">
+              <div class="field">
+                <label for="crit_{{ c.id }}">Критерии отбора</label>
+                <textarea id="crit_{{ c.id }}" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…">{{ criteria }}</textarea>
+              </div>
+              <div class="field">
+                <label for="exp_{{ c.id }}">Ресурсы экспертов</label>
+                <textarea id="exp_{{ c.id }}" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: внутренний реферальный, ярмарки вакансий…">{{ experts }}</textarea>
+              </div>
             </div>
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    </div>
+
+            <div class="form-grid">
+              <div class="field">
+                <label for="pw_{{ c.id }}">План набора (неделя)</label>
+                <input id="pw_{{ c.id }}" name="plan_week" type="number" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
+              </div>
+              <div class="field">
+                <label for="pm_{{ c.id }}">План набора (месяц)</label>
+                <input id="pm_{{ c.id }}" name="plan_month" type="number" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
+              </div>
+            </div>
+
+            <div class="stage-block">
+              <h4>Шаги и шаблоны сообщений</h4>
+              <p class="muted">Настройте тексты, которые бот отправит кандидату на каждом этапе. Оставьте поле пустым, чтобы использовать текст по умолчанию.</p>
+              {% set stages = city_stages.get(c.id, []) %}
+              {% for stage in stages %}
+                <div class="field stage-field" data-stage="{{ stage.key }}">
+                  <label for="stage_{{ stage.key }}_{{ c.id }}">{{ stage.title }}</label>
+                  <textarea
+                    id="stage_{{ stage.key }}_{{ c.id }}"
+                    name="stage__{{ stage.key }}"
+                    data-stage="{{ stage.key }}"
+                    data-default="{{ stage.default|e }}"
+                    rows="6"
+                    placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
+                  <div class="stage-controls">
+                    <button type="button" class="btn mini ghost stage-default-btn" data-stage="{{ stage.key }}">Вставить текст по умолчанию</button>
+                    <span class="muted">{{ stage.description }}</span>
+                  </div>
+                </div>
+              {% endfor %}
+              <p class="muted">
+                {% raw %}
+                Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
+                {% endraw %}
+              </p>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn-save">Сохранить</button>
+              <button type="button" class="btn btn-cancel">Отмена</button>
+              <span class="badge muted save-status" style="display:none;">Сохранено</span>
+            </div>
+          </form>
+        </div>
+      </article>
+    {% endfor %}
   </div>
 {% endif %}
 
 <style>
-  .table-wrap { overflow-x:auto; border-radius: inherit; }
-  .edit-pane { border: 1px solid var(--glass-stroke); border-radius: var(--radius-lg); padding: 12px; margin: 8px 0; background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); }
-  .edit-pane .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-  @media (max-width: 860px){ .edit-pane .grid { grid-template-columns: 1fr; } }
-  .edit-pane .field label { display:block; margin-bottom:6px; color: var(--muted); font-weight: 600; }
-  .edit-pane textarea { width:100%; min-height: 92px; resize: vertical; }
-  .stage-block { display:flex; flex-direction:column; gap:16px; margin-top:18px; }
-  .stage-field textarea { min-height: 140px; }
-  .stage-controls { display:flex; gap:8px; align-items:center; margin-top:6px; }
-  .owner-cell .owner-name { font-weight:600; }
-  .save-status.ok { color: var(--ok); display:inline-block !important; }
-  .save-status.err { color: var(--bad); display:inline-block !important; }
+  .city-toolbar {
+    margin: 8px 0 16px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .toolbar-top {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+  .toolbar-title {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .toolbar-search {
+    display: grid;
+    gap: 8px;
+  }
+  .toolbar-search .muted {
+    font-size: 0.85rem;
+  }
+  .search-input {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .btn-ghost {
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.12);
+  }
+  .search-input input[type="search"] {
+    flex: 1 1 220px;
+    min-width: 160px;
+  }
+  .city-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .city-card {
+    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+    border: 1px solid var(--glass-stroke);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .city-card__header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+  }
+  .city-card__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .city-card__title .city-name {
+    font-weight: 600;
+    font-size: 1.05rem;
+  }
+  .city-card__meta {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .city-card__meta code {
+    font-size: 0.9rem;
+  }
+  .city-card__actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-start;
+  }
+  @media (min-width: 760px) {
+    .city-card__header {
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+      align-items: center;
+    }
+    .city-card__actions {
+      justify-content: flex-end;
+    }
+  }
+  .city-details {
+    border-top: 1px solid var(--glass-stroke);
+    padding-top: 12px;
+    display: none;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .city-card.open .city-details {
+    display: flex;
+  }
+  .field label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .field textarea {
+    width: 100%;
+    min-height: 92px;
+    resize: vertical;
+  }
+  .form-grid {
+    display: grid;
+    gap: 12px;
+  }
+  @media (min-width: 860px) {
+    .form-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .stage-block {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .stage-block h4 {
+    margin: 0;
+  }
+  .stage-field textarea {
+    min-height: 140px;
+  }
+  .stage-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 6px;
+  }
+  .form-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .save-status.ok {
+    color: var(--ok);
+    display: inline-block !important;
+  }
+  .save-status.err {
+    color: var(--bad);
+    display: inline-block !important;
+  }
 </style>
 
 <script>
@@ -195,33 +313,44 @@
   const $ = (s, r=document)=>r.querySelector(s);
   const $$ = (s, r=document)=>Array.from(r.querySelectorAll(s));
 
-  const table = $('#cities_table');
+  const list = $('#cities_list');
   const search = $('#city_search');
   const reset = $('#city_reset');
   const foundBadge = $('#found_badge');
 
-  // Если таблицы нет (пустой список), просто выходим
-  if (!table) return;
+  if (!list) return;
 
-  const rows = $$('.city-row', table);
-  const totalCount = rows.length;
+  const cards = $$('.city-card', list);
+  const totalCount = cards.length;
 
   function norm(s){ return (s||'').toString().trim().toLowerCase(); }
+
+  function closeAll(){
+    cards.forEach(card => {
+      card.classList.remove('open');
+      const details = card.querySelector('.city-details');
+      if (details) details.hidden = true;
+    });
+  }
 
   function applyFilter(){
     const q = norm(search?.value);
     let visible = 0;
-    rows.forEach(tr => {
-      const name = tr.dataset.name || '';
-      const tz   = tr.dataset.tz || '';
+    cards.forEach(card => {
+      const name = card.dataset.name || '';
+      const tz = card.dataset.tz || '';
       const ok = !q || name.includes(q) || tz.includes(q);
-      tr.style.display = ok ? '' : 'none';
-      // синхронно скрываем/показываем редактор ниже
-      const edit = table.querySelector(`tr.city-edit[data-id="${tr.dataset.id}"]`);
-      if (edit) edit.style.display = (ok && edit.classList.contains('open')) ? '' : (ok ? 'none' : 'none');
-      if (ok) visible++;
+      if (ok) {
+        card.style.display = '';
+        visible++;
+      } else {
+        card.style.display = 'none';
+        card.classList.remove('open');
+        const details = card.querySelector('.city-details');
+        if (details) details.hidden = true;
+      }
     });
-    if (foundBadge) foundBadge.textContent = (visible + ' / ' + totalCount);
+    if (foundBadge) foundBadge.textContent = visible + ' / ' + totalCount;
   }
 
   search && search.addEventListener('input', applyFilter);
@@ -231,8 +360,7 @@
     search && search.focus();
   });
 
-  // Toggle редактора
-  table.addEventListener('click', (e)=>{
+  list.addEventListener('click', (e)=>{
     const defBtn = e.target.closest('.stage-default-btn');
     if (defBtn) {
       const form = defBtn.closest('form.city-form');
@@ -248,50 +376,56 @@
       return;
     }
 
+    const cancelBtn = e.target.closest('.btn-cancel');
+    if (cancelBtn) {
+      const card = cancelBtn.closest('.city-card');
+      if (card) {
+        card.classList.remove('open');
+        const details = card.querySelector('.city-details');
+        if (details) details.hidden = true;
+      }
+      return;
+    }
+
     const btn = e.target.closest('.btn-edit');
     if (!btn) return;
-    const tr = e.target.closest('tr.city-row');
-    if (!tr) return;
-    const id = tr.dataset.id;
-    const editRow = table.querySelector(`tr.city-edit[data-id="${CSS.escape(id)}"]`);
-    if (!editRow) return;
+    const card = btn.closest('.city-card');
+    if (!card) return;
+    const details = card.querySelector('.city-details');
+    if (!details) return;
 
-    const isOpen = editRow.classList.contains('open');
-    // закрыть все
-    $$('.city-edit.open', table).forEach(r=>{ r.classList.remove('open'); r.style.display='none'; });
+    const isOpen = card.classList.contains('open');
+    closeAll();
 
-    if (!isOpen) {
-      // префилд из data-*
-      const form = editRow.querySelector('form.city-form');
-      if (form) {
-        const criteria = tr.dataset.criteria || '';
-        const experts = tr.dataset.experts || '';
-        const pw = tr.dataset.planWeek || tr.dataset.planWeek || tr.getAttribute('data-plan-week') || '';
-        const pm = tr.dataset.planMonth || tr.getAttribute('data-plan-month') || '';
-        form.querySelector('[name="criteria"]').value = criteria;
-        form.querySelector('[name="experts"]').value = experts;
-        form.querySelector('[name="plan_week"]').value = pw;
-        form.querySelector('[name="plan_month"]').value = pm;
-        const ownerSelect = form.querySelector('[name="responsible_id"]');
-        if (ownerSelect) {
-          ownerSelect.value = tr.dataset.ownerId || '';
-        }
+    if (isOpen) return;
+
+    const form = details.querySelector('form.city-form');
+    if (form) {
+      form.querySelector('[name="criteria"]').value = card.dataset.criteria || '';
+      form.querySelector('[name="experts"]').value = card.dataset.experts || '';
+      form.querySelector('[name="plan_week"]').value = card.dataset.planWeek || '';
+      form.querySelector('[name="plan_month"]').value = card.dataset.planMonth || '';
+      const ownerSelect = form.querySelector('[name="responsible_id"]');
+      if (ownerSelect) {
+        ownerSelect.value = card.dataset.ownerId || '';
       }
-      editRow.classList.add('open');
-      editRow.style.display = '';
     }
+
+    card.classList.add('open');
+    details.hidden = false;
+    const firstInput = details.querySelector('textarea, input, select');
+    if (firstInput) firstInput.focus();
   });
 
-  // Сохранение формы
-  table.addEventListener('submit', async (e)=>{
+  list.addEventListener('submit', async (e)=>{
     const form = e.target.closest('form.city-form');
     if (!form) return;
     e.preventDefault();
 
-    const id = form.getAttribute('data-id');
-    const tr = table.querySelector(`tr.city-row[data-id="${CSS.escape(id)}"]`);
-    const editRow = table.querySelector(`tr.city-edit[data-id="${CSS.escape(id)}"]`);
+    const card = form.closest('.city-card');
+    if (!card) return;
 
+    const id = form.getAttribute('data-id');
     const criteria = form.criteria.value.trim();
     const experts = form.experts.value.trim();
     const plan_week = form.plan_week.value ? parseInt(form.plan_week.value, 10) : null;
@@ -300,13 +434,20 @@
     const ownerRaw = ownerSelect ? ownerSelect.value.trim() : '';
     const ownerId = ownerRaw && !Number.isNaN(Number(ownerRaw)) ? Number(ownerRaw) : null;
     const templates = {};
+
     form.querySelectorAll('textarea[data-stage]').forEach(ta => {
       const key = ta.dataset.stage;
       if (key) templates[key] = ta.value.trim();
     });
 
     const status = form.querySelector('.save-status');
-    const badge = tr.querySelector('.plan-badge');
+    const badge = card.querySelector('.plan-badge');
+
+    if (status) {
+      status.style.display = 'inline-block';
+      status.classList.remove('ok', 'err');
+      status.textContent = 'Сохранение…';
+    }
 
     try {
       const resp = await fetch(`/cities/${id}/settings`, {
@@ -325,12 +466,11 @@
 
       if (!json || json.ok !== true) throw new Error(json && json.error || 'Ошибка сохранения');
 
-      // обновим data-* и бейдж
-      tr.dataset.criteria = criteria;
-      tr.dataset.experts = experts;
-      tr.setAttribute('data-plan-week', plan_week ?? '');
-      tr.setAttribute('data-plan-month', plan_month ?? '');
-      tr.dataset.ownerId = ownerId ? String(ownerId) : '';
+      card.dataset.criteria = criteria;
+      card.dataset.experts = experts;
+      card.dataset.planWeek = plan_week ?? '';
+      card.dataset.planMonth = plan_month ?? '';
+      card.dataset.ownerId = ownerId ? String(ownerId) : '';
 
       if (badge) {
         if (plan_week || plan_month) {
@@ -340,40 +480,42 @@
         }
       }
 
-      const ownerCell = tr.querySelector('.owner-name');
-      if (ownerCell) {
+      const ownerLabel = card.querySelector('.city-owner');
+      if (ownerLabel) {
         if (ownerId) {
           const selector = `option[value="${ownerId}"]`;
           const option = ownerSelect ? ownerSelect.querySelector(selector) : null;
-          ownerCell.textContent = option ? option.textContent : 'Назначен';
-          ownerCell.classList.remove('muted');
+          ownerLabel.textContent = option ? option.textContent : 'Назначен';
+          ownerLabel.classList.remove('muted');
         } else {
-          ownerCell.textContent = 'Не назначен';
-          ownerCell.classList.add('muted');
+          ownerLabel.textContent = 'Не назначен';
+          ownerLabel.classList.add('muted');
         }
       }
 
-      if (status) { status.classList.remove('err'); status.classList.add('ok'); status.textContent = 'Сохранено'; }
-      setTimeout(()=>{ if (status){ status.classList.remove('ok'); status.style.display='none'; } }, 1200);
-      // закрыть
-      editRow.classList.remove('open');
-      editRow.style.display='none';
+      if (status) {
+        status.classList.add('ok');
+        status.textContent = 'Сохранено';
+      }
+
+      card.classList.remove('open');
+      const details = card.querySelector('.city-details');
+      if (details) details.hidden = true;
+
+      setTimeout(()=>{
+        if (status) {
+          status.classList.remove('ok');
+          status.style.display = 'none';
+        }
+      }, 1200);
     } catch (err) {
-      if (status) { status.style.display='inline-block'; status.classList.add('err'); status.textContent = 'Ошибка'; }
+      if (status) {
+        status.classList.add('err');
+        status.textContent = 'Ошибка';
+      }
     }
   });
 
-  // Отмена
-  table.addEventListener('click', (e)=>{
-    const btn = e.target.closest('.btn-cancel');
-    if (!btn) return;
-    const form = btn.closest('form.city-form');
-    const id = form?.getAttribute('data-id');
-    const editRow = id && table.querySelector(`tr.city-edit[data-id="${CSS.escape(id)}"]`);
-    if (editRow) { editRow.classList.remove('open'); editRow.style.display='none'; }
-  });
-
-  // первичный рендер
   applyFilter();
 })();
 </script>
