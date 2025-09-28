@@ -96,6 +96,13 @@ class BotContext:
 
         await self.reminder_queue.flush()
 
+    async def aclose(self) -> None:
+        """Gracefully tear down network connections and pending tasks."""
+
+        await self.reset_tasks()
+        self.state_manager.clear()
+        await self.bot.session.close()
+
 
 def _safe_zone(tz: Optional[str]) -> ZoneInfo:
     try:

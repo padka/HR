@@ -36,6 +36,8 @@ def create_dispatcher() -> Dispatcher:
 def create_application(
     token: str | None = None,
     *,
+    dispatcher: Dispatcher | None = None,
+    state_manager: StateManager | None = None,
     reminder_queue: ReminderQueue | None = None,
 ) -> BotContext:
     """Create and configure the bot application components.
@@ -44,6 +46,14 @@ def create_application(
     ----------
     token:
         Explicit bot token override. Falls back to :data:`BOT_TOKEN` when ``None``.
+    dispatcher:
+        Optional dispatcher instance. Supplying a pre-configured dispatcher
+        allows the caller to attach custom middlewares before routers are
+        registered.
+    state_manager:
+        Optional state storage implementation. Defaults to the in-memory
+        :class:`StateManager`, but callers can inject a persistent
+        alternative.
     reminder_queue:
         Optional reminder queue implementation. When omitted, an in-memory
         :class:`AsyncioReminderQueue` is created. Supplying a custom queue allows
@@ -51,8 +61,8 @@ def create_application(
         touching business logic.
     """
     bot = create_bot(token)
-    dispatcher = create_dispatcher()
-    state_manager = StateManager()
+    dispatcher = dispatcher or create_dispatcher()
+    state_manager = state_manager or StateManager()
     context = BotContext(
         bot=bot,
         dispatcher=dispatcher,

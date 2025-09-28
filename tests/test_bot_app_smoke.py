@@ -2,8 +2,11 @@ import pytest
 
 pytest.importorskip("aiogram")
 
-from backend.apps.bot.app import BotContext, create_application
 from datetime import datetime
+
+from aiogram import Dispatcher
+
+from backend.apps.bot.app import BotContext, create_application
 
 from backend.apps.bot.reminders import (
     AsyncioReminderQueue,
@@ -22,12 +25,13 @@ async def test_create_application_smoke():
     assert context.dispatcher is not None
     assert isinstance(context.reminder_queue, AsyncioReminderQueue)
 
-    await context.bot.session.close()
+    await context.aclose()
 
 
 class _StubQueue:
     def __init__(self) -> None:
         self.enqueued: list[ReminderQueueKey] = []
+        self.flushed = False
 
     async def enqueue(
         self, key: ReminderQueueKey, when: datetime, callback: ReminderCallback
@@ -38,7 +42,7 @@ class _StubQueue:
         pass
 
     async def flush(self) -> None:
-        pass
+        self.flushed = True
 
 
 @pytest.mark.asyncio
@@ -48,4 +52,33 @@ async def test_create_application_accepts_external_queue():
 
     assert context.reminder_queue is queue
 
-    await context.bot.session.close()
+    await context.aclose()
+    assert queue.flushed
+
+
+class _TrackedStateManager(StateManager):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cleared = False
+
+    def clear(self) -> None:
+        self.cleared = True
+        super().clear()
+
+
+@pytest.mark.asyncio
+async def test_create_application_accepts_external_dispatcher_and_state():
+    dispatcher = Dispatcher()
+    state_manager = _TrackedStateManager()
+
+    context = create_application(
+        "123456:ABCDEF",
+        dispatcher=dispatcher,
+        state_manager=state_manager,
+    )
+
+    assert context.dispatcher is dispatcher
+    assert context.state_manager is state_manager
+
+    await context.aclose()
+    assert state_manager.cleared
