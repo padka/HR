@@ -538,8 +538,7 @@
         <a class="brand" href="/">TG Bot Admin</a>
         <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Дашборд</a>
         <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">Рекрутёры</a>
-        <a href="/cities" class="{% if request.url.path == '/cities' or (request.url.path.startswith('/cities/') and not request.url.path.startswith('/cities/owners')) %}active{% endif %}">Города</a>
-        <a href="/cities/owners" class="{% if request.url.path.startswith('/cities/owners') %}active{% endif %}">Ответственные</a>
+        <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">Города</a>
         <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">Слоты</a>
         <a href="/templates" class="{% if request.url.path.startswith('/templates') %}active{% endif %}">Шаблоны</a>
         <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">Вопросы</a>

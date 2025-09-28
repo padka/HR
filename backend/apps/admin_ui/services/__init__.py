@@ -11,7 +11,6 @@ from .recruiters import (
 from .cities import (
     api_cities_payload,
     api_city_owners_payload,
-    assign_city_owner,
     city_owner_field_name,
     create_city,
     list_cities,
@@ -51,7 +50,6 @@ __all__ = [
     "build_recruiter_payload",
     "list_cities",
     "create_city",
-    "assign_city_owner",
     "update_city_settings",
     "city_owner_field_name",
     "get_stage_templates",
