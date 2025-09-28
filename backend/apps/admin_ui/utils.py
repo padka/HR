@@ -20,11 +20,11 @@ def safe_zone(tz_str: Optional[str]) -> ZoneInfo:
         return ZoneInfo(DEFAULT_TZ)
 
 
-def fmt_local(dt_utc: datetime, tz_str: str) -> str:
+def fmt_local(dt_utc: datetime, tz_str: Optional[str], fmt: str = "%d.%m %H:%M") -> str:
     if dt_utc.tzinfo is None:
         dt_utc = dt_utc.replace(tzinfo=timezone.utc)
     local = dt_utc.astimezone(safe_zone(tz_str))
-    return local.strftime("%d.%m %H:%M")
+    return local.strftime(fmt)
 
 
 def fmt_utc(dt_utc: datetime) -> str:

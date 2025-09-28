@@ -12,7 +12,13 @@ from sqlalchemy.exc import IntegrityError
 from backend.core.db import async_session
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, Template, TestQuestion
 from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
+
+# -----------------------------
+# ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ/ФУНКЦИИ
+# -----------------------------
+
 from backend.apps.admin_ui.utils import (
+    fmt_local,
     norm_status,
     paginate,
     recruiter_time_to_utc,
@@ -20,7 +26,7 @@ from backend.apps.admin_ui.utils import (
 )
 
 # -----------------------------
-# ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ/ФУНКЦИИ
+# DASHBOARD / СЧЁТЧИКИ
 # -----------------------------
 
 TEST_LABELS = {
@@ -29,34 +35,6 @@ TEST_LABELS = {
 }
 
 STAGE_KEYS: List[str] = [stage.key for stage in CITY_TEMPLATE_STAGES]
-
-# Локализация времени: безопасно конвертирует в нужный часовой пояс и форматирует
-from zoneinfo import ZoneInfo  # stdlib, Python 3.9+
-
-def fmt_local(
-    dt: Optional[datetime],
-    tz: str = "Europe/Moscow",
-    fmt: str = "%d.%m.%Y %H:%M",
-) -> str:
-    """
-    Преобразует datetime в локальную зону и форматирует строкой.
-    Если dt naive — считаем, что он в UTC.
-    Возвращает пустую строку, если dt отсутствует.
-    """
-    if not dt:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    try:
-        return dt.astimezone(ZoneInfo(tz)).strftime(fmt)
-    except Exception:
-        # на случай некорректного tz — не падаем
-        return dt.astimezone(ZoneInfo("UTC")).strftime(fmt)
-
-
-# -----------------------------
-# DASHBOARD / СЧЁТЧИКИ
-# -----------------------------
 
 async def dashboard_counts() -> Dict[str, int]:
     async with async_session() as session:
