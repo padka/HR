@@ -40,7 +40,7 @@ from aiogram.types import (
 from aiogram.exceptions import TelegramBadRequest
 
 # === ADMIN DB layer ===
-from admin_app.repo import (
+from backend.domain.repositories import (
     get_active_recruiters,
     get_recruiter,
     get_free_slots_by_recruiter,
@@ -52,7 +52,7 @@ from admin_app.repo import (
     reject_slot,
     get_template,
 )
-from admin_app.models import SlotStatus
+from backend.domain.models import SlotStatus
 from backend.core.settings import get_settings
 from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS
 from backend.domain.template_stages import STAGE_DEFAULTS

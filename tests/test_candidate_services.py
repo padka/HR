@@ -1,34 +1,39 @@
 from datetime import datetime
 
-from backend.core.db import sync_session
+import pytest
+from sqlalchemy import select
+
+from backend.core.db import async_session
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.models import AutoMessage, Notification, QuestionAnswer, TestResult, User
 
 
-def test_create_or_update_user_and_lookup():
-    created = candidate_services.create_or_update_user(telegram_id=1001, fio="Иван Иванов", city="Москва")
+@pytest.mark.asyncio
+async def test_create_or_update_user_and_lookup():
+    created = await candidate_services.create_or_update_user(telegram_id=1001, fio="Иван Иванов", city="Москва")
     assert isinstance(created, User)
     assert created.telegram_id == 1001
     assert created.city == "Москва"
 
-    updated = candidate_services.create_or_update_user(telegram_id=1001, fio="Иван И.", city="Санкт-Петербург")
+    updated = await candidate_services.create_or_update_user(telegram_id=1001, fio="Иван И.", city="Санкт-Петербург")
     assert updated.id == created.id
     assert updated.fio == "Иван И."
     assert updated.city == "Санкт-Петербург"
 
-    fetched = candidate_services.get_user_by_telegram_id(1001)
+    fetched = await candidate_services.get_user_by_telegram_id(1001)
     assert fetched is not None
     assert fetched.id == created.id
 
-    active_users = candidate_services.get_all_active_users()
+    active_users = await candidate_services.get_all_active_users()
     assert len(active_users) == 1
     assert active_users[0].telegram_id == 1001
 
 
-def test_save_test_result_and_statistics():
-    user = candidate_services.create_or_update_user(telegram_id=2002, fio="Анна Петрова", city="Новосибирск")
+@pytest.mark.asyncio
+async def test_save_test_result_and_statistics():
+    user = await candidate_services.create_or_update_user(telegram_id=2002, fio="Анна Петрова", city="Новосибирск")
 
-    result = candidate_services.save_test_result(
+    result = await candidate_services.save_test_result(
         user_id=user.id,
         raw_score=7,
         final_score=6.5,
@@ -60,34 +65,37 @@ def test_save_test_result_and_statistics():
 
     assert isinstance(result, TestResult)
 
-    with sync_session() as session:
-        stored = session.get(TestResult, result.id)
+    async with async_session() as session:
+        stored = await session.get(TestResult, result.id)
         assert stored is not None
-        answers = session.query(QuestionAnswer).filter_by(test_result_id=result.id).all()
+        answers = (await session.execute(
+            select(QuestionAnswer).where(QuestionAnswer.test_result_id == result.id)
+        )).scalars().all()
         assert len(answers) == 2
         assert any(a.is_correct for a in answers)
         assert any(a.overtime for a in answers)
 
-    stats = candidate_services.get_test_statistics()
+    stats = await candidate_services.get_test_statistics()
     assert stats["total_tests"] == 1
     assert stats["completed_tests"] == 1
     assert stats["average_score"] == 6.5
     assert stats["success_rate"] == 100.0
 
 
-def test_auto_messages_and_notifications():
-    created = candidate_services.create_auto_message(
+@pytest.mark.asyncio
+async def test_auto_messages_and_notifications():
+    created = await candidate_services.create_auto_message(
         message_text="Напоминание",
         send_time="09:00",
         target_chat_id=555,
     )
     assert isinstance(created, AutoMessage)
 
-    active = candidate_services.get_active_auto_messages()
+    active = await candidate_services.get_active_auto_messages()
     assert len(active) == 1
     assert active[0].message_text == "Напоминание"
 
-    notification = candidate_services.create_notification(
+    notification = await candidate_services.create_notification(
         admin_chat_id=777,
         notification_type="alert",
         message_text="Проверить заявки",
@@ -95,10 +103,10 @@ def test_auto_messages_and_notifications():
     assert isinstance(notification, Notification)
     assert notification.is_sent is False
 
-    candidate_services.mark_notification_sent(notification.id)
+    await candidate_services.mark_notification_sent(notification.id)
 
-    with sync_session() as session:
-        stored = session.get(Notification, notification.id)
+    async with async_session() as session:
+        stored = await session.get(Notification, notification.id)
         assert stored is not None
         assert stored.is_sent is True
         assert isinstance(stored.sent_at, datetime)

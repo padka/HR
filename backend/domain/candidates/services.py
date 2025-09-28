@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Iterable, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 from sqlalchemy import func, select
 
-from backend.core.db import sync_session
+from backend.core.db import async_session
 from .models import AutoMessage, Notification, QuestionAnswer, TestResult, User
 
 
-def create_or_update_user(telegram_id: int, fio: str, city: str) -> User:
-    with sync_session() as session:
-        user = session.execute(
+async def create_or_update_user(telegram_id: int, fio: str, city: str) -> User:
+    async with async_session() as session:
+        result = await session.execute(
             select(User).where(User.telegram_id == telegram_id)
-        ).scalar_one_or_none()
+        )
+        user = result.scalar_one_or_none()
         if user:
             user.fio = fio
             user.city = city
@@ -26,12 +27,12 @@ def create_or_update_user(telegram_id: int, fio: str, city: str) -> User:
                 last_activity=datetime.now(timezone.utc),
             )
             session.add(user)
-        session.commit()
-        session.refresh(user)
+        await session.commit()
+        await session.refresh(user)
         return user
 
 
-def save_test_result(
+async def save_test_result(
     user_id: int,
     raw_score: int,
     final_score: float,
@@ -39,7 +40,7 @@ def save_test_result(
     total_time: int,
     question_data: Sequence[dict],
 ) -> TestResult:
-    with sync_session() as session:
+    async with async_session() as session:
         test_result = TestResult(
             user_id=user_id,
             raw_score=raw_score,
@@ -48,7 +49,7 @@ def save_test_result(
             total_time=total_time,
         )
         session.add(test_result)
-        session.flush()  # ensure PK for FK usage
+        await session.flush()  # ensure PK for FK usage
 
         for q_data in question_data:
             answer = QuestionAnswer(
@@ -64,27 +65,29 @@ def save_test_result(
             )
             session.add(answer)
 
-        session.commit()
-        session.refresh(test_result)
+        await session.commit()
+        await session.refresh(test_result)
         return test_result
 
 
-def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:
-    with sync_session() as session:
-        return session.execute(
+async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:
+    async with async_session() as session:
+        result = await session.execute(
             select(User).where(User.telegram_id == telegram_id)
-        ).scalar_one_or_none()
+        )
+        return result.scalar_one_or_none()
 
 
-def get_all_active_users() -> List[User]:
-    with sync_session() as session:
-        return (session.execute(select(User).where(User.is_active.is_(True))).scalars().all())
+async def get_all_active_users() -> List[User]:
+    async with async_session() as session:
+        result = await session.scalars(select(User).where(User.is_active.is_(True)))
+        return list(result.all())
 
 
-def get_test_statistics() -> dict:
-    with sync_session() as session:
-        total_tests = session.execute(select(func.count(TestResult.id))).scalar_one()
-        completed_tests = total_tests
+async def get_test_statistics() -> dict:
+    async with async_session() as session:
+        total_tests = await session.scalar(select(func.count(TestResult.id)))
+        completed_tests = total_tests or 0
 
         if not completed_tests:
             return {
@@ -94,60 +97,61 @@ def get_test_statistics() -> dict:
                 "success_rate": 0,
             }
 
-        avg_score = session.execute(select(func.avg(TestResult.final_score))).scalar()
-        successful_tests = session.execute(
+        avg_score = await session.scalar(select(func.avg(TestResult.final_score)))
+        successful_tests = await session.scalar(
             select(func.count(TestResult.id)).where(TestResult.final_score >= 3.5)
-        ).scalar()
+        )
 
         return {
-            "total_tests": total_tests,
+            "total_tests": completed_tests,
             "completed_tests": completed_tests,
             "average_score": round(avg_score or 0, 2),
             "success_rate": round(((successful_tests or 0) / completed_tests) * 100, 2),
         }
 
 
-def create_auto_message(
+async def create_auto_message(
     message_text: str, send_time: str, target_chat_id: Optional[int] = None
 ) -> AutoMessage:
-    with sync_session() as session:
+    async with async_session() as session:
         auto_message = AutoMessage(
             message_text=message_text,
             send_time=send_time,
             target_chat_id=target_chat_id,
         )
         session.add(auto_message)
-        session.commit()
-        session.refresh(auto_message)
+        await session.commit()
+        await session.refresh(auto_message)
         return auto_message
 
 
-def get_active_auto_messages() -> List[AutoMessage]:
-    with sync_session() as session:
-        return (
-            session.execute(select(AutoMessage).where(AutoMessage.is_active.is_(True))).scalars().all()
+async def get_active_auto_messages() -> List[AutoMessage]:
+    async with async_session() as session:
+        result = await session.scalars(
+            select(AutoMessage).where(AutoMessage.is_active.is_(True))
         )
+        return list(result.all())
 
 
-def create_notification(
+async def create_notification(
     admin_chat_id: int, notification_type: str, message_text: str
 ) -> Notification:
-    with sync_session() as session:
+    async with async_session() as session:
         notification = Notification(
             admin_chat_id=admin_chat_id,
             notification_type=notification_type,
             message_text=message_text,
         )
         session.add(notification)
-        session.commit()
-        session.refresh(notification)
+        await session.commit()
+        await session.refresh(notification)
         return notification
 
 
-def mark_notification_sent(notification_id: int) -> None:
-    with sync_session() as session:
-        notification = session.get(Notification, notification_id)
+async def mark_notification_sent(notification_id: int) -> None:
+    async with async_session() as session:
+        notification = await session.get(Notification, notification_id)
         if notification:
             notification.is_sent = True
             notification.sent_at = datetime.now(timezone.utc)
-            session.commit()
+            await session.commit()
