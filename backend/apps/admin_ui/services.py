@@ -19,14 +19,44 @@ from backend.apps.admin_ui.utils import (
     status_to_db,
 )
 
+# -----------------------------
+# ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ/ФУНКЦИИ
+# -----------------------------
+
 TEST_LABELS = {
     "test1": "Анкета кандидата",
     "test2": "Инфо-тест",
 }
 
-
 STAGE_KEYS: List[str] = [stage.key for stage in CITY_TEMPLATE_STAGES]
 
+# Локализация времени: безопасно конвертирует в нужный часовой пояс и форматирует
+from zoneinfo import ZoneInfo  # stdlib, Python 3.9+
+
+def fmt_local(
+    dt: Optional[datetime],
+    tz: str = "Europe/Moscow",
+    fmt: str = "%d.%m.%Y %H:%M",
+) -> str:
+    """
+    Преобразует datetime в локальную зону и форматирует строкой.
+    Если dt naive — считаем, что он в UTC.
+    Возвращает пустую строку, если dt отсутствует.
+    """
+    if not dt:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    try:
+        return dt.astimezone(ZoneInfo(tz)).strftime(fmt)
+    except Exception:
+        # на случай некорректного tz — не падаем
+        return dt.astimezone(ZoneInfo("UTC")).strftime(fmt)
+
+
+# -----------------------------
+# DASHBOARD / СЧЁТЧИКИ
+# -----------------------------
 
 async def dashboard_counts() -> Dict[str, int]:
     async with async_session() as session:
@@ -52,6 +82,10 @@ async def dashboard_counts() -> Dict[str, int]:
         "slots_booked": status_map.get(_norm("BOOKED"), 0),
     }
 
+
+# -----------------------------
+# РЕКРУТЕРЫ / ГОРОДА / СЛОТЫ
+# -----------------------------
 
 async def list_recruiters(order_by_name: bool = True) -> List[Recruiter]:
     async with async_session() as session:
@@ -96,7 +130,6 @@ async def list_recruiters(order_by_name: bool = True) -> List[Recruiter]:
             for row in city_rows:
                 city_map.setdefault(row.responsible_recruiter_id, []).append((row.name, row.tz))
 
-    enriched: List[Recruiter] = []
     now = datetime.now(timezone.utc)
     out = []
     for rec in recs:
@@ -106,7 +139,7 @@ async def list_recruiters(order_by_name: bool = True) -> List[Recruiter]:
             next_dt = next_dt.replace(tzinfo=timezone.utc)
         if isinstance(next_dt, datetime) and next_dt.tzinfo is not None:
             stats["next_free"] = next_dt
-            next_local = fmt_local(next_dt, rec.tz or "Europe/Moscow")
+            next_local = fmt_local(next_dt, getattr(rec, "tz", None) or "Europe/Moscow")
             next_future = next_dt > now
         else:
             next_local = None
@@ -132,6 +165,10 @@ async def list_cities(order_by_name: bool = True) -> List[City]:
             query = query.order_by(City.name.asc())
         return (await session.scalars(query)).all()
 
+
+# -----------------------------
+# ШАБЛОНЫ СТАДИЙ / ГОРОДА
+# -----------------------------
 
 async def get_stage_templates(
     *, city_ids: Optional[Sequence[int]] = None, include_global: bool = False
@@ -256,6 +293,10 @@ async def update_city_settings(
     return None
 
 
+# -----------------------------
+# СЛОТЫ / ФОРМЫ / ЛИСТИНГ
+# -----------------------------
+
 async def list_slots(
     recruiter_id: Optional[int],
     status: Optional[str],
@@ -291,7 +332,7 @@ async def list_slots(
 def city_owner_field_name() -> Optional[str]:
     inspector = sa_inspect(City)
     attrs = set(inspector.attrs.keys())
-    cols = set(inspector.columns.keys()) if hasattr(inspector, "columns") else set()
+    cols = set(getattr(inspector, "columns", {}).keys()) if hasattr(inspector, "columns") else set()
     allowed = attrs | cols
     for name in ["responsible_recruiter_id", "owner_id", "recruiter_id", "manager_id"]:
         if name in allowed:
@@ -301,7 +342,7 @@ def city_owner_field_name() -> Optional[str]:
 
 async def recruiters_for_slot_form() -> List[Recruiter]:
     inspector = sa_inspect(Recruiter)
-    has_active = "active" in inspector.columns
+    has_active = "active" in getattr(inspector, "columns", {})
     query = select(Recruiter).order_by(Recruiter.name.asc())
     if has_active:
         query = query.where(getattr(Recruiter, "active") == True)  # noqa: E712
@@ -324,6 +365,10 @@ async def create_slot(recruiter_id: int, date: str, time: str) -> bool:
         await session.commit()
         return True
 
+
+# -----------------------------
+# РЕКРУТЕРЫ CRUD
+# -----------------------------
 
 async def create_recruiter(payload: Dict[str, object], *, cities: Optional[List[str]] = None) -> None:
     async with async_session() as session:
@@ -369,19 +414,19 @@ async def update_recruiter(rec_id: int, payload: Dict[str, object], *, cities: O
         for key, value in payload.items():
             setattr(recruiter, key, value)
 
-        await session.commit()
-
         selected: List[int] = []
         if cities:
             for cid in cities:
                 if cid and cid.strip().isdigit():
                     selected.append(int(cid.strip()))
 
+        # Снимаем текущие привязки города к этому рекрутеру
         await session.execute(
             update(City)
             .where(City.responsible_recruiter_id == rec_id)
             .values(responsible_recruiter_id=None)
         )
+        # Назначаем новые, если есть
         if selected:
             await session.execute(
                 update(City)
@@ -389,7 +434,9 @@ async def update_recruiter(rec_id: int, payload: Dict[str, object], *, cities: O
                 .values(responsible_recruiter_id=rec_id)
             )
 
-    await session.commit()
+        # ВАЖНО: коммит ДОЛЖЕН БЫТЬ внутри контекста сессии
+        await session.commit()
+
     return True
 
 
@@ -451,6 +498,10 @@ def _pick_field(allowed: Sequence[str], candidates: Sequence[str]) -> Optional[s
     return None
 
 
+# -----------------------------
+# ГОРОДА CRUD / ВЛАДЕЛЕЦ
+# -----------------------------
+
 async def create_city(name: str, tz: str) -> None:
     async with async_session() as session:
         session.add(City(name=name.strip(), tz=tz.strip() if tz else "Europe/Moscow"))
@@ -476,6 +527,10 @@ async def assign_city_owner(city_id: int, recruiter_id: Optional[int]) -> Option
         await session.commit()
     return None
 
+
+# -----------------------------
+# ШАБЛОНЫ CRUD / API-ПОМОЩНИКИ
+# -----------------------------
 
 async def list_templates() -> Dict[str, object]:
     overview = await templates_overview()
@@ -510,6 +565,10 @@ async def delete_template(tmpl_id: int) -> None:
         await session.execute(delete(Template).where(Template.id == tmpl_id))
         await session.commit()
 
+
+# -----------------------------
+# API-ПЕЙЛОАДЫ ДЛЯ UI
+# -----------------------------
 
 async def api_recruiters_payload() -> List[Dict[str, object]]:
     async with async_session() as session:
@@ -636,6 +695,10 @@ async def api_city_owners_payload() -> Dict[str, object]:
         "owners": {c.id: getattr(c, owner_field, None) for c in cities},
     }
 
+
+# -----------------------------
+# ТЕСТОВЫЕ ВОПРОСЫ
+# -----------------------------
 
 def _parse_question_payload(payload: str) -> Dict[str, object]:
     try:
