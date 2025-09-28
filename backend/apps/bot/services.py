@@ -6,8 +6,8 @@ import asyncio
 import html
 import logging
 import math
-import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 from zoneinfo import ZoneInfo
 
@@ -15,6 +15,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, ForceReply, Message, FSInputFile
 
+from backend.core.settings import get_settings
 from backend.domain.models import SlotStatus
 from backend.domain.repositories import (
     approve_slot,
@@ -49,6 +50,15 @@ from .keyboards import (
     kb_slots_for_recruiter,
     kb_start,
 )
+
+
+_settings = get_settings()
+REPORTS_DIR: Path = _settings.data_dir / "reports"
+TEST1_DIR: Path = _settings.data_dir / "test1"
+UPLOADS_DIR: Path = _settings.data_dir / "uploads"
+
+for _path in (REPORTS_DIR, TEST1_DIR, UPLOADS_DIR):
+    _path.mkdir(parents=True, exist_ok=True)
 
 
 class StateManager:
@@ -583,7 +593,7 @@ async def finalize_test1(user_id: int) -> None:
         qid = q["id"]
         lines.append(f"- {q['prompt']}\n  {state['test1_answers'].get(qid, '—')}")
 
-    fname = f"test1_{(state.get('fio') or user_id)}.txt"
+    fname = TEST1_DIR / f"test1_{(state.get('fio') or user_id)}.txt"
     try:
         with open(fname, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
@@ -885,16 +895,16 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
     )
 
     attached = False
-    for name in [
-        f"test1_{state.get('fio') or user_id}.txt",
-        f"report_{state.get('fio') or user_id}.txt",
+    for path in [
+        TEST1_DIR / f"test1_{state.get('fio') or user_id}.txt",
+        REPORTS_DIR / f"report_{state.get('fio') or user_id}.txt",
     ]:
-        if os.path.exists(name):
+        if path.exists():
             try:
                 if rec and rec.tg_chat_id:
                     await bot.send_document(
                         rec.tg_chat_id,
-                        FSInputFile(name),
+                        FSInputFile(str(path)),
                         caption=caption,
                         reply_markup=kb_approve(slot.id),
                     )
