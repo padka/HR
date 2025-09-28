@@ -65,16 +65,29 @@ async def get_slot(slot_id: int) -> Optional[Slot]:
         return slot
 
 
-async def get_template(city_id: int, key: str) -> Optional[Template]:
+async def get_template(city_id: Optional[int], key: str) -> Optional[Template]:
     async with async_session() as session:
-        res = await session.scalars(
-            select(Template).where(Template.city_id == city_id, Template.key == key)
-        )
-        return res.first()
+        base = select(Template).where(Template.key == key)
+        if city_id is None:
+            res = await session.scalars(base.where(Template.city_id.is_(None)))
+            return res.first()
+
+        res = await session.scalars(base.where(Template.city_id == city_id))
+        tmpl = res.first()
+        if tmpl:
+            return tmpl
+        fallback = await session.scalars(base.where(Template.city_id.is_(None)))
+        return fallback.first()
 
 
 async def reserve_slot(
-    slot_id: int, candidate_tg_id: int, candidate_fio: str, candidate_tz: str
+    slot_id: int,
+    candidate_tg_id: int,
+    candidate_fio: str,
+    candidate_tz: str,
+    *,
+    candidate_city_id: Optional[int] = None,
+    purpose: str = "interview",
 ) -> Optional[Slot]:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id, with_for_update=True)
@@ -84,6 +97,8 @@ async def reserve_slot(
         slot.candidate_tg_id = candidate_tg_id
         slot.candidate_fio = candidate_fio
         slot.candidate_tz = candidate_tz
+        slot.candidate_city_id = candidate_city_id
+        slot.purpose = purpose or "interview"
         await session.commit()
         await session.refresh(slot)
         slot.start_utc = _to_aware_utc(slot.start_utc)

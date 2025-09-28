@@ -50,6 +50,7 @@ async def init_models() -> None:
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_city_owner_column(conn)
+        await _ensure_slot_purpose_column(conn)
 
     await _seed_defaults()
 
@@ -63,6 +64,24 @@ async def _ensure_city_owner_column(conn) -> None:
             text(
                 "ALTER TABLE cities ADD COLUMN responsible_recruiter_id INTEGER "
                 "REFERENCES recruiters(id) ON DELETE SET NULL"
+            )
+        )
+
+
+async def _ensure_slot_purpose_column(conn) -> None:
+    """Гарантирует наличие вспомогательных столбцов в таблице slots."""
+    result = await conn.execute(text("PRAGMA table_info('slots')"))
+    columns = {row[1] for row in result}
+    if "purpose" not in columns:
+        await conn.execute(
+            text(
+                "ALTER TABLE slots ADD COLUMN purpose VARCHAR(32) NOT NULL DEFAULT 'interview'"
+            )
+        )
+    if "candidate_city_id" not in columns:
+        await conn.execute(
+            text(
+                "ALTER TABLE slots ADD COLUMN candidate_city_id INTEGER REFERENCES cities(id) ON DELETE SET NULL"
             )
         )
 

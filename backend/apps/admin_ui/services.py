@@ -4,13 +4,14 @@ from datetime import datetime, timezone
 import json
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import delete, func, select, case, update
+from sqlalchemy import delete, func, select, case, update, or_
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.db import async_session
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, Template, TestQuestion
+from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 from backend.apps.admin_ui.utils import (
     norm_status,
     paginate,
@@ -22,6 +23,9 @@ TEST_LABELS = {
     "test1": "Анкета кандидата",
     "test2": "Инфо-тест",
 }
+
+
+STAGE_KEYS: List[str] = [stage.key for stage in CITY_TEMPLATE_STAGES]
 
 
 async def dashboard_counts() -> Dict[str, int]:
@@ -127,6 +131,129 @@ async def list_cities(order_by_name: bool = True) -> List[City]:
         if order_by_name:
             query = query.order_by(City.name.asc())
         return (await session.scalars(query)).all()
+
+
+async def get_stage_templates(
+    *, city_ids: Optional[Sequence[int]] = None, include_global: bool = False
+) -> Dict[Optional[int], Dict[str, str]]:
+    conditions = [Template.key.in_(STAGE_KEYS)]
+    filters = []
+    if city_ids:
+        filters.append(Template.city_id.in_(city_ids))
+    if include_global:
+        filters.append(Template.city_id.is_(None))
+
+    if filters:
+        query = select(Template).where(or_(*filters), *conditions)
+    else:
+        query = select(Template).where(*conditions)
+
+    async with async_session() as session:
+        items = (await session.scalars(query)).all()
+
+    data: Dict[Optional[int], Dict[str, str]] = {}
+    for item in items:
+        data.setdefault(item.city_id, {})[item.key] = item.content
+
+    if city_ids:
+        for cid in city_ids:
+            data.setdefault(cid, {})
+    if include_global:
+        data.setdefault(None, {})
+    return data
+
+
+def stage_payload_for_ui(stored: Dict[str, str]) -> List[Dict[str, object]]:
+    result: List[Dict[str, object]] = []
+    for stage in CITY_TEMPLATE_STAGES:
+        value = stored.get(stage.key, "")
+        result.append(
+            {
+                "key": stage.key,
+                "title": stage.title,
+                "description": stage.description,
+                "value": value,
+                "default": STAGE_DEFAULTS.get(stage.key, ""),
+                "is_custom": bool(value.strip()),
+            }
+        )
+    return result
+
+
+async def templates_overview() -> Dict[str, object]:
+    cities = await list_cities()
+    city_ids = [c.id for c in cities]
+    raw_map = await get_stage_templates(city_ids=city_ids, include_global=True)
+
+    city_payload = [
+        {
+            "city": city,
+            "stages": stage_payload_for_ui(raw_map.get(city.id, {})),
+        }
+        for city in cities
+    ]
+
+    global_payload = stage_payload_for_ui(raw_map.get(None, {}))
+
+    return {
+        "cities": city_payload,
+        "global": {
+            "stages": global_payload,
+        },
+        "stage_meta": CITY_TEMPLATE_STAGES,
+    }
+
+
+async def update_templates_for_city(
+    city_id: Optional[int], templates: Dict[str, Optional[str]]
+) -> None:
+    valid_keys = set(STAGE_KEYS)
+    cleaned = {key: (templates.get(key) or "").strip() for key in valid_keys}
+
+    async with async_session() as session:
+        if city_id is None:
+            query = select(Template).where(Template.key.in_(valid_keys), Template.city_id.is_(None))
+        else:
+            query = select(Template).where(Template.key.in_(valid_keys), Template.city_id == city_id)
+        existing = {item.key: item for item in (await session.scalars(query)).all()}
+
+        for key in valid_keys:
+            text_value = cleaned.get(key, "")
+            tmpl = existing.get(key)
+            if text_value:
+                if tmpl:
+                    tmpl.content = text_value
+                else:
+                    session.add(Template(city_id=city_id, key=key, content=text_value))
+            elif tmpl:
+                await session.delete(tmpl)
+
+        await session.commit()
+
+
+async def update_city_settings(
+    city_id: int,
+    *,
+    responsible_id: Optional[int],
+    templates: Dict[str, Optional[str]],
+) -> Optional[str]:
+    owner_field = city_owner_field_name()
+    async with async_session() as session:
+        city = await session.get(City, city_id)
+        if not city:
+            return "City not found"
+
+        if responsible_id is not None:
+            recruiter = await session.get(Recruiter, responsible_id)
+            if not recruiter:
+                return "Recruiter not found"
+
+        if owner_field:
+            setattr(city, owner_field, responsible_id)
+        await session.commit()
+
+    await update_templates_for_city(city_id, templates)
+    return None
 
 
 async def list_slots(
@@ -350,12 +477,9 @@ async def assign_city_owner(city_id: int, recruiter_id: Optional[int]) -> Option
     return None
 
 
-async def list_templates() -> Dict[str, List[Template]]:
-    async with async_session() as session:
-        query = select(Template).options(selectinload(Template.city)).order_by(Template.key.asc())
-        templates = (await session.scalars(query)).all()
-        cities = (await session.scalars(select(City).order_by(City.name.asc()))).all()
-    return {"templates": templates, "cities": cities}
+async def list_templates() -> Dict[str, object]:
+    overview = await templates_overview()
+    return overview
 
 
 async def create_template(key: str, text: str, city_id: Optional[int]) -> None:
