@@ -1,5 +1,12 @@
 """Bot application package exports."""
 
-from bot import bot, dp, main  # noqa: F401
+from .app import create_application, create_bot, create_dispatcher, main
+from .services import StateManager
 
-__all__ = ["bot", "dp", "main"]
+__all__ = [
+    "create_application",
+    "create_bot",
+    "create_dispatcher",
+    "main",
+    "StateManager",
+]

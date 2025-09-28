@@ -9,6 +9,18 @@ load it directly:
 python3 -m uvicorn backend.apps.admin_ui.app:app
 ```
 
+## Telegram bot
+The Telegram bot is exposed through a small CLI wrapper (`bot.py`) that calls
+the new application factory defined in `backend.apps.bot.app`. To launch the
+bot locally, ensure `BOT_TOKEN` is configured (for example via `.env`) and run:
+
+```bash
+python bot.py
+```
+
+The same behaviour can be reproduced programmatically via
+`backend.apps.bot.app.create_application()`.
+
 ## Running tests
 Project level tests should be executed with the Python module runner to avoid
 PATH issues:
