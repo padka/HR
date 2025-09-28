@@ -34,6 +34,9 @@ class User(Base):
     test_results: Mapped[List["TestResult"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    survey_responses: Mapped[List["SurveyResponse"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<User {self.id} tg={self.telegram_id}>"
@@ -125,3 +128,24 @@ class Notification(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<Notification {self.id} type={self.notification_type}>"
+
+
+class SurveyResponse(Base):
+    __tablename__ = "survey_responses"
+    __test__ = False  # prevent pytest from treating the model as a test case
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    answers_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    user: Mapped["User"] = relationship(back_populates="survey_responses")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<SurveyResponse {self.id} user={self.user_id}>"
