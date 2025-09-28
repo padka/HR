@@ -45,7 +45,7 @@ class City(Base):
     )
 
     templates: Mapped[List["Template"]] = relationship(back_populates="city", cascade="all, delete-orphan")
-    slots: Mapped[List["Slot"]] = relationship(back_populates="city")
+    slots: Mapped[List["Slot"]] = relationship(back_populates="city", foreign_keys="Slot.city_id")
     responsible_recruiter: Mapped[Optional["Recruiter"]] = relationship(
         foreign_keys=[responsible_recruiter_id]
     )
@@ -84,6 +84,10 @@ class Slot(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     recruiter_id: Mapped[int] = mapped_column(ForeignKey("recruiters.id", ondelete="CASCADE"))
     city_id: Mapped[Optional[int]] = mapped_column(ForeignKey("cities.id", ondelete="SET NULL"), nullable=True)
+    candidate_city_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("cities.id", ondelete="SET NULL"), nullable=True
+    )
+    purpose: Mapped[str] = mapped_column(String(32), default="interview", nullable=False)
 
     start_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_min: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
@@ -106,7 +110,7 @@ class Slot(Base):
     )
 
     recruiter: Mapped["Recruiter"] = relationship(back_populates="slots")
-    city: Mapped[Optional["City"]] = relationship(back_populates="slots")
+    city: Mapped[Optional["City"]] = relationship(back_populates="slots", foreign_keys=[city_id])
 
     def __repr__(self) -> str:
         return f"<Slot {self.id} {self.start_utc.isoformat()} {self.status}>"

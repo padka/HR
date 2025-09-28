@@ -37,7 +37,8 @@
         <tr>
           <th style="width: 80px;">ID</th>
           <th>Название</th>
-          <th style="width: 240px;">Часовой пояс (TZ)</th>
+          <th style="width: 220px;">Часовой пояс (TZ)</th>
+          <th style="width: 240px;">Ответственный</th>
           <th style="width: 320px;">Действия</th>
         </tr>
       </thead>
@@ -48,6 +49,8 @@
         {% set experts = c.experts|default('') %}
         {% set plan_week = c.plan_week|default('') %}
         {% set plan_month = c.plan_month|default('') %}
+        {% set owner_id = owners.get(c.id) %}
+        {% set owner = rec_map.get(owner_id) if owner_id else None %}
         <tr class="city-row"
             data-id="{{ c.id }}"
             data-name="{{ c.name|lower }}"
@@ -55,7 +58,8 @@
             data-criteria="{{ criteria|e }}"
             data-experts="{{ experts|e }}"
             data-plan-week="{{ plan_week }}"
-            data-plan-month="{{ plan_month }}">
+            data-plan-month="{{ plan_month }}"
+            data-owner-id="{{ owner_id or '' }}">
           <td style="white-space:nowrap;">
             <span class="badge">#{{ c.id }}</span>
           </td>
@@ -69,6 +73,15 @@
           </td>
           <td>
             <code>{{ tz }}</code>
+          </td>
+          <td>
+            <div class="owner-cell">
+              {% if owner %}
+                <span class="owner-name">{{ owner.name }}</span>
+              {% else %}
+                <span class="owner-name muted">Не назначен</span>
+              {% endif %}
+            </div>
           </td>
           <td>
             <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
@@ -88,6 +101,15 @@
           <td colspan="4">
             <div class="edit-pane glass grain">
               <form class="city-form" data-id="{{ c.id }}">
+                <div class="field">
+                  <label for="owner_{{ c.id }}">Ответственный рекрутёр</label>
+                  <select id="owner_{{ c.id }}" name="responsible_id" class="responsible-select">
+                    <option value="">— Не назначен —</option>
+                    {% for r in recruiters %}
+                      <option value="{{ r.id }}" {% if owner_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
                 <div class="grid">
                   <div class="field">
                     <label for="crit_{{ c.id }}">Критерии отбора</label>
@@ -108,6 +130,34 @@
                     <input id="pm_{{ c.id }}" name="plan_month" type="number" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
                   </div>
                 </div>
+
+                <div class="stage-block">
+                  <h4 style="margin:18px 0 8px;">Шаблоны сообщений по шагам</h4>
+                  <p class="muted" style="margin:0 0 12px;">Настройте тексты, которые бот отправит кандидату на каждом этапе. Оставьте поле пустым, чтобы использовать текст по умолчанию.</p>
+                  {% set stages = city_stages.get(c.id, []) %}
+                  {% for stage in stages %}
+                    <div class="field stage-field" data-stage="{{ stage.key }}">
+                      <label for="stage_{{ stage.key }}_{{ c.id }}">{{ stage.title }}</label>
+                      <textarea
+                        id="stage_{{ stage.key }}_{{ c.id }}"
+                        name="stage__{{ stage.key }}"
+                        data-stage="{{ stage.key }}"
+                        data-default="{{ stage.default|e }}"
+                        rows="6"
+                        placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
+                      <div class="stage-controls">
+                        <button type="button" class="btn mini ghost stage-default-btn" data-stage="{{ stage.key }}">Вставить текст по умолчанию</button>
+                        <span class="muted" style="flex:1;">{{ stage.description }}</span>
+                      </div>
+                    </div>
+                  {% endfor %}
+                  <p class="muted" style="margin:12px 0 0;">
+                    {% raw %}
+                    Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
+                    {% endraw %}
+                  </p>
+                </div>
+
                 <div style="display:flex; gap:8px;">
                   <button type="submit" class="btn btn-save">Сохранить</button>
                   <button type="button" class="btn btn-cancel">Отмена</button>
@@ -129,6 +179,10 @@
   @media (max-width: 860px){ .edit-pane .grid { grid-template-columns: 1fr; } }
   .edit-pane .field label { display:block; margin-bottom:6px; color: var(--muted); font-weight: 600; }
   .edit-pane textarea { width:100%; min-height: 92px; resize: vertical; }
+  .stage-block { display:flex; flex-direction:column; gap:16px; margin-top:18px; }
+  .stage-field textarea { min-height: 140px; }
+  .stage-controls { display:flex; gap:8px; align-items:center; margin-top:6px; }
+  .owner-cell .owner-name { font-weight:600; }
   .save-status.ok { color: var(--ok); display:inline-block !important; }
   .save-status.err { color: var(--bad); display:inline-block !important; }
 </style>
@@ -176,6 +230,21 @@
 
   // Toggle редактора
   table.addEventListener('click', (e)=>{
+    const defBtn = e.target.closest('.stage-default-btn');
+    if (defBtn) {
+      const form = defBtn.closest('form.city-form');
+      if (!form) return;
+      const key = defBtn.dataset.stage;
+      if (!key) return;
+      const ta = form.querySelector(`textarea[data-stage="${CSS.escape(key)}"]`);
+      if (ta) {
+        ta.value = ta.dataset.default || '';
+        ta.focus();
+      }
+      e.preventDefault();
+      return;
+    }
+
     const btn = e.target.closest('.btn-edit');
     if (!btn) return;
     const tr = e.target.closest('tr.city-row');
@@ -200,6 +269,10 @@
         form.querySelector('[name="experts"]').value = experts;
         form.querySelector('[name="plan_week"]').value = pw;
         form.querySelector('[name="plan_month"]').value = pm;
+        const ownerSelect = form.querySelector('[name="responsible_id"]');
+        if (ownerSelect) {
+          ownerSelect.value = tr.dataset.ownerId || '';
+        }
       }
       editRow.classList.add('open');
       editRow.style.display = '';
@@ -220,15 +293,30 @@
     const experts = form.experts.value.trim();
     const plan_week = form.plan_week.value ? parseInt(form.plan_week.value, 10) : null;
     const plan_month = form.plan_month.value ? parseInt(form.plan_month.value, 10) : null;
+    const ownerSelect = form.querySelector('[name="responsible_id"]');
+    const ownerRaw = ownerSelect ? ownerSelect.value.trim() : '';
+    const ownerId = ownerRaw && !Number.isNaN(Number(ownerRaw)) ? Number(ownerRaw) : null;
+    const templates = {};
+    form.querySelectorAll('textarea[data-stage]').forEach(ta => {
+      const key = ta.dataset.stage;
+      if (key) templates[key] = ta.value.trim();
+    });
 
     const status = form.querySelector('.save-status');
     const badge = tr.querySelector('.plan-badge');
 
     try {
-      const resp = await fetch('/cities/params/update', {
+      const resp = await fetch(`/cities/${id}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ city_id: Number(id), criteria, experts, plan_week, plan_month })
+        body: JSON.stringify({
+          criteria,
+          experts,
+          plan_week,
+          plan_month,
+          templates,
+          responsible_recruiter_id: ownerId,
+        })
       });
       const json = await resp.json();
 
@@ -239,12 +327,26 @@
       tr.dataset.experts = experts;
       tr.setAttribute('data-plan-week', plan_week ?? '');
       tr.setAttribute('data-plan-month', plan_month ?? '');
+      tr.dataset.ownerId = ownerId ? String(ownerId) : '';
 
       if (badge) {
         if (plan_week || plan_month) {
           badge.textContent = `Нед: ${plan_week ?? '—'} · Мес: ${plan_month ?? '—'}`;
         } else {
           badge.textContent = 'Параметры не заданы';
+        }
+      }
+
+      const ownerCell = tr.querySelector('.owner-name');
+      if (ownerCell) {
+        if (ownerId) {
+          const selector = `option[value="${ownerId}"]`;
+          const option = ownerSelect ? ownerSelect.querySelector(selector) : null;
+          ownerCell.textContent = option ? option.textContent : 'Назначен';
+          ownerCell.classList.remove('muted');
+        } else {
+          ownerCell.textContent = 'Не назначен';
+          ownerCell.classList.add('muted');
         }
       }
 

@@ -55,6 +55,7 @@ from admin_app.repo import (
 from admin_app.models import SlotStatus
 from backend.core.settings import get_settings
 from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS
+from backend.domain.template_stages import STAGE_DEFAULTS
 from backend.domain.test_questions import load_all_test_questions
 
 
@@ -210,6 +211,8 @@ DEFAULT_TEMPLATES: Dict[str, str] = {
     ),
 }
 
+DEFAULT_TEMPLATES.update(STAGE_DEFAULTS)
+
 
 # =============================
 #  Утилиты
@@ -223,6 +226,14 @@ def _safe_zone(tz: Optional[str]) -> ZoneInfo:
 
 def fmt_dt_local(dt_utc: datetime, tz: str) -> str:
     return dt_utc.astimezone(_safe_zone(tz)).strftime(TIME_FMT)
+
+def slot_local_labels(dt_utc: datetime, tz: str) -> Dict[str, str]:
+    local_dt = dt_utc.astimezone(_safe_zone(tz))
+    return {
+        "slot_date_local": local_dt.strftime("%d.%m"),
+        "slot_time_local": local_dt.strftime("%H:%M"),
+        "slot_datetime_local": local_dt.strftime("%d.%m %H:%M"),
+    }
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -438,8 +449,14 @@ async def schedule_reminder(slot_id: int, candidate_id: int):
             if not fresh or fresh.candidate_tg_id != candidate_id:
                 return
             tz = fresh.candidate_tz or DEFAULT_TZ
-            text = await tpl(getattr(fresh, "candidate_city_id", None), "reminder_1h",
-                             dt=fmt_dt_local(fresh.start_utc, tz))
+            labels = slot_local_labels(fresh.start_utc, tz)
+            text = await tpl(
+                getattr(fresh, "candidate_city_id", None),
+                "reminder_1h",
+                candidate_fio=getattr(fresh, "candidate_fio", "") or "",
+                dt=fmt_dt_local(fresh.start_utc, tz),
+                **labels,
+            )
             await bot.send_message(candidate_id, text)
         except asyncio.CancelledError:
             pass
@@ -468,8 +485,17 @@ async def schedule_confirm_prompt(slot_id: int, candidate_id: int):
             if not fresh or fresh.candidate_tg_id != candidate_id:
                 return
             tz = fresh.candidate_tz or DEFAULT_TZ
-            text = await tpl(getattr(fresh, "candidate_city_id", None), "confirm_2h",
-                             dt=fmt_dt_local(fresh.start_utc, tz))
+            labels = slot_local_labels(fresh.start_utc, tz)
+            key = "stage4_intro_reminder" if getattr(fresh, "purpose", "interview") == "intro_day" else "stage2_interview_reminder"
+            state = user_data.get(candidate_id, {})
+            text = await tpl(
+                getattr(fresh, "candidate_city_id", None),
+                key,
+                candidate_fio=getattr(fresh, "candidate_fio", "") or "",
+                city_name=state.get("city_name") or "",
+                dt=fmt_dt_local(fresh.start_utc, tz),
+                **labels,
+            )
             await bot.send_message(candidate_id, text, reply_markup=kb_attendance_confirm(slot_id))
         except asyncio.CancelledError:
             pass
@@ -833,7 +859,14 @@ async def finalize_test1(user_id: int):
     except Exception:
         pass
 
-    await bot.send_message(user_id, await tpl(state.get("city_id"), "t1_done"))
+    invite_text = await tpl(
+        state.get("city_id"),
+        "stage1_invite",
+        candidate_fio=state.get("fio") or "",
+        city_name=state.get("city_name") or "",
+        interview_dt_hint="выберите удобное время из списка ниже",
+    )
+    await bot.send_message(user_id, invite_text)
 
     await _show_recruiter_menu(user_id)
 
@@ -1063,16 +1096,19 @@ async def pick_slot(callback: CallbackQuery):
         return
 
     # Резервируем слот в БД (PENDING)
+    is_intro = (state.get("flow") == "intro")
     slot = await reserve_slot(
         slot_id,
         candidate_tg_id=user_id,
         candidate_fio=state.get("fio", str(user_id)),
         candidate_tz=state.get("candidate_tz", DEFAULT_TZ),
+        candidate_city_id=state.get("city_id"),
+        purpose="intro_day" if is_intro else "interview",
     )
     if not slot:
         # если сценарий intro — снова общий выбор времени; иначе — по рекрутёру
         text = await tpl(state.get("city_id"), "slot_taken")
-        if state.get("flow") == "intro":
+        if is_intro:
             try:
                 await callback.message.edit_text(text)
                 await callback.message.edit_reply_markup(reply_markup=None)
@@ -1155,7 +1191,17 @@ async def approve_slot_cb(callback: CallbackQuery):
 
     # Уведомляем кандидата
     tz = slot.candidate_tz or DEFAULT_TZ
-    text = await tpl(getattr(slot, "candidate_city_id", None), "approved_msg", dt=fmt_dt_local(slot.start_utc, tz))
+    labels = slot_local_labels(slot.start_utc, tz)
+    template_key = "stage3_intro_invite" if getattr(slot, "purpose", "interview") == "intro_day" else "approved_msg"
+    state = user_data.get(slot.candidate_tg_id, {})
+    text = await tpl(
+        getattr(slot, "candidate_city_id", None),
+        template_key,
+        candidate_fio=slot.candidate_fio or "",
+        city_name=state.get("city_name") or "",
+        dt=fmt_dt_local(slot.start_utc, tz),
+        **labels,
+    )
     await bot.send_message(slot.candidate_tg_id, text)
 
     # Ставим запрос подтверждения за 2 часа до встречи

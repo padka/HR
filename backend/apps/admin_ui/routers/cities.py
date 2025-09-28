@@ -1,10 +1,11 @@
-from typing import Optional
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui import services
+from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 
 router = APIRouter(prefix="/cities", tags=["cities"])
 
@@ -16,12 +17,22 @@ async def cities_list(request: Request):
     recruiters = await services.list_recruiters()
     owners = {c.id: getattr(c, owner_field, None) if owner_field else None for c in cities}
     rec_map = {r.id: r for r in recruiters}
+    stage_map = await services.get_stage_templates(
+        city_ids=[c.id for c in cities], include_global=True
+    )
+    city_stages: Dict[int, object] = {
+        city.id: services.stage_payload_for_ui(stage_map.get(city.id, {})) for city in cities
+    }
     context = {
         "request": request,
         "cities": cities,
         "owner_field": owner_field,
         "owners": owners,
         "rec_map": rec_map,
+        "recruiters": recruiters,
+        "stage_meta": CITY_TEMPLATE_STAGES,
+        "city_stages": city_stages,
+        "global_defaults": {key: STAGE_DEFAULTS[key] for key in STAGE_DEFAULTS},
     }
     return templates.TemplateResponse("cities_list.html", context)
 
@@ -40,45 +51,27 @@ async def cities_create(
     return RedirectResponse(url="/cities", status_code=303)
 
 
-@router.get("/owners", response_class=HTMLResponse)
-async def cities_owners_board(request: Request):
-    owner_field = services.city_owner_field_name()
-    recruiters = await services.list_recruiters()
-    cities = await services.list_cities()
-    owners = {
-        c.id: getattr(c, owner_field, None) if owner_field else None
-        for c in cities
-    }
-    context = {
-        "request": request,
-        "recruiters": recruiters,
-        "cities": cities,
-        "owner_field_exists": owner_field is not None,
-        "owner_field": owner_field,
-        "owners": owners,
-    }
-    return templates.TemplateResponse("cities_owners.html", context)
-
-
-@router.post("/owners/assign")
-async def cities_owner_assign(request: Request):
+@router.post("/{city_id}/settings")
+async def update_city_settings(city_id: int, request: Request):
     payload = await request.json()
-    try:
-        city_id = int(payload.get("city_id"))
-    except Exception:
-        return JSONResponse({"ok": False, "error": "Invalid payload"}, status_code=400)
-
-    recruiter_raw = payload.get("recruiter_id")
-    recruiter_id: Optional[int]
+    recruiter_raw = payload.get("responsible_recruiter_id")
     if recruiter_raw in (None, "", "null"):
-        recruiter_id = None
+        responsible_id: Optional[int] = None
     else:
         try:
-            recruiter_id = int(recruiter_raw)
+            responsible_id = int(recruiter_raw)
         except (TypeError, ValueError):
-            return JSONResponse({"ok": False, "error": "Invalid recruiter id"}, status_code=400)
+            return JSONResponse({"ok": False, "error": "invalid_recruiter"}, status_code=400)
 
-    error = await services.assign_city_owner(city_id, recruiter_id)
+    templates_payload = payload.get("templates") or {}
+    if not isinstance(templates_payload, dict):
+        templates_payload = {}
+
+    error = await services.update_city_settings(
+        city_id,
+        responsible_id=responsible_id,
+        templates=templates_payload,
+    )
     if error:
         status = 404 if "not found" in error.lower() else 400
         return JSONResponse({"ok": False, "error": error}, status_code=status)
