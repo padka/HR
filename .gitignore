@@ -2,3 +2,12 @@
 __pycache__/
 *.log
 .env
+
+# Runtime data (databases, reports, uploads)
+data/
+storage/
+*.sqlite3
+*.db
+uploads/
+report_*.txt
+test1_*.txt
