@@ -32,6 +32,7 @@
   </div>
 {% else %}
   <div class="card glass grain" data-tilt style="padding:0;">
+    <div class="table-wrap">
     <table id="cities_table">
       <thead>
         <tr>
@@ -170,10 +171,12 @@
       {% endfor %}
       </tbody>
     </table>
+    </div>
   </div>
 {% endif %}
 
 <style>
+  .table-wrap { overflow-x:auto; border-radius: inherit; }
   .edit-pane { border: 1px solid var(--glass-stroke); border-radius: var(--radius-lg); padding: 12px; margin: 8px 0; background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); }
   .edit-pane .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
   @media (max-width: 860px){ .edit-pane .grid { grid-template-columns: 1fr; } }

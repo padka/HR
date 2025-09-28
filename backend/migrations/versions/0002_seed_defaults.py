@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable
-
+import os
 from datetime import datetime, timezone
+from typing import Any, Dict, Iterable
 
 import sqlalchemy as sa
 
@@ -21,20 +21,30 @@ DEFAULT_CITIES = [
     {"name": "Екатеринбург", "tz": "Asia/Yekaterinburg"},
 ]
 
-DEFAULT_RECRUITERS = [
-    {
-        "name": "Михаил Шеншин",
-        "tz": "Europe/Moscow",
-        "telemost_url": "https://telemost.yandex.ru/j/SMART_ONBOARDING",
-        "active": True,
-    },
-    {
-        "name": "Юлия Начауридзе",
-        "tz": "Europe/Moscow",
-        "telemost_url": "https://telemost.yandex.ru/j/SMART_RECRUIT",
-        "active": True,
-    },
-]
+_SEED_RECRUITERS = os.getenv("SEED_DEFAULT_RECRUITERS", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+DEFAULT_RECRUITERS = (
+    [
+        {
+            "name": "Михаил Шеншин",
+            "tz": "Europe/Moscow",
+            "telemost_url": "https://telemost.yandex.ru/j/SMART_ONBOARDING",
+            "active": True,
+        },
+        {
+            "name": "Юлия Начауридзе",
+            "tz": "Europe/Moscow",
+            "telemost_url": "https://telemost.yandex.ru/j/SMART_RECRUIT",
+            "active": True,
+        },
+    ]
+    if _SEED_RECRUITERS
+    else []
+)
 
 
 def _table(name: str, *columns: sa.Column) -> sa.Table:
@@ -81,7 +91,8 @@ def upgrade(conn):
     )
 
     _ensure_entries(conn, cities, unique_field="name", rows=DEFAULT_CITIES)
-    _ensure_entries(conn, recruiters, unique_field="name", rows=DEFAULT_RECRUITERS)
+    if DEFAULT_RECRUITERS:
+        _ensure_entries(conn, recruiters, unique_field="name", rows=DEFAULT_RECRUITERS)
 
     existing_questions = conn.execute(sa.select(sa.func.count()).select_from(test_questions)).scalar()
     if existing_questions:

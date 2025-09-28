@@ -19,8 +19,12 @@ router = APIRouter(prefix="/recruiters", tags=["recruiters"])
 
 @router.get("", response_class=HTMLResponse)
 async def recruiters_list(request: Request):
-    recruiters = await list_recruiters()
-    return templates.TemplateResponse("recruiters_list.html", {"request": request, "recruiters": recruiters})
+    recruiter_rows = await list_recruiters()
+    context = {
+        "request": request,
+        "recruiter_rows": recruiter_rows,
+    }
+    return templates.TemplateResponse("recruiters_list.html", context)
 
 
 @router.get("/new", response_class=HTMLResponse)

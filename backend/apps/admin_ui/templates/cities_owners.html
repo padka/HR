@@ -18,8 +18,8 @@
 
 <!-- Панель инструментов -->
 <div class="card glass grain" data-tilt style="margin-bottom:12px; padding:12px;">
-  <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
-    <div class="field" style="min-width:260px;">
+  <div class="owners-toolbar">
+    <div class="field owners-field">
       <label for="search">Поиск по городу</label>
       <input id="search" type="text" placeholder="Начните вводить название города…">
     </div>
@@ -29,7 +29,7 @@
       Только без ответственного
     </label>
 
-    <div class="muted" style="margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <div class="muted owners-meta">
       <span>Поле в БД: <code>{{ owner_field }}</code></span>
       <span class="badge" title="Метрики">
         Города: {{ cities|length }} · Рекрутёры: {{ recruiters|length }}
@@ -102,6 +102,10 @@
     transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
     background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.015));
   }
+  .owners-toolbar { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+  .owners-field { flex:1 1 260px; min-width:220px; }
+  .owners-field input { width:100%; padding:10px 12px; border-radius:var(--radius-md); border:1px solid var(--field-border); background:var(--field-bg); color:inherit; box-shadow:var(--field-shadow); }
+  .owners-meta { margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .dropzone.hover {
     background: rgba(255,255,255,.04);
     border-color: var(--ring);
@@ -110,6 +114,10 @@
   .city-card { cursor: grab; }
   .city-card:active { cursor: grabbing; }
   .city-card.dragging { opacity: .6; transform: scale(.98); }
+  @media (max-width: 760px) {
+    .owners-meta { width:100%; margin-left:0; justify-content:space-between; }
+    #board { grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); }
+  }
 </style>
 
 {% raw %}

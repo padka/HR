@@ -7,10 +7,11 @@
   .toolbar{position:sticky;top:8px;z-index:5}
   .chips{display:flex;gap:6px;flex-wrap:wrap}
   .chip{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid var(--glass-stroke);background:rgba(255,255,255,.06)}
-  .chip.btn-like{cursor:pointer}
   .chip-free{border-color:rgba(46,204,113,.45)}
   .chip-pending{border-color:rgba(241,196,15,.55)}
   .chip-booked{border-color:rgba(52,152,219,.55)}
+  #flt select{padding:8px 12px;border-radius:var(--radius-md);border:1px solid var(--field-border);background:var(--field-bg);color:inherit;box-shadow:var(--field-shadow)}
+  #flt button{border-radius:var(--radius-md);padding:10px 16px;}
 
   /* table */
   .tbl-wrap{overflow:auto;border-radius:12px}
@@ -36,12 +37,12 @@
 <h3 class="tilt" data-tilt data-tilt-max="2" data-tilt-speed="1200" data-tilt-scale="1.005" style="margin:0 0 10px 0;">Слоты</h3>
 
 <div class="card tilt toolbar" data-tilt data-tilt-glare data-tilt-max="8" data-tilt-speed="600" data-tilt-scale="1.01" style="margin-bottom:12px;">
-  <form id="flt" method="get" action="/slots" style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
-    <div>
-      <label for="recruiter_id">Рекрутёр</label><br>
-      <select id="recruiter_id" name="recruiter_id" style="min-width:240px;">
+  <form id="flt" method="get" action="/slots" style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap;">
+    <div style="display:flex; flex-direction:column; gap:6px; min-width:220px;">
+      <label for="recruiter_id">Рекрутёр</label>
+      <select id="recruiter_id" name="recruiter_id">
         <option value="">— все —</option>
-        {% for r in recruiters %}
+        {% for r in recruiter_options %}
           <option value="{{ r.id }}" {% if filter_recruiter_id and filter_recruiter_id == r.id %}selected{% endif %}>
             {{ r.name }} ({{ r.tz or "Europe/Moscow" }})
           </option>
@@ -49,8 +50,8 @@
       </select>
     </div>
 
-    <div>
-      <label for="status">Статус</label><br>
+    <div style="display:flex; flex-direction:column; gap:6px; min-width:160px;">
+      <label for="status">Статус</label>
       <select id="status" name="status">
         <option value="">— все —</option>
         <option value="FREE" {% if filter_status == 'FREE' %}selected{% endif %}>FREE</option>
@@ -59,8 +60,8 @@
       </select>
     </div>
 
-    <div>
-      <label for="per_page">На странице</label><br>
+    <div style="display:flex; flex-direction:column; gap:6px; min-width:140px;">
+      <label for="per_page">На странице</label>
       <select id="per_page" name="per_page">
         {% for n in [10,20,50,100] %}
           <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
@@ -68,30 +69,23 @@
       </select>
     </div>
 
-    <div>
-      <label for="q">Поиск</label><br>
-      <input id="q" type="text" placeholder="Имя кандидата / рекрутёра / TZ…" style="min-width:220px;">
-    </div>
-
-    <div style="display:flex; gap:8px; align-items:center;">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
       <label class="badge" style="cursor:pointer;">
         <input id="toggle_cand_tz" type="checkbox" style="margin-right:6px;"> Время кандидата
       </label>
       <label class="badge" style="cursor:pointer;">
         <input id="only_future" type="checkbox" style="margin-right:6px;"> Только будущие
       </label>
-      <button type="submit">Фильтровать</button>
-      <a class="btn" href="/slots">Сбросить</a>
+      <button type="submit" class="btn">Показать</button>
       <a class="btn" href="/slots/new">+ Новый слот</a>
-      <button id="btn-export" class="btn" type="button">Экспорт CSV</button>
     </div>
   </form>
 
-  <div class="chips" style="margin-top:10px;">
-    <span class="chip chip-free btn-like" data-status="FREE">FREE: <b id="cnt-free">0</b></span>
-    <span class="chip chip-pending btn-like" data-status="PENDING">PENDING: <b id="cnt-pending">0</b></span>
-    <span class="chip chip-booked btn-like" data-status="BOOKED">BOOKED: <b id="cnt-booked">0</b></span>
-    <span class="chip">Всего: <b id="cnt-total">0</b></span>
+  <div class="chips" style="margin-top:12px;">
+    <span class="chip chip-free">FREE: <b id="cnt-free">{{ status_counts.FREE }}</b></span>
+    <span class="chip chip-pending">PENDING: <b id="cnt-pending">{{ status_counts.PENDING }}</b></span>
+    <span class="chip chip-booked">BOOKED: <b id="cnt-booked">{{ status_counts.BOOKED }}</b></span>
+    <span class="chip">Всего: <b id="cnt-total">{{ status_counts.total }}</b></span>
   </div>
 </div>
 
@@ -205,27 +199,22 @@
   const $ = function(s, r){ return (r||document).querySelector(s); };
   const $$= function(s, r){ return Array.from((r||document).querySelectorAll(s)); };
 
+  var rows = $$('#slots-table tbody tr');
+  var onlyFuture = $('#only_future');
+  var candTzToggle = $('#toggle_cand_tz');
+
   // Copy helper
   $$('.copyable[data-copy]').forEach(function(el){
     el.addEventListener('click', function(){
       var val = el.getAttribute('data-copy') || '';
       navigator.clipboard.writeText(val).then(function(){
-        var p = el.textContent; el.textContent='Скопировано'; setTimeout(function(){ el.textContent=p; },800);
+        var prev = el.textContent;
+        el.textContent = 'Скопировано';
+        setTimeout(function(){ el.textContent = prev; }, 900);
       }).catch(function(){ alert('Не удалось скопировать'); });
     });
   });
 
-  // State persistence
-  var LS = window.localStorage;
-  function save(k,v){ try{ LS.setItem(k, v); }catch(e){} }
-  function load(k,d){ try{ var v = LS.getItem(k); return v===null? d : v; }catch(e){ return d; } }
-
-  // Search + only future + counters
-  var q = $('#q');
-  var onlyFuture = $('#only_future');
-  var rows = $$('#slots-table tbody tr');
-
-  function norm(s){ return (s||'').toLowerCase(); }
   function isFuture(tr){
     var iso = tr.getAttribute('data-utc');
     if(!iso) return true;
@@ -233,32 +222,41 @@
     return isFinite(t) ? t >= Date.now() : true;
   }
 
-  function applyFilters(){
-    var text = norm(q ? q.value : '');
+  function refreshCounts(){
     var fut = !!(onlyFuture && onlyFuture.checked);
-    var cFree=0,cPend=0,cBook=0,cTot=0;
+    var free=0, pend=0, book=0, total=0;
     rows.forEach(function(tr){
-      var cells = tr.textContent.toLowerCase();
-      var show = (!text || cells.indexOf(text) !== -1) && (!fut || isFuture(tr));
-      tr.style.display = show ? '' : 'none';
-      if (show){
-        cTot++;
+      var visible = !fut || isFuture(tr);
+      tr.style.display = visible ? '' : 'none';
+      if(visible){
+        total++;
         var st = tr.getAttribute('data-st');
-        if(st==='FREE') cFree++; else if(st==='PENDING') cPend++; else if(st==='BOOKED') cBook++;
+        if(st==='FREE') free++; else if(st==='PENDING') pend++; else if(st==='BOOKED') book++;
       }
     });
-    $('#cnt-total').textContent=cTot; $('#cnt-free').textContent=cFree; $('#cnt-pending').textContent=cPend; $('#cnt-booked').textContent=cBook;
+    $('#cnt-total').textContent = total;
+    $('#cnt-free').textContent = free;
+    $('#cnt-pending').textContent = pend;
+    $('#cnt-booked').textContent = book;
   }
 
-  // Restore persisted UI
-  if (q) { q.value = load('slots.q', ''); }
-  if (onlyFuture){ var of = load('slots.onlyFuture','0')==='1'; onlyFuture.checked = of; }
-  var candTzToggle = $('#toggle_cand_tz');
-  if (candTzToggle){ var vis = load('slots.candTz','0')==='1'; setCandCol(vis); candTzToggle.checked = vis; }
+  if(onlyFuture){
+    onlyFuture.addEventListener('change', function(){
+      refreshCounts();
+    });
+  }
 
-  // Bind search / toggles
-  if(q) q.addEventListener('input', function(){ save('slots.q', q.value); applyFilters(); });
-  if(onlyFuture) onlyFuture.addEventListener('change', function(){ save('slots.onlyFuture', onlyFuture.checked?'1':'0'); applyFilters(); });
+  function setCandCol(show){
+    $$('.col-cand-tz').forEach(function(col){
+      col.classList.toggle('hidden-col', !show);
+    });
+  }
+  if(candTzToggle){
+    candTzToggle.addEventListener('change', function(){
+      setCandCol(candTzToggle.checked);
+    });
+    setCandCol(candTzToggle.checked);
+  }
 
   // Relative time now + update every minute
   function rel(ts){
@@ -279,44 +277,9 @@
   updateRel();
   setInterval(updateRel, 60000);
 
-  // Toggle candidate TZ column (persisted)
-  function setCandCol(vis){
-    $$('.col-cand-tz').forEach(function(c){ c.classList.toggle('hidden-col', !vis); });
-  }
-  if(candTzToggle){
-    candTzToggle.addEventListener('change', function(){ setCandCol(candTzToggle.checked); save('slots.candTz', candTzToggle.checked?'1':'0'); });
-  }
-
-  // Quick status chips -> submit server filter
-  $$('.status-chip').forEach(function(ch){ ch.style.cursor='pointer'; });
-  $$('.chip.btn-like[data-status]').forEach(function(chip){
-    chip.addEventListener('click', function(){
-      var v = chip.getAttribute('data-status');
-      var sel = $('#status'); if(sel){ sel.value = v; $('#flt').submit(); }
-    });
-  });
-
-  // Export CSV (visible rows)
-  var exportBtn = $('#btn-export');
-  if(exportBtn){
-    exportBtn.addEventListener('click', function(){
-      var headers = Array.from($('#slots-table thead tr').cells).map(function(th){ return th.textContent.trim(); });
-      var lines = [headers.join(',')];
-      $$('#slots-table tbody tr').forEach(function(tr){
-        if (tr.style.display==='none') return;
-        var cols = Array.from(tr.cells).map(function(td){ return '"'+ td.textContent.replace(/\"/g,'""').trim() +'"'; });
-        lines.push(cols.join(','));
-      });
-      var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a'); a.href = url; a.download = 'slots.csv'; a.click();
-      setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
-    });
-  }
-
   // Column sorting (client-side, visible rows)
-  var sortKey = load('slots.sortKey','utc');
-  var sortDir = load('slots.sortDir','asc');
+  var sortKey = 'utc';
+  var sortDir = 'asc';
 
   function applySortIndicator(){
     $$('#slots-table thead th.sortable').forEach(function(th){ th.classList.remove('active'); var d = th.querySelector('.dir'); if(d) d.textContent=''; });
@@ -350,23 +313,21 @@
       var key = th.getAttribute('data-sort');
       if (sortKey===key){ sortDir = (sortDir==='asc') ? 'desc' : 'asc'; }
       else { sortKey = key; sortDir = 'asc'; }
-      save('slots.sortKey', sortKey); save('slots.sortDir', sortDir);
       applySortIndicator(); sortRows();
+      refreshCounts();
     });
   });
 
-  // Keyboard: '/' focus search, 't' toggle candidate TZ, 'f' only future, 'esc' clear search
+  // Keyboard shortcuts: 't' toggle candidate TZ, 'f' toggle future filter
   document.addEventListener('keydown', function(e){
-    if(e.key==='/' && q){ e.preventDefault(); q.focus(); q.select(); }
     if(e.key==='t' && candTzToggle){ candTzToggle.checked = !candTzToggle.checked; candTzToggle.dispatchEvent(new Event('change')); }
     if(e.key==='f' && onlyFuture){ onlyFuture.checked = !onlyFuture.checked; onlyFuture.dispatchEvent(new Event('change')); }
-    if(e.key==='Escape' && q){ q.value=''; q.dispatchEvent(new Event('input')); }
   });
 
   // First run
   applySortIndicator();
   sortRows();
-  applyFilters();
+  refreshCounts();
 })();
 </script>
 {% endraw %}

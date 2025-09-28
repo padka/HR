@@ -2,34 +2,60 @@
 {% block title %}Рекрутёры{% endblock %}
 {% block content %}
 <style>
-  .panel { padding:24px; border-radius:20px; backdrop-filter:blur(30px); border:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.04); }
-  .panel__header { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
-  .panel__title { margin:0; font-size:24px; font-weight:600; }
-  .panel__subtitle { margin:4px 0 0; color:var(--muted,rgba(255,255,255,0.55)); font-size:14px; }
-  .filters { display:flex; gap:12px; flex-wrap:wrap; margin:20px 0; }
-  .field { display:flex; flex-direction:column; gap:6px; min-width:200px; }
-  .field input, .field select { padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.25); color:inherit; }
-  .table-wrapper { overflow:auto; border-radius:16px; border:1px solid rgba(255,255,255,0.05); }
-  table { width:100%; border-collapse:collapse; }
-  th, td { padding:12px 16px; border-bottom:1px solid rgba(255,255,255,0.05); text-align:left; }
-  tbody tr:hover { background:rgba(255,255,255,0.03); }
-  .chip { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; background:rgba(255,255,255,0.06); font-size:12px; margin-right:4px; }
-  .chip--ok { color:#2ecc71; }
-  .chip--warn { color:#f39c12; }
-  .chip--off { color:#95a5a6; }
-  .actions { display:flex; gap:8px; flex-wrap:wrap; }
-  .btn { padding:10px 16px; border-radius:12px; border:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.3); color:inherit; cursor:pointer; text-decoration:none; }
-  .btn--primary { background:linear-gradient(135deg,#4f8dfd,#8758ff); border:none; color:#fff; }
-  .muted { color:var(--muted,rgba(255,255,255,0.55)); }
+  .page { display:flex; flex-direction:column; gap:24px; }
+  .page-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; }
+  .page-header h1 { margin:0; font-size:28px; font-weight:700; }
+  .page-header p { margin:6px 0 0; color:var(--muted); max-width:420px; }
+  .page-header .actions { display:flex; gap:10px; flex-wrap:wrap; }
+
+  .filters { display:flex; gap:12px; flex-wrap:wrap; padding:16px; border-radius:var(--radius-lg); border:1px solid var(--glass-stroke); background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02)); box-shadow:var(--shadow-1); }
+  .filters .field { display:flex; flex-direction:column; gap:6px; min-width:220px; flex:1 1 200px; }
+  .filters label { font-weight:600; color:var(--muted); font-size:13px; }
+  .filters input,
+  .filters select { padding:10px 12px; border-radius:var(--radius-md); border:1px solid var(--field-border); background:var(--field-bg); color:inherit; box-shadow:var(--field-shadow); }
+  .filters button { align-self:flex-end; margin-left:auto; }
+
+  .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); }
+  .card-rec { display:flex; flex-direction:column; gap:12px; padding:18px; border-radius:var(--radius-lg); border:1px solid var(--glass-stroke); background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.015)); box-shadow:var(--shadow-2); min-height:240px; }
+  .card-rec header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+  .card-rec h2 { margin:0; font-size:18px; }
+  .card-rec .meta { display:flex; flex-wrap:wrap; gap:6px; font-size:12px; color:var(--muted); }
+  .card-rec .meta span { display:inline-flex; gap:4px; align-items:center; padding:4px 8px; border-radius:999px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); }
+  .card-rec .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .card-rec .chips span { padding:4px 8px; border-radius:999px; background:rgba(255,255,255,.05); font-size:12px; }
+  .card-rec .chips .free { color:var(--ok); }
+  .card-rec .chips .pending { color:var(--warn); }
+  .card-rec .chips .booked { color:var(--accent); }
+  .card-rec .cities { display:flex; flex-wrap:wrap; gap:6px; }
+  .card-rec .cities span { padding:4px 10px; border-radius:999px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); font-size:12px; }
+  .card-rec footer { margin-top:auto; display:flex; gap:8px; flex-wrap:wrap; }
+  .card-rec footer .btn { flex:1 1 auto; text-align:center; }
+  .status-pill { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:999px; font-weight:600; }
+  .status-on { background:rgba(46,204,113,.12); color:#2ecc71; border:1px solid rgba(46,204,113,.25); }
+  .status-off { background:rgba(255,107,107,.12); color:#ff6b6b; border:1px solid rgba(255,107,107,.18); }
+
+  .btn { padding:10px 16px; border-radius:var(--radius-md); border:1px solid rgba(255,255,255,0.12); background:var(--btn-bg); color:inherit; cursor:pointer; text-decoration:none; display:inline-flex; justify-content:center; align-items:center; gap:6px; }
+  .btn:hover { background:var(--btn-bg-hover); }
+  .btn-primary { background:linear-gradient(135deg,#579bff,#8d5bff); border:none; color:#fff; box-shadow:var(--shadow-2); }
+  .btn-ghost { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); }
+  .empty { padding:32px; border-radius:var(--radius-lg); border:1px dashed rgba(255,255,255,.2); text-align:center; color:var(--muted); }
+
+  @media (max-width: 640px) {
+    .page-header { flex-direction:column; align-items:flex-start; }
+    .page-header .actions { width:100%; justify-content:flex-start; }
+    .card-rec footer .btn { flex:1 1 100%; }
+  }
 </style>
 
-<section class="panel">
-  <div class="panel__header">
+<section class="page">
+  <div class="page-header">
     <div>
-      <h1 class="panel__title">Рекрутёры</h1>
-      <p class="panel__subtitle">Слоты, города и статусы в одном месте</p>
+      <h1>Рекрутёры</h1>
+      <p>Следите за нагрузкой, ближайшими слотами и ответственными городами каждого рекрутёра.</p>
     </div>
-    <a class="btn btn--primary" href="/recruiters/new">Добавить рекрутёра</a>
+    <div class="actions">
+      <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
+    </div>
   </div>
 
   <div class="filters">
@@ -37,7 +63,7 @@
       <label for="flt_query">Поиск</label>
       <input id="flt_query" type="text" placeholder="Имя, город или chat_id">
     </div>
-    <div class="field">
+    <div class="field" style="max-width:220px;">
       <label for="flt_state">Статус</label>
       <select id="flt_state">
         <option value="">Все</option>
@@ -45,78 +71,89 @@
         <option value="off">Отключённые</option>
       </select>
     </div>
-    <button class="btn" type="button" id="flt_reset">Сбросить</button>
+    <button class="btn btn-ghost" type="button" id="flt_reset">Сбросить</button>
   </div>
 
-  {% if not recruiters %}
-    <p class="muted">Записи отсутствуют. Создайте первого рекрутёра.</p>
+  {% if not recruiter_rows %}
+    <div class="empty">
+      Записи отсутствуют. Создайте первого рекрутёра, чтобы начать работу.
+      <div style="margin-top:12px;">
+        <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
+      </div>
+    </div>
   {% else %}
-  <div class="table-wrapper">
-    <table id="recs_table">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Имя</th>
-          <th>TZ</th>
-          <th>Города</th>
-          <th>Слоты</th>
-          <th>Ближайший слот</th>
-          <th>Статус</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in recruiters %}
-          {% set r = item.rec %}
-          {% set stats = item.stats %}
-          {% set active = r.active if r.active is not none else False %}
-          <tr data-name="{{ (r.name or '')|lower }}" data-tz="{{ (r.tz or 'Europe/Moscow')|lower }}" data-chat="{{ r.tg_chat_id or '' }}" data-cities="{{ item.cities_text }}" data-active="{{ 'on' if active else 'off' }}">
-            <td>#{{ r.id }}</td>
-            <td>{{ r.name }}</td>
-            <td>{{ r.tz or 'Europe/Moscow' }}</td>
-            <td>
+    <div id="recs_grid" class="grid">
+      {% for item in recruiter_rows %}
+        {% set r = item.rec %}
+        {% set stats = item.stats %}
+        {% set active = r.active if r.active is not none else False %}
+        <article class="card-rec"
+                 data-name="{{ (r.name or '')|lower }}"
+                 data-tz="{{ (r.tz or 'Europe/Moscow')|lower }}"
+                 data-chat="{{ r.tg_chat_id or '' }}"
+                 data-cities="{{ item.cities_text }}"
+                 data-active="{{ 'on' if active else 'off' }}">
+          <header>
+            <div>
+              <h2>{{ r.name }}</h2>
+              <div class="meta">
+                <span>#{{ r.id }}</span>
+                <span title="Часовой пояс">TZ: {{ r.tz or 'Europe/Moscow' }}</span>
+                {% if r.tg_chat_id %}
+                  <span title="ID чата в Telegram">chat_id: {{ r.tg_chat_id }}</span>
+                {% endif %}
+              </div>
+            </div>
+            <span class="status-pill {{ 'status-on' if active else 'status-off' }}">
+              {{ 'Активен' if active else 'Отключен' }}
+            </span>
+          </header>
+
+          <div>
+            <div class="chips">
+              <span class="free">Свободно {{ stats.free }}</span>
+              <span class="pending">Ожидают {{ stats.pending }}</span>
+              <span class="booked">Занято {{ stats.booked }}</span>
+              <span>Всего {{ stats.total }}</span>
+            </div>
+          </div>
+
+          <div>
+            <strong style="font-size:13px;">Города</strong>
+            <div class="cities">
               {% if item.cities %}
                 {% for cname, ctz in item.cities %}
-                  <span class="chip" title="{{ ctz }}">{{ cname }}</span>
+                  <span title="{{ ctz }}">{{ cname }}</span>
                 {% endfor %}
               {% else %}
                 <span class="muted">не назначены</span>
               {% endif %}
-            </td>
-            <td>
-              <span class="chip chip--ok">свободно {{ stats.free }}</span>
-              <span class="chip">ожидают {{ stats.pending }}</span>
-              <span class="chip">занято {{ stats.booked }}</span>
-              <span class="chip">всего {{ stats.total }}</span>
-            </td>
-            <td>
-              {% if item.next_free_local %}
-                <span class="chip{% if not item.next_is_future %} chip--warn{% endif %}">{{ item.next_free_local }}</span>
-              {% else %}
-                <span class="muted">нет свободных</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if active %}
-                <span class="chip chip--ok">активен</span>
-              {% else %}
-                <span class="chip chip--off">выкл</span>
-              {% endif %}
-            </td>
-            <td>
-              <div class="actions">
-                <button class="btn" type="button" data-copy="{{ r.tg_chat_id or '' }}" {% if not r.tg_chat_id %}disabled{% endif %}>Скопировать</button>
-                <a class="btn" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
-                <form method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');">
-                  <button class="btn" type="submit">Удалить</button>
-                </form>
-              </div>
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+            </div>
+          </div>
+
+          <div>
+            <strong style="font-size:13px;">Ближайший свободный слот</strong><br>
+            {% if item.next_free_local %}
+              <span class="badge" style="margin-top:4px; display:inline-block;">
+                {{ item.next_free_local }}{% if not item.next_is_future %} · истёк{% endif %}
+              </span>
+            {% else %}
+              <span class="muted">Нет свободных слотов</span>
+            {% endif %}
+          </div>
+
+          <footer>
+            <button class="btn btn-ghost" type="button" data-copy="{{ r.tg_chat_id or '' }}" {% if not r.tg_chat_id %}disabled{% endif %}>
+              Скопировать chat_id
+            </button>
+            <a class="btn btn-ghost" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
+            <form method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');" style="margin:0;">
+              <button class="btn btn-ghost" type="submit">Удалить</button>
+            </form>
+          </footer>
+        </article>
+      {% endfor %}
+    </div>
   {% endif %}
 </section>
 
@@ -127,20 +164,20 @@
   const q = $('#flt_query');
   const state = $('#flt_state');
   const reset = $('#flt_reset');
-  const rows = $$('#recs_table tbody tr');
+  const cards = $$('#recs_grid .card-rec');
   const norm = v => (v || '').toString().toLowerCase().trim();
 
   const apply = () => {
     const query = norm(q && q.value);
     const st = (state && state.value) || '';
-    rows.forEach(row => {
+    cards.forEach(card => {
       const matchText = !query ||
-        row.dataset.name?.includes(query) ||
-        row.dataset.tz?.includes(query) ||
-        row.dataset.chat?.includes(query) ||
-        row.dataset.cities?.includes(query);
-      const matchState = !st || row.dataset.active === st;
-      row.style.display = (matchText && matchState) ? '' : 'none';
+        card.dataset.name?.includes(query) ||
+        card.dataset.tz?.includes(query) ||
+        card.dataset.chat?.includes(query) ||
+        card.dataset.cities?.includes(query);
+      const matchState = !st || card.dataset.active === st;
+      card.style.display = (matchText && matchState) ? '' : 'none';
     });
   };
 
@@ -153,7 +190,7 @@
   });
   apply();
 
-  $$('.actions .btn[data-copy]').forEach(btn => {
+  $$('.card-rec button[data-copy]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const value = btn.getAttribute('data-copy');
       if (!value) return;
