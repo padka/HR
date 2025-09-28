@@ -45,30 +45,7 @@
       </p>
     </div>
 
-    <!-- Ключ -->
-    <div class="field" style="margin-top:12px;">
-      <label for="key">Ключ</label>
-      <input id="key" type="text" name="key" required placeholder="например: invite_interview, confirm_2h" list="key_suggestions">
-      <datalist id="key_suggestions">
-        <!-- будет дополнен из /api/template_keys -->
-        <option value="invite_interview"></option>
-        <option value="confirm_2h"></option>
-        <option value="reminder_1h"></option>
-        <option value="after_meeting"></option>
-        <option value="day_intro"></option>
-        <option value="slot_rejected"></option>
-        <option value="city_welcome"></option>
-      </datalist>
-
-      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
-        <!-- Быстрые варианты ключей -->
-        {% set KEY_PRESETS = ["invite_interview","confirm_2h","reminder_1h","after_meeting","day_intro","slot_rejected","city_welcome"] %}
-        {% for k in KEY_PRESETS %}
-          <button class="btn" type="button" data-key="{{k}}" data-role="pick-key">{{k}}</button>
-        {% endfor %}
-      </div>
-      <p class="muted" style="margin:6px 0 0;">Короткий системный идентификатор: латиница/цифры/нижнее_подчёркивание.</p>
-    </div>
+    <input id="key" type="hidden" name="key" value="">
 
     <!-- Пресеты текста -->
     <div class="field" style="margin-top:12px;">
@@ -83,7 +60,7 @@
         <option value="slot_rejected">Слот отклонён (выбрать заново)</option>
         <option value="city_welcome">Приветствие по городу</option>
       </select>
-      <p class="muted" style="margin:6px 0 0;">Пресет заполнит «Ключ» (если пустой) и «Текст». Текст можно редактировать.</p>
+      <p class="muted" style="margin:6px 0 0;">Пресет заполнит «Текст». Текст можно редактировать.</p>
     </div>
 
     <!-- Текст -->
@@ -151,24 +128,19 @@
   const preview= document.getElementById('preview');
   const presetSel = document.getElementById('preset');
 
-  // ---- Подтягиваем ключи из API (если доступно) ----
-  (async function loadKeySuggestions(){
-    try{
-      const r = await fetch('/api/template_keys');
-      if(!r.ok) return;
-      const arr = await r.json();
-      const dl = document.getElementById('key_suggestions');
-      if (dl && Array.isArray(arr)){
-        arr.forEach(v=>{
-          if (!dl.querySelector(`option[value="${v}"]`)){
-            const o = document.createElement('option');
-            o.value = v;
-            dl.appendChild(o);
-          }
-        });
-      }
-    }catch(e){ /* тихо игнорим */ }
-  })();
+  function randomKey(){
+    const stamp = Date.now().toString(36);
+    const random = Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(0, 6);
+    return `tmpl_${stamp}_${random}`;
+  }
+
+  function ensureKey(force = false){
+    if (!keyInp) return;
+    if (force || !(keyInp.value || '').trim()){
+      keyInp.value = randomKey();
+    }
+  }
+  ensureKey(true);
 
   // ---- Состояние города vs глобальный ----
   function applyGlobalState() {
@@ -196,19 +168,6 @@
       if (!citySel.value && filtered.length) citySel.value = filtered[0].value;
     });
   }
-
-  // ---- Быстрый выбор ключа ----
-  document.querySelectorAll('[data-role="pick-key"]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const k = btn.getAttribute('data-key') || '';
-      if (!keyInp.value) keyInp.value = k;
-      if (PRESETS[k] && (!textTa.value || confirm('Заменить текущий текст на пресет?'))){
-        textTa.value = PRESETS[k];
-        updatePreview();
-      }
-      keyInp.focus();
-    });
-  });
 
   // ---- Вставка плейсхолдеров ----
   function insertAtCursor(el, text){
@@ -289,7 +248,6 @@
     presetSel.addEventListener('change', () => {
       const v = presetSel.value;
       if (!v) return;
-      if (!keyInp.value) keyInp.value = v;
       textTa.value = PRESETS[v] || '';
       updatePreview();
     });
@@ -345,10 +303,7 @@
   // ---- Мини-валидация перед отправкой ----
   form.addEventListener('submit', (e) => {
     const g = isGlob && isGlob.checked;
-    if (!keyInp.value.trim()){
-      alert('Укажите ключ шаблона');
-      e.preventDefault(); return;
-    }
+    ensureKey();
     if (!textTa.value.trim()){
       alert('Заполните текст шаблона');
       e.preventDefault(); return;
