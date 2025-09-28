@@ -2,6 +2,8 @@
 from pathlib import Path
 from typing import Dict, Optional, List, Tuple
 
+import json
+
 import math
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -14,10 +16,12 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func, delete, update, case
 from sqlalchemy.orm import selectinload
 from sqlalchemy.inspection import inspect as sa_inspect
+from sqlalchemy.exc import IntegrityError
 
 # используем admin_app.* где лежат db/models
 from admin_app.db import init_db, SessionLocal
 from admin_app.models import Recruiter, City, Slot, SlotStatus, Template
+from backend.domain.models import TestQuestion
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -160,6 +164,160 @@ def _city_owner_field_name() -> Optional[str]:
         if name in allowed:
             return name
     return None
+
+
+# ---------- questions ----------
+
+TEST_LABELS = {
+    "test1": "Анкета кандидата",
+    "test2": "Инфо-тест",
+}
+
+QUESTION_ERROR_MESSAGES = {
+    "invalid_json": "Не удалось разобрать JSON с данными вопроса.",
+    "duplicate_index": "Для выбранного теста уже существует вопрос с таким порядковым номером.",
+    "test_required": "Укажите идентификатор теста.",
+    "index_required": "Укажите порядковый номер (целое число).",
+}
+
+
+def _parse_question_payload(payload: Optional[str]) -> Dict[str, object]:
+    if not payload:
+        return {}
+    try:
+        data = json.loads(payload)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _question_kind(data: Dict[str, object]) -> str:
+    options = data.get("options") if isinstance(data, dict) else None
+    if isinstance(options, list) and options:
+        return "choice"
+    return "text"
+
+
+def _correct_option_label(data: Dict[str, object]) -> Optional[str]:
+    if not isinstance(data, dict):
+        return None
+    options = data.get("options")
+    correct = data.get("correct")
+    if isinstance(options, list) and isinstance(correct, int):
+        if 0 <= correct < len(options):
+            return str(options[correct])
+    return None
+
+
+async def _list_test_questions() -> List[Dict[str, object]]:
+    async with SessionLocal() as s:
+        items = (
+            await s.scalars(
+                select(TestQuestion).order_by(
+                    TestQuestion.test_id.asc(), TestQuestion.question_index.asc()
+                )
+            )
+        ).all()
+
+    grouped: Dict[str, Dict[str, object]] = {}
+    for item in items:
+        data = _parse_question_payload(item.payload)
+        grouped.setdefault(
+            item.test_id,
+            {
+                "test_id": item.test_id,
+                "title": TEST_LABELS.get(item.test_id, item.test_id),
+                "questions": [],
+            },
+        )["questions"].append(
+            {
+                "id": item.id,
+                "index": item.question_index,
+                "title": item.title,
+                "prompt": data.get("prompt") or data.get("text") or item.title,
+                "kind": _question_kind(data),
+                "options_count": len(data.get("options") or []) if isinstance(data, dict) else 0,
+                "correct_label": _correct_option_label(data),
+                "is_active": item.is_active,
+                "updated_at": item.updated_at,
+            }
+        )
+
+    ordered: List[Dict[str, object]] = []
+    known_order = list(TEST_LABELS.keys())
+    extra_ids = [tid for tid in grouped.keys() if tid not in known_order]
+    for test_id in [*known_order, *sorted(extra_ids)]:
+        if test_id not in grouped:
+            continue
+        questions = sorted(grouped[test_id]["questions"], key=lambda q: q["index"])
+        grouped[test_id]["questions"] = questions
+        ordered.append(grouped[test_id])
+
+    return ordered
+
+
+async def _get_test_question_detail(question_id: int) -> Optional[Dict[str, object]]:
+    async with SessionLocal() as s:
+        question = await s.get(TestQuestion, question_id)
+        if not question:
+            return None
+
+    data = _parse_question_payload(question.payload)
+    pretty = json.dumps(data or {}, ensure_ascii=False, indent=2, sort_keys=True)
+    return {
+        "question": question,
+        "payload_json": pretty,
+        "test_choices": list(TEST_LABELS.items()),
+    }
+
+
+async def _update_test_question(
+    question_id: int,
+    *,
+    title: str,
+    test_id: str,
+    question_index: int,
+    payload: str,
+    is_active: bool,
+) -> Tuple[bool, Optional[str]]:
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return False, "invalid_json"
+
+    if not isinstance(data, dict):
+        return False, "invalid_json"
+
+    normalized_payload = json.dumps(data, ensure_ascii=False)
+    resolved_title = title.strip() or data.get("prompt") or data.get("text")
+    if not resolved_title:
+        resolved_title = f"Вопрос {question_index}"
+
+    clean_test_id = test_id.strip()
+    if not clean_test_id:
+        return False, "test_required"
+
+    async with SessionLocal() as s:
+        question = await s.get(TestQuestion, question_id)
+        if not question:
+            return False, "not_found"
+
+        question.title = resolved_title
+        question.test_id = clean_test_id
+        question.question_index = question_index
+        question.payload = normalized_payload
+        question.is_active = is_active
+        question.updated_at = datetime.now(timezone.utc)
+
+        try:
+            await s.commit()
+        except IntegrityError:
+            await s.rollback()
+            return False, "duplicate_index"
+
+    return True, None
 
 
 # ---------- dashboard ----------
@@ -677,6 +835,64 @@ async def cities_owner_assign(request: Request):
         await s.commit()
 
     return JSONResponse({"ok": True})
+
+
+# ---------- questions UI ----------
+
+
+@app.get("/questions", response_class=HTMLResponse)
+async def questions_list(request: Request):
+    tests = await _list_test_questions()
+    return templates.TemplateResponse(
+        "questions_list.html",
+        {"request": request, "tests": tests},
+    )
+
+
+@app.get("/questions/{question_id}/edit", response_class=HTMLResponse)
+async def questions_edit(request: Request, question_id: int, err: Optional[str] = Query(None)):
+    detail = await _get_test_question_detail(question_id)
+    if not detail:
+        return RedirectResponse(url="/questions", status_code=303)
+
+    error_message = QUESTION_ERROR_MESSAGES.get(err or "")
+    return templates.TemplateResponse(
+        "questions_edit.html",
+        {
+            "request": request,
+            "detail": detail,
+            "error_message": error_message,
+        },
+    )
+
+
+@app.post("/questions/{question_id}/update")
+async def questions_update(
+    question_id: int,
+    title: str = Form(""),
+    test_id: str = Form(...),
+    question_index: str = Form(...),
+    payload: str = Form(...),
+    is_active: Optional[str] = Form(None),
+):
+    index_value = _parse_optional_int(question_index)
+    if index_value is None or index_value < 1:
+        return RedirectResponse(url=f"/questions/{question_id}/edit?err=index_required", status_code=303)
+
+    success, error = await _update_test_question(
+        question_id,
+        title=title,
+        test_id=test_id,
+        question_index=index_value,
+        payload=payload,
+        is_active=bool(is_active),
+    )
+    if not success:
+        if error == "not_found":
+            return RedirectResponse(url="/questions", status_code=303)
+        return RedirectResponse(url=f"/questions/{question_id}/edit?err={error}", status_code=303)
+
+    return RedirectResponse(url="/questions", status_code=303)
 
 
 # ---------- templates (шаблоны по городам + глобальные) ----------
