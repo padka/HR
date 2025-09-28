@@ -6,10 +6,11 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from .. import services
+from ..services import BotContext
 
 router = Router()
 
 
 @router.callback_query(F.data.startswith("t1opt:"))
-async def handle_option(callback: CallbackQuery) -> None:
-    await services.handle_test1_option(callback)
+async def handle_option(callback: CallbackQuery, context: BotContext) -> None:
+    await services.handle_test1_option(context, callback)

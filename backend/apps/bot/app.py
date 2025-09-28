@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Tuple
-
 from aiogram import Bot, Dispatcher
 
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
-from .services import StateManager, configure as configure_services
+from .services import BotContext, StateManager
 
-__all__ = ["create_application", "create_bot", "create_dispatcher", "main"]
+__all__ = [
+    "BotContext",
+    "create_application",
+    "create_bot",
+    "create_dispatcher",
+    "main",
+]
 
 
 def create_bot(token: str | None = None) -> Bot:
@@ -25,26 +29,29 @@ def create_bot(token: str | None = None) -> Bot:
 
 
 def create_dispatcher() -> Dispatcher:
-    dispatcher = Dispatcher()
-    register_routers(dispatcher)
-    return dispatcher
+    return Dispatcher()
 
 
-def create_application(token: str | None = None) -> Tuple[Bot, Dispatcher, StateManager]:
+def create_application(token: str | None = None) -> BotContext:
     """Create and configure the bot application components."""
     bot = create_bot(token)
     dispatcher = create_dispatcher()
     state_manager = StateManager()
-    configure_services(bot, state_manager)
-    return bot, dispatcher, state_manager
+    context = BotContext(
+        bot=bot,
+        dispatcher=dispatcher,
+        state_manager=state_manager,
+    )
+    register_routers(dispatcher, context)
+    return context
 
 
 async def main() -> None:
-    bot, dispatcher, _ = create_application()
-    await bot.delete_webhook(drop_pending_updates=True)
-    me = await bot.get_me()
+    context = create_application()
+    await context.bot.delete_webhook(drop_pending_updates=True)
+    me = await context.bot.get_me()
     logging.warning("BOOT: using bot id=%s, username=@%s", me.id, me.username)
-    await dispatcher.start_polling(bot)
+    await context.dispatcher.start_polling(context.bot)
 
 
 if __name__ == "__main__":

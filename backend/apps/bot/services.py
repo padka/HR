@@ -8,10 +8,12 @@ import logging
 import math
 import os
 from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
+from aiogram import Dispatcher
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, ForceReply, Message, FSInputFile
 
@@ -76,29 +78,33 @@ class StateManager:
     def clear(self) -> None:
         self._storage.clear()
 
+@dataclass(slots=True)
+class BotContext:
+    """Aggregates stateful bot dependencies for explicit injection.
 
-_bot: Optional[Bot] = None
-_state_manager: Optional[StateManager] = None
-REMINDERS: Dict[RemKey, asyncio.Task] = {}
-CONFIRM_TASKS: Dict[RemKey, asyncio.Task] = {}
+    The in-memory reminder registries are kept together with other runtime
+    components so they can be swapped with a persistent scheduler (e.g. Redis,
+    APScheduler) without touching business logic.
+    """
 
+    bot: Bot
+    dispatcher: Dispatcher
+    state_manager: StateManager
+    reminders: Dict[RemKey, asyncio.Task] = field(default_factory=dict)
+    confirm_tasks: Dict[RemKey, asyncio.Task] = field(default_factory=dict)
 
-def configure(bot: Bot, state_manager: StateManager) -> None:
-    global _bot, _state_manager
-    _bot = bot
-    _state_manager = state_manager
+    def reset_tasks(self) -> None:
+        """Cancel and clear scheduled reminder tasks."""
 
+        for task in list(self.reminders.values()):
+            if not task.done():
+                task.cancel()
+        self.reminders.clear()
 
-def get_bot() -> Bot:
-    if _bot is None:
-        raise RuntimeError("Bot is not configured")
-    return _bot
-
-
-def get_state_manager() -> StateManager:
-    if _state_manager is None:
-        raise RuntimeError("State manager is not configured")
-    return _state_manager
+        for task in list(self.confirm_tasks.values()):
+            if not task.done():
+                task.cancel()
+        self.confirm_tasks.clear()
 
 
 def _safe_zone(tz: Optional[str]) -> ZoneInfo:
@@ -160,10 +166,10 @@ async def safe_remove_reply_markup(cb_msg) -> None:
         pass
 
 
-async def schedule_reminder(slot_id: int, candidate_id: int) -> None:
-    bot = get_bot()
+async def schedule_reminder(context: BotContext, slot_id: int, candidate_id: int) -> None:
+    bot = context.bot
     key: RemKey = (slot_id, candidate_id)
-    t2 = REMINDERS.pop(key, None)
+    t2 = context.reminders.pop(key, None)
     if t2 and not t2.done():
         t2.cancel()
 
@@ -197,13 +203,15 @@ async def schedule_reminder(slot_id: int, candidate_id: int) -> None:
         except Exception as exc:  # pragma: no cover - logging path
             logging.exception("Reminder error: %s", exc)
 
-    REMINDERS[key] = asyncio.create_task(_rem())
+    context.reminders[key] = asyncio.create_task(_rem())
 
 
-async def schedule_confirm_prompt(slot_id: int, candidate_id: int) -> None:
-    bot = get_bot()
+async def schedule_confirm_prompt(
+    context: BotContext, slot_id: int, candidate_id: int
+) -> None:
+    bot = context.bot
     key: RemKey = (slot_id, candidate_id)
-    t = CONFIRM_TASKS.pop(key, None)
+    t = context.confirm_tasks.pop(key, None)
     if t and not t.done():
         t.cancel()
 
@@ -226,7 +234,7 @@ async def schedule_confirm_prompt(slot_id: int, candidate_id: int) -> None:
                 if getattr(fresh, "purpose", "interview") == "intro_day"
                 else "stage2_interview_reminder"
             )
-            state = get_state_manager().get(candidate_id) or {}
+            state = context.state_manager.get(candidate_id) or {}
             text = await templates.tpl(
                 getattr(fresh, "candidate_city_id", None),
                 key_name,
@@ -256,12 +264,12 @@ async def schedule_confirm_prompt(slot_id: int, candidate_id: int) -> None:
         except Exception as exc:  # pragma: no cover - logging path
             logging.exception("Confirm scheduler error: %s", exc)
 
-    CONFIRM_TASKS[key] = asyncio.create_task(_rem())
+    context.confirm_tasks[key] = asyncio.create_task(_rem())
 
 
-async def begin_interview(user_id: int) -> None:
-    state_manager = get_state_manager()
-    bot = get_bot()
+async def begin_interview(context: BotContext, user_id: int) -> None:
+    state_manager = context.state_manager
+    bot = context.bot
     state_manager.set(
         user_id,
         State(
@@ -283,11 +291,11 @@ async def begin_interview(user_id: int) -> None:
     )
     intro = await templates.tpl(None, "t1_intro")
     await bot.send_message(user_id, intro)
-    await send_test1_question(user_id)
+    await send_test1_question(context, user_id)
 
 
-async def send_welcome(user_id: int) -> None:
-    bot = get_bot()
+async def send_welcome(context: BotContext, user_id: int) -> None:
+    bot = context.bot
     text = (
         "👋 Добро пожаловать!\n"
         "Нажмите «Начать», чтобы заполнить мини-анкету и выбрать время для интервью."
@@ -295,8 +303,8 @@ async def send_welcome(user_id: int) -> None:
     await bot.send_message(user_id, text, reply_markup=kb_start())
 
 
-async def start_introday_flow(message: Message) -> None:
-    state_manager = get_state_manager()
+async def start_introday_flow(context: BotContext, message: Message) -> None:
+    state_manager = context.state_manager
     user_id = message.from_user.id
     prev = state_manager.get(user_id) or {}
     state_manager.set(
@@ -318,7 +326,7 @@ async def start_introday_flow(message: Message) -> None:
             picked_slot_id=None,
         ),
     )
-    await start_test2(user_id)
+    await start_test2(context, user_id)
 
 
 def _format_prompt(prompt: Any) -> str:
@@ -327,15 +335,15 @@ def _format_prompt(prompt: Any) -> str:
     return str(prompt)
 
 
-async def send_test1_question(user_id: int) -> None:
-    bot = get_bot()
-    state_manager = get_state_manager()
+async def send_test1_question(context: BotContext, user_id: int) -> None:
+    bot = context.bot
+    state_manager = context.state_manager
     state = state_manager.ensure(user_id)
     sequence = state.get("t1_sequence") or list(TEST1_QUESTIONS)
     idx = state.get("t1_idx", 0)
     total = len(sequence)
     if idx >= total:
-        await finalize_test1(user_id)
+        await finalize_test1(context, user_id)
         return
     q = sequence[idx]
     progress = await templates.tpl(state.get("city_id"), "t1_progress", n=idx + 1, total=total)
@@ -405,9 +413,11 @@ def _shorten_answer(text: str, limit: int = 80) -> str:
     return clean[: limit - 1] + "…"
 
 
-async def _mark_test1_question_answered(user_id: int, summary: str) -> None:
-    bot = get_bot()
-    state = get_state_manager().get(user_id)
+async def _mark_test1_question_answered(
+    context: BotContext, user_id: int, summary: str
+) -> None:
+    bot = context.bot
+    state = context.state_manager.get(user_id)
     if not state:
         return
     prompt_id = state.get("t1_last_prompt_id")
@@ -432,8 +442,10 @@ def _recruiter_header(name: str, tz_label: str) -> str:
     )
 
 
-async def save_test1_answer(user_id: int, question: Dict[str, Any], answer: str) -> None:
-    state_manager = get_state_manager()
+async def save_test1_answer(
+    context: BotContext, user_id: int, question: Dict[str, Any], answer: str
+) -> None:
+    state_manager = context.state_manager
     state = state_manager.ensure(user_id)
     state.setdefault("test1_answers", {})
     state["test1_answers"][question["id"]] = answer
@@ -470,9 +482,9 @@ async def save_test1_answer(user_id: int, question: Dict[str, Any], answer: str)
                 existing_ids.add(FOLLOWUP_STUDY_SCHEDULE["id"])
 
 
-async def handle_test1_answer(message: Message) -> None:
+async def handle_test1_answer(context: BotContext, message: Message) -> None:
     user_id = message.from_user.id
-    state = get_state_manager().get(user_id)
+    state = context.state_manager.get(user_id)
     if not state or state.get("flow") != "interview":
         return
 
@@ -503,19 +515,19 @@ async def handle_test1_answer(message: Message) -> None:
         await message.reply("Ответ не распознан. Напишите текст или выберите вариант.")
         return
 
-    await save_test1_answer(user_id, question, answer_text)
-    await _mark_test1_question_answered(user_id, _shorten_answer(answer_text))
+    await save_test1_answer(context, user_id, question, answer_text)
+    await _mark_test1_question_answered(context, user_id, _shorten_answer(answer_text))
 
     state["t1_idx"] = idx + 1
     if state["t1_idx"] >= total:
-        await finalize_test1(user_id)
+        await finalize_test1(context, user_id)
     else:
-        await send_test1_question(user_id)
+        await send_test1_question(context, user_id)
 
 
-async def handle_test1_option(callback: CallbackQuery) -> None:
+async def handle_test1_option(context: BotContext, callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
-    state = get_state_manager().get(user_id)
+    state = context.state_manager.get(user_id)
     if not state or state.get("flow") != "interview":
         await callback.answer("Сценарий неактивен", show_alert=True)
         return
@@ -561,12 +573,12 @@ async def handle_test1_option(callback: CallbackQuery) -> None:
     if state["t1_idx"] >= len(sequence):
         await finalize_test1(user_id)
     else:
-        await send_test1_question(user_id)
+        await send_test1_question(context, user_id)
 
 
-async def finalize_test1(user_id: int) -> None:
-    bot = get_bot()
-    state_manager = get_state_manager()
+async def finalize_test1(context: BotContext, user_id: int) -> None:
+    bot = context.bot
+    state_manager = context.state_manager
     state = state_manager.ensure(user_id)
     sequence = state.get("t1_sequence", list(TEST1_QUESTIONS))
     lines = [
@@ -599,7 +611,7 @@ async def finalize_test1(user_id: int) -> None:
     )
     await bot.send_message(user_id, invite_text)
 
-    await show_recruiter_menu(user_id)
+    await show_recruiter_menu(context, user_id)
 
     state["t1_idx"] = None
     state["t1_last_prompt_id"] = None
@@ -607,9 +619,9 @@ async def finalize_test1(user_id: int) -> None:
     state["t1_requires_free_text"] = False
 
 
-async def start_test2(user_id: int) -> None:
-    bot = get_bot()
-    state = get_state_manager().ensure(user_id)
+async def start_test2(context: BotContext, user_id: int) -> None:
+    bot = context.bot
+    state = context.state_manager.ensure(user_id)
     state["t2_attempts"] = {
         q_index: {"answers": [], "is_correct": False, "start_time": None}
         for q_index in range(len(TEST2_QUESTIONS))
@@ -622,12 +634,12 @@ async def start_test2(user_id: int) -> None:
         attempts=MAX_ATTEMPTS,
     )
     await bot.send_message(user_id, intro)
-    await send_test2_question(user_id, 0)
+    await send_test2_question(context, user_id, 0)
 
 
-async def send_test2_question(user_id: int, q_index: int) -> None:
-    bot = get_bot()
-    state = get_state_manager().ensure(user_id)
+async def send_test2_question(context: BotContext, user_id: int, q_index: int) -> None:
+    bot = context.bot
+    state = context.state_manager.ensure(user_id)
     state["t2_attempts"][q_index]["start_time"] = datetime.now()
     question = TEST2_QUESTIONS[q_index]
     txt = (
@@ -640,9 +652,9 @@ async def send_test2_question(user_id: int, q_index: int) -> None:
     )
 
 
-async def handle_test2_answer(callback: CallbackQuery) -> None:
+async def handle_test2_answer(context: BotContext, callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
-    state = get_state_manager().get(user_id)
+    state = context.state_manager.get(user_id)
     if not state or "t2_attempts" not in state or state.get("flow") != "intro":
         await callback.answer()
         return
@@ -685,9 +697,9 @@ async def handle_test2_answer(callback: CallbackQuery) -> None:
         await callback.message.edit_text(final_feedback)
 
         if q_index < len(TEST2_QUESTIONS) - 1:
-            await send_test2_question(user_id, q_index + 1)
+            await send_test2_question(context, user_id, q_index + 1)
         else:
-            await finalize_test2(user_id)
+            await finalize_test2(context, user_id)
     else:
         attempts_left = MAX_ATTEMPTS - len(attempt["answers"])
         final_feedback = f"{feedback_message}"
@@ -701,14 +713,14 @@ async def handle_test2_answer(callback: CallbackQuery) -> None:
             final_feedback += "\n🚫 <i>Лимит попыток исчерпан</i>"
             await callback.message.edit_text(final_feedback)
             if q_index < len(TEST2_QUESTIONS) - 1:
-                await send_test2_question(user_id, q_index + 1)
+                await send_test2_question(context, user_id, q_index + 1)
             else:
-                await finalize_test2(user_id)
+                await finalize_test2(context, user_id)
 
 
-async def finalize_test2(user_id: int) -> None:
-    bot = get_bot()
-    state_manager = get_state_manager()
+async def finalize_test2(context: BotContext, user_id: int) -> None:
+    bot = context.bot
+    state_manager = context.state_manager
     state = state_manager.ensure(user_id)
     attempts = state.get("t2_attempts", {})
     correct_answers = sum(1 for attempt in attempts.values() if attempt["is_correct"])
@@ -726,15 +738,17 @@ async def finalize_test2(user_id: int) -> None:
     if pct < PASS_THRESHOLD:
         fail_text = await templates.tpl(state.get("city_id"), "result_fail")
         await bot.send_message(user_id, fail_text)
-        get_state_manager().pop(user_id)
+        context.state_manager.pop(user_id)
         return
 
-    await show_recruiter_menu(user_id)
+    await show_recruiter_menu(context, user_id)
 
 
-async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> None:
-    bot = get_bot()
-    state = get_state_manager().get(user_id) or {}
+async def show_recruiter_menu(
+    context: BotContext, user_id: int, *, notice: Optional[str] = None
+) -> None:
+    bot = context.bot
+    state = context.state_manager.get(user_id) or {}
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
     kb = await kb_recruiters(tz_label)
     text = await templates.tpl(state.get("city_id"), "choose_recruiter")
@@ -743,16 +757,16 @@ async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> 
     await bot.send_message(user_id, text, reply_markup=kb)
 
 
-async def handle_home_start(callback: CallbackQuery) -> None:
+async def handle_home_start(context: BotContext, callback: CallbackQuery) -> None:
     await callback.answer()
-    await begin_interview(callback.from_user.id)
+    await begin_interview(context, callback.from_user.id)
 
 
-async def handle_pick_recruiter(callback: CallbackQuery) -> None:
+async def handle_pick_recruiter(context: BotContext, callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     rid_s = callback.data.split(":", 1)[1]
 
-    state_manager = get_state_manager()
+    state_manager = context.state_manager
     state = state_manager.get(user_id)
 
     if rid_s == "__again__":
@@ -799,7 +813,7 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-async def handle_refresh_slots(callback: CallbackQuery) -> None:
+async def handle_refresh_slots(context: BotContext, callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     _, rid_s = callback.data.split(":", 1)
     try:
@@ -808,7 +822,7 @@ async def handle_refresh_slots(callback: CallbackQuery) -> None:
         await callback.answer("Рекрутёр не найден", show_alert=True)
         return
 
-    state = get_state_manager().get(user_id)
+    state = context.state_manager.get(user_id)
     if not state:
         await callback.answer("Сессия истекла. Введите /start", show_alert=True)
         return
@@ -828,7 +842,7 @@ async def handle_refresh_slots(callback: CallbackQuery) -> None:
     await callback.answer("Обновлено")
 
 
-async def handle_pick_slot(callback: CallbackQuery) -> None:
+async def handle_pick_slot(context: BotContext, callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     _, rid_s, slot_id_s = callback.data.split(":", 2)
 
@@ -838,7 +852,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         await callback.answer("Слот не найден", show_alert=True)
         return
 
-    state = get_state_manager().get(user_id)
+    state = context.state_manager.get(user_id)
     if not state:
         await callback.answer("Сессия истекла. Введите /start", show_alert=True)
         return
@@ -860,7 +874,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
                 await callback.message.edit_reply_markup(reply_markup=None)
             except TelegramBadRequest:
                 pass
-            await show_recruiter_menu(user_id, notice=text)
+            await show_recruiter_menu(context, user_id, notice=text)
         else:
             kb = await kb_slots_for_recruiter(
                 int(rid_s), state.get("candidate_tz", DEFAULT_TZ)
@@ -876,7 +890,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
 
     rec = await get_recruiter(slot.recruiter_id)
     purpose = "ознакомительный день" if is_intro else "видео-интервью"
-    bot = get_bot()
+    bot = context.bot
     caption = (
         f"📥 <b>Новый кандидат на {purpose}</b>\n"
         f"👤 {slot.candidate_fio or user_id}\n"
@@ -923,7 +937,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-async def handle_approve_slot(callback: CallbackQuery) -> None:
+async def handle_approve_slot(context: BotContext, callback: CallbackQuery) -> None:
     slot_id = int(callback.data.split(":", 1)[1])
     slot = await get_slot(slot_id)
     if not slot:
@@ -953,7 +967,7 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         if getattr(slot, "purpose", "interview") == "intro_day"
         else "approved_msg"
     )
-    state = get_state_manager().get(slot.candidate_tg_id, {})
+    state = context.state_manager.get(slot.candidate_tg_id, {})
     text = await templates.tpl(
         getattr(slot, "candidate_city_id", None),
         template_key,
@@ -962,8 +976,8 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         dt=fmt_dt_local(slot.start_utc, tz),
         **labels,
     )
-    await get_bot().send_message(slot.candidate_tg_id, text)
-    await schedule_confirm_prompt(slot.id, slot.candidate_tg_id)
+    await context.bot.send_message(slot.candidate_tg_id, text)
+    await schedule_confirm_prompt(context, slot.id, slot.candidate_tg_id)
 
     confirm_text = (
         f"✅ Согласовано: {slot.candidate_fio or slot.candidate_tg_id} — "
@@ -974,7 +988,7 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
     await callback.answer("Согласовано")
 
 
-async def handle_reject_slot(callback: CallbackQuery) -> None:
+async def handle_reject_slot(context: BotContext, callback: CallbackQuery) -> None:
     slot_id = int(callback.data.split(":", 1)[1])
     slot = await get_slot(slot_id)
     if not slot:
@@ -989,12 +1003,12 @@ async def handle_reject_slot(callback: CallbackQuery) -> None:
 
     await reject_slot(slot_id)
 
-    bot = get_bot()
+    bot = context.bot
     await bot.send_message(slot.candidate_tg_id, "К сожалению, выбранное время недоступно.")
 
-    st = get_state_manager().get(slot.candidate_tg_id, {})
+    st = context.state_manager.get(slot.candidate_tg_id, {})
     if st.get("flow") == "intro":
-        await show_recruiter_menu(slot.candidate_tg_id)
+        await show_recruiter_menu(context, slot.candidate_tg_id)
     else:
         kb = await kb_recruiters(st.get("candidate_tz", DEFAULT_TZ))
         await bot.send_message(
@@ -1008,7 +1022,7 @@ async def handle_reject_slot(callback: CallbackQuery) -> None:
     await callback.answer("Отказано")
 
 
-async def handle_attendance_yes(callback: CallbackQuery) -> None:
+async def handle_attendance_yes(context: BotContext, callback: CallbackQuery) -> None:
     slot_id = int(callback.data.split(":", 1)[1])
     slot = await get_slot(slot_id)
     if not slot or slot.status != SlotStatus.BOOKED:
@@ -1016,7 +1030,7 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         return
 
     key: RemKey = (slot_id, callback.from_user.id)
-    t = CONFIRM_TASKS.pop(key, None)
+    t = context.confirm_tasks.pop(key, None)
     if t and not t.done():
         t.cancel()
 
@@ -1031,10 +1045,10 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         link=link,
         dt=fmt_dt_local(slot.start_utc, tz),
     )
-    bot = get_bot()
+    bot = context.bot
     await bot.send_message(slot.candidate_tg_id, text)
 
-    await schedule_reminder(slot_id, slot.candidate_tg_id)
+    await schedule_reminder(context, slot_id, slot.candidate_tg_id)
 
     try:
         await callback.message.edit_text("Спасибо! Участие подтверждено. Ссылка отправлена.")
@@ -1048,7 +1062,7 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
     await callback.answer("Подтверждено")
 
 
-async def handle_attendance_no(callback: CallbackQuery) -> None:
+async def handle_attendance_no(context: BotContext, callback: CallbackQuery) -> None:
     slot_id = int(callback.data.split(":", 1)[1])
     slot = await get_slot(slot_id)
     if not slot:
@@ -1057,17 +1071,17 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
         return
 
     key: RemKey = (slot_id, slot.candidate_tg_id)
-    t = CONFIRM_TASKS.pop(key, None)
+    t = context.confirm_tasks.pop(key, None)
     if t and not t.done():
         t.cancel()
-    t2 = REMINDERS.pop(key, None)
+    t2 = context.reminders.pop(key, None)
     if t2 and not t2.done():
         t2.cancel()
 
     await reject_slot(slot_id)
 
     rec = await get_recruiter(slot.recruiter_id)
-    bot = get_bot()
+    bot = context.bot
     if rec and rec.tg_chat_id:
         try:
             await bot.send_message(
@@ -1078,13 +1092,13 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
         except Exception:
             pass
 
-    st = get_state_manager().get(callback.from_user.id, {})
+    st = context.state_manager.get(callback.from_user.id, {})
     await bot.send_message(
         callback.from_user.id,
         await templates.tpl(getattr(slot, "candidate_city_id", None), "att_declined"),
     )
     if st.get("flow") == "intro":
-        await show_recruiter_menu(callback.from_user.id)
+        await show_recruiter_menu(context, callback.from_user.id)
     else:
         kb = await kb_recruiters(st.get("candidate_tz", DEFAULT_TZ))
         await bot.send_message(
@@ -1118,9 +1132,9 @@ def get_rating(score: float) -> str:
 
 
 __all__ = [
+    "BotContext",
     "StateManager",
     "calculate_score",
-    "configure",
     "finalize_test1",
     "finalize_test2",
     "fmt_dt_local",
@@ -1133,9 +1147,7 @@ __all__ = [
     "handle_test1_answer",
     "handle_test1_option",
     "handle_test2_answer",
-    "get_bot",
     "get_rating",
-    "get_state_manager",
     "now_utc",
     "save_test1_answer",
     "schedule_confirm_prompt",
