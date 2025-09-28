@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import html
 import logging
 import math
 import os
-from datetime import datetime, timezone
-from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
+from datetime import datetime, timezone, timedelta
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, cast
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -36,7 +35,6 @@ from .config import (
     FOLLOWUP_STUDY_SCHEDULE,
     MAX_ATTEMPTS,
     PASS_THRESHOLD,
-    RemKey,
     State,
     TEST1_QUESTIONS,
     TEST2_QUESTIONS,
@@ -51,6 +49,7 @@ from .keyboards import (
     kb_slots_for_recruiter,
     kb_start,
 )
+from .reminders import ReminderQueue, ReminderQueueKey
 
 
 class StateManager:
@@ -82,29 +81,20 @@ class StateManager:
 class BotContext:
     """Aggregates stateful bot dependencies for explicit injection.
 
-    The in-memory reminder registries are kept together with other runtime
-    components so they can be swapped with a persistent scheduler (e.g. Redis,
-    APScheduler) without touching business logic.
+    Reminder scheduling is delegated to :class:`ReminderQueue`, which makes it
+    possible to swap in a persistent backend (Redis, APScheduler, etc.) without
+    rewriting business logic.
     """
 
     bot: Bot
     dispatcher: Dispatcher
     state_manager: StateManager
-    reminders: Dict[RemKey, asyncio.Task] = field(default_factory=dict)
-    confirm_tasks: Dict[RemKey, asyncio.Task] = field(default_factory=dict)
+    reminder_queue: ReminderQueue
 
-    def reset_tasks(self) -> None:
-        """Cancel and clear scheduled reminder tasks."""
+    async def reset_tasks(self) -> None:
+        """Cancel all scheduled reminders (used in tests and shutdown hooks)."""
 
-        for task in list(self.reminders.values()):
-            if not task.done():
-                task.cancel()
-        self.reminders.clear()
-
-        for task in list(self.confirm_tasks.values()):
-            if not task.done():
-                task.cancel()
-        self.confirm_tasks.clear()
+        await self.reminder_queue.flush()
 
 
 def _safe_zone(tz: Optional[str]) -> ZoneInfo:
@@ -134,6 +124,10 @@ def now_utc() -> datetime:
 def create_progress_bar(current: int, total: int) -> str:
     filled = max(0, min(10, math.ceil((current / total) * 10)))
     return f"[{'🟩' * filled}{'⬜️' * (10 - filled)}]"
+
+
+def _queue_key(kind: str, slot_id: int, candidate_id: int) -> ReminderQueueKey:
+    return (kind, (slot_id, candidate_id))
 
 
 def calculate_score(attempts: Dict[int, Dict[str, Any]]) -> float:
@@ -168,103 +162,79 @@ async def safe_remove_reply_markup(cb_msg) -> None:
 
 async def schedule_reminder(context: BotContext, slot_id: int, candidate_id: int) -> None:
     bot = context.bot
-    key: RemKey = (slot_id, candidate_id)
-    t2 = context.reminders.pop(key, None)
-    if t2 and not t2.done():
-        t2.cancel()
+    queue_key = _queue_key("reminder", slot_id, candidate_id)
+    context.reminder_queue.cancel(queue_key)
 
     slot = await get_slot(slot_id)
     if not slot:
         return
 
-    start_utc = slot.start_utc
-    delay = (start_utc - now_utc()).total_seconds() - 3600  # -1h
-    if delay <= 0:
-        return
+    run_at = slot.start_utc - timedelta(hours=1)
 
     async def _rem() -> None:
-        try:
-            await asyncio.sleep(delay)
-            fresh = await get_slot(slot_id)
-            if not fresh or fresh.candidate_tg_id != candidate_id:
-                return
-            tz = fresh.candidate_tz or DEFAULT_TZ
-            labels = slot_local_labels(fresh.start_utc, tz)
-            text = await templates.tpl(
-                getattr(fresh, "candidate_city_id", None),
-                "reminder_1h",
-                candidate_fio=getattr(fresh, "candidate_fio", "") or "",
-                dt=fmt_dt_local(fresh.start_utc, tz),
-                **labels,
-            )
-            await bot.send_message(candidate_id, text)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:  # pragma: no cover - logging path
-            logging.exception("Reminder error: %s", exc)
+        fresh = await get_slot(slot_id)
+        if not fresh or fresh.candidate_tg_id != candidate_id:
+            return
+        tz = fresh.candidate_tz or DEFAULT_TZ
+        labels = slot_local_labels(fresh.start_utc, tz)
+        text = await templates.tpl(
+            getattr(fresh, "candidate_city_id", None),
+            "reminder_1h",
+            candidate_fio=getattr(fresh, "candidate_fio", "") or "",
+            dt=fmt_dt_local(fresh.start_utc, tz),
+            **labels,
+        )
+        await bot.send_message(candidate_id, text)
 
-    context.reminders[key] = asyncio.create_task(_rem())
+    if run_at <= now_utc():
+        await _rem()
+        return
+
+    await context.reminder_queue.enqueue(queue_key, run_at, _rem)
 
 
 async def schedule_confirm_prompt(
     context: BotContext, slot_id: int, candidate_id: int
 ) -> None:
     bot = context.bot
-    key: RemKey = (slot_id, candidate_id)
-    t = context.confirm_tasks.pop(key, None)
-    if t and not t.done():
-        t.cancel()
+    queue_key = _queue_key("confirm", slot_id, candidate_id)
+    context.reminder_queue.cancel(queue_key)
 
     slot = await get_slot(slot_id)
     if not slot:
         return
 
-    start_utc = slot.start_utc
-    delay = (start_utc - now_utc()).total_seconds() - 7200  # -2h
+    run_at = slot.start_utc - timedelta(hours=2)
 
     async def _ask_now() -> None:
-        try:
-            fresh = await get_slot(slot_id)
-            if not fresh or fresh.candidate_tg_id != candidate_id:
-                return
-            tz = fresh.candidate_tz or DEFAULT_TZ
-            labels = slot_local_labels(fresh.start_utc, tz)
-            key_name = (
-                "stage4_intro_reminder"
-                if getattr(fresh, "purpose", "interview") == "intro_day"
-                else "stage2_interview_reminder"
-            )
-            state = context.state_manager.get(candidate_id) or {}
-            text = await templates.tpl(
-                getattr(fresh, "candidate_city_id", None),
-                key_name,
-                candidate_fio=getattr(fresh, "candidate_fio", "") or "",
-                city_name=state.get("city_name") or "",
-                dt=fmt_dt_local(fresh.start_utc, tz),
-                **labels,
-            )
-            await bot.send_message(
-                candidate_id, text, reply_markup=kb_attendance_confirm(slot_id)
-            )
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:  # pragma: no cover - logging path
-            logging.exception("Confirm prompt error: %s", exc)
+        fresh = await get_slot(slot_id)
+        if not fresh or fresh.candidate_tg_id != candidate_id:
+            return
+        tz = fresh.candidate_tz or DEFAULT_TZ
+        labels = slot_local_labels(fresh.start_utc, tz)
+        key_name = (
+            "stage4_intro_reminder"
+            if getattr(fresh, "purpose", "interview") == "intro_day"
+            else "stage2_interview_reminder"
+        )
+        state = context.state_manager.get(candidate_id) or {}
+        text = await templates.tpl(
+            getattr(fresh, "candidate_city_id", None),
+            key_name,
+            candidate_fio=getattr(fresh, "candidate_fio", "") or "",
+            city_name=state.get("city_name") or "",
+            dt=fmt_dt_local(fresh.start_utc, tz),
+            **labels,
+        )
+        await bot.send_message(
+            candidate_id, text, reply_markup=kb_attendance_confirm(slot_id)
+        )
 
-    if delay <= 0:
+    if run_at <= now_utc():
         await _ask_now()
         return
 
-    async def _rem() -> None:
-        try:
-            await asyncio.sleep(delay)
-            await _ask_now()
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:  # pragma: no cover - logging path
-            logging.exception("Confirm scheduler error: %s", exc)
-
-    context.confirm_tasks[key] = asyncio.create_task(_rem())
+    await context.reminder_queue.enqueue(queue_key, run_at, _ask_now)
 
 
 async def begin_interview(context: BotContext, user_id: int) -> None:
@@ -1029,10 +999,9 @@ async def handle_attendance_yes(context: BotContext, callback: CallbackQuery) ->
         await callback.answer("Заявка не найдена или ещё не подтверждена рекрутёром.", show_alert=True)
         return
 
-    key: RemKey = (slot_id, callback.from_user.id)
-    t = context.confirm_tasks.pop(key, None)
-    if t and not t.done():
-        t.cancel()
+    context.reminder_queue.cancel(
+        _queue_key("confirm", slot_id, callback.from_user.id)
+    )
 
     rec = await get_recruiter(slot.recruiter_id)
     link = (
@@ -1070,13 +1039,9 @@ async def handle_attendance_no(context: BotContext, callback: CallbackQuery) -> 
         await safe_remove_reply_markup(callback.message)
         return
 
-    key: RemKey = (slot_id, slot.candidate_tg_id)
-    t = context.confirm_tasks.pop(key, None)
-    if t and not t.done():
-        t.cancel()
-    t2 = context.reminders.pop(key, None)
-    if t2 and not t2.done():
-        t2.cancel()
+    queue_key = _queue_key("confirm", slot_id, slot.candidate_tg_id)
+    context.reminder_queue.cancel(queue_key)
+    context.reminder_queue.cancel(_queue_key("reminder", slot_id, slot.candidate_tg_id))
 
     await reject_slot(slot_id)
 

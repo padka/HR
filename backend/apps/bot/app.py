@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher
 
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
+from .reminders import AsyncioReminderQueue
 from .services import BotContext, StateManager
 
 __all__ = [
@@ -41,6 +42,7 @@ def create_application(token: str | None = None) -> BotContext:
         bot=bot,
         dispatcher=dispatcher,
         state_manager=state_manager,
+        reminder_queue=AsyncioReminderQueue(),
     )
     register_routers(dispatcher, context)
     return context
