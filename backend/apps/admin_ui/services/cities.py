@@ -13,7 +13,6 @@ from .templates import update_templates_for_city
 __all__ = [
     "list_cities",
     "create_city",
-    "assign_city_owner",
     "update_city_settings",
     "city_owner_field_name",
     "api_cities_payload",
@@ -43,26 +42,6 @@ def city_owner_field_name() -> Optional[str]:
     for name in ["responsible_recruiter_id", "owner_id", "recruiter_id", "manager_id"]:
         if name in allowed:
             return name
-    return None
-
-
-async def assign_city_owner(city_id: int, recruiter_id: Optional[int]) -> Optional[str]:
-    owner_field = city_owner_field_name()
-    if not owner_field:
-        return "Owner field is missing on City model."
-
-    async with async_session() as session:
-        city = await session.get(City, city_id)
-        if not city:
-            return "City not found"
-
-        if recruiter_id is not None:
-            recruiter = await session.get(Recruiter, recruiter_id)
-            if not recruiter:
-                return "Recruiter not found"
-
-        setattr(city, owner_field, recruiter_id)
-        await session.commit()
     return None
 
 
