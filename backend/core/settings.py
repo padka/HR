@@ -18,6 +18,8 @@ class Settings:
     bot_token: str
     admin_chat_id: int
     timezone: str
+    state_storage_backend: str
+    state_storage_dsn: str | None
 
 
 load_env()
@@ -76,6 +78,15 @@ def get_settings() -> Settings:
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
 
+    redis_dsn = os.getenv("REDIS_DSN")
+    state_backend = os.getenv("STATE_STORAGE_BACKEND")
+    if redis_dsn and not state_backend:
+        state_backend = "redis"
+    if not state_backend:
+        # Memory storage is a safe default for local development when no
+        # external state backend is configured.
+        state_backend = "memory"
+
     return Settings(
         data_dir=data_dir,
         database_url_async=async_url,
@@ -84,4 +95,6 @@ def get_settings() -> Settings:
         bot_token=bot_token,
         admin_chat_id=admin_chat_id,
         timezone=timezone,
+        state_storage_backend=state_backend,
+        state_storage_dsn=redis_dsn,
     )

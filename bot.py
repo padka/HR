@@ -21,12 +21,11 @@ import math
 import asyncio
 import logging
 import html
-from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Tuple, TypedDict
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, TypedDict, cast
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.client.bot import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import (
@@ -40,6 +39,12 @@ from aiogram.types import (
 from aiogram.exceptions import TelegramBadRequest
 
 # === ADMIN DB layer ===
+from backend.apps.bot.state_manager import (
+    ReminderMeta,
+    ReminderWorker,
+    StateManager,
+    create_storage,
+)
 from backend.domain.repositories import (
     get_active_recruiters,
     get_recruiter,
@@ -73,8 +78,8 @@ PASS_THRESHOLD = 0.75
 MAX_ATTEMPTS = 3
 TIME_LIMIT = 120  # сек на вопрос (Тест 2)
 
-# Напоминания/подтверждения: key=(slot_id, candidate_id) -> asyncio.Task
-RemKey = Tuple[int, int]
+REMINDER_KIND_SLOT = "slot_1h"
+REMINDER_KIND_CONFIRM = "confirm_2h"
 
 class State(TypedDict, total=False):
     flow: str                    # 'interview' | 'intro'
@@ -103,13 +108,32 @@ TOKEN = settings.bot_token
 if not TOKEN or ":" not in TOKEN:
     raise SystemExit("BOT_TOKEN не найден или некорректен. Задай BOT_TOKEN=... (или используй .env)")
 
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
+bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
+storage = create_storage(settings)
+state_manager = StateManager(storage)
+reminder_worker = ReminderWorker(state_manager)
+dp = Dispatcher(storage=storage)
 
-# Глобальные in-memory структуры
-REMINDERS: Dict[RemKey, asyncio.Task] = {}
-CONFIRM_TASKS: Dict[RemKey, asyncio.Task] = {}
-user_data: Dict[int, State] = {}   # состояние пользователя
+
+async def get_state(user_id: int) -> State:
+    """Load user state from FSM storage."""
+    data = await state_manager.load_state(user_id)
+    return cast(State, dict(data))
+
+
+async def save_state(user_id: int, state: State) -> None:
+    """Persist user state."""
+    await state_manager.save_state(user_id, dict(state))
+
+
+async def update_state(user_id: int, **changes: Any) -> State:
+    """Update user state atomically."""
+    data = await state_manager.update_state(user_id, **changes)
+    return cast(State, data)
+
+
+async def clear_state(user_id: int) -> None:
+    await state_manager.clear_state(user_id)
 
 
 # =============================
@@ -397,7 +421,7 @@ def _recruiter_header(name: str, tz_label: str) -> str:
 
 
 async def _show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> None:
-    state = user_data.get(user_id) or {}
+    state = await get_state(user_id)
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
     kb = await kb_recruiters(tz_label)
     text = await tpl(state.get("city_id"), "choose_recruiter")
@@ -428,94 +452,102 @@ def kb_attendance_confirm(slot_id: int) -> InlineKeyboardMarkup:
 # =============================
 
 async def schedule_reminder(slot_id: int, candidate_id: int):
-    key: RemKey = (slot_id, candidate_id)
-    t2 = REMINDERS.pop(key, None)
-    if t2 and not t2.done():
-        t2.cancel()
-
     slot = await get_slot(slot_id)
     if not slot:
         return
 
-    start_utc = slot.start_utc
-    delay = (start_utc - now_utc()).total_seconds() - 3600  # -1h
-    if delay <= 0:
+    notify_at = slot.start_utc - timedelta(hours=1)
+    if notify_at <= now_utc():
+        await _send_slot_reminder(
+            ReminderMeta(
+                slot_id=slot_id,
+                candidate_id=candidate_id,
+                notify_at=now_utc(),
+                kind=REMINDER_KIND_SLOT,
+            )
+        )
         return
 
-    async def _rem():
-        try:
-            await asyncio.sleep(delay)
-            fresh = await get_slot(slot_id)
-            if not fresh or fresh.candidate_tg_id != candidate_id:
-                return
-            tz = fresh.candidate_tz or DEFAULT_TZ
-            labels = slot_local_labels(fresh.start_utc, tz)
-            text = await tpl(
-                getattr(fresh, "candidate_city_id", None),
-                "reminder_1h",
-                candidate_fio=getattr(fresh, "candidate_fio", "") or "",
-                dt=fmt_dt_local(fresh.start_utc, tz),
-                **labels,
-            )
-            await bot.send_message(candidate_id, text)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logging.exception("Reminder error: %s", e)
+    await state_manager.schedule_reminder(
+        slot_id=slot_id,
+        candidate_id=candidate_id,
+        notify_at=notify_at,
+        kind=REMINDER_KIND_SLOT,
+    )
 
-    REMINDERS[key] = asyncio.create_task(_rem())
 
 async def schedule_confirm_prompt(slot_id: int, candidate_id: int):
     """За 2 часа до встречи просим подтвердить участие. Потом шлём ссылку."""
-    key: RemKey = (slot_id, candidate_id)
-    t = CONFIRM_TASKS.pop(key, None)
-    if t and not t.done():
-        t.cancel()
-
     slot = await get_slot(slot_id)
     if not slot:
         return
 
-    start_utc = slot.start_utc
-    delay = (start_utc - now_utc()).total_seconds() - 7200  # -2h
-
-    async def _ask_now():
-        try:
-            fresh = await get_slot(slot_id)
-            if not fresh or fresh.candidate_tg_id != candidate_id:
-                return
-            tz = fresh.candidate_tz or DEFAULT_TZ
-            labels = slot_local_labels(fresh.start_utc, tz)
-            key = "stage4_intro_reminder" if getattr(fresh, "purpose", "interview") == "intro_day" else "stage2_interview_reminder"
-            state = user_data.get(candidate_id, {})
-            text = await tpl(
-                getattr(fresh, "candidate_city_id", None),
-                key,
-                candidate_fio=getattr(fresh, "candidate_fio", "") or "",
-                city_name=state.get("city_name") or "",
-                dt=fmt_dt_local(fresh.start_utc, tz),
-                **labels,
-            )
-            await bot.send_message(candidate_id, text, reply_markup=kb_attendance_confirm(slot_id))
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logging.exception("Confirm prompt error: %s", e)
-
-    if delay <= 0:
-        await _ask_now()
+    notify_at = slot.start_utc - timedelta(hours=2)
+    reminder = ReminderMeta(
+        slot_id=slot_id,
+        candidate_id=candidate_id,
+        notify_at=notify_at,
+        kind=REMINDER_KIND_CONFIRM,
+    )
+    if notify_at <= now_utc():
+        await _send_confirm_prompt(reminder)
         return
 
-    async def _rem():
-        try:
-            await asyncio.sleep(delay)
-            await _ask_now()
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logging.exception("Confirm scheduler error: %s", e)
+    await state_manager.schedule_reminder(
+        slot_id=slot_id,
+        candidate_id=candidate_id,
+        notify_at=notify_at,
+        kind=REMINDER_KIND_CONFIRM,
+    )
 
-    CONFIRM_TASKS[key] = asyncio.create_task(_rem())
+
+async def _send_slot_reminder(reminder: ReminderMeta) -> None:
+    try:
+        fresh = await get_slot(reminder.slot_id)
+        if not fresh or fresh.candidate_tg_id != reminder.candidate_id:
+            return
+        tz = fresh.candidate_tz or DEFAULT_TZ
+        labels = slot_local_labels(fresh.start_utc, tz)
+        text = await tpl(
+            getattr(fresh, "candidate_city_id", None),
+            "reminder_1h",
+            candidate_fio=getattr(fresh, "candidate_fio", "") or "",
+            dt=fmt_dt_local(fresh.start_utc, tz),
+            **labels,
+        )
+        await bot.send_message(reminder.candidate_id, text)
+    except Exception as exc:
+        logging.exception("Reminder error: %s", exc)
+
+
+async def _send_confirm_prompt(reminder: ReminderMeta) -> None:
+    try:
+        fresh = await get_slot(reminder.slot_id)
+        if not fresh or fresh.candidate_tg_id != reminder.candidate_id:
+            return
+        tz = fresh.candidate_tz or DEFAULT_TZ
+        labels = slot_local_labels(fresh.start_utc, tz)
+        key = (
+            "stage4_intro_reminder"
+            if getattr(fresh, "purpose", "interview") == "intro_day"
+            else "stage2_interview_reminder"
+        )
+        state = await get_state(reminder.candidate_id)
+        text = await tpl(
+            getattr(fresh, "candidate_city_id", None),
+            key,
+            candidate_fio=getattr(fresh, "candidate_fio", "") or "",
+            city_name=state.get("city_name") or "",
+            dt=fmt_dt_local(fresh.start_utc, tz),
+            **labels,
+        )
+        await bot.send_message(
+            reminder.candidate_id,
+            text,
+            reply_markup=kb_attendance_confirm(reminder.slot_id),
+        )
+    except Exception as exc:
+        logging.exception("Confirm prompt error: %s", exc)
 
 
 # =============================
@@ -524,21 +556,24 @@ async def schedule_confirm_prompt(slot_id: int, candidate_id: int):
 
 async def begin_interview(user_id: int):
     """Инициализирует сценарий A (анкета → выбор рекрутёра/слота)."""
-    user_data[user_id] = State(
-        flow="interview",
-        t1_idx=0,
-        test1_answers={},
-        t1_last_prompt_id=None,
-        t1_last_question_text="",
-        t1_requires_free_text=True,
-        t1_sequence=list(test1_questions),
-        fio="",
-        city_name="",
-        city_id=None,
-        candidate_tz=DEFAULT_TZ,
-        t2_attempts={},
-        picked_recruiter_id=None,
-        picked_slot_id=None,
+    await save_state(
+        user_id,
+        State(
+            flow="interview",
+            t1_idx=0,
+            test1_answers={},
+            t1_last_prompt_id=None,
+            t1_last_question_text="",
+            t1_requires_free_text=True,
+            t1_sequence=list(test1_questions),
+            fio="",
+            city_name="",
+            city_id=None,
+            candidate_tz=DEFAULT_TZ,
+            t2_attempts={},
+            picked_recruiter_id=None,
+            picked_slot_id=None,
+        ),
     )
     await bot.send_message(user_id, await tpl(None, "t1_intro"))
     await send_test1_question(user_id)
@@ -566,27 +601,30 @@ async def start_introday_flow(message: Message):
     Запускаем Тест 2 → сразу выбор времени для ознакомительного дня.
     """
     user_id = message.from_user.id
-    prev = user_data.get(user_id, {})
+    prev = await get_state(user_id)
     fio = prev.get("fio", "")
     city_name = prev.get("city_name", "")
     city_id = prev.get("city_id", None)
     candidate_tz = prev.get("candidate_tz", DEFAULT_TZ)
 
-    user_data[user_id] = State(
-        flow="intro",
-        t1_idx=None,
-        test1_answers=prev.get("test1_answers", {}),
-        t1_last_prompt_id=None,
-        t1_last_question_text="",
-        t1_requires_free_text=False,
-        t1_sequence=prev.get("t1_sequence", list(test1_questions)),
-        fio=fio,
-        city_name=city_name,
-        city_id=city_id,
-        candidate_tz=candidate_tz,
-        t2_attempts={},
-        picked_recruiter_id=None,
-        picked_slot_id=None,
+    await save_state(
+        user_id,
+        State(
+            flow="intro",
+            t1_idx=None,
+            test1_answers=prev.get("test1_answers", {}),
+            t1_last_prompt_id=None,
+            t1_last_question_text="",
+            t1_requires_free_text=False,
+            t1_sequence=prev.get("t1_sequence", list(test1_questions)),
+            fio=fio,
+            city_name=city_name,
+            city_id=city_id,
+            candidate_tz=candidate_tz,
+            t2_attempts={},
+            picked_recruiter_id=None,
+            picked_slot_id=None,
+        ),
     )
     await start_test2(user_id)
 
@@ -596,7 +634,7 @@ async def start_introday_flow(message: Message):
 # =============================
 
 async def send_test1_question(user_id: int):
-    state = user_data.get(user_id)
+    state = await get_state(user_id)
     if not state:
         return
     idx = state.get("t1_idx", 0)
@@ -630,6 +668,7 @@ async def send_test1_question(user_id: int):
     state["t1_last_prompt_id"] = sent.message_id
     state["t1_last_question_text"] = base_text
     state["t1_current_idx"] = idx
+    await save_state(user_id, state)
 
 
 def _build_test1_options_markup(question_idx: int, options: List[Any]) -> InlineKeyboardMarkup:
@@ -673,7 +712,7 @@ def _shorten_answer(text: str, limit: int = 80) -> str:
 
 
 async def _mark_test1_question_answered(user_id: int, summary: str) -> None:
-    state = user_data.get(user_id)
+    state = await get_state(user_id)
     if not state:
         return
     prompt_id = state.get("t1_last_prompt_id")
@@ -688,10 +727,13 @@ async def _mark_test1_question_answered(user_id: int, summary: str) -> None:
     state["t1_last_prompt_id"] = None
     state["t1_last_question_text"] = ""
     state["t1_requires_free_text"] = False
+    await save_state(user_id, state)
 
 
 async def _save_test1_answer(user_id: int, question: Dict[str, Any], answer: str) -> None:
-    state = user_data[user_id]
+    state = await get_state(user_id)
+    if not state:
+        return
     state.setdefault("test1_answers", {})
     state["test1_answers"][question["id"]] = answer
     sequence = state.setdefault("t1_sequence", list(test1_questions))
@@ -725,6 +767,7 @@ async def _save_test1_answer(user_id: int, question: Dict[str, Any], answer: str
             if FOLLOWUP_STUDY_SCHEDULE["id"] not in existing_ids:
                 sequence.insert(insert_pos, FOLLOWUP_STUDY_SCHEDULE.copy())
                 existing_ids.add(FOLLOWUP_STUDY_SCHEDULE["id"])
+    await save_state(user_id, state)
 
 @dp.message()
 async def free_text_router(message: Message):
@@ -734,7 +777,7 @@ async def free_text_router(message: Message):
       - иначе игнорируем (Тест 2 кликается кнопками).
     """
     user_id = message.from_user.id
-    state = user_data.get(user_id)
+    state = await get_state(user_id)
     if not state:
         await send_welcome(user_id)
         return
@@ -745,7 +788,7 @@ async def free_text_router(message: Message):
 
 async def handle_test1_answer(message: Message):
     user_id = message.from_user.id
-    state = user_data.get(user_id)
+    state = await get_state(user_id)
     if not state:
         return
 
@@ -775,6 +818,7 @@ async def handle_test1_answer(message: Message):
     await _mark_test1_question_answered(user_id, _shorten_answer(ans))
 
     state["t1_idx"] = idx + 1
+    await save_state(user_id, state)
     if state["t1_idx"] >= total:
         await finalize_test1(user_id)
     else:
@@ -784,7 +828,7 @@ async def handle_test1_answer(message: Message):
 @dp.callback_query(F.data.startswith("t1opt:"))
 async def handle_test1_option(callback: CallbackQuery):
     user_id = callback.from_user.id
-    state = user_data.get(user_id)
+    state = await get_state(user_id)
     if not state or state.get("flow") != "interview":
         await callback.answer("Сценарий неактивен", show_alert=True)
         return
@@ -824,6 +868,7 @@ async def handle_test1_option(callback: CallbackQuery):
     await _mark_test1_question_answered(user_id, label)
 
     state["t1_idx"] = idx + 1
+    await save_state(user_id, state)
 
     await callback.answer(f"Выбрано: {label}")
 
@@ -834,7 +879,9 @@ async def handle_test1_option(callback: CallbackQuery):
 
 async def finalize_test1(user_id: int):
     """Завершили Тест 1 → отчёт → выбор рекрутёра/слота (видео-интервью)."""
-    state = user_data[user_id]
+    state = await get_state(user_id)
+    if not state:
+        return
     sequence = state.get("t1_sequence", list(test1_questions))
 
     # Сохраним анкету в файл
@@ -874,6 +921,7 @@ async def finalize_test1(user_id: int):
     state["t1_last_prompt_id"] = None
     state["t1_last_question_text"] = ""
     state["t1_requires_free_text"] = False
+    await save_state(user_id, state)
 
 
 # =============================
@@ -881,11 +929,14 @@ async def finalize_test1(user_id: int):
 # =============================
 
 async def start_test2(user_id: int):
-    state = user_data[user_id]
+    state = await get_state(user_id)
+    if not state:
+        return
     state["t2_attempts"] = {
         q_index: {"answers": [], "is_correct": False, "start_time": None}
         for q_index in range(len(test2_questions))
     }
+    await save_state(user_id, state)
     intro = await tpl(
         state.get("city_id"),
         "t2_intro",
@@ -897,7 +948,11 @@ async def start_test2(user_id: int):
     await send_test2_question(user_id, 0)
 
 async def send_test2_question(user_id: int, q_index: int):
-    user_data[user_id]["t2_attempts"][q_index]["start_time"] = datetime.now()
+    state = await get_state(user_id)
+    if not state or "t2_attempts" not in state:
+        return
+    state["t2_attempts"][q_index]["start_time"] = datetime.now()
+    await save_state(user_id, state)
     question = test2_questions[q_index]
     txt = (
         f"🔹 <b>Вопрос {q_index + 1}/{len(test2_questions)}</b>\n"
@@ -909,7 +964,7 @@ async def send_test2_question(user_id: int, q_index: int):
 @dp.callback_query(lambda c: c.data.startswith("answer_"))
 async def test2_answer_handler(callback: CallbackQuery):
     user_id = callback.from_user.id
-    state = user_data.get(user_id)
+    state = await get_state(user_id)
     if not state or "t2_attempts" not in state or state.get("flow") != "intro":
         await callback.answer()
         return
@@ -944,8 +999,10 @@ async def test2_answer_handler(callback: CallbackQuery):
         await callback.message.edit_text(final_feedback)
 
         if q_index < len(test2_questions) - 1:
+            await save_state(user_id, state)
             await send_test2_question(user_id, q_index + 1)
         else:
+            await save_state(user_id, state)
             await finalize_test2(user_id)
     else:
         attempts_left = MAX_ATTEMPTS - len(attempt["answers"])
@@ -953,17 +1010,22 @@ async def test2_answer_handler(callback: CallbackQuery):
         if attempts_left > 0:
             final_feedback += f"\nОсталось попыток: {attempts_left}"
             await callback.message.edit_text(final_feedback, reply_markup=create_keyboard(question["options"], q_index))
+            await save_state(user_id, state)
         else:
             final_feedback += "\n🚫 <i>Лимит попыток исчерпан</i>"
             await callback.message.edit_text(final_feedback)
             if q_index < len(test2_questions) - 1:
+                await save_state(user_id, state)
                 await send_test2_question(user_id, q_index + 1)
             else:
+                await save_state(user_id, state)
                 await finalize_test2(user_id)
 
 async def finalize_test2(user_id: int):
     """Завершили Тест 2 → сразу выбор времени (без выбора рекрутёра)."""
-    state = user_data[user_id]
+    state = await get_state(user_id)
+    if not state:
+        return
     total_correct = sum(1 for q in state["t2_attempts"] if state["t2_attempts"][q]["is_correct"])
     total_score = calculate_score(state["t2_attempts"])
     pct = total_correct / max(1, len(test2_questions))
@@ -977,7 +1039,7 @@ async def finalize_test2(user_id: int):
     if pct < PASS_THRESHOLD:
         fail_text = await tpl(state.get("city_id"), "result_fail")
         await bot.send_message(user_id, fail_text)
-        user_data.pop(user_id, None)
+        await clear_state(user_id)
         return
 
     await _show_recruiter_menu(user_id)
@@ -1000,12 +1062,12 @@ async def pick_recruiter(callback: CallbackQuery):
     rid_s = callback.data.split(":", 1)[1]
 
     if rid_s == "__again__":
-        state = user_data.get(user_id)
-        tz_label = (state or {}).get("candidate_tz", DEFAULT_TZ)
+        state = await get_state(user_id)
+        tz_label = state.get("candidate_tz", DEFAULT_TZ)
         kb = await kb_recruiters(tz_label)
         text = await tpl(state.get("city_id") if state else None, "choose_recruiter")
-        if state is not None:
-            state["picked_recruiter_id"] = None
+        state["picked_recruiter_id"] = None
+        await save_state(user_id, state)
         try:
             await callback.message.edit_text(text, reply_markup=kb)
         except TelegramBadRequest:
@@ -1025,12 +1087,13 @@ async def pick_recruiter(callback: CallbackQuery):
         await callback.answer("Рекрутёр не найден/не активен", show_alert=True)
         return
 
-    state = user_data.get(user_id)
+    state = await get_state(user_id)
     if not state:
         await callback.answer("Сессия истекла. Введите /start", show_alert=True)
         return
 
     state["picked_recruiter_id"] = rid
+    await save_state(user_id, state)
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
     slots_list = await get_free_slots_by_recruiter(rid)
     kb = await kb_slots_for_recruiter(rid, tz_label, slots=slots_list)
@@ -1054,7 +1117,7 @@ async def refresh_slots(callback: CallbackQuery):
         await callback.answer("Некорректный рекрутёр", show_alert=True)
         return
 
-    state = user_data.get(user_id)
+    state = await get_state(user_id)
     if not state:
         await callback.answer("Сессия истекла. Введите /start", show_alert=True)
         return
@@ -1065,6 +1128,7 @@ async def refresh_slots(callback: CallbackQuery):
         return
 
     state["picked_recruiter_id"] = rid
+    await save_state(user_id, state)
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
     slots_list = await get_free_slots_by_recruiter(rid)
     kb = await kb_slots_for_recruiter(rid, tz_label, slots=slots_list)
@@ -1090,7 +1154,7 @@ async def pick_slot(callback: CallbackQuery):
         await callback.answer("Слот не найден", show_alert=True)
         return
 
-    state = user_data.get(user_id)
+    state = await get_state(user_id)
     if not state:
         await callback.answer("Сессия истекла. Введите /start", show_alert=True)
         return
@@ -1193,7 +1257,7 @@ async def approve_slot_cb(callback: CallbackQuery):
     tz = slot.candidate_tz or DEFAULT_TZ
     labels = slot_local_labels(slot.start_utc, tz)
     template_key = "stage3_intro_invite" if getattr(slot, "purpose", "interview") == "intro_day" else "approved_msg"
-    state = user_data.get(slot.candidate_tg_id, {})
+    state = await get_state(slot.candidate_tg_id)
     text = await tpl(
         getattr(slot, "candidate_city_id", None),
         template_key,
@@ -1234,7 +1298,7 @@ async def reject_slot_cb(callback: CallbackQuery):
     await bot.send_message(slot.candidate_tg_id, "К сожалению, выбранное время недоступно.")
 
     # Показываем повторный выбор в зависимости от сценария
-    st = user_data.get(slot.candidate_tg_id, {})
+    st = await get_state(slot.candidate_tg_id)
     if st.get("flow") == "intro":
         await _show_recruiter_menu(slot.candidate_tg_id)
     else:
@@ -1265,10 +1329,11 @@ async def att_yes(callback: CallbackQuery):
         return
 
     # Отменим задачу confirm (если ещё ждёт)
-    key: RemKey = (slot_id, callback.from_user.id)
-    t = CONFIRM_TASKS.pop(key, None)
-    if t and not t.done():
-        t.cancel()
+    await state_manager.cancel_reminder(
+        slot_id=slot_id,
+        candidate_id=callback.from_user.id,
+        kind=REMINDER_KIND_CONFIRM,
+    )
 
     # Отправим ссылку на телемост (из рекрутёра)
     rec = await get_recruiter(slot.recruiter_id)
@@ -1302,13 +1367,16 @@ async def att_no(callback: CallbackQuery):
         return
 
     # Отменим задачи (подтверждение и фин. напоминание)
-    key: RemKey = (slot_id, slot.candidate_tg_id)
-    t = CONFIRM_TASKS.pop(key, None)
-    if t and not t.done():
-        t.cancel()
-    t2 = REMINDERS.pop(key, None)
-    if t2 and not t2.done():
-        t2.cancel()
+    await state_manager.cancel_reminder(
+        slot_id=slot_id,
+        candidate_id=slot.candidate_tg_id,
+        kind=REMINDER_KIND_CONFIRM,
+    )
+    await state_manager.cancel_reminder(
+        slot_id=slot_id,
+        candidate_id=slot.candidate_tg_id,
+        kind=REMINDER_KIND_SLOT,
+    )
 
     # Освободим слот
     await reject_slot(slot_id)
@@ -1326,7 +1394,7 @@ async def att_no(callback: CallbackQuery):
             pass
 
     # Кандидату — повторный выбор времени (если «intro»), иначе — рекрутёры
-    st = user_data.get(callback.from_user.id, {})
+    st = await get_state(callback.from_user.id)
     await bot.send_message(callback.from_user.id, await tpl(getattr(slot, "candidate_city_id", None), "att_declined"))
     if st.get("flow") == "intro":
         await _show_recruiter_menu(callback.from_user.id)
@@ -1374,8 +1442,15 @@ def get_rating(score: float) -> str:
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     me = await bot.get_me()
+    state_manager.set_bot_id(me.id)
     logging.warning(f"BOOT: using bot id={me.id}, username=@{me.username}")
-    await dp.start_polling(bot)
+    reminder_worker.register_handler(REMINDER_KIND_SLOT, _send_slot_reminder)
+    reminder_worker.register_handler(REMINDER_KIND_CONFIRM, _send_confirm_prompt)
+    await reminder_worker.start()
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await reminder_worker.stop()
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
