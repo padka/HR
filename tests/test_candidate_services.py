@@ -1,11 +1,19 @@
-from datetime import datetime
+import json
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
 
 from backend.core.db import async_session
 from backend.domain.candidates import services as candidate_services
-from backend.domain.candidates.models import AutoMessage, Notification, QuestionAnswer, TestResult, User
+from backend.domain.candidates.models import (
+    AutoMessage,
+    Notification,
+    QuestionAnswer,
+    SurveyResponse,
+    TestResult,
+    User,
+)
 
 
 @pytest.mark.asyncio
@@ -110,3 +118,36 @@ async def test_auto_messages_and_notifications():
         assert stored is not None
         assert stored.is_sent is True
         assert isinstance(stored.sent_at, datetime)
+
+
+@pytest.mark.asyncio
+async def test_save_and_load_survey_response():
+    user = await candidate_services.create_or_update_user(
+        telegram_id=3003,
+        fio="Сергей Смирнов",
+        city="Казань",
+    )
+
+    payload = {
+        "meta": {
+            "telegram_id": user.telegram_id,
+            "fio": user.fio,
+            "city": user.city,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        "questions": [
+            {"id": "fio", "prompt": "ФИО", "answer": user.fio},
+            {"id": "city", "prompt": "Город", "answer": user.city},
+        ],
+        "summary_text": "summary",
+    }
+
+    saved = await candidate_services.save_survey_response(user.id, payload)
+    assert isinstance(saved, SurveyResponse)
+
+    loaded = await candidate_services.load_survey_summary(user.id)
+    assert loaded is not None
+
+    restored = json.loads(loaded.answers_json)
+    assert restored["meta"]["fio"] == user.fio
+    assert restored["questions"][0]["prompt"] == "ФИО"

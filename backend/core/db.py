@@ -48,7 +48,7 @@ async def init_models() -> None:
     from backend.domain.base import Base
 
     async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
         await _ensure_city_owner_column(conn)
         await _ensure_slot_purpose_column(conn)
 

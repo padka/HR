@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
-from typing import List, Optional, Sequence
+from typing import Any, Mapping, List, Optional, Sequence
 
 from sqlalchemy import func, select
 
 from backend.core.db import async_session
-from .models import AutoMessage, Notification, QuestionAnswer, TestResult, User
+from .models import (
+    AutoMessage,
+    Notification,
+    QuestionAnswer,
+    SurveyResponse,
+    TestResult,
+    User,
+)
 
 
 async def create_or_update_user(telegram_id: int, fio: str, city: str) -> User:
@@ -68,6 +76,35 @@ async def save_test_result(
         await session.commit()
         await session.refresh(test_result)
         return test_result
+
+
+async def save_survey_response(
+    user_id: int, answers: Mapping[str, Any]
+) -> SurveyResponse:
+    """Persist candidate survey answers as JSON payload."""
+
+    async with async_session() as session:
+        response = SurveyResponse(
+            user_id=user_id,
+            answers_json=json.dumps(dict(answers), ensure_ascii=False),
+        )
+        session.add(response)
+        await session.commit()
+        await session.refresh(response)
+        return response
+
+
+async def load_survey_summary(user_id: int) -> Optional[SurveyResponse]:
+    """Return the most recent survey response for the given user."""
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(SurveyResponse)
+            .where(SurveyResponse.user_id == user_id)
+            .order_by(SurveyResponse.created_at.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
 
 
 async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:

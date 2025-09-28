@@ -16,13 +16,14 @@ Recruitment TG-bot (aiogram v3)
 - Entrypoint
 """
 
-import os
-import math
 import asyncio
-import logging
+import base64
 import html
+import json
+import logging
+import math
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Tuple, TypedDict
+from typing import Dict, Any, List, Optional, Tuple, TypedDict, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F
@@ -35,7 +36,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     ForceReply,
-    FSInputFile,
+    BufferedInputFile,
 )
 from aiogram.exceptions import TelegramBadRequest
 
@@ -57,6 +58,7 @@ from backend.core.settings import get_settings
 from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS
 from backend.domain.template_stages import STAGE_DEFAULTS
 from backend.domain.test_questions import load_all_test_questions
+from backend.domain.candidates import services as candidate_services
 
 
 # =============================
@@ -672,6 +674,102 @@ def _shorten_answer(text: str, limit: int = 80) -> str:
     return (cleaned[: limit - 1] + "…") if len(cleaned) > limit else cleaned
 
 
+def _normalize_filename_component(raw: Optional[str], fallback: str) -> str:
+    if not raw:
+        return fallback
+    cleaned = "".join(ch for ch in raw if ch.isalnum() or ch in {" ", "_", "-"}).strip()
+    return cleaned.replace(" ", "_") or fallback
+
+
+def _render_survey_summary(meta: Mapping[str, Any], questions: Sequence[Mapping[str, Any]]) -> str:
+    created_raw = meta.get("created_at")
+    created_dt = None
+    if isinstance(created_raw, str):
+        try:
+            created_dt = datetime.fromisoformat(created_raw)
+        except ValueError:
+            created_dt = None
+    if created_dt is None:
+        created_dt = datetime.now()
+
+    lines = [
+        "📋 Анкета кандидата (Тест 1)",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"Дата: {created_dt.astimezone().strftime('%Y-%m-%d %H:%M')}",
+        f"TG ID: {meta.get('telegram_id') or meta.get('tg_id') or '—'}",
+        f"ФИО: {meta.get('fio') or '—'}",
+        f"Город: {meta.get('city') or '—'}",
+        "",
+        "Ответы:",
+    ]
+
+    for entry in questions:
+        prompt = str(entry.get("prompt") or entry.get("title") or entry.get("id") or "—")
+        answer = entry.get("answer")
+        answer_text = "—" if answer is None or str(answer).strip() == "" else str(answer)
+        lines.append(f"- {prompt}\n  {answer_text}")
+
+    return "\n".join(lines)
+
+
+def _prepare_survey_attachment(
+    user_label: str,
+    payload: Any,
+    created_at: datetime,
+    fallback_label: str,
+) -> BufferedInputFile:
+    meta: Mapping[str, Any] = {}
+    questions: Sequence[Mapping[str, Any]] = []
+    summary_text: Optional[str] = None
+    html_content: Optional[str] = None
+    pdf_bytes: Optional[bytes] = None
+
+    if isinstance(payload, dict):
+        meta_candidate = payload.get("meta")
+        if isinstance(meta_candidate, dict):
+            meta = {**meta_candidate}
+        else:
+            meta = {}
+        meta.setdefault("telegram_id", meta.get("tg_id"))
+        questions_candidate = payload.get("questions")
+        if isinstance(questions_candidate, list):
+            questions = [entry for entry in questions_candidate if isinstance(entry, dict)]
+        summary_text = payload.get("summary_text") or payload.get("summary")
+        html_candidate = payload.get("report_html")
+        html_content = html_candidate if isinstance(html_candidate, str) else None
+        pdf_candidate = payload.get("report_pdf")
+        if isinstance(pdf_candidate, str):
+            try:
+                pdf_bytes = base64.b64decode(pdf_candidate)
+            except Exception:
+                pdf_bytes = pdf_candidate.encode("utf-8")
+        elif isinstance(pdf_candidate, (bytes, bytearray)):
+            pdf_bytes = bytes(pdf_candidate)
+    elif isinstance(payload, str):
+        summary_text = payload
+
+    if not meta:
+        meta = {"telegram_id": fallback_label, "fio": user_label, "city": "", "created_at": created_at.isoformat()}
+    else:
+        meta.setdefault("telegram_id", meta.get("telegram_id") or fallback_label)
+        meta.setdefault("fio", meta.get("fio") or user_label)
+        meta.setdefault("city", meta.get("city") or "")
+        meta.setdefault("created_at", meta.get("created_at") or created_at.isoformat())
+
+    if not summary_text:
+        if questions:
+            summary_text = _render_survey_summary(meta, questions)
+        else:
+            summary_text = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    base_label = _normalize_filename_component(user_label, fallback_label)
+
+    if pdf_bytes:
+        return BufferedInputFile(pdf_bytes, filename=f"report_{base_label}.pdf")
+    if html_content:
+        return BufferedInputFile(html_content.encode("utf-8"), filename=f"report_{base_label}.html")
+
+    return BufferedInputFile(summary_text.encode("utf-8"), filename=f"test1_{base_label}.txt")
 async def _mark_test1_question_answered(user_id: int, summary: str) -> None:
     state = user_data.get(user_id)
     if not state:
@@ -836,28 +934,38 @@ async def finalize_test1(user_id: int):
     """Завершили Тест 1 → отчёт → выбор рекрутёра/слота (видео-интервью)."""
     state = user_data[user_id]
     sequence = state.get("t1_sequence", list(test1_questions))
-
-    # Сохраним анкету в файл
-    lines = [
-        "📋 Анкета кандидата (Тест 1)",
-        "━━━━━━━━━━━━━━━━━━━━",
-        f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"TG ID: {user_id}",
-        f"ФИО: {state.get('fio') or '—'}",
-        f"Город: {state.get('city_name') or '—'}",
-        "",
-        "Ответы:",
-    ]
+    answers = state.get("test1_answers") or {}
+    created_at = datetime.now(timezone.utc)
+    meta = {
+        "telegram_id": user_id,
+        "fio": state.get("fio") or "",
+        "city": state.get("city_name") or "",
+        "created_at": created_at.isoformat(),
+    }
+    question_entries: List[Dict[str, Any]] = []
     for q in sequence:
-        qid = q["id"]
-        lines.append(f"- {q['prompt']}\n  {state['test1_answers'].get(qid, '—')}")
+        qid = q.get("id")
+        prompt = q.get("prompt") or str(qid)
+        answer_value = answers.get(qid, "—")
+        question_entries.append({"id": qid, "prompt": prompt, "answer": answer_value})
 
-    fname = f"test1_{(state.get('fio') or user_id)}.txt"
-    try:
-        with open(fname, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-    except Exception:
-        pass
+    summary_text = _render_survey_summary(meta, question_entries)
+
+    fio_value = state.get("fio") or str(user_id)
+    city_value = state.get("city_name") or ""
+    user_record = await candidate_services.create_or_update_user(
+        telegram_id=user_id,
+        fio=fio_value,
+        city=city_value,
+    )
+    state["candidate_db_id"] = user_record.id
+
+    payload = {
+        "meta": meta,
+        "questions": question_entries,
+        "summary_text": summary_text,
+    }
+    await candidate_services.save_survey_response(user_record.id, payload)
 
     invite_text = await tpl(
         state.get("city_id"),
@@ -1135,15 +1243,39 @@ async def pick_slot(callback: CallbackQuery):
     )
 
     attached = False
-    for name in [f"test1_{state.get('fio') or user_id}.txt", f"report_{state.get('fio') or user_id}.txt"]:
-        if os.path.exists(name):
+    attachment: Optional[BufferedInputFile] = None
+    candidate_db_id = state.get("candidate_db_id")
+    if not candidate_db_id:
+        db_user = await candidate_services.get_user_by_telegram_id(user_id)
+        if db_user:
+            candidate_db_id = db_user.id
+            state["candidate_db_id"] = candidate_db_id
+    if candidate_db_id:
+        survey_response = await candidate_services.load_survey_summary(candidate_db_id)
+        if survey_response:
             try:
-                if rec and rec.tg_chat_id:
-                    await bot.send_document(rec.tg_chat_id, FSInputFile(name), caption=caption, reply_markup=kb_approve(slot.id))
-                    attached = True
-            except Exception:
-                pass
-            break
+                payload = json.loads(survey_response.answers_json)
+            except json.JSONDecodeError:
+                payload = survey_response.answers_json
+            created_at = survey_response.created_at or datetime.now(timezone.utc)
+            attachment = _prepare_survey_attachment(
+                state.get("fio") or str(user_id),
+                payload,
+                created_at,
+                str(user_id),
+            )
+
+    if rec and rec.tg_chat_id and attachment is not None:
+        try:
+            await bot.send_document(
+                rec.tg_chat_id,
+                document=attachment,
+                caption=caption,
+                reply_markup=kb_approve(slot.id),
+            )
+            attached = True
+        except Exception:
+            pass
 
     if rec and rec.tg_chat_id and not attached:
         try:

@@ -3,6 +3,7 @@
 from . import models  # noqa: F401  # ensure models are registered
 from .services import (  # noqa: F401
     create_or_update_user,
+    save_survey_response,
     save_test_result,
     get_user_by_telegram_id,
     get_all_active_users,
@@ -11,10 +12,12 @@ from .services import (  # noqa: F401
     get_active_auto_messages,
     create_notification,
     mark_notification_sent,
+    load_survey_summary,
 )
 
 __all__ = [
     "create_or_update_user",
+    "save_survey_response",
     "save_test_result",
     "get_user_by_telegram_id",
     "get_all_active_users",
@@ -23,4 +26,5 @@ __all__ = [
     "get_active_auto_messages",
     "create_notification",
     "mark_notification_sent",
+    "load_survey_summary",
 ]
