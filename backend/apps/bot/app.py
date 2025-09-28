@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
-from .reminders import AsyncioReminderQueue
+from .reminders import AsyncioReminderQueue, ReminderQueue
 from .services import BotContext, StateManager
 
 __all__ = [
@@ -33,8 +33,23 @@ def create_dispatcher() -> Dispatcher:
     return Dispatcher()
 
 
-def create_application(token: str | None = None) -> BotContext:
-    """Create and configure the bot application components."""
+def create_application(
+    token: str | None = None,
+    *,
+    reminder_queue: ReminderQueue | None = None,
+) -> BotContext:
+    """Create and configure the bot application components.
+
+    Parameters
+    ----------
+    token:
+        Explicit bot token override. Falls back to :data:`BOT_TOKEN` when ``None``.
+    reminder_queue:
+        Optional reminder queue implementation. When omitted, an in-memory
+        :class:`AsyncioReminderQueue` is created. Supplying a custom queue allows
+        embedding persistent schedulers (Redis, APScheduler, etc.) without
+        touching business logic.
+    """
     bot = create_bot(token)
     dispatcher = create_dispatcher()
     state_manager = StateManager()
@@ -42,7 +57,7 @@ def create_application(token: str | None = None) -> BotContext:
         bot=bot,
         dispatcher=dispatcher,
         state_manager=state_manager,
-        reminder_queue=AsyncioReminderQueue(),
+        reminder_queue=reminder_queue or AsyncioReminderQueue(),
     )
     register_routers(dispatcher, context)
     return context
