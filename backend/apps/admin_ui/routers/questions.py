@@ -6,7 +6,11 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from backend.apps.admin_ui.config import templates as jinja_templates
-from backend.apps.admin_ui import services
+from backend.apps.admin_ui.services.questions import (
+    get_test_question_detail,
+    list_test_questions,
+    update_test_question,
+)
 from backend.apps.admin_ui.utils import parse_optional_int
 
 
@@ -23,7 +27,7 @@ ERROR_MESSAGES = {
 
 @router.get("", response_class=HTMLResponse)
 async def questions_list(request: Request):
-    tests = await services.list_test_questions()
+    tests = await list_test_questions()
     context = {
         "request": request,
         "tests": tests,
@@ -33,7 +37,7 @@ async def questions_list(request: Request):
 
 @router.get("/{question_id}/edit", response_class=HTMLResponse)
 async def questions_edit(request: Request, question_id: int):
-    detail = await services.get_test_question_detail(question_id)
+    detail = await get_test_question_detail(question_id)
     if not detail:
         return RedirectResponse(url="/questions", status_code=303)
 
@@ -59,7 +63,7 @@ async def questions_update(
     if index_value is None or index_value < 1:
         return RedirectResponse(url=f"/questions/{question_id}/edit?err=index_required", status_code=303)
 
-    success, error = await services.update_test_question(
+    success, error = await update_test_question(
         question_id,
         title=title,
         test_id=test_id,

@@ -33,6 +33,24 @@ def fmt_utc(dt_utc: datetime) -> str:
     return dt_utc.astimezone(timezone.utc).strftime("%d.%m %H:%M")
 
 
+def format_optional_local(
+    dt: Optional[datetime],
+    tz: Optional[str],
+    fmt: str = "%d.%m.%Y %H:%M",
+) -> Optional[str]:
+    """Format ``dt`` for the provided ``tz`` if both are present."""
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    tz_name = tz or DEFAULT_TZ
+    try:
+        local = dt.astimezone(safe_zone(tz_name))
+    except Exception:
+        local = dt.astimezone(ZoneInfo(DEFAULT_TZ))
+    return local.strftime(fmt)
+
+
 def norm_status(st) -> Optional[str]:
     if st is None:
         return None

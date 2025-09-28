@@ -4,7 +4,17 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from backend.apps.admin_ui.config import templates
-from backend.apps.admin_ui import services
+from backend.apps.admin_ui.services.cities import (
+    create_city,
+    list_cities,
+    city_owner_field_name,
+    update_city_settings as update_city_settings_service,
+)
+from backend.apps.admin_ui.services.recruiters import list_recruiters
+from backend.apps.admin_ui.services.templates import (
+    get_stage_templates,
+    stage_payload_for_ui,
+)
 from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 
 router = APIRouter(prefix="/cities", tags=["cities"])
@@ -12,16 +22,16 @@ router = APIRouter(prefix="/cities", tags=["cities"])
 
 @router.get("", response_class=HTMLResponse)
 async def cities_list(request: Request):
-    cities = await services.list_cities()
-    owner_field = services.city_owner_field_name()
-    recruiters = await services.list_recruiters()
+    cities = await list_cities()
+    owner_field = city_owner_field_name()
+    recruiters = await list_recruiters()
     owners = {c.id: getattr(c, owner_field, None) if owner_field else None for c in cities}
     rec_map = {r.id: r for r in recruiters}
-    stage_map = await services.get_stage_templates(
+    stage_map = await get_stage_templates(
         city_ids=[c.id for c in cities], include_global=True
     )
     city_stages: Dict[int, object] = {
-        city.id: services.stage_payload_for_ui(stage_map.get(city.id, {})) for city in cities
+        city.id: stage_payload_for_ui(stage_map.get(city.id, {})) for city in cities
     }
     context = {
         "request": request,
@@ -47,7 +57,7 @@ async def cities_create(
     name: str = Form(...),
     tz: str = Form("Europe/Moscow"),
 ):
-    await services.create_city(name, tz)
+    await create_city(name, tz)
     return RedirectResponse(url="/cities", status_code=303)
 
 
@@ -67,7 +77,7 @@ async def update_city_settings(city_id: int, request: Request):
     if not isinstance(templates_payload, dict):
         templates_payload = {}
 
-    error = await services.update_city_settings(
+    error = await update_city_settings_service(
         city_id,
         responsible_id=responsible_id,
         templates=templates_payload,

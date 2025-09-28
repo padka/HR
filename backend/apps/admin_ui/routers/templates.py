@@ -4,14 +4,17 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from backend.apps.admin_ui.config import templates as jinja_templates
-from backend.apps.admin_ui import services
+from backend.apps.admin_ui.services.templates import (
+    list_templates,
+    update_templates_for_city,
+)
 
 router = APIRouter(prefix="/templates", tags=["templates"])
 
 
 @router.get("", response_class=HTMLResponse)
 async def templates_list(request: Request):
-    overview = await services.list_templates()
+    overview = await list_templates()
     context = {
         "request": request,
         "overview": overview,
@@ -35,5 +38,5 @@ async def templates_save(request: Request):
     if not isinstance(templates_payload, dict):
         templates_payload = {}
 
-    await services.update_templates_for_city(city_id, templates_payload)
+    await update_templates_for_city(city_id, templates_payload)
     return JSONResponse({"ok": True})

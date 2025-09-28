@@ -4,7 +4,12 @@ from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from backend.apps.admin_ui.config import templates
-from backend.apps.admin_ui import services
+from backend.apps.admin_ui.services.recruiters import list_recruiters
+from backend.apps.admin_ui.services.slots import (
+    create_slot,
+    list_slots,
+    recruiters_for_slot_form,
+)
 from backend.apps.admin_ui.utils import parse_optional_int, status_filter
 
 router = APIRouter(prefix="/slots", tags=["slots"])
@@ -20,8 +25,8 @@ async def slots_list(
 ):
     recruiter = parse_optional_int(recruiter_id)
     status_norm = status_filter(status)
-    result = await services.list_slots(recruiter, status_norm, page, per_page)
-    recruiters = await services.list_recruiters()
+    result = await list_slots(recruiter, status_norm, page, per_page)
+    recruiters = await list_recruiters()
     context = {
         "request": request,
         "slots": result["items"],
@@ -37,7 +42,7 @@ async def slots_list(
 
 @router.get("/new", response_class=HTMLResponse)
 async def slots_new(request: Request):
-    recruiters = await services.recruiters_for_slot_form()
+    recruiters = await recruiters_for_slot_form()
     return templates.TemplateResponse("slots_new.html", {"request": request, "recruiters": recruiters})
 
 
@@ -47,6 +52,6 @@ async def slots_create(
     date: str = Form(...),
     time: str = Form(...),
 ):
-    ok = await services.create_slot(recruiter_id, date, time)
+    ok = await create_slot(recruiter_id, date, time)
     redirect = "/slots" if ok else "/slots/new"
     return RedirectResponse(url=redirect, status_code=303)
