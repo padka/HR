@@ -13,6 +13,13 @@
     --fg: #e9eef6;
     --muted: #aab3c2;
 
+    /* layout backgrounds */
+    --bg-gradient: linear-gradient(180deg, #0b0e13 0%, #0d1118 100%);
+    --halo-gradient:
+      radial-gradient(40% 40% at 10% 0%, rgba(105,183,255,.16), transparent 60%),
+      radial-gradient(45% 45% at 90% 85%, rgba(184,137,255,.16), transparent 62%),
+      radial-gradient(35% 35% at 65% 35%, rgba(35,209,139,.16), transparent 65%);
+
     /* accents */
     --accent: #69b7ff;
     --accent-2: #b889ff;
@@ -46,11 +53,27 @@
     --blur: 16px;             /* base blur for panes */
     --sat: 1.35;              /* base saturation */
     --bright: 1.02;           /* base brightness to lift content */
+
+    /* component tokens */
+    --brand-color: #fff;
+    --brand-shadow: 0 1px 2px rgba(0,0,0,.35);
+    --nav-active-bg: rgba(255,255,255,.06);
+    --nav-active-color: #fff;
+    --badge-bg: rgba(255,255,255,.06);
+    --table-hover: rgba(255,255,255,.03);
+    --input-bg: rgba(12,14,19,.65);
+    --button-bg: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02));
+    --button-bg-hover: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.04));
   }
 
   @media (prefers-color-scheme: light) {
     :root {
       --bg: #f6f7fb; --fg: #0f1a2a; --muted: #5b6372;
+      --bg-gradient: linear-gradient(180deg, #f6f7fb 0%, #e7ebf5 100%);
+      --halo-gradient:
+        radial-gradient(40% 40% at 10% 0%, rgba(45,124,255,.20), transparent 65%),
+        radial-gradient(45% 45% at 90% 85%, rgba(184,137,255,.16), transparent 70%),
+        radial-gradient(35% 35% at 65% 35%, rgba(35,209,139,.18), transparent 70%);
       --glass-tint: rgba(255,255,255,.55);
       --glass-stroke: rgba(0,0,0,.12);
       --glass-inner: rgba(255,255,255,.35);
@@ -62,6 +85,15 @@
       --ring: #2d7cff;
       --row-sep: rgba(0,0,0,.06); --border: rgba(0,0,0,.12);
       --bright: 1.00;
+      --brand-color: var(--fg);
+      --brand-shadow: 0 1px 0 rgba(255,255,255,.6);
+      --nav-active-bg: color-mix(in oklab, var(--ring) 18%, rgba(255,255,255,.8));
+      --nav-active-color: var(--fg);
+      --badge-bg: rgba(255,255,255,.85);
+      --table-hover: rgba(45,124,255,.08);
+      --input-bg: rgba(255,255,255,.85);
+      --button-bg: linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.75));
+      --button-bg-hover: linear-gradient(180deg, rgba(255,255,255,1), rgba(255,255,255,.82));
     }
   }
 
@@ -73,7 +105,7 @@
     background:
       radial-gradient(1200px 800px at 10% 0%, rgba(105,183,255,.10), transparent 60%),
       radial-gradient(1200px 900px at 100% 100%, rgba(184,137,255,.10), transparent 60%),
-      linear-gradient(180deg, #0b0e13 0%, #0d1118 100%);
+      var(--bg-gradient);
     color: var(--fg);
     font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji";
     overflow-x: hidden;
@@ -82,10 +114,7 @@
   /* Ambient halo (static, minimal motion) */
   .halo {
     position: fixed; inset: -30%; z-index: -2; pointer-events: none;
-    background:
-      radial-gradient(40% 40% at 10% 0%, rgba(105,183,255,.16), transparent 60%),
-      radial-gradient(45% 45% at 90% 85%, rgba(184,137,255,.16), transparent 62%),
-      radial-gradient(35% 35% at 65% 35%, rgba(35,209,139,.16), transparent 65%);
+    background: var(--halo-gradient);
     filter: blur(55px) saturate(1.1);
   }
 
@@ -163,9 +192,9 @@
   .nav::before { background: linear-gradient( to top left, rgba(255,255,255,.14), transparent 60% ); mix-blend-mode: screen; }
   .nav::after { box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
 
-  .nav .brand { font-weight: 800; letter-spacing: .2px; color: #fff; margin-right: 6px; text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+  .nav .brand { font-weight: 800; letter-spacing: .2px; color: var(--brand-color); margin-right: 6px; text-shadow: var(--brand-shadow); }
   .nav a { color: var(--fg); opacity: .85; padding: 6px 10px; border-radius: 8px; }
-  .nav a.active { color: #fff; font-weight: 600; background: rgba(255,255,255,.06); box-shadow: inset 0 1px 0 rgba(255,255,255,.08); text-decoration: none; }
+  .nav a.active { color: var(--nav-active-color); font-weight: 600; background: var(--nav-active-bg); box-shadow: inset 0 1px 0 rgba(255,255,255,.08); text-decoration: none; }
 
   .container { max-width: 1100px; margin: 0 auto; padding: 16px; }
 
@@ -181,7 +210,7 @@
 
   .card h4 { margin: 0 0 10px 0; font-size: 13px; color: var(--muted); font-weight: 700; letter-spacing: .32px; text-transform: uppercase; }
   .card .big { font-size: 30px; font-weight: 900; letter-spacing: .2px; }
-  .badge { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--glass-stroke); background: rgba(255,255,255,.06); color: var(--muted); font-size: 12px; }
+  .badge { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--glass-stroke); background: var(--badge-bg); color: var(--muted); font-size: 12px; }
   .muted { color: var(--muted); }
 
   /* tables in glass */
@@ -193,7 +222,7 @@
     padding: 10px 12px;
   }
   tbody td { padding: 10px 12px; border-bottom: 1px solid var(--row-sep); }
-  tbody tr:hover { background: rgba(255,255,255,.03); }
+  tbody tr:hover { background: var(--table-hover); }
   table { background: linear-gradient(180deg, var(--glass-tint), rgba(255,255,255,.015)); border: 1px solid var(--glass-stroke); box-shadow: var(--shadow-1); }
   @supports ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {
     table { backdrop-filter: blur(14px) saturate(1.25); -webkit-backdrop-filter: blur(14px) saturate(1.25); }
@@ -202,7 +231,7 @@
   /* forms */
   form label { display: inline-block; margin: 6px 12px 6px 0; }
   input, select, textarea {
-    background: rgba(12,14,19,.65);
+    background: var(--input-bg);
     color: var(--fg);
     border: 1px solid var(--glass-stroke);
     border-radius: var(--radius-md);
@@ -218,13 +247,13 @@
   button, .btn {
     display: inline-block; padding: 9px 14px; border-radius: var(--radius-md);
     border: 1px solid var(--glass-stroke);
-    background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02));
+    background: var(--button-bg);
     color: var(--fg); cursor: pointer;
     box-shadow: var(--shadow-1), inset 0 1px 0 rgba(255,255,255,.06);
     transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
     position: relative; overflow: hidden;
   }
-  button:hover, .btn:hover { background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.04)); transform: translateY(-.5px); box-shadow: var(--shadow-2); text-decoration: none; }
+  button:hover, .btn:hover { background: var(--button-bg-hover); transform: translateY(-.5px); box-shadow: var(--shadow-2); text-decoration: none; }
   button:active, .btn:active { transform: translateY(0); box-shadow: var(--shadow-1); }
   button:focus-visible, .btn:focus-visible { outline: none; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ring) 32%, transparent), var(--shadow-2); }
 
