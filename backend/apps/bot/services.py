@@ -605,7 +605,7 @@ async def finalize_test1(user_id: int) -> None:
         "stage1_invite",
         candidate_fio=state.get("fio") or "",
         city_name=state.get("city_name") or "",
-        interview_dt_hint="выберите удобное время из списка ниже",
+        interview_dt_hint="выберите удобное время из списка ниже (по-вашему времени)",
     )
     await bot.send_message(user_id, invite_text)
 
