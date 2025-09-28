@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from backend.apps.bot.app import main
+from backend.apps.bot import main
 
 
 def run() -> None:
