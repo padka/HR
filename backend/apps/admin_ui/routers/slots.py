@@ -1,4 +1,5 @@
-from typing import Optional
+from collections import Counter
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -26,16 +27,29 @@ async def slots_list(
     recruiter = parse_optional_int(recruiter_id)
     status_norm = status_filter(status)
     result = await list_slots(recruiter, status_norm, page, per_page)
-    recruiters = await list_recruiters()
+    recruiter_rows = await list_recruiters()
+    recruiter_options = [row["rec"] for row in recruiter_rows]
+    slots = result["items"]
+    status_counter: Counter[str] = Counter()
+    for slot in slots:
+        status = getattr(slot.status, "value", slot.status)
+        status_counter[str(status)] += 1
+    status_counts: Dict[str, int] = {
+        "total": len(slots),
+        "FREE": status_counter.get("FREE", 0),
+        "PENDING": status_counter.get("PENDING", 0),
+        "BOOKED": status_counter.get("BOOKED", 0),
+    }
     context = {
         "request": request,
-        "slots": result["items"],
+        "slots": slots,
         "filter_recruiter_id": recruiter,
         "filter_status": status_norm,
         "page": result["page"],
         "pages_total": result["pages_total"],
         "per_page": per_page,
-        "recruiters": recruiters,
+        "recruiter_options": recruiter_options,
+        "status_counts": status_counts,
     }
     return templates.TemplateResponse("slots_list.html", context)
 

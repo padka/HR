@@ -12,9 +12,15 @@ router = APIRouter()
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     counts = await dashboard_counts()
-    recruiters = await list_recruiters()
+    recruiter_rows = await list_recruiters()
+    recruiters = [row["rec"] for row in recruiter_rows]
     cities = await list_cities()
     return templates.TemplateResponse(
         "index.html",
-        {"request": request, "counts": counts, "recruiters": recruiters, "cities": cities},
+        {
+            "request": request,
+            "counts": counts,
+            "recruiters": recruiters,
+            "cities": cities,
+        },
     )
