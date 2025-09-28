@@ -32,3 +32,19 @@ python3 -m pytest
 If you prefer to call `pytest` directly, ensure that your shell `PATH` includes
 `~/.local/bin` (or the equivalent directory where your Python environment
 installs console scripts).
+
+## Database migrations and seed data
+
+The database schema is managed through Python migration scripts located under
+`backend/migrations`. Both the web applications and the bot call
+`backend.core.db.init_models()` during startup, which upgrades the database to
+the latest revision and applies the default seed data.
+
+For brand new environments or CI setups you can run the same logic manually:
+
+```bash
+python -c "from backend.migrations import upgrade_to_head; upgrade_to_head()"
+```
+
+The seeding step is idempotent and can be executed multiple times without
+creating duplicate cities, recruiters or test questions.
