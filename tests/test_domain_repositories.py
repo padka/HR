@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
+from backend.apps.bot.services import handle_recruiter_identity_command
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.repositories import (
@@ -123,3 +125,35 @@ async def test_slot_workflow_and_templates():
 
     again = await set_recruiter_chat_id_by_command("unknown", chat_id=1)
     assert again is None
+
+
+@pytest.mark.asyncio
+async def test_iam_command_updates_recruiter_chat_id():
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Софья", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+
+    responses = []
+
+    class DummyMessage:
+        def __init__(self, text: str, chat_id: int) -> None:
+            self.text = text
+            self.chat = SimpleNamespace(id=chat_id)
+            self.from_user = SimpleNamespace(id=chat_id)
+
+        async def answer(self, text: str, **kwargs) -> None:
+            responses.append(text)
+
+    message = DummyMessage("/iam Софья", chat_id=987654321)
+
+    await handle_recruiter_identity_command(message)
+
+    async with async_session() as session:
+        updated = await session.get(models.Recruiter, recruiter_id)
+        assert updated is not None
+        assert updated.tg_chat_id == 987654321
+
+    assert any("Готово" in resp for resp in responses)

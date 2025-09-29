@@ -25,6 +25,7 @@ from backend.domain.repositories import (
     get_slot,
     reject_slot,
     reserve_slot,
+    set_recruiter_chat_id_by_command,
 )
 
 from . import templates
@@ -303,6 +304,28 @@ async def send_welcome(user_id: int) -> None:
         "Нажмите «Начать», чтобы заполнить мини-анкету и выбрать время для интервью."
     )
     await bot.send_message(user_id, text, reply_markup=kb_start())
+
+
+async def handle_recruiter_identity_command(message: Message) -> None:
+    """Process the `/iam` command sent by a recruiter."""
+
+    text = (message.text or "").strip()
+    _, _, args = text.partition(" ")
+    name_hint = args.strip()
+    if not name_hint:
+        await message.answer("Используйте команду в формате: /iam <Имя>")
+        return
+
+    updated = await set_recruiter_chat_id_by_command(name_hint, chat_id=message.chat.id)
+    if not updated:
+        await message.answer(
+            "Рекрутер не найден. Убедитесь, что имя совпадает с записью в системе."
+        )
+        return
+
+    await message.answer(
+        "Готово! Уведомления о брони и подтверждениях будут приходить в этот чат."
+    )
 
 
 async def start_introday_flow(message: Message) -> None:

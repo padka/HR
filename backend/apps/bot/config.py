@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
+import logging
+
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.enums import ParseMode
 
@@ -48,7 +50,13 @@ class State(TypedDict, total=False):
     picked_slot_id: Optional[int]
 
 
-_QUESTIONS_BANK = load_all_test_questions()
+try:
+    _QUESTIONS_BANK = load_all_test_questions()
+except Exception:  # pragma: no cover - fallback for missing DB tables
+    logging.getLogger(__name__).warning(
+        "Falling back to default test questions; database is not available."
+    )
+    _QUESTIONS_BANK = DEFAULT_TEST_QUESTIONS
 TEST2_QUESTIONS: List[Dict[str, Any]] = (
     _QUESTIONS_BANK.get("test2", DEFAULT_TEST_QUESTIONS.get("test2", [])).copy()
 )
