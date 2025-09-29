@@ -1,108 +1,504 @@
 {% extends "base.html" %}
 {% block title %}Дашборд{% endblock %}
 {% block content %}
+<style>
+  .dashboard-hero {
+    position: relative;
+    margin-bottom: 28px;
+    padding: clamp(24px, 4vw, 36px);
+    display: grid;
+    gap: clamp(20px, 3vw, 40px);
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    grid-template-areas: "hero-text hero-actions";
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 24%, transparent) 0%, transparent 60%),
+                linear-gradient(200deg, color-mix(in srgb, var(--accent-2) 20%, transparent) 8%, transparent 70%),
+                linear-gradient(180deg, var(--glass-tint), rgba(0,0,0,.18));
+    border-radius: clamp(var(--radius-lg), 5vw, 32px);
+    border: 1px solid var(--glass-stroke);
+    box-shadow: var(--shadow-3);
+    overflow: hidden;
+  }
 
-<!-- Тулбар дашборда: заголовок + быстрые действия в Liquid Glass -->
-<div class="card glass grain" data-tilt style="margin: 0 0 12px; padding: 12px;">
-  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-    <h3 style="margin:0;">Дашборд</h3>
-    <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
-      <a class="btn" href="/slots/new">+ Новый слот</a>
-      <a class="btn" href="/recruiters/new">+ Новый рекрутёр</a>
-      <a class="btn" href="/cities/new">+ Новый город</a>
-      <a class="btn" href="/templates/new">+ Новый шаблон</a>
+  .dashboard-hero::before {
+    content: "";
+    position: absolute;
+    inset: -60% -20% auto;
+    height: 120%;
+    background: radial-gradient(45% 45% at 12% 24%, color-mix(in srgb, var(--accent) 60%, transparent), transparent 70%);
+    opacity: .45;
+    pointer-events: none;
+    filter: blur(18px) saturate(1.2);
+  }
+
+  .dashboard-hero::after {
+    content: "";
+    position: absolute;
+    inset: auto -40% -70% 50%;
+    width: 320px;
+    height: 320px;
+    transform: translateX(-50%);
+    background: radial-gradient(50% 50% at 50% 50%, color-mix(in srgb, var(--accent-2) 55%, transparent) 0%, transparent 70%);
+    opacity: .28;
+    pointer-events: none;
+    filter: blur(30px);
+  }
+
+  .hero__copy {
+    position: relative;
+    z-index: 1;
+    grid-area: hero-text;
+    display: grid;
+    gap: 14px;
+  }
+
+  .hero__eyebrow {
+    margin: 0;
+    font-size: 12px;
+    letter-spacing: .38px;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
+  }
+
+  .hero__title {
+    margin: 0;
+    font-size: clamp(26px, 4vw, 38px);
+    font-weight: 800;
+    letter-spacing: -.4px;
+    color: var(--fg-strong);
+    text-shadow: var(--brand-shadow);
+  }
+
+  .hero__description {
+    margin: 0;
+    font-size: 15px;
+    color: color-mix(in srgb, var(--fg) 85%, var(--muted) 15%);
+    max-width: 520px;
+    line-height: 1.6;
+  }
+
+  .hero__actions {
+    position: relative;
+    z-index: 1;
+    grid-area: hero-actions;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  .hero__actions-title {
+    margin: 0;
+    font-size: 13px;
+    letter-spacing: .32px;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
+  }
+
+  .hero__cta-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .hero__cta-secondary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .btn--primary {
+    --btn-primary-bg: linear-gradient(135deg, color-mix(in srgb, var(--accent) 82%, transparent) 0%, color-mix(in srgb, var(--accent) 35%, transparent) 100%);
+    background: var(--btn-primary-bg);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+    color: var(--fg-strong);
+    box-shadow: 0 12px 30px rgba(45,124,255,.24), inset 0 1px 0 rgba(255,255,255,.28);
+  }
+
+  .btn--primary:hover {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 92%, transparent) 0%, color-mix(in srgb, var(--accent) 45%, transparent) 100%);
+  }
+
+  .btn--ghost {
+    background: color-mix(in srgb, var(--bg) 60%, transparent 40%);
+    border-color: color-mix(in srgb, var(--glass-stroke) 60%, transparent);
+    color: var(--fg);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  }
+
+  .btn--ghost:hover {
+    background: color-mix(in srgb, var(--bg) 75%, transparent 25%);
+  }
+
+  .dashboard-metrics {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-bottom: 32px;
+  }
+
+  @media (max-width: 640px) {
+    .dashboard-hero {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "hero-text"
+        "hero-actions";
+      text-align: left;
+    }
+
+    .hero__actions {
+      align-items: flex-start;
+    }
+
+    .dashboard-metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 420px) {
+    .dashboard-metrics {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hero__cta-group,
+    .hero__cta-secondary {
+      width: 100%;
+    }
+
+    .hero__cta-group .btn,
+    .hero__cta-secondary .btn {
+      flex: 1 1 auto;
+      justify-content: center;
+    }
+  }
+
+  .metric-card {
+    position: relative;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 1fr minmax(80px, auto);
+    grid-template-areas:
+      "metric-label metric-analytics"
+      "metric-value metric-analytics"
+      "metric-meta metric-meta";
+    padding: 20px;
+  }
+
+  .metric-card__label {
+    grid-area: metric-label;
+    font-size: 13px;
+    letter-spacing: .32px;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
+    font-weight: 700;
+  }
+
+  .metric-card__value {
+    grid-area: metric-value;
+    font-size: clamp(30px, 6vw, 42px);
+    font-weight: 900;
+    letter-spacing: -.2px;
+    color: var(--fg-strong);
+  }
+
+  .metric-card__meta {
+    grid-area: metric-meta;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .metric-card__link {
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .metric-card__badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .metric-card__analytics {
+    grid-area: metric-analytics;
+    justify-self: end;
+    align-self: stretch;
+    min-width: 72px;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--bg) 65%, rgba(255,255,255,.08) 35%);
+    border: 1px dashed color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+    opacity: .8;
+  }
+
+  .badge--soft {
+    border-color: color-mix(in srgb, var(--badge-border) 60%, transparent);
+    background: color-mix(in srgb, var(--badge-bg) 75%, transparent 25%);
+  }
+
+  .badge--success {
+    border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+    background: color-mix(in srgb, var(--ok) 15%, transparent);
+    color: color-mix(in srgb, var(--fg) 85%, var(--ok) 15%);
+  }
+
+  .dashboard-panels {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  }
+
+  .panel {
+    position: relative;
+    display: grid;
+    gap: 20px;
+    padding: 22px;
+    border-radius: var(--radius-lg);
+  }
+
+  .panel__header {
+    display: flex;
+    gap: 18px;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .panel__eyebrow {
+    margin: 0;
+    font-size: 12px;
+    letter-spacing: .32px;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
+    font-weight: 700;
+  }
+
+  .panel__title {
+    margin: 4px 0 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--fg-strong);
+  }
+
+  .panel__subtitle {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .panel__empty {
+    margin: 0;
+  }
+
+  .entity-list {
+    display: grid;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .entity-card {
+    display: grid;
+    gap: 6px 14px;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      "entity-id entity-title entity-status"
+      "entity-id entity-meta entity-analytics";
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--bg) 60%, rgba(255,255,255,.08) 40%);
+    border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  }
+
+  .entity-card__id {
+    grid-area: entity-id;
+    font-weight: 700;
+    font-size: 13px;
+    color: color-mix(in srgb, var(--fg) 75%, var(--muted) 25%);
+  }
+
+  .entity-card__title {
+    grid-area: entity-title;
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--fg-strong);
+  }
+
+  .entity-card__meta {
+    grid-area: entity-meta;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .entity-card__status {
+    grid-area: entity-status;
+    justify-self: end;
+  }
+
+  .entity-card__analytics {
+    grid-area: entity-analytics;
+    min-height: 26px;
+    min-width: 80px;
+    border-radius: var(--radius-sm);
+    border: 1px dashed color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+    background: color-mix(in srgb, var(--bg) 65%, rgba(255,255,255,.06) 35%);
+    opacity: .7;
+  }
+
+  .panel__footer {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  @media (max-width: 900px) {
+    .dashboard-panels {
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+  }
+
+  @media (max-width: 720px) {
+    .dashboard-panels {
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(80%, 1fr);
+      overflow-x: auto;
+      padding-bottom: 8px;
+      margin: 0 -8px;
+      padding-inline: 8px;
+      scroll-snap-type: x mandatory;
+    }
+
+    .panel {
+      scroll-snap-align: start;
+      min-height: 100%;
+    }
+
+    .entity-card {
+      grid-template-columns: 1fr auto;
+      grid-template-areas:
+        "entity-title entity-status"
+        "entity-meta entity-analytics"
+        "entity-id entity-analytics";
+    }
+  }
+</style>
+
+<section class="dashboard-hero glass grain" data-tilt tabindex="0">
+  <div class="hero__copy">
+    <p class="hero__eyebrow">Оперативная панель</p>
+    <h1 class="hero__title">Дашборд найма</h1>
+    <p class="hero__description">Следите за ключевыми метриками, создавайте новые сущности и держите команды в курсе прогресса, не покидая главную страницу.</p>
+  </div>
+  <div class="hero__actions">
+    <p class="hero__actions-title">Быстрые действия</p>
+    <div class="hero__cta-group">
+      <a class="btn btn--primary" href="/slots/new">Создать слот</a>
+      <a class="btn btn--primary" href="/recruiters/new">Добавить рекрутёра</a>
+    </div>
+    <div class="hero__cta-secondary">
+      <a class="btn btn--ghost" href="/cities/new">Добавить город</a>
+      <a class="btn btn--ghost" href="/templates/new">Новый шаблон</a>
     </div>
   </div>
-</div>
+</section>
 
-<div class="cards">
-  <div class="card glass grain" data-tilt tabindex="0">
-    <h4>Рекрутёры</h4>
-    <div class="big">{{ counts.recruiters }}</div>
-    <p style="margin:6px 0 0;"><a href="/recruiters">Перейти к списку</a></p>
-  </div>
-
-  <div class="card glass grain" data-tilt tabindex="0">
-    <h4>Города</h4>
-    <div class="big">{{ counts.cities }}</div>
-    <p style="margin:6px 0 0;"><a href="/cities">Перейти к списку</a></p>
-  </div>
-
-  <div class="card glass grain" data-tilt tabindex="0">
-    <h4>Слоты всего</h4>
-    <div class="big">{{ counts.slots_total }}</div>
-    <p class="badge">FREE: {{ counts.slots_free }} · PENDING: {{ counts.slots_pending }} · BOOKED: {{ counts.slots_booked }}</p>
-    <p style="margin:6px 0 0;"><a href="/slots">Перейти к слотам</a></p>
-  </div>
-
-  <div class="card glass grain" data-tilt tabindex="0">
-    <h4>Шаблоны</h4>
-    <div class="big">{{ counts.templates|default(0) }}</div>
-    <p style="margin:6px 0 0;"><a href="/templates">Перейти к списку</a></p>
-  </div>
-</div>
-
-<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
-  <div class="card glass grain" data-tilt tabindex="0" style="padding:0;">
-    <div style="padding:14px;">
-      <h4 style="margin:0 0 10px 0;">Активные рекрутёры</h4>
-      {% set actives = recruiters | selectattr('active') | list %}
-      {% if not actives %}
-        <p class="muted">Пока пусто. <a href="/recruiters/new">Добавить рекрутёра</a></p>
-      {% else %}
-        <table>
-          <thead>
-            <tr>
-              <th style="width:60px;">ID</th>
-              <th>Имя</th>
-              <th style="width:200px;">TZ</th>
-              <th style="width:120px;">Активен</th>
-            </tr>
-          </thead>
-          <tbody>
-          {% for r in actives %}
-            <tr>
-              <td>{{ r.id }}</td>
-              <td>{{ r.name }}</td>
-              <td>{{ r.tz or "Europe/Moscow" }}</td>
-              <td>Да</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-        <p style="margin:10px 0 0;"><a href="/recruiters">Открыть все</a></p>
-      {% endif %}
+<section class="dashboard-metrics">
+  <article class="card glass grain metric-card" data-tilt tabindex="0">
+    <span class="metric-card__label">Рекрутёры</span>
+    <div class="metric-card__value">{{ counts.recruiters }}</div>
+    <div class="metric-card__analytics" aria-hidden="true"></div>
+    <div class="metric-card__meta">
+      <a class="metric-card__link" href="/recruiters">Перейти к списку</a>
     </div>
-  </div>
+  </article>
 
-  <div class="card glass grain" data-tilt tabindex="0" style="padding:0;">
-    <div style="padding:14px;">
-      <h4 style="margin:0 0 10px 0;">Города в работе</h4>
-      {% if not cities %}
-        <p class="muted">Пока пусто. <a href="/cities/new">Добавить город</a></p>
-      {% else %}
-        <table>
-          <thead>
-            <tr>
-              <th style="width:60px;">ID</th>
-              <th>Город</th>
-              <th style="width:200px;">TZ</th>
-            </tr>
-          </thead>
-          <tbody>
-          {% for c in cities %}
-            <tr>
-              <td>{{ c.id }}</td>
-              <td>{{ c.name }}</td>
-              <td>{{ c.tz or "Europe/Moscow" }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-        <p style="margin:10px 0 0;"><a href="/cities">Открыть все</a></p>
-      {% endif %}
+  <article class="card glass grain metric-card" data-tilt tabindex="0">
+    <span class="metric-card__label">Города</span>
+    <div class="metric-card__value">{{ counts.cities }}</div>
+    <div class="metric-card__analytics" aria-hidden="true"></div>
+    <div class="metric-card__meta">
+      <a class="metric-card__link" href="/cities">Перейти к списку</a>
     </div>
-  </div>
-</div>
+  </article>
+
+  <article class="card glass grain metric-card" data-tilt tabindex="0">
+    <span class="metric-card__label">Слоты всего</span>
+    <div class="metric-card__value">{{ counts.slots_total }}</div>
+    <div class="metric-card__analytics" aria-hidden="true"></div>
+    <div class="metric-card__meta">
+      <div class="metric-card__badges">
+        <span class="badge badge--soft">FREE: {{ counts.slots_free }}</span>
+        <span class="badge badge--soft">PENDING: {{ counts.slots_pending }}</span>
+        <span class="badge badge--soft">BOOKED: {{ counts.slots_booked }}</span>
+      </div>
+      <a class="metric-card__link" href="/slots">Перейти к слотам</a>
+    </div>
+  </article>
+
+  <article class="card glass grain metric-card" data-tilt tabindex="0">
+    <span class="metric-card__label">Шаблоны</span>
+    <div class="metric-card__value">{{ counts.templates|default(0) }}</div>
+    <div class="metric-card__analytics" aria-hidden="true"></div>
+    <div class="metric-card__meta">
+      <a class="metric-card__link" href="/templates">Перейти к списку</a>
+    </div>
+  </article>
+</section>
+
+{% set actives = recruiters | selectattr('active') | list %}
+<section class="dashboard-panels">
+  <article class="panel glass grain" data-tilt tabindex="0">
+    <header class="panel__header">
+      <div>
+        <p class="panel__eyebrow">Команда</p>
+        <h3 class="panel__title">Активные рекрутёры</h3>
+        <p class="panel__subtitle">Следите за ответственными и их часовыми поясами.</p>
+      </div>
+      <a class="btn btn--ghost" href="/recruiters">Открыть все</a>
+    </header>
+    {% if not actives %}
+      <p class="panel__empty muted">Пока пусто. <a href="/recruiters/new">Добавить рекрутёра</a></p>
+    {% else %}
+      <ul class="entity-list">
+        {% for r in actives %}
+          <li class="entity-card">
+            <span class="entity-card__id">#{{ r.id }}</span>
+            <span class="entity-card__title">{{ r.name }}</span>
+            <span class="entity-card__meta">{{ r.tz or "Europe/Moscow" }}</span>
+            <span class="entity-card__status"><span class="badge badge--success">Активен</span></span>
+            <div class="entity-card__analytics" aria-hidden="true"></div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </article>
+
+  <article class="panel glass grain" data-tilt tabindex="0">
+    <header class="panel__header">
+      <div>
+        <p class="panel__eyebrow">География</p>
+        <h3 class="panel__title">Города в работе</h3>
+        <p class="panel__subtitle">Контролируйте покрытие и операционные временные зоны.</p>
+      </div>
+      <a class="btn btn--ghost" href="/cities">Открыть все</a>
+    </header>
+    {% if not cities %}
+      <p class="panel__empty muted">Пока пусто. <a href="/cities/new">Добавить город</a></p>
+    {% else %}
+      <ul class="entity-list">
+        {% for c in cities %}
+          <li class="entity-card">
+            <span class="entity-card__id">#{{ c.id }}</span>
+            <span class="entity-card__title">{{ c.name }}</span>
+            <span class="entity-card__meta">{{ c.tz or "Europe/Moscow" }}</span>
+            <span class="entity-card__status"></span>
+            <div class="entity-card__analytics" aria-hidden="true"></div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </article>
+</section>
 
 {% endblock %}
