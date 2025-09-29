@@ -19,6 +19,7 @@ from backend.core.settings import get_settings
 from backend.domain.models import SlotStatus
 from backend.domain.repositories import (
     approve_slot,
+    get_city,
     get_city_by_name,
     get_free_slots_by_recruiter,
     get_recruiter,
@@ -769,7 +770,7 @@ async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> 
     bot = get_bot()
     state = get_state_manager().get(user_id) or {}
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
-    kb = await kb_recruiters(tz_label)
+    kb = await kb_recruiters(tz_label, city_id=state.get("city_id"))
     text = await templates.tpl(state.get("city_id"), "choose_recruiter")
     if notice:
         text = f"{notice}\n\n{text}"
@@ -790,7 +791,7 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
 
     if rid_s == "__again__":
         tz_label = (state or {}).get("candidate_tz", DEFAULT_TZ)
-        kb = await kb_recruiters(tz_label)
+        kb = await kb_recruiters(tz_label, city_id=(state or {}).get("city_id"))
         text = await templates.tpl(state.get("city_id") if state else None, "choose_recruiter")
         if state is not None:
             state["picked_recruiter_id"] = None
@@ -817,10 +818,18 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
         await callback.answer("Сессия истекла. Введите /start", show_alert=True)
         return
 
+    city_id = state.get("city_id")
+    if city_id:
+        city = await get_city(city_id)
+        if not city or city.responsible_recruiter_id != rid:
+            await callback.answer("Этот рекрутёр не работает с вашим городом", show_alert=True)
+            await show_recruiter_menu(user_id)
+            return
+
     state["picked_recruiter_id"] = rid
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
-    slots_list = await get_free_slots_by_recruiter(rid)
-    kb = await kb_slots_for_recruiter(rid, tz_label, slots=slots_list)
+    slots_list = await get_free_slots_by_recruiter(rid, city_id=city_id)
+    kb = await kb_slots_for_recruiter(rid, tz_label, slots=slots_list, city_id=city_id)
     text = _recruiter_header(rec.name, tz_label)
     if not slots_list:
         text = f"{text}\n\n{await templates.tpl(state.get('city_id'), 'no_slots')}"
@@ -847,8 +856,9 @@ async def handle_refresh_slots(callback: CallbackQuery) -> None:
         return
 
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
-    slots_list = await get_free_slots_by_recruiter(rid)
-    kb = await kb_slots_for_recruiter(rid, tz_label, slots=slots_list)
+    city_id = state.get("city_id")
+    slots_list = await get_free_slots_by_recruiter(rid, city_id=city_id)
+    kb = await kb_slots_for_recruiter(rid, tz_label, slots=slots_list, city_id=city_id)
     rec = await get_recruiter(rid)
     text = _recruiter_header(rec.name if rec else str(rid), tz_label)
     if not slots_list:
@@ -866,6 +876,12 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
     _, rid_s, slot_id_s = callback.data.split(":", 2)
 
     try:
+        recruiter_id = int(rid_s)
+    except ValueError:
+        await callback.answer("Рекрутёр не найден", show_alert=True)
+        return
+
+    try:
         slot_id = int(slot_id_s)
     except ValueError:
         await callback.answer("Слот не найден", show_alert=True)
@@ -877,6 +893,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         return
 
     is_intro = state.get("flow") == "intro"
+    city_id = state.get("city_id")
     slot = await reserve_slot(
         slot_id,
         candidate_tg_id=user_id,
@@ -884,6 +901,8 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         candidate_tz=state.get("candidate_tz", DEFAULT_TZ),
         candidate_city_id=state.get("city_id"),
         purpose="intro_day" if is_intro else "interview",
+        expected_recruiter_id=recruiter_id,
+        expected_city_id=city_id,
     )
     if not slot:
         text = await templates.tpl(state.get("city_id"), "slot_taken")
@@ -896,7 +915,9 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
             await show_recruiter_menu(user_id, notice=text)
         else:
             kb = await kb_slots_for_recruiter(
-                int(rid_s), state.get("candidate_tz", DEFAULT_TZ)
+                recruiter_id,
+                state.get("candidate_tz", DEFAULT_TZ),
+                city_id=city_id,
             )
             try:
                 await callback.message.edit_text(text, reply_markup=kb)
@@ -1029,7 +1050,10 @@ async def handle_reject_slot(callback: CallbackQuery) -> None:
     if st.get("flow") == "intro":
         await show_recruiter_menu(slot.candidate_tg_id)
     else:
-        kb = await kb_recruiters(st.get("candidate_tz", DEFAULT_TZ))
+        city_for_candidate = st.get("city_id") or getattr(slot, "candidate_city_id", None)
+        kb = await kb_recruiters(
+            st.get("candidate_tz", DEFAULT_TZ), city_id=city_for_candidate
+        )
         await bot.send_message(
             slot.candidate_tg_id,
             await templates.tpl(getattr(slot, "candidate_city_id", None), "choose_recruiter"),

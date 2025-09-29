@@ -46,6 +46,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback stub
 
 from backend.apps.bot import keyboards
 from backend.apps.bot.keyboards import kb_recruiters
+from backend.apps.bot.config import DEFAULT_TZ
 from backend.core.db import async_session
 from backend.domain import models
 
@@ -98,7 +99,7 @@ async def test_kb_recruiters_uses_aggregated_repository(monkeypatch):
 
     summary_calls = 0
 
-    async def fake_summary(recruiter_ids, now_utc=None):
+    async def fake_summary(recruiter_ids, now_utc=None, *, city_id=None):
         nonlocal summary_calls
         summary_calls += 1
         assert set(recruiter_ids) == {1, 2}
@@ -142,3 +143,52 @@ async def test_kb_recruiters_handles_uppercase_status():
 
     assert buttons, "expected recruiter buttons to be present"
     assert any(btn.callback_data.endswith(str(recruiter.id)) for btn in buttons)
+
+
+@pytest.mark.asyncio
+async def test_kb_recruiters_filters_by_city():
+    async with async_session() as session:
+        rec1 = models.Recruiter(name="Городской", tz="Europe/Moscow", active=True)
+        rec2 = models.Recruiter(name="Дальний", tz="Europe/Samara", active=True)
+        city1 = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        city2 = models.City(name="Самара", tz="Europe/Samara", active=True)
+        session.add_all([rec1, rec2, city1, city2])
+        await session.commit()
+        await session.refresh(rec1)
+        await session.refresh(rec2)
+        await session.refresh(city1)
+        await session.refresh(city2)
+        city1.responsible_recruiter_id = rec1.id
+        city2.responsible_recruiter_id = rec2.id
+        await session.commit()
+
+        now = datetime.now(timezone.utc)
+        session.add_all(
+            [
+                models.Slot(
+                    recruiter_id=rec1.id,
+                    city_id=city1.id,
+                    start_utc=now + timedelta(hours=1),
+                    status=models.SlotStatus.FREE,
+                ),
+                models.Slot(
+                    recruiter_id=rec2.id,
+                    city_id=city2.id,
+                    start_utc=now + timedelta(hours=1),
+                    status=models.SlotStatus.FREE,
+                ),
+            ]
+        )
+        await session.commit()
+
+    keyboard = await kb_recruiters(candidate_tz=DEFAULT_TZ, city_id=city1.id)
+    buttons = [
+        btn
+        for row in keyboard.inline_keyboard
+        for btn in row
+        if getattr(btn, "callback_data", "").startswith("pick_rec:")
+    ]
+
+    assert buttons
+    assert any(btn.callback_data.endswith(str(rec1.id)) for btn in buttons)
+    assert all(not btn.callback_data.endswith(str(rec2.id)) for btn in buttons)

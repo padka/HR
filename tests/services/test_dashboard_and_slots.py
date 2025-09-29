@@ -21,8 +21,16 @@ async def test_dashboard_and_slot_listing():
         await session.commit()
         await session.refresh(recruiter)
         await session.refresh(city)
+        city.responsible_recruiter_id = recruiter.id
+        await session.commit()
+        await session.refresh(city)
 
-    created = await create_slot(recruiter_id=recruiter.id, date=str(date.today()), time="10:00")
+    created = await create_slot(
+        recruiter_id=recruiter.id,
+        date=str(date.today()),
+        time="10:00",
+        city_id=city.id,
+    )
     assert created is True
 
     counts = await dashboard_counts()
@@ -44,25 +52,33 @@ async def test_dashboard_and_slot_listing():
 async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
     async with async_session() as session:
         recruiter = models.Recruiter(name="UI", tz="Europe/Moscow", active=True)
-        session.add(recruiter)
+        city = models.City(name="City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
+        await session.refresh(city)
+        city.responsible_recruiter_id = recruiter.id
+        await session.commit()
+        await session.refresh(city)
 
         now = datetime.now(timezone.utc)
         session.add_all(
             [
                 models.Slot(
                     recruiter_id=recruiter.id,
+                    city_id=city.id,
                     start_utc=now,
                     status=models.SlotStatus.FREE,
                 ),
                 models.Slot(
                     recruiter_id=recruiter.id,
+                    city_id=city.id,
                     start_utc=now + timedelta(hours=1),
                     status=models.SlotStatus.PENDING,
                 ),
                 models.Slot(
                     recruiter_id=recruiter.id,
+                    city_id=city.id,
                     start_utc=now + timedelta(hours=2),
                     status=models.SlotStatus.BOOKED,
                 ),

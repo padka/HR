@@ -21,6 +21,22 @@ async def get_active_recruiters() -> List[Recruiter]:
         return list(res)
 
 
+async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
+    async with async_session() as session:
+        res = await session.scalars(
+            select(Recruiter)
+            .join(City, City.responsible_recruiter_id == Recruiter.id)
+            .where(
+                City.id == city_id,
+                Recruiter.active.is_(True),
+                City.active.is_(True),
+            )
+            .distinct()
+            .order_by(Recruiter.name.asc())
+        )
+        return list(res)
+
+
 async def get_recruiter(recruiter_id: int) -> Optional[Recruiter]:
     async with async_session() as session:
         return await session.get(Recruiter, recruiter_id)
@@ -38,11 +54,14 @@ async def get_city(city_id: int) -> Optional[City]:
 
 
 async def get_free_slots_by_recruiter(
-    recruiter_id: int, now_utc: Optional[datetime] = None
+    recruiter_id: int,
+    now_utc: Optional[datetime] = None,
+    *,
+    city_id: Optional[int] = None,
 ) -> List[Slot]:
     now_utc = now_utc or datetime.now(timezone.utc)
     async with async_session() as session:
-        res = await session.scalars(
+        query = (
             select(Slot)
             .where(
                 Slot.recruiter_id == recruiter_id,
@@ -51,6 +70,10 @@ async def get_free_slots_by_recruiter(
             )
             .order_by(Slot.start_utc.asc())
         )
+        if city_id is not None:
+            query = query.where(Slot.city_id == city_id)
+
+        res = await session.scalars(query)
         out = list(res)
         for slot in out:
             slot.start_utc = _to_aware_utc(slot.start_utc)
@@ -60,6 +83,8 @@ async def get_free_slots_by_recruiter(
 async def get_recruiters_free_slots_summary(
     recruiter_ids: Iterable[int],
     now_utc: Optional[datetime] = None,
+    *,
+    city_id: Optional[int] = None,
 ) -> Dict[int, Tuple[datetime, int]]:
     ids = {int(rid) for rid in recruiter_ids if rid is not None}
     if not ids:
@@ -79,6 +104,11 @@ async def get_recruiters_free_slots_summary(
                     Slot.recruiter_id.in_(ids),
                     func.lower(Slot.status) == SlotStatus.FREE,
                     Slot.start_utc > now_utc,
+                    *(
+                        [Slot.city_id == city_id]
+                        if city_id is not None
+                        else []
+                    ),
                 )
                 .group_by(Slot.recruiter_id)
             )
@@ -123,10 +153,16 @@ async def reserve_slot(
     *,
     candidate_city_id: Optional[int] = None,
     purpose: str = "interview",
+    expected_recruiter_id: Optional[int] = None,
+    expected_city_id: Optional[int] = None,
 ) -> Optional[Slot]:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id, with_for_update=True)
         if not slot or slot.status != SlotStatus.FREE:
+            return None
+        if expected_recruiter_id is not None and slot.recruiter_id != expected_recruiter_id:
+            return None
+        if expected_city_id is not None and slot.city_id != expected_city_id:
             return None
         slot.status = SlotStatus.PENDING
         slot.candidate_tg_id = candidate_tg_id

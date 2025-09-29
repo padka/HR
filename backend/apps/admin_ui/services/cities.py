@@ -14,6 +14,7 @@ __all__ = [
     "list_cities",
     "create_city",
     "update_city_settings",
+    "delete_city",
     "city_owner_field_name",
     "api_cities_payload",
     "api_city_owners_payload",
@@ -83,6 +84,20 @@ async def update_city_settings(
             await session.rollback()
             raise
     return None
+
+
+async def delete_city(city_id: int) -> bool:
+    async with async_session() as session:
+        try:
+            city = await session.get(City, city_id)
+            if not city:
+                return False
+            await session.delete(city)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+    return True
 
 
 async def api_cities_payload() -> List[Dict[str, object]]:

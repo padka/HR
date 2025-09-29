@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% from "partials/list_toolbar.html" import list_toolbar %}
-{% from "partials/components.html" import meta_list %}
 {% block title %}Слоты{% endblock %}
 {% block content %}
-<section class="page">
+{% set has_slots = slots|length > 0 %}
+<section class="page page--slots" data-page="slots" aria-labelledby="slots-title">
   <header class="page-header">
     <div>
-      <h1 class="page-title">Слоты</h1>
+      <h1 id="slots-title" class="page-title">Слоты</h1>
       <p class="page-description">
-        Управляйте слотами интервью, фильтруйте по рекрутёрам и статусу и следите за балансом загрузки.
+        Следите за расписанием интервью: фильтруйте таблицу по рекрутёрам и статусу, переключайтесь между будущими и прошедшими слотами, просматривайте подробности в правой панели.
       </p>
     </div>
     <div class="page-actions">
@@ -23,31 +23,31 @@
     </div>
   {% endif %}
 
-  <section class="stat-grid" aria-label="Быстрая статистика по слотам">
-    <article class="stat-card" data-tone="success">
-      <span class="stat-card__label">Свободные</span>
-      <span class="stat-card__value" id="cnt-free">{{ status_counts.FREE }}</span>
-      <p class="stat-card__hint">Готовы к бронированию</p>
+  <section class="slot-summary" aria-label="Быстрая статистика по слотам">
+    <article class="slot-summary__item" data-tone="success">
+      <span class="slot-summary__label">Свободные</span>
+      <span class="slot-summary__value" id="cnt-free">{{ status_counts.FREE }}</span>
+      <p class="slot-summary__hint">Готовы к бронированию</p>
     </article>
-    <article class="stat-card" data-tone="warning">
-      <span class="stat-card__label">В ожидании</span>
-      <span class="stat-card__value" id="cnt-pending">{{ status_counts.PENDING }}</span>
-      <p class="stat-card__hint">Требуют подтверждения</p>
+    <article class="slot-summary__item" data-tone="warning">
+      <span class="slot-summary__label">Ожидают</span>
+      <span class="slot-summary__value" id="cnt-pending">{{ status_counts.PENDING }}</span>
+      <p class="slot-summary__hint">Заявки требуют подтверждения</p>
     </article>
-    <article class="stat-card" data-tone="info">
-      <span class="stat-card__label">Забронированные</span>
-      <span class="stat-card__value" id="cnt-booked">{{ status_counts.BOOKED }}</span>
-      <p class="stat-card__hint">Назначены кандидатам</p>
+    <article class="slot-summary__item" data-tone="info">
+      <span class="slot-summary__label">Забронированы</span>
+      <span class="slot-summary__value" id="cnt-booked">{{ status_counts.BOOKED }}</span>
+      <p class="slot-summary__hint">Интервью назначены кандидатам</p>
     </article>
-    <article class="stat-card">
-      <span class="stat-card__label">Всего слотов</span>
-      <span class="stat-card__value" id="cnt-total">{{ status_counts.total }}</span>
-      <p class="stat-card__hint">С учётом активных фильтров</p>
+    <article class="slot-summary__item" data-tone="neutral">
+      <span class="slot-summary__label">Всего</span>
+      <span class="slot-summary__value" id="cnt-total">{{ status_counts.total }}</span>
+      <p class="slot-summary__hint">С учётом действующих фильтров</p>
     </article>
   </section>
 
   {% call list_toolbar(
-    form_id="flt",
+    form_id="slot_filters",
     form_action="/slots",
     method="get",
     sticky=True,
@@ -56,7 +56,7 @@
     <div class="form-field">
       <label for="recruiter_id">Рекрутёр</label>
       <select id="recruiter_id" name="recruiter_id">
-        <option value="">— все —</option>
+        <option value="">— Все —</option>
         {% for r in recruiter_options %}
           <option value="{{ r.id }}" {% if filter_recruiter_id and filter_recruiter_id == r.id %}selected{% endif %}>
             {{ r.name }} ({{ r.tz or "Europe/Moscow" }})
@@ -68,7 +68,7 @@
     <div class="form-field form-field--narrow">
       <label for="status">Статус</label>
       <select id="status" name="status">
-        <option value="">— все —</option>
+        <option value="">— Все —</option>
         <option value="FREE" {% if filter_status == 'FREE' %}selected{% endif %}>FREE</option>
         <option value="PENDING" {% if filter_status == 'PENDING' %}selected{% endif %}>PENDING</option>
         <option value="BOOKED" {% if filter_status == 'BOOKED' %}selected{% endif %}>BOOKED</option>
@@ -84,70 +84,90 @@
       </select>
     </div>
 
-    <span class="filter-divider" aria-hidden="true"></span>
-    <div class="filter-group" role="group" aria-label="Быстрые фильтры">
-      <p class="filter-group__title">Быстрые фильтры</p>
-      <label class="form-toggle" for="only_future">
-        <input id="only_future" type="checkbox"> Только будущие слоты
-      </label>
-      <label class="form-toggle" for="toggle_cand_tz">
-        <input id="toggle_cand_tz" type="checkbox"> Показать время кандидата
-      </label>
-    </div>
+    <p class="slot-toolbar-note">Параметры фильтра перегружают страницу. Дополнительные режимы ниже срабатывают моментально.</p>
   {% endcall %}
 
-  {% if not slots %}
-    <div class="card glass grain">
-      <h3 class="section-title">Пусто</h3>
-      <p class="page-description">Слотов по выбранным условиям нет.</p>
-    </div>
-  {% else %}
+  <div class="slot-toggle-bar" role="group" aria-label="Дополнительные режимы отображения">
+    <label class="slot-toggle">
+      <input id="only_future" type="checkbox" autocomplete="off">
+      <span class="slot-toggle__indicator" aria-hidden="true"></span>
+      <span class="slot-toggle__label">Только будущие слоты</span>
+    </label>
+    <label class="slot-toggle">
+      <input id="toggle_cand_tz" type="checkbox" autocomplete="off">
+      <span class="slot-toggle__indicator" aria-hidden="true"></span>
+      <span class="slot-toggle__label">Показать время кандидата</span>
+    </label>
+  </div>
+
+  {% if has_slots %}
     <div class="list-table-wrapper">
-      <table id="slots-table" class="list-table list-table--responsive">
+      <table class="list-table list-table--responsive slot-table" id="slots_table">
         <thead>
           <tr>
-            <th class="sortable" data-sort="id">ID <span class="dir"></span></th>
-            <th class="sortable" data-sort="rec">Рекрутёр <span class="dir"></span></th>
-            <th class="sortable" data-sort="utc">UTC <span class="dir"></span></th>
-            <th>Локальное (TZ рекрутёра)</th>
-            <th class="col-cand-tz is-optional">Локальное (TZ кандидата)</th>
-            <th class="sortable" data-sort="status">Статус <span class="dir"></span></th>
-            <th class="sortable" data-sort="cand">Кандидат <span class="dir"></span></th>
-            <th class="is-optional">Детали</th>
+            <th scope="col" class="sortable">
+              <button class="sort" type="button" data-key="id" aria-sort="ascending">ID <span class="arrow" aria-hidden="true"></span></button>
+            </th>
+            <th scope="col" class="sortable">
+              <button class="sort" type="button" data-key="recruiter" aria-sort="none">Рекрутёр <span class="arrow" aria-hidden="true"></span></button>
+            </th>
+            <th scope="col" class="sortable">
+              <button class="sort" type="button" data-key="utc" aria-sort="none">UTC <span class="arrow" aria-hidden="true"></span></button>
+            </th>
+            <th scope="col">Локальное (TZ рекрутёра)</th>
+            <th scope="col" class="col-cand-tz is-optional">Локальное (TZ кандидата)</th>
+            <th scope="col" class="sortable">
+              <button class="sort" type="button" data-key="status" aria-sort="none">Статус <span class="arrow" aria-hidden="true"></span></button>
+            </th>
+            <th scope="col" class="sortable is-optional">
+              <button class="sort" type="button" data-key="candidate" aria-sort="none">Кандидат <span class="arrow" aria-hidden="true"></span></button>
+            </th>
+            <th scope="col" class="col-actions">Действия</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="slots_tbody">
         {% for s in slots %}
           {% set st = norm_status(s.status) %}
-          {% set row_cls = 'row-free' if st=='FREE' else ('row-pending' if st=='PENDING' else ('row-booked' if st=='BOOKED' else '')) %}
-          <tr class="{{ row_cls }}" data-st="{{ st or '' }}" data-id="{{ s.id }}" data-utc="{{ s.start_utc.isoformat() }}" data-rec="{{ s.recruiter.name if s.recruiter else '' }}" data-cand="{{ s.candidate_fio or '' }}" data-sto="{{ 0 if st=='FREE' else (1 if st=='PENDING' else (2 if st=='BOOKED' else 9)) }}">
-            <td data-label="ID">
-              <span class="copyable" data-copy="{{ s.id }}" title="Скопировать ID">{{ s.id }}</span>
-            </td>
+          {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
+          {% set cand_tz = s.candidate_tz %}
+          {% set status_order = 0 if st == 'FREE' else (1 if st == 'PENDING' else (2 if st == 'BOOKED' else 9)) %}
+          <tr class="slot-row"
+              tabindex="0"
+              data-id="{{ s.id }}"
+              data-status="{{ st or '' }}"
+              data-status-order="{{ status_order }}"
+              data-start-iso="{{ s.start_utc.isoformat() }}"
+              data-start-utc="{{ fmt_utc(s.start_utc) }}"
+              data-start-rec="{{ fmt_local(s.start_utc, tz_rec) }}"
+              data-start-cand="{{ fmt_local(s.start_utc, cand_tz) if cand_tz else '' }}"
+              data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
+              data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
+              data-recruiter-tz="{{ tz_rec }}"
+              data-duration="{{ s.duration_min }}"
+              data-candidate="{{ s.candidate_fio or '' }}"
+              data-candidate-id="{{ s.candidate_tg_id or '' }}"
+              data-candidate-tz="{{ cand_tz or '' }}"
+              data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
+            <td data-label="ID">ID {{ s.id }}</td>
             <td data-label="Рекрутёр">
-              <div>{{ s.recruiter.name if s.recruiter else "—" }}</div>
-              <div class="badge">{{ (s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow") }}</div>
+              <div class="slot-cell-primary">{{ s.recruiter.name if s.recruiter else "—" }}</div>
+              <span class="badge badge--soft">{{ tz_rec }}</span>
             </td>
             <td data-label="UTC">
-              <span class="copyable" data-copy="{{ fmt_utc(s.start_utc) }}" title="Скопировать UTC-время" data-utc-iso="{{ s.start_utc.isoformat() }}">
-                {{ fmt_utc(s.start_utc) }}
-              </span>
-              <div class="muted" data-rel></div>
+              <div class="slot-time">
+                <span class="slot-time__value">{{ fmt_utc(s.start_utc) }}</span>
+                <span class="slot-time__relative" data-role="relative">—</span>
+              </div>
             </td>
-            <td data-label="Локальное (рекрутёр)">
-              {% set tz_rec = (s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow") %}
-              <span class="copyable" data-copy="{{ fmt_local(s.start_utc, tz_rec) }}" title="Скопировать локальное время рекрутёра">
-                {{ fmt_local(s.start_utc, tz_rec) }}
-              </span>
+            <td data-label="Время (рекрутёр)">
+              <span class="slot-time__value">{{ fmt_local(s.start_utc, tz_rec) }}</span>
             </td>
-            <td class="col-cand-tz is-optional" data-label="Кандидат TZ">
-              {% if s.candidate_tz %}
-                <div class="badge">{{ s.candidate_tz }}</div>
-                <span class="copyable" data-copy="{{ fmt_local(s.start_utc, s.candidate_tz) }}" title="Скопировать локальное время кандидата">
-                  {{ fmt_local(s.start_utc, s.candidate_tz) }}
-                </span>
+            <td data-label="Время (кандидат)" class="col-cand-tz is-optional">
+              {% if cand_tz %}
+                <div class="badge badge--soft">{{ cand_tz }}</div>
+                <span class="slot-time__value">{{ fmt_local(s.start_utc, cand_tz) }}</span>
               {% else %}
-                <span class="badge">—</span>
+                <span class="badge badge--soft">—</span>
               {% endif %}
             </td>
             <td data-label="Статус">
@@ -158,27 +178,25 @@
               {% elif st == "BOOKED" %}
                 <span class="status-badge" data-tone="info">BOOKED</span>
               {% else %}
-                <span class="badge">{{ st or "—" }}</span>
+                <span class="badge badge--soft">{{ st or "—" }}</span>
               {% endif %}
             </td>
-            <td data-label="Кандидат">
+            <td data-label="Кандидат" class="is-optional">
               {% if s.candidate_fio %}
-                <div>{{ s.candidate_fio }}</div>
-                <div class="badge copyable" data-copy="{{ s.candidate_tg_id or '' }}" title="Скопировать tg_id">tg_id: {{ s.candidate_tg_id or "—" }}</div>
+                <div class="slot-cell-primary">{{ s.candidate_fio }}</div>
+                <span class="badge badge--soft">tg_id: {{ s.candidate_tg_id or "—" }}</span>
               {% else %}
-                <span class="badge">—</span>
+                <span class="badge badge--soft">—</span>
               {% endif %}
             </td>
-            <td class="list-table__details" data-label="">
-              <details>
-                <summary>Подробнее</summary>
-                {% call meta_list() %}
-                  <span>UTC: {{ fmt_utc(s.start_utc) }}</span>
-                  <span>Рекрутёр: {{ s.recruiter.name if s.recruiter else '—' }}</span>
-                  {% if s.candidate_fio %}<span>Кандидат: {{ s.candidate_fio }}</span>{% endif %}
-                  {% if s.candidate_tz %}<span>TZ кандидата: {{ s.candidate_tz }}</span>{% endif %}
-                {% endcall %}
-              </details>
+            <td class="col-actions" data-label="Действия">
+              <button type="button" class="btn btn-soft btn--small" data-action="open-slot">Подробнее</button>
+              <button type="button"
+                      class="btn btn-danger btn--small"
+                      data-action="delete-slot"
+                      {% if st not in ['FREE', 'PENDING'] %}disabled{% endif %}>
+                Удалить
+              </button>
             </td>
           </tr>
         {% endfor %}
@@ -191,7 +209,7 @@
       {% set qstat = '&status=' ~ filter_status if filter_status else '' %}
       {% set qpp = '&per_page=' ~ per_page if per_page else '' %}
 
-      <span class="badge">Стр. {{ page }} из {{ pages_total }}</span>
+      <span class="badge badge--soft">Страница {{ page }} из {{ pages_total }}</span>
 
       {% if page > 1 %}
         <a class="btn btn-ghost" href="/slots?page=1{{ qrecr }}{{ qstat }}{{ qpp }}">« Первая</a>
@@ -209,154 +227,598 @@
         <span class="btn btn-ghost" aria-disabled="true">Последняя »</span>
       {% endif %}
     </div>
+  {% else %}
+    <div class="card glass grain slot-empty-state" role="status">
+      <h3 class="section-title">Пока пусто</h3>
+      <p class="page-description">Создайте первый слот или измените фильтры, чтобы увидеть расписание.</p>
+      <div class="slot-empty-state__actions">
+        <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+      </div>
+    </div>
   {% endif %}
+
+  <div id="slot_backdrop" class="sheet-backdrop" hidden></div>
+  <aside id="slot_sheet" class="sheet slot-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="slot_sheet_title">
+    <header class="sheet-header">
+      <div>
+        <h3 id="slot_sheet_title" class="sheet-title">Слот не выбран</h3>
+        <p id="slot_sheet_sub" class="sheet-sub muted">Выберите запись в таблице.</p>
+      </div>
+      <button id="slot_sheet_close" class="btn btn-ghost btn--small" type="button" aria-label="Закрыть">✕</button>
+    </header>
+
+    <div class="sheet-body slot-sheet-body">
+      <section class="slot-overview" aria-live="polite">
+        <div class="slot-overview__top">
+          <span class="badge badge--soft" id="slot_sheet_id">ID —</span>
+          <span class="status-badge" id="slot_sheet_status" data-tone="info">Статус: —</span>
+        </div>
+        <div class="slot-overview__meta">
+          <div>
+            <span class="slot-overview__hint">UTC</span>
+            <p class="slot-overview__value" id="slot_sheet_utc">—</p>
+          </div>
+          <div>
+            <span class="slot-overview__hint">Локальное (рекрутёр)</span>
+            <p class="slot-overview__value" id="slot_sheet_local">—</p>
+          </div>
+          <div id="slot_sheet_local_candidate_wrap">
+            <span class="slot-overview__hint">Локальное (кандидат)</span>
+            <p class="slot-overview__value" id="slot_sheet_local_candidate">—</p>
+          </div>
+        </div>
+        <p class="slot-overview__rel" id="slot_sheet_rel">—</p>
+      </section>
+
+      <section class="slot-panel">
+        <div class="slot-panel__header">
+          <span class="slot-panel__icon" aria-hidden="true">🧑‍💼</span>
+          <div>
+            <h4 class="slot-panel__title">Рекрутёр</h4>
+            <p class="slot-panel__hint">Текущий владелец слота</p>
+          </div>
+        </div>
+        <div class="slot-panel__body" id="slot_sheet_recruiter">
+          <p class="muted">Не назначен</p>
+        </div>
+      </section>
+
+      <section class="slot-panel" id="slot_sheet_candidate_section">
+        <div class="slot-panel__header">
+          <span class="slot-panel__icon" aria-hidden="true">🧑‍🎓</span>
+          <div>
+            <h4 class="slot-panel__title">Кандидат</h4>
+            <p class="slot-panel__hint">Бронь и контакты</p>
+          </div>
+        </div>
+        <div class="slot-panel__body" id="slot_sheet_candidate">
+          <p class="muted">Пока никто не забронировал слот.</p>
+        </div>
+      </section>
+
+      <section class="slot-panel">
+        <div class="slot-panel__header">
+          <span class="slot-panel__icon" aria-hidden="true">⏱</span>
+          <div>
+            <h4 class="slot-panel__title">Параметры</h4>
+            <p class="slot-panel__hint">Продолжительность и статус</p>
+          </div>
+        </div>
+        <div class="slot-panel__body">
+          <ul class="slot-meta" id="slot_sheet_meta"></ul>
+        </div>
+      </section>
+    </div>
+
+    <footer class="sheet-footer slot-sheet-footer">
+      <div class="form-actions">
+        <button id="slot_delete_btn" class="btn btn-danger btn--small" type="button" disabled>Удалить слот</button>
+        <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+      </div>
+    </footer>
+  </aside>
+
+  <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
 </section>
 
-{% raw %}
 <script>
 (function(){
-  const $ = function(s, r){ return (r||document).querySelector(s); };
-  const $$= function(s, r){ return Array.from((r||document).querySelectorAll(s)); };
+  const $ = (selector, root=document) => root.querySelector(selector);
+  const $$ = (selector, root=document) => Array.from(root.querySelectorAll(selector));
+  const on = (el, event, cb, opts) => el && el.addEventListener(event, cb, opts);
 
-  var rows = $$('#slots-table tbody tr');
-  var onlyFuture = $('#only_future');
-  var candTzToggle = $('#toggle_cand_tz');
+  const table = $('#slots_table');
+  const tbody = $('#slots_tbody');
+  const rows = tbody ? $$('.slot-row', tbody) : [];
 
-  // Copy helper
-  $$('.copyable[data-copy]').forEach(function(el){
-    el.addEventListener('click', function(){
-      var val = el.getAttribute('data-copy') || '';
-      navigator.clipboard.writeText(val).then(function(){
-        var prev = el.textContent;
-        el.textContent = 'Скопировано';
-        setTimeout(function(){ el.textContent = prev; }, 900);
-      }).catch(function(){ alert('Не удалось скопировать'); });
-    });
-  });
+  const onlyFuture = $('#only_future');
+  const candToggle = $('#toggle_cand_tz');
+  const emptyCard = $('#slot_empty_state');
 
-  function isFuture(tr){
-    var iso = tr.getAttribute('data-utc');
-    if(!iso) return true;
-    var t = Date.parse(iso);
-    return isFinite(t) ? t >= Date.now() : true;
+  const chipTotal = $('#cnt-total');
+  const chipFree = $('#cnt-free');
+  const chipPending = $('#cnt-pending');
+  const chipBookedEl = $('#cnt-booked');
+
+  const slotSheet = $('#slot_sheet');
+  const slotBackdrop = $('#slot_backdrop');
+  const slotClose = $('#slot_sheet_close');
+
+  const slotTitle = $('#slot_sheet_title');
+  const slotSub = $('#slot_sheet_sub');
+  const slotId = $('#slot_sheet_id');
+  const slotStatus = $('#slot_sheet_status');
+  const slotUtc = $('#slot_sheet_utc');
+  const slotLocal = $('#slot_sheet_local');
+  const slotLocalCandidateWrap = $('#slot_sheet_local_candidate_wrap');
+  const slotLocalCandidate = $('#slot_sheet_local_candidate');
+  const slotRel = $('#slot_sheet_rel');
+  const slotRecruiter = $('#slot_sheet_recruiter');
+  const slotCandidateSection = $('#slot_sheet_candidate_section');
+  const slotCandidate = $('#slot_sheet_candidate');
+  const slotMeta = $('#slot_sheet_meta');
+  const slotDeleteBtn = $('#slot_delete_btn');
+  const toastStack = $('#toasts');
+
+  let sortState = { key: 'utc', dir: 'asc' };
+  let currentRow = null;
+  let relTimer = null;
+
+  const storage = window.localStorage;
+  const storageKeys = {
+    future: 'slots.onlyFuture',
+    candidate: 'slots.showCandidateTz'
+  };
+
+  function toast(text, kind='info'){
+    if (!toastStack) return;
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.dataset.kind = kind;
+    el.textContent = text;
+    toastStack.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('toast--show'));
+    setTimeout(() => el.classList.add('toast--hide'), 1800);
+    setTimeout(() => el.remove(), 2200);
   }
 
-  function refreshCounts(){
-    var fut = !!(onlyFuture && onlyFuture.checked);
-    var free=0, pend=0, book=0, total=0;
-    rows.forEach(function(tr){
-      var visible = !fut || isFuture(tr);
-      tr.style.display = visible ? '' : 'none';
-      if(visible){
-        total++;
-        var st = tr.getAttribute('data-st');
-        if(st==='FREE') free++; else if(st==='PENDING') pend++; else if(st==='BOOKED') book++;
-      }
-    });
-    var totalEl = $('#cnt-total');
-    if(totalEl) totalEl.textContent = total;
-    var freeEl = $('#cnt-free');
-    if(freeEl) freeEl.textContent = free;
-    var pendEl = $('#cnt-pending');
-    if(pendEl) pendEl.textContent = pend;
-    var bookEl = $('#cnt-booked');
-    if(bookEl) bookEl.textContent = book;
+  function parseTime(row){
+    const iso = row?.dataset.startIso;
+    if (!iso) return NaN;
+    const value = Date.parse(iso);
+    return Number.isNaN(value) ? NaN : value;
   }
 
-  if(onlyFuture){
-    onlyFuture.addEventListener('change', function(){
-      refreshCounts();
-    });
+  function isFutureRow(row){
+    const ts = parseTime(row);
+    return Number.isNaN(ts) ? true : ts >= Date.now();
   }
 
-  function setCandCol(show){
-    $$('.col-cand-tz').forEach(function(col){
-      col.classList.toggle('hidden-col', !show);
-    });
-  }
-  if(candTzToggle){
-    candTzToggle.addEventListener('change', function(){
-      setCandCol(candTzToggle.checked);
-    });
-    setCandCol(candTzToggle.checked);
+  function formatRelative(timestamp){
+    if (!Number.isFinite(timestamp)) return '—';
+    const diffMin = Math.round((timestamp - Date.now()) / 60000);
+    const abs = Math.abs(diffMin);
+    if (abs < 1) return diffMin >= 0 ? 'через несколько секунд' : 'только что';
+    if (abs < 60) return `${diffMin >= 0 ? 'через' : ''} ${abs} мин`;
+    const hours = Math.round(abs / 60);
+    return `${diffMin >= 0 ? 'через' : ''} ${hours} ч`;
   }
 
-  // Relative time now + update every minute
-  function rel(ts){
-    var diff = Math.round((ts - Date.now())/60000);
-    var abs = Math.abs(diff);
-    if(abs<60) return (diff>=0? 'через ':'') + abs + ' мин';
-    var h = Math.round(abs/60);
-    return (diff>=0? 'через ':'') + h + ' ч';
+  function updateCounters(result){
+    if (!result) result = computeVisibleStats();
+    if (chipTotal) chipTotal.textContent = result.total;
+    if (chipFree) chipFree.textContent = result.free;
+    if (chipPending) chipPending.textContent = result.pending;
+    if (chipBookedEl) chipBookedEl.textContent = result.booked;
   }
-  function updateRel(){
-    $$('#slots-table [data-utc-iso]').forEach(function(el){
-      var iso = el.getAttribute('data-utc-iso');
-      var d = iso ? new Date(iso) : null;
-      var holder = el.parentElement.querySelector('[data-rel]');
-      if(d && holder){ holder.textContent = rel(d.getTime()); }
+
+  function computeVisibleStats(){
+    let total = 0, free = 0, pending = 0, booked = 0;
+    rows.forEach(row => {
+      if (row.style.display === 'none') return;
+      total += 1;
+      const st = row.dataset.status;
+      if (st === 'FREE') free += 1;
+      else if (st === 'PENDING') pending += 1;
+      else if (st === 'BOOKED') booked += 1;
     });
+    return { total, free, pending, booked };
   }
-  updateRel();
-  setInterval(updateRel, 60000);
 
-  // Column sorting (client-side, visible rows)
-  var sortKey = 'utc';
-  var sortDir = 'asc';
-
-  function applySortIndicator(){
-    $$('#slots-table thead th.sortable').forEach(function(th){
-      th.classList.remove('active');
-      var d = th.querySelector('.dir');
-      if(d) d.textContent='';
+  function applyFutureFilter(){
+    const onlyFutureEnabled = onlyFuture && onlyFuture.checked;
+    let visible = 0;
+    rows.forEach(row => {
+      const show = !onlyFutureEnabled || isFutureRow(row);
+      row.style.display = show ? '' : 'none';
+      row.classList.toggle('is-hidden', !show);
+      if (show) visible += 1;
     });
-    var th = $('#slots-table thead th.sortable[data-sort="'+sortKey+'"]');
-    if (th){
-      th.classList.add('active');
-      var d = th.querySelector('.dir');
-      if(d) d.textContent = sortDir==='asc' ? '▲' : '▼';
+    updateCounters();
+    toggleEmptyState(visible);
+  }
+
+  function toggleEmptyState(visibleCount){
+    if (!emptyCard) return;
+    if (!rows.length){
+      emptyCard.hidden = false;
+      return;
+    }
+    emptyCard.hidden = visibleCount > 0;
+  }
+
+  function setCandidateColumnVisibility(show){
+    const targets = $$('.col-cand-tz');
+    targets.forEach(el => el.classList.toggle('hidden-col', !show));
+  }
+
+  function getSortValue(row, key){
+    switch(key){
+      case 'id':
+        return parseInt(row.dataset.id || '0', 10);
+      case 'utc':
+        return parseTime(row);
+      case 'recruiter':
+        return (row.dataset.recruiter || '').toLowerCase();
+      case 'candidate':
+        return (row.dataset.candidate || '').toLowerCase();
+      case 'status':
+        return parseInt(row.dataset.statusOrder || '9', 10);
+      default:
+        return 0;
     }
   }
 
-  function cmp(a,b){ return a<b?-1:a>b?1:0; }
-
-  function sortRows(){
-    var tbody = $('#slots-table tbody');
-    var arr = rows.slice();
-    arr.sort(function(tr1, tr2){
-      var v1, v2;
-      if (sortKey==='id'){ v1 = parseInt(tr1.getAttribute('data-id')||'0',10); v2 = parseInt(tr2.getAttribute('data-id')||'0',10); }
-      else if (sortKey==='utc'){ v1 = Date.parse(tr1.getAttribute('data-utc')||''); v2 = Date.parse(tr2.getAttribute('data-utc')||''); }
-      else if (sortKey==='rec'){ v1 = (tr1.getAttribute('data-rec')||'').toLowerCase(); v2 = (tr2.getAttribute('data-rec')||'').toLowerCase(); }
-      else if (sortKey==='cand'){ v1 = (tr1.getAttribute('data-cand')||'').toLowerCase(); v2 = (tr2.getAttribute('data-cand')||'').toLowerCase(); }
-      else if (sortKey==='status'){ v1 = parseInt(tr1.getAttribute('data-sto')||'9',10); v2 = parseInt(tr2.getAttribute('data-sto')||'9',10); }
-      else { v1 = 0; v2 = 0; }
-      var r = cmp(v1,v2);
-      return sortDir==='asc' ? r : -r;
+  function applySortIndicator(){
+    if (!table) return;
+    $$('.sort', table).forEach(btn => {
+      const key = btn.dataset.key;
+      const active = key === sortState.key;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-sort', active ? (sortState.dir === 'asc' ? 'ascending' : 'descending') : 'none');
     });
-    arr.forEach(function(tr){ tbody.appendChild(tr); });
   }
 
-  $$('#slots-table thead th.sortable').forEach(function(th){
-    th.addEventListener('click', function(){
-      var key = th.getAttribute('data-sort');
-      if (sortKey===key){ sortDir = (sortDir==='asc') ? 'desc' : 'asc'; }
-      else { sortKey = key; sortDir = 'asc'; }
-      applySortIndicator(); sortRows();
-      refreshCounts();
+  function applySort(){
+    if (!tbody) return;
+    const sorted = rows.slice().sort((a, b) => {
+      const av = getSortValue(a, sortState.key);
+      const bv = getSortValue(b, sortState.key);
+      if (av < bv) return sortState.dir === 'asc' ? -1 : 1;
+      if (av > bv) return sortState.dir === 'asc' ? 1 : -1;
+      return 0;
     });
-  });
+    sorted.forEach(row => tbody.appendChild(row));
+  }
 
-  document.addEventListener('keydown', function(e){
-    if(e.key==='t' && candTzToggle){ candTzToggle.checked = !candTzToggle.checked; candTzToggle.dispatchEvent(new Event('change')); }
-    if(e.key==='f' && onlyFuture){ onlyFuture.checked = !onlyFuture.checked; onlyFuture.dispatchEvent(new Event('change')); }
-  });
+  function updateRelativeLabels(){
+    rows.forEach(row => {
+      const relEl = $('[data-role="relative"]', row);
+      if (!relEl) return;
+      relEl.textContent = formatRelative(parseTime(row));
+    });
+    if (currentRow && slotRel){
+      slotRel.textContent = formatRelative(parseTime(currentRow));
+    }
+  }
 
+  function fillList(container, items){
+    container.innerHTML = '';
+    items.forEach(text => {
+      const li = document.createElement('li');
+      li.textContent = text;
+      container.appendChild(li);
+    });
+  }
+
+  function removeRow(row){
+    if (!row) return;
+    const idx = rows.indexOf(row);
+    if (idx !== -1){
+      rows.splice(idx, 1);
+    }
+    row.remove();
+  }
+
+  function openSheet(){
+    if (!slotSheet || !slotBackdrop) return;
+    slotSheet.hidden = false;
+    slotBackdrop.hidden = false;
+    requestAnimationFrame(() => {
+      slotSheet.classList.add('open');
+      slotBackdrop.classList.add('open');
+      document.body.classList.add('sheet-open');
+    });
+  }
+
+  function closeSheet(){
+    if (!slotSheet || !slotBackdrop) return;
+    slotSheet.classList.remove('open');
+    slotBackdrop.classList.remove('open');
+    setTimeout(() => {
+      slotSheet.hidden = true;
+      slotBackdrop.hidden = true;
+      document.body.classList.remove('sheet-open');
+      currentRow = null;
+      resetSheet();
+    }, 200);
+  }
+
+  function resetSheet(){
+    if (slotTitle) slotTitle.textContent = 'Слот не выбран';
+    if (slotSub) slotSub.textContent = 'Выберите запись в таблице.';
+    if (slotId) slotId.textContent = 'ID —';
+    if (slotStatus){
+      slotStatus.textContent = 'Статус: —';
+      slotStatus.dataset.tone = 'info';
+    }
+    if (slotUtc) slotUtc.textContent = '—';
+    if (slotLocal) slotLocal.textContent = '—';
+    if (slotLocalCandidateWrap){
+      slotLocalCandidateWrap.hidden = true;
+    }
+    if (slotRel) slotRel.textContent = '—';
+    if (slotRecruiter) slotRecruiter.innerHTML = '<p class="muted">Не назначен</p>';
+    if (slotCandidateSection){
+      slotCandidateSection.hidden = true;
+    }
+    if (slotCandidate) slotCandidate.innerHTML = '';
+    if (slotMeta) slotMeta.innerHTML = '';
+    if (slotDeleteBtn){
+      slotDeleteBtn.disabled = true;
+      slotDeleteBtn.dataset.slotId = '';
+    }
+  }
+
+  function toneForStatus(status){
+    if (status === 'FREE') return 'success';
+    if (status === 'PENDING') return 'warning';
+    if (status === 'BOOKED') return 'info';
+    return 'neutral';
+  }
+
+  function hydrateSheet(row){
+    const id = row.dataset.id || '—';
+    const status = row.dataset.status || '—';
+    const recruiterName = row.dataset.recruiter || '—';
+    const recruiterTz = row.dataset.recruiterTz || 'Europe/Moscow';
+    const candidateName = row.dataset.candidate || '';
+    const candidateTz = row.dataset.candidateTz || '';
+    const candidateId = row.dataset.candidateId || '';
+    const duration = parseInt(row.dataset.duration || '0', 10);
+
+    if (slotTitle) slotTitle.textContent = recruiterName ? `Слот у ${recruiterName}` : `Слот #${id}`;
+    if (slotSub) slotSub.textContent = `ID: ${id}`;
+    if (slotId) slotId.textContent = `ID ${id}`;
+    if (slotStatus){
+      slotStatus.textContent = `Статус: ${status}`;
+      slotStatus.dataset.tone = toneForStatus(status);
+    }
+    if (slotUtc) slotUtc.textContent = row.dataset.startUtc || '—';
+    if (slotLocal) slotLocal.textContent = row.dataset.startRec || '—';
+    if (slotLocalCandidateWrap){
+      if (candidateTz && row.dataset.startCand){
+        slotLocalCandidateWrap.hidden = false;
+        if (slotLocalCandidate) slotLocalCandidate.textContent = `${row.dataset.startCand} (${candidateTz})`;
+      } else {
+        slotLocalCandidateWrap.hidden = true;
+      }
+    }
+    if (slotRel) slotRel.textContent = formatRelative(parseTime(row));
+
+    if (slotRecruiter){
+      slotRecruiter.innerHTML = `
+        <div class="slot-person">
+          <span class="slot-person__name">${recruiterName || '—'}</span>
+          <span class="badge badge--soft">${recruiterTz}</span>
+        </div>`;
+    }
+
+    if (slotCandidateSection){
+      if (candidateName){
+        slotCandidateSection.hidden = false;
+        if (slotCandidate){
+          slotCandidate.innerHTML = `
+            <div class="slot-person">
+              <span class="slot-person__name">${candidateName}</span>
+              ${candidateTz ? `<span class="badge badge--soft">${candidateTz}</span>` : ''}
+            </div>
+            <p class="muted">tg_id: ${candidateId || '—'}</p>`;
+        }
+      } else {
+        slotCandidateSection.hidden = false;
+        if (slotCandidate) slotCandidate.innerHTML = '<p class="muted">Пока никто не забронировал слот.</p>';
+      }
+    }
+
+    if (slotMeta){
+      const items = [];
+      items.push(`Длительность: ${duration || 60} мин`);
+      items.push(`UTC: ${row.dataset.startUtc || '—'}`);
+      items.push(`TZ рекрутёра: ${recruiterTz}`);
+      if (candidateTz) items.push(`TZ кандидата: ${candidateTz}`);
+      fillList(slotMeta, items);
+    }
+
+    if (slotDeleteBtn){
+      const canDelete = row.dataset.canDelete === '1';
+      slotDeleteBtn.disabled = !canDelete;
+      slotDeleteBtn.dataset.slotId = id;
+      slotDeleteBtn.dataset.status = status;
+      slotDeleteBtn.dataset.recruiter = recruiterName || '';
+    }
+
+  }
+
+  function openSlot(row){
+    if (!row) return;
+    currentRow = row;
+    hydrateSheet(row);
+    openSheet();
+  }
+
+  async function performDelete(row){
+    if (!row) return;
+    const id = row.dataset.id;
+    if (!id) return;
+
+    const recruiterName = row.dataset.recruiter ? ` (${row.dataset.recruiter})` : '';
+    const confirmation = window.confirm(`Удалить слот #${id}${recruiterName}? Действие нельзя отменить.`);
+    if (!confirmation) return;
+
+    const rowDeleteBtn = row.querySelector('[data-action="delete-slot"]');
+    if (rowDeleteBtn) rowDeleteBtn.disabled = true;
+    if (slotDeleteBtn && currentRow === row) slotDeleteBtn.disabled = true;
+
+    try {
+      const response = await fetch(`/slots/${id}`, {
+        method: 'DELETE',
+        headers: { 'Accept': 'application/json' },
+      });
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (_err) {
+        payload = null;
+      }
+
+      if (!response.ok || !payload || payload.ok !== true){
+        const message = payload && payload.message ? payload.message : 'Не удалось удалить слот.';
+        toast(message, 'error');
+        if (rowDeleteBtn) rowDeleteBtn.disabled = row.dataset.canDelete !== '1';
+        if (slotDeleteBtn && currentRow === row){
+          slotDeleteBtn.disabled = row.dataset.canDelete !== '1';
+        }
+        return;
+      }
+
+      toast(payload.message || 'Слот удалён', 'success');
+      if (currentRow === row){
+        closeSheet();
+      }
+      removeRow(row);
+      applyFutureFilter();
+      updateRelativeLabels();
+    } catch (err){
+      console.error(err);
+      toast('Не удалось удалить слот.', 'error');
+      if (rowDeleteBtn) rowDeleteBtn.disabled = row.dataset.canDelete !== '1';
+      if (slotDeleteBtn && currentRow === row){
+        slotDeleteBtn.disabled = row.dataset.canDelete !== '1';
+      }
+    }
+  }
+
+  function restorePreferences(){
+    if (onlyFuture && storage){
+      const saved = storage.getItem(storageKeys.future);
+      if (saved !== null) onlyFuture.checked = saved === '1';
+    }
+    if (candToggle && storage){
+      const saved = storage.getItem(storageKeys.candidate);
+      if (saved !== null) candToggle.checked = saved === '1';
+    }
+  }
+
+  function persistPreference(key, value){
+    if (!storage) return;
+    storage.setItem(key, value ? '1' : '0');
+  }
+
+  if (!table || !tbody) return;
+
+  resetSheet();
+  restorePreferences();
+  setCandidateColumnVisibility(candToggle ? candToggle.checked : false);
+  applySort();
   applySortIndicator();
-  sortRows();
-  refreshCounts();
+  applyFutureFilter();
+  updateRelativeLabels();
+
+  if (relTimer) clearInterval(relTimer);
+  relTimer = window.setInterval(updateRelativeLabels, 60000);
+
+  on(tbody, 'click', e => {
+    const deleteBtn = e.target.closest('[data-action="delete-slot"]');
+    if (deleteBtn){
+      e.preventDefault();
+      e.stopPropagation();
+      const row = deleteBtn.closest('.slot-row');
+      performDelete(row);
+      return;
+    }
+    const actionBtn = e.target.closest('[data-action="open-slot"]');
+    if (actionBtn){
+      const row = actionBtn.closest('.slot-row');
+      openSlot(row);
+      return;
+    }
+    const row = e.target.closest('.slot-row');
+    if (row) openSlot(row);
+  });
+
+  on(tbody, 'dblclick', e => {
+    const row = e.target.closest('.slot-row');
+    if (row) openSlot(row);
+  });
+
+  on(tbody, 'keydown', e => {
+    const row = e.target.closest('.slot-row');
+    if (!row) return;
+    if (e.target.closest('[data-action="delete-slot"]')) return;
+    if (e.key === 'Enter'){ e.preventDefault(); openSlot(row); }
+    if (e.key === ' '){ e.preventDefault(); openSlot(row); }
+  });
+
+  on(table, 'click', e => {
+    const sortButton = e.target.closest('.sort');
+    if (!sortButton) return;
+    const key = sortButton.dataset.key;
+    if (!key) return;
+    if (sortState.key === key){
+      sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortState.key = key;
+      sortState.dir = 'asc';
+    }
+    applySort();
+    applySortIndicator();
+    applyFutureFilter();
+  });
+
+  on(onlyFuture, 'change', () => {
+    persistPreference(storageKeys.future, !!onlyFuture.checked);
+    applyFutureFilter();
+  });
+
+  on(candToggle, 'change', () => {
+    persistPreference(storageKeys.candidate, !!candToggle.checked);
+    setCandidateColumnVisibility(candToggle.checked);
+  });
+
+  on(slotDeleteBtn, 'click', () => {
+    if (currentRow) performDelete(currentRow);
+  });
+
+  on(slotBackdrop, 'click', closeSheet);
+  on(slotClose, 'click', closeSheet);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !slotSheet.hidden){
+      e.preventDefault();
+      closeSheet();
+    }
+    if (e.key === 'f' && onlyFuture){
+      onlyFuture.checked = !onlyFuture.checked;
+      persistPreference(storageKeys.future, onlyFuture.checked);
+      applyFutureFilter();
+    }
+    if (e.key === 't' && candToggle){
+      candToggle.checked = !candToggle.checked;
+      persistPreference(storageKeys.candidate, candToggle.checked);
+      setCandidateColumnVisibility(candToggle.checked);
+    }
+  });
+
 })();
 </script>
-{% endraw %}
-
 {% endblock %}

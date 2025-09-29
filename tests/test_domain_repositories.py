@@ -9,6 +9,7 @@ from backend.domain import models
 from backend.domain.repositories import (
     approve_slot,
     get_active_recruiters,
+    get_active_recruiters_for_city,
     get_city,
     get_city_by_name,
     get_free_slots_by_recruiter,
@@ -32,9 +33,14 @@ async def test_recruiter_and_city_queries():
         await session.refresh(recruiter_active)
         await session.refresh(recruiter_inactive)
         await session.refresh(city)
+        city.responsible_recruiter_id = recruiter_active.id
+        await session.commit()
 
     active = await get_active_recruiters()
     assert [r.name for r in active] == ["Михаил"]
+
+    by_city = await get_active_recruiters_for_city(city.id)
+    assert [r.name for r in by_city] == ["Михаил"]
 
     fetched = await get_recruiter(recruiter_active.id)
     assert fetched is not None
@@ -59,6 +65,8 @@ async def test_slot_workflow_and_templates():
         await session.commit()
         await session.refresh(recruiter)
         await session.refresh(city)
+        city.responsible_recruiter_id = recruiter.id
+        await session.commit()
 
         slot_free = models.Slot(
             recruiter_id=recruiter.id,
@@ -84,6 +92,11 @@ async def test_slot_workflow_and_templates():
     free_slots = await get_free_slots_by_recruiter(recruiter.id, now_utc=now)
     assert len(free_slots) == 1
     assert free_slots[0].id == slot_free.id
+
+    filtered_slots = await get_free_slots_by_recruiter(
+        recruiter.id, now_utc=now, city_id=city.id
+    )
+    assert [s.id for s in filtered_slots] == [slot_free.id]
 
     reserved = await reserve_slot(
         slot_free.id,

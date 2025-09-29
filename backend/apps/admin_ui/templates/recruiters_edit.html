@@ -6,7 +6,7 @@
   title=recruiter.name,
   description="Измените данные и закреплённые города.",
   form_id="recruiter-edit",
-  action="/recruiters/{{ recruiter.id }}/update",
+  action='/recruiters/' ~ recruiter.id ~ '/update',
   autocomplete="off",
   back_href="/recruiters",
   back_label="К списку рекрутёров",

@@ -18,6 +18,7 @@ class Settings:
     bot_token: str
     admin_chat_id: int
     timezone: str
+    session_secret: str
 
 
 load_env()
@@ -75,6 +76,11 @@ def get_settings() -> Settings:
     bot_token = os.getenv("BOT_TOKEN", "")
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
+    session_secret = (
+        os.getenv("SESSION_SECRET")
+        or os.getenv("SECRET_KEY")
+        or "dev-admin-session"
+    )
 
     return Settings(
         data_dir=data_dir,
@@ -84,4 +90,5 @@ def get_settings() -> Settings:
         bot_token=bot_token,
         admin_chat_id=admin_chat_id,
         timezone=timezone,
+        session_secret=session_secret,
     )

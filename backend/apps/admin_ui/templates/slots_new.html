@@ -56,10 +56,25 @@
       {% call forms.field("Рекрутёр", hint="Выберите, для кого создаём слот") %}
         <select id="recruiter_id" name="recruiter_id" required>
           <option value="" disabled selected>— выберите рекрутёра —</option>
-          {% for r in recruiters %}
-            <option value="{{ r.id }}" data-tz="{{ r.tz or 'Europe/Moscow' }}">{{ r.name }} ({{ r.tz or "Europe/Moscow" }})</option>
+          {% for item in recruiters %}
+            {% set r = item.rec %}
+            <option value="{{ r.id }}"
+                    data-tz="{{ r.tz or 'Europe/Moscow' }}"
+                    data-hascities="{{ 1 if item.cities else 0 }}">{{ r.name }} ({{ r.tz or "Europe/Moscow" }})</option>
           {% endfor %}
         </select>
+      {% endcall %}
+      {% call forms.field("Город", hint="Слот будет доступен кандидатам выбранного города") %}
+        <select id="city_id" name="city_id" required disabled>
+          <option value="" disabled selected>— выберите город —</option>
+          {% for item in recruiters %}
+            {% set r = item.rec %}
+            {% for city in item.cities %}
+              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.name }} ({{ city.tz or "Europe/Moscow" }})</option>
+            {% endfor %}
+          {% endfor %}
+        </select>
+        <p class="form-note" id="city_hint_one">Сначала выберите рекрутёра.</p>
       {% endcall %}
       {% call forms.meta() %}
         {% call forms.note(inline=True, id='tz_one_hint') %}TZ рекрутёра: —{% endcall %}
@@ -111,10 +126,25 @@
       {% call forms.field("Рекрутёр", hint="Слоты будут созданы в его часовом поясе") %}
         <select id="recruiter_id_bulk" name="recruiter_id" required>
           <option value="" disabled selected>— выберите рекрутёра —</option>
-          {% for r in recruiters %}
-            <option value="{{ r.id }}" data-tz="{{ r.tz or 'Europe/Moscow' }}">{{ r.name }} ({{ r.tz or "Europe/Moscow" }})</option>
+          {% for item in recruiters %}
+            {% set r = item.rec %}
+            <option value="{{ r.id }}"
+                    data-tz="{{ r.tz or 'Europe/Moscow' }}"
+                    data-hascities="{{ 1 if item.cities else 0 }}">{{ r.name }} ({{ r.tz or "Europe/Moscow" }})</option>
           {% endfor %}
         </select>
+      {% endcall %}
+      {% call forms.field("Город", hint="Слоты будут созданы для указанного города") %}
+        <select id="city_id_bulk" name="city_id" required disabled>
+          <option value="" disabled selected>— выберите город —</option>
+          {% for item in recruiters %}
+            {% set r = item.rec %}
+            {% for city in item.cities %}
+              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.name }} ({{ city.tz or "Europe/Moscow" }})</option>
+            {% endfor %}
+          {% endfor %}
+        </select>
+        <p class="form-note" id="city_hint_bulk">Сначала выберите рекрутёра.</p>
       {% endcall %}
       {% call forms.note(id='tz_bulk_hint') %}TZ рекрутёра: —{% endcall %}
     {% endcall %}
@@ -181,6 +211,8 @@
     tab: 'slots_new.tab',
     recOne: 'slots_new.recOne',
     recBulk: 'slots_new.recBulk',
+    cityOne: 'slots_new.cityOne',
+    cityBulk: 'slots_new.cityBulk',
     date: 'slots_new.date',
     time: 'slots_new.time'
   };
@@ -247,6 +279,8 @@
   }
 
   const selOne = $('#recruiter_id');
+  const cityOne = $('#city_id');
+  const cityHintOne = $('#city_hint_one');
   const dateOne= $('#date');
   const timeOne= $('#time');
   const tzOne  = $('#tz_one_hint');
@@ -260,6 +294,46 @@
     return opt ? (opt.getAttribute('data-tz') || 'Europe/Moscow') : 'Europe/Moscow';
   }
 
+  function updateCityOptions(recSelect, citySelect, hintEl){
+    if (!citySelect) return false;
+    const recId = recSelect?.value || '';
+    const options = Array.from(citySelect.querySelectorAll('option[data-rec]'));
+    let hasMatches = false;
+    options.forEach(opt => {
+      const match = recId && opt.getAttribute('data-rec') === recId;
+      opt.hidden = !match;
+      opt.disabled = !match;
+      if (!match && opt.selected) opt.selected = false;
+      if (match) hasMatches = true;
+    });
+
+    if (!recId){
+      citySelect.value = '';
+      citySelect.disabled = true;
+      if (hintEl) hintEl.textContent = 'Сначала выберите рекрутёра.';
+      return false;
+    }
+
+    if (!hasMatches){
+      citySelect.value = '';
+      citySelect.disabled = true;
+      if (hintEl) hintEl.textContent = 'Для рекрутёра нет привязанных городов.';
+      return false;
+    }
+
+    if (hintEl) hintEl.textContent = '';
+    citySelect.disabled = false;
+
+    if (!options.some(opt => !opt.disabled && opt.value === citySelect.value)){
+      const first = options.find(opt => !opt.disabled);
+      if (first){
+        first.selected = true;
+        citySelect.value = first.value;
+      }
+    }
+    return !!citySelect.value;
+  }
+
   function snapToHalfHour(h, m){
     const minutes = h*60 + m;
     const snapped = Math.round(minutes / 30) * 30;
@@ -267,13 +341,16 @@
   }
 
   function updateOne(){
+    const hasCities = updateCityOptions(selOne, cityOne, cityHintOne);
     const tz = currentTZ(selOne);
     tzOne.textContent = `TZ рекрутёра: ${tz}`;
     offsetText.textContent = getOffsetLabel(tz, new Date());
     updateNowChip();
 
     const d = dateOne.value, t = timeOne.value;
-    const ready = !!(selOne.value && d && t);
+    const cityVal = cityOne ? cityOne.value : '';
+    if (cityOne) localStorage.setItem(LS.cityOne, cityVal || '');
+    const ready = !!(selOne.value && hasCities && cityVal && d && t);
     btnOne.disabled = !ready;
 
     if (!ready){
@@ -341,18 +418,37 @@
     timeOne.value = `${fmt2(s.h)}:${fmt2(s.m)}`;
   });
 
-  selOne?.addEventListener('change', ()=>{ updateOne(); localStorage.setItem(LS.recOne, selOne.value||''); });
+  selOne?.addEventListener('change', ()=>{
+    localStorage.setItem(LS.recOne, selOne.value||'');
+    updateCityOptions(selOne, cityOne, cityHintOne);
+    updateOne();
+  });
   dateOne?.addEventListener('input', updateOne);
   timeOne?.addEventListener('input', updateOne);
+  cityOne?.addEventListener('change', ()=>{
+    localStorage.setItem(LS.cityOne, cityOne.value||'');
+    updateOne();
+  });
 
   (function restoreOne(){
-    const r = localStorage.getItem(LS.recOne); if (r) selOne.value = r;
+    const r = localStorage.getItem(LS.recOne);
+    if (r) selOne.value = r;
+    updateCityOptions(selOne, cityOne, cityHintOne);
+    const savedCity = localStorage.getItem(LS.cityOne);
+    if (savedCity && cityOne){
+      const match = cityOne.querySelector(`option[value="${savedCity}"][data-rec="${selOne.value}"]`);
+      if (match && !match.disabled){
+        cityOne.value = savedCity;
+      }
+    }
     const d = localStorage.getItem(LS.date);   if (d) dateOne.value = d;
     const t = localStorage.getItem(LS.time);   if (t) timeOne.value = t;
     updateOne();
   })();
 
   const selBulk = $('#recruiter_id_bulk');
+  const cityBulk = $('#city_id_bulk');
+  const cityHintBulk = $('#city_hint_bulk');
   const tzBulk  = $('#tz_bulk_hint');
   const sd = $('#start_date'), ed = $('#end_date');
   const prevBulk = $('#preview-bulk');
@@ -425,11 +521,14 @@
   }
 
   function updateBulk(){
+    const hasCities = updateCityOptions(selBulk, cityBulk, cityHintBulk);
     const tz = currentTZ(selBulk);
     tzBulk.textContent = `TZ рекрутёра: ${tz}`;
 
     const s = sd.value, e = ed.value;
-    const ready = !!(selBulk.value && s && e);
+    const cityVal = cityBulk ? cityBulk.value : '';
+    if (cityBulk) localStorage.setItem(LS.cityBulk, cityVal || '');
+    const ready = !!(selBulk.value && hasCities && cityVal && s && e);
     btnBulk.disabled = !ready;
 
     const st = hid.start.value, en = hid.end.value, bs = hid.bstart.value, be = hid.bend.value, step = parseInt(hid.step.value||'30',10);
@@ -458,11 +557,31 @@
     localStorage.setItem(LS.recBulk, selBulk.value||'');
   }
 
-  selBulk?.addEventListener('change', updateBulk);
+  selBulk?.addEventListener('change', ()=>{
+    localStorage.setItem(LS.recBulk, selBulk.value||'');
+    updateCityOptions(selBulk, cityBulk, cityHintBulk);
+    updateBulk();
+  });
   sd?.addEventListener('input', ()=>{ if(!ed.value) ed.value = sd.value; updateBulk(); });
   ed?.addEventListener('input', updateBulk);
+  cityBulk?.addEventListener('change', ()=>{
+    localStorage.setItem(LS.cityBulk, cityBulk.value||'');
+    updateBulk();
+  });
 
-  (function restoreBulk(){ const r = localStorage.getItem(LS.recBulk); if(r) selBulk.value = r; updateBulk(); })();
+  (function restoreBulk(){
+    const r = localStorage.getItem(LS.recBulk);
+    if(r) selBulk.value = r;
+    updateCityOptions(selBulk, cityBulk, cityHintBulk);
+    const savedCity = localStorage.getItem(LS.cityBulk);
+    if (savedCity && cityBulk){
+      const match = cityBulk.querySelector(`option[value="${savedCity}"][data-rec="${selBulk.value}"]`);
+      if (match && !match.disabled){
+        cityBulk.value = savedCity;
+      }
+    }
+    updateBulk();
+  })();
 
   updateNowChip(); setInterval(updateNowChip, 60000);
 

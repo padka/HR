@@ -1,5 +1,5 @@
 import pytest
-from datetime import date
+from datetime import date, timezone
 
 from sqlalchemy import select
 
@@ -13,14 +13,24 @@ from backend.domain import models
 async def test_bulk_create_slots_creates_unique_series():
     async with async_session() as session:
         recruiter = models.Recruiter(name="Bulk", tz="Europe/Moscow", active=True)
-        session.add(recruiter)
+        city = models.City(
+            name="Bulk City",
+            tz="Europe/Moscow",
+            active=True,
+            responsible_recruiter_id=None,
+        )
+        session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
+        city.responsible_recruiter_id = recruiter.id
+        await session.commit()
+        await session.refresh(city)
 
     start = date(2024, 1, 8)
 
     created, error = await bulk_create_slots(
         recruiter_id=recruiter.id,
+        city_id=city.id,
         start_date=start.isoformat(),
         end_date=start.isoformat(),
         start_time="10:00",
@@ -36,6 +46,7 @@ async def test_bulk_create_slots_creates_unique_series():
 
     created_second, error_second = await bulk_create_slots(
         recruiter_id=recruiter.id,
+        city_id=city.id,
         start_date=start.isoformat(),
         end_date=start.isoformat(),
         start_time="10:00",
@@ -51,6 +62,7 @@ async def test_bulk_create_slots_creates_unique_series():
 
     created_third, error_third = await bulk_create_slots(
         recruiter_id=recruiter.id,
+        city_id=city.id,
         start_date=start.isoformat(),
         end_date=start.isoformat(),
         start_time="10:00",
@@ -76,4 +88,15 @@ async def test_bulk_create_slots_creates_unique_series():
         recruiter_time_to_utc(start.isoformat(), "10:30", recruiter.tz),
         recruiter_time_to_utc(start.isoformat(), "11:00", recruiter.tz),
     }
-    assert stored == expected
+
+    def _as_utc(dt):
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+    assert {_as_utc(dt) for dt in stored} == {_as_utc(dt) for dt in expected}
+    async with async_session() as session:
+        city_ids = set(
+            await session.scalars(
+                select(models.Slot.city_id).where(models.Slot.recruiter_id == recruiter.id)
+            )
+        )
+    assert city_ids == {city.id}

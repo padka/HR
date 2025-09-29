@@ -6,7 +6,7 @@
   title="Редактирование шаблона",
   description="Обновите текст и назначение шаблона.",
   form_id="tmplForm",
-  action="/templates/{{ tmpl.id }}/update",
+  action='/templates/' ~ tmpl.id ~ '/update',
   autocomplete="off",
   back_href="/templates",
   back_label="К списку шаблонов",

@@ -6,7 +6,7 @@
   title="Редактирование вопроса",
   description="Измените параметры и текст вопроса.",
   form_id="question-form",
-  action="/questions/{{ detail.question.id }}/update",
+  action='/questions/' ~ detail.question.id ~ '/update',
   autocomplete="off",
   back_href="/questions",
   back_label="К списку вопросов",

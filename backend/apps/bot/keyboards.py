@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from backend.domain.repositories import (
     get_active_recruiters,
+    get_active_recruiters_for_city,
     get_free_slots_by_recruiter,
     get_recruiters_free_slots_summary,
 )
@@ -60,8 +61,15 @@ def _slot_button_label(
     return label
 
 
-async def kb_recruiters(candidate_tz: str = DEFAULT_TZ) -> InlineKeyboardMarkup:
-    recs = await get_active_recruiters()
+async def kb_recruiters(
+    candidate_tz: str = DEFAULT_TZ,
+    *,
+    city_id: Optional[int] = None,
+) -> InlineKeyboardMarkup:
+    if city_id is not None:
+        recs = await get_active_recruiters_for_city(city_id)
+    else:
+        recs = await get_active_recruiters()
     if not recs:
         return InlineKeyboardMarkup(
             inline_keyboard=[
@@ -73,7 +81,7 @@ async def kb_recruiters(candidate_tz: str = DEFAULT_TZ) -> InlineKeyboardMarkup:
             ]
         )
 
-    slots_summary = await get_recruiters_free_slots_summary(r.id for r in recs)
+    slots_summary = await get_recruiters_free_slots_summary((r.id for r in recs), city_id=city_id)
 
     seen_names: set[str] = set()
     rows: List[List[InlineKeyboardButton]] = []
@@ -109,10 +117,14 @@ async def kb_recruiters(candidate_tz: str = DEFAULT_TZ) -> InlineKeyboardMarkup:
 
 
 async def kb_slots_for_recruiter(
-    recruiter_id: int, candidate_tz: str, *, slots: Optional[List[Any]] = None
+    recruiter_id: int,
+    candidate_tz: str,
+    *,
+    slots: Optional[List[Any]] = None,
+    city_id: Optional[int] = None,
 ) -> InlineKeyboardMarkup:
     if slots is None:
-        slots = await get_free_slots_by_recruiter(recruiter_id)
+        slots = await get_free_slots_by_recruiter(recruiter_id, city_id=city_id)
     if not slots:
         return InlineKeyboardMarkup(
             inline_keyboard=[

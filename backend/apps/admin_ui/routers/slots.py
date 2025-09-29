@@ -1,8 +1,12 @@
 from collections import Counter
+import base64
+import hashlib
+import hmac
+import json
 from typing import Dict, Optional
 
 from fastapi import APIRouter, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui.services.recruiters import list_recruiters
@@ -11,10 +15,15 @@ from backend.apps.admin_ui.services.slots import (
     create_slot,
     list_slots,
     recruiters_for_slot_form,
+    delete_slot,
 )
 from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
+from backend.core.settings import get_settings
 
 router = APIRouter(prefix="/slots", tags=["slots"])
+
+_FLASH_COOKIE = "admin_flash"
+_SECRET = get_settings().session_secret.encode()
 
 
 def _parse_checkbox(value: Optional[str]) -> bool:
@@ -22,14 +31,33 @@ def _parse_checkbox(value: Optional[str]) -> bool:
 
 
 def _pop_flash(request: Request) -> Optional[Dict[str, str]]:
-    if hasattr(request, "session"):
-        return request.session.pop("flash", None)
-    return None
+    raw = request.cookies.get(_FLASH_COOKIE)
+    if not raw:
+        return None
+    try:
+        padding = "=" * (-len(raw) % 4)
+        data = base64.urlsafe_b64decode((raw + padding).encode())
+        payload, sig = data.rsplit(b".", 1)
+        expected = hmac.new(_SECRET, payload, hashlib.sha256).hexdigest().encode()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        return json.loads(payload.decode("utf-8"))
+    except Exception:
+        return None
 
 
-def _set_flash(request: Request, status: str, message: str) -> None:
-    if hasattr(request, "session"):
-        request.session["flash"] = {"status": status, "message": message}
+def _set_flash(response: RedirectResponse, status: str, message: str) -> None:
+    payload = json.dumps({"status": status, "message": message}, ensure_ascii=False).encode("utf-8")
+    digest = hmac.new(_SECRET, payload, hashlib.sha256).hexdigest().encode()
+    token = base64.urlsafe_b64encode(payload + b"." + digest).decode("ascii").rstrip("=")
+    response.set_cookie(
+        _FLASH_COOKIE,
+        token,
+        max_age=300,
+        path="/",
+        httponly=False,
+        samesite="lax",
+    )
 
 
 @router.get("", response_class=HTMLResponse)
@@ -68,34 +96,47 @@ async def slots_list(
         "status_counts": status_counts,
         "flash": flash,
     }
-    return templates.TemplateResponse("slots_list.html", context)
+    response = templates.TemplateResponse("slots_list.html", context)
+    if flash:
+        response.delete_cookie(_FLASH_COOKIE, path="/")
+    return response
 
 
 @router.get("/new", response_class=HTMLResponse)
 async def slots_new(request: Request):
     recruiters = await recruiters_for_slot_form()
     flash = _pop_flash(request)
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         "slots_new.html",
         {"request": request, "recruiters": recruiters, "flash": flash},
     )
+    if flash:
+        response.delete_cookie(_FLASH_COOKIE, path="/")
+    return response
 
 
 @router.post("/create")
 async def slots_create(
     recruiter_id: int = Form(...),
+    city_id: int = Form(...),
     date: str = Form(...),
     time: str = Form(...),
 ):
-    ok = await create_slot(recruiter_id, date, time)
+    ok = await create_slot(recruiter_id, date, time, city_id=city_id)
     redirect = "/slots" if ok else "/slots/new"
-    return RedirectResponse(url=redirect, status_code=303)
+    response = RedirectResponse(url=redirect, status_code=303)
+    if ok:
+        _set_flash(response, "success", "Слот создан")
+    else:
+        _set_flash(response, "error", "Не удалось создать слот. Проверьте город, дату и время.")
+    return response
 
 
 @router.post("/bulk_create")
 async def slots_bulk_create(
     request: Request,
     recruiter_id: int = Form(...),
+    city_id: int = Form(...),
     start_date: str = Form(...),
     end_date: str = Form(...),
     start_time: str = Form(...),
@@ -108,6 +149,7 @@ async def slots_bulk_create(
 ):
     created, error = await bulk_create_slots(
         recruiter_id=recruiter_id,
+        city_id=city_id,
         start_date=start_date,
         end_date=end_date,
         start_time=start_time,
@@ -119,11 +161,32 @@ async def slots_bulk_create(
         use_break=_parse_checkbox(use_break),
     )
 
+    response = RedirectResponse(url="/slots", status_code=303)
     if error:
-        _set_flash(request, "error", error)
+        _set_flash(response, "error", error)
     elif created == 0:
-        _set_flash(request, "info", "Новые слоты не созданы — все уже существуют.")
+        _set_flash(response, "info", "Новые слоты не созданы — все уже существуют.")
     else:
-        _set_flash(request, "success", f"Создано {created} слот(ов).")
+        _set_flash(response, "success", f"Создано {created} слот(ов).")
 
-    return RedirectResponse(url="/slots", status_code=303)
+    return response
+
+
+@router.post("/{slot_id}/delete")
+async def slots_delete_form(slot_id: int):
+    ok, error = await delete_slot(slot_id)
+    response = RedirectResponse(url="/slots", status_code=303)
+    if ok:
+        _set_flash(response, "success", "Слот удалён")
+    else:
+        _set_flash(response, "error", error or "Не удалось удалить слот.")
+    return response
+
+
+@router.delete("/{slot_id}")
+async def slots_delete(slot_id: int):
+    ok, error = await delete_slot(slot_id)
+    if ok:
+        return JSONResponse({"ok": True, "message": "Слот удалён"})
+    status_code = 404 if error == "Слот не найден" else 400
+    return JSONResponse({"ok": False, "message": error or "Не удалось удалить слот."}, status_code=status_code)

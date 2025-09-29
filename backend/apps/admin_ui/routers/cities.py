@@ -9,6 +9,7 @@ from backend.apps.admin_ui.services.cities import (
     list_cities,
     city_owner_field_name,
     update_city_settings as update_city_settings_service,
+    delete_city,
 )
 from backend.apps.admin_ui.services.recruiters import list_recruiters
 from backend.apps.admin_ui.services.templates import (
@@ -89,4 +90,11 @@ async def update_city_settings(city_id: int, request: Request):
         return JSONResponse({"ok": False, "error": error}, status_code=status)
     return JSONResponse({"ok": True})
 
+
+@router.post("/{city_id}/delete")
+async def cities_delete(city_id: int):
+    ok = await delete_city(city_id)
+    if not ok:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    return JSONResponse({"ok": True})
 

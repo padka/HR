@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date as date_type, datetime, time as time_type, timedelta
+from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select
@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.utils import paginate, recruiter_time_to_utc, norm_status, status_to_db
 from backend.core.db import async_session
-from backend.domain.models import Recruiter, Slot, SlotStatus
+from backend.domain.models import Recruiter, Slot, SlotStatus, City
 
 __all__ = [
     "list_slots",
@@ -17,6 +17,7 @@ __all__ = [
     "create_slot",
     "bulk_create_slots",
     "api_slots_payload",
+    "delete_slot",
 ]
 
 
@@ -52,20 +53,51 @@ async def list_slots(
     }
 
 
-async def recruiters_for_slot_form() -> List[Recruiter]:
+async def recruiters_for_slot_form() -> List[Dict[str, object]]:
     inspector = sa_inspect(Recruiter)
     has_active = "active" in getattr(inspector, "columns", {})
     query = select(Recruiter).order_by(Recruiter.name.asc())
     if has_active:
         query = query.where(getattr(Recruiter, "active") == True)  # noqa: E712
     async with async_session() as session:
-        return (await session.scalars(query)).all()
+        recs = (await session.scalars(query)).all()
+        if not recs:
+            return []
+
+        rec_ids = [rec.id for rec in recs]
+        city_rows = (
+            await session.scalars(
+                select(City)
+                .where(City.responsible_recruiter_id.in_(rec_ids))
+                .order_by(City.name.asc())
+            )
+        ).all()
+
+        city_map: Dict[int, List[City]] = {}
+        for city in city_rows:
+            if city.responsible_recruiter_id is None:
+                continue
+            city_map.setdefault(city.responsible_recruiter_id, []).append(city)
+
+    return [
+        {"rec": rec, "cities": city_map.get(rec.id, [])}
+        for rec in recs
+    ]
 
 
-async def create_slot(recruiter_id: int, date: str, time: str) -> bool:
+async def create_slot(
+    recruiter_id: int,
+    date: str,
+    time: str,
+    *,
+    city_id: int,
+) -> bool:
     async with async_session() as session:
         recruiter = await session.get(Recruiter, recruiter_id)
         if not recruiter:
+            return False
+        city = await session.get(City, city_id)
+        if not city or city.responsible_recruiter_id != recruiter_id:
             return False
         dt_utc = recruiter_time_to_utc(date, time, getattr(recruiter, "tz", None))
         if not dt_utc:
@@ -73,9 +105,46 @@ async def create_slot(recruiter_id: int, date: str, time: str) -> bool:
         status_free = getattr(SlotStatus, "FREE", "FREE")
         if hasattr(status_free, "value"):
             status_free = status_free.value
-        session.add(Slot(recruiter_id=recruiter_id, start_utc=dt_utc, status=status_free))
+        session.add(
+            Slot(
+                recruiter_id=recruiter_id,
+                city_id=city_id,
+                start_utc=dt_utc,
+                status=status_free,
+            )
+        )
         await session.commit()
         return True
+
+
+async def delete_slot(slot_id: int) -> Tuple[bool, Optional[str]]:
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if not slot:
+            return False, "Слот не найден"
+
+        status = norm_status(slot.status)
+        if status not in {"FREE", "PENDING"}:
+            return False, f"Нельзя удалить слот со статусом {status or 'UNKNOWN'}"
+
+        await session.delete(slot)
+        await session.commit()
+        return True, None
+
+
+def _normalize_utc(dt: datetime) -> datetime:
+    """Return UTC naive datetime for reliable comparisons across drivers."""
+    if dt.tzinfo is None:
+        # Assume already UTC naive
+        return dt.replace(tzinfo=None)
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _as_utc(dt: datetime) -> datetime:
+    """Ensure datetime is timezone-aware UTC for database comparisons."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 async def bulk_create_slots(
@@ -89,11 +158,19 @@ async def bulk_create_slots(
     step_min: int,
     include_weekends: bool,
     use_break: bool,
+    *,
+    city_id: int,
 ) -> Tuple[int, Optional[str]]:
     async with async_session() as session:
         recruiter = await session.get(Recruiter, recruiter_id)
         if not recruiter:
             return 0, "Рекрутёр не найден"
+
+        city = await session.get(City, city_id)
+        if not city:
+            return 0, "Город не найден"
+        if city.responsible_recruiter_id != recruiter_id:
+            return 0, "Город не привязан к выбранному рекрутёру"
 
         try:
             start = date_type.fromisoformat(start_date)
@@ -126,8 +203,8 @@ async def bulk_create_slots(
 
         tz = getattr(recruiter, "tz", None)
 
-        planned: List[datetime] = []
-        planned_set = set()
+        planned_pairs: List[Tuple[datetime, datetime]] = []  # (original, normalized)
+        planned_norms = set()
         current_date = start
         while current_date <= end:
             if include_weekends or current_date.weekday() < 5:
@@ -146,24 +223,29 @@ async def bulk_create_slots(
                     dt_utc = recruiter_time_to_utc(current_date.isoformat(), time_str, tz)
                     if not dt_utc:
                         return 0, "Не удалось преобразовать время в UTC"
-                    if dt_utc not in planned_set:
-                        planned_set.add(dt_utc)
-                        planned.append(dt_utc)
+                    norm_dt = _normalize_utc(dt_utc)
+                    if norm_dt not in planned_norms:
+                        planned_norms.add(norm_dt)
+                        planned_pairs.append((dt_utc, norm_dt))
                     current_minutes += step_min
             current_date += timedelta(days=1)
 
-        if not planned:
+        if not planned_pairs:
             return 0, "Нет доступных слотов для создания"
 
-        existing = set(
-            await session.scalars(
-                select(Slot.start_utc)
-                .where(Slot.recruiter_id == recruiter_id)
-                .where(Slot.start_utc.in_(planned))
-            )
-        )
+        norm_values = [norm for _, norm in planned_pairs]
+        range_start = min(norm_values)
+        range_end = max(norm_values)
 
-        to_insert = [dt for dt in planned if dt not in existing]
+        existing_rows = await session.scalars(
+            select(Slot.start_utc)
+            .where(Slot.recruiter_id == recruiter_id)
+            .where(Slot.start_utc >= _as_utc(range_start))
+            .where(Slot.start_utc <= _as_utc(range_end))
+        )
+        existing_norms = {_normalize_utc(dt) for dt in existing_rows}
+
+        to_insert = [original for original, norm in planned_pairs if norm not in existing_norms]
         if not to_insert:
             return 0, None
 
@@ -173,7 +255,12 @@ async def bulk_create_slots(
 
         session.add_all(
             [
-                Slot(recruiter_id=recruiter_id, start_utc=dt, status=status_free)
+                Slot(
+                    recruiter_id=recruiter_id,
+                    city_id=city_id,
+                    start_utc=dt,
+                    status=status_free,
+                )
                 for dt in to_insert
             ]
         )
