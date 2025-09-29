@@ -2,21 +2,329 @@
 {% from "partials/list_toolbar.html" import list_toolbar %}
 {% block title %}Города{% endblock %}
 {% block content %}
-<section class="page">
+<section class="page page--cities" data-page="cities" aria-labelledby="cities-title">
+  <style>
+    /* ===== Apple-like design system (local, scoped) ===== */
+    :root {
+      --radius-xs: 8px;
+      --radius-sm: 12px;
+      --radius-md: 16px;
+      --radius-lg: 22px;
+      --shadow-1: 0 1px 2px rgba(0,0,0,.05), 0 3px 12px rgba(0,0,0,.06);
+      --shadow-2: 0 6px 16px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.06);
+      --blur: 18px;
+      --trans-fast: 160ms cubic-bezier(.22,.61,.36,1);
+      --trans: 260ms cubic-bezier(.22,.61,.36,1);
+      --trans-slow: 420ms cubic-bezier(.22,.61,.36,1);
+      --ring: 0 0 0 3px rgba(0, 122, 255, .25);
+      --bg-gradient: linear-gradient(180deg, rgba(255,255,255,.6), rgba(255,255,255,.3));
+      --surface: rgba(255,255,255,.55);
+      --text: #0b0c0e;
+      --muted: #6b7280;
+      --border: rgba(0,0,0,.08);
+      --primary: #007aff; /* iOS Blue */
+      --success: #34c759;
+      --info: #5ac8fa;
+      --warning: #ff9f0a;
+      --danger: #ff3b30;
+      --card-bg: rgba(248,248,250,.72);
+      --chip-bg: rgba(0,0,0,.05);
+      --chip-text: #111;
+      --glass-bg: rgba(255,255,255,.58);
+      --code-bg: rgba(2,2,8,.06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-gradient: linear-gradient(180deg, rgba(24,24,28,.65), rgba(18,18,22,.35));
+        --surface: rgba(30,30,34,.65);
+        --text: #eceef1;
+        --muted: #9aa3af;
+        --border: rgba(255,255,255,.12);
+        --primary: #0a84ff;
+        --card-bg: rgba(26,26,30,.66);
+        --chip-bg: rgba(255,255,255,.08);
+        --chip-text: #eaeef3;
+        --glass-bg: rgba(30,30,34,.58);
+        --code-bg: rgba(255,255,255,.08);
+      }
+    }
+
+    .page--cities {
+      --maxw: 1200px;
+      position: relative;
+      isolation: isolate;
+    }
+    .page--cities::before {
+      /* мягкий фон */
+      content: "";
+      position: absolute; inset: -10vmax;
+      background:
+        radial-gradient(60vmax 60vmax at 10% -10%, rgba(90,200,250,.18), transparent 60%),
+        radial-gradient(50vmax 50vmax at 120% 10%, rgba(52,199,89,.12), transparent 60%),
+        radial-gradient(40vmax 40vmax at 80% 120%, rgba(10,132,255,.10), transparent 60%);
+      filter: blur(30px);
+      z-index: -2;
+      pointer-events: none;
+    }
+
+    .page-header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: end;
+      max-width: var(--maxw);
+      margin: 24px auto 12px;
+      padding: 24px clamp(16px, 4vw, 28px);
+      border-radius: var(--radius-lg);
+      background: var(--bg-gradient);
+      backdrop-filter: saturate(140%) blur(var(--blur));
+      -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
+      box-shadow: var(--shadow-1);
+      border: 1px solid var(--border);
+    }
+    .page-title {
+      margin: 0 0 6px;
+      font-size: clamp(24px, 2.4vw, 32px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .page-description {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14.5px;
+    }
+    .page-actions {
+      display: flex; gap: 12px; justify-content: end; align-items: center;
+    }
+    .btn {
+      --btn-bg: var(--surface);
+      --btn-border: var(--border);
+      --btn-text: var(--text);
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 10px 14px;
+      border: 1px solid var(--btn-border);
+      background: var(--btn-bg);
+      color: var(--btn-text);
+      border-radius: calc(var(--radius-sm) - 2px);
+      font-weight: 600; font-size: 14px; line-height: 1;
+      transition: transform var(--trans), box-shadow var(--trans), background var(--trans);
+      box-shadow: 0 0 0 rgba(0,0,0,0);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-1); }
+    .btn:active { transform: translateY(0); box-shadow: none; }
+    .btn:focus-visible { box-shadow: var(--ring); outline: none; }
+    .btn-primary {
+      --btn-bg: linear-gradient(180deg, color-mix(in srgb, var(--primary) 98%, #fff 2%), color-mix(in srgb, var(--primary) 80%, #000 20%));
+      --btn-text: #fff;
+      --btn-border: color-mix(in srgb, var(--primary), #000 12%);
+    }
+    .btn-soft {
+      --btn-bg: color-mix(in srgb, var(--primary) 12%, transparent);
+      --btn-border: color-mix(in srgb, var(--primary) 18%, transparent);
+      --btn-text: color-mix(in srgb, var(--primary) 88%, #fff);
+    }
+    .btn-ghost {
+      --btn-bg: transparent;
+      --btn-border: transparent;
+      --btn-text: var(--muted);
+    }
+    .btn--small { padding: 8px 10px; font-size: 13px; border-radius: var(--radius-xs); }
+
+    /* Инструменты списка */
+    .toolbar {
+      max-width: var(--maxw);
+      margin: 8px auto 18px;
+      padding: 10px clamp(16px, 4vw, 28px);
+    }
+    .form-field { display: grid; gap: 6px; }
+    .form-field--wide { width: min(720px, 100%); }
+    .form-field--compact { width: 100%; }
+    .form-field input[type="search"],
+    .form-field input[type="number"],
+    .form-field select,
+    .form-field textarea {
+      background: var(--card-bg);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 12px;
+      font-size: 14.5px;
+      color: var(--text);
+      transition: border-color var(--trans), background var(--trans), box-shadow var(--trans);
+    }
+    .form-field textarea { padding: 12px 14px; }
+    .form-field input::placeholder,
+    .form-field textarea::placeholder { color: color-mix(in srgb, var(--muted) 78%, transparent); }
+    .form-field input:focus-visible,
+    .form-field select:focus-visible,
+    .form-field textarea:focus-visible { outline: none; box-shadow: var(--ring); border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+
+    /* Плашки и бейджи */
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 10px; border-radius: 999px;
+      font-size: 12.5px; font-weight: 600;
+      background: var(--chip-bg); color: var(--chip-text);
+      border: 1px solid var(--border);
+    }
+    .badge.success { background: color-mix(in srgb, var(--success) 16%, transparent); color: #0f5132; }
+    .badge.info { background: color-mix(in srgb, var(--info) 16%, transparent); color: #0b4660; }
+    .badge.muted { background: transparent; color: var(--muted); border-color: transparent; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--info); display: inline-block; }
+
+    /* Пустой экран */
+    .card.glass.grain {
+      max-width: var(--maxw);
+      margin: 18px auto 0;
+      padding: clamp(18px, 3.5vw, 28px);
+      border-radius: var(--radius-lg);
+      background: var(--glass-bg);
+      backdrop-filter: blur(var(--blur)) saturate(120%);
+      -webkit-backdrop-filter: blur(var(--blur)) saturate(120%);
+      box-shadow: var(--shadow-1);
+      border: 1px solid var(--border);
+      position: relative; overflow: hidden;
+    }
+    .card.glass.grain::after {
+      content: "";
+      position: absolute; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' opacity='.04'%3E%3Cfilter id='f'%3E%3CfeTurbulence baseFrequency='.65' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+      pointer-events: none;
+    }
+    .section-title { margin: 0 0 6px; font-size: 18px; font-weight: 700; letter-spacing: -.01em; color: var(--text); }
+
+    /* Коллекция городов */
+    .city-collection {
+      max-width: var(--maxw);
+      margin: 0 auto 64px;
+      padding: 0 clamp(16px, 4vw, 28px);
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: clamp(12px, 2.2vw, 18px);
+    }
+    .city-card {
+      display: grid; grid-auto-rows: min-content;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--card-bg);
+      box-shadow: var(--shadow-1);
+      backdrop-filter: saturate(125%) blur(8px);
+      -webkit-backdrop-filter: saturate(125%) blur(8px);
+      overflow: clip;
+      transition: transform var(--trans), box-shadow var(--trans), border-color var(--trans);
+      will-change: transform;
+    }
+    .city-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+    .city-card:focus-within { box-shadow: var(--ring); }
+
+    .city-card__header {
+      display: grid; gap: 10px;
+      padding: 14px 14px 12px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--card-bg) 70%, transparent));
+    }
+    .city-card__title { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+    .city-name { font-weight: 700; letter-spacing: -.01em; font-size: 16.5px; color: var(--text); }
+    .city-card__meta { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; color: var(--muted); font-size: 13.5px; }
+    .city-card__meta code { background: var(--code-bg); padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border); }
+
+    .city-card__actions { display: flex; gap: 8px; margin-left: auto; }
+    .btn-edit { white-space: nowrap; }
+
+    .city-card__details {
+      display: grid; gap: 16px; padding: 14px;
+      transition: grid-template-rows var(--trans-slow), opacity var(--trans), visibility var(--trans);
+      opacity: 0; visibility: hidden; grid-template-rows: 0fr;
+    }
+    .city-card.open .city-card__details { opacity: 1; visibility: visible; grid-template-rows: 1fr; }
+    .city-card.open .city-card__details > * { overflow: hidden; }
+
+    .city-sheet { display: grid; gap: 14px; }
+    .city-panel {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      padding: 12px;
+    }
+    .city-panel__header { display: flex; gap: 12px; align-items: start; }
+    .city-panel__icon { font-size: 18px; }
+    .city-panel__title { margin: 0; font-size: 15.5px; font-weight: 700; }
+    .city-panel__hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+    .city-form__row { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+    @container style(--w: 1) { .city-form__row { grid-template-columns: 1fr; } }
+    @media (max-width: 560px) { .city-form__row { grid-template-columns: 1fr; } }
+
+    .info-badge { display: inline-flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--chip-bg); color: var(--muted); font-size: 12.5px; }
+
+    /* Аккордеоны этапов */
+    .city-panel__body--stacked { display: grid; gap: 10px; }
+    .city-collapse {
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-sm);
+      background: color-mix(in srgb, var(--surface) 74%, transparent);
+      overflow: clip;
+    }
+    .city-collapse > summary {
+      cursor: pointer; user-select: none;
+      list-style: none; padding: 10px 12px; font-weight: 600; color: var(--text);
+    }
+    .city-collapse > summary::-webkit-details-marker { display: none; }
+    .city-collapse[open] { border-style: solid; }
+    .city-collapse__body { padding: 10px 12px 12px; }
+
+    .stage-accordion { display: grid; gap: 10px; }
+    .stage-item {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: color-mix(in srgb, var(--surface) 80%, transparent);
+      overflow: clip;
+      transition: border-color var(--trans);
+    }
+    .stage-item[open] { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); }
+    .stage-item__summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; }
+    .stage-item__title { font-weight: 700; }
+    .stage-item__preview { font-size: 12.5px; color: var(--muted); max-width: 60ch; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
+    .stage-item--custom .stage-item__preview { color: color-mix(in srgb, var(--primary) 70%, var(--muted)); }
+    .stage-item__body { display: grid; gap: 8px; padding: 10px 12px 12px; }
+    .stage-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    .stage-hint { margin: 6px 0 0; font-size: 12.5px; }
+    .stage-hint code { background: var(--code-bg); padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border); }
+
+    .city-form__footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 2px; }
+    .form-actions { display: flex; gap: 8px; align-items: center; }
+    .save-status { opacity: 0; transform: translateY(2px); transition: opacity var(--trans), transform var(--trans); }
+    .save-status.ok { opacity: 1; color: color-mix(in srgb, var(--success) 90%, #000); }
+    .save-status.err { opacity: 1; color: color-mix(in srgb, var(--danger) 90%, #000); }
+
+    /* Keyboard focus outlines for cards */
+    .city-card [tabindex="-1"]:focus { outline: none; }
+    .city-card:has(:focus-visible) { box-shadow: var(--ring); }
+
+    /* Reduce motion */
+    @media (prefers-reduced-motion: reduce) {
+      .city-card, .btn, .city-card__details { transition: none !important; }
+    }
+  </style>
+
   <header class="page-header">
     <div>
-      <h1 class="page-title">Города</h1>
+      <h1 id="cities-title" class="page-title">Города</h1>
       <p class="page-description">Управляйте ответственными, планами и текстами сообщений для каждого города.</p>
     </div>
     <div class="page-actions">
-      <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
+      <a class="btn btn-primary" href="/cities/new" data-cta="new-city" aria-label="Добавить новый город">+ Новый город</a>
     </div>
   </header>
 
   {% call list_toolbar(
     form_id="city_filters",
     method="get",
-    mass_actions=[{'label': 'Сбросить', 'type': 'button', 'variant': 'ghost', 'button_type': 'button', 'attrs': 'id="city_reset"'}],
+    mass_actions=[{'label': 'Сбросить', 'type': 'button', 'variant': 'ghost', 'button_type': 'button', 'attrs': 'id="city_reset" class="btn btn-ghost"'}],
     chips=[
       {'label': 'Всего', 'value': cities|length, 'tone': 'info', 'value_id': 'total_count'},
       {'label': 'Найдено', 'value': (cities|length|string) ~ ' / ' ~ (cities|length|string), 'tone': 'success', 'value_id': 'found_badge'}
@@ -24,12 +332,13 @@
   ) %}
     <div class="form-field form-field--wide">
       <label for="city_search">Поиск</label>
-      <input id="city_search" type="search" placeholder="Москва, Novosibirsk, Europe/Moscow…">
+      <input id="city_search" type="search" placeholder="Москва, Novosibirsk, Europe/Moscow…" aria-describedby="search-hint" autocomplete="off" enterkeyhint="search">
+      <small id="search-hint" class="page-description">Поддерживаются горячие клавиши: <code>/</code> — фокус, <code>Esc</code> — очистка.</small>
     </div>
   {% endcall %}
 
   {% if not cities %}
-    <div class="card glass grain">
+    <div class="card glass grain" role="status" aria-live="polite">
       <h3 class="section-title">Пока пусто</h3>
       <p class="page-description">Добавьте город, чтобы настроить сообщения и ответственных.</p>
       <div class="page-actions">
@@ -37,7 +346,7 @@
       </div>
     </div>
   {% else %}
-    <div class="city-collection" id="cities_list">
+    <div class="city-collection" id="cities_list" role="list">
       {% for c in cities %}
         {% set tz = c.tz or "Europe/Moscow" %}
         {% set criteria = c.criteria|default('') %}
@@ -47,6 +356,9 @@
         {% set owner_id = owners.get(c.id) %}
         {% set owner = rec_map.get(owner_id) if owner_id else None %}
         <article class="city-card"
+                 role="listitem"
+                 tabindex="0"
+                 aria-label="Город {{ c.name }}"
                  data-id="{{ c.id }}"
                  data-name="{{ c.name|lower }}"
                  data-tz="{{ tz|lower }}"
@@ -62,9 +374,9 @@
                 <span class="badge" title="Используется TZ по умолчанию">TZ: Europe/Moscow</span>
               {% endif %}
             </div>
-            <div class="city-card__meta">
+            <div class="city-card__meta" aria-label="Метаданные города">
               <span class="city-tz">TZ: <code>{{ tz }}</code></span>
-              <span class="city-owner {% if not owner %}muted{% endif %}">
+              <span class="city-owner {% if not owner %}muted{% endif %}" aria-live="polite">
                 {% if owner %}
                   {{ owner.name }}
                 {% else %}
@@ -80,17 +392,17 @@
               </span>
             </div>
             <div class="city-card__actions">
-              <button class="btn btn-soft btn-edit" type="button" title="Настроить город">Настроить</button>
+              <button class="btn btn-soft btn-edit" type="button" title="Настроить город" aria-expanded="false" aria-controls="city-panel-{{ c.id }}">Настроить</button>
             </div>
           </div>
-          <div class="city-card__details" hidden>
-            <form class="city-form" data-id="{{ c.id }}">
+          <div class="city-card__details" id="city-panel-{{ c.id }}" hidden>
+            <form class="city-form" data-id="{{ c.id }}" novalidate>
               <div class="city-sheet">
-                <section class="city-panel">
+                <section class="city-panel" aria-labelledby="basic-{{ c.id }}">
                   <header class="city-panel__header">
                     <span class="city-panel__icon" aria-hidden="true">🧭</span>
                     <div>
-                      <h4 class="city-panel__title">Основные параметры</h4>
+                      <h4 id="basic-{{ c.id }}" class="city-panel__title">Основные параметры</h4>
                       <p class="city-panel__hint">Кто отвечает за город и какие цели по найму.</p>
                     </div>
                   </header>
@@ -107,11 +419,11 @@
                     <div class="city-form__row">
                       <div class="form-field form-field--compact">
                         <label for="pw_{{ c.id }}">План на неделю</label>
-                        <input id="pw_{{ c.id }}" name="plan_week" type="number" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
+                        <input id="pw_{{ c.id }}" name="plan_week" type="number" inputmode="numeric" pattern="\d*" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
                       </div>
                       <div class="form-field form-field--compact">
                         <label for="pm_{{ c.id }}">План на месяц</label>
-                        <input id="pm_{{ c.id }}" name="plan_month" type="number" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
+                        <input id="pm_{{ c.id }}" name="plan_month" type="number" inputmode="numeric" pattern="\d*" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
                       </div>
                     </div>
                     <div class="info-badge muted">
@@ -121,11 +433,11 @@
                   </div>
                 </section>
 
-                <section class="city-panel">
+                <section class="city-panel" aria-labelledby="profile-{{ c.id }}">
                   <header class="city-panel__header">
                     <span class="city-panel__icon" aria-hidden="true">📝</span>
                     <div>
-                      <h4 class="city-panel__title">Профиль города</h4>
+                      <h4 id="profile-{{ c.id }}" class="city-panel__title">Профиль города</h4>
                       <p class="city-panel__hint">Требования к кандидатам и ресурсы экспертов.</p>
                     </div>
                   </header>
@@ -145,11 +457,11 @@
                   </div>
                 </section>
 
-                <section class="city-panel city-panel--stages">
+                <section class="city-panel city-panel--stages" aria-labelledby="stages-{{ c.id }}">
                   <header class="city-panel__header">
                     <span class="city-panel__icon" aria-hidden="true">💬</span>
                     <div>
-                      <h4 class="city-panel__title">Шаги и шаблоны сообщений</h4>
+                      <h4 id="stages-{{ c.id }}" class="city-panel__title">Шаги и шаблоны сообщений</h4>
                       <p class="city-panel__hint">Настройте тексты для кандидатов на каждом этапе воронки.</p>
                     </div>
                   </header>
@@ -193,7 +505,7 @@
                 <div class="form-actions">
                   <button type="submit" class="btn btn-primary">Сохранить</button>
                   <button type="button" class="btn btn-ghost btn-cancel">Отмена</button>
-                  <span class="badge muted save-status">Сохранено</span>
+                  <span class="badge muted save-status" aria-live="polite">Сохранено</span>
                 </div>
               </footer>
             </form>
@@ -206,8 +518,10 @@
 
 <script>
 (function(){
+  // ===== Utilities =====
   const $ = (s, r=document)=>r.querySelector(s);
   const $$ = (s, r=document)=>Array.from(r.querySelectorAll(s));
+  const on = (el, ev, cb, opts)=>el && el.addEventListener(ev, cb, opts);
 
   const list = $('#cities_list');
   const search = $('#city_search');
@@ -219,12 +533,25 @@
   const cards = $$('.city-card', list);
   const totalCount = cards.length;
 
-  function norm(s){ return (s||'').toString().trim().toLowerCase(); }
+  /* Debounce for buttery search */
+  const debounce = (fn, ms=160)=> {
+    let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); };
+  };
 
-  function truncate(value, limit=120){
+  /* Normalize to compare (diacritics-insensitive) */
+  const norm = (s)=> (s||'')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const truncate = (value, limit=120)=> {
     if (!value) return '';
     return value.length > limit ? value.slice(0, limit).trimEnd() + '…' : value;
-  }
+  };
+
+  const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
   function updateStagePreview(details){
     if (!details) return;
@@ -248,7 +575,7 @@
       const textarea = details.querySelector('textarea[data-stage]');
       if (!textarea) return;
       if (!textarea.dataset.previewBound) {
-        textarea.addEventListener('input', () => updateStagePreview(details));
+        on(textarea, 'input', () => updateStagePreview(details));
         textarea.dataset.previewBound = '1';
       }
       updateStagePreview(details);
@@ -259,7 +586,11 @@
     cards.forEach(card => {
       card.classList.remove('open');
       const details = card.querySelector('.city-card__details');
-      if (details) details.hidden = true;
+      if (details) {
+        details.hidden = true;
+        const btn = card.querySelector('.btn-edit');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+      }
     });
   }
 
@@ -283,12 +614,62 @@
     if (foundBadge) foundBadge.textContent = visible + ' / ' + totalCount;
   }
 
-  search && search.addEventListener('input', applyFilter);
-  reset && reset.addEventListener('click', () => {
+  const applyFilterDebounced = debounce(applyFilter, 120);
+
+  /* Keyboard niceties */
+  on(document, 'keydown', (e)=>{
+    if (e.key === '/' && document.activeElement !== search) {
+      e.preventDefault();
+      search?.focus();
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (search && document.activeElement === search) {
+        search.value = '';
+        applyFilter();
+      }
+      closeAll();
+    }
+    if (e.key === 'Enter' && document.activeElement?.classList.contains('city-card')) {
+      const card = document.activeElement;
+      const btn = card.querySelector('.btn-edit');
+      btn?.click();
+    }
+  });
+
+  search && on(search, 'input', applyFilterDebounced);
+  reset && on(reset, 'click', () => {
     if (search) search.value = '';
     applyFilter();
     search && search.focus();
   });
+
+  // Animate open/close with View Transitions when available
+  const supportsVT = !!document.startViewTransition;
+
+  function toggleCard(card, open){
+    const details = card.querySelector('.city-card__details');
+    const btn = card.querySelector('.btn-edit');
+    if (!details) return;
+
+    const doToggle = ()=>{
+      if (open) {
+        card.classList.add('open');
+        details.hidden = false;
+        btn?.setAttribute('aria-expanded','true');
+      } else {
+        card.classList.remove('open');
+        details.hidden = true;
+        btn?.setAttribute('aria-expanded','false');
+      }
+    };
+
+    if (prefersReduced || !supportsVT) {
+      doToggle();
+      return;
+    }
+    document.startViewTransition(doToggle);
+  }
 
   list.addEventListener('click', (e)=>{
     const defBtn = e.target.closest('.stage-default-btn');
@@ -310,11 +691,7 @@
     const cancelBtn = e.target.closest('.btn-cancel');
     if (cancelBtn) {
       const card = cancelBtn.closest('.city-card');
-      if (card) {
-        card.classList.remove('open');
-        const details = card.querySelector('.city-card__details');
-        if (details) details.hidden = true;
-      }
+      if (card) toggleCard(card, false);
       return;
     }
 
@@ -327,7 +704,6 @@
 
     const isOpen = card.classList.contains('open');
     closeAll();
-
     if (isOpen) return;
 
     const form = details.querySelector('form.city-form');
@@ -345,12 +721,12 @@
       bindStagePreviews(form);
     }
 
-    card.classList.add('open');
-    details.hidden = false;
+    toggleCard(card, true);
     const firstInput = details.querySelector('textarea, input, select');
-    if (firstInput) firstInput.focus();
+    firstInput?.focus();
   });
 
+  // Submit with optimistic, tactile feedback
   list.addEventListener('submit', async (e)=>{
     const form = e.target.closest('form.city-form');
     if (!form) return;
@@ -378,10 +754,46 @@
     const badge = card.querySelector('.plan-badge');
 
     if (status) {
-      status.style.display = 'inline-block';
+      status.style.display = 'inline-flex';
       status.classList.remove('ok', 'err');
       status.textContent = 'Сохранение…';
+      requestAnimationFrame(()=> status.classList.add('ok')); // мягкая индикация
     }
+
+    // Optimistic UI
+    const prev = {
+      criteria: card.dataset.criteria,
+      experts: card.dataset.experts,
+      planWeek: card.dataset.planWeek,
+      planMonth: card.dataset.planMonth,
+      ownerId: card.dataset.ownerId,
+      badgeText: badge?.textContent
+    };
+
+    card.dataset.criteria = criteria;
+    card.dataset.experts = experts;
+    card.dataset.planWeek = plan_week ?? '';
+    card.dataset.planMonth = plan_month ?? '';
+    card.dataset.ownerId = ownerId ? String(ownerId) : '';
+
+    if (badge) {
+      if (plan_week || plan_month) {
+        badge.textContent = `Нед: ${plan_week ?? '—'} · Мес: ${plan_month ?? '—'}`;
+      } else {
+        badge.textContent = 'Параметры не заданы';
+      }
+    }
+
+    const ownerLabel = card.querySelector('.city-owner');
+
+    const restorePrev = ()=>{
+      card.dataset.criteria = prev.criteria ?? '';
+      card.dataset.experts = prev.experts ?? '';
+      card.dataset.planWeek = prev.planWeek ?? '';
+      card.dataset.planMonth = prev.planMonth ?? '';
+      card.dataset.ownerId = prev.ownerId ?? '';
+      if (badge) badge.textContent = prev.badgeText ?? '';
+    };
 
     try {
       const resp = await fetch(`/cities/${id}/settings`, {
@@ -400,21 +812,6 @@
 
       if (!json || json.ok !== true) throw new Error(json && json.error || 'Ошибка сохранения');
 
-      card.dataset.criteria = criteria;
-      card.dataset.experts = experts;
-      card.dataset.planWeek = plan_week ?? '';
-      card.dataset.planMonth = plan_month ?? '';
-      card.dataset.ownerId = ownerId ? String(ownerId) : '';
-
-      if (badge) {
-        if (plan_week || plan_month) {
-          badge.textContent = `Нед: ${plan_week ?? '—'} · Мес: ${plan_month ?? '—'}`;
-        } else {
-          badge.textContent = 'Параметры не заданы';
-        }
-      }
-
-      const ownerLabel = card.querySelector('.city-owner');
       if (ownerLabel) {
         if (ownerId) {
           const selector = `option[value="${ownerId}"]`;
@@ -432,25 +829,34 @@
         status.textContent = 'Сохранено';
       }
 
-      card.classList.remove('open');
-      const details = card.querySelector('.city-card__details');
-      if (details) details.hidden = true;
+      toggleCard(card, false);
 
       setTimeout(()=>{
         if (status) {
           status.classList.remove('ok');
           status.style.display = 'none';
         }
-      }, 1200);
+      }, 900);
     } catch (err) {
+      restorePrev();
       if (status) {
         status.classList.add('err');
         status.textContent = 'Ошибка';
       }
+      // «тактильный» фидбек через легкую вибрацию (если доступно)
+      if (navigator.vibrate) navigator.vibrate(60);
     }
   });
 
+  // Initialize
   applyFilter();
+
+  // Focus ring polish
+  cards.forEach(card=>{
+    on(card, 'focus', ()=> card.classList.add('focus'), true);
+    on(card, 'blur',  ()=> card.classList.remove('focus'), true);
+  });
+
 })();
 </script>
 {% endblock %}
