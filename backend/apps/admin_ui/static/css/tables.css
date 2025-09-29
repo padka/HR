@@ -1,0 +1,592 @@
+/* Transparent surfaces and responsive layout tweaks for tables & filters */
+
+/* Stat cards ----------------------------------------------------------- */
+.stat-grid {
+  gap: 14px;
+}
+
+.stat-card {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 20px 18px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.02)),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.2), transparent);
+  backdrop-filter: blur(18px) saturate(1.05);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.stat-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(100% 120% at 8% 0%, rgba(255, 255, 255, 0.22), transparent 65%);
+  mix-blend-mode: screen;
+}
+
+.stat-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--glass-tint) 65%, transparent);
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 80%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  color: inherit;
+}
+
+.stat-card[data-tone="success"] {
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+}
+
+.stat-card[data-tone="success"] .stat-card__icon {
+  color: color-mix(in srgb, var(--ok) 80%, white 12%);
+}
+
+.stat-card[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--warn) 42%, transparent);
+}
+
+.stat-card[data-tone="warning"] .stat-card__icon {
+  color: color-mix(in srgb, var(--warn) 85%, white 8%);
+}
+
+.stat-card[data-tone="info"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.stat-card[data-tone="info"] .stat-card__icon {
+  color: color-mix(in srgb, var(--accent) 85%, white 8%);
+}
+
+/* Toolbar surface ------------------------------------------------------ */
+.list-toolbar--surface {
+  position: relative;
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 80%, transparent);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.24), transparent);
+  box-shadow: var(--shadow-1);
+  padding: 18px;
+  isolation: isolate;
+}
+
+.list-toolbar--surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.16), transparent 60%);
+  mix-blend-mode: screen;
+}
+
+.list-toolbar--surface.list-toolbar--sticky {
+  top: 12px;
+}
+
+.toolbar {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.toolbar__filters {
+  flex: 1 1 100%;
+  position: relative;
+}
+
+.toolbar__summary {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 78%, transparent);
+  background: color-mix(in srgb, var(--glass-tint) 70%, transparent);
+  font-weight: 600;
+  letter-spacing: 0.28px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.toolbar__summary svg {
+  width: 16px;
+  height: 16px;
+}
+
+.toolbar__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 0;
+}
+
+.toolbar__cluster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.toolbar__cluster--grow {
+  flex: 1 1 auto;
+}
+
+.toolbar__cluster--compact {
+  gap: 8px;
+}
+
+.toolbar__actions,
+.toolbar__mass,
+.toolbar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.toolbar__actions {
+  margin-left: auto;
+}
+
+.toolbar__chips {
+  margin-top: 4px;
+}
+
+.toolbar__summary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+.toolbar-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 75%, transparent);
+  background: color-mix(in srgb, var(--glass-tint) 70%, transparent);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+}
+
+.toolbar-toggle:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.toolbar-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toolbar-toggle__indicator {
+  display: inline-flex;
+  align-items: center;
+  width: 38px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 75%, transparent);
+  background: color-mix(in srgb, var(--glass-tint) 40%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  padding: 2px;
+  transition: border-color .2s ease, background .2s ease;
+}
+
+.toolbar-toggle__indicator::after {
+  content: "";
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  transform: translateX(0);
+  transition: transform .25s ease, background .25s ease;
+}
+
+.toolbar-toggle input:checked + .toolbar-toggle__indicator {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.toolbar-toggle input:checked + .toolbar-toggle__indicator::after {
+  transform: translateX(16px);
+  background: color-mix(in srgb, var(--accent) 80%, white 10%);
+}
+
+.toolbar-toggle__label {
+  font-weight: 500;
+}
+
+.toolbar-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
+/* Segmented controls --------------------------------------------------- */
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 78%, transparent);
+  background: color-mix(in srgb, var(--glass-tint) 65%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.segmented__input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  color: color-mix(in srgb, var(--muted) 80%, transparent);
+  cursor: pointer;
+  transition: color .2s ease, background .2s ease, box-shadow .2s ease;
+}
+
+.segmented__option svg {
+  width: 16px;
+  height: 16px;
+}
+
+.segmented__input:checked + .segmented__option {
+  color: var(--fg-strong);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 8px 18px rgba(0, 0, 0, 0.28);
+}
+
+.segmented__input:focus-visible + .segmented__option {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+/* Table shell --------------------------------------------------------- */
+.data-table {
+  position: relative;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 85%, transparent);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.22), transparent);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.data-table__scroll {
+  position: relative;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 45%, transparent) transparent;
+}
+
+.data-table__scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.data-table__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.data-table__scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.data-table__scroll::before,
+.data-table__scroll::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+
+.data-table__scroll::before {
+  left: 0;
+  background: linear-gradient(90deg, rgba(11, 14, 19, 0.92), transparent 80%);
+}
+
+.data-table__scroll::after {
+  right: 0;
+  background: linear-gradient(270deg, rgba(11, 14, 19, 0.92), transparent 80%);
+}
+
+.data-table::after {
+  content: "";
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 6px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, transparent), color-mix(in srgb, var(--accent-2) 70%, transparent));
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+
+.data-table.is-scrollable::after {
+  opacity: .35;
+}
+
+.data-table.is-scroll-end::after {
+  opacity: 0;
+}
+
+.data-table.is-scrolled .data-table__scroll::before {
+  opacity: .6;
+}
+
+.data-table.is-scrollable:not(.is-scroll-end) .data-table__scroll::after {
+  opacity: .6;
+}
+
+.data-table table {
+  min-width: 780px;
+}
+
+.data-table thead th {
+  border-bottom: 1px solid color-mix(in srgb, var(--glass-stroke) 55%, transparent);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04));
+  letter-spacing: .32px;
+  text-transform: uppercase;
+}
+
+.data-table tbody tr {
+  transition: background .2s ease;
+}
+
+.data-table tbody tr:hover {
+  background: color-mix(in srgb, var(--glass-tint) 30%, transparent);
+}
+
+/* Status pills --------------------------------------------------------- */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+  background: color-mix(in srgb, var(--glass-tint) 60%, transparent);
+  font-weight: 650;
+  font-size: 12px;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+}
+
+.status-pill__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+.status-pill[data-tone="success"] {
+  color: color-mix(in srgb, var(--ok) 85%, white 6%);
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+}
+
+.status-pill[data-tone="warning"] {
+  color: color-mix(in srgb, var(--warn) 85%, black 6%);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+
+.status-pill[data-tone="info"] {
+  color: color-mix(in srgb, var(--accent) 90%, white 4%);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* Slot card actions ---------------------------------------------------- */
+.slot-card__actions-cell {
+  min-width: 200px;
+}
+
+.slot-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.slot-card__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 75%, transparent);
+  background: color-mix(in srgb, var(--glass-tint) 70%, transparent);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease, transform .2s ease;
+}
+
+.slot-card__action:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--glass-tint) 85%, transparent);
+}
+
+.slot-card__action:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.slot-card__action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.slot-card__action[data-role="expand"] .slot-card__action-icon {
+  transition: transform .25s ease;
+}
+
+.slot-card__action[data-role="expand"].is-active .slot-card__action-icon {
+  transform: rotate(180deg);
+}
+
+.slot-card__details {
+  margin-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--glass-stroke) 55%, transparent);
+  padding-top: 10px;
+}
+
+.slot-card__details summary {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.slot-card__details .meta-list {
+  gap: 10px 16px;
+}
+
+.slot-card__action[data-role="expand"].is-active {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.slot-card__action[data-role="copy"].is-copied {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* Pagination ----------------------------------------------------------- */
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.pager__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+  background: color-mix(in srgb, var(--glass-tint) 65%, transparent);
+  font-weight: 600;
+}
+
+/* Mobile adjustments --------------------------------------------------- */
+@media (max-width: 960px) {
+  .toolbar__summary {
+    display: inline-flex;
+    width: 100%;
+  }
+
+  .toolbar__filters[data-toolbar-collapsible]:not([open]) .toolbar__fields {
+    display: none;
+  }
+
+  .toolbar__fields {
+    margin-top: 12px;
+  }
+
+  .toolbar__cluster--grow {
+    width: 100%;
+  }
+
+  .slot-card__actions-cell {
+    display: grid !important;
+    gap: 10px;
+  }
+
+  .slot-card__actions {
+    order: 1;
+  }
+
+  .slot-card__details {
+    order: 2;
+  }
+}
+
+@media (max-width: 640px) {
+  .stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+
+  .toolbar__fields {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .segmented {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .slot-card__actions {
+    justify-content: flex-start;
+  }
+}

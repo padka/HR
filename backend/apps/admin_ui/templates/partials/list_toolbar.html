@@ -7,13 +7,14 @@
   {% set attrs = action.attrs|default('') %}
   {% set icon = action.icon %}
   {% set disabled = action.disabled|default(false) %}
+  {% set extra_classes = action.extra_classes|default('') %}
   {% if type == 'button' %}
-    <button type="{{ button_type }}" class="btn btn-{{ variant }}" {{ attrs|safe }}{% if disabled %} disabled{% endif %}>
+    <button type="{{ button_type }}" class="btn btn-{{ variant }} toolbar__btn {{ extra_classes }}" {{ attrs|safe }}{% if disabled %} disabled{% endif %}>
       {% if icon %}<span class="btn__icon">{{ icon|safe }}</span>{% endif %}
       {{ label }}
     </button>
   {% else %}
-    <a href="{{ href }}" class="btn btn-{{ variant }}" {{ attrs|safe }}{% if disabled %} aria-disabled="true"{% endif %}>
+    <a href="{{ href }}" class="btn btn-{{ variant }} toolbar__btn {{ extra_classes }}" {{ attrs|safe }}{% if disabled %} aria-disabled="true"{% endif %}>
       {% if icon %}<span class="btn__icon">{{ icon|safe }}</span>{% endif %}
       {{ label }}
     </a>
@@ -34,24 +35,66 @@
   </span>
 {% endmacro %}
 
-{% macro list_toolbar(form_id=None, form_action='#', method='get', actions=None, chips=None, mass_actions=None, sticky=False, form_attrs='') %}
+{% macro segmented_control(name, options, value=None, size='md', attrs='') %}
+  <div class="segmented segmented--{{ size }}" {{ attrs|safe }}>
+    {% for option in options %}
+      {% set option_value = option.value|default('') %}
+      {% set option_label = option.label|default(option_value) %}
+      {% set option_icon = option.icon %}
+      {% set option_id = option.id|default(name ~ '-' ~ loop.index) %}
+      {% set option_attrs = option.attrs|default('') %}
+      <input
+        class="segmented__input"
+        type="radio"
+        name="{{ name }}"
+        id="{{ option_id }}"
+        value="{{ option_value }}"
+        {% if value is not none and value|string == option_value|string %}checked{% endif %}
+        {{ option_attrs|safe }}>
+      <label class="segmented__option" for="{{ option_id }}" data-tone="{{ option.tone|default('neutral') }}">
+        {% if option_icon %}<span class="segmented__icon">{{ option_icon|safe }}</span>{% endif %}
+        <span class="segmented__label">{{ option_label }}</span>
+      </label>
+    {% endfor %}
+  </div>
+{% endmacro %}
+
+{% macro list_toolbar(form_id=None, form_action='#', method='get', actions=None, chips=None, mass_actions=None, sticky=False, form_attrs='', filters_label='Фильтры', collapsible=True) %}
   {% set actions = actions or [] %}
   {% set chips = chips or [] %}
   {% set mass_actions = mass_actions or [] %}
-  <section class="list-toolbar{% if sticky %} list-toolbar--sticky{% endif %}">
-    <form{% if form_id %} id="{{ form_id }}"{% endif %} class="list-toolbar__form" action="{{ form_action }}" method="{{ method }}" {{ form_attrs|safe }}>
-      <div class="list-toolbar__filters">
-        {{ caller() }}
-      </div>
+  <section class="list-toolbar list-toolbar--surface{% if sticky %} list-toolbar--sticky{% endif %}">
+    <form{% if form_id %} id="{{ form_id }}"{% endif %} class="toolbar" action="{{ form_action }}" method="{{ method }}" {{ form_attrs|safe }}>
+      {% if collapsible %}
+        <details class="toolbar__filters" data-toolbar-collapsible open>
+          <summary class="toolbar__summary">
+            <span class="toolbar__summary-label">{{ filters_label }}</span>
+            <span class="toolbar__summary-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M3.25 4.75h9.5M5.5 8h5M6.75 11.25h2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </summary>
+          <div class="toolbar__fields">
+            {{ caller() }}
+          </div>
+        </details>
+      {% else %}
+        <div class="toolbar__filters">
+          <div class="toolbar__fields">
+            {{ caller() }}
+          </div>
+        </div>
+      {% endif %}
       {% if mass_actions %}
-        <div class="list-toolbar__mass">
+        <div class="toolbar__mass toolbar__cluster toolbar__cluster--compact">
           {% for action in mass_actions %}
             {{ toolbar_action(action) }}
           {% endfor %}
         </div>
       {% endif %}
       {% if actions %}
-        <div class="list-toolbar__actions">
+        <div class="toolbar__actions toolbar__cluster toolbar__cluster--compact">
           {% for action in actions %}
             {{ toolbar_action(action) }}
           {% endfor %}
@@ -59,7 +102,7 @@
       {% endif %}
     </form>
     {% if chips %}
-      <div class="list-toolbar__chips">
+      <div class="toolbar__chips">
         {% for chip in chips %}
           {{ toolbar_chip(chip) }}
         {% endfor %}
