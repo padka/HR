@@ -60,20 +60,28 @@ async def update_city_settings(
 ) -> Optional[str]:
     owner_field = city_owner_field_name()
     async with async_session() as session:
-        city = await session.get(City, city_id)
-        if not city:
-            return "City not found"
+        try:
+            city = await session.get(City, city_id)
+            if not city:
+                return "City not found"
 
-        if responsible_id is not None:
-            recruiter = await session.get(Recruiter, responsible_id)
-            if not recruiter:
-                return "Recruiter not found"
+            if responsible_id is not None:
+                recruiter = await session.get(Recruiter, responsible_id)
+                if not recruiter:
+                    return "Recruiter not found"
 
-        if owner_field:
-            setattr(city, owner_field, responsible_id)
-        await session.commit()
+            if owner_field:
+                setattr(city, owner_field, responsible_id)
 
-    await update_templates_for_city(city_id, templates)
+            error = await update_templates_for_city(city_id, templates, session=session)
+            if error:
+                await session.rollback()
+                return error
+
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
     return None
 
 

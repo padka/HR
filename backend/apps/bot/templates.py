@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from backend.domain.repositories import get_template
 from backend.domain.template_stages import STAGE_DEFAULTS
@@ -65,20 +65,30 @@ DEFAULT_TEMPLATES: Dict[str, str] = {
 
 DEFAULT_TEMPLATES.update(STAGE_DEFAULTS)
 
-__all__ = ["DEFAULT_TEMPLATES", "tpl"]
+_TEMPLATE_CACHE: Dict[Tuple[Optional[int], str], Optional[str]] = {}
+
+__all__ = ["DEFAULT_TEMPLATES", "tpl", "clear_cache"]
 
 
 async def _fetch_template(city_id: Optional[int], key: str) -> Optional[str]:
     """Return template text from DB (city specific or global)."""
+    cache_key = (city_id, key)
+    if cache_key in _TEMPLATE_CACHE:
+        return _TEMPLATE_CACHE[cache_key]
+
     try:
         template = await get_template(city_id, key)
     except Exception:
         template = None
     if template is None:
-        return None
+        result = None
     if isinstance(template, str):
-        return template
-    return getattr(template, "text", None) or getattr(template, "content", None)
+        result = template
+    else:
+        result = getattr(template, "text", None) or getattr(template, "content", None)
+
+    _TEMPLATE_CACHE[cache_key] = result
+    return result
 
 
 async def tpl(city_id: Optional[int], key: str, **fmt: Any) -> str:
@@ -89,3 +99,8 @@ async def tpl(city_id: Optional[int], key: str, **fmt: Any) -> str:
         return text.format(**fmt)
     except Exception:
         return text
+
+
+def clear_cache() -> None:
+    """Reset template cache."""
+    _TEMPLATE_CACHE.clear()

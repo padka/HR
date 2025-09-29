@@ -37,3 +37,29 @@ async def test_template_payloads_and_city_owner_assignment():
     assert isinstance(template_payload, dict)
     assert template_payload.get("found") is True
     assert template_payload.get("text") == "custom text"
+
+
+@pytest.mark.asyncio
+async def test_update_city_settings_rolls_back_on_template_error():
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Owner", tz="Europe/Moscow", active=True)
+        city = models.City(name="Rollback City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+    error = await update_city_settings(
+        city_id=city.id,
+        responsible_id=recruiter.id,
+        templates={"invalid_key": "should fail"},
+    )
+
+    assert error is not None
+    assert "Unknown template keys" in error
+
+    async with async_session() as session:
+        refreshed_city = await session.get(models.City, city.id)
+        assert refreshed_city.responsible_recruiter_id is None
+        await session.refresh(refreshed_city, attribute_names=["templates"])
+        assert refreshed_city.templates == []
