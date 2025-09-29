@@ -8,6 +8,8 @@ from typing import Tuple
 
 from aiogram import Bot, Dispatcher
 
+from backend.core.db import init_models
+
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
 from .services import StateManager, configure as configure_services
@@ -44,6 +46,7 @@ async def main() -> None:
     await bot.delete_webhook(drop_pending_updates=True)
     me = await bot.get_me()
     logging.warning("BOOT: using bot id=%s, username=@%s", me.id, me.username)
+    await init_models()
     await dispatcher.start_polling(bot)
 
 
