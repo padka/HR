@@ -6,15 +6,18 @@
   <style>
     :root{
       --maxw: 1200px;
+
       --bg: #f7f8fa;
-      --surface: #fff;
+      --surface: #ffffff;
       --text: #0b0c0e;
       --muted: #6b7280;
       --border: #e6e7eb;
+
       --primary: #0a84ff;
       --success: #34c759;
       --danger: #ff3b30;
 
+      --radius-xs: 8px;
       --radius-sm: 10px;
       --radius-md: 14px;
 
@@ -22,6 +25,7 @@
       --ring: 0 0 0 3px rgba(10,132,255,.18);
 
       --t: 180ms cubic-bezier(.22,.61,.36,1);
+      --t-slow: 280ms cubic-bezier(.22,.61,.36,1);
     }
     @media (prefers-color-scheme: dark){
       :root{
@@ -31,7 +35,9 @@
       }
     }
 
-    .page--cities{ background:var(--bg); padding-bottom:48px; }
+    .visually-hidden{ position:absolute !important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+
+    .page--cities{ background:var(--bg); padding-bottom:60px; }
 
     /* Header */
     .page-header{
@@ -39,7 +45,7 @@
       margin:18px auto 12px;
       padding:16px clamp(16px,4vw,24px);
       display:flex; align-items:flex-end; justify-content:space-between; gap:12px;
-      background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow-1);
+      background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); box-shadow:var(--shadow-1);
     }
     .page-title{ margin:0 0 4px; font-size:clamp(22px,2.4vw,28px); font-weight:700; letter-spacing:-.01em; color:var(--text); }
     .page-description{ margin:0; color:var(--muted); font-size:14px; }
@@ -48,14 +54,15 @@
     .btn{
       --btn-bg:var(--surface); --btn-bd:var(--border); --btn-text:var(--text);
       display:inline-flex; align-items:center; justify-content:center; gap:8px;
-      padding:9px 12px; border-radius:10px; border:1px solid var(--btn-bd);
-      background:var(--btn-bg); color:var(--btn-text); font-weight:600; font-size:14px; line-height:1;
+      padding:9px 12px; border-radius:var(--radius-sm); border:1px solid var(--btn-bd);
+      background:var(--btn-bg); color:var(--btn-text);
+      font-weight:600; font-size:14px; line-height:1;
       transition:box-shadow var(--t), transform var(--t), background var(--t), border-color var(--t);
     }
     .btn:hover{ transform:translateY(-1px); box-shadow:var(--shadow-1); }
     .btn:focus-visible{ outline:none; box-shadow:var(--ring); }
     .btn-primary{ --btn-bg:var(--primary); --btn-bd:var(--primary); --btn-text:#fff; }
-    .btn-soft{ --btn-bg:rgba(10,132,255,.1); --btn-bd:rgba(10,132,255,.18); --btn-text:var(--primary); }
+    .btn-soft{ --btn-bg:rgba(10,132,255,.10); --btn-bd:rgba(10,132,255,.18); --btn-text:var(--primary); }
     .btn-ghost{ --btn-bg:transparent; --btn-bd:transparent; --btn-text:var(--muted); }
     .btn--small{ padding:7px 10px; font-size:13px; }
 
@@ -64,87 +71,89 @@
       max-width:var(--maxw);
       margin:8px auto 14px;
       padding:0 clamp(16px,4vw,24px);
-      display:grid; grid-template-columns: 1fr auto auto; gap:12px; align-items:center;
+      display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center;
     }
     .form-field{ display:grid; gap:6px; }
-    .form-field--wide{ width:min(560px, 100%); }
+    .form-field--wide{ width:min(560px,100%); }
     .form-field input[type="search"]{
       border:1px solid var(--border); background:var(--surface); color:var(--text);
-      border-radius:10px; padding:10px 12px; font-size:14.5px; transition:border-color var(--t), box-shadow var(--t);
+      border-radius:var(--radius-sm); padding:10px 12px; font-size:14.5px;
+      transition:border-color var(--t), box-shadow var(--t);
     }
     .form-field input::placeholder{ color:var(--muted); opacity:.75; }
     .form-field input:focus-visible{ outline:none; border-color:var(--primary); box-shadow:var(--ring); }
-
-    .segmented{
-      display:inline-flex; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--surface);
-    }
-    .segmented button{
-      padding:8px 10px; font-size:12.5px; border:0; background:transparent; color:var(--muted); cursor:pointer;
-    }
-    .segmented button[aria-pressed="true"]{ background:rgba(10,132,255,.1); color:var(--primary); }
-
     .chips{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
     .chip{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; font-size:12.5px; font-weight:600; border:1px solid var(--border); border-radius:999px; color:var(--muted); background:var(--surface); }
     .chip .dot{ width:6px; height:6px; border-radius:50%; background:var(--muted); }
-    .chip select{
-      border:1px solid var(--border); border-radius:8px; padding:6px 8px; background:var(--surface); color:var(--text); font-size:12.5px;
-    }
 
-    /* Table */
-    .table-wrap{ max-width:var(--maxw); margin:0 auto; padding:0 clamp(16px,4vw,24px) 28px; }
-    .table-scroll{ overflow:auto; border-radius:14px; border:1px solid var(--border); box-shadow:var(--shadow-1); background:var(--surface); }
-    table.city-table{ width:100%; border-collapse:separate; border-spacing:0; }
+    /* Table container */
+    .table-wrap{ max-width:var(--maxw); margin:0 auto; padding:0 clamp(16px,4vw,24px); }
+    .table-scroll{ overflow:auto; border-radius:var(--radius-md); border:1px solid var(--border); box-shadow:var(--shadow-1); background:var(--surface); }
+    .city-table{ width:100%; border-collapse:separate; border-spacing:0; }
+
     thead th{
       position:sticky; top:0; z-index:1;
       background:var(--surface);
       border-bottom:1px solid var(--border);
-      text-align:left; font-weight:700; letter-spacing:-.01em;
-      color:var(--muted); font-size:12.5px; padding:10px 12px; user-select:none; cursor: default;
+      text-align:left; color:var(--muted); font-weight:700; letter-spacing:-.01em;
+      padding:10px 12px; font-size:12.5px;
     }
-    th.sortable{ cursor:pointer; }
-    th.sortable:after{
-      content:""; display:inline-block; margin-left:6px; width:8px; height:8px; border-right:2px solid currentColor; border-bottom:2px solid currentColor; transform:rotate(-45deg) translateY(-1px); opacity:.25;
+    thead th button.sort{
+      display:inline-flex; align-items:center; gap:6px;
+      padding:4px 6px; border-radius:8px; background:transparent; border:1px solid transparent; color:inherit; font:inherit;
+      cursor:pointer; transition:background var(--t), border-color var(--t);
     }
-    th.sort-asc:after{ transform:rotate(135deg) translateY(1px); opacity:.9; color:var(--primary); }
-    th.sort-desc:after{ transform:rotate(-45deg) translateY(-1px); opacity:.9; color:var(--primary); }
+    thead th button.sort:hover{ background:rgba(0,0,0,.03); border-color:var(--border); }
+    thead th button.sort .arrow{ display:inline-block; width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-top:6px solid currentColor; opacity:.4; transform:rotate(0deg); transition:transform var(--t), opacity var(--t); }
+    thead th button.sort[aria-sort="ascending"] .arrow{ transform:rotate(180deg); opacity:1; }
+    thead th button.sort[aria-sort="descending"] .arrow{ transform:rotate(0deg); opacity:1; }
 
     tbody td{
-      padding:10px 12px; border-top:1px solid var(--border); vertical-align:middle; font-size:14px; color:var(--text);
+      padding:10px 12px; border-top:1px solid var(--border); color:var(--text); font-size:14px; vertical-align:middle;
     }
-    .density-compact tbody td{ padding:6px 10px; font-size:13.5px; }
-    tr.city-row:hover{ background:color-mix(in srgb, var(--surface) 92%, #000 8%); }
+    tbody tr.city-row:nth-child(even){ background:color-mix(in srgb, var(--surface) 96%, #000 4%); }
+    tbody tr.city-row:hover{ background:color-mix(in srgb, var(--surface) 92%, #000 8%); }
+
     .col-name{ font-weight:700; letter-spacing:-.01em; }
     .col-tz code{
       padding:2px 6px; border:1px solid var(--border); border-radius:8px;
-      font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12.5px; color:var(--muted); background:transparent;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; color:var(--muted); background:transparent;
     }
-    .muted{ color:var(--muted); }
-    .empty-row td{ text-align:center; color:var(--muted); padding:18px 12px; }
+    .owner-label.muted{ color:var(--muted); }
 
-    .pager{
-      display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:10px;
-      color:var(--muted); font-size:12.5px;
+    /* Sheet (drawer) */
+    .sheet-backdrop{
+      position:fixed; inset:0; background:rgba(0,0,0,.35);
+      opacity:0; visibility:hidden; transition:opacity var(--t-slow), visibility var(--t-slow);
     }
-
-    /* Drawer (editor) */
-    .drawer{ position:fixed; inset:0; display:grid; grid-template-columns: 1fr min(520px, 96vw); z-index:50; }
-    .drawer[hidden]{ display:none; }
-    .drawer__backdrop{ background:rgba(0,0,0,.35); }
-    .drawer__panel{
+    .sheet{
+      position:fixed; inset:0 0 0 auto; width:min(720px, 92vw);
       background:var(--surface); border-left:1px solid var(--border);
-      display:grid; grid-template-rows: auto 1fr auto; height:100%;
+      transform:translateX(100%); transition:transform var(--t-slow);
+      display:flex; flex-direction:column; gap:0;
+      box-shadow: -16px 0 36px rgba(0,0,0,.18);
     }
-    .drawer__header{ padding:12px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:8px; }
-    .drawer__title{ margin:0; font-size:16px; font-weight:700; color:var(--text); }
-    .drawer__content{ padding:12px; overflow:auto; }
-    .drawer__footer{ padding:12px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:8px; }
-    .badge{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid var(--border); border-radius:999px; font-size:12px; color:var(--muted); }
+    .sheet.open{ transform:translateX(0); }
+    .sheet-backdrop.open{ opacity:1; visibility:visible; }
+    body.sheet-open{ overflow:hidden; }
 
-    .panel{ border:1px solid var(--border); border-radius:12px; padding:10px; background:transparent; display:grid; gap:8px; }
+    .sheet-header{
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+      padding:12px 14px; border-bottom:1px solid var(--border);
+      position:sticky; top:0; background:var(--surface); z-index:2;
+    }
+    .sheet-title{ margin:0; font-size:16px; font-weight:700; }
+    .sheet-sub{ margin:0; color:var(--muted); font-size:12.5px; }
+    .sheet-close{ border-radius:10px; padding:8px 10px; border:1px solid var(--border); background:transparent; }
+    .sheet-body{ padding:12px 14px 18px; overflow:auto; display:grid; gap:12px; }
+    .panel{
+      border:1px solid var(--border); border-radius:12px; background:transparent;
+      padding:10px; display:grid; gap:8px;
+    }
     .panel h4{ margin:0; font-size:15px; font-weight:700; color:var(--text); }
     .panel .hint{ margin:0; font-size:12.5px; color:var(--muted); }
-    .panel .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-    @media (max-width:700px){ .panel .grid2{ grid-template-columns:1fr; } }
+    .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    @media (max-width:720px){ .grid2{ grid-template-columns:1fr; } }
     .panel textarea, .panel select, .panel input[type="number"]{
       border:1px solid var(--border); background:var(--surface); color:var(--text);
       border-radius:10px; padding:10px 12px; font-size:14px; transition:border-color var(--t), box-shadow var(--t);
@@ -155,20 +164,44 @@
     .stage-accordion{ display:grid; gap:8px; }
     details.stage-item{ border:1px solid var(--border); border-radius:10px; background:transparent; transition:border-color var(--t); }
     details.stage-item[open]{ border-color:var(--primary); }
-    details.stage-item > summary{ list-style:none; cursor:pointer; user-select:none; padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    details.stage-item > summary{
+      list-style:none; cursor:pointer; user-select:none; padding:10px 12px;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+    }
     details.stage-item > summary::-webkit-details-marker{ display:none; }
     .stage-item__title{ font-weight:700; font-size:14px; color:var(--text); }
-    .stage-item__preview{ font-size:12.5px; color:var(--muted); max-width:60ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .stage-item__preview{ font-size:12.5px; color:var(--muted); max-width:60ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .stage-item__body{ padding:10px 12px 12px; display:grid; gap:8px; }
     .stage-hint{ margin:6px 0 0; font-size:12.5px; color:var(--muted); }
 
-    .toast{ position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--surface); border:1px solid var(--border); border-radius:999px; padding:8px 12px; box-shadow:var(--shadow-1); font-size:13.5px; color:var(--text); z-index:60; }
+    .sheet-footer{
+      padding:12px 14px; border-top:1px solid var(--border);
+      position:sticky; bottom:0; background:var(--surface); z-index:2;
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
+    }
+    .form-actions{ display:flex; gap:8px; align-items:center; }
+    .save-status{ font-size:12.5px; color:var(--muted); opacity:0; transition:opacity var(--t); }
+    .save-status.ok, .save-status.err{ opacity:1; }
+    .save-status.ok{ color:var(--success); }
+    .save-status.err{ color:var(--danger); }
+
+    /* Toasts */
+    .toasts{ position:fixed; inset:auto 16px 16px auto; display:grid; gap:8px; z-index:1000; }
+    .toast{
+      background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:10px;
+      padding:10px 12px; box-shadow:var(--shadow-1); font-size:14px; display:flex; align-items:center; gap:8px;
+      animation:toast-in var(--t) ease;
+    }
+    @keyframes toast-in{ from{ transform:translateY(6px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
+
+    /* Reduce motion */
+    @media (prefers-reduced-motion: reduce){ .btn, .sheet, .sheet-backdrop, .city-table, .toast{ transition:none !important; animation:none !important; } }
   </style>
 
   <header class="page-header">
     <div>
       <h1 id="cities-title" class="page-title">Города</h1>
-      <p class="page-description">Чистая таблица. Все настройки открываются только при редактировании.</p>
+      <p class="page-description">Табличный список. Редактирование — через выезжающую панель по кнопке «Настроить».</p>
     </div>
     <div class="page-actions">
       <a class="btn btn-primary" href="/cities/new" aria-label="Добавить новый город">+ Новый город</a>
@@ -188,49 +221,43 @@
       <div class="form-field form-field--wide">
         <label for="city_search" class="visually-hidden">Поиск по городам</label>
         <input id="city_search" type="search" placeholder="Поиск: Москва, Novosibirsk, Europe/Moscow…" autocomplete="off" enterkeyhint="search">
-        <small class="page-description">Горячие клавиши: <code>/</code> — фокус, <code>Esc</code> — очистка.</small>
+        <small class="page-description">Сочетания: <code>/</code> — фокус поиска, <code>↑/↓</code> — навигация по строкам, <code>Enter</code> — редактировать.</small>
       </div>
-
-      <div class="segmented" role="group" aria-label="Плотность">
-        <button id="density_comfy" type="button" aria-pressed="true">Обычный</button>
-        <button id="density_compact" type="button" aria-pressed="false">Компактный</button>
-      </div>
-
       <div class="chips">
         <span class="chip"><span class="dot"></span> Всего: <strong id="total_count">{{ cities|length }}</strong></span>
         <span class="chip">Найдено: <strong id="found_badge">{{ cities|length }} / {{ cities|length }}</strong></span>
-        <span class="chip">На странице:
-          <select id="per_page">
-            <option value="10">10</option>
-            <option value="25" selected>25</option>
-            <option value="50">50</option>
-            <option value="0">Все</option>
-          </select>
-        </span>
         <button id="city_reset" type="button" class="btn btn-ghost btn--small">Сбросить</button>
       </div>
     </div>
   {% endcall %}
 
-  {% if not cities %}
-    <div class="table-wrap">
-      <div class="empty" role="status" aria-live="polite" style="text-align:center; padding:16px; background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow-1);">
-        <h3 class="page-title" style="font-size:18px">Пока пусто</h3>
-        <p class="page-description" style="margin:6px 0 12px">Добавьте первый город, чтобы настроить планы и сообщения.</p>
+  <div class="table-wrap">
+    {% if not cities %}
+      <div class="empty" role="status" aria-live="polite" style="text-align:center; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); box-shadow:var(--shadow-1); padding:20px;">
+        <h3 class="page-title" style="font-size:18px; margin:0 0 6px;">Пока пусто</h3>
+        <p class="page-description" style="margin:0 0 12px;">Добавьте первый город, чтобы настроить планы и сообщения.</p>
         <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
       </div>
-    </div>
-  {% else %}
-    <div class="table-wrap">
-      <div class="table-scroll" role="region" aria-label="Таблица городов">
-        <table class="city-table" id="city_table" aria-describedby="cities-title">
+    {% else %}
+      <div class="table-scroll" role="region" aria-label="Таблица городов (горизонтальная прокрутка при узком экране)">
+        <table class="city-table" id="city_table">
           <thead>
             <tr>
-              <th class="sortable" data-sort="name" aria-sort="none" style="min-width:220px">Город</th>
-              <th class="sortable" data-sort="tz" aria-sort="none" style="min-width:180px">Часовой пояс</th>
-              <th class="sortable" data-sort="owner" aria-sort="none" style="min-width:220px">Ответственный</th>
-              <th class="sortable" data-sort="week" aria-sort="none" style="min-width:130px">План · нед</th>
-              <th class="sortable" data-sort="month" aria-sort="none" style="min-width:130px">План · мес</th>
+              <th style="min-width:240px">
+                <button class="sort" data-key="name" aria-sort="none">Город <span class="arrow" aria-hidden="true"></span></button>
+              </th>
+              <th style="min-width:180px">
+                <button class="sort" data-key="tz" aria-sort="none">Часовой пояс <span class="arrow" aria-hidden="true"></span></button>
+              </th>
+              <th style="min-width:220px">
+                <button class="sort" data-key="owner" aria-sort="none">Ответственный <span class="arrow" aria-hidden="true"></span></button>
+              </th>
+              <th style="min-width:130px; text-align:right;">
+                <button class="sort" data-key="week" aria-sort="none">План · нед <span class="arrow" aria-hidden="true"></span></button>
+              </th>
+              <th style="min-width:130px; text-align:right;">
+                <button class="sort" data-key="month" aria-sort="none">План · мес <span class="arrow" aria-hidden="true"></span></button>
+              </th>
               <th style="min-width:140px; text-align:right;">Действия</th>
             </tr>
           </thead>
@@ -243,10 +270,13 @@
               {% set plan_month = c.plan_month|default('') %}
               {% set owner_id = owners.get(c.id) %}
               {% set owner = rec_map.get(owner_id) if owner_id else None %}
+              {% set stages = city_stages.get(c.id, []) %}
               <tr class="city-row"
+                  tabindex="0"
                   data-id="{{ c.id }}"
                   data-name="{{ c.name|lower }}"
                   data-tz="{{ tz|lower }}"
+                  data-owner="{{ (owner.name if owner else '')|lower }}"
                   data-criteria="{{ criteria|e }}"
                   data-experts="{{ experts|e }}"
                   data-plan-week="{{ plan_week }}"
@@ -259,122 +289,489 @@
                     {% if owner %}{{ owner.name }}{% else %}Не назначен{% endif %}
                   </span>
                 </td>
-                <td class="col-week" data-sort="{{ plan_week or 0 }}">{{ plan_week or '—' }}</td>
-                <td class="col-month" data-sort="{{ plan_month or 0 }}">{{ plan_month or '—' }}</td>
+                <td class="col-week" data-sort="{{ plan_week or 0 }}" style="text-align:right;">{{ plan_week or '—' }}</td>
+                <td class="col-month" data-sort="{{ plan_month or 0 }}" style="text-align:right;">{{ plan_month or '—' }}</td>
                 <td class="col-actions" style="text-align:right;">
-                  <button class="btn btn-soft btn--small btn-edit" type="button" data-id="{{ c.id }}">Редактировать</button>
+                  <button class="btn btn-soft btn--small btn-edit" type="button">Настроить</button>
                 </td>
               </tr>
-
-              <!-- Шаблон формы для drawer (рендерим один раз на сервере, монтируем в drawer при открытии) -->
-              <template id="tmpl-city-form-{{ c.id }}">
-                <form class="city-form" data-id="{{ c.id }}" novalidate>
-                  <div class="panel">
-                    <h4>Основные параметры</h4>
-                    <p class="hint">Ответственный и цели по найму.</p>
-                    <div class="form-field">
-                      <label for="owner_{{ c.id }}">Ответственный рекрутёр</label>
-                      <select id="owner_{{ c.id }}" name="responsible_id">
-                        <option value="">— Не назначен —</option>
-                        {% for r in recruiters %}
-                          <option value="{{ r.id }}" {% if owner_id == r.id %}selected{% endif %}>{{ r.name }}</option>
-                        {% endfor %}
-                      </select>
-                    </div>
-                    <div class="panel grid2">
-                      <div class="form-field">
-                        <label for="pw_{{ c.id }}">План на неделю</label>
-                        <input id="pw_{{ c.id }}" name="plan_week" type="number" inputmode="numeric" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
-                      </div>
-                      <div class="form-field">
-                        <label for="pm_{{ c.id }}">План на месяц</label>
-                        <input id="pm_{{ c.id }}" name="plan_month" type="number" inputmode="numeric" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="panel">
-                    <h4>Профиль города</h4>
-                    <p class="hint">Критерии и ресурсы.</p>
-
-                    <details class="stage-item" open>
+              <!-- Шаблон этапов для конкретного города (подставляется в выезжающую панель) -->
+              <template id="tpl-stages-{{ c.id }}">
+                <div class="stage-accordion">
+                  {% for stage in stages %}
+                    <details class="stage-item" data-stage="{{ stage.key }}">
                       <summary>
-                        <span class="stage-item__title">Критерии отбора</span>
-                        <span class="stage-item__preview muted"></span>
+                        <span class="stage-item__title">{{ stage.title }}</span>
+                        <span class="stage-item__preview muted">Текст по умолчанию</span>
                       </summary>
                       <div class="stage-item__body">
-                        <textarea id="crit_{{ c.id }}" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…">{{ criteria }}</textarea>
+                        <textarea
+                          id="stage_{{ stage.key }}_{{ c.id }}"
+                          name="stage__{{ stage.key }}"
+                          data-stage="{{ stage.key }}"
+                          data-default="{{ stage.default|e }}"
+                          rows="5"
+                          placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
+                        <div class="form-actions">
+                          <button type="button" class="btn btn-ghost btn--small stage-default-btn" data-stage="{{ stage.key }}">Вставить по умолчанию</button>
+                          <span class="page-description">{{ stage.description }}</span>
+                        </div>
                       </div>
                     </details>
-
-                    <details class="stage-item">
-                      <summary>
-                        <span class="stage-item__title">Ресурсы экспертов</span>
-                        <span class="stage-item__preview muted"></span>
-                      </summary>
-                      <div class="stage-item__body">
-                        <textarea id="exp_{{ c.id }}" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: реферальный, ярмарки вакансий…">{{ experts }}</textarea>
-                      </div>
-                    </details>
-                  </div>
-
-                  <div class="panel">
-                    <h4>Этапы и сообщения</h4>
-                    <p class="hint">Тексты для кандидатов.</p>
-                    {% set stages = city_stages.get(c.id, []) %}
-                    <div class="stage-accordion">
-                      {% for stage in stages %}
-                        <details class="stage-item" data-stage="{{ stage.key }}">
-                          <summary>
-                            <span class="stage-item__title">{{ stage.title }}</span>
-                            <span class="stage-item__preview muted">Текст по умолчанию</span>
-                          </summary>
-                          <div class="stage-item__body">
-                            <textarea
-                              id="stage_{{ stage.key }}_{{ c.id }}"
-                              name="stage__{{ stage.key }}"
-                              data-stage="{{ stage.key }}"
-                              data-default="{{ stage.default|e }}"
-                              rows="5"
-                              placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-                            <div class="form-actions">
-                              <button type="button" class="btn btn-ghost btn--small stage-default-btn" data-stage="{{ stage.key }}">Вставить по умолчанию</button>
-                              <span class="page-description">{{ stage.description }}</span>
-                            </div>
-                          </div>
-                        </details>
-                      {% endfor %}
-                    </div>
-                    <p class="stage-hint">
-                      {% raw %}
-                      Переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
-                      {% endraw %}
-                    </p>
-                  </div>
-
-                  <div class="drawer__footer">
-                    <div class="badge save-status" aria-live="polite">Готово к сохранению</div>
-                    <div class="form-actions">
-                      <button type="button" class="btn btn-ghost btn-cancel">Отмена</button>
-                      <button type="submit" class="btn btn-primary">Сохранить</button>
-                    </div>
-                  </div>
-                </form>
+                  {% endfor %}
+                </div>
+                <p class="stage-hint">
+                  {% raw %}
+                  Переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
+                  {% endraw %}
+                </p>
               </template>
             {% endfor %}
           </tbody>
         </table>
       </div>
+    {% endif %}
+  </div>
 
-      <div class="pager" id="pager" aria-live="polite">
-        <div><strong id="pager_info">Стр. 1 / 1</strong></div>
-        <div class="form-actions">
-          <button class="btn btn-ghost btn--small" id="prev_page" type="button">← Назад</button>
-          <button class="btn btn-ghost btn--small" id="next_page" type="button">Вперёд →</button>
+  <!-- Выезжающая панель (одна на страницу) -->
+  <div id="sheet_backdrop" class="sheet-backdrop" hidden></div>
+  <aside id="sheet" class="sheet" hidden aria-modal="true" role="dialog" aria-labelledby="sheet-title">
+    <header class="sheet-header">
+      <div>
+        <h3 id="sheet-title" class="sheet-title">Редактирование города</h3>
+        <p id="sheet-sub" class="sheet-sub"></p>
+      </div>
+      <button id="sheet_close" class="sheet-close" type="button" aria-label="Закрыть">✕</button>
+    </header>
+
+    <form id="sheet_form" class="sheet-body" novalidate>
+      <input type="hidden" name="city_id" id="city_id">
+      <div class="panel">
+        <h4>Основные параметры</h4>
+        <p class="hint">Ответственный и цели по найму.</p>
+        <div class="form-field">
+          <label for="owner_select">Ответственный рекрутёр</label>
+          <select id="owner_select" name="responsible_id">
+            <option value="">— Не назначен —</option>
+            {% for r in recruiters %}
+              <option value="{{ r.id }}">{{ r.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="grid2">
+          <div class="form-field">
+            <label for="plan_week">План на неделю</label>
+            <input id="plan_week" name="plan_week" type="number" inputmode="numeric" min="0" step="1" placeholder="Например, 12">
+          </div>
+          <div class="form-field">
+            <label for="plan_month">План на месяц</label>
+            <input id="plan_month" name="plan_month" type="number" inputmode="numeric" min="0" step="1" placeholder="Например, 48">
+          </div>
         </div>
       </div>
-    </div>
-  {% endif %}
 
-  <!-- Drawer -->
-  <div class="drawer" id="drawer" hidden aria-hidden="
+      <div class="panel">
+        <h4>Профиль города</h4>
+        <p class="hint">Критерии и ресурсы.</p>
+        <details class="stage-item" open>
+          <summary>
+            <span class="stage-item__title">Критерии отбора</span>
+            <span id="crit_preview" class="stage-item__preview muted">—</span>
+          </summary>
+          <div class="stage-item__body">
+            <textarea id="criteria" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…"></textarea>
+          </div>
+        </details>
+        <details class="stage-item">
+          <summary>
+            <span class="stage-item__title">Ресурсы экспертов</span>
+            <span id="exp_preview" class="stage-item__preview muted">—</span>
+          </summary>
+          <div class="stage-item__body">
+            <textarea id="experts" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: реферальный, ярмарки вакансий…"></textarea>
+          </div>
+        </details>
+      </div>
+
+      <div id="sheet_stages" class="panel">
+        <h4>Этапы и сообщения</h4>
+        <p class="hint">Тексты для кандидатов. Можно быстро вернуть дефолтный текст.</p>
+        <!-- сюда подставится разметка из template конкретного города -->
+      </div>
+    </form>
+
+    <footer class="sheet-footer">
+      <span id="save_status" class="save-status" aria-live="polite">Сохранено</span>
+      <div class="form-actions">
+        <button id="btn_save" class="btn btn-primary" type="button">Сохранить</button>
+        <button id="btn_cancel" class="btn btn-ghost" type="button">Отмена</button>
+      </div>
+    </footer>
+  </aside>
+
+  <!-- Toasts -->
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
+
+</section>
+
+<script>
+(function(){
+  const $ = (s, r=document)=>r.querySelector(s);
+  const $$ = (s, r=document)=>Array.from(r.querySelectorAll(s));
+  const on = (el, ev, cb, opts)=>el && el.addEventListener(ev, cb, opts);
+
+  const table = $('#city_table');
+  const tbody = $('#cities_tbody');
+  const search = $('#city_search');
+  const reset = $('#city_reset');
+  const foundBadge = $('#found_badge');
+
+  const sheet = $('#sheet');
+  const sheetBackdrop = $('#sheet_backdrop');
+  const sheetForm = $('#sheet_form');
+  const sheetStages = $('#sheet_stages');
+  const sheetTitle = $('#sheet-title');
+  const sheetSub = $('#sheet-sub');
+  const sheetClose = $('#sheet_close');
+  const btnSave = $('#btn_save');
+  const btnCancel = $('#btn_cancel');
+  const saveStatus = $('#save_status');
+
+  const inputId = $('#city_id');
+  const selOwner = $('#owner_select');
+  const inWeek = $('#plan_week');
+  const inMonth = $('#plan_month');
+  const taCriteria = $('#criteria');
+  const taExperts = $('#experts');
+  const prevCrit = $('#crit_preview');
+  const prevExp = $('#exp_preview');
+
+  if (!tbody) return;
+
+  const rows = $$('.city-row', tbody);
+  const totalCount = rows.length;
+
+  const debounce = (fn, ms=180)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
+  const norm = (s)=> (s||'').toString().trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+
+  const truncate = (v, n=120)=>!v ? '—' : (v.length>n ? v.slice(0,n).trimEnd()+'…' : v);
+
+  /* ---------- Toasts ---------- */
+  function toast(text, kind='info'){
+    const wrap = $('#toasts');
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.role = 'status';
+    t.textContent = text;
+    wrap.appendChild(t);
+    setTimeout(()=>{ t.remove(); }, 2200);
+  }
+
+  /* ---------- Sorting ---------- */
+  const sortState = { key: 'name', dir: 'asc' };
+  function getCellValue(row, key){
+    switch(key){
+      case 'name':  return row.dataset.name || '';
+      case 'tz':    return row.dataset.tz || '';
+      case 'owner': return row.dataset.owner || '';
+      case 'week':  return Number(row.querySelector('.col-week')?.dataset.sort || 0);
+      case 'month': return Number(row.querySelector('.col-month')?.dataset.sort || 0);
+      default: return '';
+    }
+  }
+  function applySort(){
+    const rowsArr = Array.from(rows).filter(r=>r.style.display !== 'none');
+    rowsArr.sort((a,b)=>{
+      const av = getCellValue(a, sortState.key);
+      const bv = getCellValue(b, sortState.key);
+      let res = 0;
+      if (typeof av === 'number' || typeof bv === 'number') res = (av as any) - (bv as any);
+      else res = String(av).localeCompare(String(bv), 'ru', { sensitivity:'base' });
+      return sortState.dir === 'asc' ? res : -res;
+    });
+    // re-append
+    rowsArr.forEach(r=> tbody.appendChild(r));
+    // update header aria
+    $$('.sort', table).forEach(btn=>{
+      const dir = (btn.dataset.key === sortState.key) ? (sortState.dir==='asc'?'ascending':'descending') : 'none';
+      btn.setAttribute('aria-sort', dir);
+    });
+  }
+
+  on(table, 'click', (e)=>{
+    const btn = e.target.closest('button.sort'); if (!btn) return;
+    const key = btn.dataset.key;
+    if (!key) return;
+    if (sortState.key === key){
+      sortState.dir = (sortState.dir === 'asc') ? 'desc' : 'asc';
+    } else {
+      sortState.key = key; sortState.dir = 'asc';
+    }
+    applySort();
+  });
+
+  /* ---------- Filter ---------- */
+  function applyFilter(){
+    const q = norm(search?.value);
+    let visible = 0;
+    rows.forEach(r=>{
+      const ok = !q || (r.dataset.name||'').includes(q) || (r.dataset.tz||'').includes(q) || (r.dataset.owner||'').includes(q);
+      r.style.display = ok ? 'table-row' : 'none';
+      if (ok) visible++;
+    });
+    if (foundBadge) foundBadge.textContent = visible + ' / ' + totalCount;
+    applySort();
+  }
+  const applyFilterDebounced = debounce(applyFilter, 120);
+
+  on(search, 'input', applyFilterDebounced);
+  on(reset, 'click', ()=>{ if (search) search.value=''; applyFilter(); search?.focus(); });
+
+  /* ---------- Drawer open/close & dirty state ---------- */
+  let currentRow = null;
+  let isDirty = false;
+  function setDirty(v){
+    isDirty = v;
+    saveStatus.textContent = v ? 'Есть несохранённые изменения' : 'Сохранено';
+    saveStatus.classList.toggle('ok', !v);
+    saveStatus.classList.toggle('err', false);
+  }
+
+  function openSheetForRow(row){
+    currentRow = row;
+    const id = row.dataset.id;
+    const name = row.querySelector('.col-name')?.textContent?.trim() || 'Город';
+    sheetTitle.textContent = `Редактирование: ${name}`;
+    sheetSub.textContent = `ID: ${id}`;
+    inputId.value = id;
+
+    // hydrate from dataset
+    selOwner.value = row.dataset.ownerId || '';
+    inWeek.value = row.dataset.planWeek || '';
+    inMonth.value = row.dataset.planMonth || '';
+    taCriteria.value = row.dataset.criteria || '';
+    taExperts.value = row.dataset.experts || '';
+    prevCrit.textContent = truncate(taCriteria.value);
+    prevExp.textContent = truncate(taExperts.value);
+
+    // stages template
+    sheetStages.querySelectorAll('.stage-accordion, .stage-hint').forEach(n=>n.remove());
+    const tpl = document.getElementById(`tpl-stages-${id}`) as HTMLTemplateElement;
+    if (tpl && tpl.content){
+      const frag = tpl.content.cloneNode(true);
+      sheetStages.appendChild(frag);
+      // bind stage previews
+      sheetStages.querySelectorAll('details.stage-item').forEach(d=>{
+        const ta = d.querySelector('textarea[data-stage]');
+        const prev = d.querySelector('.stage-item__preview');
+        const updatePrev = ()=>{ prev.textContent = (ta.value.trim() ? truncate(ta.value) : 'Текст по умолчанию'); };
+        if (ta){
+          ta.addEventListener('input', ()=>{ setDirty(true); updatePrev(); });
+          updatePrev();
+        }
+      });
+      // default buttons
+      sheetStages.querySelectorAll('.stage-default-btn').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          const key = btn.getAttribute('data-stage');
+          const ta = sheetStages.querySelector(`textarea[data-stage="${CSS.escape(key)}"]`);
+          if (ta){
+            ta.value = ta.dataset.default || '';
+            ta.dispatchEvent(new Event('input',{bubbles:true}));
+            ta.focus();
+          }
+        });
+      });
+    }
+
+    // bind dirtiness
+    [selOwner,inWeek,inMonth,taCriteria,taExperts].forEach(el=>{
+      el.addEventListener('input', ()=> setDirty(true), { once:false });
+    });
+
+    // open
+    sheet.hidden = false; sheetBackdrop.hidden = false;
+    document.body.classList.add('sheet-open');
+    requestAnimationFrame(()=>{
+      sheet.classList.add('open'); sheetBackdrop.classList.add('open');
+    });
+    setDirty(false);
+    selOwner.focus();
+  }
+
+  function tryCloseSheet(){
+    if (isDirty){
+      const ok = confirm('Есть несохранённые изменения. Закрыть без сохранения?');
+      if (!ok) return;
+    }
+    closeSheet(true);
+  }
+  function closeSheet(reset=false){
+    sheet.classList.remove('open'); sheetBackdrop.classList.remove('open');
+    setTimeout(()=>{
+      sheet.hidden = true; sheetBackdrop.hidden = true;
+      document.body.classList.remove('sheet-open');
+      if (reset) sheetForm.reset();
+      currentRow = null; isDirty = false;
+    }, 180);
+  }
+
+  on(sheetBackdrop, 'click', tryCloseSheet);
+  on(sheetClose, 'click', tryCloseSheet);
+  on(btnCancel, 'click', tryCloseSheet);
+
+  // Cmd/Ctrl+S to save, Esc to close
+  on(document, 'keydown', (e)=>{
+    if (!sheet.hidden){
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){ e.preventDefault(); doSave(); }
+      if (e.key === 'Escape'){ e.preventDefault(); tryCloseSheet(); }
+    } else {
+      if (e.key === '/' && document.activeElement !== search){ e.preventDefault(); search?.focus(); }
+      // row navigation + Enter to edit
+      const focusRow = document.activeElement?.closest?.('tr.city-row');
+      if (e.key === 'Enter' && focusRow){ e.preventDefault(); focusRow.querySelector('.btn-edit')?.click(); }
+      if (['ArrowDown','ArrowUp'].includes(e.key)){
+        e.preventDefault();
+        const visibleRows = rows.filter(r=>r.style.display !== 'none');
+        const idx = visibleRows.indexOf(focusRow);
+        let next = null;
+        if (e.key === 'ArrowDown'){ next = visibleRows[Math.min(idx+1, visibleRows.length-1)] || visibleRows[0]; }
+        else { next = visibleRows[Math.max(idx-1, 0)] || visibleRows[0]; }
+        next?.focus();
+      }
+    }
+  });
+
+  /* ---------- Row edit open ---------- */
+  on(tbody,'click',(e)=>{
+    const btn = e.target.closest('.btn-edit');
+    if (!btn) return;
+    const row = btn.closest('tr.city-row');
+    if (!row) return;
+    openSheetForRow(row);
+  });
+  // dblclick row opens editor
+  on(tbody,'dblclick',(e)=>{
+    const row = e.target.closest('tr.city-row');
+    if (!row) return;
+    openSheetForRow(row);
+  });
+
+  /* ---------- Save ---------- */
+  async function doSave(){
+    if (!currentRow) return;
+    const id = inputId.value;
+
+    const ownerId = (selOwner.value || '').trim();
+    const plan_week = inWeek.value ? parseInt(inWeek.value,10) : null;
+    const plan_month = inMonth.value ? parseInt(inMonth.value,10) : null;
+
+    const templates = {};
+    sheetStages.querySelectorAll('textarea[data-stage]').forEach(ta=>{
+      const k = ta.dataset.stage; if (k) templates[k] = ta.value.trim();
+    });
+
+    // optimistic UI update for row
+    const ownerLabel = currentRow.querySelector('.owner-label');
+    const colWeek = currentRow.querySelector('.col-week');
+    const colMonth = currentRow.querySelector('.col-month');
+
+    const prev = {
+      criteria: currentRow.dataset.criteria,
+      experts: currentRow.dataset.experts,
+      planWeek: currentRow.dataset.planWeek,
+      planMonth: currentRow.dataset.planMonth,
+      ownerId: currentRow.dataset.ownerId,
+      ownerText: ownerLabel?.textContent,
+      weekText: colWeek?.textContent,
+      monthText: colMonth?.textContent,
+      weekSort: colWeek?.dataset.sort,
+      monthSort: colMonth?.dataset.sort
+    };
+
+    // set status
+    saveStatus.textContent = 'Сохранение…';
+    saveStatus.classList.add('ok'); saveStatus.classList.remove('err');
+
+    // apply optimistic
+    currentRow.dataset.criteria = taCriteria.value.trim();
+    currentRow.dataset.experts = taExperts.value.trim();
+    currentRow.dataset.planWeek = plan_week ?? '';
+    currentRow.dataset.planMonth = plan_month ?? '';
+    currentRow.dataset.ownerId = ownerId ? String(Number(ownerId)) : '';
+    // owner dataset (for sorting/filter)
+    currentRow.dataset.owner = (ownerId ? selOwner.options[selOwner.selectedIndex].textContent.trim().toLowerCase() : '');
+
+    if (ownerLabel){
+      if (ownerId){
+        ownerLabel.textContent = selOwner.options[selOwner.selectedIndex].textContent;
+        ownerLabel.classList.remove('muted');
+      } else {
+        ownerLabel.textContent = 'Не назначен';
+        ownerLabel.classList.add('muted');
+      }
+    }
+    if (colWeek){ colWeek.textContent = plan_week ?? '—'; colWeek.dataset.sort = String(plan_week ?? 0); }
+    if (colMonth){ colMonth.textContent = plan_month ?? '—'; colMonth.dataset.sort = String(plan_month ?? 0); }
+
+    try{
+      const resp = await fetch(`/cities/${id}/settings`, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({
+          criteria: taCriteria.value.trim(),
+          experts: taExperts.value.trim(),
+          plan_week, plan_month,
+          templates,
+          responsible_recruiter_id: ownerId ? Number(ownerId) : null
+        })
+      });
+      const json = await resp.json();
+      if (!json || json.ok !== true) throw new Error(json && json.error || 'Ошибка сохранения');
+
+      setDirty(false);
+      saveStatus.textContent = 'Сохранено';
+      saveStatus.classList.add('ok'); saveStatus.classList.remove('err');
+
+      toast('Изменения сохранены');
+      closeSheet(false);
+      applySort(); // может обновиться порядок
+    }catch(err){
+      // rollback
+      currentRow.dataset.criteria = prev.criteria ?? '';
+      currentRow.dataset.experts = prev.experts ?? '';
+      currentRow.dataset.planWeek = prev.planWeek ?? '';
+      currentRow.dataset.planMonth = prev.planMonth ?? '';
+      currentRow.dataset.ownerId = prev.ownerId ?? '';
+      if (ownerLabel){ ownerLabel.textContent = prev.ownerText ?? ownerLabel.textContent; }
+      if (colWeek){ colWeek.textContent = prev.weekText ?? colWeek.textContent; colWeek.dataset.sort = prev.weekSort ?? '0'; }
+      if (colMonth){ colMonth.textContent = prev.monthText ?? colMonth.textContent; colMonth.dataset.sort = prev.monthSort ?? '0'; }
+      saveStatus.textContent = 'Ошибка';
+      saveStatus.classList.remove('ok'); saveStatus.classList.add('err');
+      if (navigator.vibrate) navigator.vibrate(60);
+      toast('Не удалось сохранить', 'error');
+    }
+  }
+  on(btnSave, 'click', doSave);
+
+  /* ---------- Search & init ---------- */
+  function focusSearch(){ search?.focus(); }
+  on(document,'keydown',(e)=>{
+    if (e.key === '/' && sheet.hidden && document.activeElement !== search){ e.preventDefault(); focusSearch(); }
+  });
+
+  // previews in base panel
+  on(taCriteria, 'input', ()=>{ prevCrit.textContent = truncate(taCriteria.value); setDirty(true); });
+  on(taExperts, 'input', ()=>{ prevExp.textContent = truncate(taExperts.value); setDirty(true); });
+
+  // leave warning
+  window.addEventListener('beforeunload', (e)=>{
+    if (!sheet.hidden && isDirty){ e.preventDefault(); e.returnValue = ''; }
+  });
+
+  // Initial
+  applyFilter();
+
+})();
+</script>
+{% endblock %}
