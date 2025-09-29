@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
@@ -9,6 +11,8 @@ from aiogram.types import CallbackQuery, Message
 from .. import services
 
 router = Router()
+
+logger = logging.getLogger(__name__)
 
 
 @router.message(Command("start"))
@@ -24,6 +28,25 @@ async def cmd_intro(message: Message) -> None:
 @router.callback_query(F.data == "home:start")
 async def cb_home_start(callback: CallbackQuery) -> None:
     await services.handle_home_start(callback)
+
+
+@router.callback_query(F.data.startswith("noop:"))
+async def cb_noop_hint(callback: CallbackQuery) -> None:
+    hints = {
+        "no_recruiters": "Сейчас нет активных рекрутёров",
+        "no_slots": "Свободные слоты появятся позже",
+    }
+
+    suffix = ""
+    if callback.data:
+        _, _, suffix = callback.data.partition(":")
+
+    message = hints.get(suffix, "Нет доступной информации")
+
+    user_id = callback.from_user.id if callback.from_user else "unknown"
+    logger.info("noop callback handled", extra={"suffix": suffix or None, "user_id": user_id})
+
+    await callback.answer(message)
 
 
 @router.message()
