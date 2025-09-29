@@ -85,70 +85,117 @@
           </div>
           <div class="city-card__details" hidden>
             <form class="city-form" data-id="{{ c.id }}">
-              <div class="form-field">
-                <label for="owner_{{ c.id }}">Ответственный рекрутёр</label>
-                <select id="owner_{{ c.id }}" name="responsible_id" class="responsible-select">
-                  <option value="">— Не назначен —</option>
-                  {% for r in recruiters %}
-                    <option value="{{ r.id }}" {% if owner_id == r.id %}selected{% endif %}>{{ r.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-
-              <div class="form-grid">
-                <div class="form-field">
-                  <label for="crit_{{ c.id }}">Критерии отбора</label>
-                  <textarea id="crit_{{ c.id }}" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…">{{ criteria }}</textarea>
-                </div>
-                <div class="form-field">
-                  <label for="exp_{{ c.id }}">Ресурсы экспертов</label>
-                  <textarea id="exp_{{ c.id }}" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: внутренний реферальный, ярмарки вакансий…">{{ experts }}</textarea>
-                </div>
-              </div>
-
-              <div class="form-grid">
-                <div class="form-field">
-                  <label for="pw_{{ c.id }}">План набора (неделя)</label>
-                  <input id="pw_{{ c.id }}" name="plan_week" type="number" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
-                </div>
-                <div class="form-field">
-                  <label for="pm_{{ c.id }}">План набора (месяц)</label>
-                  <input id="pm_{{ c.id }}" name="plan_month" type="number" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
-                </div>
-              </div>
-
-              <div class="stage-block">
-                <h4>Шаги и шаблоны сообщений</h4>
-                <p class="muted">Настройте тексты, которые бот отправит кандидату на каждом этапе. Оставьте поле пустым, чтобы использовать текст по умолчанию.</p>
-                {% set stages = city_stages.get(c.id, []) %}
-                {% for stage in stages %}
-                  <div class="stage-field" data-stage="{{ stage.key }}">
-                    <label for="stage_{{ stage.key }}_{{ c.id }}">{{ stage.title }}</label>
-                    <textarea
-                      id="stage_{{ stage.key }}_{{ c.id }}"
-                      name="stage__{{ stage.key }}"
-                      data-stage="{{ stage.key }}"
-                      data-default="{{ stage.default|e }}"
-                      rows="6"
-                      placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-                    <div class="stage-controls">
-                      <button type="button" class="btn btn-ghost btn--small stage-default-btn" data-stage="{{ stage.key }}">Вставить текст по умолчанию</button>
-                      <span class="muted">{{ stage.description }}</span>
+              <div class="city-sheet">
+                <section class="city-panel">
+                  <header class="city-panel__header">
+                    <span class="city-panel__icon" aria-hidden="true">🧭</span>
+                    <div>
+                      <h4 class="city-panel__title">Основные параметры</h4>
+                      <p class="city-panel__hint">Кто отвечает за город и какие цели по найму.</p>
+                    </div>
+                  </header>
+                  <div class="city-panel__body">
+                    <div class="form-field">
+                      <label for="owner_{{ c.id }}">Ответственный рекрутёр</label>
+                      <select id="owner_{{ c.id }}" name="responsible_id" class="responsible-select">
+                        <option value="">— Не назначен —</option>
+                        {% for r in recruiters %}
+                          <option value="{{ r.id }}" {% if owner_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="city-form__row">
+                      <div class="form-field form-field--compact">
+                        <label for="pw_{{ c.id }}">План на неделю</label>
+                        <input id="pw_{{ c.id }}" name="plan_week" type="number" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
+                      </div>
+                      <div class="form-field form-field--compact">
+                        <label for="pm_{{ c.id }}">План на месяц</label>
+                        <input id="pm_{{ c.id }}" name="plan_month" type="number" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
+                      </div>
+                    </div>
+                    <div class="info-badge muted">
+                      <span class="dot"></span>
+                      <span>Контролируйте загрузку команды и динамику выполнения планов.</span>
                     </div>
                   </div>
-                {% endfor %}
-                <p class="muted">
-                  {% raw %}
-                  Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
-                  {% endraw %}
-                </p>
+                </section>
+
+                <section class="city-panel">
+                  <header class="city-panel__header">
+                    <span class="city-panel__icon" aria-hidden="true">📝</span>
+                    <div>
+                      <h4 class="city-panel__title">Профиль города</h4>
+                      <p class="city-panel__hint">Требования к кандидатам и ресурсы экспертов.</p>
+                    </div>
+                  </header>
+                  <div class="city-panel__body city-panel__body--stacked">
+                    <details class="city-collapse" open>
+                      <summary>Критерии отбора</summary>
+                      <div class="city-collapse__body">
+                        <textarea id="crit_{{ c.id }}" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…">{{ criteria }}</textarea>
+                      </div>
+                    </details>
+                    <details class="city-collapse">
+                      <summary>Ресурсы экспертов</summary>
+                      <div class="city-collapse__body">
+                        <textarea id="exp_{{ c.id }}" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: внутренний реферальный, ярмарки вакансий…">{{ experts }}</textarea>
+                      </div>
+                    </details>
+                  </div>
+                </section>
+
+                <section class="city-panel city-panel--stages">
+                  <header class="city-panel__header">
+                    <span class="city-panel__icon" aria-hidden="true">💬</span>
+                    <div>
+                      <h4 class="city-panel__title">Шаги и шаблоны сообщений</h4>
+                      <p class="city-panel__hint">Настройте тексты для кандидатов на каждом этапе воронки.</p>
+                    </div>
+                  </header>
+                  <div class="city-panel__body">
+                    {% set stages = city_stages.get(c.id, []) %}
+                    <div class="stage-accordion">
+                      {% for stage in stages %}
+                        <details class="stage-item" data-stage="{{ stage.key }}">
+                          <summary>
+                            <div class="stage-item__summary">
+                              <span class="stage-item__title">{{ stage.title }}</span>
+                              <span class="stage-item__preview muted">Используется текст по умолчанию</span>
+                            </div>
+                          </summary>
+                          <div class="stage-item__body">
+                            <textarea
+                              id="stage_{{ stage.key }}_{{ c.id }}"
+                              name="stage__{{ stage.key }}"
+                              data-stage="{{ stage.key }}"
+                              data-default="{{ stage.default|e }}"
+                              rows="5"
+                              placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
+                            <div class="stage-controls">
+                              <button type="button" class="btn btn-ghost btn--small stage-default-btn" data-stage="{{ stage.key }}">Вставить текст по умолчанию</button>
+                              <span class="muted">{{ stage.description }}</span>
+                            </div>
+                          </div>
+                        </details>
+                      {% endfor %}
+                    </div>
+                    <p class="muted stage-hint">
+                      {% raw %}
+                      Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
+                      {% endraw %}
+                    </p>
+                  </div>
+                </section>
               </div>
 
-              <div class="form-actions">
-                <button type="submit" class="btn btn-primary">Сохранить</button>
-                <button type="button" class="btn btn-ghost btn-cancel">Отмена</button>
-                <span class="badge muted save-status">Сохранено</span>
-              </div>
+              <footer class="city-form__footer">
+                <div class="form-actions">
+                  <button type="submit" class="btn btn-primary">Сохранить</button>
+                  <button type="button" class="btn btn-ghost btn-cancel">Отмена</button>
+                  <span class="badge muted save-status">Сохранено</span>
+                </div>
+              </footer>
             </form>
           </div>
         </article>
@@ -173,6 +220,40 @@
   const totalCount = cards.length;
 
   function norm(s){ return (s||'').toString().trim().toLowerCase(); }
+
+  function truncate(value, limit=120){
+    if (!value) return '';
+    return value.length > limit ? value.slice(0, limit).trimEnd() + '…' : value;
+  }
+
+  function updateStagePreview(details){
+    if (!details) return;
+    const textarea = details.querySelector('textarea[data-stage]');
+    const preview = details.querySelector('.stage-item__preview');
+    if (!textarea || !preview) return;
+    const value = textarea.value.trim();
+    if (value) {
+      preview.textContent = truncate(value);
+      details.classList.add('stage-item--custom');
+    } else {
+      preview.textContent = 'Используется текст по умолчанию';
+      details.classList.remove('stage-item--custom');
+    }
+  }
+
+  function bindStagePreviews(form){
+    if (!form) return;
+    const items = form.querySelectorAll('.stage-item');
+    items.forEach(details => {
+      const textarea = details.querySelector('textarea[data-stage]');
+      if (!textarea) return;
+      if (!textarea.dataset.previewBound) {
+        textarea.addEventListener('input', () => updateStagePreview(details));
+        textarea.dataset.previewBound = '1';
+      }
+      updateStagePreview(details);
+    });
+  }
 
   function closeAll(){
     cards.forEach(card => {
@@ -220,6 +301,7 @@
       if (ta) {
         ta.value = ta.dataset.default || '';
         ta.focus();
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
       }
       e.preventDefault();
       return;
@@ -260,6 +342,7 @@
       if (planMonthField) planMonthField.value = card.dataset.planMonth || '';
       const ownerSelect = form.querySelector('[name="responsible_id"]');
       if (ownerSelect) ownerSelect.value = card.dataset.ownerId || '';
+      bindStagePreviews(form);
     }
 
     card.classList.add('open');
