@@ -1,69 +1,32 @@
 {% extends "base.html" %}
+{% from "partials/list_toolbar.html" import list_toolbar %}
 {% block title %}Рекрутёры{% endblock %}
 {% block content %}
-<style>
-  .page { display:flex; flex-direction:column; gap:24px; }
-  .page-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; }
-  .page-header h1 { margin:0; font-size:28px; font-weight:700; }
-  .page-header p { margin:6px 0 0; color:var(--muted); max-width:420px; }
-  .page-header .actions { display:flex; gap:10px; flex-wrap:wrap; }
-
-  .filters { display:flex; gap:12px; flex-wrap:wrap; padding:16px; border-radius:var(--radius-lg); border:1px solid var(--glass-stroke); background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02)); box-shadow:var(--shadow-1); }
-  .filters .field { display:flex; flex-direction:column; gap:6px; min-width:220px; flex:1 1 200px; }
-  .filters label { font-weight:600; color:var(--muted); font-size:13px; }
-  .filters input,
-  .filters select { padding:10px 12px; border-radius:var(--radius-md); border:1px solid var(--field-border); background:var(--field-bg); color:inherit; box-shadow:var(--field-shadow); }
-  .filters button { align-self:flex-end; margin-left:auto; }
-
-  .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); }
-  .card-rec { display:flex; flex-direction:column; gap:12px; padding:18px; border-radius:var(--radius-lg); border:1px solid var(--glass-stroke); background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.015)); box-shadow:var(--shadow-2); min-height:240px; }
-  .card-rec header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
-  .card-rec h2 { margin:0; font-size:18px; }
-  .card-rec .meta { display:flex; flex-wrap:wrap; gap:6px; font-size:12px; color:var(--muted); }
-  .card-rec .meta span { display:inline-flex; gap:4px; align-items:center; padding:4px 8px; border-radius:999px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); }
-  .card-rec .chips { display:flex; flex-wrap:wrap; gap:6px; }
-  .card-rec .chips span { padding:4px 8px; border-radius:999px; background:rgba(255,255,255,.05); font-size:12px; }
-  .card-rec .chips .free { color:var(--ok); }
-  .card-rec .chips .pending { color:var(--warn); }
-  .card-rec .chips .booked { color:var(--accent); }
-  .card-rec .cities { display:flex; flex-wrap:wrap; gap:6px; }
-  .card-rec .cities span { padding:4px 10px; border-radius:999px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); font-size:12px; }
-  .card-rec footer { margin-top:auto; display:flex; gap:8px; flex-wrap:wrap; }
-  .card-rec footer .btn { flex:1 1 auto; text-align:center; }
-  .status-pill { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:999px; font-weight:600; }
-  .status-on { background:rgba(46,204,113,.12); color:#2ecc71; border:1px solid rgba(46,204,113,.25); }
-  .status-off { background:rgba(255,107,107,.12); color:#ff6b6b; border:1px solid rgba(255,107,107,.18); }
-
-  .btn { padding:10px 16px; border-radius:var(--radius-md); border:1px solid rgba(255,255,255,0.12); background:var(--btn-bg); color:inherit; cursor:pointer; text-decoration:none; display:inline-flex; justify-content:center; align-items:center; gap:6px; }
-  .btn:hover { background:var(--btn-bg-hover); }
-  .btn-primary { background:linear-gradient(135deg,#579bff,#8d5bff); border:none; color:#fff; box-shadow:var(--shadow-2); }
-  .btn-ghost { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); }
-  .empty { padding:32px; border-radius:var(--radius-lg); border:1px dashed rgba(255,255,255,.2); text-align:center; color:var(--muted); }
-
-  @media (max-width: 640px) {
-    .page-header { flex-direction:column; align-items:flex-start; }
-    .page-header .actions { width:100%; justify-content:flex-start; }
-    .card-rec footer .btn { flex:1 1 100%; }
-  }
-</style>
-
 <section class="page">
-  <div class="page-header">
+  <header class="page-header">
     <div>
-      <h1>Рекрутёры</h1>
-      <p>Следите за нагрузкой, ближайшими слотами и ответственными городами каждого рекрутёра.</p>
+      <h1 class="page-title">Рекрутёры</h1>
+      <p class="page-description">
+        Следите за нагрузкой, ближайшими слотами и ответственными городами каждого рекрутёра.
+      </p>
     </div>
-    <div class="actions">
+    <div class="page-actions">
       <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
     </div>
-  </div>
+  </header>
 
-  <div class="filters">
-    <div class="field">
+  {% call list_toolbar(form_id="recruiter_filters", method="get", mass_actions=[{
+    'label': 'Сбросить',
+    'type': 'button',
+    'variant': 'ghost',
+    'button_type': 'button',
+    'attrs': 'id="flt_reset"'
+  }]) %}
+    <div class="form-field form-field--wide">
       <label for="flt_query">Поиск</label>
-      <input id="flt_query" type="text" placeholder="Имя, город или chat_id">
+      <input id="flt_query" type="search" placeholder="Имя, город или chat_id">
     </div>
-    <div class="field" style="max-width:220px;">
+    <div class="form-field form-field--narrow">
       <label for="flt_state">Статус</label>
       <select id="flt_state">
         <option value="">Все</option>
@@ -71,32 +34,32 @@
         <option value="off">Отключённые</option>
       </select>
     </div>
-    <button class="btn btn-ghost" type="button" id="flt_reset">Сбросить</button>
-  </div>
+  {% endcall %}
 
   {% if not recruiter_rows %}
-    <div class="empty">
-      Записи отсутствуют. Создайте первого рекрутёра, чтобы начать работу.
-      <div style="margin-top:12px;">
+    <div class="card glass grain">
+      <h3 class="section-title">Пока пусто</h3>
+      <p class="page-description">Записи отсутствуют. Создайте первого рекрутёра, чтобы начать работу.</p>
+      <div class="page-actions">
         <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
       </div>
     </div>
   {% else %}
-    <div id="recs_grid" class="grid">
+    <div id="recs_grid" class="card-grid">
       {% for item in recruiter_rows %}
         {% set r = item.rec %}
         {% set stats = item.stats %}
         {% set active = r.active if r.active is not none else False %}
-        <article class="card-rec"
+        <article class="recruiter-card"
                  data-name="{{ (r.name or '')|lower }}"
                  data-tz="{{ (r.tz or 'Europe/Moscow')|lower }}"
                  data-chat="{{ r.tg_chat_id or '' }}"
                  data-cities="{{ item.cities_text }}"
                  data-active="{{ 'on' if active else 'off' }}">
-          <header>
+          <header class="recruiter-card__header">
             <div>
-              <h2>{{ r.name }}</h2>
-              <div class="meta">
+              <h2 class="recruiter-card__name">{{ r.name }}</h2>
+              <div class="meta-list">
                 <span>#{{ r.id }}</span>
                 <span title="Часовой пояс">TZ: {{ r.tz or 'Europe/Moscow' }}</span>
                 {% if r.tg_chat_id %}
@@ -104,26 +67,27 @@
                 {% endif %}
               </div>
             </div>
-            <span class="status-pill {{ 'status-on' if active else 'status-off' }}">
+            <span class="status-pill" data-state="{{ 'on' if active else 'off' }}">
               {{ 'Активен' if active else 'Отключен' }}
             </span>
           </header>
 
-          <div>
-            <div class="chips">
-              <span class="free">Свободно {{ stats.free }}</span>
-              <span class="pending">Ожидают {{ stats.pending }}</span>
-              <span class="booked">Занято {{ stats.booked }}</span>
-              <span>Всего {{ stats.total }}</span>
+          <div class="section-block">
+            <h3 class="section-title">Нагрузка</h3>
+            <div class="chip-row">
+              <span class="chip chip--success">Свободно <span class="chip__value">{{ stats.free }}</span></span>
+              <span class="chip chip--warning">Ожидают <span class="chip__value">{{ stats.pending }}</span></span>
+              <span class="chip chip--info">Занято <span class="chip__value">{{ stats.booked }}</span></span>
+              <span class="chip">Всего <span class="chip__value">{{ stats.total }}</span></span>
             </div>
           </div>
 
-          <div>
-            <strong style="font-size:13px;">Города</strong>
-            <div class="cities">
+          <div class="section-block">
+            <h3 class="section-title">Города</h3>
+            <div class="badge-row">
               {% if item.cities %}
                 {% for cname, ctz in item.cities %}
-                  <span title="{{ ctz }}">{{ cname }}</span>
+                  <span class="badge" title="{{ ctz }}">{{ cname }}</span>
                 {% endfor %}
               {% else %}
                 <span class="muted">не назначены</span>
@@ -131,10 +95,10 @@
             </div>
           </div>
 
-          <div>
-            <strong style="font-size:13px;">Ближайший свободный слот</strong><br>
+          <div class="section-block">
+            <h3 class="section-title">Ближайший свободный слот</h3>
             {% if item.next_free_local %}
-              <span class="badge" style="margin-top:4px; display:inline-block;">
+              <span class="badge">
                 {{ item.next_free_local }}{% if not item.next_is_future %} · истёк{% endif %}
               </span>
             {% else %}
@@ -142,13 +106,13 @@
             {% endif %}
           </div>
 
-          <footer>
-            <button class="btn btn-ghost" type="button" data-copy="{{ r.tg_chat_id or '' }}" {% if not r.tg_chat_id %}disabled{% endif %}>
+          <footer class="recruiter-card__footer">
+            <button class="btn btn-ghost btn--grow" type="button" data-copy="{{ r.tg_chat_id or '' }}" {% if not r.tg_chat_id %}disabled{% endif %}>
               Скопировать chat_id
             </button>
-            <a class="btn btn-ghost" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
-            <form method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');" style="margin:0;">
-              <button class="btn btn-ghost" type="submit">Удалить</button>
+            <a class="btn btn-soft btn--grow" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
+            <form class="inline-form" method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');">
+              <button class="btn btn-danger btn--grow" type="submit">Удалить</button>
             </form>
           </footer>
         </article>
@@ -164,7 +128,7 @@
   const q = $('#flt_query');
   const state = $('#flt_state');
   const reset = $('#flt_reset');
-  const cards = $$('#recs_grid .card-rec');
+  const cards = $$('#recs_grid .recruiter-card');
   const norm = v => (v || '').toString().toLowerCase().trim();
 
   const apply = () => {
@@ -190,7 +154,7 @@
   });
   apply();
 
-  $$('.card-rec button[data-copy]').forEach(btn => {
+  $$('#recs_grid .recruiter-card button[data-copy]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const value = btn.getAttribute('data-copy');
       if (!value) return;
