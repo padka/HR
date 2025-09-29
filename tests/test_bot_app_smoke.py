@@ -19,3 +19,15 @@ async def test_create_application_smoke(monkeypatch):
     assert dispatcher is not None
 
     await bot.session.close()
+
+
+def test_state_manager_get_with_default():
+    manager = StateManager()
+    default_state = {"flow": "intro"}
+
+    assert manager.get(1, default_state) is default_state
+
+    existing_state = {"flow": "interview"}
+    manager.set(1, existing_state)  # type: ignore[arg-type]
+
+    assert manager.get(1, default_state) is existing_state
