@@ -33,6 +33,7 @@ from .slots import (
     create_slot,
     list_slots,
     recruiters_for_slot_form,
+    set_slot_outcome,
 )
 from .questions import (
     get_test_question_detail,
@@ -69,6 +70,7 @@ __all__ = [
     "list_slots",
     "recruiters_for_slot_form",
     "create_slot",
+    "set_slot_outcome",
     "list_test_questions",
     "get_test_question_detail",
     "update_test_question",

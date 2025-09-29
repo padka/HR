@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -11,6 +12,17 @@ from backend.apps.admin_ui.utils import paginate, recruiter_time_to_utc, norm_st
 from backend.core.db import async_session
 from backend.domain.models import Recruiter, Slot, SlotStatus, City
 
+try:  # Bot services are optional in some environments (e.g. unit tests without bot)
+    from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS, State as BotState
+    from backend.apps.bot.services import get_state_manager, start_test2
+
+    _BOT_AVAILABLE = True
+except Exception:  # pragma: no cover - bot may be unavailable during certain tests
+    DEFAULT_TZ = "Europe/Moscow"
+    TEST1_QUESTIONS = []
+    BotState = dict  # type: ignore[assignment]
+    _BOT_AVAILABLE = False
+
 __all__ = [
     "list_slots",
     "recruiters_for_slot_form",
@@ -18,7 +30,11 @@ __all__ = [
     "bulk_create_slots",
     "api_slots_payload",
     "delete_slot",
+    "set_slot_outcome",
 ]
+
+
+logger = logging.getLogger(__name__)
 
 
 async def list_slots(
@@ -130,6 +146,92 @@ async def delete_slot(slot_id: int) -> Tuple[bool, Optional[str]]:
         await session.delete(slot)
         await session.commit()
         return True, None
+
+
+async def set_slot_outcome(slot_id: int, outcome: str) -> Tuple[bool, Optional[str], Optional[str]]:
+    normalized = (outcome or "").strip().lower()
+    if normalized not in {"passed", "failed"}:
+        return False, "Некорректный исход. Выберите «Прошёл» или «Не прошёл».", None
+
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if not slot:
+            return False, "Слот не найден.", None
+        if not getattr(slot, "candidate_tg_id", None):
+            return False, "Слот не привязан к кандидату, отправить тест нельзя.", None
+
+        slot.interview_outcome = normalized
+        await session.commit()
+
+        candidate_id = int(slot.candidate_tg_id)
+        candidate_tz = getattr(slot, "candidate_tz", None)
+        candidate_city = getattr(slot, "candidate_city_id", None)
+        candidate_name = getattr(slot, "candidate_fio", "")
+
+    if normalized == "passed":
+        ok, error = await _send_test2(candidate_id, candidate_tz, candidate_city, candidate_name)
+        if not ok:
+            return False, error or "Не удалось отправить Тест 2 кандидату.", normalized
+        message = "Исход «Прошёл» сохранён. Кандидату отправлен Тест 2."
+    else:
+        message = "Исход «Не прошёл» сохранён."
+
+    return True, message, normalized
+
+
+async def _send_test2(
+    candidate_id: int,
+    candidate_tz: Optional[str],
+    candidate_city: Optional[int],
+    candidate_name: str,
+) -> Tuple[bool, Optional[str]]:
+    if not _BOT_AVAILABLE:
+        logger.warning("Bot services are not configured; cannot send Test 2.")
+        return False, "Бот недоступен. Проверьте его конфигурацию."
+
+    try:
+        state_manager = get_state_manager()
+    except RuntimeError as exc:  # pragma: no cover - depends on runtime configuration
+        logger.error("State manager is not configured: %s", exc)
+        return False, "Бот недоступен. Проверьте его конфигурацию."
+
+    prev_state = state_manager.get(candidate_id) or {}
+    sequence = prev_state.get("t1_sequence")
+    if sequence:
+        try:
+            sequence = list(sequence)
+        except TypeError:
+            sequence = list(TEST1_QUESTIONS)
+    else:
+        sequence = list(TEST1_QUESTIONS)
+
+    new_state: BotState = BotState(
+        flow="intro",
+        t1_idx=None,
+        t1_current_idx=None,
+        test1_answers=prev_state.get("test1_answers", {}),
+        t1_last_prompt_id=None,
+        t1_last_question_text="",
+        t1_requires_free_text=False,
+        t1_sequence=sequence,
+        fio=prev_state.get("fio", candidate_name or ""),
+        city_name=prev_state.get("city_name", ""),
+        city_id=prev_state.get("city_id", candidate_city),
+        candidate_tz=candidate_tz or prev_state.get("candidate_tz", DEFAULT_TZ),
+        t2_attempts={},
+        picked_recruiter_id=None,
+        picked_slot_id=None,
+    )
+
+    state_manager.set(candidate_id, new_state)
+
+    try:
+        await start_test2(candidate_id)
+    except Exception as exc:  # pragma: no cover - network errors etc.
+        logger.exception("Failed to start Test 2 for candidate %s", candidate_id)
+        return False, str(exc)
+
+    return True, None
 
 
 def _normalize_utc(dt: datetime) -> datetime:

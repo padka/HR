@@ -7,6 +7,7 @@ from typing import Dict, Optional
 
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from pydantic import BaseModel
 
 from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui.services.recruiters import list_recruiters
@@ -16,6 +17,7 @@ from backend.apps.admin_ui.services.slots import (
     list_slots,
     recruiters_for_slot_form,
     delete_slot,
+    set_slot_outcome,
 )
 from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
 from backend.core.settings import get_settings
@@ -190,3 +192,19 @@ async def slots_delete(slot_id: int):
         return JSONResponse({"ok": True, "message": "Слот удалён"})
     status_code = 404 if error == "Слот не найден" else 400
     return JSONResponse({"ok": False, "message": error or "Не удалось удалить слот."}, status_code=status_code)
+
+
+class OutcomePayload(BaseModel):
+    outcome: str
+
+
+@router.post("/{slot_id}/outcome")
+async def slots_set_outcome(slot_id: int, payload: OutcomePayload):
+    ok, message, stored = await set_slot_outcome(slot_id, payload.outcome)
+    status_code = 200
+    if not ok:
+        status_code = 404 if message and "не найден" in message.lower() else 400
+    return JSONResponse(
+        {"ok": ok, "message": message, "outcome": stored},
+        status_code=status_code,
+    )
