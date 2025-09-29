@@ -1,312 +1,161 @@
 {% extends "base.html" %}
+{% from "partials/list_toolbar.html" import list_toolbar %}
 {% block title %}Города{% endblock %}
 {% block content %}
+<section class="page">
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">Города</h1>
+      <p class="page-description">Управляйте ответственными, планами и текстами сообщений для каждого города.</p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
+    </div>
+  </header>
 
-<div class="card glass grain city-toolbar">
-  <div class="toolbar-top">
-    <h3 class="toolbar-title">
-      Города
-      <span class="badge" id="total_count">{{ cities|length }}</span>
-    </h3>
-    <a class="btn" href="/cities/new">+ Новый город</a>
-  </div>
-  <div class="toolbar-search">
-    <label for="city_search" class="muted">Поиск</label>
-    <div class="search-input">
+  {% call list_toolbar(
+    form_id="city_filters",
+    method="get",
+    mass_actions=[{'label': 'Сбросить', 'type': 'button', 'variant': 'ghost', 'button_type': 'button', 'attrs': 'id="city_reset"'}],
+    chips=[
+      {'label': 'Всего', 'value': cities|length, 'tone': 'info', 'value_id': 'total_count'},
+      {'label': 'Найдено', 'value': (cities|length|string) ~ ' / ' ~ (cities|length|string), 'tone': 'success', 'value_id': 'found_badge'}
+    ]
+  ) %}
+    <div class="form-field form-field--wide">
+      <label for="city_search">Поиск</label>
       <input id="city_search" type="search" placeholder="Москва, Novosibirsk, Europe/Moscow…">
-      <button id="city_reset" class="btn btn-ghost" type="button" title="Сбросить фильтр">Сбросить</button>
     </div>
-    <span class="badge" id="found_badge" title="Найдено / всего">{{ cities|length }} / {{ cities|length }}</span>
-  </div>
-</div>
+  {% endcall %}
 
-{% if not cities %}
-  <div class="card glass grain" data-tilt style="padding:16px;">
-    <h4>Пусто</h4>
-    <p class="muted">Пока нет ни одного города. Нажмите «Новый город», чтобы добавить первый.</p>
-    <div style="margin-top:8px;">
-      <a class="btn" href="/cities/new">+ Новый город</a>
+  {% if not cities %}
+    <div class="card glass grain">
+      <h3 class="section-title">Пока пусто</h3>
+      <p class="page-description">Добавьте город, чтобы настроить сообщения и ответственных.</p>
+      <div class="page-actions">
+        <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
+      </div>
     </div>
-  </div>
-{% else %}
-  <div class="city-list" id="cities_list">
-    {% for c in cities %}
-      {% set tz = c.tz or "Europe/Moscow" %}
-      {% set criteria = c.criteria|default('') %}
-      {% set experts = c.experts|default('') %}
-      {% set plan_week = c.plan_week|default('') %}
-      {% set plan_month = c.plan_month|default('') %}
-      {% set owner_id = owners.get(c.id) %}
-      {% set owner = rec_map.get(owner_id) if owner_id else None %}
-      <article class="city-card"
-               data-id="{{ c.id }}"
-               data-name="{{ c.name|lower }}"
-               data-tz="{{ tz|lower }}"
-               data-criteria="{{ criteria|e }}"
-               data-experts="{{ experts|e }}"
-               data-plan-week="{{ plan_week }}"
-               data-plan-month="{{ plan_month }}"
-               data-owner-id="{{ owner_id or '' }}">
-        <div class="city-card__header">
-          <div class="city-card__title">
-            <span class="city-name">{{ c.name }}</span>
-            {% if not c.tz %}
-              <span class="badge" title="Используется TZ по умолчанию">TZ: Europe/Moscow</span>
-            {% endif %}
-          </div>
-          <div class="city-card__meta">
-            <span class="city-tz">TZ: <code>{{ tz }}</code></span>
-            <span class="city-owner {% if not owner %}muted{% endif %}">
-              {% if owner %}
-                {{ owner.name }}
-              {% else %}
-                Не назначен
+  {% else %}
+    <div class="city-collection" id="cities_list">
+      {% for c in cities %}
+        {% set tz = c.tz or "Europe/Moscow" %}
+        {% set criteria = c.criteria|default('') %}
+        {% set experts = c.experts|default('') %}
+        {% set plan_week = c.plan_week|default('') %}
+        {% set plan_month = c.plan_month|default('') %}
+        {% set owner_id = owners.get(c.id) %}
+        {% set owner = rec_map.get(owner_id) if owner_id else None %}
+        <article class="city-card"
+                 data-id="{{ c.id }}"
+                 data-name="{{ c.name|lower }}"
+                 data-tz="{{ tz|lower }}"
+                 data-criteria="{{ criteria|e }}"
+                 data-experts="{{ experts|e }}"
+                 data-plan-week="{{ plan_week }}"
+                 data-plan-month="{{ plan_month }}"
+                 data-owner-id="{{ owner_id or '' }}">
+          <div class="city-card__header">
+            <div class="city-card__title">
+              <span class="city-name">{{ c.name }}</span>
+              {% if not c.tz %}
+                <span class="badge" title="Используется TZ по умолчанию">TZ: Europe/Moscow</span>
               {% endif %}
-            </span>
-            <span class="badge plan-badge">
-              {% if plan_week or plan_month %}
-                Нед: {{ plan_week or '—' }} · Мес: {{ plan_month or '—' }}
-              {% else %}
-                Параметры не заданы
-              {% endif %}
-            </span>
+            </div>
+            <div class="city-card__meta">
+              <span class="city-tz">TZ: <code>{{ tz }}</code></span>
+              <span class="city-owner {% if not owner %}muted{% endif %}">
+                {% if owner %}
+                  {{ owner.name }}
+                {% else %}
+                  Не назначен
+                {% endif %}
+              </span>
+              <span class="badge plan-badge">
+                {% if plan_week or plan_month %}
+                  Нед: {{ plan_week or '—' }} · Мес: {{ plan_month or '—' }}
+                {% else %}
+                  Параметры не заданы
+                {% endif %}
+              </span>
+            </div>
+            <div class="city-card__actions">
+              <button class="btn btn-soft btn-edit" type="button" title="Настроить город">Настроить</button>
+            </div>
           </div>
-          <div class="city-card__actions">
-            <button class="btn btn-edit" type="button" title="Настроить город">Настроить</button>
-          </div>
-        </div>
-        <div class="city-details" hidden>
-          <form class="city-form" data-id="{{ c.id }}">
-            <div class="field">
-              <label for="owner_{{ c.id }}">Ответственный рекрутёр</label>
-              <select id="owner_{{ c.id }}" name="responsible_id" class="responsible-select">
-                <option value="">— Не назначен —</option>
-                {% for r in recruiters %}
-                  <option value="{{ r.id }}" {% if owner_id == r.id %}selected{% endif %}>{{ r.name }}</option>
-                {% endfor %}
-              </select>
-            </div>
+          <div class="city-card__details" hidden>
+            <form class="city-form" data-id="{{ c.id }}">
+              <div class="form-field">
+                <label for="owner_{{ c.id }}">Ответственный рекрутёр</label>
+                <select id="owner_{{ c.id }}" name="responsible_id" class="responsible-select">
+                  <option value="">— Не назначен —</option>
+                  {% for r in recruiters %}
+                    <option value="{{ r.id }}" {% if owner_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
 
-            <div class="form-grid">
-              <div class="field">
-                <label for="crit_{{ c.id }}">Критерии отбора</label>
-                <textarea id="crit_{{ c.id }}" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…">{{ criteria }}</textarea>
-              </div>
-              <div class="field">
-                <label for="exp_{{ c.id }}">Ресурсы экспертов</label>
-                <textarea id="exp_{{ c.id }}" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: внутренний реферальный, ярмарки вакансий…">{{ experts }}</textarea>
-              </div>
-            </div>
-
-            <div class="form-grid">
-              <div class="field">
-                <label for="pw_{{ c.id }}">План набора (неделя)</label>
-                <input id="pw_{{ c.id }}" name="plan_week" type="number" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
-              </div>
-              <div class="field">
-                <label for="pm_{{ c.id }}">План набора (месяц)</label>
-                <input id="pm_{{ c.id }}" name="plan_month" type="number" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
-              </div>
-            </div>
-
-            <div class="stage-block">
-              <h4>Шаги и шаблоны сообщений</h4>
-              <p class="muted">Настройте тексты, которые бот отправит кандидату на каждом этапе. Оставьте поле пустым, чтобы использовать текст по умолчанию.</p>
-              {% set stages = city_stages.get(c.id, []) %}
-              {% for stage in stages %}
-                <div class="field stage-field" data-stage="{{ stage.key }}">
-                  <label for="stage_{{ stage.key }}_{{ c.id }}">{{ stage.title }}</label>
-                  <textarea
-                    id="stage_{{ stage.key }}_{{ c.id }}"
-                    name="stage__{{ stage.key }}"
-                    data-stage="{{ stage.key }}"
-                    data-default="{{ stage.default|e }}"
-                    rows="6"
-                    placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-                  <div class="stage-controls">
-                    <button type="button" class="btn mini ghost stage-default-btn" data-stage="{{ stage.key }}">Вставить текст по умолчанию</button>
-                    <span class="muted">{{ stage.description }}</span>
-                  </div>
+              <div class="form-grid">
+                <div class="form-field">
+                  <label for="crit_{{ c.id }}">Критерии отбора</label>
+                  <textarea id="crit_{{ c.id }}" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…">{{ criteria }}</textarea>
                 </div>
-              {% endfor %}
-              <p class="muted">
-                {% raw %}
-                Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
-                {% endraw %}
-              </p>
-            </div>
+                <div class="form-field">
+                  <label for="exp_{{ c.id }}">Ресурсы экспертов</label>
+                  <textarea id="exp_{{ c.id }}" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: внутренний реферальный, ярмарки вакансий…">{{ experts }}</textarea>
+                </div>
+              </div>
 
-            <div class="form-actions">
-              <button type="submit" class="btn btn-save">Сохранить</button>
-              <button type="button" class="btn btn-cancel">Отмена</button>
-              <span class="badge muted save-status" style="display:none;">Сохранено</span>
-            </div>
-          </form>
-        </div>
-      </article>
-    {% endfor %}
-  </div>
-{% endif %}
+              <div class="form-grid">
+                <div class="form-field">
+                  <label for="pw_{{ c.id }}">План набора (неделя)</label>
+                  <input id="pw_{{ c.id }}" name="plan_week" type="number" min="0" step="1" value="{{ plan_week }}" placeholder="Например, 12">
+                </div>
+                <div class="form-field">
+                  <label for="pm_{{ c.id }}">План набора (месяц)</label>
+                  <input id="pm_{{ c.id }}" name="plan_month" type="number" min="0" step="1" value="{{ plan_month }}" placeholder="Например, 48">
+                </div>
+              </div>
 
-<style>
-  .city-toolbar {
-    margin: 8px 0 16px;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .toolbar-top {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-  .toolbar-title {
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .toolbar-search {
-    display: grid;
-    gap: 8px;
-  }
-  .toolbar-search .muted {
-    font-size: 0.85rem;
-  }
-  .search-input {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .btn-ghost {
-    background: rgba(255,255,255,.04);
-    border: 1px solid rgba(255,255,255,.12);
-  }
-  .search-input input[type="search"] {
-    flex: 1 1 220px;
-    min-width: 160px;
-  }
-  .city-list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .city-card {
-    border-radius: var(--radius-lg);
-    background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
-    border: 1px solid var(--glass-stroke);
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .city-card__header {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-    align-items: center;
-  }
-  .city-card__title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .city-card__title .city-name {
-    font-weight: 600;
-    font-size: 1.05rem;
-  }
-  .city-card__meta {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    flex-wrap: wrap;
-    color: var(--muted);
-    font-size: 0.9rem;
-  }
-  .city-card__meta code {
-    font-size: 0.9rem;
-  }
-  .city-card__actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-start;
-  }
-  @media (min-width: 760px) {
-    .city-card__header {
-      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
-      align-items: center;
-    }
-    .city-card__actions {
-      justify-content: flex-end;
-    }
-  }
-  .city-details {
-    border-top: 1px solid var(--glass-stroke);
-    padding-top: 12px;
-    display: none;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .city-card.open .city-details {
-    display: flex;
-  }
-  .field label {
-    display: block;
-    margin-bottom: 6px;
-    color: var(--muted);
-    font-weight: 600;
-  }
-  .field textarea {
-    width: 100%;
-    min-height: 92px;
-    resize: vertical;
-  }
-  .form-grid {
-    display: grid;
-    gap: 12px;
-  }
-  @media (min-width: 860px) {
-    .form-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-  .stage-block {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .stage-block h4 {
-    margin: 0;
-  }
-  .stage-field textarea {
-    min-height: 140px;
-  }
-  .stage-controls {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
-    margin-top: 6px;
-  }
-  .form-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  .save-status.ok {
-    color: var(--ok);
-    display: inline-block !important;
-  }
-  .save-status.err {
-    color: var(--bad);
-    display: inline-block !important;
-  }
-</style>
+              <div class="stage-block">
+                <h4>Шаги и шаблоны сообщений</h4>
+                <p class="muted">Настройте тексты, которые бот отправит кандидату на каждом этапе. Оставьте поле пустым, чтобы использовать текст по умолчанию.</p>
+                {% set stages = city_stages.get(c.id, []) %}
+                {% for stage in stages %}
+                  <div class="stage-field" data-stage="{{ stage.key }}">
+                    <label for="stage_{{ stage.key }}_{{ c.id }}">{{ stage.title }}</label>
+                    <textarea
+                      id="stage_{{ stage.key }}_{{ c.id }}"
+                      name="stage__{{ stage.key }}"
+                      data-stage="{{ stage.key }}"
+                      data-default="{{ stage.default|e }}"
+                      rows="6"
+                      placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
+                    <div class="stage-controls">
+                      <button type="button" class="btn btn-ghost btn--small stage-default-btn" data-stage="{{ stage.key }}">Вставить текст по умолчанию</button>
+                      <span class="muted">{{ stage.description }}</span>
+                    </div>
+                  </div>
+                {% endfor %}
+                <p class="muted">
+                  {% raw %}
+                  Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
+                  {% endraw %}
+                </p>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+                <button type="button" class="btn btn-ghost btn-cancel">Отмена</button>
+                <span class="badge muted save-status">Сохранено</span>
+              </div>
+            </form>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% endif %}
+</section>
 
 <script>
 (function(){
@@ -328,7 +177,7 @@
   function closeAll(){
     cards.forEach(card => {
       card.classList.remove('open');
-      const details = card.querySelector('.city-details');
+      const details = card.querySelector('.city-card__details');
       if (details) details.hidden = true;
     });
   }
@@ -346,7 +195,7 @@
       } else {
         card.style.display = 'none';
         card.classList.remove('open');
-        const details = card.querySelector('.city-details');
+        const details = card.querySelector('.city-card__details');
         if (details) details.hidden = true;
       }
     });
@@ -381,7 +230,7 @@
       const card = cancelBtn.closest('.city-card');
       if (card) {
         card.classList.remove('open');
-        const details = card.querySelector('.city-details');
+        const details = card.querySelector('.city-card__details');
         if (details) details.hidden = true;
       }
       return;
@@ -391,7 +240,7 @@
     if (!btn) return;
     const card = btn.closest('.city-card');
     if (!card) return;
-    const details = card.querySelector('.city-details');
+    const details = card.querySelector('.city-card__details');
     if (!details) return;
 
     const isOpen = card.classList.contains('open');
@@ -401,14 +250,16 @@
 
     const form = details.querySelector('form.city-form');
     if (form) {
-      form.querySelector('[name="criteria"]').value = card.dataset.criteria || '';
-      form.querySelector('[name="experts"]').value = card.dataset.experts || '';
-      form.querySelector('[name="plan_week"]').value = card.dataset.planWeek || '';
-      form.querySelector('[name="plan_month"]').value = card.dataset.planMonth || '';
+      const criteriaField = form.querySelector('[name="criteria"]');
+      const expertsField = form.querySelector('[name="experts"]');
+      const planWeekField = form.querySelector('[name="plan_week"]');
+      const planMonthField = form.querySelector('[name="plan_month"]');
+      if (criteriaField) criteriaField.value = card.dataset.criteria || '';
+      if (expertsField) expertsField.value = card.dataset.experts || '';
+      if (planWeekField) planWeekField.value = card.dataset.planWeek || '';
+      if (planMonthField) planMonthField.value = card.dataset.planMonth || '';
       const ownerSelect = form.querySelector('[name="responsible_id"]');
-      if (ownerSelect) {
-        ownerSelect.value = card.dataset.ownerId || '';
-      }
+      if (ownerSelect) ownerSelect.value = card.dataset.ownerId || '';
     }
 
     card.classList.add('open');
@@ -499,7 +350,7 @@
       }
 
       card.classList.remove('open');
-      const details = card.querySelector('.city-details');
+      const details = card.querySelector('.city-card__details');
       if (details) details.hidden = true;
 
       setTimeout(()=>{

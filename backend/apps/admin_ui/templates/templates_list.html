@@ -1,109 +1,102 @@
 {% extends "base.html" %}
 {% block title %}Шаблоны сообщений{% endblock %}
 {% block content %}
-
-<div class="card glass grain" style="margin-bottom:16px; padding:16px;">
-  <h2 style="margin:0 0 8px;">Шаблоны по этапам</h2>
-  <p class="muted" style="margin:0;">
-    Здесь можно настроить тексты, которые бот отправляет кандидату на каждом шаге процесса. Если поле оставить пустым,
-    бот возьмёт текст по умолчанию.
-  </p>
-  <ol class="stage-flow muted">
-    <li><strong>Шаг 1.</strong> После Теста 1 кандидат получает приглашение выбрать время для видеоинтервью.</li>
-    <li><strong>Шаг 2.</strong> За 2 часа до интервью бот отправляет напоминание с запросом подтверждения.</li>
-    <li><strong>Шаг 3.</strong> После успешного собеседования и согласования даты бот приглашает на ознакомительный день.</li>
-    <li><strong>Шаг 4.</strong> За 2 часа до ознакомительного дня бот просит подтвердить явку (кнопки «Подтверждаю/Не смогу»).</li>
-  </ol>
-  <div class="badge" style="margin-top:4px; display:inline-flex; gap:8px; align-items:center; flex-wrap:wrap;">
-    {% raw %}
-    Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>,
-    <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>,
-    <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
-    {% endraw %}
-  </div>
-</div>
-
-<section class="card glass tilt" data-tilt data-tilt-max="4" data-tilt-speed="400" style="margin-bottom:18px;">
-  <header style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+<section class="page">
+  <header class="page-header">
     <div>
-      <h3 style="margin:0;">Глобальные шаблоны</h3>
-      <p class="muted" style="margin:4px 0 0;">Используются, если для города нет своего текста.</p>
+      <h1 class="page-title">Шаблоны сообщений</h1>
+      <p class="page-description">
+        Настройте тексты, которые бот отправляет кандидату на каждом шаге процесса. Пустые поля используют текст по умолчанию.
+      </p>
     </div>
   </header>
-  <form class="template-form" data-city="" autocomplete="off" style="margin-top:14px;">
-    {% for stage in overview.global.stages %}
-      <div class="field stage-field" data-stage="{{ stage.key }}">
-        <label for="global_{{ stage.key }}">{{ stage.title }}</label>
-        <textarea
-          id="global_{{ stage.key }}"
-          data-stage="{{ stage.key }}"
-          data-default="{{ stage.default|e }}"
-          rows="6"
-          placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-        <div class="stage-controls">
-          <button type="button" class="btn mini ghost stage-default">Вставить стандартный текст</button>
-          <span class="muted">{{ stage.description }}</span>
+
+  <div class="card glass grain">
+    <h2 class="section-title">Этапы коммуникации</h2>
+    <ol class="stage-flow muted">
+      <li><strong>Шаг 1.</strong> После Теста 1 кандидат получает приглашение выбрать время для видеоинтервью.</li>
+      <li><strong>Шаг 2.</strong> За 2 часа до интервью бот отправляет напоминание с запросом подтверждения.</li>
+      <li><strong>Шаг 3.</strong> После успешного собеседования и согласования даты бот приглашает на ознакомительный день.</li>
+      <li><strong>Шаг 4.</strong> За 2 часа до ознакомительного дня бот просит подтвердить явку (кнопки «Подтверждаю/Не смогу»).</li>
+    </ol>
+    <div class="badge info-badge">
+      {% raw %}
+      Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>,
+      <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>,
+      <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
+      {% endraw %}
+    </div>
+  </div>
+
+  <section class="card glass tilt" data-tilt data-tilt-max="4" data-tilt-speed="400">
+    <header class="page-header">
+      <div>
+        <h3 class="card-title">Глобальные шаблоны</h3>
+        <p class="page-description">Используются, если для города нет собственного текста.</p>
+      </div>
+    </header>
+    <form class="template-form" data-city="" autocomplete="off">
+      {% for stage in overview.global.stages %}
+        <div class="stage-field" data-stage="{{ stage.key }}">
+          <label for="global_{{ stage.key }}">{{ stage.title }}</label>
+          <textarea
+            id="global_{{ stage.key }}"
+            data-stage="{{ stage.key }}"
+            data-default="{{ stage.default|e }}"
+            rows="6"
+            placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
+          <div class="stage-controls">
+            <button type="button" class="btn btn-ghost btn--small stage-default">Вставить стандартный текст</button>
+            <span class="muted">{{ stage.description }}</span>
+          </div>
         </div>
+      {% endfor %}
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Сохранить глобальные</button>
+        <span class="badge muted save-status">Сохранено</span>
+      </div>
+    </form>
+  </section>
+
+  <section class="city-collection">
+    {% for entry in overview.cities %}
+      <article class="card glass grain city-card" data-city="{{ entry.city.id }}">
+        <header class="city-card__header">
+          <div class="city-card__title">
+            <span class="city-name">{{ entry.city.name }}</span>
+            <span class="badge" title="Часовой пояс">{{ entry.city.tz or "Europe/Moscow" }}</span>
+          </div>
+        </header>
+        <form class="template-form" data-city="{{ entry.city.id }}" autocomplete="off">
+          {% for stage in entry.stages %}
+            <div class="stage-field" data-stage="{{ stage.key }}">
+              <label for="stage_{{ entry.city.id }}_{{ stage.key }}">{{ stage.title }}</label>
+              <textarea
+                id="stage_{{ entry.city.id }}_{{ stage.key }}"
+                data-stage="{{ stage.key }}"
+                data-default="{{ stage.default|e }}"
+                rows="6"
+                placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
+              <div class="stage-controls">
+                <button type="button" class="btn btn-ghost btn--small stage-default">Вставить стандартный текст</button>
+                <span class="muted">{{ stage.description }}</span>
+              </div>
+            </div>
+          {% endfor %}
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Сохранить</button>
+            <span class="badge muted save-status">Сохранено</span>
+          </div>
+        </form>
+      </article>
+    {% else %}
+      <div class="card glass grain">
+        <h3 class="section-title">Пока нет городов</h3>
+        <p class="page-description">Добавьте город, чтобы настроить городские сообщения.</p>
       </div>
     {% endfor %}
-    <div class="actions">
-      <button type="submit">Сохранить глобальные</button>
-      <span class="badge muted save-status" style="display:none;">Сохранено</span>
-    </div>
-  </form>
+  </section>
 </section>
-
-<section class="cards city-templates">
-  {% for entry in overview.cities %}
-    <article class="card glass grain city-card" data-city="{{ entry.city.id }}">
-      <header class="city-header">
-        <h4 style="margin:0;">{{ entry.city.name }}</h4>
-        <span class="badge" title="Часовой пояс">{{ entry.city.tz or "Europe/Moscow" }}</span>
-      </header>
-      <form class="template-form" data-city="{{ entry.city.id }}" autocomplete="off">
-        {% for stage in entry.stages %}
-          <div class="field stage-field" data-stage="{{ stage.key }}">
-            <label for="stage_{{ entry.city.id }}_{{ stage.key }}">{{ stage.title }}</label>
-            <textarea
-              id="stage_{{ entry.city.id }}_{{ stage.key }}"
-              data-stage="{{ stage.key }}"
-              data-default="{{ stage.default|e }}"
-              rows="6"
-              placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-            <div class="stage-controls">
-              <button type="button" class="btn mini ghost stage-default">Вставить стандартный текст</button>
-              <span class="muted">{{ stage.description }}</span>
-            </div>
-          </div>
-        {% endfor %}
-        <div class="actions">
-          <button type="submit">Сохранить</button>
-          <span class="badge muted save-status" style="display:none;">Сохранено</span>
-        </div>
-      </form>
-    </article>
-  {% else %}
-    <div class="card glass grain">
-      <h4 style="margin:0 0 6px;">Пока нет городов</h4>
-      <p class="muted" style="margin:0;">Добавьте город, чтобы настроить городские сообщения.</p>
-    </div>
-  {% endfor %}
-</section>
-
-<style>
-  .city-templates { display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); }
-  .stage-field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
-  .stage-field textarea { min-height:140px; resize:vertical; }
-  .stage-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .actions { display:flex; gap:10px; align-items:center; margin-top:12px; }
-  .city-header { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px; }
-  .city-card form { margin-top:4px; }
-  .stage-default { border-color:var(--row-sep); background:transparent; }
-  .save-status.ok { color: var(--ok); }
-  .save-status.err { color: var(--bad); }
-  .stage-flow { margin:12px 0 0; padding-left:20px; display:flex; flex-direction:column; gap:6px; }
-  .stage-flow li { margin:0; }
-</style>
 
 <script>
 (function(){
@@ -162,5 +155,4 @@
   });
 })();
 </script>
-
 {% endblock %}
