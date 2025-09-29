@@ -21,6 +21,7 @@
     --glass-alpha-04: rgba(255,255,255,.04);
     --glass-alpha-06: rgba(255,255,255,.06);
     --glass-alpha-08: rgba(255,255,255,.08);
+    --glass-alpha-10: rgba(255,255,255,.10);
     --glass-alpha-12: rgba(255,255,255,.12);
     --glass-alpha-18: rgba(255,255,255,.18);
     --glass-tint: rgba(20, 26, 36, 0.62);
@@ -92,6 +93,7 @@
     --glass-alpha-04: rgba(20,32,52,.04);
     --glass-alpha-06: rgba(20,32,52,.06);
     --glass-alpha-08: rgba(20,32,52,.08);
+    --glass-alpha-10: rgba(20,32,52,.10);
     --glass-alpha-12: rgba(20,32,52,.12);
     --glass-alpha-18: rgba(20,32,52,.18);
     --glass-tint: rgba(255,255,255,.82);
