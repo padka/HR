@@ -19,8 +19,8 @@ from backend.core.settings import get_settings
 from backend.domain.models import SlotStatus
 from backend.domain.repositories import (
     approve_slot,
-    get_city,
     get_city_by_name,
+    get_active_recruiters_for_city,
     get_free_slots_by_recruiter,
     get_recruiter,
     get_slot,
@@ -820,8 +820,8 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
 
     city_id = state.get("city_id")
     if city_id:
-        city = await get_city(city_id)
-        if not city or city.responsible_recruiter_id != rid:
+        allowed = await get_active_recruiters_for_city(city_id)
+        if rid not in {r.id for r in allowed}:
             await callback.answer("Этот рекрутёр не работает с вашим городом", show_alert=True)
             await show_recruiter_menu(user_id)
             return

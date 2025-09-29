@@ -55,6 +55,38 @@ async def test_recruiter_and_city_queries():
 
 
 @pytest.mark.asyncio
+async def test_city_recruiter_lookup_includes_slot_owners():
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        responsible = models.Recruiter(name="Ответственный", tz="Europe/Moscow", active=True)
+        extra = models.Recruiter(name="Помощник", tz="Europe/Moscow", active=True)
+        city = models.City(name="Казань", tz="Europe/Moscow", active=True)
+        session.add_all([responsible, extra, city])
+        await session.commit()
+        await session.refresh(responsible)
+        await session.refresh(extra)
+        await session.refresh(city)
+
+        city.responsible_recruiter_id = responsible.id
+
+        session.add(
+            models.Slot(
+                recruiter_id=extra.id,
+                city_id=city.id,
+                start_utc=now + timedelta(hours=2),
+                status=models.SlotStatus.FREE,
+            )
+        )
+
+        await session.commit()
+
+    recruiters = await get_active_recruiters_for_city(city.id)
+    names = {r.name for r in recruiters}
+    assert names == {"Ответственный", "Помощник"}
+
+
+@pytest.mark.asyncio
 async def test_slot_workflow_and_templates():
     now = datetime.now(timezone.utc)
 
