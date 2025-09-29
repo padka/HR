@@ -258,9 +258,24 @@
   .panel {
     position: relative;
     display: grid;
-    gap: 20px;
-    padding: 22px;
+    gap: clamp(14px, 2.4vw, 20px);
+    padding: clamp(18px, 2.6vw, 24px);
     border-radius: var(--radius-lg);
+  }
+
+  .panel--minimal {
+    border: 1px solid color-mix(in srgb, var(--glass-stroke) 55%, transparent);
+    background: color-mix(in srgb, var(--bg) 92%, rgba(255,255,255,.06) 8%);
+    box-shadow: none;
+  }
+
+  .panel--minimal .panel__header {
+    align-items: center;
+  }
+
+  .panel--minimal:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    outline-offset: 4px;
   }
 
   .panel__header {
@@ -298,31 +313,43 @@
 
   .entity-list {
     display: grid;
-    gap: 12px;
+    gap: 0;
     margin: 0;
-    padding: 0;
+    padding: 6px;
     list-style: none;
+    border-radius: var(--radius-md);
+    border: 1px solid color-mix(in srgb, var(--glass-stroke) 45%, transparent);
+    background: color-mix(in srgb, var(--bg) 95%, rgba(255,255,255,.05) 5%);
   }
 
   .entity-card {
     display: grid;
-    gap: 6px 14px;
+    gap: 4px 12px;
     grid-template-columns: auto 1fr auto;
     grid-template-areas:
       "entity-id entity-title entity-status"
       "entity-id entity-meta entity-status";
-    padding: 14px 16px;
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--bg) 60%, rgba(255,255,255,.08) 40%);
-    border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+    padding: 12px 10px;
+    border-radius: calc(var(--radius-md) - 4px);
+    border-bottom: 1px solid color-mix(in srgb, var(--glass-stroke) 40%, transparent);
+    background: transparent;
+    transition: background .2s ease, border-color .2s ease;
+  }
+
+  .entity-card:last-child {
+    border-bottom-color: transparent;
+  }
+
+  .entity-card:hover {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border-bottom-color: color-mix(in srgb, var(--accent) 35%, var(--glass-stroke));
   }
 
   .entity-card__id {
     grid-area: entity-id;
-    font-weight: 700;
+    font-weight: 600;
     font-size: 13px;
-    color: color-mix(in srgb, var(--fg) 75%, var(--muted) 25%);
+    color: color-mix(in srgb, var(--muted) 70%, var(--fg) 30%);
   }
 
   .entity-card__title {
@@ -334,7 +361,7 @@
 
   .entity-card__meta {
     grid-area: entity-meta;
-    color: var(--muted);
+    color: color-mix(in srgb, var(--muted) 85%, var(--fg) 15%);
     font-size: 13px;
   }
 
@@ -449,7 +476,7 @@
 
 {% set actives = recruiters | selectattr('active') | list %}
 <section class="dashboard-panels">
-  <article class="panel glass grain" data-tilt tabindex="0">
+  <article class="panel panel--minimal" tabindex="0">
     <header class="panel__header">
       <div>
         <p class="panel__eyebrow">Команда</p>
@@ -474,7 +501,7 @@
     {% endif %}
   </article>
 
-  <article class="panel glass grain" data-tilt tabindex="0">
+  <article class="panel panel--minimal" tabindex="0">
     <header class="panel__header">
       <div>
         <p class="panel__eyebrow">География</p>
