@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from backend.core.db import async_session
 from .models import Recruiter, City, Template, Slot, SlotStatus
@@ -55,6 +55,41 @@ async def get_free_slots_by_recruiter(
         for slot in out:
             slot.start_utc = _to_aware_utc(slot.start_utc)
         return out
+
+
+async def get_recruiters_free_slots_summary(
+    recruiter_ids: Iterable[int],
+    now_utc: Optional[datetime] = None,
+) -> Dict[int, Tuple[datetime, int]]:
+    ids = {int(rid) for rid in recruiter_ids if rid is not None}
+    if not ids:
+        return {}
+
+    now_utc = now_utc or datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        rows = (
+            await session.execute(
+                select(
+                    Slot.recruiter_id,
+                    func.min(Slot.start_utc).label("next_start"),
+                    func.count(Slot.id).label("total_slots"),
+                )
+                .where(
+                    Slot.recruiter_id.in_(ids),
+                    Slot.status == SlotStatus.FREE,
+                    Slot.start_utc > now_utc,
+                )
+                .group_by(Slot.recruiter_id)
+            )
+        ).all()
+
+    summary: Dict[int, Tuple[datetime, int]] = {}
+    for recruiter_id, next_start, total in rows:
+        if next_start is None:
+            continue
+        summary[int(recruiter_id)] = (_to_aware_utc(next_start), int(total))
+    return summary
 
 
 async def get_slot(slot_id: int) -> Optional[Slot]:
