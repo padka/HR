@@ -13,11 +13,12 @@
 
   <div class="card glass grain">
     <h2 class="section-title">Этапы коммуникации</h2>
+    <p class="section-subtitle">Ключевые шаги, на которых кандидат взаимодействует с ботом.</p>
     <ol class="stage-flow muted">
-      <li><strong>Шаг 1.</strong> После Теста 1 кандидат получает приглашение выбрать время для видеоинтервью.</li>
-      <li><strong>Шаг 2.</strong> За 2 часа до интервью бот отправляет напоминание с запросом подтверждения.</li>
-      <li><strong>Шаг 3.</strong> После успешного собеседования и согласования даты бот приглашает на ознакомительный день.</li>
-      <li><strong>Шаг 4.</strong> За 2 часа до ознакомительного дня бот просит подтвердить явку (кнопки «Подтверждаю/Не смогу»).</li>
+      <li><strong>Шаг 1.</strong> Приглашение выбрать время для видеоинтервью.</li>
+      <li><strong>Шаг 2.</strong> Напоминание за 2 часа до интервью с подтверждением.</li>
+      <li><strong>Шаг 3.</strong> Приглашение на ознакомительный день после согласования даты.</li>
+      <li><strong>Шаг 4.</strong> Напоминание и подтверждение явки за 2 часа до ознакомительного дня.</li>
     </ol>
     <div class="badge info-badge">
       {% raw %}
@@ -38,17 +39,17 @@
     <form class="template-form" data-city="" autocomplete="off">
       {% for stage in overview.global.stages %}
         <div class="stage-field" data-stage="{{ stage.key }}">
-          <label for="global_{{ stage.key }}">{{ stage.title }}</label>
+          <div class="stage-field__header">
+            <label for="global_{{ stage.key }}">{{ stage.title }}</label>
+            <button type="button" class="btn btn-soft btn--small stage-default">Стандартный текст</button>
+          </div>
+          <p class="stage-field__description">{{ stage.description }}</p>
           <textarea
             id="global_{{ stage.key }}"
             data-stage="{{ stage.key }}"
             data-default="{{ stage.default|e }}"
             rows="6"
             placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-          <div class="stage-controls">
-            <button type="button" class="btn btn-ghost btn--small stage-default">Вставить стандартный текст</button>
-            <span class="muted">{{ stage.description }}</span>
-          </div>
         </div>
       {% endfor %}
       <div class="form-actions">
@@ -70,17 +71,17 @@
         <form class="template-form" data-city="{{ entry.city.id }}" autocomplete="off">
           {% for stage in entry.stages %}
             <div class="stage-field" data-stage="{{ stage.key }}">
-              <label for="stage_{{ entry.city.id }}_{{ stage.key }}">{{ stage.title }}</label>
+              <div class="stage-field__header">
+                <label for="stage_{{ entry.city.id }}_{{ stage.key }}">{{ stage.title }}</label>
+                <button type="button" class="btn btn-soft btn--small stage-default">Стандартный текст</button>
+              </div>
+              <p class="stage-field__description">{{ stage.description }}</p>
               <textarea
                 id="stage_{{ entry.city.id }}_{{ stage.key }}"
                 data-stage="{{ stage.key }}"
                 data-default="{{ stage.default|e }}"
                 rows="6"
                 placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-              <div class="stage-controls">
-                <button type="button" class="btn btn-ghost btn--small stage-default">Вставить стандартный текст</button>
-                <span class="muted">{{ stage.description }}</span>
-              </div>
             </div>
           {% endfor %}
           <div class="form-actions">

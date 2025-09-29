@@ -15,18 +15,35 @@
     </div>
   </header>
 
+  <section class="stat-grid" aria-label="Быстрая статистика по слотам">
+    <article class="stat-card" data-tone="success">
+      <span class="stat-card__label">Свободные</span>
+      <span class="stat-card__value" id="cnt-free">{{ status_counts.FREE }}</span>
+      <p class="stat-card__hint">Готовы к бронированию</p>
+    </article>
+    <article class="stat-card" data-tone="warning">
+      <span class="stat-card__label">В ожидании</span>
+      <span class="stat-card__value" id="cnt-pending">{{ status_counts.PENDING }}</span>
+      <p class="stat-card__hint">Требуют подтверждения</p>
+    </article>
+    <article class="stat-card" data-tone="info">
+      <span class="stat-card__label">Забронированные</span>
+      <span class="stat-card__value" id="cnt-booked">{{ status_counts.BOOKED }}</span>
+      <p class="stat-card__hint">Назначены кандидатам</p>
+    </article>
+    <article class="stat-card">
+      <span class="stat-card__label">Всего слотов</span>
+      <span class="stat-card__value" id="cnt-total">{{ status_counts.total }}</span>
+      <p class="stat-card__hint">С учётом активных фильтров</p>
+    </article>
+  </section>
+
   {% call list_toolbar(
     form_id="flt",
     form_action="/slots",
     method="get",
     sticky=True,
-    mass_actions=[{'label': 'Показать', 'type': 'button', 'variant': 'primary', 'button_type': 'submit'}],
-    chips=[
-      {'label': 'FREE', 'value': status_counts.FREE, 'tone': 'success', 'value_id': 'cnt-free'},
-      {'label': 'PENDING', 'value': status_counts.PENDING, 'tone': 'warning', 'value_id': 'cnt-pending'},
-      {'label': 'BOOKED', 'value': status_counts.BOOKED, 'tone': 'info', 'value_id': 'cnt-booked'},
-      {'label': 'Всего', 'value': status_counts.total, 'value_id': 'cnt-total'}
-    ]
+    mass_actions=[{'label': 'Показать', 'type': 'button', 'variant': 'primary', 'button_type': 'submit'}]
   ) %}
     <div class="form-field">
       <label for="recruiter_id">Рекрутёр</label>
@@ -59,12 +76,14 @@
       </select>
     </div>
 
-    <div class="field-stack">
-      <label class="form-toggle" for="toggle_cand_tz">
-        <input id="toggle_cand_tz" type="checkbox"> Время кандидата
-      </label>
+    <span class="filter-divider" aria-hidden="true"></span>
+    <div class="filter-group" role="group" aria-label="Быстрые фильтры">
+      <p class="filter-group__title">Быстрые фильтры</p>
       <label class="form-toggle" for="only_future">
-        <input id="only_future" type="checkbox"> Только будущие
+        <input id="only_future" type="checkbox"> Только будущие слоты
+      </label>
+      <label class="form-toggle" for="toggle_cand_tz">
+        <input id="toggle_cand_tz" type="checkbox"> Показать время кандидата
       </label>
     </div>
   {% endcall %}
