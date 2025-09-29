@@ -48,9 +48,12 @@ environment variable.
 
 ## Running tests
 Project level tests should be executed with the Python module runner to avoid
-PATH issues:
+PATH issues. The test suite relies on optional dependencies that are not part
+of the standard library, therefore make sure to install the development
+requirements before invoking pytest:
 
 ```bash
+pip install -r requirements-dev.txt
 python3 -m pytest
 ```
 
