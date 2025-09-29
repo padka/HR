@@ -10,6 +10,9 @@ try:  # pragma: no cover - best effort import
 except ModuleNotFoundError:  # pragma: no cover - fallback stub
     fake_aiogram = types.ModuleType("aiogram")
     fake_types = types.ModuleType("aiogram.types")
+    fake_client = types.ModuleType("aiogram.client")
+    fake_client_bot = types.ModuleType("aiogram.client.bot")
+    fake_enums = types.ModuleType("aiogram.enums")
 
     class _FakeInlineKeyboardButton:
         def __init__(self, *, text: str, callback_data: str):
@@ -20,13 +23,28 @@ except ModuleNotFoundError:  # pragma: no cover - fallback stub
         def __init__(self, *, inline_keyboard):
             self.inline_keyboard = inline_keyboard
 
+    class _FakeDefaultBotProperties:
+        def __init__(self, **_: object):
+            pass
+
+    class _FakeParseMode:
+        HTML = "HTML"
+
     fake_types.InlineKeyboardButton = _FakeInlineKeyboardButton
     fake_types.InlineKeyboardMarkup = _FakeInlineKeyboardMarkup
+    fake_client_bot.DefaultBotProperties = _FakeDefaultBotProperties
+    fake_enums.ParseMode = _FakeParseMode
     fake_aiogram.types = fake_types
+    fake_aiogram.client = fake_client
+    fake_client.bot = fake_client_bot
 
     sys.modules["aiogram"] = fake_aiogram
     sys.modules["aiogram.types"] = fake_types
+    sys.modules["aiogram.client"] = fake_client
+    sys.modules["aiogram.client.bot"] = fake_client_bot
+    sys.modules["aiogram.enums"] = fake_enums
 
+from backend.apps.bot import keyboards
 from backend.apps.bot.keyboards import kb_recruiters
 from backend.core.db import async_session
 from backend.domain import models
@@ -62,3 +80,35 @@ async def test_kb_recruiters_handles_duplicate_names_with_slots():
     assert buttons, "expected recruiter buttons to be present"
     assert any(btn.callback_data.endswith(str(target_id)) for btn in buttons)
     assert all("Временно нет свободных рекрутёров" not in btn.text for btn in buttons)
+
+
+@pytest.mark.asyncio
+async def test_kb_recruiters_uses_aggregated_repository(monkeypatch):
+    class _Obj:
+        def __init__(self, rid: int, name: str):
+            self.id = rid
+            self.name = name
+
+    active_calls = 0
+
+    async def fake_get_active_recruiters():
+        nonlocal active_calls
+        active_calls += 1
+        return [_Obj(1, "Анна"), _Obj(2, "Борис")]
+
+    summary_calls = 0
+
+    async def fake_summary(recruiter_ids, now_utc=None):
+        nonlocal summary_calls
+        summary_calls += 1
+        assert set(recruiter_ids) == {1, 2}
+        return {1: (datetime.now(timezone.utc), 4)}
+
+    monkeypatch.setattr(keyboards, "get_active_recruiters", fake_get_active_recruiters)
+    monkeypatch.setattr(keyboards, "get_recruiters_free_slots_summary", fake_summary)
+
+    keyboard = await keyboards.kb_recruiters()
+
+    assert summary_calls == 1
+    assert active_calls == 1
+    assert keyboard.inline_keyboard
