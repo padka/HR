@@ -25,18 +25,21 @@
     </div>
   {% endif %}
   {% call forms.section("Назначение") %}
-    <div class="form-field__meta">
-      <label class="badge" for="is_global">
-        <input id="is_global" name="is_global" type="checkbox" {% if form_data.is_global or not has_cities %}checked{% endif %}{% if not has_cities %} disabled{% endif %}>
-        Глобальный (без города)
-      </label>
-      <span class="hint">Используется до выбора города кандидатом.</span>
-    </div>
+    {% call forms.meta() %}
+      {{ forms.switch(
+        id='is_global',
+        name='is_global',
+        checked=form_data.is_global or (not has_cities),
+        disabled=not has_cities,
+        label='Глобальный (без города)'
+      ) }}
+      {% call forms.note(inline=True) %}Используется до выбора города кандидатом.{% endcall %}
+    {% endcall %}
     {% if not has_cities %}
       <div class="alert mt-sm">Городов пока нет: можно создать только <strong>глобальные</strong> шаблоны. Добавьте города в разделе «Города».</div>
     {% endif %}
     {% call forms.field("Город") %}
-      <div class="form-shell__grid form-shell__grid--two">
+      <div class="form-grid form-grid--two">
         <select id="city_id" name="city_id" {% if not has_cities %}disabled{% else %}required{% endif %}>
           <option value="" {% if not form_data.city_id %}selected{% endif %} disabled>— выберите город —</option>
           {% for c in cities %}
@@ -45,11 +48,11 @@
         </select>
         <input id="city_filter" type="text" placeholder="Поиск по городам…" {% if not has_cities %}disabled{% endif %}>
       </div>
-      <span class="form-field__hint" id="city_hint">Для глобального шаблона город не требуется — включите переключатель «Глобальный».</span>
+      {% call forms.note(id='city_hint') %}Для глобального шаблона город не требуется — включите переключатель «Глобальный».{% endcall %}
     {% endcall %}
   {% endcall %}
 
-  {% call forms.section("Содержимое сообщения") %}
+  {% call forms.section("Содержимое сообщения", span='full') %}
     {% call forms.field("Быстрый шаблон", hint="Выберите пресет — текст можно отредактировать") %}
       <select id="preset">
         <option value="">— не выбирать пресет —</option>
@@ -64,8 +67,8 @@
     {% endcall %}
 
     {% call forms.field("Текст", hint="Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.") %}
-      <textarea id="text" name="text" rows="14" required placeholder="Текст сообщения. Поддерживаются переносы строк." class="mt-sm text-mono">{{ form_data.text or '' }}</textarea>
-      <div class="hint mt-sm">Доступные плейсхолдеры (клик вставит в текст):</div>
+      <textarea id="text" name="text" rows="14" required placeholder="Текст сообщения. Поддерживаются переносы строк." class="text-mono">{{ form_data.text or '' }}</textarea>
+      {% call forms.note() %}Доступные плейсхолдеры (клик вставит в текст):{% endcall %}
       <div class="btn-group">
         {% raw %}
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{candidate_fio}}">{{candidate_fio}}</button>
@@ -78,47 +81,39 @@
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
         {% endraw %}
       </div>
-      <div class="form-field__meta mt-sm">
+      {% call forms.meta() %}
         <span class="badge" data-overflow="false"><span id="char_count">0</span> / 4096</span>
-        <span class="hint">Telegram ограничивает сообщения ≈ 4096 символами.</span>
-      </div>
+        {% call forms.note(inline=True) %}Telegram ограничивает сообщения ≈ 4096 символами.{% endcall %}
+      {% endcall %}
     {% endcall %}
 
     <details class="form-advanced mt-md">
       <summary class="hint">Предпросмотр</summary>
-      <div class="form-shell__grid form-shell__grid--three mt-sm">
-        <label class="form-field">
-          <span class="form-field__label">Имя</span>
+      <div class="form-grid form-grid--three mt-sm">
+        {% call forms.field("Имя") %}
           <input id="pv_fio" type="text" value="Иван Иванов">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Город</span>
+        {% endcall %}
+        {% call forms.field("Город") %}
           <input id="pv_city" type="text" value="Москва">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Дата</span>
+        {% endcall %}
+        {% call forms.field("Дата") %}
           <input id="pv_date" type="text" value="21.09">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Время</span>
+        {% endcall %}
+        {% call forms.field("Время") %}
           <input id="pv_time" type="text" value="10:30">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Рекрутёр</span>
+        {% endcall %}
+        {% call forms.field("Рекрутёр") %}
           <input id="pv_rec" type="text" value="Михаил">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Телефон</span>
+        {% endcall %}
+        {% call forms.field("Телефон") %}
           <input id="pv_phone" type="text" value="+7 (900) 000-00-00">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Адрес</span>
+        {% endcall %}
+        {% call forms.field("Адрес") %}
           <input id="pv_addr" type="text" value="ул. Пушкина, 10">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">WhatsApp</span>
+        {% endcall %}
+        {% call forms.field("WhatsApp") %}
           <input id="pv_wa" type="text" value="https://wa.me/79000000000">
-        </label>
+        {% endcall %}
       </div>
       <div id="preview" class="preview-panel mt-sm" aria-live="polite"></div>
     </details>
