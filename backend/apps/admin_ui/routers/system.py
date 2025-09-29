@@ -35,8 +35,20 @@ async def health_check(request: Request) -> JSONResponse:
     checks = {
         "database": "ok",
         "state_manager": "ok" if getattr(request.app.state, "state_manager", None) else "missing",
-        "bot": "configured" if getattr(request.app.state, "bot", None) else "unconfigured",
     }
+    bot_service = getattr(request.app.state, "bot_service", None)
+    if bot_service is None:
+        bot_client_status = "missing"
+    else:
+        bot_client_status = bot_service.health_status
+
+    checks["bot_client"] = bot_client_status
+    if bot_client_status == "ok":
+        checks["bot"] = "configured"
+    elif bot_client_status == "disabled":
+        checks["bot"] = "disabled"
+    else:
+        checks["bot"] = "unconfigured"
     status_code = 200
 
     if checks["state_manager"] == "missing":

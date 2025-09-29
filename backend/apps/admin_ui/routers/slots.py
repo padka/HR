@@ -5,11 +5,12 @@ import hmac
 import json
 from typing import Dict, Optional
 
-from fastapi import APIRouter, Form, Query, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel
 
 from backend.apps.admin_ui.config import templates
+from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.recruiters import list_recruiters
 from backend.apps.admin_ui.services.slots import (
     bulk_create_slots,
@@ -199,8 +200,16 @@ class OutcomePayload(BaseModel):
 
 
 @router.post("/{slot_id}/outcome")
-async def slots_set_outcome(slot_id: int, payload: OutcomePayload):
-    ok, message, stored = await set_slot_outcome(slot_id, payload.outcome)
+async def slots_set_outcome(
+    slot_id: int,
+    payload: OutcomePayload,
+    bot_service: BotService = Depends(provide_bot_service),
+):
+    ok, message, stored = await set_slot_outcome(
+        slot_id,
+        payload.outcome,
+        bot_service=bot_service,
+    )
     status_code = 200
     if not ok:
         if message and "не найден" in message.lower():

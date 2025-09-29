@@ -19,6 +19,7 @@ class Settings:
     admin_chat_id: int
     timezone: str
     session_secret: str
+    enable_test2_bot: bool
 
 
 load_env()
@@ -82,6 +83,10 @@ def get_settings() -> Settings:
         or "dev-admin-session"
     )
 
+    test2_bot_enabled = os.getenv("ENABLE_TEST2_BOT", "1")
+    test2_bot_enabled = test2_bot_enabled.strip().lower()
+    enable_test2_bot = test2_bot_enabled in {"1", "true", "yes", "on"}
+
     return Settings(
         data_dir=data_dir,
         database_url_async=async_url,
@@ -91,4 +96,5 @@ def get_settings() -> Settings:
         admin_chat_id=admin_chat_id,
         timezone=timezone,
         session_secret=session_secret,
+        enable_test2_bot=enable_test2_bot,
     )

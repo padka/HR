@@ -40,9 +40,9 @@ async def test_set_slot_outcome_triggers_test2(monkeypatch):
 
     calls = {}
 
-    async def fake_send(candidate_id, candidate_tz, candidate_city, candidate_name):
+    async def fake_send(candidate_id, candidate_tz, candidate_city, candidate_name, **_):
         calls["args"] = (candidate_id, candidate_tz, candidate_city, candidate_name)
-        return True, None
+        return True, None, None
 
     monkeypatch.setattr(slot_services, "_send_test2", fake_send)
 

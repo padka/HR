@@ -8,20 +8,14 @@ from sqlalchemy import func, select
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
+from backend.apps.admin_ui.services.bot_service import (
+    BotService,
+    get_bot_service as resolve_bot_service,
+)
+from backend.apps.bot.services import get_state_manager as _get_state_manager
 from backend.apps.admin_ui.utils import paginate, recruiter_time_to_utc, norm_status, status_to_db
 from backend.core.db import async_session
 from backend.domain.models import Recruiter, Slot, SlotStatus, City
-
-try:  # Bot services are optional in some environments (e.g. unit tests without bot)
-    from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS, State as BotState
-    from backend.apps.bot.services import get_state_manager, start_test2
-
-    _BOT_AVAILABLE = True
-except Exception:  # pragma: no cover - bot may be unavailable during certain tests
-    DEFAULT_TZ = "Europe/Moscow"
-    TEST1_QUESTIONS = []
-    BotState = dict  # type: ignore[assignment]
-    _BOT_AVAILABLE = False
 
 __all__ = [
     "list_slots",
@@ -31,10 +25,17 @@ __all__ = [
     "api_slots_payload",
     "delete_slot",
     "set_slot_outcome",
+    "get_state_manager",
 ]
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_state_manager():
+    """Compatibility wrapper exposing the bot state manager."""
+
+    return _get_state_manager()
 
 
 async def list_slots(
@@ -148,7 +149,12 @@ async def delete_slot(slot_id: int) -> Tuple[bool, Optional[str]]:
         return True, None
 
 
-async def set_slot_outcome(slot_id: int, outcome: str) -> Tuple[bool, Optional[str], Optional[str]]:
+async def set_slot_outcome(
+    slot_id: int,
+    outcome: str,
+    *,
+    bot_service: Optional[BotService] = None,
+) -> Tuple[bool, Optional[str], Optional[str]]:
     normalized = (outcome or "").strip().lower()
     if normalized not in {"passed", "failed"}:
         return False, "Некорректный исход. Выберите «Прошёл» или «Не прошёл».", None
@@ -169,10 +175,19 @@ async def set_slot_outcome(slot_id: int, outcome: str) -> Tuple[bool, Optional[s
         candidate_name = getattr(slot, "candidate_fio", "")
 
     if normalized == "passed":
-        ok, error = await _send_test2(candidate_id, candidate_tz, candidate_city, candidate_name)
+        ok, error, info = await _send_test2(
+            candidate_id,
+            candidate_tz,
+            candidate_city,
+            candidate_name,
+            bot_service=bot_service,
+        )
         if not ok:
             return False, error or "Не удалось отправить Тест 2 кандидату.", normalized
-        message = "Исход «Прошёл» сохранён. Кандидату отправлен Тест 2."
+        if info:
+            message = f"Исход «Прошёл» сохранён. {info}"
+        else:
+            message = "Исход «Прошёл» сохранён. Кандидату отправлен Тест 2."
     else:
         message = "Исход «Не прошёл» сохранён."
 
@@ -184,56 +199,29 @@ async def _send_test2(
     candidate_tz: Optional[str],
     candidate_city: Optional[int],
     candidate_name: str,
-) -> Tuple[bool, Optional[str]]:
-    if not _BOT_AVAILABLE:
-        logger.warning("Bot services are not configured; cannot send Test 2.")
-        return False, "Бот недоступен. Проверьте его конфигурацию."
-
-    try:
-        state_manager = get_state_manager()
-    except RuntimeError as exc:  # pragma: no cover - depends on runtime configuration
-        logger.error("State manager is not configured: %s", exc)
-        return False, "Бот недоступен. Проверьте его конфигурацию."
-
-    prev_state = state_manager.get(candidate_id) or {}
-    sequence = prev_state.get("t1_sequence")
-    if sequence:
+    *,
+    bot_service: Optional[BotService] = None,
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    service = bot_service
+    if service is None:
         try:
-            sequence = list(sequence)
-        except TypeError:
-            sequence = list(TEST1_QUESTIONS)
-    else:
-        sequence = list(TEST1_QUESTIONS)
+            service = resolve_bot_service()
+        except RuntimeError:
+            logger.warning("Bot services are not configured; cannot send Test 2.")
+            return False, "Бот недоступен. Проверьте его конфигурацию.", None
 
-    new_state: BotState = BotState(
-        flow="intro",
-        t1_idx=None,
-        t1_current_idx=None,
-        test1_answers=prev_state.get("test1_answers", {}),
-        t1_last_prompt_id=None,
-        t1_last_question_text="",
-        t1_requires_free_text=False,
-        t1_sequence=sequence,
-        fio=prev_state.get("fio", candidate_name or ""),
-        city_name=prev_state.get("city_name", ""),
-        city_id=prev_state.get("city_id", candidate_city),
-        candidate_tz=candidate_tz or prev_state.get("candidate_tz", DEFAULT_TZ),
-        t2_attempts={},
-        picked_recruiter_id=None,
-        picked_slot_id=None,
+    result = await service.send_test2(
+        candidate_id,
+        candidate_tz,
+        candidate_city,
+        candidate_name,
     )
 
-    state_manager.set(candidate_id, new_state)
+    if not result.ok:
+        return False, result.error or "Бот недоступен. Проверьте его конфигурацию.", None
 
-    try:
-        await start_test2(candidate_id)
-    except Exception as exc:  # pragma: no cover - network errors etc.
-        logger.exception("Failed to start Test 2 for candidate %s", candidate_id)
-        if isinstance(exc, RuntimeError) and "bot" in str(exc).lower():
-            return False, "Бот недоступен. Проверьте его конфигурацию."
-        return False, str(exc)
-
-    return True, None
+    info = result.message
+    return True, None, info
 
 
 def _normalize_utc(dt: datetime) -> datetime:

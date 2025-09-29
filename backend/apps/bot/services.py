@@ -107,7 +107,7 @@ REMINDERS: Dict[RemKey, asyncio.Task] = {}
 CONFIRM_TASKS: Dict[RemKey, asyncio.Task] = {}
 
 
-def configure(bot: Bot, state_manager: StateManager) -> None:
+def configure(bot: Optional[Bot], state_manager: StateManager) -> None:
     global _bot, _state_manager
     _bot = bot
     _state_manager = state_manager
