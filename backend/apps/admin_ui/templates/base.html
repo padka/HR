@@ -6,6 +6,7 @@
   <title>{% block title %}Админка{% endblock %} · TG Bot Admin</title>
   <link rel="icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/css/lists.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
   <script>
     (function () {
       var storageKey = "tg-admin-theme";
@@ -895,9 +896,9 @@
   <main class="container">
     {% block content %}{% endblock %}
   </main>
+<script type="module" src="/static/js/modules/effects.js"></script>
 <script>
   (function(){
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const docEl = document.documentElement;
     const storageKey = 'tg-admin-theme';
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
@@ -949,70 +950,6 @@
         if (!getStoredTheme()) {
           applyTheme(event.matches ? 'dark' : 'light', false);
         }
-      });
-    }
-
-    if (!reduceMotion) {
-      const tiltTargets = Array.from(document.querySelectorAll('[data-tilt]'));
-      tiltTargets.forEach(el => {
-        let frame, rx = 0, ry = 0, tx = 0, ty = 0;
-        const ease = 0.12;
-        const rect = () => el.getBoundingClientRect();
-        const max = 2;
-        const onMove = (e) => {
-          const r = rect();
-          const x = (e.clientX - r.left) / r.width;
-          const y = (e.clientY - r.top) / r.height;
-          rx = (0.5 - y) * max;
-          ry = (x - 0.5) * max;
-          if (!frame) loop();
-        };
-        const onLeave = () => {
-          rx = 0;
-          ry = 0;
-          if (!frame) loop();
-        };
-        function loop(){
-          frame = requestAnimationFrame(()=>{
-            tx += (rx - tx) * ease;
-            ty += (ry - ty) * ease;
-            el.style.transform = `perspective(900px) rotateX(${tx}deg) rotateY(${ty}deg)`;
-            if (Math.abs(tx - rx) > 0.01 || Math.abs(ty - ry) > 0.01) {
-              loop();
-            } else {
-              cancelAnimationFrame(frame);
-              frame = null;
-            }
-          });
-        }
-        el.addEventListener('mousemove', onMove);
-        el.addEventListener('mouseleave', onLeave);
-      });
-
-      const rippleTargets = document.querySelectorAll('button, .btn');
-      rippleTargets.forEach(btn => {
-        btn.style.position = btn.style.position || 'relative';
-        btn.style.overflow = 'hidden';
-        btn.addEventListener('click', (e) => {
-          const d = Math.max(btn.clientWidth, btn.clientHeight);
-          const r = document.createElement('span');
-          r.style.position = 'absolute';
-          r.style.width = r.style.height = d + 'px';
-          r.style.left = (e.offsetX - d/2) + 'px';
-          r.style.top = (e.offsetY - d/2) + 'px';
-          r.style.borderRadius = '50%';
-          r.style.background = 'radial-gradient(circle, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 60%)';
-          r.style.transform = 'scale(0)';
-          r.style.opacity = '0.7';
-          r.style.pointerEvents = 'none';
-          r.style.transition = 'transform .45s ease, opacity .6s ease';
-          btn.appendChild(r);
-          requestAnimationFrame(() => {
-            r.style.transform = 'scale(1)';
-            r.style.opacity = '0';
-          });
-          setTimeout(() => r.remove(), 620);
-        });
       });
     }
   })();
