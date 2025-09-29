@@ -1,7 +1,8 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from backend.core.db import async_session
 from .models import Recruiter, City, Template, Slot, SlotStatus
@@ -13,12 +14,53 @@ def _to_aware_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+@dataclass
+class RecruiterAvailability:
+    recruiter: Recruiter
+    next_slot_utc: datetime
+    slot_count: int
+
+
 async def get_active_recruiters() -> List[Recruiter]:
     async with async_session() as session:
         res = await session.scalars(
             select(Recruiter).where(Recruiter.active.is_(True)).order_by(Recruiter.name.asc())
         )
         return list(res)
+
+
+async def get_available_recruiters(now_utc: Optional[datetime] = None) -> List[RecruiterAvailability]:
+    now_utc = now_utc or datetime.now(timezone.utc)
+    async with async_session() as session:
+        slot_alias = (
+            select(
+                Slot.recruiter_id.label("recruiter_id"),
+                func.min(Slot.start_utc).label("next_start"),
+                func.count(Slot.id).label("slot_count"),
+            )
+            .where(
+                Slot.start_utc >= now_utc,
+                func.lower(Slot.status) == SlotStatus.FREE.lower(),
+            )
+            .group_by(Slot.recruiter_id)
+            .subquery()
+        )
+
+        res = await session.execute(
+            select(Recruiter, slot_alias.c.next_start, slot_alias.c.slot_count)
+                .join(slot_alias, Recruiter.id == slot_alias.c.recruiter_id)
+                .where(Recruiter.active.is_(True))
+                .order_by(Recruiter.name.asc())
+        )
+
+        return [
+            RecruiterAvailability(
+                recruiter=recruiter,
+                next_slot_utc=_to_aware_utc(next_start) if next_start else now_utc,
+                slot_count=int(slot_count or 0),
+            )
+            for recruiter, next_start, slot_count in res
+        ]
 
 
 async def get_recruiter(recruiter_id: int) -> Optional[Recruiter]:
@@ -46,8 +88,8 @@ async def get_free_slots_by_recruiter(
             select(Slot)
             .where(
                 Slot.recruiter_id == recruiter_id,
-                Slot.status == SlotStatus.FREE,
-                Slot.start_utc > now_utc,
+                func.lower(Slot.status) == SlotStatus.FREE.lower(),
+                Slot.start_utc >= now_utc,
             )
             .order_by(Slot.start_utc.asc())
         )

@@ -9,6 +9,7 @@ from backend.domain import models
 from backend.domain.repositories import (
     approve_slot,
     get_active_recruiters,
+    get_available_recruiters,
     get_city,
     get_city_by_name,
     get_free_slots_by_recruiter,
@@ -72,18 +73,31 @@ async def test_slot_workflow_and_templates():
             start_utc=now + timedelta(hours=5),
             status=models.SlotStatus.PENDING,
         )
-        session.add_all([slot_free, slot_pending])
-
+        slot_upper = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=now + timedelta(hours=6),
+            status="FREE",
+        )
+        session.add_all([slot_free, slot_pending, slot_upper])
+        
         template_city = models.Template(city_id=city.id, key="invite", content="hello")
         template_global = models.Template(city_id=None, key="invite", content="global")
         session.add_all([template_city, template_global])
         await session.commit()
         await session.refresh(slot_free)
         await session.refresh(slot_pending)
+        await session.refresh(slot_upper)
 
     free_slots = await get_free_slots_by_recruiter(recruiter.id, now_utc=now)
-    assert len(free_slots) == 1
-    assert free_slots[0].id == slot_free.id
+    assert len(free_slots) == 2
+    assert {sl.id for sl in free_slots} == {slot_free.id, slot_upper.id}
+
+    available = await get_available_recruiters(now_utc=now)
+    assert available
+    assert available[0].recruiter.id == recruiter.id
+    assert available[0].slot_count == 2
+    assert available[0].next_slot_utc == free_slots[0].start_utc
 
     reserved = await reserve_slot(
         slot_free.id,

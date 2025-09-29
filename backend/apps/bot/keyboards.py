@@ -8,7 +8,11 @@ from zoneinfo import ZoneInfo
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from backend.domain.repositories import get_active_recruiters, get_free_slots_by_recruiter
+from backend.domain.repositories import (
+    get_active_recruiters,
+    get_available_recruiters,
+    get_free_slots_by_recruiter,
+)
 
 from .config import DEFAULT_TZ
 
@@ -57,26 +61,28 @@ def _slot_button_label(
 
 
 async def kb_recruiters(candidate_tz: str = DEFAULT_TZ) -> InlineKeyboardMarkup:
-    recs = await get_active_recruiters()
-    if not recs:
+    availabilities = await get_available_recruiters()
+    if not availabilities:
+        active = await get_active_recruiters()
+        message = "Рекрутёры не найдены"
+        if active:
+            message = "Временно нет свободных рекрутёров"
         return InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="Рекрутёры не найдены", callback_data="noop")]]
+            inline_keyboard=[[InlineKeyboardButton(text=message, callback_data="noop")]]
         )
 
     seen_names: set[str] = set()
     rows: List[List[InlineKeyboardButton]] = []
-    for recruiter in recs:
+    for availability in availabilities:
+        recruiter = availability.recruiter
         key = recruiter.name.strip().lower()
         if key in seen_names:
             continue
+
         seen_names.add(key)
 
-        slots = await get_free_slots_by_recruiter(recruiter.id)
-        if not slots:
-            continue
-
-        next_local = fmt_dt_local(slots[0].start_utc, candidate_tz)
-        label_suffix = f"{next_local} • {min(len(slots), 99)} сл."
+        next_local = fmt_dt_local(availability.next_slot_utc, candidate_tz)
+        label_suffix = f"{next_local} • {min(availability.slot_count, 99)} сл."
         text = f"👤 {_short_name(recruiter.name)} — {label_suffix}"
         rows.append(
             [InlineKeyboardButton(text=text, callback_data=f"pick_rec:{recruiter.id}")]
