@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import aliased
 
 
 from backend.core.db import async_session
