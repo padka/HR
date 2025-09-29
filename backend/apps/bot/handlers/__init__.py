@@ -11,6 +11,7 @@ __all__ = ["register_routers"]
 
 def register_routers(dp: Dispatcher) -> None:
     """Include all bot routers into the dispatcher."""
+    # common router contains generic commands such as /start and /iam
     dp.include_router(common.router)
     dp.include_router(test1.router)
     dp.include_router(test2.router)
