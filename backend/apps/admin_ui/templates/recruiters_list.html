@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% from "partials/list_toolbar.html" import list_toolbar %}
 {% block title %}Рекрутёры{% endblock %}
 {% block content %}
 <section class="page">
@@ -15,27 +14,6 @@
     </div>
   </header>
 
-  {% call list_toolbar(form_id="recruiter_filters", method="get", mass_actions=[{
-    'label': 'Сбросить',
-    'type': 'button',
-    'variant': 'ghost',
-    'button_type': 'button',
-    'attrs': 'id="flt_reset"'
-  }]) %}
-    <div class="form-field form-field--wide">
-      <label for="flt_query">Поиск</label>
-      <input id="flt_query" type="search" placeholder="Имя, город или chat_id">
-    </div>
-    <div class="form-field form-field--narrow">
-      <label for="flt_state">Статус</label>
-      <select id="flt_state">
-        <option value="">Все</option>
-        <option value="on">Активные</option>
-        <option value="off">Отключённые</option>
-      </select>
-    </div>
-  {% endcall %}
-
   {% if not recruiter_rows %}
     <div class="card glass grain">
       <h3 class="section-title">Пока пусто</h3>
@@ -50,20 +28,15 @@
         {% set r = item.rec %}
         {% set stats = item.stats %}
         {% set active = r.active if r.active is not none else False %}
-        <article class="recruiter-card"
-                 data-name="{{ (r.name or '')|lower }}"
-                 data-tz="{{ (r.tz or 'Europe/Moscow')|lower }}"
-                 data-chat="{{ r.tg_chat_id or '' }}"
-                 data-cities="{{ item.cities_text }}"
-                 data-active="{{ 'on' if active else 'off' }}">
+        <article class="recruiter-card">
           <header class="recruiter-card__header">
-            <div>
+            <div class="recruiter-card__identity">
               <h2 class="recruiter-card__name">{{ r.name }}</h2>
               <div class="meta-list">
                 <span>#{{ r.id }}</span>
-                <span title="Часовой пояс">TZ: {{ r.tz or 'Europe/Moscow' }}</span>
+                <span title="Часовой пояс">{{ r.tz or 'Europe/Moscow' }}</span>
                 {% if r.tg_chat_id %}
-                  <span title="ID чата в Telegram">chat_id: {{ r.tg_chat_id }}</span>
+                  <span title="ID чата в Telegram">chat_id {{ r.tg_chat_id }}</span>
                 {% endif %}
               </div>
             </div>
@@ -72,44 +45,55 @@
             </span>
           </header>
 
-          <div class="section-block">
-            <h3 class="section-title">Нагрузка</h3>
-            <div class="chip-row">
-              <span class="chip chip--success">Свободно <span class="chip__value">{{ stats.free }}</span></span>
-              <span class="chip chip--warning">Ожидают <span class="chip__value">{{ stats.pending }}</span></span>
-              <span class="chip chip--info">Занято <span class="chip__value">{{ stats.booked }}</span></span>
-              <span class="chip">Всего <span class="chip__value">{{ stats.total }}</span></span>
+          <div class="recruiter-card__body">
+            <div class="recruiter-card__section">
+              <h3 class="section-title">Нагрузка</h3>
+              <dl class="recruiter-metrics">
+                <div>
+                  <dt>Свободно</dt>
+                  <dd>{{ stats.free }}</dd>
+                </div>
+                <div>
+                  <dt>Ожидают</dt>
+                  <dd>{{ stats.pending }}</dd>
+                </div>
+                <div>
+                  <dt>Занято</dt>
+                  <dd>{{ stats.booked }}</dd>
+                </div>
+                <div>
+                  <dt>Всего</dt>
+                  <dd>{{ stats.total }}</dd>
+                </div>
+              </dl>
             </div>
-          </div>
 
-          <div class="section-block">
-            <h3 class="section-title">Города</h3>
-            <div class="badge-row">
-              {% if item.cities %}
-                {% for cname, ctz in item.cities %}
-                  <span class="badge" title="{{ ctz }}">{{ cname }}</span>
-                {% endfor %}
+            <div class="recruiter-card__section">
+              <h3 class="section-title">Города</h3>
+              <div class="badge-row">
+                {% if item.cities %}
+                  {% for cname, ctz in item.cities %}
+                    <span class="badge" title="{{ ctz }}">{{ cname }}</span>
+                  {% endfor %}
+                {% else %}
+                  <span class="muted">не назначены</span>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="recruiter-card__section">
+              <h3 class="section-title">Ближайший свободный слот</h3>
+              {% if item.next_free_local %}
+                <span class="badge">
+                  {{ item.next_free_local }}{% if not item.next_is_future %} · истёк{% endif %}
+                </span>
               {% else %}
-                <span class="muted">не назначены</span>
+                <span class="muted">Нет свободных слотов</span>
               {% endif %}
             </div>
           </div>
 
-          <div class="section-block">
-            <h3 class="section-title">Ближайший свободный слот</h3>
-            {% if item.next_free_local %}
-              <span class="badge">
-                {{ item.next_free_local }}{% if not item.next_is_future %} · истёк{% endif %}
-              </span>
-            {% else %}
-              <span class="muted">Нет свободных слотов</span>
-            {% endif %}
-          </div>
-
           <footer class="recruiter-card__footer">
-            <button class="btn btn-ghost btn--grow" type="button" data-copy="{{ r.tg_chat_id or '' }}" {% if not r.tg_chat_id %}disabled{% endif %}>
-              Скопировать chat_id
-            </button>
             <a class="btn btn-soft btn--grow" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
             <form class="inline-form" method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');">
               <button class="btn btn-danger btn--grow" type="submit">Удалить</button>
@@ -120,54 +104,4 @@
     </div>
   {% endif %}
 </section>
-
-<script>
-(() => {
-  const $ = (sel, root=document) => root.querySelector(sel);
-  const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
-  const q = $('#flt_query');
-  const state = $('#flt_state');
-  const reset = $('#flt_reset');
-  const cards = $$('#recs_grid .recruiter-card');
-  const norm = v => (v || '').toString().toLowerCase().trim();
-
-  const apply = () => {
-    const query = norm(q && q.value);
-    const st = (state && state.value) || '';
-    cards.forEach(card => {
-      const matchText = !query ||
-        card.dataset.name?.includes(query) ||
-        card.dataset.tz?.includes(query) ||
-        card.dataset.chat?.includes(query) ||
-        card.dataset.cities?.includes(query);
-      const matchState = !st || card.dataset.active === st;
-      card.style.display = (matchText && matchState) ? '' : 'none';
-    });
-  };
-
-  q && q.addEventListener('input', apply);
-  state && state.addEventListener('change', apply);
-  reset && reset.addEventListener('click', () => {
-    if (q) q.value = '';
-    if (state) state.value = '';
-    apply();
-  });
-  apply();
-
-  $$('#recs_grid .recruiter-card button[data-copy]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const value = btn.getAttribute('data-copy');
-      if (!value) return;
-      try {
-        await navigator.clipboard.writeText(value);
-        const prev = btn.textContent;
-        btn.textContent = 'Скопировано';
-        setTimeout(() => btn.textContent = prev, 1200);
-      } catch (_) {
-        alert('Не удалось скопировать chat_id');
-      }
-    });
-  });
-})();
-</script>
 {% endblock %}
