@@ -112,3 +112,33 @@ async def test_kb_recruiters_uses_aggregated_repository(monkeypatch):
     assert summary_calls == 1
     assert active_calls == 1
     assert keyboard.inline_keyboard
+
+
+@pytest.mark.asyncio
+async def test_kb_recruiters_handles_uppercase_status():
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Борис", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
+        await session.flush()
+
+        await session.execute(
+            models.Slot.__table__.insert().values(
+                recruiter_id=recruiter.id,
+                start_utc=datetime.now(timezone.utc) + timedelta(hours=1),
+                duration_min=60,
+                status="FREE",
+            )
+        )
+        await session.commit()
+
+    keyboard = await kb_recruiters()
+
+    buttons = [
+        btn
+        for row in keyboard.inline_keyboard
+        for btn in row
+        if getattr(btn, "callback_data", "").startswith("pick_rec:")
+    ]
+
+    assert buttons, "expected recruiter buttons to be present"
+    assert any(btn.callback_data.endswith(str(recruiter.id)) for btn in buttons)

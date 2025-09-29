@@ -1,7 +1,7 @@
 from sqladmin import Admin, ModelView
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from backend.domain.models import Recruiter, City, Template, Slot
+from backend.domain.models import Recruiter, City, Template, Slot, SlotStatus
 
 
 class RecruiterAdmin(ModelView, model=Recruiter):
@@ -61,6 +61,15 @@ class SlotAdmin(ModelView, model=Slot):
         Slot.candidate_fio,
         Slot.candidate_tz,
     ]
+
+    form_choices = {
+        "status": [
+            (SlotStatus.FREE, "free"),
+            (SlotStatus.PENDING, "pending"),
+            (SlotStatus.BOOKED, "booked"),
+            (SlotStatus.CANCELED, "canceled"),
+        ]
+    }
 
 
 def mount_admin(app, engine: AsyncEngine):

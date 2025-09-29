@@ -33,15 +33,16 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
 
         if recs:
             rec_ids = [r.id for r in recs]
+            status_lower = func.lower(Slot.status)
             stats_rows = (
                 await session.execute(
                     select(
                         Slot.recruiter_id,
                         func.count().label("total"),
-                        func.sum(case((Slot.status == SlotStatus.FREE, 1), else_=0)).label("free"),
-                        func.sum(case((Slot.status == SlotStatus.PENDING, 1), else_=0)).label("pending"),
-                        func.sum(case((Slot.status == SlotStatus.BOOKED, 1), else_=0)).label("booked"),
-                        func.min(case((Slot.status == SlotStatus.FREE, Slot.start_utc), else_=None)).label(
+                        func.sum(case((status_lower == SlotStatus.FREE, 1), else_=0)).label("free"),
+                        func.sum(case((status_lower == SlotStatus.PENDING, 1), else_=0)).label("pending"),
+                        func.sum(case((status_lower == SlotStatus.BOOKED, 1), else_=0)).label("booked"),
+                        func.min(case((status_lower == SlotStatus.FREE, Slot.start_utc), else_=None)).label(
                             "next_free"
                         ),
                     )

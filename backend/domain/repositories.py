@@ -46,7 +46,7 @@ async def get_free_slots_by_recruiter(
             select(Slot)
             .where(
                 Slot.recruiter_id == recruiter_id,
-                Slot.status == SlotStatus.FREE,
+                func.lower(Slot.status) == SlotStatus.FREE,
                 Slot.start_utc > now_utc,
             )
             .order_by(Slot.start_utc.asc())
@@ -77,7 +77,7 @@ async def get_recruiters_free_slots_summary(
                 )
                 .where(
                     Slot.recruiter_id.in_(ids),
-                    Slot.status == SlotStatus.FREE,
+                    func.lower(Slot.status) == SlotStatus.FREE,
                     Slot.start_utc > now_utc,
                 )
                 .group_by(Slot.recruiter_id)
