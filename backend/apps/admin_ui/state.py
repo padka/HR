@@ -11,6 +11,10 @@ from fastapi import FastAPI
 
 from backend.apps.bot.config import DEFAULT_BOT_PROPERTIES
 from backend.apps.bot.services import StateManager, configure as configure_bot_services
+from backend.apps.admin_ui.services.bot_service import (
+    BotService,
+    configure_bot_service,
+)
 from backend.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -22,6 +26,7 @@ class BotIntegration:
 
     state_manager: StateManager
     bot: Optional[Bot]
+    bot_service: BotService
 
     async def shutdown(self) -> None:
         """Shutdown resources created for the integration."""
@@ -55,10 +60,18 @@ def setup_bot_state(app: FastAPI) -> BotIntegration:
 
     configure_bot_services(bot, state_manager)
 
+    bot_service = BotService(
+        state_manager=state_manager,
+        enabled=settings.enable_test2_bot,
+        configured=bot is not None,
+    )
+    configure_bot_service(bot_service)
+
     app.state.bot = bot
     app.state.state_manager = state_manager
+    app.state.bot_service = bot_service
 
-    return BotIntegration(state_manager=state_manager, bot=bot)
+    return BotIntegration(state_manager=state_manager, bot=bot, bot_service=bot_service)
 
 
 __all__ = ["BotIntegration", "setup_bot_state"]
