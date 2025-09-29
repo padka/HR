@@ -64,7 +64,13 @@ async def kb_recruiters(candidate_tz: str = DEFAULT_TZ) -> InlineKeyboardMarkup:
     recs = await get_active_recruiters()
     if not recs:
         return InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="Рекрутёры не найдены", callback_data="noop")]]
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Рекрутёры не найдены", callback_data="noop:no_recruiters"
+                    )
+                ]
+            ]
         )
 
     slots_summary = await get_recruiters_free_slots_summary(r.id for r in recs)
@@ -91,7 +97,11 @@ async def kb_recruiters(candidate_tz: str = DEFAULT_TZ) -> InlineKeyboardMarkup:
 
     if not rows:
         no_rows = [
-            [InlineKeyboardButton(text="Временно нет свободных рекрутёров", callback_data="noop")]
+            [
+                InlineKeyboardButton(
+                    text="Временно нет свободных рекрутёров", callback_data="noop:no_slots"
+                )
+            ]
         ]
         return InlineKeyboardMarkup(inline_keyboard=no_rows)
 
