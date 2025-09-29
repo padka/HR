@@ -6,6 +6,7 @@
   <title>{% block title %}Админка{% endblock %} · TG Bot Admin</title>
   <link rel="icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/css/lists.css">
+  <link rel="stylesheet" href="/static/css/topbar.css">
   <script>
     (function () {
       var storageKey = "tg-admin-theme";
@@ -232,106 +233,6 @@
       radial-gradient(120% 90% at 50% 110%, rgba(0,0,0,.18), transparent 65%),
       radial-gradient(100% 80% at -10% 0%, rgba(255,255,255,.06), transparent 55%);
     opacity: .9;
-  }
-
-  header {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    padding: 12px 16px 6px;
-    background: linear-gradient(180deg, rgba(0,0,0,.22), transparent 70%);
-  }
-
-  html[data-theme="light"] header {
-    background: linear-gradient(180deg, rgba(246,247,251,.92), rgba(246,247,251,0));
-  }
-
-  .nav {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 12px 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-1);
-    background: linear-gradient(180deg, var(--glass-tint), rgba(255,255,255,.02));
-  }
-
-  @supports ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {
-    .nav {
-      backdrop-filter: blur(16px) saturate(1.2);
-      -webkit-backdrop-filter: blur(16px) saturate(1.2);
-    }
-  }
-
-  .nav::before,
-  .nav::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-  }
-
-  .nav::before {
-    background: linear-gradient(to top left, rgba(255,255,255,.14), transparent 60%);
-    mix-blend-mode: screen;
-  }
-
-  .nav::after {
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
-  }
-
-  .nav__section {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .nav__section--primary {
-    gap: 14px;
-  }
-
-  .nav .brand {
-    font-weight: 800;
-    letter-spacing: .2px;
-    color: var(--fg-strong);
-    margin-right: 6px;
-    text-shadow: var(--brand-shadow);
-    font-size: 16px;
-  }
-
-  .nav a {
-    color: var(--fg);
-    opacity: .9;
-    padding: 6px 10px;
-    border-radius: 8px;
-    transition: background .2s ease, color .2s ease, opacity .2s ease;
-  }
-
-  .nav a:hover {
-    opacity: 1;
-  }
-
-  .nav a.active {
-    color: var(--fg-strong);
-    font-weight: 600;
-    background: var(--nav-active-bg);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
-    text-decoration: none;
-  }
-
-  .nav__meta {
-    margin-left: auto;
-    gap: 10px;
-  }
-
-  .nav__env {
-    margin-left: 0;
   }
 
   .container {
@@ -838,32 +739,6 @@
     color: color-mix(in srgb, var(--bad) 65%, var(--fg));
   }
 
-  .theme-toggle {
-    border-radius: 999px;
-    font-weight: 600;
-    padding: 8px 14px;
-    background: color-mix(in srgb, var(--bg) 20%, var(--btn-bg) 80%);
-  }
-
-  .theme-toggle__icon {
-    font-size: 16px;
-    line-height: 1;
-  }
-
-  .theme-toggle__label {
-    font-size: 13px;
-  }
-
-  @media (max-width: 720px) {
-    .nav__section--primary {
-      gap: 10px;
-    }
-
-    .theme-toggle__label {
-      display: none;
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; }
   }
@@ -871,25 +746,53 @@
 </head>
 <body>
   <div aria-hidden="true" class="halo"></div>
-  <header>
-    <nav class="nav glass grain" role="navigation">
-      <div class="nav__section nav__section--primary">
-        <a class="brand" href="/">TG Bot Admin</a>
-        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Дашборд</a>
-        <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">Рекрутёры</a>
-        <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">Города</a>
-        <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">Слоты</a>
-        <a href="/templates" class="{% if request.url.path.startswith('/templates') %}active{% endif %}">Шаблоны</a>
-        <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">Вопросы</a>
+  <header class="topbar">
+    <div class="topbar__shell grain">
+      <div class="topbar__bar">
+        <a href="/" class="topbar__brand">
+          <span class="topbar__logo" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="presentation" focusable="false">
+              <defs>
+                <linearGradient id="logoGradient" x1="12%" y1="5%" x2="88%" y2="95%">
+                  <stop offset="0%" stop-color="var(--accent)" />
+                  <stop offset="100%" stop-color="var(--accent-2)" />
+                </linearGradient>
+              </defs>
+              <rect x="2" y="2" width="28" height="28" rx="8" ry="8" fill="url(#logoGradient)" />
+              <path d="M10 21.5c2.2-4.6 4.6-7.5 7.4-9l4.6 4.6-2.8 2.8-2-2c-1.8 1.2-3.4 2.9-4.9 5.3z" fill="rgba(0,0,0,0.18)" />
+              <path d="M10 21c2.4-4.8 5.2-7.6 8.2-8.6l4.8 4.8-3 3-1.8-1.8c-1.6 1.1-3.2 2.8-4.9 5.1z" fill="rgba(255,255,255,0.85)" />
+            </svg>
+          </span>
+          <span class="topbar__title">TG Bot Admin</span>
+        </a>
+        <div class="topbar__actions">
+          <button id="theme-toggle" class="topbar__theme-toggle" type="button" aria-label="Переключить тему" aria-pressed="true">
+            <span class="topbar__theme-icon" aria-hidden="true">🌙</span>
+            <span class="topbar__theme-label">Тёмная тема</span>
+          </button>
+          <span class="topbar__env" role="status" aria-live="polite">{{ request.url.hostname or 'localhost' }}</span>
+          <button id="topbar-menu-toggle" class="topbar__menu-toggle" type="button" aria-label="Открыть навигацию" aria-expanded="false" aria-controls="topbar-drawer">
+            <span class="topbar__menu-icon" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+          </button>
+        </div>
       </div>
-      <div class="nav__section nav__meta">
-        <button id="theme-toggle" class="btn theme-toggle" type="button" aria-label="Переключить тему" aria-pressed="true">
-          <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
-          <span class="theme-toggle__label">Тёмная тема</span>
-        </button>
-        <span class="badge nav__env">{{ request.url.hostname or 'localhost' }}</span>
+      <div id="topbar-drawer" class="topbar__drawer" data-open="false">
+        <nav id="topbar-navigation" class="topbar__nav" aria-label="Основная навигация">
+          <ul class="topbar__links">
+            <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Дашборд</a></li>
+            <li><a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">Рекрутёры</a></li>
+            <li><a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">Города</a></li>
+            <li><a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">Слоты</a></li>
+            <li><a href="/templates" class="{% if request.url.path.startswith('/templates') %}active{% endif %}">Шаблоны</a></li>
+            <li><a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">Вопросы</a></li>
+          </ul>
+        </nav>
       </div>
-    </nav>
+    </div>
   </header>
 
   <main class="container">
@@ -927,8 +830,11 @@
       toggle.setAttribute('aria-pressed', theme === 'dark');
       const icon = theme === 'dark' ? '🌙' : '🌞';
       const label = theme === 'dark' ? 'Тёмная тема' : 'Светлая тема';
-      toggle.querySelector('.theme-toggle__icon').textContent = icon;
-      toggle.querySelector('.theme-toggle__label').textContent = label;
+      const iconEl = toggle.querySelector('.topbar__theme-icon');
+      const labelEl = toggle.querySelector('.topbar__theme-label');
+      if (iconEl) { iconEl.textContent = icon; }
+      if (labelEl) { labelEl.textContent = label; }
+      toggle.setAttribute('aria-label', label);
       toggle.title = 'Сменить на ' + (theme === 'dark' ? 'светлую' : 'тёмную') + ' тему';
     }
 
@@ -942,6 +848,55 @@
         const next = current === 'dark' ? 'light' : 'dark';
         applyTheme(next);
       });
+    }
+
+    const menuToggle = document.getElementById('topbar-menu-toggle');
+    const drawer = document.getElementById('topbar-drawer');
+    const topbar = document.querySelector('.topbar');
+    const desktopQuery = window.matchMedia('(min-width: 768px)');
+
+    function setMenuState(open) {
+      if (!menuToggle || !drawer || !topbar) { return; }
+      topbar.classList.toggle('topbar--menu-open', open);
+      drawer.dataset.open = open ? 'true' : 'false';
+      drawer.setAttribute('aria-hidden', open ? 'false' : 'true');
+      menuToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      menuToggle.setAttribute('aria-label', open ? 'Скрыть навигацию' : 'Открыть навигацию');
+    }
+
+    if (menuToggle && drawer && topbar) {
+      const syncMenuToViewport = (event) => {
+        if (event.matches) {
+          topbar.classList.remove('topbar--menu-open');
+          drawer.dataset.open = 'true';
+          drawer.setAttribute('aria-hidden', 'false');
+          menuToggle.setAttribute('aria-expanded', 'false');
+          menuToggle.setAttribute('aria-label', 'Открыть навигацию');
+        } else {
+          setMenuState(false);
+        }
+      };
+
+      menuToggle.addEventListener('click', () => {
+        const willOpen = !topbar.classList.contains('topbar--menu-open');
+        setMenuState(willOpen);
+      });
+
+      drawer.querySelectorAll('a').forEach(link => {
+        link.addEventListener('click', () => {
+          if (!desktopQuery.matches) {
+            setMenuState(false);
+          }
+        });
+      });
+
+      drawer.setAttribute('aria-hidden', desktopQuery.matches ? 'false' : 'true');
+      syncMenuToViewport(desktopQuery);
+      if (typeof desktopQuery.addEventListener === 'function') {
+        desktopQuery.addEventListener('change', syncMenuToViewport);
+      } else if (typeof desktopQuery.addListener === 'function') {
+        desktopQuery.addListener(syncMenuToViewport);
+      }
     }
 
     if (prefersDark && typeof prefersDark.addEventListener === 'function') {
