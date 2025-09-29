@@ -1,32 +1,26 @@
 {% extends "base.html" %}
+{% import "partials/form_shell.html" as forms %}
 {% block title %}Новый город{% endblock %}
 {% block content %}
+{% call forms.shell(
+  title="Новый город",
+  description="Поддерживается кириллица, таймзона подставится автоматически (можно изменить вручную).",
+  form_id="cityForm",
+  action="/cities/create",
+  autocomplete="off",
+  back_href="/cities",
+  back_label="К списку городов",
+  actions=[
+    {"type": "submit", "text": "Создать", "variant": "primary"},
+    {"href": "/cities", "text": "Отмена", "variant": "ghost"}
+  ]
+) %}
+  {% call forms.section("Параметры") %}
+    {% call forms.field("Название", hint="Например: Новосибирск") %}
+      <input id="name" type="text" name="name" placeholder="Новосибирск" required autofocus>
+    {% endcall %}
 
-<div class="card glass grain" data-tilt style="margin: 8px 0 16px;">
-  <h3 style="margin:0 0 12px 0; display:flex; align-items:center; gap:10px;">
-    🏙️ Новый город
-    <span class="badge" title="Часовой пояс">TZ</span>
-  </h3>
-
-  <form id="cityForm" method="post" action="/cities/create" autocomplete="off">
-    <!-- Название -->
-    <div class="field" style="margin-top:8px;">
-      <label for="name" style="display:block; margin-bottom:6px;">Название</label>
-      <input id="name"
-             type="text"
-             name="name"
-             placeholder="Новосибирск"
-             required
-             autofocus
-             style="width:100%;">
-      <p class="muted" style="margin:6px 0 0;">
-        Поддерживается кириллица. Для известных городов таймзона подставится автоматически (можно изменить вручную).
-      </p>
-    </div>
-
-    <!-- TZ -->
-    <div class="field" style="margin-top:12px;">
-      <label for="tz" style="display:block; margin-bottom:6px;">Часовой пояс (IANA TZ)</label>
+    {% call forms.field("Часовой пояс (IANA)", hint="Например: Europe/Moscow, Asia/Novosibirsk") %}
       <input id="tz"
              type="text"
              name="tz"
@@ -36,8 +30,7 @@
              inputmode="text"
              pattern="[A-Za-z_]+(?:\/[A-Za-z_\-]+)+"
              title="Например: Europe/Moscow, Europe/Samara, Asia/Novosibirsk"
-             required
-             style="width:100%;">
+             required>
       <datalist id="tz-list">
         <option value="Europe/Moscow"></option>
         <option value="Europe/Samara"></option>
@@ -50,26 +43,20 @@
         <option value="Asia/Almaty"></option>
         <option value="Europe/Minsk"></option>
       </datalist>
-
-      <!-- Статус валидации + предпросмотр времени -->
-      <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+      <div class="form-field__meta" aria-live="polite">
         <span id="tz_status" class="badge" title="Валидация TZ">Проверка TZ…</span>
-        <span id="tz_now" class="muted"></span>
+        <span id="tz_now" class="hint"></span>
       </div>
+      <div class="hint">
+        Примеры: <code>Europe/Moscow</code>, <code>Europe/Samara</code>, <code>Asia/Novosibirsk</code>, <code>Asia/Almaty</code>
+      </div>
+    {% endcall %}
+  {% endcall %}
+{% endcall %}
 
-      <p class="muted" style="margin:6px 0 0;">
-        Примеры: <code>Europe/Moscow</code>, <code>Europe/Samara</code>, <code>Asia/Novosibirsk</code>, <code>Asia/Almaty</code>.
-      </p>
-    </div>
+<script type="module">
+import { bindSubmitHotkey } from "/static/js/modules/form-hotkeys.js";
 
-    <div style="display:flex; gap:8px; margin-top:16px;">
-      <button type="submit">Создать</button>
-      <a class="btn" href="/cities">Отмена</a>
-    </div>
-  </form>
-</div>
-
-<script>
 (function(){
   const form = document.getElementById('cityForm');
   const nameInput = document.getElementById('name');
@@ -77,7 +64,8 @@
   const tzStatus = document.getElementById('tz_status');
   const tzNow = document.getElementById('tz_now');
 
-  // Карта популярных городов → IANA TZ
+  bindSubmitHotkey(form, { key: 'enter' });
+
   const CITY_TZ_MAP = {
     'москва': 'Europe/Moscow',
     'санкт-петербург': 'Europe/Moscow',
@@ -107,10 +95,9 @@
       .replace(/\s+/g, ' ');
   }
 
-  // Автоподстановка TZ по названию города (если TZ не меняли вручную)
   let tzTouched = false;
-  tzInput.addEventListener('input', ()=> { tzTouched = true; validateTZ(); });
-  nameInput.addEventListener('input', () => {
+  tzInput?.addEventListener('input', ()=> { tzTouched = true; validateTZ(); });
+  nameInput?.addEventListener('input', () => {
     const key = normalizeCity(nameInput.value);
     const guess = CITY_TZ_MAP[key];
     if (guess && !tzTouched) {
@@ -119,10 +106,8 @@
     }
   });
 
-  // Валидация TZ + предпросмотр времени в этой зоне
   function isValidTimeZone(tz){
     try {
-      // Бросает исключение, если TZ некорректная
       new Intl.DateTimeFormat('ru-RU', { timeZone: tz }).format();
       return true;
     } catch(e) { return false; }
@@ -130,12 +115,11 @@
 
   function formatNow(tz){
     try {
-      const nowStr = new Intl.DateTimeFormat('ru-RU', {
+      return new Intl.DateTimeFormat('ru-RU', {
         timeZone: tz,
         hour: '2-digit', minute: '2-digit',
         day: '2-digit', month: '2-digit', year: 'numeric'
       }).format(new Date());
-      return nowStr;
     } catch { return ''; }
   }
 
@@ -159,19 +143,9 @@
     }
   }
 
-  // Первичная проверка
   validateTZ();
 
-  // Горячие клавиши: Ctrl/Cmd+Enter — отправка
-  window.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'enter') {
-      e.preventDefault();
-      form?.requestSubmit();
-    }
-  });
-
-  // Финальная проверка перед отправкой
-  form.addEventListener('submit', (e) => {
+  form?.addEventListener('submit', (e) => {
     const name = (nameInput.value || '').trim();
     const tz = (tzInput.value || '').trim();
     if (!name){
@@ -185,5 +159,4 @@
   });
 })();
 </script>
-
 {% endblock %}

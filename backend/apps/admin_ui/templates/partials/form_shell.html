@@ -1,0 +1,57 @@
+{% macro shell(title, description='', form_id='', action='', method='post', autocomplete='off', enctype='', back_href='', back_label='Назад', meta=(), actions=(), form_class='', section_id='', hidden=False) -%}
+<section class="form-shell glass grain"{% if section_id %} id="{{ section_id }}"{% endif %}{% if hidden %} hidden{% endif %}>
+  <div class="form-shell__header">
+    {% if back_href %}
+      <div class="form-shell__breadcrumbs">
+        <a href="{{ back_href }}" class="muted">← {{ back_label }}</a>
+      </div>
+    {% endif %}
+    <div>
+      <h1 class="form-shell__title">{{ title }}</h1>
+      {% if description %}<p class="form-shell__description">{{ description }}</p>{% endif %}
+    </div>
+    {% if meta %}
+      <div class="form-shell__meta">
+        {% for item in meta %}
+          <span class="badge">{{ item }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  <form class="form-shell__form {{ form_class }}"{% if form_id %} id="{{ form_id }}"{% endif %}{% if action %} action="{{ action }}"{% endif %}{% if method %} method="{{ method }}"{% endif %}{% if autocomplete %} autocomplete="{{ autocomplete }}"{% endif %}{% if enctype %} enctype="{{ enctype }}"{% endif %}>
+    <div class="form-shell__body">
+      {{ caller() }}
+    </div>
+    {% if actions %}
+      <div class="form-shell__actions">
+        {% for btn in actions %}
+          {% set variant = 'btn--' + (btn.variant or 'primary') %}
+          {% if btn.href %}
+            <a href="{{ btn.href }}" class="btn {{ variant }}{% if btn.block %} btn--block{% endif %}">{{ btn.text }}</a>
+          {% else %}
+            <button type="{{ btn.type or 'button' }}" class="btn {{ variant }}{% if btn.block %} btn--block{% endif %}"{% if btn.id %} id="{{ btn.id }}"{% endif %}{% if btn.name %} name="{{ btn.name }}"{% endif %}{% if btn.value is not none %} value="{{ btn.value }}"{% endif %}{% if btn.disabled %} disabled{% endif %}>{{ btn.text }}</button>
+          {% endif %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </form>
+</section>
+{%- endmacro %}
+
+{% macro section(title, hint='') -%}
+<div class="form-shell__section">
+  <div>
+    <h2 class="form-shell__section-title">{{ title }}</h2>
+    {% if hint %}<p class="form-shell__section-hint">{{ hint }}</p>{% endif %}
+  </div>
+  {{ caller() }}
+</div>
+{%- endmacro %}
+
+{% macro field(label='', hint='', inline=False) -%}
+<label class="form-field{% if inline %} form-field--inline{% endif %}">
+  {% if label %}<span class="form-field__label">{{ label }}</span>{% endif %}
+  {{ caller() }}
+  {% if hint %}<span class="form-field__hint">{{ hint }}</span>{% endif %}
+</label>
+{%- endmacro %}
