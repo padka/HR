@@ -1,0 +1,38 @@
+{% macro status_pill(label, tone='neutral', icon=None, title=None) -%}
+  <span class="status-pill" data-tone="{{ tone }}"{% if title %} title="{{ title }}"{% endif %}>
+    {% if icon %}<span class="status-pill__icon" aria-hidden="true">{{ icon }}</span>{% endif %}
+    <span class="status-pill__label">{{ label }}</span>
+  </span>
+{%- endmacro %}
+
+{% macro meta_list(items=None) -%}
+  <div class="meta-list">
+    {% if items is not none %}
+      {% for item in items %}
+        <span>{{ item }}</span>
+      {% endfor %}
+    {% elif caller is defined %}
+      {{ caller() }}
+    {% endif %}
+  </div>
+{%- endmacro %}
+
+{% macro badge_row(items=None, empty=None) -%}
+  {% if items is not none %}
+    {% set has_items = items | length > 0 %}
+  {% else %}
+    {% set rendered = (caller() if caller is defined else '') %}
+    {% set has_items = rendered.strip() != '' %}
+  {% endif %}
+  <div class="badge-row">
+    {% if items is not none %}
+      {% for item in items %}
+        {{ item }}
+      {% endfor %}
+    {% elif has_items %}
+      {{ rendered | safe }}
+    {% elif empty %}
+      <span class="muted">{{ empty }}</span>
+    {% endif %}
+  </div>
+{%- endmacro %}

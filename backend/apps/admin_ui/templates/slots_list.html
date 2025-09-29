@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/list_toolbar.html" import list_toolbar %}
+{% from "partials/components.html" import meta_list %}
 {% block title %}Слоты{% endblock %}
 {% block content %}
 <section class="page">
@@ -164,12 +165,12 @@
             <td class="list-table__details" data-label="">
               <details>
                 <summary>Подробнее</summary>
-                <div class="meta-list">
+                {% call meta_list() %}
                   <span>UTC: {{ fmt_utc(s.start_utc) }}</span>
                   <span>Рекрутёр: {{ s.recruiter.name if s.recruiter else '—' }}</span>
                   {% if s.candidate_fio %}<span>Кандидат: {{ s.candidate_fio }}</span>{% endif %}
                   {% if s.candidate_tz %}<span>TZ кандидата: {{ s.candidate_tz }}</span>{% endif %}
-                </div>
+                {% endcall %}
               </details>
             </td>
           </tr>
