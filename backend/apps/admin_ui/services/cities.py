@@ -29,8 +29,15 @@ async def list_cities(order_by_name: bool = True) -> List[City]:
 
 
 async def create_city(name: str, tz: str) -> None:
+    """Create a new city ensuring that basic validation is applied."""
+
+    clean_name = (name or "").strip()
+    clean_tz = (tz or "").strip()
+    if not clean_tz:
+        clean_tz = "Europe/Moscow"
+
     async with async_session() as session:
-        session.add(City(name=name.strip(), tz=tz.strip() if tz else "Europe/Moscow"))
+        session.add(City(name=clean_name, tz=clean_tz))
         await session.commit()
 
 
