@@ -20,7 +20,7 @@ from backend.domain.models import SlotStatus
 from backend.domain.repositories import (
     approve_slot,
     get_city_by_name,
-    get_candidate_cities,
+
     get_active_recruiters_for_city,
     get_free_slots_by_recruiter,
     get_recruiter,

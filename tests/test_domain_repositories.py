@@ -88,58 +88,7 @@ async def test_city_recruiter_lookup_includes_slot_owners():
 
 
 @pytest.mark.asyncio
-async def test_candidate_city_lookup_includes_responsible_and_slot_cities():
-    now = datetime.now(timezone.utc)
 
-    async with async_session() as session:
-        resp_active = models.Recruiter(name="Координатор", tz="Europe/Moscow", active=True)
-        resp_inactive = models.Recruiter(name="Неактивен", tz="Europe/Moscow", active=False)
-        slot_owner = models.Recruiter(name="Слотер", tz="Europe/Moscow", active=True)
-
-        city_resp = models.City(name="Екатеринбург", tz="Asia/Yekaterinburg", active=True)
-        city_slot = models.City(name="Самара", tz="Europe/Samara", active=True)
-        city_inactive = models.City(name="Томск", tz="Asia/Tomsk", active=True)
-
-        session.add_all([resp_active, resp_inactive, slot_owner, city_resp, city_slot, city_inactive])
-        await session.commit()
-
-        await session.refresh(resp_active)
-        await session.refresh(resp_inactive)
-        await session.refresh(slot_owner)
-        await session.refresh(city_resp)
-        await session.refresh(city_slot)
-        await session.refresh(city_inactive)
-
-        city_resp.responsible_recruiter_id = resp_active.id
-        city_slot.responsible_recruiter_id = resp_inactive.id
-
-        session.add(
-            models.Slot(
-                recruiter_id=slot_owner.id,
-                city_id=city_slot.id,
-                start_utc=now + timedelta(hours=3),
-                status=models.SlotStatus.FREE,
-            )
-        )
-
-        session.add(
-            models.Slot(
-                recruiter_id=resp_inactive.id,
-                city_id=city_inactive.id,
-                start_utc=now + timedelta(hours=4),
-                status=models.SlotStatus.FREE,
-            )
-        )
-
-        await session.commit()
-
-    cities = await get_candidate_cities()
-    names = [city.name for city in cities]
-
-    assert names == ["Екатеринбург", "Самара"]
-
-
-@pytest.mark.asyncio
 async def test_slot_workflow_and_templates():
     now = datetime.now(timezone.utc)
 
