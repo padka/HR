@@ -11,7 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .base import Base
 
@@ -114,6 +114,13 @@ class Slot(Base):
 
     def __repr__(self) -> str:
         return f"<Slot {self.id} {self.start_utc.isoformat()} {self.status}>"
+
+    @validates("status")
+    def _normalize_status(self, _key, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        raw_value = value.value if hasattr(value, "value") else value
+        return str(raw_value).strip().lower()
 
 
 class TestQuestion(Base):
