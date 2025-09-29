@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+pytest.importorskip("starlette")
 from starlette.requests import Request
 
 from backend.apps.admin_ui.config import register_template_globals
