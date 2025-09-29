@@ -596,21 +596,36 @@ button:disabled,
 
 /* City list */
 .city-collection {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  align-items: stretch;
 }
 
-.city-collection {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 20px;
+@media (max-width: 720px) {
+  .city-collection {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .city-card {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 90%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg) 90%, rgba(255, 255, 255, 0.05) 10%);
+  box-shadow: none;
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+
+.city-card:hover {
+  border-color: color-mix(in srgb, var(--border-strong) 45%, transparent);
+  box-shadow: 0 6px 18px rgba(15, 20, 40, 0.08);
+}
+
+.city-card.open {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 10px 24px rgba(20, 30, 60, 0.12);
 }
 
 .city-card__header {
@@ -618,25 +633,120 @@ button:disabled,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 18px 20px;
+  cursor: pointer;
+}
+
+@media (max-width: 540px) {
+  .city-card__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 .city-card__title {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 18px;
+  gap: 4px;
+  font-size: 17px;
   font-weight: 600;
+  line-height: 1.2;
+  color: var(--fg-strong);
+}
+
+.city-card__title .badge {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  color: color-mix(in srgb, var(--muted) 85%, transparent);
+  font-size: 11px;
+  letter-spacing: 0.32px;
+  text-transform: uppercase;
 }
 
 .city-name {
   font-size: 18px;
-  font-weight: 650;
+  font-weight: 620;
 }
 
-.template-form {
+.city-card__meta,
+.city-card__actions,
+.city-card__details {
+  display: none;
+}
+
+.city-card__divider {
+  display: none;
+  height: 1px;
+  background: color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  margin: 0 20px;
+}
+
+.city-card.open .city-card__divider {
+  display: block;
+}
+
+.city-card.open .city-card__meta,
+.city-card.open .city-card__actions {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+}
+
+.city-card.open .city-card__meta {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 16px 20px 0;
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 75%, transparent);
+  font-size: 13px;
+  color: color-mix(in srgb, var(--muted) 80%, transparent);
+}
+
+.city-card.open .city-card__meta > * {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+}
+
+.city-card.open .city-card__meta .plan-badge {
+  color: color-mix(in srgb, var(--accent) 80%, white 15%);
+  font-weight: 600;
+}
+
+.city-card.open .city-card__actions {
+  justify-content: flex-end;
+  padding: 12px 20px 0;
+  gap: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 75%, transparent);
+}
+
+.city-card.open .city-card__actions .btn-edit {
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  color: color-mix(in srgb, var(--accent) 86%, white 18%);
+  font-weight: 600;
+  transition: background-color .2s ease, border-color .2s ease;
+}
+
+.city-card.open .city-card__actions .btn-edit:hover,
+.city-card.open .city-card__actions .btn-edit:focus-visible {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: none;
+}
+
+.city-card.open .city-card__details {
+  display: grid;
+  gap: 14px;
+  padding: 16px 20px 20px;
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 75%, transparent);
+  font-size: 14px;
+  color: color-mix(in srgb, var(--fg) 92%, transparent);
 }
 
 .stage-flow {
