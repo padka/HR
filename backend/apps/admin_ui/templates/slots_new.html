@@ -1,198 +1,168 @@
 {% extends "base.html" %}
+{% import "partials/form_shell.html" as forms %}
 {% block title %}Новый слот{% endblock %}
 {% block content %}
-
-<style>
-  /* компактная «яблочная» сегментированная кнопка */
-  .segmented {
-    display:inline-flex; border:1px solid var(--glass-stroke);
-    border-radius:10px; overflow:hidden; backdrop-filter:saturate(1.1);
-  }
-  .segmented button{
-    border:0; background:transparent; padding:8px 12px; cursor:pointer;
-    color:var(--muted);
-  }
-  .segmented button.active{
-    color:var(--fg);
-    background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.03));
-  }
-  .hint { font-size:12px; color:var(--muted); }
-
-  .preview {
-    border:1px solid var(--glass-stroke);
-    border-radius:10px; padding:10px 12px;
-    background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
-    font-size:13px; color:var(--muted);
-  }
-  .ok    { color: var(--ok); }
-  .warn  { color: var(--warn); }
-  .bad   { color: var(--bad); }
-  .row2  { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
-  @media (max-width:720px){ .row2{ grid-template-columns:1fr; } }
-
-  .mini { font-size:12px; padding:6px 9px; }
-  .ghost { background:transparent; border-color:var(--row-sep); }
-
-  .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid var(--glass-stroke); border-radius:999px; font-size:12px; color:var(--muted); background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); }
-  .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; border:1px solid var(--glass-stroke); padding:1px 6px; border-radius:6px; background:rgba(255,255,255,.06); }
-</style>
-
-<div class="tilt" data-tilt data-tilt-max="6" data-tilt-speed="500" style="margin:0 0 10px 0;">
-  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-    <h3 style="margin:0;">➕ Новый слот</h3>
-    <div class="segmented" role="tablist" aria-label="Режим создания">
+<div class="surface glass grain" id="slot-switcher">
+  <div class="form-shell__header">
+    <div>
+      <h1 class="form-shell__title">Создание слотов</h1>
+      <p class="form-shell__description">Локальная дата и время рекрутёра автоматически конвертируются в UTC.</p>
+    </div>
+    <div class="form-field__meta">
+      <span class="chip" id="now_chip" title="Текущее время в выбранном поясе">⏱️ <span id="now_text">—:—</span></span>
+    </div>
+  </div>
+  <div class="form-field__meta" role="tablist" aria-label="Режим создания">
+    <div class="segmented">
       <button id="tab-one" class="active" type="button" role="tab" aria-selected="true" aria-controls="panel-one">Один слот</button>
       <button id="tab-bulk" type="button" role="tab" aria-selected="false" aria-controls="panel-bulk">Серия</button>
     </div>
-    <span class="chip" id="now_chip" title="Текущее время в выбранном поясе">⏱️ <span id="now_text">—:—</span></span>
+    <span class="hint">Горячие клавиши: <span class="kbd">/</span> — фокус на дате, <span class="kbd">⌘/Ctrl+Enter</span> — создать.</span>
   </div>
-  <p class="hint" style="margin:6px 0 0;">Локальная дата/время рекрутёра автоматически конвертируются в UTC. Горячие клавиши: <span class="kbd">/</span> фокус на дате, <span class="kbd">⌘/Ctrl+Enter</span> — создать.</p>
 </div>
 
 {% if not recruiters %}
-  <div class="card glass tilt" data-tilt data-tilt-max="8" data-tilt-speed="450">
-    <h4 style="margin:0 0 8px 0;">Нет рекрутёров</h4>
-    <p class="muted" style="margin:0 0 10px 0;">Сначала добавьте рекрутёра, затем создайте слот.</p>
-    <p style="margin:0;"><a class="btn" href="/recruiters/new">+ Добавить рекрутёра</a></p>
+  <div class="surface glass grain alert" role="alert">
+    <h2 class="form-shell__section-title">Нет рекрутёров</h2>
+    <p class="form-shell__section-hint">Сначала добавьте рекрутёра, затем создайте слот.</p>
+    <div class="btn-group mt-sm">
+      <a class="btn btn--primary" href="/recruiters/new">+ Добавить рекрутёра</a>
+    </div>
   </div>
 {% else %}
-
-<!-- ==== ПАНЕЛЬ «ОДИН СЛОТ» ==== -->
-<section id="panel-one" class="card glass tilt" data-tilt data-tilt-max="8" data-tilt-speed="450" data-tilt-glare data-tilt-max-glare="0.18" style="margin-bottom:14px;">
-  <form method="post" action="/slots/create" autocomplete="off" id="form-one">
-    <div class="row2">
-      <div class="field">
-        <label for="recruiter_id" style="display:block; margin-bottom:6px;">Рекрутёр</label>
+  {% call forms.shell(
+    title="Один слот",
+    description="Укажите рекрутёра, дату и время — покажем UTC.",
+    form_id="form-one",
+    action="/slots/create",
+    autocomplete="off",
+    section_id="panel-one",
+    actions=[
+      {"type": "submit", "text": "Создать", "variant": "primary", "id": "btn-create-one", "disabled": true},
+      {"href": "/slots", "text": "Отмена", "variant": "ghost"}
+    ]
+  ) %}
+    {% call forms.section("Рекрутёр") %}
+      {% call forms.field("Рекрутёр", hint="Выберите, для кого создаём слот") %}
         <select id="recruiter_id" name="recruiter_id" required>
-          <option value="" disabled>— выберите рекрутёра —</option>
+          <option value="" disabled selected>— выберите рекрутёра —</option>
           {% for r in recruiters %}
             <option value="{{ r.id }}" data-tz="{{ r.tz or 'Europe/Moscow' }}">{{ r.name }} ({{ r.tz or "Europe/Moscow" }})</option>
           {% endfor %}
         </select>
-        <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
-          <div class="hint" id="tz_one_hint">TZ рекрутёра: —</div>
-          <span class="chip" id="offset_chip" title="Смещение от UTC">GMT <span id="offset_text">±0</span></span>
-        </div>
+      {% endcall %}
+      <div class="form-field__meta">
+        <div class="hint" id="tz_one_hint">TZ рекрутёра: —</div>
+        <span class="chip" id="offset_chip" title="Смещение от UTC">GMT <span id="offset_text">±0</span></span>
       </div>
+    {% endcall %}
 
-      <div class="row2">
-        <div class="field">
-          <label for="date" style="display:block; margin-bottom:6px;">Дата (локальная)</label>
+    {% call forms.section("Дата и время") %}
+      <div class="form-shell__grid form-shell__grid--two">
+        {% call forms.field("Дата (локальная)") %}
           <input id="date" type="date" name="date" required>
-          <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
-            <button class="btn mini ghost" type="button" data-quick="today">Сегодня</button>
-            <button class="btn mini ghost" type="button" data-quick="tomorrow">Завтра</button>
+          <div class="btn-group">
+            <button class="btn btn--ghost btn--sm" type="button" data-quick="today">Сегодня</button>
+            <button class="btn btn--ghost btn--sm" type="button" data-quick="tomorrow">Завтра</button>
           </div>
-        </div>
-        <div class="field">
-          <label for="time" style="display:block; margin-bottom:6px;">Время (локальное)</label>
+        {% endcall %}
+        {% call forms.field("Время (локальное)") %}
           <input id="time" type="time" name="time" required>
-          <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
-            <button class="btn mini ghost" type="button" data-time="next30">+30 мин</button>
-            <button class="btn mini ghost" type="button" data-time="next60">+1 час</button>
-            <button class="btn mini ghost" type="button" data-time="13:00">13:00</button>
-            <button class="btn mini ghost" type="button" data-time="15:00">15:00</button>
+          <div class="btn-group">
+            <button class="btn btn--ghost btn--sm" type="button" data-time="next30">+30 мин</button>
+            <button class="btn btn--ghost btn--sm" type="button" data-time="next60">+1 час</button>
+            <button class="btn btn--ghost btn--sm" type="button" data-time="13:00">13:00</button>
+            <button class="btn btn--ghost btn--sm" type="button" data-time="15:00">15:00</button>
           </div>
-        </div>
+        {% endcall %}
       </div>
-    </div>
+    {% endcall %}
 
-    <div class="preview" id="preview-one" aria-live="polite" style="margin-top:10px;">
+    <div class="preview-panel" id="preview-one" aria-live="polite">
       <b>Превью</b><br>
       Укажите рекрутёра, дату и время — покажем UTC.
     </div>
+  {% endcall %}
 
-    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
-      <button id="btn-create-one" type="submit" disabled>Создать</button>
-      <a class="btn" href="/slots">Отмена</a>
-    </div>
-  </form>
-</section>
+  {% call forms.shell(
+    title="Серия слотов",
+    description="Создаст слоты каждый будний день с 10:00 до 16:00, перерыв 12:00–13:00, шаг 30 минут. Дубликаты пропускаются.",
+    form_id="form-bulk",
+    action="/slots/bulk_create",
+    autocomplete="off",
+    section_id="panel-bulk",
+    hidden=True,
+    actions=[
+      {"type": "submit", "text": "Создать слоты пакетом", "variant": "primary", "id": "btn-create-bulk", "disabled": true},
+      {"href": "/slots", "text": "Отмена", "variant": "ghost"}
+    ]
+  ) %}
+    {% call forms.section("Рекрутёр") %}
+      {% call forms.field("Рекрутёр", hint="Слоты будут созданы в его часовом поясе") %}
+        <select id="recruiter_id_bulk" name="recruiter_id" required>
+          <option value="" disabled selected>— выберите рекрутёра —</option>
+          {% for r in recruiters %}
+            <option value="{{ r.id }}" data-tz="{{ r.tz or 'Europe/Moscow' }}">{{ r.name }} ({{ r.tz or "Europe/Moscow" }})</option>
+          {% endfor %}
+        </select>
+      {% endcall %}
+      <div class="hint" id="tz_bulk_hint">TZ рекрутёра: —</div>
+    {% endcall %}
 
-<!-- ==== ПАНЕЛЬ «СЕРИЯ» ==== -->
-<section id="panel-bulk" class="card glass tilt" data-tilt data-tilt-max="8" data-tilt-speed="450" data-tilt-glare data-tilt-max-glare="0.18" hidden>
-  <form method="post" action="/slots/bulk_create" autocomplete="off" id="form-bulk">
-    <p class="hint" style="margin:0 0 6px;">Создаст слоты каждый будний день с 10:00 до 16:00, перерыв 12:00–13:00, шаг 30 минут. Дубликаты пропускаются.</p>
-
-    <div class="field" style="margin-bottom:8px;">
-      <label for="recruiter_id_bulk" style="display:block; margin-bottom:6px;">Рекрутёр</label>
-      <select id="recruiter_id_bulk" name="recruiter_id" required>
-        <option value="" disabled>— выберите рекрутёра —</option>
-        {% for r in recruiters %}
-          <option value="{{ r.id }}" data-tz="{{ r.tz or 'Europe/Moscow' }}">{{ r.name }} ({{ r.tz or "Europe/Moscow" }})</option>
-        {% endfor %}
-      </select>
-      <div class="hint" id="tz_bulk_hint" style="margin-top:6px;">TZ рекрутёра: —</div>
-    </div>
-
-    <div class="row2">
-      <div class="field">
-        <label for="start_date" style="display:block; margin-bottom:6px;">Дата начала</label>
-        <input id="start_date" type="date" name="start_date" required>
+    {% call forms.section("Период") %}
+      <div class="form-shell__grid form-shell__grid--two">
+        {% call forms.field("Дата начала") %}
+          <input id="start_date" type="date" name="start_date" required>
+        {% endcall %}
+        {% call forms.field("Дата окончания") %}
+          <input id="end_date" type="date" name="end_date" required>
+        {% endcall %}
       </div>
-      <div class="field">
-        <label for="end_date" style="display:block; margin-bottom:6px;">Дата окончания</label>
-        <input id="end_date" type="date" name="end_date" required>
+      <div class="form-field__meta">
+        <label class="badge" for="include_weekends">
+          <input type="checkbox" id="include_weekends"> Включать выходные
+        </label>
+        <label class="badge" for="use_break">
+          <input type="checkbox" id="use_break" checked> Учитывать перерыв 12:00–13:00
+        </label>
       </div>
-    </div>
+    {% endcall %}
 
-    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:8px;">
-      <label class="badge" style="cursor:pointer;">
-        <input type="checkbox" id="include_weekends"> Включать выходные
-      </label>
-      <label class="badge" style="cursor:pointer;">
-        <input type="checkbox" id="use_break" checked> Учитывать перерыв 12:00–13:00
-      </label>
-    </div>
-
-    <!-- фиксированные по умолчанию + возможность поправить в «Расширенных» -->
     <input type="hidden" name="start_time" id="bulk_start_time" value="10:00">
     <input type="hidden" name="end_time"   id="bulk_end_time"   value="16:00">
     <input type="hidden" name="break_start" id="bulk_break_start" value="12:00">
     <input type="hidden" name="break_end"   id="bulk_break_end"   value="13:00">
     <input type="hidden" name="step_min"    id="bulk_step"        value="30">
 
-    <details style="margin-top:8px;">
-      <summary class="hint" style="cursor:pointer;">Расширенные настройки</summary>
-      <div class="row2" style="margin-top:8px;">
-        <div class="field">
-          <label>Окно (с)</label>
+    <details class="form-advanced mt-md">
+      <summary class="hint">Расширенные настройки</summary>
+      <div class="form-shell__grid form-shell__grid--two mt-sm">
+        {% call forms.field("Окно (с)") %}
           <input type="time" id="adv_start_time" value="10:00">
-        </div>
-        <div class="field">
-          <label>Окно (до)</label>
+        {% endcall %}
+        {% call forms.field("Окно (до)") %}
           <input type="time" id="adv_end_time" value="16:00">
-        </div>
+        {% endcall %}
       </div>
-      <div class="row2" style="margin-top:8px;">
-        <div class="field">
-          <label>Перерыв (с)</label>
+      <div class="form-shell__grid form-shell__grid--two mt-sm">
+        {% call forms.field("Перерыв (с)") %}
           <input type="time" id="adv_break_start" value="12:00" disabled>
-        </div>
-        <div class="field">
-          <label>Перерыв (до)</label>
+        {% endcall %}
+        {% call forms.field("Перерыв (до)") %}
           <input type="time" id="adv_break_end" value="13:00" disabled>
-        </div>
+        {% endcall %}
       </div>
-      <div class="field" style="margin-top:8px; max-width:220px;">
-        <label>Шаг (мин)</label>
+      {% call forms.field("Шаг (мин)") %}
         <input type="number" id="adv_step" min="5" step="5" value="30">
-      </div>
-      <div class="hint" style="margin-top:6px;">Изменения сразу применяются к создаваемой серии.</div>
+      {% endcall %}
+      <div class="hint">Изменения сразу применяются к создаваемой серии.</div>
     </details>
 
-    <div class="preview" id="preview-bulk" aria-live="polite" style="margin-top:10px;">
+    <div class="preview-panel" id="preview-bulk" aria-live="polite">
       <b>Превью</b><br>
       Выберите период — посчитаем примерное количество слотов (только будни).
     </div>
-
-    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
-      <button id="btn-create-bulk" type="submit" disabled>Создать слоты пакетом</button>
-      <a class="btn" href="/slots">Отмена</a>
-    </div>
-  </form>
-</section>
-
+  {% endcall %}
 {% endif %}
 
 {% raw %}
@@ -201,7 +171,6 @@
   const $ = (s, r=document)=>r.querySelector(s);
   const $$= (s, r=document)=>Array.from(r.querySelectorAll(s));
 
-  // persist helpers
   const LS = {
     tab: 'slots_new.tab',
     recOne: 'slots_new.recOne',
@@ -210,7 +179,6 @@
     time: 'slots_new.time'
   };
 
-  // --- Tabs + persistence
   const tabOne = $('#tab-one'), tabBulk = $('#tab-bulk');
   const panelOne = $('#panel-one'), panelBulk = $('#panel-bulk');
 
@@ -231,12 +199,10 @@
   tabBulk?.addEventListener('click', ()=>activate('bulk'));
   activate(localStorage.getItem(LS.tab) || 'one');
 
-  // --- Helpers
   const fmt2 = (n)=> String(n).padStart(2,'0');
   function parseISODate(s){ try{ return s ? new Date(s+'T00:00:00') : null; }catch{ return null; } }
   function parseTime(s){ if(!s) return null; const [h,m] = s.split(':').map(x=>parseInt(x,10)); if(isNaN(h)||isNaN(m)) return null; return {h,m}; }
 
-  // offset label like GMT+3
   function getOffsetLabel(tz, d){
     try {
       const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour:'2-digit', minute:'2-digit', timeZoneName:'shortOffset' }).formatToParts(d);
@@ -268,14 +234,12 @@
   function fmtHuman(d){ if(!d) return '—'; return `${fmt2(d.getDate())}.${fmt2(d.getMonth()+1)} ${fmt2(d.getHours())}:${fmt2(d.getMinutes())}`; }
   function toISOZ(d){ if(!d) return ''; const s = d.toISOString(); return s.replace('.000',''); }
 
-  // Now chip updater (top bar)
   const nowChip = $('#now_text');
   function updateNowChip(){
     const tz = currentTZ($('#recruiter_id')) || 'Europe/Moscow';
     nowChip.textContent = tzNowText(tz);
   }
 
-  // --- One slot: live preview
   const selOne = $('#recruiter_id');
   const dateOne= $('#date');
   const timeOne= $('#time');
@@ -314,7 +278,6 @@
     const local = new Date(localIso);
     const utc   = toUTCDate(localIso, tz);
 
-    // past/future flag relative to recruiter TZ now
     let note = '';
     try {
       const nowTZ = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
@@ -328,13 +291,11 @@
        <br>UTC: <span class="ok">${fmtHuman(utc)}</span>
        <br><span class="hint">ISO (UTC): <code>${isoZ}</code></span>`;
 
-    // persist
     localStorage.setItem(LS.recOne, selOne.value || '');
     localStorage.setItem(LS.date, d);
     localStorage.setItem(LS.time, t);
   }
 
-  // quick date
   $$('#form-one [data-quick]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const now = new Date();
@@ -343,7 +304,7 @@
       updateOne();
     });
   });
-  // quick time
+
   $$('#form-one [data-time]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const kind = btn.getAttribute('data-time');
@@ -353,7 +314,6 @@
       if (kind==='next30') base = new Date(base.getTime() + 30*60000);
       else if (kind==='next60') base = new Date(base.getTime() + 60*60000);
       else if (/^\d{2}:\d{2}$/.test(kind)){
-        // set exact time on current date
         if (!dateOne.value){
           const now = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
           dateOne.value = `${now.getFullYear()}-${fmt2(now.getMonth()+1)}-${fmt2(now.getDate())}`;
@@ -369,7 +329,6 @@
     });
   });
 
-  // snap on blur to :00/:30
   timeOne?.addEventListener('blur', ()=>{
     const t = parseTime(timeOne.value); if(!t) return;
     const s = snapToHalfHour(t.h, t.m);
@@ -380,7 +339,6 @@
   dateOne?.addEventListener('input', updateOne);
   timeOne?.addEventListener('input', updateOne);
 
-  // restore persisted
   (function restoreOne(){
     const r = localStorage.getItem(LS.recOne); if (r) selOne.value = r;
     const d = localStorage.getItem(LS.date);   if (d) dateOne.value = d;
@@ -388,7 +346,6 @@
     updateOne();
   })();
 
-  // --- Bulk: live summary
   const selBulk = $('#recruiter_id_bulk');
   const tzBulk  = $('#tz_bulk_hint');
   const sd = $('#start_date'), ed = $('#end_date');
@@ -397,7 +354,6 @@
   const includeWeekends = $('#include_weekends');
   const useBreak = $('#use_break');
 
-  // advanced bindings -> hidden
   const adv = {
     start:  $('#adv_start_time'),
     end:    $('#adv_end_time'),
@@ -426,10 +382,9 @@
   });
 
   function weekdaysBetween(a,b, includeWkd){
-    // a,b inclusive
     let d = new Date(a), cnt = 0;
     while (d <= b){
-      const w = d.getDay(); // 0..6, 0=Sun
+      const w = d.getDay();
       if (includeWkd || (w>=1 && w<=5)) cnt++;
       d.setDate(d.getDate()+1);
     }
@@ -501,13 +456,10 @@
   sd?.addEventListener('input', ()=>{ if(!ed.value) ed.value = sd.value; updateBulk(); });
   ed?.addEventListener('input', updateBulk);
 
-  // restore bulk recruiter
   (function restoreBulk(){ const r = localStorage.getItem(LS.recBulk); if(r) selBulk.value = r; updateBulk(); })();
 
-  // update top now chip each minute
   updateNowChip(); setInterval(updateNowChip, 60000);
 
-  // Cmd/Ctrl + Enter to submit active form
   window.addEventListener('keydown', (e)=>{
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase()==='enter'){
       const activeTab = localStorage.getItem(LS.tab) || 'one';
@@ -521,5 +473,4 @@
 })();
 </script>
 {% endraw %}
-
 {% endblock %}

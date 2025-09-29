@@ -1,35 +1,40 @@
 {% extends "base.html" %}
+{% import "partials/form_shell.html" as forms %}
 {% block title %}Шаблон #{{ tmpl.id }}{% endblock %}
 {% block content %}
-<h3 style="margin-top:0;">Редактирование шаблона <span class="badge">#{{ tmpl.id }}</span></h3>
+{% call forms.shell(
+  title="Редактирование шаблона",
+  description="Обновите текст и назначение шаблона.",
+  form_id="tmplForm",
+  action="/templates/{{ tmpl.id }}/update",
+  autocomplete="off",
+  back_href="/templates",
+  back_label="К списку шаблонов",
+  meta=['ID #' ~ tmpl.id, 'Ключ ' ~ tmpl.key],
+  actions=[
+    {"type": "submit", "text": "Сохранить", "variant": "primary"},
+    {"href": "/templates", "text": "Отмена", "variant": "ghost"}
+  ]
+) %}
+  {% call forms.section("Назначение") %}
+    {% call forms.field("Глобальный шаблон", hint="Если включено — используется по умолчанию для всех городов") %}
+      <label class="badge">
+        <input type="checkbox" id="is_global" name="is_global" value="1" {% if tmpl.is_global or (tmpl.city_id is none) %}checked{% endif %}>
+        Глобальный (без привязки к городу)
+      </label>
+    {% endcall %}
 
-<div class="card glass tilt" data-tilt data-tilt-max="6" data-tilt-speed="400" data-tilt-glare data-tilt-max-glare="0.15">
-  <form method="post" action="/templates/{{ tmpl.id }}/update" autocomplete="off" id="tmplForm">
-    <!-- Тип шаблона -->
-    <div class="field" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-      <input type="checkbox" id="is_global" name="is_global" value="1"
-             {% if tmpl.is_global or (tmpl.city_id is none) %}checked{% endif %}>
-      <label for="is_global" style="margin:0;">Глобальный шаблон (без привязки к городу)</label>
-      <span class="badge">Если включено — используется по умолчанию для всех городов</span>
-    </div>
-
-    <!-- Привязка к городу -->
-    <div class="field">
-      <label for="city_id">Город</label>
-      <select id="city_id" name="city_id" {% if tmpl.is_global or (tmpl.city_id is none) %}disabled{% endif %} {% if not (tmpl.is_global or (tmpl.city_id is none)) %}required{% endif %}>
+    {% call forms.field("Город") %}
+      <select id="city_id" name="city_id" {% if tmpl.is_global or (tmpl.city_id is none) %}disabled{% else %}required{% endif %}>
         {% for c in cities %}
-          <option value="{{ c.id }}" {% if c.id == tmpl.city_id %}selected{% endif %}>
-            {{ c.name }} ({{ c.tz or "Europe/Moscow" }})
-          </option>
+          <option value="{{ c.id }}" {% if c.id == tmpl.city_id %}selected{% endif %}>{{ c.name }} ({{ c.tz or "Europe/Moscow" }})</option>
         {% endfor %}
       </select>
-    </div>
+      <span class="form-field__hint">Для глобального шаблона город не нужен.</span>
+    {% endcall %}
 
-    <!-- Ключ -->
-    <div class="field" style="margin-top:12px;">
-      <label for="key">Ключ</label>
-      <input id="key" type="text" name="key" required value="{{ tmpl.key }}"
-             placeholder="например: intro, confirm_2h, reminder_1h" list="key_suggestions">
+    {% call forms.field("Ключ", hint="Ключ используют бот и админка для поиска нужного сообщения") %}
+      <input id="key" type="text" name="key" required value="{{ tmpl.key }}" placeholder="например: intro, confirm_2h, reminder_1h" list="key_suggestions">
       <datalist id="key_suggestions">
         <option value="invite_interview"></option>
         <option value="confirm_2h"></option>
@@ -38,155 +43,95 @@
         <option value="followup_missed"></option>
         <option value="slot_rejected"></option>
       </datalist>
-      <p class="muted" style="margin:6px 0 0;">Ключ используют бот и админка для поиска нужного сообщения.</p>
-    </div>
+    {% endcall %}
+  {% endcall %}
 
-    <!-- Быстрые плейсхолдеры -->
-    <div class="field" style="margin-top:10px;">
-      <div class="muted" style="margin-bottom:6px;">Вставить плейсхолдер:</div>
-      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+  {% call forms.section("Содержимое сообщения") %}
+    <div class="hint">Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.</div>
+    {% call forms.field("Текст") %}
+      <textarea id="text" name="text" rows="14" required class="mt-sm text-mono">{{ tmpl.text_field }}</textarea>
+      <div class="hint mt-sm">Вставить плейсхолдер:</div>
+      <div class="btn-group">
         {% raw %}
-        <button class="btn ph" type="button" data-ph="{{candidate_fio}}">{{candidate_fio}}</button>
-        <button class="btn ph" type="button" data-ph="{{city_name}}">{{city_name}}</button>
-        <button class="btn ph" type="button" data-ph="{{slot_date_local}}">{{slot_date_local}}</button>
-        <button class="btn ph" type="button" data-ph="{{slot_time_local}}">{{slot_time_local}}</button>
-        <button class="btn ph" type="button" data-ph="{{recruiter_name}}">{{recruiter_name}}</button>
-        <button class="btn ph" type="button" data-ph="{{recruiter_phone}}">{{recruiter_phone}}</button>
-        <button class="btn ph" type="button" data-ph="{{address}}">{{address}}</button>
-        <button class="btn ph" type="button" data-ph="{{whatsapp_link}}">{{whatsapp_link}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{candidate_fio}}">{{candidate_fio}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{city_name}}">{{city_name}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{slot_date_local}}">{{slot_date_local}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{slot_time_local}}">{{slot_time_local}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{recruiter_name}}">{{recruiter_name}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{recruiter_phone}}">{{recruiter_phone}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{address}}">{{address}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
         {% endraw %}
       </div>
-    </div>
-
-    <!-- Текст шаблона -->
-    <div class="field" style="margin-top:12px;">
-      <label for="text">Текст шаблона</label>
-      <textarea id="text" name="text" rows="14" required
-                style="width:100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">{{ tmpl.text_field }}</textarea>
-      <p class="muted" style="margin:6px 0 0;">
-        Поддерживаются плейсхолдеры:
-        {% raw %}
-        <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{recruiter_phone}}</code>, <code>{{address}}</code>, <code>{{whatsapp_link}}</code>
-        {% endraw %}
-      </p>
-      <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
-        <span class="badge"><span id="char_count">0</span> символов</span>
-        <span class="muted">Предпросмотр ниже. ⌘/Ctrl+S — сохранить.</span>
+      <div class="form-field__meta mt-sm">
+        <span class="badge" data-overflow="false"><span id="char_count">0</span> символов</span>
+        <span class="hint">Предпросмотр ниже. ⌘/Ctrl+S — сохранить.</span>
       </div>
-    </div>
+    {% endcall %}
 
-    <!-- Предпросмотр + подстановка тестовых значений -->
-    <details style="margin-top:2px;">
-      <summary class="badge" style="cursor:pointer;">Предпросмотр</summary>
-      <div class="glass" style="padding:12px; margin-top:8px;">
-        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-bottom:8px;">
-          <div><label class="muted">Имя</label><input id="pv_fio" type="text" value="Иван Иванов"></div>
-          <div><label class="muted">Город</label><input id="pv_city" type="text" value="Москва"></div>
-          <div><label class="muted">Дата</label><input id="pv_date" type="text" value="21.09"></div>
-          <div><label class="muted">Время</label><input id="pv_time" type="text" value="10:30"></div>
-          <div><label class="muted">Рекрутёр</label><input id="pv_rec" type="text" value="Михаил"></div>
-          <div><label class="muted">Телефон</label><input id="pv_phone" type="text" value="+7 (900) 000-00-00"></div>
-          <div><label class="muted">Адрес</label><input id="pv_addr" type="text" value="ул. Пушкина, 10"></div>
-          <div><label class="muted">WhatsApp</label><input id="pv_wa" type="text" value="https://wa.me/79000000000"></div>
-        </div>
-        <div id="preview" style="white-space:pre-wrap; overflow-wrap:anywhere;"></div>
+    <details class="form-advanced mt-md">
+      <summary class="hint">Предпросмотр</summary>
+      <div class="form-shell__grid form-shell__grid--three mt-sm">
+        <label class="form-field">
+          <span class="form-field__label">Имя</span>
+          <input id="pv_fio" type="text" value="Иван Иванов">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Город</span>
+          <input id="pv_city" type="text" value="Москва">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Дата</span>
+          <input id="pv_date" type="text" value="21.09">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Время</span>
+          <input id="pv_time" type="text" value="10:30">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Рекрутёр</span>
+          <input id="pv_rec" type="text" value="Михаил">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Телефон</span>
+          <input id="pv_phone" type="text" value="+7 (900) 000-00-00">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Адрес</span>
+          <input id="pv_addr" type="text" value="ул. Пушкина, 10">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">WhatsApp</span>
+          <input id="pv_wa" type="text" value="https://wa.me/79000000000">
+        </label>
       </div>
+      <div id="preview" class="preview-panel mt-sm" aria-live="polite"></div>
     </details>
+  {% endcall %}
+{% endcall %}
 
-    <!-- Кнопки -->
-    <div style="margin-top:16px; display:flex; gap:8px; align-items:center;">
-      <button type="submit">💾 Сохранить</button>
-      <a class="btn" href="/templates">Отмена</a>
-    </div>
+<div class="surface glass grain alert alert--danger mt-md">
+  <h2 class="form-shell__section-title">Опасная зона</h2>
+  <p class="form-shell__section-hint">Удаление шаблона безвозвратно.</p>
+  <form method="post" action="/templates/{{ tmpl.id }}/delete" onsubmit="return confirm('Удалить шаблон безвозвратно?');" class="mt-sm">
+    <button type="submit" class="btn btn--danger">Удалить шаблон</button>
   </form>
 </div>
 
-<div class="card glass" style="margin-top:14px;">
-  <h4 style="margin:0 0 8px 0;">Опасная зона</h4>
-  <form method="post" action="/templates/{{ tmpl.id }}/delete" onsubmit="return confirm('Удалить шаблон безвозвратно?');">
-    <button type="submit" style="border-color: var(--bad); color: var(--bad);">Удалить шаблон</button>
-  </form>
-</div>
+<script type="module">
+import { initTemplateEditor } from "/static/js/modules/template-editor.js";
 
-<script>
-(function(){
-  // Тоггл "Глобальный" ↔ город
-  const chk = document.getElementById('is_global');
-  const sel = document.getElementById('city_id');
-  function syncCityState() {
-    const g = chk && chk.checked;
-    if (!sel) return;
-    sel.disabled = g;
-    if (g) sel.removeAttribute('required');
-    else sel.setAttribute('required', '');
-  }
-  chk && chk.addEventListener('change', syncCityState);
-  syncCityState();
-
-  // Вставка плейсхолдера по клику
-  function insertAtCursor(input, text) {
-    const start = input.selectionStart ?? input.value.length;
-    const end = input.selectionEnd ?? input.value.length;
-    const before = input.value.slice(0, start);
-    const after  = input.value.slice(end);
-    input.value = before + text + after;
-    const pos = start + text.length;
-    input.selectionStart = input.selectionEnd = pos;
-    input.focus();
-    input.dispatchEvent(new Event('input', {bubbles:true}));
-  }
-  const ta = document.getElementById('text');
-  document.querySelectorAll('.btn.ph').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (!ta) return;
-      insertAtCursor(ta, btn.getAttribute('data-ph') || '');
-    });
-  });
-
-  // Лёгкий предпросмотр и счётчик
-  const cnt = document.getElementById('char_count');
-  const prev = document.getElementById('preview');
-  const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
-  function renderPreview() {
-    if (!ta || !prev) return;
-    let tpl = ta.value || '';
-    const map = {
-      '{{candidate_fio}}': document.getElementById('pv_fio')?.value || '',
-      '{{city_name}}': document.getElementById('pv_city')?.value || '',
-      '{{slot_date_local}}': document.getElementById('pv_date')?.value || '',
-      '{{slot_time_local}}': document.getElementById('pv_time')?.value || '',
-      '{{recruiter_name}}': document.getElementById('pv_rec')?.value || '',
-      '{{recruiter_phone}}': document.getElementById('pv_phone')?.value || '',
-      '{{address}}': document.getElementById('pv_addr')?.value || '',
-      '{{whatsapp_link}}': document.getElementById('pv_wa')?.value || '',
-    };
-    for (const k in map) {
-      const val = map[k];
-      tpl = tpl.split(k).join(val);
-    }
-    prev.innerHTML = esc(tpl).replace(/\n/g,'<br>');
-  }
-
-  function updateMeta() {
-    cnt && (cnt.textContent = String(ta.value.length));
-    renderPreview();
-  }
-
-  ta && ta.addEventListener('input', updateMeta);
-  ['pv_fio','pv_city','pv_date','pv_time','pv_rec','pv_phone','pv_addr','pv_wa']
-    .forEach(id => document.getElementById(id)?.addEventListener('input', renderPreview));
-
-  updateMeta();
-
-  // Ctrl/Cmd+S -> submit
-  const form = document.getElementById('tmplForm');
-  window.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      form?.requestSubmit();
-    }
-  });
-})();
+initTemplateEditor({
+  formId: 'tmplForm',
+  textareaId: 'text',
+  counterId: 'char_count',
+  previewId: 'preview',
+  placeholderSelector: '[data-role="insert-var"]',
+  keyInputId: 'key',
+  isGlobalCheckboxId: 'is_global',
+  citySelectId: 'city_id',
+  charLimit: 4096,
+  submitHotkey: { key: 's', ctrlOrMeta: true }
+});
 </script>
 {% endblock %}

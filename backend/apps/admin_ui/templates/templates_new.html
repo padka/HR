@@ -1,55 +1,47 @@
 {% extends "base.html" %}
+{% import "partials/form_shell.html" as forms %}
 {% block title %}Новый шаблон{% endblock %}
 {% block content %}
-<h3 style="margin:0 0 12px 0;">Новый шаблон</h3>
-
-<form id="tmplForm" method="post" action="/templates/create" autocomplete="off">
-  <div class="glass tilt" style="padding:16px; max-width:860px; margin:0;">
-    {% set has_cities = (cities|length) > 0 %}
-
-    <!-- Тип шаблона -->
-    <div class="field" style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
-      <label style="margin-right:8px;">Тип:</label>
-      <label class="badge" style="cursor:pointer; display:flex; align-items:center; gap:6px;">
-        <input
-          id="is_global"
-          name="is_global"
-          type="checkbox"
-          {% if not has_cities %}checked disabled{% endif %}
-        >
+{% set has_cities = (cities|length) > 0 %}
+{% call forms.shell(
+  title="Новый шаблон",
+  description="Создайте сообщение для коммуникации с кандидатами.",
+  form_id="tmplForm",
+  action="/templates/create",
+  autocomplete="off",
+  actions=[
+    {"type": "submit", "text": "Создать", "variant": "primary"},
+    {"href": "/templates", "text": "Отмена", "variant": "ghost"}
+  ]
+) %}
+  {% call forms.section("Назначение") %}
+    <div class="form-field__meta">
+      <label class="badge" for="is_global">
+        <input id="is_global" name="is_global" type="checkbox" {% if not has_cities %}checked disabled{% endif %}>
         Глобальный (без города)
       </label>
-      <span class="muted">— используем для общих сообщений до назначения города</span>
+      <span class="hint">Используется до выбора города кандидатом.</span>
     </div>
-
     {% if not has_cities %}
-      <div class="badge" style="margin:6px 0 0;">
-        Городов пока нет: можно создать только <b>глобальные</b> шаблоны. Добавить города: «Города → +».
-      </div>
+      <div class="alert mt-sm">Городов пока нет: можно создать только <strong>глобальные</strong> шаблоны. Добавьте города в разделе «Города».</div>
     {% endif %}
-
-    <!-- Город (для городских шаблонов) -->
-    <div class="field" style="margin-top:10px;">
-      <label for="city_id">Город</label>
-      <div style="display:flex; gap:8px; align-items:center;">
+    {% call forms.field("Город") %}
+      <div class="form-shell__grid form-shell__grid--two">
         <select id="city_id" name="city_id" {% if not has_cities %}disabled{% else %}required{% endif %}>
           <option value="" selected disabled>— выберите город —</option>
           {% for c in cities %}
             <option value="{{ c.id }}">{{ c.name }} ({{ c.tz or "Europe/Moscow" }})</option>
           {% endfor %}
         </select>
-        <input id="city_filter" type="text" placeholder="Поиск по городам…" style="min-width:200px;" {% if not has_cities %}disabled{% endif %}>
+        <input id="city_filter" type="text" placeholder="Поиск по городам…" {% if not has_cities %}disabled{% endif %}>
       </div>
-      <p class="muted" id="city_hint" style="margin:6px 0 0;">
-        Для глобального шаблона город не требуется — включите переключатель «Глобальный».
-      </p>
-    </div>
-
+      <span class="form-field__hint" id="city_hint">Для глобального шаблона город не требуется — включите переключатель «Глобальный».</span>
+    {% endcall %}
     <input id="key" type="hidden" name="key" value="">
+  {% endcall %}
 
-    <!-- Пресеты текста -->
-    <div class="field" style="margin-top:12px;">
-      <label for="preset">Быстрый шаблон</label>
+  {% call forms.section("Содержимое сообщения") %}
+    {% call forms.field("Быстрый шаблон", hint="Выберите пресет — текст можно отредактировать") %}
       <select id="preset">
         <option value="">— не выбирать пресет —</option>
         <option value="invite_interview">Приглашение на интервью</option>
@@ -60,266 +52,88 @@
         <option value="slot_rejected">Слот отклонён (выбрать заново)</option>
         <option value="city_welcome">Приветствие по городу</option>
       </select>
-      <p class="muted" style="margin:6px 0 0;">Пресет заполнит «Текст». Текст можно редактировать.</p>
-    </div>
+    {% endcall %}
 
-    <!-- Текст -->
-    <div class="field" style="margin-top:12px;">
-      <label for="text">Текст</label>
-      <textarea id="text" name="text" rows="14" required placeholder="Текст сообщения. Поддерживаются переносы строк." style="width:100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;"></textarea>
-
-      <!-- Плейсхолдеры -->
-      <div class="muted" style="margin:8px 0 6px;">Доступные плейсхолдеры (клик вставит в курсор):</div>
-      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    {% call forms.field("Текст", hint="Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.") %}
+      <textarea id="text" name="text" rows="14" required placeholder="Текст сообщения. Поддерживаются переносы строк." class="mt-sm text-mono"></textarea>
+      <div class="hint mt-sm">Доступные плейсхолдеры (клик вставит в текст):</div>
+      <div class="btn-group">
         {% raw %}
-        <button type="button" class="btn" data-insert="{{candidate_fio}}" data-role="insert-var">{{candidate_fio}}</button>
-        <button type="button" class="btn" data-insert="{{city_name}}" data-role="insert-var">{{city_name}}</button>
-        <button type="button" class="btn" data-insert="{{slot_date_local}}" data-role="insert-var">{{slot_date_local}}</button>
-        <button type="button" class="btn" data-insert="{{slot_time_local}}" data-role="insert-var">{{slot_time_local}}</button>
-        <button type="button" class="btn" data-insert="{{recruiter_name}}" data-role="insert-var">{{recruiter_name}}</button>
-        <button type="button" class="btn" data-insert="{{recruiter_phone}}" data-role="insert-var">{{recruiter_phone}}</button>
-        <button type="button" class="btn" data-insert="{{address}}" data-role="insert-var">{{address}}</button>
-        <button type="button" class="btn" data-insert="{{whatsapp_link}}" data-role="insert-var">{{whatsapp_link}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{candidate_fio}}">{{candidate_fio}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{city_name}}">{{city_name}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{slot_date_local}}">{{slot_date_local}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{slot_time_local}}">{{slot_time_local}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{recruiter_name}}">{{recruiter_name}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{recruiter_phone}}">{{recruiter_phone}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{address}}">{{address}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
         {% endraw %}
       </div>
-
-      <!-- Счётчик / лимит -->
-      <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
-        <span class="badge"><span id="char_count">0</span> / 4096</span>
-        <span class="muted">Telegram лимит ≈ 4096 символов. ⌘/Ctrl+S — сохранить.</span>
+      <div class="form-field__meta mt-sm">
+        <span class="badge" data-overflow="false"><span id="char_count">0</span> / 4096</span>
+        <span class="hint">Telegram ограничивает сообщения ≈ 4096 символами.</span>
       </div>
-    </div>
+    {% endcall %}
 
-    <!-- Предпросмотр + подстановка тестовых значений -->
-    <details style="margin-top:10px;">
-      <summary class="badge" style="cursor:pointer;">Предпросмотр</summary>
-      <div class="glass" style="padding:12px; margin-top:8px;">
-        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-bottom:8px;">
-          <div><label class="muted">Имя</label><input id="pv_fio" type="text" value="Иван Иванов"></div>
-          <div><label class="muted">Город</label><input id="pv_city" type="text" value="Москва"></div>
-          <div><label class="muted">Дата</label><input id="pv_date" type="text" value="21.09"></div>
-          <div><label class="muted">Время</label><input id="pv_time" type="text" value="10:30"></div>
-          <div><label class="muted">Рекрутёр</label><input id="pv_rec" type="text" value="Михаил"></div>
-          <div><label class="muted">Телефон</label><input id="pv_phone" type="text" value="+7 (900) 000-00-00"></div>
-          <div><label class="muted">Адрес</label><input id="pv_addr" type="text" value="ул. Пушкина, 10"></div>
-          <div><label class="muted">WhatsApp</label><input id="pv_wa" type="text" value="https://wa.me/79000000000"></div>
-        </div>
-        <div id="preview" style="white-space:pre-wrap; overflow-wrap:anywhere;"></div>
+    <details class="form-advanced mt-md">
+      <summary class="hint">Предпросмотр</summary>
+      <div class="form-shell__grid form-shell__grid--three mt-sm">
+        <label class="form-field">
+          <span class="form-field__label">Имя</span>
+          <input id="pv_fio" type="text" value="Иван Иванов">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Город</span>
+          <input id="pv_city" type="text" value="Москва">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Дата</span>
+          <input id="pv_date" type="text" value="21.09">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Время</span>
+          <input id="pv_time" type="text" value="10:30">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Рекрутёр</span>
+          <input id="pv_rec" type="text" value="Михаил">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Телефон</span>
+          <input id="pv_phone" type="text" value="+7 (900) 000-00-00">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">Адрес</span>
+          <input id="pv_addr" type="text" value="ул. Пушкина, 10">
+        </label>
+        <label class="form-field">
+          <span class="form-field__label">WhatsApp</span>
+          <input id="pv_wa" type="text" value="https://wa.me/79000000000">
+        </label>
       </div>
+      <div id="preview" class="preview-panel mt-sm" aria-live="polite"></div>
     </details>
+  {% endcall %}
+{% endcall %}
 
-    <!-- Действия -->
-    <div style="display:flex; gap:10px; margin-top:14px;">
-      <button type="submit">Создать</button>
-      <a class="btn" href="/templates">Отмена</a>
-    </div>
-  </div>
-</form>
+<script type="module">
+import { initTemplateEditor } from "/static/js/modules/template-editor.js";
+import { TEMPLATE_PRESETS } from "/static/js/modules/template-presets.js";
 
-<script>
-(function(){
-  const form   = document.getElementById('tmplForm');
-  const isGlob = document.getElementById('is_global');
-  const citySel= document.getElementById('city_id');
-  const cityFilter = document.getElementById('city_filter');
-  const keyInp = document.getElementById('key');
-  const textTa = document.getElementById('text');
-  const count  = document.getElementById('char_count');
-  const preview= document.getElementById('preview');
-  const presetSel = document.getElementById('preset');
-
-  function randomKey(){
-    const stamp = Date.now().toString(36);
-    const random = Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(0, 6);
-    return `tmpl_${stamp}_${random}`;
-  }
-
-  function ensureKey(force = false){
-    if (!keyInp) return;
-    if (force || !(keyInp.value || '').trim()){
-      keyInp.value = randomKey();
-    }
-  }
-  ensureKey(true);
-
-  // ---- Состояние города vs глобальный ----
-  function applyGlobalState() {
-    const g = isGlob && isGlob.checked;
-    if (citySel){
-      citySel.disabled = g || !citySel.options.length;
-      if (g) citySel.removeAttribute('required'); else citySel.setAttribute('required','');
-      if (g) citySel.value = '';
-    }
-    if (cityFilter){
-      cityFilter.disabled = g || !citySel || !citySel.options.length;
-    }
-  }
-  isGlob && isGlob.addEventListener('change', applyGlobalState);
-  applyGlobalState();
-
-  // ---- Фильтр по городам ----
-  if (cityFilter && citySel){
-    const original = Array.from(citySel.options);
-    cityFilter.addEventListener('input', () => {
-      const q = (cityFilter.value || '').toLowerCase().trim();
-      citySel.innerHTML = '';
-      const filtered = original.filter(o => !q || o.text.toLowerCase().includes(q));
-      filtered.forEach(o => citySel.appendChild(o));
-      if (!citySel.value && filtered.length) citySel.value = filtered[0].value;
-    });
-  }
-
-  // ---- Вставка плейсхолдеров ----
-  function insertAtCursor(el, text){
-    el.focus();
-    const s = el.selectionStart ?? el.value.length;
-    const e = el.selectionEnd ?? el.value.length;
-    el.value = el.value.slice(0,s) + text + el.value.slice(e);
-    el.selectionStart = el.selectionEnd = s + text.length;
-    updatePreview();
-  }
-  document.querySelectorAll('[data-role="insert-var"]').forEach(btn=>{
-    btn.addEventListener('click', ()=> insertAtCursor(textTa, btn.getAttribute('data-insert') || ''));
-  });
-
-  // ---- Пресеты текста ----
-  const PRESETS = {
-    invite_interview:
-`{{candidate_fio}} 👋
-
-Поздравляем — вы шаг ближе к команде <b>SMART SERVICE</b>!
-
-🗓 <b>{{slot_date_local}}, {{slot_time_local}}</b> (ваше время)
-
-💬 <b>Формат:</b> видеочат WhatsApp | 15–20 мин
-
-⚡ Что нужно заранее:
-• стабильный интернет
-• рабочий WhatsApp
-• 2–3 вопроса о вакансии
-
-🔔 Не забудьте поставить напоминание на телефон.
-
-✉️ <b>Подтвердите участие</b> одним словом «Да» или эмодзи 👍 — бронирую слот.`,
-    confirm_2h:
-`Доброе утро, {{candidate_fio}}! 😊
-
-⏰ Напоминаю: сегодня в {{slot_time_local}} (ваше время) — видеособеседование в компании SMART⚡
-
-📌 План: кратко о компании и вакансии → ваши вопросы → ожидания и рост.
-Проверьте интернет + камеру.
-
-👉 Подтвердите участие одним «Да» или 👍 — ждём на связи!`,
-    reminder_1h:
-`⏰ Напоминание: встреча через 1 час — {{slot_time_local}} (ваше время).
-Если не получается — дайте знать и подберём другой слот.`,
-    after_meeting:
-`Вы успешно прошли видеоинтервью в компании <b>SMART</b>! 🎉
-
-Завтра в <b>{{slot_time_local}}</b> у вас запланирована встреча с руководителем по адресу: <b>{{address}}</b>.
-
-Пожалуйста, приходите в презентабельном виде и с отличным настроением! 😊
-Это не собеседование, а <b>ознакомительный день</b> (~2 часа).
-
-💼 Контакт руководителя: {{recruiter_name}}, {{recruiter_phone}}
-
-👉 Подтвердите «Еду» или 👍. Вопросы — сюда.`,
-    day_intro:
-`Доброе утро! ☀️
-
-Напоминаю, что сегодня в <b>{{slot_time_local}}</b> у вас запланирован <b>ознакомительный день в компании SMART</b>.
-
-🌟 Что вас ждёт:
-• возможность увидеть работу изнутри
-• знакомство с командой
-• погружение в реальные задачи
-
-💼 Одежда: деловой стиль.
-👉 Успеваете?`,
-    slot_rejected:
-`К сожалению, выбранный слот недоступен. Давайте подберём другое время.
-Напишите удобный промежуток или выберите новый слот в системе.`,
-    city_welcome:
-`{{candidate_fio}}, приветствуем в {{city_name}}!
-Скоро пришлём детали по адресу и времени.`
-  };
-
-  if (presetSel){
-    presetSel.addEventListener('change', () => {
-      const v = presetSel.value;
-      if (!v) return;
-      textTa.value = PRESETS[v] || '';
-      updatePreview();
-    });
-  }
-
-  // ---- Счётчик и предпросмотр (с тестовыми значениями) ----
-  const SAMPLE = () => ({
-    '{{candidate_fio}}': document.getElementById('pv_fio')?.value || 'Иванов Иван',
-    '{{city_name}}':     document.getElementById('pv_city')?.value || 'Москва',
-    '{{slot_date_local}}': document.getElementById('pv_date')?.value || '12.10',
-    '{{slot_time_local}}': document.getElementById('pv_time')?.value || '10:30',
-    '{{recruiter_name}}':  document.getElementById('pv_rec')?.value || 'Михаил',
-    '{{recruiter_phone}}': document.getElementById('pv_phone')?.value || '+7 (900) 000-00-00',
-    '{{address}}':         document.getElementById('pv_addr')?.value || 'ул. Примерная, 1',
-    '{{whatsapp_link}}':   document.getElementById('pv_wa')?.value || 'https://wa.me/79990000000'
-  });
-  function renderPreview(){
-    if (!preview) return;
-    let s = textTa.value || '';
-    const map = SAMPLE();
-    Object.keys(map).forEach(k => { s = s.split(k).join(map[k]); });
-    // безопасно: без HTML-интерпретации
-    preview.textContent = s;
-  }
-  function updateCount(){
-    const len = (textTa.value || '').length;
-    count.textContent = String(len);
-    if (len > 4096){
-      // мягко подсветим превышение
-      count.parentElement.style.border = '1px solid var(--bad)';
-    } else {
-      count.parentElement.style.border = '1px solid transparent';
-    }
-  }
-  function updatePreview(){
-    updateCount();
-    renderPreview();
-  }
-
-  textTa.addEventListener('input', updatePreview);
-  ['pv_fio','pv_city','pv_date','pv_time','pv_rec','pv_phone','pv_addr','pv_wa']
-    .forEach(id => document.getElementById(id)?.addEventListener('input', renderPreview));
-  updatePreview();
-
-  // ---- Ctrl/Cmd+S -> submit ----
-  window.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      form?.requestSubmit();
-    }
-  });
-
-  // ---- Мини-валидация перед отправкой ----
-  form.addEventListener('submit', (e) => {
-    const g = isGlob && isGlob.checked;
-    ensureKey();
-    if (!textTa.value.trim()){
-      alert('Заполните текст шаблона');
-      e.preventDefault(); return;
-    }
-    if (!g){
-      if (!citySel || !citySel.value){
-        alert('Выберите город или включите «Глобальный шаблон».');
-        e.preventDefault(); return;
-      }
-    }
-    if ((textTa.value || '').length > 4096){
-      if (!confirm('Текст длиннее 4096 символов и может не отправиться в Telegram. Всё равно сохранить?')) {
-        e.preventDefault(); return;
-      }
-    }
-  });
-})();
+initTemplateEditor({
+  formId: 'tmplForm',
+  textareaId: 'text',
+  counterId: 'char_count',
+  previewId: 'preview',
+  placeholderSelector: '[data-role="insert-var"]',
+  presets: TEMPLATE_PRESETS,
+  presetSelectId: 'preset',
+  keyInputId: 'key',
+  isGlobalCheckboxId: 'is_global',
+  citySelectId: 'city_id',
+  cityFilterId: 'city_filter',
+  charLimit: 4096,
+  showLimit: true
+});
 </script>
 {% endblock %}
