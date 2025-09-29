@@ -1,9 +1,13 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from starlette.requests import Request
+
+from backend.apps.admin_ui.config import register_template_globals
+from backend.apps.admin_ui.routers.slots import slots_list
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
-from backend.apps.admin_ui.services.slots import create_slot, list_slots
+from backend.apps.admin_ui.services.slots import api_slots_payload, create_slot, list_slots
 from backend.core.db import async_session
 from backend.domain import models
 
@@ -34,3 +38,50 @@ async def test_dashboard_and_slot_listing():
     )
     assert listing["total"] == 1
     assert listing["items"][0].recruiter_id == recruiter.id
+
+
+@pytest.mark.asyncio
+async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="UI", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+
+        now = datetime.now(timezone.utc)
+        session.add_all(
+            [
+                models.Slot(
+                    recruiter_id=recruiter.id,
+                    start_utc=now,
+                    status=models.SlotStatus.FREE,
+                ),
+                models.Slot(
+                    recruiter_id=recruiter.id,
+                    start_utc=now + timedelta(hours=1),
+                    status=models.SlotStatus.PENDING,
+                ),
+                models.Slot(
+                    recruiter_id=recruiter.id,
+                    start_utc=now + timedelta(hours=2),
+                    status=models.SlotStatus.BOOKED,
+                ),
+            ]
+        )
+        await session.commit()
+
+    payload = await api_slots_payload(recruiter_id=None, status=None, limit=10)
+    assert {item["status"] for item in payload} == {"FREE", "PENDING", "BOOKED"}
+
+    register_template_globals()
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/slots",
+        "headers": [],
+        "query_string": b"",
+    }
+    request = Request(scope)
+    response = await slots_list(request, recruiter_id=None, status=None, page=1, per_page=10)
+    status_counts = response.context["status_counts"]
+    assert status_counts == {"total": 3, "FREE": 1, "PENDING": 1, "BOOKED": 1}

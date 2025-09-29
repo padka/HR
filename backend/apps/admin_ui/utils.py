@@ -54,7 +54,8 @@ def format_optional_local(
 def norm_status(st) -> Optional[str]:
     if st is None:
         return None
-    return st.value if hasattr(st, "value") else st
+    raw_value = st.value if hasattr(st, "value") else st
+    return str(raw_value).upper()
 
 
 STATUS_FILTERS = {"FREE", "PENDING", "BOOKED"}

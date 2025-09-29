@@ -11,7 +11,7 @@ from backend.apps.admin_ui.services.slots import (
     list_slots,
     recruiters_for_slot_form,
 )
-from backend.apps.admin_ui.utils import parse_optional_int, status_filter
+from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
@@ -32,8 +32,7 @@ async def slots_list(
     slots = result["items"]
     status_counter: Counter[str] = Counter()
     for slot in slots:
-        status = getattr(slot.status, "value", slot.status)
-        status_counter[str(status)] += 1
+        status_counter[norm_status(slot.status)] += 1
     status_counts: Dict[str, int] = {
         "total": len(slots),
         "FREE": status_counter.get("FREE", 0),
