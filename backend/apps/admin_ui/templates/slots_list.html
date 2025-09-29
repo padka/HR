@@ -107,7 +107,7 @@
       <div class="form-field">
         <label for="status">Статус</label>
         {% set status_options = [
-          {'label': 'Все', 'value': '', 'id': 'status-all', 'icon': slot_status_icon('TOTAL')},
+          {'label': 'Все', 'value': '', 'id': 'status-all', 'icon': slot_status_icon('TOTAL'), 'default': true},
           {'label': 'FREE', 'value': 'FREE', 'id': 'status-free', 'icon': slot_status_icon('FREE'), 'tone': 'success'},
           {'label': 'PENDING', 'value': 'PENDING', 'id': 'status-pending', 'icon': slot_status_icon('PENDING'), 'tone': 'warning'},
           {'label': 'BOOKED', 'value': 'BOOKED', 'id': 'status-booked', 'icon': slot_status_icon('BOOKED'), 'tone': 'info'}
@@ -216,7 +216,13 @@
               </td>
               <td class="slot-card__actions-cell" data-label="Действия">
                 <div class="slot-card__actions">
-                  <button type="button" class="slot-card__action" data-role="expand" data-target="{{ details_id }}">
+                  <button
+                    type="button"
+                    class="slot-card__action"
+                    data-role="expand"
+                    data-target="{{ details_id }}"
+                    aria-expanded="false"
+                    aria-controls="{{ details_id }}">
                     <span class="slot-card__action-icon" aria-hidden="true">
                       <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M5 7.5 10 12.5 15 7.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
@@ -286,8 +292,31 @@
   const rows = $$('#slots-table tbody tr');
   const onlyFuture = $('#only_future');
   const candTzToggle = $('#toggle_cand_tz');
-  const filterPanel = document.querySelector('[data-toolbar-collapsible]');
+  const filterPanels = $$('[data-toolbar-collapsible]');
   const scrollContainer = document.querySelector('[data-scroll-container]');
+
+  function copyText(value){
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      return navigator.clipboard.writeText(value);
+    }
+    return new Promise(function(resolve, reject){
+      try {
+        const area = document.createElement('textarea');
+        area.value = value;
+        area.setAttribute('readonly', '');
+        area.style.position = 'absolute';
+        area.style.left = '-9999px';
+        document.body.appendChild(area);
+        area.select();
+        const ok = typeof document.execCommand === 'function' ? document.execCommand('copy') : false;
+        document.body.removeChild(area);
+        if (ok) resolve();
+        else reject(new Error('execCommand failed'));
+      } catch (err){
+        reject(err);
+      }
+    });
+  }
 
   function attachCopyTriggers(scope){
     $$("[data-copy]", scope || document).forEach(function(trigger){
@@ -299,7 +328,7 @@
       const original = labelEl ? labelEl.textContent : trigger.textContent;
       const delay = parseInt(trigger.getAttribute('data-copy-delay') || '900', 10);
       trigger.addEventListener('click', function(){
-        navigator.clipboard.writeText(value).then(function(){
+        copyText(value).then(function(){
           trigger.classList.add('is-copied');
           if (labelEl) { labelEl.textContent = feedback; }
           else { trigger.textContent = feedback; }
@@ -365,14 +394,36 @@
     setCandCol(candTzToggle.checked);
   }
 
-  if (filterPanel){
+  if (filterPanels.length){
     const mq = window.matchMedia('(min-width: 960px)');
-    const syncFilters = function(e){
-      filterPanel.open = !!e.matches;
+    const applyMediaState = function(panel, matches){
+      if (matches){
+        panel.open = true;
+        panel.dataset.mediaOpen = '1';
+      } else if (panel.dataset.mediaOpen){
+        panel.open = false;
+        delete panel.dataset.mediaOpen;
+      }
     };
-    syncFilters(mq);
-    if (mq.addEventListener) mq.addEventListener('change', syncFilters);
-    else if (mq.addListener) mq.addListener(syncFilters);
+    filterPanels.forEach(function(panel){
+      if (panel.hasAttribute('open')){
+        panel.dataset.mediaOpen = panel.dataset.mediaOpen || '1';
+      }
+    });
+    const syncFilters = function(matches){
+      filterPanels.forEach(function(panel){ applyMediaState(panel, matches); });
+    };
+    syncFilters(mq.matches);
+    const mqHandler = function(e){ syncFilters(e.matches); };
+    if (mq.addEventListener) mq.addEventListener('change', mqHandler);
+    else if (mq.addListener) mq.addListener(mqHandler);
+    filterPanels.forEach(function(panel){
+      panel.addEventListener('toggle', function(){
+        if (!panel.open){
+          delete panel.dataset.mediaOpen;
+        }
+      });
+    });
   }
 
   if (scrollContainer){
@@ -396,15 +447,19 @@
     const targetId = btn.getAttribute('data-target');
     const details = targetId ? document.getElementById(targetId) : null;
     if (!details) return;
+    const syncExpanded = function(){
+      const expanded = details.hasAttribute('open') || details.open;
+      btn.classList.toggle('is-active', expanded);
+      btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    };
+    syncExpanded();
     btn.addEventListener('click', function(){
       const open = details.hasAttribute('open');
       if (open) { details.removeAttribute('open'); }
       else { details.setAttribute('open', ''); }
-      btn.classList.toggle('is-active', !open);
+      syncExpanded();
     });
-    details.addEventListener('toggle', function(){
-      btn.classList.toggle('is-active', details.open);
-    });
+    details.addEventListener('toggle', syncExpanded);
   });
 
   function rel(ts){
