@@ -23,6 +23,14 @@
   </div>
 </section>
 
+{% set tone_map = {'success': 'success', 'error': 'danger', 'info': 'info'} %}
+{% if flash %}
+  {% set tone = tone_map.get(flash.status, 'info') %}
+  <div class="surface glass grain alert" data-tone="{{ tone }}" role="alert">
+    <p class="form-shell__section-hint">{{ flash.message }}</p>
+  </div>
+{% endif %}
+
 {% if not recruiters %}
   <div class="surface glass grain alert" role="alert">
     <h2 class="form-shell__section-title">Нет рекрутёров</h2>
@@ -121,8 +129,8 @@
         {% endcall %}
       </div>
       {% call forms.meta() %}
-        {{ forms.switch(id='include_weekends', label='Включать выходные', inline=True) }}
-        {{ forms.switch(id='use_break', label='Учитывать перерыв 12:00–13:00', checked=True, inline=True) }}
+        {{ forms.switch(id='include_weekends', name='include_weekends', label='Включать выходные', inline=True) }}
+        {{ forms.switch(id='use_break', name='use_break', label='Учитывать перерыв 12:00–13:00', checked=True, inline=True) }}
       {% endcall %}
     {% endcall %}
 
