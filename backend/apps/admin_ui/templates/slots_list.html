@@ -147,6 +147,7 @@
               data-candidate="{{ s.candidate_fio or '' }}"
               data-candidate-id="{{ s.candidate_tg_id or '' }}"
               data-candidate-tz="{{ cand_tz or '' }}"
+              data-outcome="{{ s.interview_outcome or '' }}"
               data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
             <td data-label="ID">ID {{ s.id }}</td>
             <td data-label="Рекрутёр">
@@ -296,6 +297,24 @@
         </div>
       </section>
 
+      <section class="slot-panel" id="slot_sheet_outcome_section">
+        <div class="slot-panel__header">
+          <span class="slot-panel__icon" aria-hidden="true">✅</span>
+          <div>
+            <h4 class="slot-panel__title">Исход интервью</h4>
+            <p class="slot-panel__hint">Выберите результат встречи</p>
+          </div>
+        </div>
+        <div class="slot-panel__body">
+          <p class="muted" id="slot_sheet_outcome_hint">Доступно после назначения кандидата.</p>
+          <div class="slot-outcome__actions" id="slot_sheet_outcome_actions">
+            <button type="button" class="btn btn-ghost btn--small" data-outcome="passed">Прошёл</button>
+            <button type="button" class="btn btn-ghost btn--small" data-outcome="failed">Не прошёл</button>
+          </div>
+          <p class="slot-outcome__status" id="slot_sheet_outcome_status">Исход не выбран</p>
+        </div>
+      </section>
+
       <section class="slot-panel">
         <div class="slot-panel__header">
           <span class="slot-panel__icon" aria-hidden="true">⏱</span>
@@ -356,6 +375,10 @@
   const slotRecruiter = $('#slot_sheet_recruiter');
   const slotCandidateSection = $('#slot_sheet_candidate_section');
   const slotCandidate = $('#slot_sheet_candidate');
+  const slotOutcomeSection = $('#slot_sheet_outcome_section');
+  const slotOutcomeHint = $('#slot_sheet_outcome_hint');
+  const slotOutcomeActions = $('#slot_sheet_outcome_actions');
+  const slotOutcomeStatus = $('#slot_sheet_outcome_status');
   const slotMeta = $('#slot_sheet_meta');
   const slotDeleteBtn = $('#slot_delete_btn');
   const toastStack = $('#toasts');
@@ -563,6 +586,21 @@
       slotCandidateSection.hidden = true;
     }
     if (slotCandidate) slotCandidate.innerHTML = '';
+    if (slotOutcomeSection){
+      slotOutcomeSection.hidden = true;
+    }
+    if (slotOutcomeHint){
+      slotOutcomeHint.textContent = 'Доступно после назначения кандидата.';
+    }
+    if (slotOutcomeStatus){
+      slotOutcomeStatus.textContent = 'Исход не выбран';
+    }
+    if (slotOutcomeActions){
+      $$('button', slotOutcomeActions).forEach(btn => {
+        btn.disabled = true;
+        btn.classList.remove('is-active');
+      });
+    }
     if (slotMeta) slotMeta.innerHTML = '';
     if (slotDeleteBtn){
       slotDeleteBtn.disabled = true;
@@ -577,6 +615,33 @@
     return 'neutral';
   }
 
+  function normalizeOutcome(raw){
+    const value = (raw || '').toLowerCase();
+    return value === 'passed' || value === 'failed' ? value : '';
+  }
+
+  function setOutcomeButtonsEnabled(enabled){
+    if (!slotOutcomeActions) return;
+    $$('button', slotOutcomeActions).forEach(btn => {
+      btn.disabled = !enabled;
+    });
+  }
+
+  function updateOutcomeUI(outcome){
+    if (!slotOutcomeStatus || !slotOutcomeActions) return;
+    const normalized = normalizeOutcome(outcome);
+    $$('button', slotOutcomeActions).forEach(btn => {
+      btn.classList.toggle('is-active', btn.dataset.outcome === normalized);
+    });
+    if (!normalized){
+      slotOutcomeStatus.textContent = 'Исход не выбран';
+      return;
+    }
+    slotOutcomeStatus.textContent = normalized === 'passed'
+      ? 'Кандидат прошёл интервью'
+      : 'Кандидат не прошёл интервью';
+  }
+
   function hydrateSheet(row){
     const id = row.dataset.id || '—';
     const status = row.dataset.status || '—';
@@ -586,6 +651,7 @@
     const candidateTz = row.dataset.candidateTz || '';
     const candidateId = row.dataset.candidateId || '';
     const duration = parseInt(row.dataset.duration || '0', 10);
+    const outcome = normalizeOutcome(row.dataset.outcome || '');
 
     if (slotTitle) slotTitle.textContent = recruiterName ? `Слот у ${recruiterName}` : `Слот #${id}`;
     if (slotSub) slotSub.textContent = `ID: ${id}`;
@@ -631,6 +697,27 @@
       }
     }
 
+    if (slotOutcomeSection){
+      slotOutcomeSection.hidden = false;
+      const hasCandidate = !!(candidateName && candidateName.trim().length);
+      if (slotOutcomeHint){
+        slotOutcomeHint.textContent = hasCandidate
+          ? 'Отметьте исход. При выборе «Прошёл» бот отправит Тест 2.'
+          : 'Назначьте кандидата, чтобы отметить исход.';
+      }
+      setOutcomeButtonsEnabled(hasCandidate);
+      if (hasCandidate){
+        updateOutcomeUI(outcome);
+      } else if (slotOutcomeStatus){
+        slotOutcomeStatus.textContent = 'Недоступно — кандидат не назначен';
+        if (slotOutcomeActions){
+          $$('button', slotOutcomeActions).forEach(btn => btn.classList.remove('is-active'));
+        }
+      }
+    }
+
+    row.dataset.outcome = outcome;
+
     if (slotMeta){
       const items = [];
       items.push(`Длительность: ${duration || 60} мин`);
@@ -648,6 +735,47 @@
       slotDeleteBtn.dataset.recruiter = recruiterName || '';
     }
 
+  }
+
+  async function submitOutcome(outcome){
+    if (!currentRow) return;
+    if (!slotOutcomeActions) return;
+    const slotId = currentRow.dataset.id;
+    if (!slotId) return;
+    const hasCandidate = !!(currentRow.dataset.candidate && currentRow.dataset.candidate.trim().length);
+    if (!hasCandidate){
+      toast('Назначьте кандидата, чтобы отметить исход.', 'warning');
+      return;
+    }
+
+    setOutcomeButtonsEnabled(false);
+    try {
+      const response = await fetch(`/slots/${slotId}/outcome`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outcome })
+      });
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (err) {
+        data = {};
+      }
+      if (!response.ok || !data.ok){
+        toast((data && data.message) || 'Не удалось сохранить исход.', 'error');
+        return;
+      }
+      const stored = normalizeOutcome(data.outcome || outcome);
+      currentRow.dataset.outcome = stored;
+      updateOutcomeUI(stored);
+      toast((data && data.message) || 'Исход сохранён.', 'success');
+    } catch (err){
+      console.error(err);
+      toast('Не удалось сохранить исход.', 'error');
+    } finally {
+      const stillHasCandidate = !!(currentRow && currentRow.dataset.candidate && currentRow.dataset.candidate.trim().length);
+      setOutcomeButtonsEnabled(stillHasCandidate);
+    }
   }
 
   function openSlot(row){
@@ -794,6 +922,13 @@
   on(candToggle, 'change', () => {
     persistPreference(storageKeys.candidate, !!candToggle.checked);
     setCandidateColumnVisibility(candToggle.checked);
+  });
+
+  on(slotOutcomeActions, 'click', e => {
+    const btn = e.target.closest('button[data-outcome]');
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    submitOutcome(btn.dataset.outcome);
   });
 
   on(slotDeleteBtn, 'click', () => {

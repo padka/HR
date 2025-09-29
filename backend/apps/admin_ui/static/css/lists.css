@@ -1793,6 +1793,22 @@ body.sheet-open {
   font-size: 14px;
 }
 
+.slot-outcome__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.slot-outcome__status {
+  margin-top: 4px;
+  font-size: 14px;
+  color: color-mix(in srgb, var(--muted) 80%, var(--fg) 20%);
+}
+
+.slot-outcome__actions .btn.is-active {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 40%, transparent 60%);
+}
+
 .slot-person {
   display: flex;
   align-items: center;
