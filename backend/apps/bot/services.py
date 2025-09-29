@@ -1078,7 +1078,7 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         if getattr(slot, "purpose", "interview") == "intro_day"
         else "approved_msg"
     )
-    state = get_state_manager().get(slot.candidate_tg_id, {})
+    state = get_state_manager().get(slot.candidate_tg_id) or {}
     text = await templates.tpl(
         getattr(slot, "candidate_city_id", None),
         template_key,
@@ -1117,7 +1117,7 @@ async def handle_reject_slot(callback: CallbackQuery) -> None:
     bot = get_bot()
     await bot.send_message(slot.candidate_tg_id, "К сожалению, выбранное время недоступно.")
 
-    st = get_state_manager().get(slot.candidate_tg_id, {})
+    st = get_state_manager().get(slot.candidate_tg_id) or {}
     if st.get("flow") == "intro":
         await show_recruiter_menu(slot.candidate_tg_id)
     else:
@@ -1206,7 +1206,7 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
         except Exception:
             pass
 
-    st = get_state_manager().get(callback.from_user.id, {})
+    st = get_state_manager().get(callback.from_user.id) or {}
     await bot.send_message(
         callback.from_user.id,
         await templates.tpl(getattr(slot, "candidate_city_id", None), "att_declined"),
