@@ -18,19 +18,21 @@
 ) %}
   {% call forms.section("Назначение") %}
     {% call forms.field("Глобальный шаблон", hint="Если включено — используется по умолчанию для всех городов") %}
-      <label class="badge">
-        <input type="checkbox" id="is_global" name="is_global" value="1" {% if tmpl.is_global or (tmpl.city_id is none) %}checked{% endif %}>
-        Глобальный (без привязки к городу)
-      </label>
+      {{ forms.switch(
+        id='is_global',
+        name='is_global',
+        value='1',
+        checked=tmpl.is_global or (tmpl.city_id is none),
+        label='Глобальный (без привязки к городу)'
+      ) }}
     {% endcall %}
 
-    {% call forms.field("Город") %}
+    {% call forms.field("Город", hint="Для глобального шаблона город не нужен.") %}
       <select id="city_id" name="city_id" {% if tmpl.is_global or (tmpl.city_id is none) %}disabled{% else %}required{% endif %}>
         {% for c in cities %}
           <option value="{{ c.id }}" {% if c.id == tmpl.city_id %}selected{% endif %}>{{ c.name }} ({{ c.tz or "Europe/Moscow" }})</option>
         {% endfor %}
       </select>
-      <span class="form-field__hint">Для глобального шаблона город не нужен.</span>
     {% endcall %}
 
     {% call forms.field("Ключ", hint="Ключ используют бот и админка для поиска нужного сообщения") %}
@@ -46,11 +48,11 @@
     {% endcall %}
   {% endcall %}
 
-  {% call forms.section("Содержимое сообщения") %}
-    <div class="hint">Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.</div>
+  {% call forms.section("Содержимое сообщения", span='full') %}
+    {% call forms.note() %}Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.{% endcall %}
     {% call forms.field("Текст") %}
-      <textarea id="text" name="text" rows="14" required class="mt-sm text-mono">{{ tmpl.text_field }}</textarea>
-      <div class="hint mt-sm">Вставить плейсхолдер:</div>
+      <textarea id="text" name="text" rows="14" required class="text-mono">{{ tmpl.text_field }}</textarea>
+      {% call forms.note() %}Вставить плейсхолдер:{% endcall %}
       <div class="btn-group">
         {% raw %}
         <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{candidate_fio}}">{{candidate_fio}}</button>
@@ -63,47 +65,39 @@
         <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
         {% endraw %}
       </div>
-      <div class="form-field__meta mt-sm">
+      {% call forms.meta() %}
         <span class="badge" data-overflow="false"><span id="char_count">0</span> символов</span>
-        <span class="hint">Предпросмотр ниже. ⌘/Ctrl+S — сохранить.</span>
-      </div>
+        {% call forms.note(inline=True) %}Предпросмотр ниже. ⌘/Ctrl+S — сохранить.{% endcall %}
+      {% endcall %}
     {% endcall %}
 
     <details class="form-advanced mt-md">
       <summary class="hint">Предпросмотр</summary>
-      <div class="form-shell__grid form-shell__grid--three mt-sm">
-        <label class="form-field">
-          <span class="form-field__label">Имя</span>
+      <div class="form-grid form-grid--three mt-sm">
+        {% call forms.field("Имя") %}
           <input id="pv_fio" type="text" value="Иван Иванов">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Город</span>
+        {% endcall %}
+        {% call forms.field("Город") %}
           <input id="pv_city" type="text" value="Москва">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Дата</span>
+        {% endcall %}
+        {% call forms.field("Дата") %}
           <input id="pv_date" type="text" value="21.09">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Время</span>
+        {% endcall %}
+        {% call forms.field("Время") %}
           <input id="pv_time" type="text" value="10:30">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Рекрутёр</span>
+        {% endcall %}
+        {% call forms.field("Рекрутёр") %}
           <input id="pv_rec" type="text" value="Михаил">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Телефон</span>
+        {% endcall %}
+        {% call forms.field("Телефон") %}
           <input id="pv_phone" type="text" value="+7 (900) 000-00-00">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">Адрес</span>
+        {% endcall %}
+        {% call forms.field("Адрес") %}
           <input id="pv_addr" type="text" value="ул. Пушкина, 10">
-        </label>
-        <label class="form-field">
-          <span class="form-field__label">WhatsApp</span>
+        {% endcall %}
+        {% call forms.field("WhatsApp") %}
           <input id="pv_wa" type="text" value="https://wa.me/79000000000">
-        </label>
+        {% endcall %}
       </div>
       <div id="preview" class="preview-panel mt-sm" aria-live="polite"></div>
     </details>

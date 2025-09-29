@@ -2,24 +2,26 @@
 {% import "partials/form_shell.html" as forms %}
 {% block title %}Новый слот{% endblock %}
 {% block content %}
-<div class="surface glass grain" id="slot-switcher">
-  <div class="form-shell__header">
-    <div>
+<section class="form-shell" id="slot-switcher" data-tilt>
+  <header class="form-shell__header">
+    <div class="form-shell__heading">
       <h1 class="form-shell__title">Создание слотов</h1>
       <p class="form-shell__description">Локальная дата и время рекрутёра автоматически конвертируются в UTC.</p>
     </div>
-    <div class="form-field__meta">
+    {% call forms.meta() %}
       <span class="chip" id="now_chip" title="Текущее время в выбранном поясе">⏱️ <span id="now_text">—:—</span></span>
-    </div>
+    {% endcall %}
+  </header>
+  <div class="form-shell__body">
+    {% call forms.meta('role="tablist" aria-label="Режим создания"') %}
+      <div class="segmented">
+        <button id="tab-one" class="active" type="button" role="tab" aria-selected="true" aria-controls="panel-one">Один слот</button>
+        <button id="tab-bulk" type="button" role="tab" aria-selected="false" aria-controls="panel-bulk">Серия</button>
+      </div>
+      {% call forms.note(inline=True) %}Горячие клавиши: <span class="kbd">/</span> — фокус на дате, <span class="kbd">⌘/Ctrl+Enter</span> — создать.{% endcall %}
+    {% endcall %}
   </div>
-  <div class="form-field__meta" role="tablist" aria-label="Режим создания">
-    <div class="segmented">
-      <button id="tab-one" class="active" type="button" role="tab" aria-selected="true" aria-controls="panel-one">Один слот</button>
-      <button id="tab-bulk" type="button" role="tab" aria-selected="false" aria-controls="panel-bulk">Серия</button>
-    </div>
-    <span class="hint">Горячие клавиши: <span class="kbd">/</span> — фокус на дате, <span class="kbd">⌘/Ctrl+Enter</span> — создать.</span>
-  </div>
-</div>
+</section>
 
 {% if not recruiters %}
   <div class="surface glass grain alert" role="alert">
@@ -51,14 +53,14 @@
           {% endfor %}
         </select>
       {% endcall %}
-      <div class="form-field__meta">
-        <div class="hint" id="tz_one_hint">TZ рекрутёра: —</div>
+      {% call forms.meta() %}
+        {% call forms.note(inline=True, id='tz_one_hint') %}TZ рекрутёра: —{% endcall %}
         <span class="chip" id="offset_chip" title="Смещение от UTC">GMT <span id="offset_text">±0</span></span>
-      </div>
+      {% endcall %}
     {% endcall %}
 
     {% call forms.section("Дата и время") %}
-      <div class="form-shell__grid form-shell__grid--two">
+      <div class="form-grid form-grid--two">
         {% call forms.field("Дата (локальная)") %}
           <input id="date" type="date" name="date" required>
           <div class="btn-group">
@@ -106,11 +108,11 @@
           {% endfor %}
         </select>
       {% endcall %}
-      <div class="hint" id="tz_bulk_hint">TZ рекрутёра: —</div>
+      {% call forms.note(id='tz_bulk_hint') %}TZ рекрутёра: —{% endcall %}
     {% endcall %}
 
     {% call forms.section("Период") %}
-      <div class="form-shell__grid form-shell__grid--two">
+      <div class="form-grid form-grid--two">
         {% call forms.field("Дата начала") %}
           <input id="start_date" type="date" name="start_date" required>
         {% endcall %}
@@ -118,14 +120,10 @@
           <input id="end_date" type="date" name="end_date" required>
         {% endcall %}
       </div>
-      <div class="form-field__meta">
-        <label class="badge" for="include_weekends">
-          <input type="checkbox" id="include_weekends"> Включать выходные
-        </label>
-        <label class="badge" for="use_break">
-          <input type="checkbox" id="use_break" checked> Учитывать перерыв 12:00–13:00
-        </label>
-      </div>
+      {% call forms.meta() %}
+        {{ forms.switch(id='include_weekends', label='Включать выходные', inline=True) }}
+        {{ forms.switch(id='use_break', label='Учитывать перерыв 12:00–13:00', checked=True, inline=True) }}
+      {% endcall %}
     {% endcall %}
 
     <input type="hidden" name="start_time" id="bulk_start_time" value="10:00">
@@ -136,7 +134,7 @@
 
     <details class="form-advanced mt-md">
       <summary class="hint">Расширенные настройки</summary>
-      <div class="form-shell__grid form-shell__grid--two mt-sm">
+      <div class="form-grid form-grid--two mt-sm">
         {% call forms.field("Окно (с)") %}
           <input type="time" id="adv_start_time" value="10:00">
         {% endcall %}
@@ -144,7 +142,7 @@
           <input type="time" id="adv_end_time" value="16:00">
         {% endcall %}
       </div>
-      <div class="form-shell__grid form-shell__grid--two mt-sm">
+      <div class="form-grid form-grid--two mt-sm">
         {% call forms.field("Перерыв (с)") %}
           <input type="time" id="adv_break_start" value="12:00" disabled>
         {% endcall %}
@@ -155,7 +153,7 @@
       {% call forms.field("Шаг (мин)") %}
         <input type="number" id="adv_step" min="5" step="5" value="30">
       {% endcall %}
-      <div class="hint">Изменения сразу применяются к создаваемой серии.</div>
+      {% call forms.note() %}Изменения сразу применяются к создаваемой серии.{% endcall %}
     </details>
 
     <div class="preview-panel" id="preview-bulk" aria-live="polite">

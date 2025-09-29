@@ -39,17 +39,17 @@
         <option value="Asia/Novosibirsk"></option>
         <option value="Asia/Krasnoyarsk"></option>
         <option value="Asia/Irkutsk"></option>
-        <option value="Asia/Vladivostok"></option>
-        <option value="Asia/Almaty"></option>
-        <option value="Europe/Minsk"></option>
+             <option value="Asia/Vladivostok"></option>
+             <option value="Asia/Almaty"></option>
+             <option value="Europe/Minsk"></option>
       </datalist>
-      <div class="form-field__meta" aria-live="polite">
+      {% call forms.meta() %}
         <span id="tz_status" class="badge" title="Валидация TZ">Проверка TZ…</span>
-        <span id="tz_now" class="hint"></span>
-      </div>
-      <div class="hint">
+        <span id="tz_now" class="form-note form-note--inline"></span>
+      {% endcall %}
+      {% call forms.note() %}
         Примеры: <code>Europe/Moscow</code>, <code>Europe/Samara</code>, <code>Asia/Novosibirsk</code>, <code>Asia/Almaty</code>
-      </div>
+      {% endcall %}
     {% endcall %}
   {% endcall %}
 {% endcall %}

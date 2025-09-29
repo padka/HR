@@ -14,7 +14,7 @@
   ]
 ) %}
   {% call forms.section("Основные данные") %}
-    <div class="form-shell__grid form-shell__grid--two">
+    <div class="form-grid form-grid--two">
       {% call forms.field("Имя") %}
         <input id="name" type="text" name="name" placeholder="Михаил" required>
       {% endcall %}
@@ -33,7 +33,7 @@
         </datalist>
       {% endcall %}
     </div>
-    <div class="form-shell__grid form-shell__grid--two">
+    <div class="form-grid form-grid--two">
       {% call forms.field("Ссылка на Телемост", hint="Например: https://telemost.yandex.ru/j/XXXXX") %}
         <input id="telemost" type="url" name="telemost">
       {% endcall %}
@@ -55,9 +55,8 @@
     </div>
   {% endcall %}
 
-  {% call forms.field("Статус", inline=True) %}
-    <input id="active" type="checkbox" name="active" value="1" checked>
-    <span>Активен</span>
+  {% call forms.field("Статус") %}
+    {{ forms.switch(id='active', name='active', value='1', checked=True, label='Активен') }}
   {% endcall %}
 {% endcall %}
 {% endblock %}
