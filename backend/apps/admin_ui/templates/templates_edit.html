@@ -3,7 +3,7 @@
 {% block content %}
 <h3 style="margin-top:0;">Редактирование шаблона <span class="badge">#{{ tmpl.id }}</span></h3>
 
-<div class="card glass tilt" data-tilt data-tilt-max="6" data-tilt-speed="400" data-tilt-glare data-tilt-max-glare="0.15">
+<div class="card glass">
   <form method="post" action="/templates/{{ tmpl.id }}/update" autocomplete="off" id="tmplForm">
     <!-- Тип шаблона -->
     <div class="field" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
@@ -61,8 +61,7 @@
     <!-- Текст шаблона -->
     <div class="field" style="margin-top:12px;">
       <label for="text">Текст шаблона</label>
-      <textarea id="text" name="text" rows="14" required
-                style="width:100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">{{ tmpl.text_field }}</textarea>
+      <textarea id="text" name="text" rows="14" required style="width:100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">{{ tmpl.text_field }}</textarea>
       <p class="muted" style="margin:6px 0 0;">
         Поддерживаются плейсхолдеры:
         {% raw %}

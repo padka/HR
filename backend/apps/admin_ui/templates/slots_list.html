@@ -34,9 +34,9 @@
   tbody tr:hover td{background:rgba(255,255,255,.03)}
 </style>
 
-<h3 class="tilt" data-tilt data-tilt-max="2" data-tilt-speed="1200" data-tilt-scale="1.005" style="margin:0 0 10px 0;">Слоты</h3>
+<h3 style="margin:0 0 10px 0;">Слоты</h3>
 
-<div class="card tilt toolbar" data-tilt data-tilt-glare data-tilt-max="8" data-tilt-speed="600" data-tilt-scale="1.01" style="margin-bottom:12px;">
+<div class="card toolbar" style="margin-bottom:12px;">
   <form id="flt" method="get" action="/slots" style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap;">
     <div style="display:flex; flex-direction:column; gap:6px; min-width:220px;">
       <label for="recruiter_id">Рекрутёр</label>
@@ -90,19 +90,19 @@
 </div>
 
 {% if not slots %}
-  <div class="card tilt" data-tilt data-tilt-glare data-tilt-max="6" data-tilt-speed="500">
+  <div class="card">
     <h4>Пусто</h4>
     <p>Слотов по выбранным условиям нет.</p>
   </div>
 {% else %}
-  <div class="card tilt tbl-wrap" data-tilt data-tilt-glare data-tilt-max="6" data-tilt-speed="600">
+  <div class="card tbl-wrap">
     <table id="slots-table">
       <thead>
         <tr>
           <th class="sortable" data-sort="id"     title="Сортировать по ID">ID <span class="dir"></span></th>
           <th class="sortable" data-sort="rec"    title="Сортировать по рекрутёру">Рекрутёр <span class="dir"></span></th>
-          <th class="sortable" data-sort="utc"    style="width:160px;" title="Сортировать по UTC">UTC <span class="dir"></span></th>
-          <th                                   style="width:210px;">Локальное (TZ рекрутёра)</th>
+          <th class="sortable" data-sort="utc" style="width:160px;" title="Сортировать по UTC">UTC <span class="dir"></span></th>
+          <th style="width:210px;">Локальное (TZ рекрутёра)</th>
           <th style="width:210px;" class="col-cand-tz">Локальное (TZ кандидата)</th>
           <th class="sortable" data-sort="status" style="width:120px;" title="Сортировать по статусу">Статус <span class="dir"></span></th>
           <th class="sortable" data-sort="cand"   title="Сортировать по кандидату">Кандидат <span class="dir"></span></th>
@@ -168,7 +168,7 @@
   </div>
 
   <!-- пагинация -->
-  <div class="tilt" data-tilt data-tilt-max="3" data-tilt-speed="800" style="display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap;">
+  <div style="display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap;">
     {% set qrecr = '&recruiter_id=' ~ filter_recruiter_id if filter_recruiter_id else '' %}
     {% set qstat = '&status=' ~ filter_status if filter_status else '' %}
     {% set qpp = '&per_page=' ~ per_page if per_page else '' %}

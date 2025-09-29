@@ -37,7 +37,7 @@
   .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; border:1px solid var(--glass-stroke); padding:1px 6px; border-radius:6px; background:rgba(255,255,255,.06); }
 </style>
 
-<div class="tilt" data-tilt data-tilt-max="6" data-tilt-speed="500" style="margin:0 0 10px 0;">
+<div style="margin:0 0 10px 0;">
   <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
     <h3 style="margin:0;">➕ Новый слот</h3>
     <div class="segmented" role="tablist" aria-label="Режим создания">
@@ -50,7 +50,7 @@
 </div>
 
 {% if not recruiters %}
-  <div class="card glass tilt" data-tilt data-tilt-max="8" data-tilt-speed="450">
+  <div class="card glass">
     <h4 style="margin:0 0 8px 0;">Нет рекрутёров</h4>
     <p class="muted" style="margin:0 0 10px 0;">Сначала добавьте рекрутёра, затем создайте слот.</p>
     <p style="margin:0;"><a class="btn" href="/recruiters/new">+ Добавить рекрутёра</a></p>
@@ -58,7 +58,7 @@
 {% else %}
 
 <!-- ==== ПАНЕЛЬ «ОДИН СЛОТ» ==== -->
-<section id="panel-one" class="card glass tilt" data-tilt data-tilt-max="8" data-tilt-speed="450" data-tilt-glare data-tilt-max-glare="0.18" style="margin-bottom:14px;">
+<section id="panel-one" class="card glass" style="margin-bottom:14px;">
   <form method="post" action="/slots/create" autocomplete="off" id="form-one">
     <div class="row2">
       <div class="field">
@@ -110,7 +110,7 @@
 </section>
 
 <!-- ==== ПАНЕЛЬ «СЕРИЯ» ==== -->
-<section id="panel-bulk" class="card glass tilt" data-tilt data-tilt-max="8" data-tilt-speed="450" data-tilt-glare data-tilt-max-glare="0.18" hidden>
+<section id="panel-bulk" class="card glass" hidden>
   <form method="post" action="/slots/bulk_create" autocomplete="off" id="form-bulk">
     <p class="hint" style="margin:0 0 6px;">Создаст слоты каждый будний день с 10:00 до 16:00, перерыв 12:00–13:00, шаг 30 минут. Дубликаты пропускаются.</p>
 

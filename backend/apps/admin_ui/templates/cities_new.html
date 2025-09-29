@@ -2,7 +2,7 @@
 {% block title %}Новый город{% endblock %}
 {% block content %}
 
-<div class="card glass grain" data-tilt style="margin: 8px 0 16px;">
+<div class="card glass grain" style="margin: 8px 0 16px;">
   <h3 style="margin:0 0 12px 0; display:flex; align-items:center; gap:10px;">
     🏙️ Новый город
     <span class="badge" title="Часовой пояс">TZ</span>
@@ -17,8 +17,7 @@
              name="name"
              placeholder="Новосибирск"
              required
-             autofocus
-             style="width:100%;">
+             autofocus style="width:100%;">
       <p class="muted" style="margin:6px 0 0;">
         Поддерживается кириллица. Для известных городов таймзона подставится автоматически (можно изменить вручную).
       </p>
@@ -36,8 +35,7 @@
              inputmode="text"
              pattern="[A-Za-z_]+(?:\/[A-Za-z_\-]+)+"
              title="Например: Europe/Moscow, Europe/Samara, Asia/Novosibirsk"
-             required
-             style="width:100%;">
+             required style="width:100%;">
       <datalist id="tz-list">
         <option value="Europe/Moscow"></option>
         <option value="Europe/Samara"></option>

@@ -3,7 +3,7 @@
 {% block content %}
 
 <!-- Тулбар дашборда: заголовок + быстрые действия в Liquid Glass -->
-<div class="card glass grain" data-tilt style="margin: 0 0 12px; padding: 12px;">
+<div class="card glass grain" style="margin: 0 0 12px; padding: 12px;">
   <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
     <h3 style="margin:0;">Дашборд</h3>
     <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
@@ -16,26 +16,26 @@
 </div>
 
 <div class="cards">
-  <div class="card glass grain" data-tilt tabindex="0">
+  <div class="card glass grain" tabindex="0">
     <h4>Рекрутёры</h4>
     <div class="big">{{ counts.recruiters }}</div>
     <p style="margin:6px 0 0;"><a href="/recruiters">Перейти к списку</a></p>
   </div>
 
-  <div class="card glass grain" data-tilt tabindex="0">
+  <div class="card glass grain" tabindex="0">
     <h4>Города</h4>
     <div class="big">{{ counts.cities }}</div>
     <p style="margin:6px 0 0;"><a href="/cities">Перейти к списку</a></p>
   </div>
 
-  <div class="card glass grain" data-tilt tabindex="0">
+  <div class="card glass grain" tabindex="0">
     <h4>Слоты всего</h4>
     <div class="big">{{ counts.slots_total }}</div>
     <p class="badge">FREE: {{ counts.slots_free }} · PENDING: {{ counts.slots_pending }} · BOOKED: {{ counts.slots_booked }}</p>
     <p style="margin:6px 0 0;"><a href="/slots">Перейти к слотам</a></p>
   </div>
 
-  <div class="card glass grain" data-tilt tabindex="0">
+  <div class="card glass grain" tabindex="0">
     <h4>Шаблоны</h4>
     <div class="big">{{ counts.templates|default(0) }}</div>
     <p style="margin:6px 0 0;"><a href="/templates">Перейти к списку</a></p>
@@ -43,7 +43,7 @@
 </div>
 
 <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
-  <div class="card glass grain" data-tilt tabindex="0" style="padding:0;">
+  <div class="card glass grain" tabindex="0" style="padding:0;">
     <div style="padding:14px;">
       <h4 style="margin:0 0 10px 0;">Активные рекрутёры</h4>
       {% set actives = recruiters | selectattr('active') | list %}
@@ -75,7 +75,7 @@
     </div>
   </div>
 
-  <div class="card glass grain" data-tilt tabindex="0" style="padding:0;">
+  <div class="card glass grain" tabindex="0" style="padding:0;">
     <div style="padding:14px;">
       <h4 style="margin:0 0 10px 0;">Города в работе</h4>
       {% if not cities %}
