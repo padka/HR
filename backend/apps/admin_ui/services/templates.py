@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import secrets
+import string
+import time
 from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy import delete, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from backend.core.db import async_session
 from backend.domain.models import City, Template
@@ -14,6 +18,7 @@ __all__ = [
     "templates_overview",
     "update_templates_for_city",
     "list_templates",
+    "generate_template_key",
     "create_template",
     "get_template",
     "update_template",
@@ -23,6 +28,17 @@ __all__ = [
 
 
 STAGE_KEYS: List[str] = [stage.key for stage in CITY_TEMPLATE_STAGES]
+
+
+KEY_ALPHABET = string.ascii_lowercase + string.digits
+
+
+def generate_template_key(prefix: str = "tmpl") -> str:
+    """Generate a pseudo-random key for templates."""
+
+    stamp = format(int(time.time() * 1000), "x")
+    random_part = "".join(secrets.choice(KEY_ALPHABET) for _ in range(6))
+    return f"{prefix}_{stamp}_{random_part}"
 
 
 async def get_stage_templates(
@@ -129,10 +145,25 @@ async def list_templates() -> Dict[str, object]:
     return overview
 
 
-async def create_template(key: str, text: str, city_id: Optional[int]) -> None:
+async def create_template(text: str, city_id: Optional[int], *, key: Optional[str] = None) -> str:
+    """Create a template, auto-generating a key when not provided."""
+
+    attempts = 0
     async with async_session() as session:
-        session.add(Template(city_id=city_id, key=key.strip(), content=text))
-        await session.commit()
+        while True:
+            attempts += 1
+            final_key = (key or generate_template_key()).strip()
+            session.add(Template(city_id=city_id, key=final_key, content=text))
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                if key is not None or attempts >= 5:
+                    raise
+                # Retry with a freshly generated key
+                key = None
+                continue
+            return final_key
 
 
 async def get_template(tmpl_id: int) -> Optional[Template]:

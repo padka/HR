@@ -3,6 +3,7 @@
 {% block title %}Новый шаблон{% endblock %}
 {% block content %}
 {% set has_cities = (cities|length) > 0 %}
+{% set form_data = form_data or {} %}
 {% call forms.shell(
   title="Новый шаблон",
   description="Создайте сообщение для коммуникации с кандидатами.",
@@ -14,10 +15,19 @@
     {"href": "/templates", "text": "Отмена", "variant": "ghost"}
   ]
 ) %}
+  {% if errors %}
+    <div class="alert alert--danger mt-sm">
+      <ul>
+        {% for err in errors %}
+          <li>{{ err }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
   {% call forms.section("Назначение") %}
     <div class="form-field__meta">
       <label class="badge" for="is_global">
-        <input id="is_global" name="is_global" type="checkbox" {% if not has_cities %}checked disabled{% endif %}>
+        <input id="is_global" name="is_global" type="checkbox" {% if form_data.is_global or not has_cities %}checked{% endif %}{% if not has_cities %} disabled{% endif %}>
         Глобальный (без города)
       </label>
       <span class="hint">Используется до выбора города кандидатом.</span>
@@ -28,16 +38,15 @@
     {% call forms.field("Город") %}
       <div class="form-shell__grid form-shell__grid--two">
         <select id="city_id" name="city_id" {% if not has_cities %}disabled{% else %}required{% endif %}>
-          <option value="" selected disabled>— выберите город —</option>
+          <option value="" {% if not form_data.city_id %}selected{% endif %} disabled>— выберите город —</option>
           {% for c in cities %}
-            <option value="{{ c.id }}">{{ c.name }} ({{ c.tz or "Europe/Moscow" }})</option>
+            <option value="{{ c.id }}" {% if form_data.city_id == c.id %}selected{% endif %}>{{ c.name }} ({{ c.tz or "Europe/Moscow" }})</option>
           {% endfor %}
         </select>
         <input id="city_filter" type="text" placeholder="Поиск по городам…" {% if not has_cities %}disabled{% endif %}>
       </div>
       <span class="form-field__hint" id="city_hint">Для глобального шаблона город не требуется — включите переключатель «Глобальный».</span>
     {% endcall %}
-    <input id="key" type="hidden" name="key" value="">
   {% endcall %}
 
   {% call forms.section("Содержимое сообщения") %}
@@ -55,7 +64,7 @@
     {% endcall %}
 
     {% call forms.field("Текст", hint="Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.") %}
-      <textarea id="text" name="text" rows="14" required placeholder="Текст сообщения. Поддерживаются переносы строк." class="mt-sm text-mono"></textarea>
+      <textarea id="text" name="text" rows="14" required placeholder="Текст сообщения. Поддерживаются переносы строк." class="mt-sm text-mono">{{ form_data.text or '' }}</textarea>
       <div class="hint mt-sm">Доступные плейсхолдеры (клик вставит в текст):</div>
       <div class="btn-group">
         {% raw %}
@@ -128,7 +137,6 @@ initTemplateEditor({
   placeholderSelector: '[data-role="insert-var"]',
   presets: TEMPLATE_PRESETS,
   presetSelectId: 'preset',
-  keyInputId: 'key',
   isGlobalCheckboxId: 'is_global',
   citySelectId: 'city_id',
   cityFilterId: 'city_filter',
