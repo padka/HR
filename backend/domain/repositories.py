@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import select, func
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import aliased
 
 from backend.core.db import async_session
 from .models import Recruiter, City, Template, Slot, SlotStatus
@@ -22,17 +23,97 @@ async def get_active_recruiters() -> List[Recruiter]:
 
 
 async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
+    """Return recruiters that can process candidates from the given city.
+
+    A recruiter may be linked to the city explicitly (as the responsible
+    recruiter configured in the admin UI) or implicitly by owning free slots
+    for the city. The second case is important because slot management lives in
+    the admin interface: recruiters can be scheduled for specific cities
+    without being marked as the responsible contact. The bot must therefore be
+    aware of both kinds of relationships to present an accurate choice to the
+    candidate after Test 1.
+    """
+
+    now = datetime.now(timezone.utc)
+
     async with async_session() as session:
         res = await session.scalars(
             select(Recruiter)
-            .join(City, City.responsible_recruiter_id == Recruiter.id)
-            .where(
-                City.id == city_id,
-                Recruiter.active.is_(True),
-                City.active.is_(True),
+            .outerjoin(
+                City,
+                and_(
+                    City.responsible_recruiter_id == Recruiter.id,
+                    City.id == city_id,
+                    City.active.is_(True),
+                ),
             )
-            .distinct()
+            .outerjoin(
+                Slot,
+                and_(
+                    Slot.recruiter_id == Recruiter.id,
+                    Slot.city_id == city_id,
+                    func.lower(Slot.status) == SlotStatus.FREE,
+                    Slot.start_utc > now,
+                ),
+            )
+            .where(
+                Recruiter.active.is_(True),
+                or_(City.id == city_id, Slot.id.is_not(None)),
+            )
+            .group_by(Recruiter.id)
             .order_by(Recruiter.name.asc())
+        )
+        return list(res)
+
+
+async def get_candidate_cities() -> List[City]:
+    """Return active cities that have an available recruiter relation.
+
+    A city is considered available if it is active and either has an active
+    responsible recruiter assigned in the admin panel or it has at least one
+    future free slot owned by an active recruiter. This mirrors the logic used
+    by the bot when presenting recruiters, ensuring the city picker stays in
+    sync with the admin data and avoids mismatches between candidate input and
+    recruiter availability.
+    """
+
+    now = datetime.now(timezone.utc)
+
+    responsible = aliased(Recruiter)
+    slot = aliased(Slot)
+    slot_owner = aliased(Recruiter)
+
+    async with async_session() as session:
+        res = await session.scalars(
+            select(City)
+            .outerjoin(
+                responsible,
+                and_(
+                    responsible.id == City.responsible_recruiter_id,
+                    responsible.active.is_(True),
+                ),
+            )
+            .outerjoin(
+                slot,
+                and_(
+                    slot.city_id == City.id,
+                    func.lower(slot.status) == SlotStatus.FREE,
+                    slot.start_utc > now,
+                ),
+            )
+            .outerjoin(
+                slot_owner,
+                and_(
+                    slot_owner.id == slot.recruiter_id,
+                    slot_owner.active.is_(True),
+                ),
+            )
+            .where(
+                City.active.is_(True),
+                or_(responsible.id.is_not(None), slot_owner.id.is_not(None)),
+            )
+            .group_by(City.id)
+            .order_by(City.name.asc())
         )
         return list(res)
 

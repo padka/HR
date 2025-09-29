@@ -19,8 +19,9 @@ from backend.core.settings import get_settings
 from backend.domain.models import SlotStatus
 from backend.domain.repositories import (
     approve_slot,
-    get_city,
     get_city_by_name,
+    get_candidate_cities,
+    get_active_recruiters_for_city,
     get_free_slots_by_recruiter,
     get_recruiter,
     get_slot,
@@ -371,13 +372,19 @@ async def send_test1_question(user_id: int) -> None:
     if idx >= total:
         await finalize_test1(user_id)
         return
-    q = sequence[idx]
+    q = dict(sequence[idx])
+    sequence[idx] = q
+    state["t1_sequence"] = sequence
     progress = await templates.tpl(state.get("city_id"), "t1_progress", n=idx + 1, total=total)
     progress_bar = create_progress_bar(idx, total)
     helper = q.get("helper")
     base_text = f"{progress}\n{progress_bar}\n\n{_format_prompt(q['prompt'])}"
     if helper:
         base_text += f"\n\n<i>{helper}</i>"
+
+    resolved_options = await _resolve_test1_options(q)
+    if resolved_options is not None:
+        q["options"] = resolved_options
 
     options = q.get("options") or []
     if options:
@@ -432,6 +439,22 @@ def _extract_option_value(option: Any) -> str:
     return str(option)
 
 
+async def _resolve_test1_options(question: Dict[str, Any]) -> Optional[List[Any]]:
+    qid = question.get("id")
+    if qid == "city":
+        cities = await get_candidate_cities()
+        return [
+            {
+                "label": city.name,
+                "value": city.name,
+                "city_id": city.id,
+                "tz": city.tz,
+            }
+            for city in cities
+        ]
+    return None
+
+
 def _shorten_answer(text: str, limit: int = 80) -> str:
     clean = text.strip()
     if len(clean) <= limit:
@@ -466,24 +489,55 @@ def _recruiter_header(name: str, tz_label: str) -> str:
     )
 
 
-async def save_test1_answer(user_id: int, question: Dict[str, Any], answer: str) -> None:
+async def save_test1_answer(
+    user_id: int,
+    question: Dict[str, Any],
+    answer: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     state_manager = get_state_manager()
     state = state_manager.ensure(user_id)
     state.setdefault("test1_answers", {})
-    state["test1_answers"][question["id"]] = answer
     sequence = state.setdefault("t1_sequence", list(TEST1_QUESTIONS))
 
     if question["id"] == "fio":
         state["fio"] = answer
     elif question["id"] == "city":
-        state["city_name"] = answer
-        city = await get_city_by_name(answer)
-        if city:
-            state["city_id"] = city.id
-            state["candidate_tz"] = city.tz
+        meta = metadata or {}
+        resolved_name = str(
+            meta.get("name")
+            or meta.get("label")
+            or meta.get("value")
+            or answer
+        )
+        state["city_name"] = resolved_name
+
+        meta_city_id = meta.get("city_id")
+        meta_tz = meta.get("tz")
+        candidate_tz: Optional[str] = None
+        resolved_city = None
+
+        if meta_city_id is not None:
+            try:
+                state["city_id"] = int(meta_city_id)
+            except (TypeError, ValueError):
+                state["city_id"] = None
+                resolved_city = await get_city_by_name(answer)
+            candidate_tz = str(meta_tz or DEFAULT_TZ)
         else:
+            resolved_city = await get_city_by_name(answer)
+
+        if resolved_city:
+            state["city_id"] = resolved_city.id
+            candidate_tz = resolved_city.tz
+            resolved_name = resolved_city.name
+        elif meta_city_id is None:
             state["city_id"] = None
-            state["candidate_tz"] = DEFAULT_TZ
+            candidate_tz = candidate_tz or DEFAULT_TZ
+
+        state["candidate_tz"] = candidate_tz or DEFAULT_TZ
+        state["test1_answers"][question["id"]] = resolved_name
     elif question["id"] == "status":
         lower = answer.lower()
         insert_pos = state.get("t1_idx", 0) + 1
@@ -502,6 +556,9 @@ async def save_test1_answer(user_id: int, question: Dict[str, Any], answer: str)
             if FOLLOWUP_STUDY_SCHEDULE["id"] not in existing_ids:
                 sequence.insert(insert_pos, FOLLOWUP_STUDY_SCHEDULE.copy())
                 existing_ids.add(FOLLOWUP_STUDY_SCHEDULE["id"])
+
+    if question["id"] != "city":
+        state["test1_answers"][question["id"]] = answer
 
 
 async def handle_test1_answer(message: Message) -> None:
@@ -582,10 +639,13 @@ async def handle_test1_option(callback: CallbackQuery) -> None:
         await callback.answer("Вариант недоступен", show_alert=True)
         return
 
-    label = _extract_option_label(options[opt_idx])
-    value = _extract_option_value(options[opt_idx])
+    option_meta = options[opt_idx]
+    label = _extract_option_label(option_meta)
+    value = _extract_option_value(option_meta)
 
-    await save_test1_answer(user_id, question, value)
+    metadata = option_meta if isinstance(option_meta, dict) else None
+
+    await save_test1_answer(user_id, question, value, metadata=metadata)
     await _mark_test1_question_answered(user_id, label)
 
     state["t1_idx"] = idx + 1
@@ -820,8 +880,8 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
 
     city_id = state.get("city_id")
     if city_id:
-        city = await get_city(city_id)
-        if not city or city.responsible_recruiter_id != rid:
+        allowed = await get_active_recruiters_for_city(city_id)
+        if rid not in {r.id for r in allowed}:
             await callback.answer("Этот рекрутёр не работает с вашим городом", show_alert=True)
             await show_recruiter_menu(user_id)
             return

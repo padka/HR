@@ -10,6 +10,7 @@ from backend.domain.repositories import (
     approve_slot,
     get_active_recruiters,
     get_active_recruiters_for_city,
+    get_candidate_cities,
     get_city,
     get_city_by_name,
     get_free_slots_by_recruiter,
@@ -52,6 +53,90 @@ async def test_recruiter_and_city_queries():
 
     city_by_id = await get_city(city.id)
     assert city_by_id.name == "Москва"
+
+
+@pytest.mark.asyncio
+async def test_city_recruiter_lookup_includes_slot_owners():
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        responsible = models.Recruiter(name="Ответственный", tz="Europe/Moscow", active=True)
+        extra = models.Recruiter(name="Помощник", tz="Europe/Moscow", active=True)
+        city = models.City(name="Казань", tz="Europe/Moscow", active=True)
+        session.add_all([responsible, extra, city])
+        await session.commit()
+        await session.refresh(responsible)
+        await session.refresh(extra)
+        await session.refresh(city)
+
+        city.responsible_recruiter_id = responsible.id
+
+        session.add(
+            models.Slot(
+                recruiter_id=extra.id,
+                city_id=city.id,
+                start_utc=now + timedelta(hours=2),
+                status=models.SlotStatus.FREE,
+            )
+        )
+
+        await session.commit()
+
+    recruiters = await get_active_recruiters_for_city(city.id)
+    names = {r.name for r in recruiters}
+    assert names == {"Ответственный", "Помощник"}
+
+
+@pytest.mark.asyncio
+async def test_candidate_city_lookup_includes_responsible_and_slot_cities():
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        resp_active = models.Recruiter(name="Координатор", tz="Europe/Moscow", active=True)
+        resp_inactive = models.Recruiter(name="Неактивен", tz="Europe/Moscow", active=False)
+        slot_owner = models.Recruiter(name="Слотер", tz="Europe/Moscow", active=True)
+
+        city_resp = models.City(name="Екатеринбург", tz="Asia/Yekaterinburg", active=True)
+        city_slot = models.City(name="Самара", tz="Europe/Samara", active=True)
+        city_inactive = models.City(name="Томск", tz="Asia/Tomsk", active=True)
+
+        session.add_all([resp_active, resp_inactive, slot_owner, city_resp, city_slot, city_inactive])
+        await session.commit()
+
+        await session.refresh(resp_active)
+        await session.refresh(resp_inactive)
+        await session.refresh(slot_owner)
+        await session.refresh(city_resp)
+        await session.refresh(city_slot)
+        await session.refresh(city_inactive)
+
+        city_resp.responsible_recruiter_id = resp_active.id
+        city_slot.responsible_recruiter_id = resp_inactive.id
+
+        session.add(
+            models.Slot(
+                recruiter_id=slot_owner.id,
+                city_id=city_slot.id,
+                start_utc=now + timedelta(hours=3),
+                status=models.SlotStatus.FREE,
+            )
+        )
+
+        session.add(
+            models.Slot(
+                recruiter_id=resp_inactive.id,
+                city_id=city_inactive.id,
+                start_utc=now + timedelta(hours=4),
+                status=models.SlotStatus.FREE,
+            )
+        )
+
+        await session.commit()
+
+    cities = await get_candidate_cities()
+    names = [city.name for city in cities]
+
+    assert names == ["Екатеринбург", "Самара"]
 
 
 @pytest.mark.asyncio
