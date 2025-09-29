@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/components.html" import status_pill, meta_list, badge_row %}
 {% block title %}Рекрутёры{% endblock %}
 {% block content %}
 <section class="page">
@@ -15,7 +16,7 @@
   </header>
 
   {% if not recruiter_rows %}
-    <div class="card glass grain">
+    <div class="glass-card glass-card--summary grain">
       <h3 class="section-title">Пока пусто</h3>
       <p class="page-description">Записи отсутствуют. Создайте первого рекрутёра, чтобы начать работу.</p>
       <div class="page-actions">
@@ -28,25 +29,29 @@
         {% set r = item.rec %}
         {% set stats = item.stats %}
         {% set active = r.active if r.active is not none else False %}
-        <article class="recruiter-card">
+        {% set city_count = item.cities|length if item.cities else 0 %}
+        {% if item.next_free_local %}
+          {% set next_slot_label = item.next_free_local ~ (" · истёк" if not item.next_is_future else "") %}
+        {% else %}
+          {% set next_slot_label = None %}
+        {% endif %}
+        <article class="glass-card recruiter-card">
           <header class="recruiter-card__header">
             <div class="recruiter-card__identity">
               <h2 class="recruiter-card__name">{{ r.name }}</h2>
-              <div class="meta-list">
+              {% call meta_list() %}
                 <span>#{{ r.id }}</span>
                 <span title="Часовой пояс">{{ r.tz or 'Europe/Moscow' }}</span>
                 {% if r.tg_chat_id %}
                   <span title="ID чата в Telegram">chat_id {{ r.tg_chat_id }}</span>
                 {% endif %}
-              </div>
+              {% endcall %}
             </div>
-            <span class="status-pill" data-state="{{ 'on' if active else 'off' }}">
-              {{ 'Активен' if active else 'Отключен' }}
-            </span>
+            {{ status_pill('Активен' if active else 'Отключен', tone='success' if active else 'muted') }}
           </header>
 
           <div class="recruiter-card__body">
-            <div class="recruiter-card__section">
+            <section class="card-surface recruiter-card__section recruiter-card__section--metrics">
               <h3 class="section-title">Нагрузка</h3>
               <dl class="recruiter-metrics">
                 <div>
@@ -66,31 +71,46 @@
                   <dd>{{ stats.total }}</dd>
                 </div>
               </dl>
-            </div>
+            </section>
 
-            <div class="recruiter-card__section">
-              <h3 class="section-title">Города</h3>
-              <div class="badge-row">
-                {% if item.cities %}
-                  {% for cname, ctz in item.cities %}
-                    <span class="badge" title="{{ ctz }}">{{ cname }}</span>
-                  {% endfor %}
+            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
+              <summary>
+                <div class="recruiter-card__fold-head">
+                  <h3 class="section-title">Города</h3>
+                  {% if city_count %}
+                    {% set city_word = 'город' if city_count % 10 == 1 and city_count % 100 != 11 else ('города' if city_count % 10 in [2, 3, 4] and city_count % 100 not in [12, 13, 14] else 'городов') %}
+                    <span class="recruiter-card__fold-hint">{{ city_count }} {{ city_word }}</span>
+                  {% else %}
+                    <span class="recruiter-card__fold-hint">Нет городов</span>
+                  {% endif %}
+                </div>
+              </summary>
+              <div class="recruiter-card__fold-body">
+                {% call badge_row(empty='не назначены') %}
+                  {% if item.cities %}
+                    {% for cname, ctz in item.cities %}
+                      <span class="badge" title="{{ ctz }}">{{ cname }}</span>
+                    {% endfor %}
+                  {% endif %}
+                {% endcall %}
+              </div>
+            </details>
+
+            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
+              <summary>
+                <div class="recruiter-card__fold-head">
+                  <h3 class="section-title">Ближайший свободный слот</h3>
+                  <span class="recruiter-card__fold-hint">{{ next_slot_label if next_slot_label else 'Нет слотов' }}</span>
+                </div>
+              </summary>
+              <div class="recruiter-card__fold-body">
+                {% if next_slot_label %}
+                  <span class="badge">{{ next_slot_label }}</span>
                 {% else %}
-                  <span class="muted">не назначены</span>
+                  <span class="muted">Нет свободных слотов</span>
                 {% endif %}
               </div>
-            </div>
-
-            <div class="recruiter-card__section">
-              <h3 class="section-title">Ближайший свободный слот</h3>
-              {% if item.next_free_local %}
-                <span class="badge">
-                  {{ item.next_free_local }}{% if not item.next_is_future %} · истёк{% endif %}
-                </span>
-              {% else %}
-                <span class="muted">Нет свободных слотов</span>
-              {% endif %}
-            </div>
+            </details>
           </div>
 
           <footer class="recruiter-card__footer">
@@ -104,4 +124,35 @@
     </div>
   {% endif %}
 </section>
+
+{% if recruiter_rows %}
+<script>
+(function () {
+  const BREAKPOINT = 600;
+  const folds = Array.from(document.querySelectorAll('.recruiter-card [data-collapsible]'));
+  if (!folds.length) return;
+
+  let isWide = window.innerWidth >= BREAKPOINT;
+
+  function applyState(forceOpen) {
+    folds.forEach((fold) => {
+      if (forceOpen) {
+        fold.setAttribute('open', '');
+      } else {
+        fold.removeAttribute('open');
+      }
+    });
+  }
+
+  applyState(isWide);
+
+  window.addEventListener('resize', () => {
+    const next = window.innerWidth >= BREAKPOINT;
+    if (next === isWide) return;
+    isWide = next;
+    applyState(isWide);
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -1,0 +1,366 @@
+/* Unified glass card components */
+
+.card-grid {
+  --card-min-width: min(320px, 100%);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--card-min-width), 1fr));
+  gap: clamp(16px, 3vw, 28px);
+  padding: clamp(4px, 1.5vw, 12px);
+  align-items: stretch;
+}
+
+.glass-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2vw, 22px);
+  padding: clamp(18px, 2.6vw, 26px);
+  border-radius: clamp(14px, 1.8vw, 20px);
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--glass-tint) 80%, transparent) 0%,
+      color-mix(in srgb, var(--glass-inner) 18%, transparent) 100%);
+  box-shadow: var(--shadow-2);
+  isolation: isolate;
+  overflow: hidden;
+  transition: transform .28s ease, box-shadow .28s ease, border-color .28s ease, background .28s ease;
+}
+
+.glass-card::before,
+.glass-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  transition: opacity .28s ease;
+}
+
+.glass-card::before {
+  background: linear-gradient(120deg, rgba(255,255,255,.16), transparent 55%);
+  mix-blend-mode: screen;
+  opacity: .85;
+}
+
+.glass-card::after {
+  background: radial-gradient(120% 90% at 50% 110%, rgba(0,0,0,.22), transparent 68%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+  opacity: .9;
+}
+
+.glass-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-3);
+}
+
+.glass-card:hover::before {
+  opacity: 1;
+}
+
+.glass-card--summary {
+  gap: 12px;
+  padding: clamp(18px, 3vw, 24px);
+}
+
+.card-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: clamp(14px, 2vw, 18px);
+  border-radius: clamp(12px, 1.6vw, 16px);
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 55%, transparent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--glass-tint) 58%, transparent) 0%,
+    color-mix(in srgb, rgba(0,0,0,.35) 16%, transparent) 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+}
+
+@supports ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {
+  .glass-card,
+  .card-surface,
+  .recruiter-card__fold {
+    backdrop-filter: blur(var(--blur)) saturate(var(--sat));
+    -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--sat));
+  }
+}
+
+/* Status pills */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 65%, transparent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--glass-tint) 70%, transparent) 0%,
+    color-mix(in srgb, rgba(0,0,0,.45) 14%, transparent) 100%);
+  color: color-mix(in srgb, var(--fg) 82%, #fff 18%);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .28px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12);
+  transition: color .2s ease, border-color .2s ease, background .2s ease, box-shadow .2s ease;
+}
+
+.status-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 25%, transparent);
+  opacity: .85;
+}
+
+.status-pill__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.status-pill[data-tone="success"] {
+  color: color-mix(in srgb, var(--ok) 72%, var(--fg));
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--glass-stroke));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--ok) 24%, rgba(255,255,255,.16)) 0%,
+    color-mix(in srgb, var(--ok) 8%, transparent) 100%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ok) 38%, rgba(255,255,255,.35));
+}
+
+.status-pill[data-tone="danger"] {
+  color: color-mix(in srgb, var(--bad) 70%, var(--fg));
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--glass-stroke));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--bad) 22%, rgba(255,255,255,.14)) 0%,
+    color-mix(in srgb, var(--bad) 8%, transparent) 100%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bad) 30%, rgba(255,255,255,.35));
+}
+
+.status-pill[data-tone="info"] {
+  color: color-mix(in srgb, var(--accent) 68%, var(--fg));
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--glass-stroke));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 22%, rgba(255,255,255,.16)) 0%,
+    color-mix(in srgb, var(--accent) 6%, transparent) 100%);
+}
+
+.status-pill[data-tone="muted"],
+.status-pill[data-tone="neutral"] {
+  color: color-mix(in srgb, var(--muted) 85%, var(--fg));
+  border-color: color-mix(in srgb, var(--glass-stroke) 80%, transparent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--glass-tint) 75%, transparent) 0%,
+    color-mix(in srgb, rgba(0,0,0,.35) 10%, transparent) 100%);
+}
+
+/* Inline helper collections */
+.meta-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+  font-size: 12px;
+}
+
+.meta-list > * {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Recruiter list cards */
+.recruiter-card {
+  min-height: 0;
+}
+
+.recruiter-card__header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.recruiter-card__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recruiter-card__name {
+  margin: 0;
+  font-size: clamp(20px, 2.2vw, 24px);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.recruiter-card__body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: clamp(14px, 2vw, 20px);
+}
+
+.recruiter-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recruiter-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.recruiter-metrics div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recruiter-metrics dt {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--muted) 88%, transparent);
+}
+
+.recruiter-metrics dd {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--fg-strong);
+}
+
+.recruiter-card__fold {
+  border-radius: clamp(12px, 1.6vw, 16px);
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 52%, transparent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--glass-tint) 60%, transparent) 0%,
+    color-mix(in srgb, rgba(0,0,0,.38) 14%, transparent) 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  overflow: hidden;
+}
+
+.recruiter-card__fold summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: clamp(12px, 2vw, 16px);
+  margin: 0;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+}
+
+.recruiter-card__fold-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.recruiter-card__fold-head .section-title {
+  margin: 0;
+}
+
+.recruiter-card__fold summary::-webkit-details-marker {
+  display: none;
+}
+
+.recruiter-card__fold summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: .45;
+  transition: transform .2s ease, opacity .2s ease;
+}
+
+.recruiter-card__fold[open] summary::after {
+  transform: rotate(45deg);
+  opacity: .65;
+}
+
+.recruiter-card__fold-body {
+  padding: 0 clamp(12px, 2vw, 18px) clamp(14px, 2vw, 18px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recruiter-card__fold-hint {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--muted) 84%, transparent);
+}
+
+.recruiter-card__footer {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.recruiter-card__footer .btn {
+  flex: 1 1 160px;
+  justify-content: center;
+}
+
+/* Responsive rules */
+@media (min-width: 600px) {
+  .recruiter-card__fold summary {
+    cursor: default;
+  }
+
+  .recruiter-card__fold summary::after {
+    display: none;
+  }
+}
+
+@media (max-width: 880px) {
+  .card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .card-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding: 0;
+  }
+
+  .glass-card {
+    padding: 18px;
+    border-radius: 18px;
+  }
+
+  .recruiter-card__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recruiter-card__footer {
+    justify-content: flex-start;
+  }
+
+  .recruiter-card__footer .btn {
+    flex: 1 1 100%;
+  }
+}
