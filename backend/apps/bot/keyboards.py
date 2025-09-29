@@ -69,11 +69,11 @@ async def kb_recruiters(candidate_tz: str = DEFAULT_TZ) -> InlineKeyboardMarkup:
         key = recruiter.name.strip().lower()
         if key in seen_names:
             continue
-        seen_names.add(key)
-
         slots = await get_free_slots_by_recruiter(recruiter.id)
         if not slots:
             continue
+
+        seen_names.add(key)
 
         next_local = fmt_dt_local(slots[0].start_utc, candidate_tz)
         label_suffix = f"{next_local} • {min(len(slots), 99)} сл."
