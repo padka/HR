@@ -88,5 +88,7 @@ async def templates_save(request: Request):
     if not isinstance(templates_payload, dict):
         templates_payload = {}
 
-    await update_templates_for_city(city_id, templates_payload)
+    error = await update_templates_for_city(city_id, templates_payload)
+    if error:
+        return JSONResponse({"ok": False, "error": error}, status_code=400)
     return JSONResponse({"ok": True})

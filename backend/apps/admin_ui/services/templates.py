@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.db import async_session
 from backend.domain.models import City, Template
@@ -114,17 +115,23 @@ async def templates_overview() -> Dict[str, object]:
 
 
 async def update_templates_for_city(
-    city_id: Optional[int], templates: Dict[str, Optional[str]]
-) -> None:
+    city_id: Optional[int],
+    templates: Dict[str, Optional[str]],
+    *,
+    session: Optional[AsyncSession] = None,
+) -> Optional[str]:
     valid_keys = set(STAGE_KEYS)
     cleaned = {key: (templates.get(key) or "").strip() for key in valid_keys}
+    invalid_keys = sorted(set(templates.keys()) - valid_keys)
+    if invalid_keys:
+        return "Unknown template keys: " + ", ".join(invalid_keys)
 
-    async with async_session() as session:
+    async def _apply(target_session: AsyncSession) -> Optional[str]:
         if city_id is None:
             query = select(Template).where(Template.key.in_(valid_keys), Template.city_id.is_(None))
         else:
             query = select(Template).where(Template.key.in_(valid_keys), Template.city_id == city_id)
-        existing = {item.key: item for item in (await session.scalars(query)).all()}
+        existing = {item.key: item for item in (await target_session.scalars(query)).all()}
 
         for key in valid_keys:
             text_value = cleaned.get(key, "")
@@ -133,11 +140,26 @@ async def update_templates_for_city(
                 if tmpl:
                     tmpl.content = text_value
                 else:
-                    session.add(Template(city_id=city_id, key=key, content=text_value))
+                    target_session.add(Template(city_id=city_id, key=key, content=text_value))
             elif tmpl:
-                await session.delete(tmpl)
+                await target_session.delete(tmpl)
 
-        await session.commit()
+        return None
+
+    if session is None:
+        async with async_session() as own_session:
+            try:
+                error = await _apply(own_session)
+                if error:
+                    await own_session.rollback()
+                    return error
+                await own_session.commit()
+            except Exception:
+                await own_session.rollback()
+                raise
+            return None
+
+    return await _apply(session)
 
 
 async def list_templates() -> Dict[str, object]:
