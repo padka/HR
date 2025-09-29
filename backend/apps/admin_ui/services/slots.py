@@ -229,6 +229,8 @@ async def _send_test2(
         await start_test2(candidate_id)
     except Exception as exc:  # pragma: no cover - network errors etc.
         logger.exception("Failed to start Test 2 for candidate %s", candidate_id)
+        if isinstance(exc, RuntimeError) and "bot" in str(exc).lower():
+            return False, "Бот недоступен. Проверьте его конфигурацию."
         return False, str(exc)
 
     return True, None

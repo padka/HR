@@ -1,5 +1,12 @@
+import logging
+
 from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
+from sqlalchemy import text
+
+from backend.core.db import async_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -21,3 +28,26 @@ async def list_routes(request: Request):
         methods = sorted(list(getattr(item, "methods", []))) if hasattr(item, "methods") else []
         routes.append({"path": getattr(item, "path", None), "methods": methods, "name": getattr(item, "name", None)})
     return {"routes": routes}
+
+
+@router.get("/health", include_in_schema=False)
+async def health_check(request: Request) -> JSONResponse:
+    checks = {
+        "database": "ok",
+        "state_manager": "ok" if getattr(request.app.state, "state_manager", None) else "missing",
+        "bot": "configured" if getattr(request.app.state, "bot", None) else "unconfigured",
+    }
+    status_code = 200
+
+    if checks["state_manager"] == "missing":
+        status_code = 503
+
+    try:
+        async with async_session() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as exc:  # pragma: no cover - depends on runtime DB availability
+        logger.exception("Health check database probe failed")
+        checks["database"] = "error"
+        status_code = 503
+
+    return JSONResponse({"status": "ok" if status_code == 200 else "error", "checks": checks}, status_code=status_code)

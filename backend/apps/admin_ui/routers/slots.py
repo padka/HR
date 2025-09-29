@@ -203,7 +203,12 @@ async def slots_set_outcome(slot_id: int, payload: OutcomePayload):
     ok, message, stored = await set_slot_outcome(slot_id, payload.outcome)
     status_code = 200
     if not ok:
-        status_code = 404 if message and "не найден" in message.lower() else 400
+        if message and "не найден" in message.lower():
+            status_code = 404
+        elif message and "бот недоступен" in message.lower():
+            status_code = 503
+        else:
+            status_code = 400
     return JSONResponse(
         {"ok": ok, "message": message, "outcome": stored},
         status_code=status_code,
