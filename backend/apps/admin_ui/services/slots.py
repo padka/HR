@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from datetime import date as date_type, datetime, time as time_type, timedelta
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.inspection import inspect as sa_inspect
@@ -14,6 +15,7 @@ __all__ = [
     "list_slots",
     "recruiters_for_slot_form",
     "create_slot",
+    "bulk_create_slots",
     "api_slots_payload",
 ]
 
@@ -74,6 +76,109 @@ async def create_slot(recruiter_id: int, date: str, time: str) -> bool:
         session.add(Slot(recruiter_id=recruiter_id, start_utc=dt_utc, status=status_free))
         await session.commit()
         return True
+
+
+async def bulk_create_slots(
+    recruiter_id: int,
+    start_date: str,
+    end_date: str,
+    start_time: str,
+    end_time: str,
+    break_start: str,
+    break_end: str,
+    step_min: int,
+    include_weekends: bool,
+    use_break: bool,
+) -> Tuple[int, Optional[str]]:
+    async with async_session() as session:
+        recruiter = await session.get(Recruiter, recruiter_id)
+        if not recruiter:
+            return 0, "Рекрутёр не найден"
+
+        try:
+            start = date_type.fromisoformat(start_date)
+            end = date_type.fromisoformat(end_date)
+        except ValueError:
+            return 0, "Некорректные даты"
+        if end < start:
+            return 0, "Дата окончания раньше даты начала"
+
+        try:
+            window_start = time_type.fromisoformat(start_time)
+            window_end = time_type.fromisoformat(end_time)
+            pause_start = time_type.fromisoformat(break_start)
+            pause_end = time_type.fromisoformat(break_end)
+        except ValueError:
+            return 0, "Некорректное время"
+
+        if window_end <= window_start:
+            return 0, "Время окончания должно быть позже времени начала"
+        if step_min <= 0:
+            return 0, "Шаг должен быть положительным"
+
+        if use_break and pause_end <= pause_start:
+            return 0, "Время окончания перерыва должно быть позже его начала"
+
+        start_minutes = window_start.hour * 60 + window_start.minute
+        end_minutes = window_end.hour * 60 + window_end.minute
+        break_start_minutes = pause_start.hour * 60 + pause_start.minute
+        break_end_minutes = pause_end.hour * 60 + pause_end.minute
+
+        tz = getattr(recruiter, "tz", None)
+
+        planned: List[datetime] = []
+        planned_set = set()
+        current_date = start
+        while current_date <= end:
+            if include_weekends or current_date.weekday() < 5:
+                current_minutes = start_minutes
+                while current_minutes < end_minutes:
+                    if (
+                        use_break
+                        and break_start_minutes < break_end_minutes
+                        and break_start_minutes <= current_minutes < break_end_minutes
+                    ):
+                        current_minutes += step_min
+                        continue
+
+                    hours, minutes = divmod(current_minutes, 60)
+                    time_str = f"{hours:02d}:{minutes:02d}"
+                    dt_utc = recruiter_time_to_utc(current_date.isoformat(), time_str, tz)
+                    if not dt_utc:
+                        return 0, "Не удалось преобразовать время в UTC"
+                    if dt_utc not in planned_set:
+                        planned_set.add(dt_utc)
+                        planned.append(dt_utc)
+                    current_minutes += step_min
+            current_date += timedelta(days=1)
+
+        if not planned:
+            return 0, "Нет доступных слотов для создания"
+
+        existing = set(
+            await session.scalars(
+                select(Slot.start_utc)
+                .where(Slot.recruiter_id == recruiter_id)
+                .where(Slot.start_utc.in_(planned))
+            )
+        )
+
+        to_insert = [dt for dt in planned if dt not in existing]
+        if not to_insert:
+            return 0, None
+
+        status_free = getattr(SlotStatus, "FREE", "FREE")
+        if hasattr(status_free, "value"):
+            status_free = status_free.value
+
+        session.add_all(
+            [
+                Slot(recruiter_id=recruiter_id, start_utc=dt, status=status_free)
+                for dt in to_insert
+            ]
+        )
+        await session.commit()
+        return len(to_insert), None
 
 
 async def api_slots_payload(

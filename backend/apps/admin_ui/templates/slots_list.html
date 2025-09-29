@@ -16,6 +16,13 @@
     </div>
   </header>
 
+  {% if flash %}
+    {% set tone = {'success': 'success', 'error': 'danger', 'info': 'info'}.get(flash.status, 'info') %}
+    <div class="surface glass grain alert" data-tone="{{ tone }}" role="alert">
+      <p class="page-description">{{ flash.message }}</p>
+    </div>
+  {% endif %}
+
   <section class="stat-grid" aria-label="Быстрая статистика по слотам">
     <article class="stat-card" data-tone="success">
       <span class="stat-card__label">Свободные</span>
