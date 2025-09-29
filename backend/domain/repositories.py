@@ -3,6 +3,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import and_, func, or_, select
 
+
 from backend.core.db import async_session
 from .models import Recruiter, City, Template, Slot, SlotStatus
 
@@ -61,6 +62,58 @@ async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
             )
             .group_by(Recruiter.id)
             .order_by(Recruiter.name.asc())
+        )
+        return list(res)
+
+
+async def get_candidate_cities() -> List[City]:
+    """Return active cities that have an available recruiter relation.
+
+    A city is considered available if it is active and either has an active
+    responsible recruiter assigned in the admin panel or it has at least one
+    future free slot owned by an active recruiter. This mirrors the logic used
+    by the bot when presenting recruiters, ensuring the city picker stays in
+    sync with the admin data and avoids mismatches between candidate input and
+    recruiter availability.
+    """
+
+    now = datetime.now(timezone.utc)
+
+    responsible = aliased(Recruiter)
+    slot = aliased(Slot)
+    slot_owner = aliased(Recruiter)
+
+    async with async_session() as session:
+        res = await session.scalars(
+            select(City)
+            .outerjoin(
+                responsible,
+                and_(
+                    responsible.id == City.responsible_recruiter_id,
+                    responsible.active.is_(True),
+                ),
+            )
+            .outerjoin(
+                slot,
+                and_(
+                    slot.city_id == City.id,
+                    func.lower(slot.status) == SlotStatus.FREE,
+                    slot.start_utc > now,
+                ),
+            )
+            .outerjoin(
+                slot_owner,
+                and_(
+                    slot_owner.id == slot.recruiter_id,
+                    slot_owner.active.is_(True),
+                ),
+            )
+            .where(
+                City.active.is_(True),
+                or_(responsible.id.is_not(None), slot_owner.id.is_not(None)),
+            )
+            .group_by(City.id)
+            .order_by(City.name.asc())
         )
         return list(res)
 

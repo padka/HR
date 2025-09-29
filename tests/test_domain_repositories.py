@@ -10,6 +10,7 @@ from backend.domain.repositories import (
     approve_slot,
     get_active_recruiters,
     get_active_recruiters_for_city,
+    get_candidate_cities,
     get_city,
     get_city_by_name,
     get_free_slots_by_recruiter,
@@ -87,6 +88,7 @@ async def test_city_recruiter_lookup_includes_slot_owners():
 
 
 @pytest.mark.asyncio
+
 async def test_slot_workflow_and_templates():
     now = datetime.now(timezone.utc)
 
