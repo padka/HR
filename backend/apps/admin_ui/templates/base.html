@@ -414,6 +414,25 @@
     color: var(--badge-fg);
     font-size: 12px;
     letter-spacing: .3px;
+    transition: border-color .25s ease, background .25s ease, color .25s ease;
+  }
+
+  .badge[data-state="pending"] {
+    border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+    background: color-mix(in srgb, var(--warn) 18%, transparent);
+    color: color-mix(in srgb, var(--warn) 70%, var(--fg));
+  }
+
+  .badge[data-state="ok"] {
+    border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+    color: color-mix(in srgb, var(--ok) 80%, var(--fg));
+  }
+
+  .badge[data-state="error"] {
+    border-color: color-mix(in srgb, var(--bad) 55%, transparent);
+    background: color-mix(in srgb, var(--bad) 18%, transparent);
+    color: color-mix(in srgb, var(--bad) 80%, var(--fg));
   }
 
   .badge[data-overflow="true"] {

@@ -39,12 +39,12 @@
         <option value="Asia/Novosibirsk"></option>
         <option value="Asia/Krasnoyarsk"></option>
         <option value="Asia/Irkutsk"></option>
-             <option value="Asia/Vladivostok"></option>
-             <option value="Asia/Almaty"></option>
-             <option value="Europe/Minsk"></option>
+        <option value="Asia/Vladivostok"></option>
+        <option value="Asia/Almaty"></option>
+        <option value="Europe/Minsk"></option>
       </datalist>
       {% call forms.meta() %}
-        <span id="tz_status" class="badge" title="Валидация TZ">Проверка TZ…</span>
+        <span id="tz_status" class="badge" data-state="pending" title="Валидация TZ">Проверка TZ…</span>
         <span id="tz_now" class="form-note form-note--inline"></span>
       {% endcall %}
       {% call forms.note() %}
@@ -127,22 +127,23 @@ import { bindSubmitHotkey } from "/static/js/modules/form-hotkeys.js";
     const tz = tzInput.value.trim();
     if (!tz){
       tzStatus.textContent = 'Укажите TZ';
-      tzStatus.style.borderColor = 'var(--border)';
+      tzStatus.dataset.state = 'pending';
       tzNow.textContent = '';
       return;
     }
     if (isValidTimeZone(tz)){
       tzStatus.textContent = 'TZ OK';
-      tzStatus.style.borderColor = 'var(--ok)';
+      tzStatus.dataset.state = 'ok';
       const now = formatNow(tz);
       tzNow.textContent = now ? ('Сейчас там: ' + now) : '';
     } else {
       tzStatus.textContent = 'Некорректная TZ';
-      tzStatus.style.borderColor = 'var(--bad)';
+      tzStatus.dataset.state = 'error';
       tzNow.textContent = '';
     }
   }
 
+  if (tzStatus) tzStatus.dataset.state = 'pending';
   validateTZ();
 
   form?.addEventListener('submit', (e) => {

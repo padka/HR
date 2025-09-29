@@ -459,6 +459,313 @@ button:disabled,
 }
 
 /* City list */
+.page--cities {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(18px, 4vw, 28px);
+}
+
+.city-table-card {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(12px, 2.8vw, 20px);
+  padding: clamp(18px, 3vw, 26px);
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 78%, transparent), rgba(0,0,0,0.18)),
+    linear-gradient(0deg, rgba(255,255,255,0.02), rgba(255,255,255,0.02));
+  box-shadow: var(--shadow-2);
+}
+
+.city-table {
+  width: 100%;
+}
+
+.city-table thead th {
+  white-space: nowrap;
+}
+
+.city-table td {
+  font-size: 13px;
+}
+
+.city-table .cell-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-strong);
+}
+
+.city-table td.col-week,
+.city-table td.col-month {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.city-table code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+}
+
+.city-row {
+  transition: background .22s ease, transform .22s ease;
+}
+
+.city-row:focus {
+  outline: 0;
+  background: rgba(255,255,255,.05);
+  transform: translateY(-1px);
+}
+
+button.sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease, color .2s ease;
+}
+
+button.sort .arrow {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid currentColor;
+  opacity: .4;
+  transition: transform .2s ease, opacity .2s ease;
+}
+
+button.sort:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: color-mix(in srgb, var(--accent) 85%, var(--fg));
+}
+
+button.sort.is-active {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: color-mix(in srgb, var(--accent) 88%, white 12%);
+}
+
+button.sort[aria-sort="ascending"] .arrow {
+  transform: rotate(180deg);
+  opacity: 1;
+}
+
+button.sort[aria-sort="descending"] .arrow {
+  transform: rotate(0deg);
+  opacity: 1;
+}
+
+.col-align-end {
+  text-align: right;
+}
+
+.col-align-end button.sort {
+  margin-left: auto;
+}
+
+.badge--soft {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 65%, transparent);
+  background: rgba(255,255,255,.08);
+  letter-spacing: .3px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--accent) 82%, white 18%);
+}
+
+.owner-label {
+  font-weight: 500;
+}
+
+.stage-placeholder {
+  margin: 0;
+}
+
+.toast-stack {
+  position: fixed;
+  right: clamp(16px, 4vw, 32px);
+  bottom: clamp(16px, 4vw, 32px);
+  display: grid;
+  gap: 10px;
+  z-index: 160;
+}
+
+.toast {
+  min-width: 220px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 75%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 82%, transparent), rgba(0,0,0,0.32));
+  box-shadow: var(--shadow-2);
+  color: var(--fg);
+  font-size: 13px;
+  opacity: 0;
+  transform: translateY(12px);
+  animation: toast-in .28s ease forwards;
+}
+
+.toast[data-kind="error"] {
+  border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+  color: color-mix(in srgb, var(--bad) 80%, white 18%);
+}
+
+.toast[data-kind="success"] {
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  color: color-mix(in srgb, var(--ok) 78%, white 18%);
+}
+
+.toast--hide {
+  animation: toast-out .24s ease forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(7, 10, 18, 0.6);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .32s ease;
+  z-index: 150;
+}
+
+.sheet-backdrop.open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.sheet {
+  position: fixed;
+  inset: 0 0 0 auto;
+  max-width: min(520px, 100%);
+  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 84%, transparent), rgba(0,0,0,0.42));
+  border-left: 1px solid color-mix(in srgb, var(--glass-stroke) 85%, transparent);
+  box-shadow: -26px 0 60px rgba(0,0,0,0.45);
+  transform: translateX(106%);
+  transition: transform .32s ease;
+  z-index: 180;
+}
+
+.sheet.open {
+  transform: translateX(0);
+}
+
+.sheet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: clamp(16px, 3vw, 22px);
+  border-bottom: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 92%, transparent), rgba(0,0,0,0.25));
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.sheet-title {
+  margin: 0;
+  font-size: clamp(18px, 2.6vw, 22px);
+  font-weight: 600;
+}
+
+.sheet-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.sheet-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(16px, 2.8vw, 24px);
+  padding: clamp(18px, 3vw, 26px);
+  overflow-y: auto;
+}
+
+.sheet-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: clamp(16px, 3vw, 22px);
+  border-top: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 88%, transparent), rgba(0,0,0,0.28));
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+
+.city-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(16px, 2.8vw, 24px);
+}
+
+body.sheet-open {
+  overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .sheet {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.sort,
+  .sheet,
+  .sheet-backdrop,
+  .toast {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .toast {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .city-collection {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
