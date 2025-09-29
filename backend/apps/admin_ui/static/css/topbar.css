@@ -108,11 +108,13 @@ html[data-theme="light"] .topbar {
   letter-spacing: 0.1px;
   transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
   cursor: pointer;
+  box-shadow: none;
 }
 
 .topbar__theme-toggle:hover {
   background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 96%, transparent), rgba(255, 255, 255, 0.08));
   border-color: color-mix(in srgb, var(--accent) 30%, var(--glass-stroke));
+  box-shadow: none;
 }
 
 .topbar__theme-toggle:active {
@@ -122,6 +124,7 @@ html[data-theme="light"] .topbar {
 .topbar__theme-toggle:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
   outline-offset: 3px;
+  box-shadow: none;
 }
 
 .topbar__theme-toggle[data-mode="light"] .topbar__theme-icon {

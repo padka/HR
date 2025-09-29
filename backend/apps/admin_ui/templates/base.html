@@ -746,7 +746,7 @@
 </head>
 <body>
   <div aria-hidden="true" class="halo"></div>
-  <header class="topbar">
+  <header class="topbar" role="banner">
     <div class="topbar__shell grain">
       <div class="topbar__bar">
         <a href="/" class="topbar__brand">
@@ -766,11 +766,11 @@
           <span class="topbar__title">TG Bot Admin</span>
         </a>
         <div class="topbar__actions">
-          <button id="theme-toggle" class="topbar__theme-toggle" type="button" aria-label="Переключить тему" aria-pressed="true">
-            <span class="topbar__theme-icon" aria-hidden="true">🌙</span>
-            <span class="topbar__theme-label">Тёмная тема</span>
+          <button id="theme-toggle" class="topbar__theme-toggle btn theme-toggle" type="button" aria-label="Переключить тему" aria-pressed="true">
+            <span class="topbar__theme-icon theme-toggle__icon" aria-hidden="true">🌙</span>
+            <span class="topbar__theme-label theme-toggle__label">Тёмная тема</span>
           </button>
-          <span class="topbar__env" role="status" aria-live="polite">{{ request.url.hostname or 'localhost' }}</span>
+          <span class="topbar__env badge nav__env" role="status" aria-live="polite">{{ request.url.hostname or 'localhost' }}</span>
           <button id="topbar-menu-toggle" class="topbar__menu-toggle" type="button" aria-label="Открыть навигацию" aria-expanded="false" aria-controls="topbar-drawer">
             <span class="topbar__menu-icon" aria-hidden="true">
               <span></span>
@@ -780,9 +780,9 @@
           </button>
         </div>
       </div>
-      <div id="topbar-drawer" class="topbar__drawer" data-open="false">
+      <div id="topbar-drawer" class="topbar__drawer" data-open="false" aria-hidden="true">
         <nav id="topbar-navigation" class="topbar__nav" aria-label="Основная навигация">
-          <ul class="topbar__links">
+          <ul class="topbar__links" role="list">
             <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Дашборд</a></li>
             <li><a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">Рекрутёры</a></li>
             <li><a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">Города</a></li>
@@ -830,8 +830,8 @@
       toggle.setAttribute('aria-pressed', theme === 'dark');
       const icon = theme === 'dark' ? '🌙' : '🌞';
       const label = theme === 'dark' ? 'Тёмная тема' : 'Светлая тема';
-      const iconEl = toggle.querySelector('.topbar__theme-icon');
-      const labelEl = toggle.querySelector('.topbar__theme-label');
+      const iconEl = toggle.querySelector('.topbar__theme-icon, .theme-toggle__icon');
+      const labelEl = toggle.querySelector('.topbar__theme-label, .theme-toggle__label');
       if (iconEl) { iconEl.textContent = icon; }
       if (labelEl) { labelEl.textContent = label; }
       toggle.setAttribute('aria-label', label);
@@ -888,6 +888,28 @@
             setMenuState(false);
           }
         });
+      });
+
+      document.addEventListener('click', (event) => {
+        if (!desktopQuery.matches && topbar.classList.contains('topbar--menu-open')) {
+          const target = event.target;
+          if (!topbar.contains(target) && target !== menuToggle && !menuToggle.contains(target)) {
+            setMenuState(false);
+          }
+        }
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && topbar.classList.contains('topbar--menu-open')) {
+          setMenuState(false);
+          if (typeof menuToggle.focus === 'function') {
+            try {
+              menuToggle.focus({ preventScroll: true });
+            } catch (err) {
+              menuToggle.focus();
+            }
+          }
+        }
       });
 
       drawer.setAttribute('aria-hidden', desktopQuery.matches ? 'false' : 'true');
