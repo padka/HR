@@ -8,7 +8,7 @@ import logging
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TypeVar, cast, overload
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -64,14 +64,25 @@ for _path in (REPORTS_DIR, TEST1_DIR, UPLOADS_DIR):
     _path.mkdir(parents=True, exist_ok=True)
 
 
+T = TypeVar("T")
+
+
 class StateManager:
     """Simple in-memory state storage for bot flows."""
 
     def __init__(self) -> None:
         self._storage: Dict[int, State] = {}
 
+    @overload
     def get(self, user_id: int) -> Optional[State]:
-        return self._storage.get(user_id)
+        ...
+
+    @overload
+    def get(self, user_id: int, default: T) -> State | T:
+        ...
+
+    def get(self, user_id: int, default: T | None = None) -> State | T | None:
+        return self._storage.get(user_id, default)
 
     def ensure(self, user_id: int) -> State:
         state = self._storage.get(user_id)
