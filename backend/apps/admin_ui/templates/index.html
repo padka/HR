@@ -175,17 +175,13 @@
   .metric-card {
     position: relative;
     display: grid;
-    gap: 12px;
-    grid-template-columns: 1fr minmax(80px, auto);
-    grid-template-areas:
-      "metric-label metric-analytics"
-      "metric-value metric-analytics"
-      "metric-meta metric-meta";
-    padding: 20px;
+    grid-template-rows: auto auto 1fr;
+    gap: 16px;
+    padding: 24px;
+    min-height: 220px;
   }
 
   .metric-card__label {
-    grid-area: metric-label;
     font-size: 13px;
     letter-spacing: .32px;
     text-transform: uppercase;
@@ -194,7 +190,6 @@
   }
 
   .metric-card__value {
-    grid-area: metric-value;
     font-size: clamp(30px, 6vw, 42px);
     font-weight: 900;
     letter-spacing: -.2px;
@@ -202,34 +197,45 @@
   }
 
   .metric-card__meta {
-    grid-area: metric-meta;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: auto;
+    padding-top: 14px;
+    border-top: 1px solid color-mix(in srgb, var(--glass-stroke) 60%, transparent);
+  }
+
+  .metric-card__meta-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
     align-items: center;
+    gap: 10px;
+    min-height: 24px;
+  }
+
+  .metric-card__meta-row:empty {
+    display: none;
   }
 
   .metric-card__link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-weight: 600;
     color: var(--accent);
+    text-decoration: none;
+    transition: color .2s ease, gap .2s ease;
+  }
+
+  .metric-card__link:hover {
+    color: color-mix(in srgb, var(--accent) 75%, var(--fg) 25%);
+    gap: 8px;
   }
 
   .metric-card__badges {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .metric-card__analytics {
-    grid-area: metric-analytics;
-    justify-self: end;
-    align-self: stretch;
-    min-width: 72px;
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--bg) 65%, rgba(255,255,255,.08) 35%);
-    border: 1px dashed color-mix(in srgb, var(--glass-stroke) 70%, transparent);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
-    opacity: .8;
+    gap: 8px;
   }
 
   .badge--soft {
@@ -304,7 +310,7 @@
     grid-template-columns: auto 1fr auto;
     grid-template-areas:
       "entity-id entity-title entity-status"
-      "entity-id entity-meta entity-analytics";
+      "entity-id entity-meta entity-status";
     padding: 14px 16px;
     border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--bg) 60%, rgba(255,255,255,.08) 40%);
@@ -335,16 +341,7 @@
   .entity-card__status {
     grid-area: entity-status;
     justify-self: end;
-  }
-
-  .entity-card__analytics {
-    grid-area: entity-analytics;
-    min-height: 26px;
-    min-width: 80px;
-    border-radius: var(--radius-sm);
-    border: 1px dashed color-mix(in srgb, var(--glass-stroke) 70%, transparent);
-    background: color-mix(in srgb, var(--bg) 65%, rgba(255,255,255,.06) 35%);
-    opacity: .7;
+    align-self: center;
   }
 
   .panel__footer {
@@ -375,11 +372,16 @@
     }
 
     .entity-card {
-      grid-template-columns: 1fr auto;
+      grid-template-columns: auto 1fr;
       grid-template-areas:
-        "entity-title entity-status"
-        "entity-meta entity-analytics"
-        "entity-id entity-analytics";
+        "entity-id entity-title"
+        "entity-status entity-meta";
+      align-items: center;
+    }
+
+    .entity-card__status {
+      justify-self: flex-start;
+      margin-bottom: 0;
     }
   }
 </style>
@@ -407,41 +409,40 @@
   <article class="card glass grain metric-card" data-tilt tabindex="0">
     <span class="metric-card__label">Рекрутёры</span>
     <div class="metric-card__value">{{ counts.recruiters }}</div>
-    <div class="metric-card__analytics" aria-hidden="true"></div>
     <div class="metric-card__meta">
-      <a class="metric-card__link" href="/recruiters">Перейти к списку</a>
+      <div class="metric-card__meta-row"></div>
+      <a class="metric-card__link" href="/recruiters">Перейти к списку<span aria-hidden="true">→</span></a>
     </div>
   </article>
 
   <article class="card glass grain metric-card" data-tilt tabindex="0">
     <span class="metric-card__label">Города</span>
     <div class="metric-card__value">{{ counts.cities }}</div>
-    <div class="metric-card__analytics" aria-hidden="true"></div>
     <div class="metric-card__meta">
-      <a class="metric-card__link" href="/cities">Перейти к списку</a>
+      <div class="metric-card__meta-row"></div>
+      <a class="metric-card__link" href="/cities">Перейти к списку<span aria-hidden="true">→</span></a>
     </div>
   </article>
 
   <article class="card glass grain metric-card" data-tilt tabindex="0">
     <span class="metric-card__label">Слоты всего</span>
     <div class="metric-card__value">{{ counts.slots_total }}</div>
-    <div class="metric-card__analytics" aria-hidden="true"></div>
     <div class="metric-card__meta">
-      <div class="metric-card__badges">
+      <div class="metric-card__meta-row metric-card__badges">
         <span class="badge badge--soft">FREE: {{ counts.slots_free }}</span>
         <span class="badge badge--soft">PENDING: {{ counts.slots_pending }}</span>
         <span class="badge badge--soft">BOOKED: {{ counts.slots_booked }}</span>
       </div>
-      <a class="metric-card__link" href="/slots">Перейти к слотам</a>
+      <a class="metric-card__link" href="/slots">Перейти к слотам<span aria-hidden="true">→</span></a>
     </div>
   </article>
 
   <article class="card glass grain metric-card" data-tilt tabindex="0">
     <span class="metric-card__label">Шаблоны</span>
     <div class="metric-card__value">{{ counts.templates|default(0) }}</div>
-    <div class="metric-card__analytics" aria-hidden="true"></div>
     <div class="metric-card__meta">
-      <a class="metric-card__link" href="/templates">Перейти к списку</a>
+      <div class="metric-card__meta-row"></div>
+      <a class="metric-card__link" href="/templates">Перейти к списку<span aria-hidden="true">→</span></a>
     </div>
   </article>
 </section>
@@ -467,7 +468,6 @@
             <span class="entity-card__title">{{ r.name }}</span>
             <span class="entity-card__meta">{{ r.tz or "Europe/Moscow" }}</span>
             <span class="entity-card__status"><span class="badge badge--success">Активен</span></span>
-            <div class="entity-card__analytics" aria-hidden="true"></div>
           </li>
         {% endfor %}
       </ul>
@@ -493,7 +493,6 @@
             <span class="entity-card__title">{{ c.name }}</span>
             <span class="entity-card__meta">{{ c.tz or "Europe/Moscow" }}</span>
             <span class="entity-card__status"></span>
-            <div class="entity-card__analytics" aria-hidden="true"></div>
           </li>
         {% endfor %}
       </ul>
