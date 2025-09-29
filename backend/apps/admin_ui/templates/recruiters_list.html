@@ -10,7 +10,7 @@
       </p>
     </div>
     <div class="page-actions">
-      <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
+      <a class="btn btn--primary" href="/recruiters/new">Добавить рекрутёра</a>
     </div>
   </header>
 
@@ -19,7 +19,7 @@
       <h3 class="section-title">Пока пусто</h3>
       <p class="page-description">Записи отсутствуют. Создайте первого рекрутёра, чтобы начать работу.</p>
       <div class="page-actions">
-        <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
+        <a class="btn btn--primary" href="/recruiters/new">Добавить рекрутёра</a>
       </div>
     </div>
   {% else %}
@@ -94,9 +94,9 @@
           </div>
 
           <footer class="recruiter-card__footer">
-            <a class="btn btn-soft btn--grow" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
+            <a class="btn btn--soft btn--grow" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
             <form class="inline-form" method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');">
-              <button class="btn btn-danger btn--grow" type="submit">Удалить</button>
+              <button class="btn btn--danger btn--grow" type="submit">Удалить</button>
             </form>
           </footer>
         </article>

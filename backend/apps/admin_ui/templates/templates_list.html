@@ -41,7 +41,7 @@
         <div class="stage-field" data-stage="{{ stage.key }}">
           <div class="stage-field__header">
             <label for="global_{{ stage.key }}">{{ stage.title }}</label>
-            <button type="button" class="btn btn-soft btn--small stage-default">Стандартный текст</button>
+            <button type="button" class="btn btn--soft btn--small stage-default">Стандартный текст</button>
           </div>
           <p class="stage-field__description">{{ stage.description }}</p>
           <textarea
@@ -53,7 +53,7 @@
         </div>
       {% endfor %}
       <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Сохранить глобальные</button>
+        <button type="submit" class="btn btn--primary">Сохранить глобальные</button>
         <span class="badge muted save-status">Сохранено</span>
       </div>
     </form>
@@ -73,7 +73,7 @@
             <div class="stage-field" data-stage="{{ stage.key }}">
               <div class="stage-field__header">
                 <label for="stage_{{ entry.city.id }}_{{ stage.key }}">{{ stage.title }}</label>
-                <button type="button" class="btn btn-soft btn--small stage-default">Стандартный текст</button>
+                <button type="button" class="btn btn--soft btn--small stage-default">Стандартный текст</button>
               </div>
               <p class="stage-field__description">{{ stage.description }}</p>
               <textarea
@@ -85,7 +85,7 @@
             </div>
           {% endfor %}
           <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Сохранить</button>
+            <button type="submit" class="btn btn--primary">Сохранить</button>
             <span class="badge muted save-status">Сохранено</span>
           </div>
         </form>

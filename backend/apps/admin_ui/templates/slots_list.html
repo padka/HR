@@ -11,7 +11,7 @@
       </p>
     </div>
     <div class="page-actions">
-      <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+      <a class="btn btn--primary" href="/slots/new">+ Новый слот</a>
     </div>
   </header>
 
@@ -186,19 +186,19 @@
       <span class="badge">Стр. {{ page }} из {{ pages_total }}</span>
 
       {% if page > 1 %}
-        <a class="btn btn-ghost" href="/slots?page=1{{ qrecr }}{{ qstat }}{{ qpp }}">« Первая</a>
-        <a class="btn btn-ghost" href="/slots?page={{ page-1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">‹ Назад</a>
+        <a class="btn btn--ghost" href="/slots?page=1{{ qrecr }}{{ qstat }}{{ qpp }}">« Первая</a>
+        <a class="btn btn--ghost" href="/slots?page={{ page-1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">‹ Назад</a>
       {% else %}
-        <span class="btn btn-ghost" aria-disabled="true">« Первая</span>
-        <span class="btn btn-ghost" aria-disabled="true">‹ Назад</span>
+        <span class="btn btn--ghost" aria-disabled="true">« Первая</span>
+        <span class="btn btn--ghost" aria-disabled="true">‹ Назад</span>
       {% endif %}
 
       {% if page < pages_total %}
-        <a class="btn btn-ghost" href="/slots?page={{ page+1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">Вперёд ›</a>
-        <a class="btn btn-ghost" href="/slots?page={{ pages_total }}{{ qrecr }}{{ qstat }}{{ qpp }}">Последняя »</a>
+        <a class="btn btn--ghost" href="/slots?page={{ page+1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">Вперёд ›</a>
+        <a class="btn btn--ghost" href="/slots?page={{ pages_total }}{{ qrecr }}{{ qstat }}{{ qpp }}">Последняя »</a>
       {% else %}
-        <span class="btn btn-ghost" aria-disabled="true">Вперёд ›</span>
-        <span class="btn btn-ghost" aria-disabled="true">Последняя »</span>
+        <span class="btn btn--ghost" aria-disabled="true">Вперёд ›</span>
+        <span class="btn btn--ghost" aria-disabled="true">Последняя »</span>
       {% endif %}
     </div>
   {% endif %}

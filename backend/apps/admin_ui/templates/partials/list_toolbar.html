@@ -8,12 +8,12 @@
   {% set icon = action.icon %}
   {% set disabled = action.disabled|default(false) %}
   {% if type == 'button' %}
-    <button type="{{ button_type }}" class="btn btn-{{ variant }}" {{ attrs|safe }}{% if disabled %} disabled{% endif %}>
+    <button type="{{ button_type }}" class="btn btn--{{ variant }}" {{ attrs|safe }}{% if disabled %} disabled{% endif %}>
       {% if icon %}<span class="btn__icon">{{ icon|safe }}</span>{% endif %}
       {{ label }}
     </button>
   {% else %}
-    <a href="{{ href }}" class="btn btn-{{ variant }}" {{ attrs|safe }}{% if disabled %} aria-disabled="true"{% endif %}>
+    <a href="{{ href }}" class="btn btn--{{ variant }}" {{ attrs|safe }}{% if disabled %} aria-disabled="true"{% endif %}>
       {% if icon %}<span class="btn__icon">{{ icon|safe }}</span>{% endif %}
       {{ label }}
     </a>

@@ -9,7 +9,7 @@
       <p class="page-description">Управляйте ответственными, планами и текстами сообщений для каждого города.</p>
     </div>
     <div class="page-actions">
-      <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
+      <a class="btn btn--primary" href="/cities/new">+ Новый город</a>
     </div>
   </header>
 
@@ -33,7 +33,7 @@
       <h3 class="section-title">Пока пусто</h3>
       <p class="page-description">Добавьте город, чтобы настроить сообщения и ответственных.</p>
       <div class="page-actions">
-        <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
+        <a class="btn btn--primary" href="/cities/new">+ Новый город</a>
       </div>
     </div>
   {% else %}
@@ -80,7 +80,7 @@
               </span>
             </div>
             <div class="city-card__actions">
-              <button class="btn btn-soft btn-edit" type="button" title="Настроить город">Настроить</button>
+              <button class="btn btn--soft btn-edit" type="button" title="Настроить город">Настроить</button>
             </div>
           </div>
           <div class="city-card__details" hidden>
@@ -173,7 +173,7 @@
                               rows="5"
                               placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
                             <div class="stage-controls">
-                              <button type="button" class="btn btn-ghost btn--small stage-default-btn" data-stage="{{ stage.key }}">Вставить текст по умолчанию</button>
+                              <button type="button" class="btn btn--ghost btn--small stage-default-btn" data-stage="{{ stage.key }}">Вставить текст по умолчанию</button>
                               <span class="muted">{{ stage.description }}</span>
                             </div>
                           </div>
@@ -191,8 +191,8 @@
 
               <footer class="city-form__footer">
                 <div class="form-actions">
-                  <button type="submit" class="btn btn-primary">Сохранить</button>
-                  <button type="button" class="btn btn-ghost btn-cancel">Отмена</button>
+                  <button type="submit" class="btn btn--primary">Сохранить</button>
+                  <button type="button" class="btn btn--ghost btn-cancel">Отмена</button>
                   <span class="badge muted save-status">Сохранено</span>
                 </div>
               </footer>
