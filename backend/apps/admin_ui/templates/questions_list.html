@@ -21,59 +21,39 @@
           <span class="badge">{{ test.test_id }}</span>
           <span class="test-section__meta">{{ test.questions|length }} вопросов</span>
         </header>
-        <div class="list-table-wrapper">
-          <table class="list-table list-table--responsive">
-            <thead>
-              <tr>
-                <th>№</th>
-                <th>Вопрос</th>
-                <th>Тип</th>
-                <th>Последнее изменение</th>
-                <th>Статус</th>
-                <th class="cell-actions">Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-            {% for item in test.questions %}
-              <tr>
-                <td data-label="№">{{ item.index }}</td>
-                <td data-label="Вопрос">
-                  <div class="question-title">{{ item.title }}</div>
-                  <div class="question-meta">{{ item.prompt }}</div>
-                  {% if item.options_count %}
-                    <div class="question-meta--small">
-                      Вариантов: {{ item.options_count }}{% if item.correct_label %}, верный: {{ item.correct_label }}{% endif %}
-                    </div>
-                  {% endif %}
-                </td>
-                <td data-label="Тип">
-                  {% if item.kind == 'choice' %}
-                    <span class="badge">Варианты</span>
-                  {% else %}
-                    <span class="badge">Свободный ответ</span>
-                  {% endif %}
-                </td>
-                <td data-label="Последнее изменение">{% if item.updated_at %}{{ fmt_utc(item.updated_at) }} UTC{% else %}—{% endif %}</td>
-                <td data-label="Статус">
-                  {% if item.is_active %}
-                    <span class="status-badge" data-tone="success">Активен</span>
-                  {% else %}
-                    <span class="status-badge" data-tone="danger">Скрыт</span>
-                  {% endif %}
-                </td>
-                <td class="cell-actions" data-label="">
-                  <a class="btn btn-soft" href="/questions/{{ item.id }}/edit">Редактировать</a>
-                </td>
-              </tr>
-            {% else %}
-              <tr>
-                <td colspan="6" data-label="">
-                  <div class="muted table-empty">Пока нет вопросов.</div>
-                </td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
+        <div class="question-list">
+          {% for item in test.questions %}
+            <article class="question-card">
+              <div class="question-card__header">
+                <span class="badge">№ {{ item.index }}</span>
+                <h3 class="question-title">{{ item.title }}</h3>
+                {% if item.kind == 'choice' %}
+                  <span class="badge">Варианты</span>
+                {% else %}
+                  <span class="badge">Свободный ответ</span>
+                {% endif %}
+              </div>
+              {% if item.prompt %}
+                <p class="question-meta">{{ item.prompt }}</p>
+              {% endif %}
+              <div class="question-card__meta">
+                {% if item.options_count %}
+                  <span>Вариантов: {{ item.options_count }}{% if item.correct_label %}, верный: {{ item.correct_label }}{% endif %}</span>
+                {% endif %}
+                <span>Последнее изменение: {% if item.updated_at %}{{ fmt_utc(item.updated_at) }} UTC{% else %}—{% endif %}</span>
+              </div>
+              <div class="question-card__footer">
+                {% if item.is_active %}
+                  <span class="question-pill" data-tone="success">Активен</span>
+                {% else %}
+                  <span class="question-pill" data-tone="danger">Скрыт</span>
+                {% endif %}
+                <a class="btn btn-soft" href="/questions/{{ item.id }}/edit">Редактировать</a>
+              </div>
+            </article>
+          {% else %}
+            <div class="muted table-empty">Пока нет вопросов.</div>
+          {% endfor %}
         </div>
       </section>
     {% endfor %}
