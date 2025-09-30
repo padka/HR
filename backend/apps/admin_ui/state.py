@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from backend.apps.bot.config import DEFAULT_BOT_PROPERTIES
 from backend.apps.bot.services import StateManager, configure as configure_bot_services
 from backend.apps.admin_ui.services.bot_service import (
+    BOT_RUNTIME_AVAILABLE,
     BotService,
     configure_bot_service,
 )
@@ -92,6 +93,29 @@ def setup_bot_state(app: FastAPI) -> BotIntegration:
         required=settings.test2_required,
     )
     configure_bot_service(bot_service)
+
+    ready = bot_service.is_ready()
+    if not ready:
+        if not settings.bot_enabled:
+            reason = "disabled"
+        elif not BOT_RUNTIME_AVAILABLE:
+            reason = "runtime_unavailable"
+        elif not configured:
+            reason = "not_configured"
+        else:
+            reason = "unknown"
+    else:
+        reason = None
+
+    logger.info(
+        "Bot integration initialised",
+        extra={
+            "provider": settings.bot_provider,
+            "ready": ready,
+            "mode": "real" if configured and ready else "null",
+            "reason": reason,
+        },
+    )
 
     app.state.bot = bot
     app.state.state_manager = state_manager

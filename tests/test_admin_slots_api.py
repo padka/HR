@@ -12,6 +12,13 @@ from backend.core.db import async_session
 from backend.domain import models
 
 
+def _force_ready_bot(monkeypatch) -> None:
+    def _fake_build(settings):
+        return None, True
+
+    monkeypatch.setattr("backend.apps.admin_ui.state._build_bot", _fake_build)
+
+
 async def _create_booked_slot() -> Tuple[int, int]:
     async with async_session() as session:
         recruiter = models.Recruiter(name="API", tz="Europe/Moscow", active=True)
@@ -112,13 +119,13 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
         app,
         "post",
         f"/slots/{slot_id}/outcome",
-        json={"outcome": "passed"},
+        json={"outcome": "success"},
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["outcome"] == "passed"
-    assert response.headers.get("X-Bot") == "sent"
+    assert payload["outcome"] == "success"
+    assert response.headers.get("X-Bot") == "sent_test2"
 
     state = slot_services.get_state_manager().get(candidate_id)
     assert state is not None
@@ -128,12 +135,14 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
     async with async_session() as session:
         updated = await session.get(models.Slot, slot_id)
         assert updated is not None
-        assert updated.interview_outcome == "passed"
+        assert updated.interview_outcome == "success"
+        assert updated.test2_sent_at is not None
 
 
 @pytest.mark.asyncio
-async def test_slot_outcome_endpoint_returns_503_when_bot_unavailable(monkeypatch):
+async def test_slot_outcome_endpoint_returns_200_when_bot_unavailable(monkeypatch):
     slot_id, _ = await _create_booked_slot()
+    _force_ready_bot(monkeypatch)
     app = create_app()
 
     async def fake_send_test2(*_args, **_kwargs):
@@ -141,17 +150,22 @@ async def test_slot_outcome_endpoint_returns_503_when_bot_unavailable(monkeypatc
 
     monkeypatch.setattr(slot_services, "_trigger_test2", fake_send_test2)
 
-    response = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "passed"})
-    assert response.status_code == 503
+    response = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "success"})
+    assert response.status_code == 200
     payload = response.json()
-    assert payload["ok"] is False
-    assert "бот недоступен" in (payload.get("message") or "").lower()
-    assert response.headers.get("X-Bot") == "skipped:error"
+    assert payload["ok"] is True
+    assert response.headers.get("X-Bot") == "sent_test2"
+
+    async with async_session() as session:
+        updated = await session.get(models.Slot, slot_id)
+        assert updated is not None
+        assert updated.test2_sent_at is None
 
 
 @pytest.mark.asyncio
 async def test_slot_outcome_endpoint_skips_when_bot_optional(monkeypatch):
     slot_id, _ = await _create_booked_slot()
+    _force_ready_bot(monkeypatch)
     app = create_app()
 
     async def fake_send_test2(*_args, **_kwargs):
@@ -159,12 +173,80 @@ async def test_slot_outcome_endpoint_skips_when_bot_optional(monkeypatch):
 
     monkeypatch.setattr(slot_services, "_trigger_test2", fake_send_test2)
 
-    response = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "passed"})
+    response = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "success"})
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert "пропущена" in (payload.get("message") or "").lower()
-    assert response.headers.get("X-Bot") == "skipped:not_configured"
+    assert response.headers.get("X-Bot") == "sent_test2"
+
+    async with async_session() as session:
+        updated = await session.get(models.Slot, slot_id)
+        assert updated is not None
+        assert updated.test2_sent_at is None
+
+
+@pytest.mark.asyncio
+async def test_slot_outcome_success_idempotent(monkeypatch):
+    slot_id, _ = await _create_booked_slot()
+    _force_ready_bot(monkeypatch)
+    app = create_app()
+
+    calls: Dict[str, int] = {"count": 0}
+
+    async def fake_send_test2(*_args, **_kwargs):
+        calls["count"] += 1
+        return BotSendResult(ok=True, status="sent")
+
+    monkeypatch.setattr(slot_services, "_trigger_test2", fake_send_test2)
+
+    first = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "success"})
+    assert first.status_code == 200
+    assert first.headers.get("X-Bot") == "sent_test2"
+
+    second = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "success"})
+    assert second.status_code == 200
+    assert second.headers.get("X-Bot") == "skipped:already_sent"
+
+    await asyncio.sleep(0.05)
+
+    assert calls["count"] == 1
+
+    async with async_session() as session:
+        updated = await session.get(models.Slot, slot_id)
+        assert updated is not None
+        assert updated.test2_sent_at is not None
+
+
+@pytest.mark.asyncio
+async def test_slot_outcome_reject_triggers_rejection(monkeypatch):
+    slot_id, _ = await _create_booked_slot()
+    _force_ready_bot(monkeypatch)
+    app = create_app()
+
+    calls: Dict[str, int] = {"count": 0}
+
+    async def fake_send_rejection(*_args, **_kwargs):
+        calls["count"] += 1
+        return BotSendResult(ok=True, status="sent_rejection")
+
+    monkeypatch.setattr(slot_services, "_trigger_rejection", fake_send_rejection)
+
+    first = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "reject"})
+    assert first.status_code == 200
+    assert first.headers.get("X-Bot") == "sent_rejection"
+
+    second = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "reject"})
+    assert second.status_code == 200
+    assert second.headers.get("X-Bot") == "skipped:already_sent"
+
+    await asyncio.sleep(0.05)
+
+    assert calls["count"] == 1
+
+    async with async_session() as session:
+        updated = await session.get(models.Slot, slot_id)
+        assert updated is not None
+        assert updated.rejection_sent_at is not None
 
 
 @pytest.mark.asyncio
@@ -185,4 +267,5 @@ async def test_bot_health_endpoint_reports_status(monkeypatch):
     response = await _async_request(app, "get", "/health/bot")
     assert response.status_code == 200
     payload = response.json()
-    assert set(payload.keys()) == {"enabled", "ready", "status"}
+    assert set(payload.keys()) == {"enabled", "ready", "mode"}
+    assert payload["mode"] in {"real", "null"}

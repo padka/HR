@@ -98,6 +98,8 @@ class Slot(Base):
     candidate_fio: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     candidate_tz: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     interview_outcome: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    test2_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

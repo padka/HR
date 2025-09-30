@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Dict, Optional
 
 from fastapi import Request
@@ -14,8 +15,9 @@ except Exception:  # pragma: no cover - optional dependency
     _AioHttpClientError = Exception  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency handling
+    from backend.apps.bot import templates as bot_templates
     from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS, State as BotState
-    from backend.apps.bot.services import StateManager, start_test2
+    from backend.apps.bot.services import StateManager, get_bot, start_test2
     BOT_RUNTIME_AVAILABLE = True
 except Exception:  # pragma: no cover - fallback when bot package is unavailable
     DEFAULT_TZ = "Europe/Moscow"
@@ -40,6 +42,14 @@ except Exception:  # pragma: no cover - fallback when bot package is unavailable
         raise RuntimeError("Bot runtime is unavailable")
 
     BotState = dict  # type: ignore[assignment]
+
+    async def _dummy_tpl(*_args, **_kwargs) -> str:  # pragma: no cover - runtime safety net
+        return ""
+
+    bot_templates = SimpleNamespace(tpl=_dummy_tpl)
+
+    def get_bot():  # type: ignore[override]
+        raise RuntimeError("Bot runtime is unavailable")
 
 
 logger = logging.getLogger(__name__)
@@ -68,6 +78,7 @@ class BotService:
     not_configured_message: str = "Отправка Теста 2 пропущена: бот не настроен."
     transient_message: str = "Бот временно недоступен. Попробуйте позже."
     failure_message: str = "Не удалось отправить Тест 2 кандидату."
+    rejection_failure_message: str = "Не удалось отправить отказ кандидату."
 
     def is_ready(self) -> bool:
         """Return whether the bot can be used for Test 2 dispatches."""
@@ -199,6 +210,69 @@ class BotService:
             )
 
         return BotSendResult(ok=True, status="sent")
+
+    async def send_rejection(
+        self,
+        candidate_id: int,
+        *,
+        city_id: Optional[int],
+        template_key: str,
+        context: Dict[str, object],
+    ) -> BotSendResult:
+        if not self.enabled:
+            logger.info("Bot integration disabled; skipping rejection message.")
+            return BotSendResult(
+                ok=True,
+                status="skipped:disabled",
+                message=self.skip_message,
+            )
+
+        if not BOT_RUNTIME_AVAILABLE or not self.configured:
+            logger.warning("Bot integration is not configured; cannot send rejection message.")
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error=self.failure_message,
+            )
+
+        try:
+            bot = get_bot()
+        except Exception:  # pragma: no cover - runtime safety net
+            logger.exception("Bot runtime is unavailable; cannot send rejection message.")
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error=self.failure_message,
+            )
+
+        text = await bot_templates.tpl(city_id, template_key, **context)
+        if not text.strip():
+            logger.warning("Rejection template '%s' produced empty text", template_key)
+            return BotSendResult(
+                ok=False,
+                status="skipped:error",
+                error=self.rejection_failure_message,
+            )
+
+        try:
+            await bot.send_message(candidate_id, text)
+        except Exception as exc:  # pragma: no cover - network/environment errors
+            if _is_transient_error(exc):
+                logger.exception("Transient error while sending rejection message")
+                return BotSendResult(
+                    ok=False,
+                    status="queued_retry",
+                    error=self.transient_message,
+                )
+
+            logger.exception("Failed to send rejection message to candidate %s", candidate_id)
+            return BotSendResult(
+                ok=False,
+                status="skipped:error",
+                error=self.rejection_failure_message,
+            )
+
+        return BotSendResult(ok=True, status="sent_rejection")
 
 
 _bot_service: Optional[BotService] = None

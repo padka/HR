@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from backend.core.db import async_session
 from backend.core.settings import get_settings
+from backend.apps.admin_ui.services.bot_service import BOT_RUNTIME_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
@@ -72,15 +73,22 @@ async def health_check(request: Request) -> JSONResponse:
 async def bot_health(request: Request) -> JSONResponse:
     settings = get_settings()
     bot_service = getattr(request.app.state, "bot_service", None)
-    if bot_service is None:
-        status = "missing"
-        ready = False
-    else:
-        status = bot_service.health_status
+    enabled = settings.bot_enabled
+    ready = False
+    mode = "null"
+    if (
+        bot_service is not None
+        and bot_service.enabled
+        and BOT_RUNTIME_AVAILABLE
+        and getattr(bot_service, "configured", False)
+    ):
+        mode = "real"
+        ready = bot_service.is_ready()
+    elif bot_service is not None and bot_service.enabled:
         ready = bot_service.is_ready()
     payload = {
-        "enabled": settings.bot_enabled,
+        "enabled": enabled,
         "ready": ready,
-        "status": status,
+        "mode": mode,
     }
     return JSONResponse(payload)

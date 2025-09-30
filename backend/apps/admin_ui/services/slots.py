@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import logging
+from dataclasses import dataclass, field
 from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -29,10 +30,15 @@ __all__ = [
     "delete_slot",
     "set_slot_outcome",
     "get_state_manager",
+    "execute_bot_dispatch",
 ]
 
 
 logger = logging.getLogger(__name__)
+
+
+DEFAULT_COMPANY_NAME = "SMART SERVICE"
+REJECTION_TEMPLATE_KEY = "result_fail"
 
 
 def get_state_manager():
@@ -152,14 +158,35 @@ async def delete_slot(slot_id: int) -> Tuple[bool, Optional[str]]:
         return True, None
 
 
+@dataclass
+class BotDispatchPlan:
+    kind: str
+    slot_id: int
+    candidate_id: int
+    candidate_tz: Optional[str] = None
+    candidate_city_id: Optional[int] = None
+    candidate_name: str = ""
+    recruiter_name: Optional[str] = None
+    template_key: Optional[str] = None
+    template_context: Dict[str, object] = field(default_factory=dict)
+    scheduled_at: Optional[datetime] = None
+    required: Optional[bool] = None
+
+
+@dataclass
+class BotDispatch:
+    status: str
+    plan: Optional[BotDispatchPlan] = None
+
+
 async def set_slot_outcome(
     slot_id: int,
     outcome: str,
     *,
     bot_service: Optional[BotService] = None,
-) -> Tuple[bool, Optional[str], Optional[str], Optional[BotSendResult]]:
+) -> Tuple[bool, Optional[str], Optional[str], Optional[BotDispatch]]:
     normalized = (outcome or "").strip().lower()
-    if normalized not in {"passed", "failed"}:
+    if normalized not in {"success", "reject"}:
         return (
             False,
             "Некорректный исход. Выберите «Прошёл» или «Не прошёл».",
@@ -167,48 +194,196 @@ async def set_slot_outcome(
             None,
         )
 
+    service = bot_service
+    if service is None:
+        try:
+            service = resolve_bot_service()
+        except RuntimeError:
+            service = None
+
     async with async_session() as session:
-        slot = await session.get(Slot, slot_id)
+        slot = await session.scalar(
+            select(Slot)
+            .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+            .where(Slot.id == slot_id)
+        )
         if not slot:
             return False, "Слот не найден.", None, None
         if not getattr(slot, "candidate_tg_id", None):
-            return False, "Слот не привязан к кандидату, отправить тест нельзя.", None, None
+            return False, "Слот не привязан к кандидату, отправить сообщение нельзя.", None, None
 
         slot.interview_outcome = normalized
+
+        dispatch: Optional[BotDispatch]
+        if normalized == "success":
+            dispatch = _plan_test2_dispatch(slot, service)
+        else:
+            dispatch = _plan_rejection_dispatch(slot, service)
+
         await session.commit()
 
-        candidate_id = int(slot.candidate_tg_id)
-        candidate_tz = getattr(slot, "candidate_tz", None)
-        candidate_city = getattr(slot, "candidate_city_id", None)
-        candidate_name = getattr(slot, "candidate_fio", "")
-
-    settings = get_settings()
-    bot_result: Optional[BotSendResult] = None
-
-    if normalized == "passed":
-        bot_result = await _trigger_test2(
-            candidate_id,
-            candidate_tz,
-            candidate_city,
-            candidate_name,
-            bot_service=bot_service,
-            required=settings.test2_required,
-        )
-        if not bot_result.ok:
-            return False, bot_result.error or "Не удалось отправить Тест 2 кандидату.", normalized, bot_result
-
-        message_parts = ["Исход «Прошёл» сохранён."]
-        if bot_result.status == "sent":
-            message_parts.append("Кандидату отправлен Тест 2.")
-        elif bot_result.message:
-            message_parts.append(bot_result.message)
-        message = " ".join(message_parts)
-    else:
-        message = "Исход «Не прошёл» сохранён."
-
-    return True, message, normalized, bot_result
+    message = _format_outcome_message(normalized, dispatch.status if dispatch else None)
+    return True, message, normalized, dispatch
 
 
+def _plan_test2_dispatch(slot: Slot, service: Optional[BotService]) -> BotDispatch:
+    if slot.test2_sent_at is not None:
+        return BotDispatch(status="skipped:already_sent")
+
+    if service is None:
+        return BotDispatch(status="skipped:not_configured")
+
+    if not service.enabled:
+        return BotDispatch(status="skipped:disabled")
+
+    if not service.is_ready():
+        return BotDispatch(status="skipped:not_configured")
+
+    scheduled_at = datetime.now(timezone.utc)
+    slot.test2_sent_at = scheduled_at
+
+    candidate_id = int(slot.candidate_tg_id)
+    plan = BotDispatchPlan(
+        kind="test2",
+        slot_id=slot.id,
+        candidate_id=candidate_id,
+        candidate_tz=getattr(slot, "candidate_tz", None),
+        candidate_city_id=getattr(slot, "candidate_city_id", None),
+        candidate_name=getattr(slot, "candidate_fio", "") or "",
+        scheduled_at=scheduled_at,
+        required=get_settings().test2_required,
+    )
+    return BotDispatch(status="sent_test2", plan=plan)
+
+
+def _plan_rejection_dispatch(slot: Slot, service: Optional[BotService]) -> BotDispatch:
+    if slot.rejection_sent_at is not None:
+        return BotDispatch(status="skipped:already_sent")
+
+    if service is None:
+        return BotDispatch(status="skipped:not_configured")
+
+    if not service.enabled:
+        return BotDispatch(status="skipped:disabled")
+
+    if not service.is_ready():
+        return BotDispatch(status="skipped:not_configured")
+
+    scheduled_at = datetime.now(timezone.utc)
+    slot.rejection_sent_at = scheduled_at
+
+    candidate_id = int(slot.candidate_tg_id)
+    plan = BotDispatchPlan(
+        kind="rejection",
+        slot_id=slot.id,
+        candidate_id=candidate_id,
+        candidate_name=getattr(slot, "candidate_fio", "") or "",
+        candidate_city_id=getattr(slot, "candidate_city_id", None),
+        recruiter_name=slot.recruiter.name if slot.recruiter else None,
+        template_key=REJECTION_TEMPLATE_KEY,
+        template_context={
+            "candidate_fio": getattr(slot, "candidate_fio", "") or "",
+            "company_name": DEFAULT_COMPANY_NAME,
+            "city_name": slot.city.name if slot.city else "",
+            "recruiter_name": slot.recruiter.name if slot.recruiter else "",
+        },
+        scheduled_at=scheduled_at,
+    )
+    return BotDispatch(status="sent_rejection", plan=plan)
+
+
+def _format_outcome_message(outcome: str, status: Optional[str]) -> str:
+    if outcome == "success":
+        base = "Исход «Прошёл» сохранён."
+        if status == "sent_test2":
+            return base + " Кандидату отправлен Тест 2."
+        if status == "skipped:already_sent":
+            return base + " Тест 2 уже отправлялся ранее."
+        if status == "skipped:disabled":
+            return base + " Отправка Теста 2 отключена."
+        if status == "skipped:not_configured":
+            return base + " Бот не настроен."
+        return base
+
+    base = "Исход «Не прошёл» сохранён."
+    if status == "sent_rejection":
+        return base + " Кандидату отправлен отказ."
+    if status == "skipped:already_sent":
+        return base + " Отказ уже был отправлен ранее."
+    if status == "skipped:disabled":
+        return base + " Отправка сообщений отключена."
+    if status == "skipped:not_configured":
+        return base + " Бот не настроен."
+    return base
+
+
+async def execute_bot_dispatch(plan: BotDispatchPlan, outcome: str, service: BotService) -> None:
+    bot_ready = service.is_ready()
+    action_result = "skipped:error"
+    success = False
+
+    try:
+        if plan.kind == "test2":
+            result = await _trigger_test2(
+                plan.candidate_id,
+                plan.candidate_tz,
+                plan.candidate_city_id,
+                plan.candidate_name,
+                bot_service=service,
+                required=plan.required,
+            )
+            action_result = _map_test2_status(result.status)
+            success = result.ok and action_result == "sent_test2"
+        elif plan.kind == "rejection":
+            result = await _trigger_rejection(
+                plan.candidate_id,
+                plan.template_key or REJECTION_TEMPLATE_KEY,
+                plan.template_context,
+                city_id=plan.candidate_city_id,
+                bot_service=service,
+            )
+            action_result = result.status
+            success = result.ok and result.status == "sent_rejection"
+        else:
+            logger.warning("Unknown bot dispatch kind: %s", plan.kind)
+            action_result = "skipped:unknown"
+            success = False
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("Failed to execute bot dispatch for slot %s", plan.slot_id)
+        action_result = "skipped:error"
+        success = False
+
+    await _mark_dispatch_state(plan.slot_id, plan.kind, success)
+
+    logger.info(
+        "bot.dispatch.outcome",
+        extra={
+            "slot_id": plan.slot_id,
+            "candidate_id": plan.candidate_id,
+            "outcome": outcome,
+            "bot_ready": bot_ready,
+            "action_result": action_result,
+        },
+    )
+
+
+def _map_test2_status(status: str) -> str:
+    if status == "sent":
+        return "sent_test2"
+    return status
+
+
+async def _mark_dispatch_state(slot_id: int, kind: str, success: bool) -> None:
+    field = "test2_sent_at" if kind == "test2" else "rejection_sent_at"
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if not slot:
+            return
+        if success:
+            setattr(slot, field, datetime.now(timezone.utc))
+        else:
+            setattr(slot, field, None)
+        await session.commit()
 async def _trigger_test2(
     candidate_id: int,
     candidate_tz: Optional[str],
@@ -242,6 +417,34 @@ async def _trigger_test2(
         candidate_city,
         candidate_name,
         required=required,
+    )
+
+
+async def _trigger_rejection(
+    candidate_id: int,
+    template_key: str,
+    context: Dict[str, object],
+    *,
+    city_id: Optional[int],
+    bot_service: Optional[BotService],
+) -> BotSendResult:
+    service = bot_service
+    if service is None:
+        try:
+            service = resolve_bot_service()
+        except RuntimeError:
+            logger.warning("Bot services are not configured; cannot send rejection message.")
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error="Бот недоступен. Проверьте его конфигурацию.",
+            )
+
+    return await service.send_rejection(
+        candidate_id,
+        city_id=city_id,
+        template_key=template_key,
+        context=context,
     )
 
 
