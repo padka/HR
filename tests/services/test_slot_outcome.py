@@ -5,7 +5,8 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from backend.apps.admin_ui.services import slots as slot_services
-from backend.apps.admin_ui.services.bot_service import BotSendResult
+from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService
+from backend.apps.bot.services import StateManager
 from backend.core.db import async_session
 from backend.domain import models
 
@@ -47,27 +48,47 @@ async def test_set_slot_outcome_triggers_test2(monkeypatch):
 
     monkeypatch.setattr(slot_services, "_trigger_test2", fake_send)
 
-    ok, message, stored, bot_result = await slot_services.set_slot_outcome(slot_id, "passed")
+    service = BotService(
+        state_manager=StateManager(),
+        enabled=True,
+        configured=True,
+        required=False,
+    )
+
+    ok, message, stored, dispatch = await slot_services.set_slot_outcome(
+        slot_id,
+        "success",
+        bot_service=service,
+    )
     assert ok is True
-    assert stored == "passed"
+    assert stored == "success"
     assert "отправлен" in (message or "").lower()
-    assert bot_result is not None
-    assert bot_result.status == "sent"
+    assert dispatch is not None
+    assert dispatch.status == "sent_test2"
+    assert dispatch.plan is not None
+    assert dispatch.plan.candidate_id == 5555
+    assert dispatch.plan.candidate_tz == "Europe/Moscow"
+    assert dispatch.plan.candidate_city_id == city_id
+    assert dispatch.plan.candidate_name == "Иван Тест"
+
+    await slot_services.execute_bot_dispatch(dispatch.plan, stored or "", service)
+
     assert calls["args"] == (5555, "Europe/Moscow", city_id, "Иван Тест")
 
     async with async_session() as session:
         updated = await session.get(models.Slot, slot_id)
         assert updated is not None
-        assert updated.interview_outcome == "passed"
+        assert updated.interview_outcome == "success"
+        assert updated.test2_sent_at is not None
 
 
 @pytest.mark.asyncio
 async def test_set_slot_outcome_validates_choice():
-    ok, message, stored, bot_result = await slot_services.set_slot_outcome(9999, "maybe")
+    ok, message, stored, dispatch = await slot_services.set_slot_outcome(9999, "maybe")
     assert ok is False
     assert stored is None
     assert "Некорректный исход" in (message or "")
-    assert bot_result is None
+    assert dispatch is None
 
 
 @pytest.mark.asyncio
@@ -95,8 +116,8 @@ async def test_set_slot_outcome_requires_candidate():
         await session.refresh(slot)
         slot_id = slot.id
 
-    ok, message, stored, bot_result = await slot_services.set_slot_outcome(slot_id, "failed")
+    ok, message, stored, dispatch = await slot_services.set_slot_outcome(slot_id, "reject")
     assert ok is False
     assert stored is None
     assert "Слот не привязан к кандидату" in (message or "")
-    assert bot_result is None
+    assert dispatch is None

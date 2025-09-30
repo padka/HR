@@ -5,7 +5,7 @@ import hmac
 import json
 from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -19,6 +19,7 @@ from backend.apps.admin_ui.services.slots import (
     recruiters_for_slot_form,
     delete_slot,
     set_slot_outcome,
+    execute_bot_dispatch,
 )
 from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
 from backend.core.settings import get_settings
@@ -203,20 +204,21 @@ class OutcomePayload(BaseModel):
 async def slots_set_outcome(
     slot_id: int,
     payload: OutcomePayload,
+    background_tasks: BackgroundTasks,
     bot_service: BotService = Depends(provide_bot_service),
 ):
-    ok, message, stored, bot_result = await set_slot_outcome(
+    ok, message, stored, dispatch = await set_slot_outcome(
         slot_id,
         payload.outcome,
         bot_service=bot_service,
     )
     status_code = 200
-    bot_status = bot_result.status if bot_result is not None else "skipped:not_applicable"
+    bot_status = dispatch.status if dispatch is not None else "skipped:not_applicable"
+    if ok and dispatch and dispatch.plan is not None:
+        background_tasks.add_task(execute_bot_dispatch, dispatch.plan, stored or "", bot_service)
     if not ok:
         if message and "не найден" in message.lower():
             status_code = 404
-        elif bot_result is not None:
-            status_code = 503
         else:
             status_code = 400
     response = JSONResponse(
