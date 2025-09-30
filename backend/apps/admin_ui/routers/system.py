@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import text
 
 from backend.core.db import async_session
+from backend.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,10 @@ async def health_check(request: Request) -> JSONResponse:
         bot_client_status = bot_service.health_status
 
     checks["bot_client"] = bot_client_status
-    if bot_client_status == "ok":
+    if bot_client_status == "ready":
         checks["bot"] = "configured"
+    elif bot_client_status == "missing":
+        checks["bot"] = "missing"
     elif bot_client_status == "disabled":
         checks["bot"] = "disabled"
     else:
@@ -63,3 +66,21 @@ async def health_check(request: Request) -> JSONResponse:
         status_code = 503
 
     return JSONResponse({"status": "ok" if status_code == 200 else "error", "checks": checks}, status_code=status_code)
+
+
+@router.get("/health/bot", include_in_schema=False)
+async def bot_health(request: Request) -> JSONResponse:
+    settings = get_settings()
+    bot_service = getattr(request.app.state, "bot_service", None)
+    if bot_service is None:
+        status = "missing"
+        ready = False
+    else:
+        status = bot_service.health_status
+        ready = bot_service.is_ready()
+    payload = {
+        "enabled": settings.bot_enabled,
+        "ready": ready,
+        "status": status,
+    }
+    return JSONResponse(payload)

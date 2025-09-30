@@ -21,6 +21,27 @@ python bot.py
 The same behaviour can be reproduced programmatically via
 `backend.apps.bot.app.create_application()`.
 
+### Bot integration configuration
+
+The admin UI integrates with the Telegram bot to automatically launch “Test 2”
+for candidates whose interview outcome is marked as “passed”. The behaviour can
+be tuned through the following environment variables (see `.env.example` for a
+quick start template):
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `BOT_ENABLED` | `true` | Master switch for the integration. Set to `false` to skip Test 2 dispatches entirely. |
+| `BOT_PROVIDER` | `telegram` | Bot provider identifier. Only the Telegram provider is currently supported. |
+| `BOT_TOKEN` | _(empty)_ | Telegram bot token. Required when `BOT_ENABLED=true`. |
+| `BOT_API_BASE` | _(empty)_ | Optional override for custom Telegram API endpoints. |
+| `BOT_USE_WEBHOOK` | `false` | Enable webhook mode for the bot (requires `BOT_WEBHOOK_URL`). |
+| `BOT_WEBHOOK_URL` | _(empty)_ | Public webhook endpoint used when `BOT_USE_WEBHOOK=true`. |
+| `TEST2_REQUIRED` | `false` | When `true`, a bot failure results in HTTP 503 responses from `/slots/{id}/outcome`. When `false`, the request succeeds and Test 2 is skipped. |
+| `BOT_FAILFAST` | `false` | If enabled, the admin UI refuses to start when the bot is misconfigured while `BOT_ENABLED=true`. |
+
+The `/health/bot` endpoint reports the runtime state of the integration
+(`enabled`, `ready`, `status`) which simplifies operational diagnostics.
+
 ## Runtime data storage
 
 All runtime artefacts (SQLite databases, generated reports, uploaded resumes)

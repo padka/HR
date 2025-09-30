@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.services import slots as slot_services
+from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService, configure_bot_service
 from backend.core.db import async_session
 from backend.domain import models
 
@@ -72,7 +73,6 @@ def clear_state_manager():
 
 @pytest.mark.asyncio
 async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
-    from backend.apps.admin_ui.services.bot_service import BotService, configure_bot_service
     from backend.apps.admin_ui.state import BotIntegration
     from backend.apps.bot.services import StateManager, configure as configure_bot_services
 
@@ -91,7 +91,12 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
     def fake_setup_bot_state(app):
         state_manager = StateManager()
         configure_bot_services(None, state_manager)
-        service = BotService(state_manager=state_manager, enabled=True, configured=True)
+        service = BotService(
+            state_manager=state_manager,
+            enabled=True,
+            configured=True,
+            required=False,
+        )
         configure_bot_service(service)
         app.state.bot = None
         app.state.state_manager = state_manager
@@ -113,6 +118,7 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
     payload = response.json()
     assert payload["ok"] is True
     assert payload["outcome"] == "passed"
+    assert response.headers.get("X-Bot") == "sent"
 
     state = slot_services.get_state_manager().get(candidate_id)
     assert state is not None
@@ -131,15 +137,34 @@ async def test_slot_outcome_endpoint_returns_503_when_bot_unavailable(monkeypatc
     app = create_app()
 
     async def fake_send_test2(*_args, **_kwargs):
-        return False, "Бот недоступен. Проверьте его конфигурацию.", None
+        return BotSendResult(ok=False, status="skipped:error", error="Бот недоступен. Проверьте его конфигурацию.")
 
-    monkeypatch.setattr(slot_services, "_send_test2", fake_send_test2)
+    monkeypatch.setattr(slot_services, "_trigger_test2", fake_send_test2)
 
     response = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "passed"})
     assert response.status_code == 503
     payload = response.json()
     assert payload["ok"] is False
     assert "бот недоступен" in (payload.get("message") or "").lower()
+    assert response.headers.get("X-Bot") == "skipped:error"
+
+
+@pytest.mark.asyncio
+async def test_slot_outcome_endpoint_skips_when_bot_optional(monkeypatch):
+    slot_id, _ = await _create_booked_slot()
+    app = create_app()
+
+    async def fake_send_test2(*_args, **_kwargs):
+        return BotSendResult(ok=True, status="skipped:not_configured", message="Отправка Теста 2 пропущена")
+
+    monkeypatch.setattr(slot_services, "_trigger_test2", fake_send_test2)
+
+    response = await _async_request(app, "post", f"/slots/{slot_id}/outcome", json={"outcome": "passed"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "пропущена" in (payload.get("message") or "").lower()
+    assert response.headers.get("X-Bot") == "skipped:not_configured"
 
 
 @pytest.mark.asyncio
@@ -151,4 +176,13 @@ async def test_health_check_reports_ok():
     assert payload["status"] == "ok"
     assert payload["checks"]["database"] == "ok"
     assert payload["checks"]["state_manager"] == "ok"
-    assert payload["checks"]["bot_client"] in {"unconfigured", "disabled"}
+    assert payload["checks"]["bot_client"] in {"ready", "unconfigured", "disabled", "missing"}
+
+
+@pytest.mark.asyncio
+async def test_bot_health_endpoint_reports_status(monkeypatch):
+    app = create_app()
+    response = await _async_request(app, "get", "/health/bot")
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload.keys()) == {"enabled", "ready", "status"}

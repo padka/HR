@@ -205,20 +205,23 @@ async def slots_set_outcome(
     payload: OutcomePayload,
     bot_service: BotService = Depends(provide_bot_service),
 ):
-    ok, message, stored = await set_slot_outcome(
+    ok, message, stored, bot_result = await set_slot_outcome(
         slot_id,
         payload.outcome,
         bot_service=bot_service,
     )
     status_code = 200
+    bot_status = bot_result.status if bot_result is not None else "skipped:not_applicable"
     if not ok:
         if message and "не найден" in message.lower():
             status_code = 404
-        elif message and "бот недоступен" in message.lower():
+        elif bot_result is not None:
             status_code = 503
         else:
             status_code = 400
-    return JSONResponse(
+    response = JSONResponse(
         {"ok": ok, "message": message, "outcome": stored},
         status_code=status_code,
     )
+    response.headers["X-Bot"] = bot_status
+    return response

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import logging
 from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -9,12 +10,14 @@ from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.services.bot_service import (
+    BotSendResult,
     BotService,
     get_bot_service as resolve_bot_service,
 )
 from backend.apps.bot.services import get_state_manager as _get_state_manager
 from backend.apps.admin_ui.utils import paginate, recruiter_time_to_utc, norm_status, status_to_db
 from backend.core.db import async_session
+from backend.core.settings import get_settings
 from backend.domain.models import Recruiter, Slot, SlotStatus, City
 
 __all__ = [
@@ -154,17 +157,22 @@ async def set_slot_outcome(
     outcome: str,
     *,
     bot_service: Optional[BotService] = None,
-) -> Tuple[bool, Optional[str], Optional[str]]:
+) -> Tuple[bool, Optional[str], Optional[str], Optional[BotSendResult]]:
     normalized = (outcome or "").strip().lower()
     if normalized not in {"passed", "failed"}:
-        return False, "Некорректный исход. Выберите «Прошёл» или «Не прошёл».", None
+        return (
+            False,
+            "Некорректный исход. Выберите «Прошёл» или «Не прошёл».",
+            None,
+            None,
+        )
 
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if not slot:
-            return False, "Слот не найден.", None
+            return False, "Слот не найден.", None, None
         if not getattr(slot, "candidate_tg_id", None):
-            return False, "Слот не привязан к кандидату, отправить тест нельзя.", None
+            return False, "Слот не привязан к кандидату, отправить тест нельзя.", None, None
 
         slot.interview_outcome = normalized
         await session.commit()
@@ -174,54 +182,67 @@ async def set_slot_outcome(
         candidate_city = getattr(slot, "candidate_city_id", None)
         candidate_name = getattr(slot, "candidate_fio", "")
 
+    settings = get_settings()
+    bot_result: Optional[BotSendResult] = None
+
     if normalized == "passed":
-        ok, error, info = await _send_test2(
+        bot_result = await _trigger_test2(
             candidate_id,
             candidate_tz,
             candidate_city,
             candidate_name,
             bot_service=bot_service,
+            required=settings.test2_required,
         )
-        if not ok:
-            return False, error or "Не удалось отправить Тест 2 кандидату.", normalized
-        if info:
-            message = f"Исход «Прошёл» сохранён. {info}"
-        else:
-            message = "Исход «Прошёл» сохранён. Кандидату отправлен Тест 2."
+        if not bot_result.ok:
+            return False, bot_result.error or "Не удалось отправить Тест 2 кандидату.", normalized, bot_result
+
+        message_parts = ["Исход «Прошёл» сохранён."]
+        if bot_result.status == "sent":
+            message_parts.append("Кандидату отправлен Тест 2.")
+        elif bot_result.message:
+            message_parts.append(bot_result.message)
+        message = " ".join(message_parts)
     else:
         message = "Исход «Не прошёл» сохранён."
 
-    return True, message, normalized
+    return True, message, normalized, bot_result
 
 
-async def _send_test2(
+async def _trigger_test2(
     candidate_id: int,
     candidate_tz: Optional[str],
     candidate_city: Optional[int],
     candidate_name: str,
     *,
-    bot_service: Optional[BotService] = None,
-) -> Tuple[bool, Optional[str], Optional[str]]:
+    bot_service: Optional[BotService],
+    required: bool,
+) -> BotSendResult:
     service = bot_service
     if service is None:
         try:
             service = resolve_bot_service()
         except RuntimeError:
             logger.warning("Bot services are not configured; cannot send Test 2.")
-            return False, "Бот недоступен. Проверьте его конфигурацию.", None
+            if required:
+                return BotSendResult(
+                    ok=False,
+                    status="skipped:not_configured",
+                    error="Бот недоступен. Проверьте его конфигурацию.",
+                )
+            return BotSendResult(
+                ok=True,
+                status="skipped:not_configured",
+                message="Отправка Теста 2 пропущена: бот не настроен.",
+            )
 
-    result = await service.send_test2(
+    return await service.send_test2(
         candidate_id,
         candidate_tz,
         candidate_city,
         candidate_name,
+        required=required,
     )
-
-    if not result.ok:
-        return False, result.error or "Бот недоступен. Проверьте его конфигурацию.", None
-
-    info = result.message
-    return True, None, info
 
 
 def _normalize_utc(dt: datetime) -> datetime:

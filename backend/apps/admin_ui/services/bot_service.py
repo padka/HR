@@ -9,6 +9,11 @@ from typing import Dict, Optional
 from fastapi import Request
 
 try:  # pragma: no cover - optional dependency handling
+    from aiohttp import ClientError as _AioHttpClientError
+except Exception:  # pragma: no cover - optional dependency
+    _AioHttpClientError = Exception  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional dependency handling
     from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS, State as BotState
     from backend.apps.bot.services import StateManager, start_test2
     BOT_RUNTIME_AVAILABLE = True
@@ -45,7 +50,7 @@ class BotSendResult:
     """Represents the outcome of attempting to launch Test 2."""
 
     ok: bool
-    dispatched: bool
+    status: str
     message: Optional[str] = None
     error: Optional[str] = None
 
@@ -58,7 +63,16 @@ class BotService:
     enabled: bool
     configured: bool
 
+    required: bool
     skip_message: str = "Отправка Теста 2 отключена в текущем окружении."
+    not_configured_message: str = "Отправка Теста 2 пропущена: бот не настроен."
+    transient_message: str = "Бот временно недоступен. Попробуйте позже."
+    failure_message: str = "Не удалось отправить Тест 2 кандидату."
+
+    def is_ready(self) -> bool:
+        """Return whether the bot can be used for Test 2 dispatches."""
+
+        return self.enabled and BOT_RUNTIME_AVAILABLE and self.configured
 
     @property
     def health_status(self) -> str:
@@ -70,7 +84,7 @@ class BotService:
             return "unavailable"
         if not self.configured:
             return "unconfigured"
-        return "ok"
+        return "ready"
 
     def with_configuration(self, configured: bool) -> "BotService":
         """Return a copy of the service with updated configuration flag."""
@@ -79,7 +93,11 @@ class BotService:
             state_manager=self.state_manager,
             enabled=self.enabled,
             configured=configured,
+            required=self.required,
             skip_message=self.skip_message,
+            not_configured_message=self.not_configured_message,
+            transient_message=self.transient_message,
+            failure_message=self.failure_message,
         )
 
     async def send_test2(
@@ -88,21 +106,35 @@ class BotService:
         candidate_tz: Optional[str],
         candidate_city: Optional[int],
         candidate_name: str,
+        *,
+        required: Optional[bool] = None,
     ) -> BotSendResult:
         """Launch Test 2 for a candidate."""
 
+        must_succeed = self.required if required is None else required
+
         if not self.enabled:
             logger.info("Test 2 bot integration disabled via feature flag; skipping launch.")
-            return BotSendResult(ok=True, dispatched=False, message=self.skip_message)
+            return BotSendResult(
+                ok=True,
+                status="skipped:not_configured",
+                message=self.skip_message,
+            )
 
         if not BOT_RUNTIME_AVAILABLE or not self.configured:
             logger.warning(
                 "Bot integration is enabled but not configured; cannot send Test 2.",
             )
+            if must_succeed:
+                return BotSendResult(
+                    ok=False,
+                    status="skipped:not_configured",
+                    error="Бот недоступен. Проверьте его конфигурацию.",
+                )
             return BotSendResult(
-                ok=False,
-                dispatched=False,
-                error="Бот недоступен. Проверьте его конфигурацию.",
+                ok=True,
+                status="skipped:not_configured",
+                message=self.not_configured_message,
             )
 
         previous_state: Dict[str, object] = self.state_manager.get(candidate_id) or {}
@@ -139,16 +171,34 @@ class BotService:
         try:
             await start_test2(candidate_id)
         except Exception as exc:  # pragma: no cover - network/environment errors
+            if _is_transient_error(exc):
+                logger.exception("Test 2 dispatch experienced transient error")
+                if must_succeed:
+                    return BotSendResult(
+                        ok=False,
+                        status="queued_retry",
+                        error=self.transient_message,
+                    )
+                return BotSendResult(
+                    ok=True,
+                    status="queued_retry",
+                    message=self.transient_message,
+                )
+
             logger.exception("Failed to start Test 2 for candidate %s", candidate_id)
-            if isinstance(exc, RuntimeError) and "bot" in str(exc).lower():
+            if must_succeed:
                 return BotSendResult(
                     ok=False,
-                    dispatched=False,
-                    error="Бот недоступен. Проверьте его конфигурацию.",
+                    status="skipped:error",
+                    error=self.failure_message,
                 )
-            return BotSendResult(ok=False, dispatched=False, error=str(exc))
+            return BotSendResult(
+                ok=True,
+                status="skipped:error",
+                message=self.failure_message,
+            )
 
-        return BotSendResult(ok=True, dispatched=True)
+        return BotSendResult(ok=True, status="sent")
 
 
 _bot_service: Optional[BotService] = None
@@ -181,7 +231,15 @@ def provide_bot_service(request: Request) -> BotService:
 __all__ = [
     "BotSendResult",
     "BotService",
+    "BOT_RUNTIME_AVAILABLE",
     "configure_bot_service",
     "get_bot_service",
     "provide_bot_service",
 ]
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if isinstance(exc, (_AioHttpClientError, TimeoutError, ConnectionError)):
+        return True
+    return any(keyword in message for keyword in ("timeout", "temporar", "try again"))

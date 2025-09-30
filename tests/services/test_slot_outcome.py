@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from backend.apps.admin_ui.services import slots as slot_services
+from backend.apps.admin_ui.services.bot_service import BotSendResult
 from backend.core.db import async_session
 from backend.domain import models
 
@@ -42,14 +43,16 @@ async def test_set_slot_outcome_triggers_test2(monkeypatch):
 
     async def fake_send(candidate_id, candidate_tz, candidate_city, candidate_name, **_):
         calls["args"] = (candidate_id, candidate_tz, candidate_city, candidate_name)
-        return True, None, None
+        return BotSendResult(ok=True, status="sent")
 
-    monkeypatch.setattr(slot_services, "_send_test2", fake_send)
+    monkeypatch.setattr(slot_services, "_trigger_test2", fake_send)
 
-    ok, message, stored = await slot_services.set_slot_outcome(slot_id, "passed")
+    ok, message, stored, bot_result = await slot_services.set_slot_outcome(slot_id, "passed")
     assert ok is True
     assert stored == "passed"
     assert "отправлен" in (message or "").lower()
+    assert bot_result is not None
+    assert bot_result.status == "sent"
     assert calls["args"] == (5555, "Europe/Moscow", city_id, "Иван Тест")
 
     async with async_session() as session:
@@ -60,10 +63,11 @@ async def test_set_slot_outcome_triggers_test2(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_set_slot_outcome_validates_choice():
-    ok, message, stored = await slot_services.set_slot_outcome(9999, "maybe")
+    ok, message, stored, bot_result = await slot_services.set_slot_outcome(9999, "maybe")
     assert ok is False
     assert stored is None
     assert "Некорректный исход" in (message or "")
+    assert bot_result is None
 
 
 @pytest.mark.asyncio
@@ -91,7 +95,8 @@ async def test_set_slot_outcome_requires_candidate():
         await session.refresh(slot)
         slot_id = slot.id
 
-    ok, message, stored = await slot_services.set_slot_outcome(slot_id, "failed")
+    ok, message, stored, bot_result = await slot_services.set_slot_outcome(slot_id, "failed")
     assert ok is False
     assert stored is None
     assert "Слот не привязан к кандидату" in (message or "")
+    assert bot_result is None
