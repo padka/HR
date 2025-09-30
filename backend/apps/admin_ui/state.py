@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 from aiogram import Bot
 from fastapi import FastAPI
@@ -38,32 +38,58 @@ class BotIntegration:
                 logger.exception("Failed to close bot session cleanly")
 
 
+def _build_bot(settings) -> Tuple[Optional[Bot], bool]:
+    """Create bot runtime instance if configuration is valid."""
+
+    if not settings.bot_enabled:
+        logger.info("Test 2 bot integration disabled via BOT_ENABLED flag; using NullBot.")
+        return None, False
+
+    if settings.bot_provider not in {"telegram", ""}:
+        logger.warning(
+            "Unsupported BOT_PROVIDER '%s'; expected 'telegram'.", settings.bot_provider
+        )
+        return None, False
+
+    token = (settings.bot_token or "").strip()
+    missing = []
+    if not token:
+        missing.append("BOT_TOKEN")
+    if settings.bot_use_webhook and not settings.bot_webhook_url:
+        missing.append("BOT_WEBHOOK_URL")
+
+    if missing:
+        message = "Bot enabled but missing: %s" % ", ".join(missing)
+        if settings.bot_failfast:
+            raise RuntimeError(message)
+        logger.warning("%s; running with NullBot", message)
+        return None, False
+
+    try:
+        bot = Bot(token=token, default=DEFAULT_BOT_PROPERTIES)
+    except Exception:
+        logger.exception("Failed to initialise Telegram bot; running with NullBot")
+        if settings.bot_failfast:
+            raise
+        return None, False
+
+    return bot, True
+
+
 def setup_bot_state(app: FastAPI) -> BotIntegration:
     """Initialise the bot state manager for the admin application."""
 
     settings = get_settings()
-    token = (settings.bot_token or "").strip()
-
     state_manager = StateManager()
-    bot: Optional[Bot] = None
+    bot, configured = _build_bot(settings)
 
-    if token and ":" in token:
-        try:
-            bot = Bot(token=token, default=DEFAULT_BOT_PROPERTIES)
-        except Exception:  # pragma: no cover - network/environment specific
-            logger.exception("Failed to initialise Telegram bot; Test 2 notifications disabled")
-            bot = None
-    else:
-        logger.warning(
-            "BOT_TOKEN is not configured or invalid; Test 2 notifications will not be sent."
-        )
-
-    configure_bot_services(bot, state_manager)
+    configure_bot_services(bot if configured else None, state_manager)
 
     bot_service = BotService(
         state_manager=state_manager,
-        enabled=settings.enable_test2_bot,
-        configured=bot is not None,
+        enabled=settings.bot_enabled,
+        configured=configured,
+        required=settings.test2_required,
     )
     configure_bot_service(bot_service)
 

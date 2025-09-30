@@ -15,11 +15,17 @@ class Settings:
     database_url_async: str
     database_url_sync: str
     sql_echo: bool
+    bot_enabled: bool
+    bot_provider: str
     bot_token: str
+    bot_api_base: str
+    bot_use_webhook: bool
+    bot_webhook_url: str
+    test2_required: bool
+    bot_failfast: bool
     admin_chat_id: int
     timezone: str
     session_secret: str
-    enable_test2_bot: bool
 
 
 load_env()
@@ -53,6 +59,20 @@ def _normalize_sqlite_url(url: str, *, async_driver: bool) -> str:
     return url
 
 
+def _get_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_bool_with_fallback(*names: str, default: bool = False) -> bool:
+    for name in names:
+        if os.getenv(name) is not None:
+            return _get_bool(name)
+    return default
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     data_dir = _default_data_dir()
@@ -74,7 +94,14 @@ def get_settings() -> Settings:
 
     async_url = _normalize_sqlite_url(raw_db_url, async_driver=True)
 
+    bot_enabled = _get_bool_with_fallback("BOT_ENABLED", "ENABLE_TEST2_BOT", default=True)
+    bot_provider = os.getenv("BOT_PROVIDER", "telegram").strip().lower() or "telegram"
     bot_token = os.getenv("BOT_TOKEN", "")
+    bot_api_base = os.getenv("BOT_API_BASE", "").strip()
+    bot_use_webhook = _get_bool("BOT_USE_WEBHOOK", default=False)
+    bot_webhook_url = os.getenv("BOT_WEBHOOK_URL", "").strip()
+    test2_required = _get_bool("TEST2_REQUIRED", default=False)
+    bot_failfast = _get_bool("BOT_FAILFAST", default=False)
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
     session_secret = (
@@ -83,18 +110,20 @@ def get_settings() -> Settings:
         or "dev-admin-session"
     )
 
-    test2_bot_enabled = os.getenv("ENABLE_TEST2_BOT", "1")
-    test2_bot_enabled = test2_bot_enabled.strip().lower()
-    enable_test2_bot = test2_bot_enabled in {"1", "true", "yes", "on"}
-
     return Settings(
         data_dir=data_dir,
         database_url_async=async_url,
         database_url_sync=sync_url,
         sql_echo=os.getenv("SQL_ECHO", "0") in {"1", "true", "True"},
+        bot_enabled=bot_enabled,
+        bot_provider=bot_provider,
         bot_token=bot_token,
+        bot_api_base=bot_api_base,
+        bot_use_webhook=bot_use_webhook,
+        bot_webhook_url=bot_webhook_url,
+        test2_required=test2_required,
+        bot_failfast=bot_failfast,
         admin_chat_id=admin_chat_id,
         timezone=timezone,
         session_secret=session_secret,
-        enable_test2_bot=enable_test2_bot,
     )
