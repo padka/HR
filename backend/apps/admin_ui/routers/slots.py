@@ -1,4 +1,3 @@
-from collections import Counter
 import base64
 import hashlib
 import hmac
@@ -18,6 +17,7 @@ from backend.apps.admin_ui.services.slots import (
     list_slots,
     recruiters_for_slot_form,
     delete_slot,
+    delete_all_slots,
     set_slot_outcome,
     execute_bot_dispatch,
 )
@@ -27,7 +27,8 @@ from backend.core.settings import get_settings
 router = APIRouter(prefix="/slots", tags=["slots"])
 
 _FLASH_COOKIE = "admin_flash"
-_SECRET = get_settings().session_secret.encode()
+_SETTINGS = get_settings()
+_SECRET = _SETTINGS.session_secret.encode()
 
 
 def _parse_checkbox(value: Optional[str]) -> bool:
@@ -59,8 +60,9 @@ def _set_flash(response: RedirectResponse, status: str, message: str) -> None:
         token,
         max_age=300,
         path="/",
-        httponly=False,
-        samesite="lax",
+        httponly=True,
+        secure=_SETTINGS.session_cookie_secure,
+        samesite=_SETTINGS.session_cookie_samesite,
     )
 
 
@@ -78,14 +80,12 @@ async def slots_list(
     recruiter_rows = await list_recruiters()
     recruiter_options = [row["rec"] for row in recruiter_rows]
     slots = result["items"]
-    status_counter: Counter[str] = Counter()
-    for slot in slots:
-        status_counter[norm_status(slot.status)] += 1
+    aggregated = result.get("status_counts") or {}
     status_counts: Dict[str, int] = {
-        "total": len(slots),
-        "FREE": status_counter.get("FREE", 0),
-        "PENDING": status_counter.get("PENDING", 0),
-        "BOOKED": status_counter.get("BOOKED", 0),
+        "total": result.get("total", len(slots)),
+        "FREE": int(aggregated.get("FREE", 0)),
+        "PENDING": int(aggregated.get("PENDING", 0)),
+        "BOOKED": int(aggregated.get("BOOKED", 0)),
     }
     flash = _pop_flash(request)
     context = {
@@ -102,7 +102,13 @@ async def slots_list(
     }
     response = templates.TemplateResponse("slots_list.html", context)
     if flash:
-        response.delete_cookie(_FLASH_COOKIE, path="/")
+        response.delete_cookie(
+            _FLASH_COOKIE,
+            path="/",
+            secure=_SETTINGS.session_cookie_secure,
+            httponly=True,
+            samesite=_SETTINGS.session_cookie_samesite,
+        )
     return response
 
 
@@ -115,7 +121,13 @@ async def slots_new(request: Request):
         {"request": request, "recruiters": recruiters, "flash": flash},
     )
     if flash:
-        response.delete_cookie(_FLASH_COOKIE, path="/")
+        response.delete_cookie(
+            _FLASH_COOKIE,
+            path="/",
+            secure=_SETTINGS.session_cookie_secure,
+            httponly=True,
+            samesite=_SETTINGS.session_cookie_samesite,
+        )
     return response
 
 
@@ -177,8 +189,9 @@ async def slots_bulk_create(
 
 
 @router.post("/{slot_id}/delete")
-async def slots_delete_form(slot_id: int):
-    ok, error = await delete_slot(slot_id)
+async def slots_delete_form(slot_id: int, force: Optional[str] = Form(default=None)):
+    force_flag = str(force).lower() not in {"", "none", "0", "false"}
+    ok, error = await delete_slot(slot_id, force=force_flag)
     response = RedirectResponse(url="/slots", status_code=303)
     if ok:
         _set_flash(response, "success", "Слот удалён")
@@ -188,12 +201,25 @@ async def slots_delete_form(slot_id: int):
 
 
 @router.delete("/{slot_id}")
-async def slots_delete(slot_id: int):
-    ok, error = await delete_slot(slot_id)
+async def slots_delete(slot_id: int, force: Optional[bool] = Query(default=False)):
+    ok, error = await delete_slot(slot_id, force=bool(force))
     if ok:
         return JSONResponse({"ok": True, "message": "Слот удалён"})
+    payload: Dict[str, object] = {"ok": False, "message": error or "Не удалось удалить слот."}
+    if error and "Нельзя удалить" in error:
+        payload["code"] = "requires_force"
     status_code = 404 if error == "Слот не найден" else 400
-    return JSONResponse({"ok": False, "message": error or "Не удалось удалить слот."}, status_code=status_code)
+    return JSONResponse(payload, status_code=status_code)
+
+
+class BulkDeletePayload(BaseModel):
+    force: Optional[bool] = False
+
+
+@router.post("/delete_all")
+async def slots_delete_all(payload: BulkDeletePayload):
+    deleted, remaining = await delete_all_slots(force=bool(payload.force))
+    return JSONResponse({"ok": True, "deleted": deleted, "remaining": remaining})
 
 
 class OutcomePayload(BaseModel):

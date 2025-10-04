@@ -217,25 +217,41 @@
     time: 'slots_new.time'
   };
 
+  const storage = (()=>{
+    try { return window.localStorage; }
+    catch { return null; }
+  })();
+  const storageGet = (key)=>{
+    if (!storage) return null;
+    try { return storage.getItem(key); }
+    catch { return null; }
+  };
+  const storageSet = (key, value)=>{
+    if (!storage) return;
+    try { storage.setItem(key, value); }
+    catch { /* ignore */ }
+  };
+
   const tabOne = $('#tab-one'), tabBulk = $('#tab-bulk');
   const panelOne = $('#panel-one'), panelBulk = $('#panel-bulk');
 
   function activate(tab){
+    if (!tabOne || !tabBulk || !panelOne || !panelBulk) return;
     if (tab === 'one'){
       tabOne.classList.add('active'); tabOne.setAttribute('aria-selected','true');
       tabBulk.classList.remove('active'); tabBulk.setAttribute('aria-selected','false');
       panelOne.hidden = false; panelBulk.hidden = true;
-      localStorage.setItem(LS.tab, 'one');
+      storageSet(LS.tab, 'one');
     } else {
       tabBulk.classList.add('active'); tabBulk.setAttribute('aria-selected','true');
       tabOne.classList.remove('active'); tabOne.setAttribute('aria-selected','false');
       panelBulk.hidden = false; panelOne.hidden = true;
-      localStorage.setItem(LS.tab, 'bulk');
+      storageSet(LS.tab, 'bulk');
     }
   }
   tabOne?.addEventListener('click', ()=>activate('one'));
   tabBulk?.addEventListener('click', ()=>activate('bulk'));
-  activate(localStorage.getItem(LS.tab) || 'one');
+  activate(storageGet(LS.tab) || 'one');
 
   const fmt2 = (n)=> String(n).padStart(2,'0');
   function parseISODate(s){ try{ return s ? new Date(s+'T00:00:00') : null; }catch{ return null; } }
@@ -349,7 +365,7 @@
 
     const d = dateOne.value, t = timeOne.value;
     const cityVal = cityOne ? cityOne.value : '';
-    if (cityOne) localStorage.setItem(LS.cityOne, cityVal || '');
+    if (cityOne) storageSet(LS.cityOne, cityVal || '');
     const ready = !!(selOne.value && hasCities && cityVal && d && t);
     btnOne.disabled = !ready;
 
@@ -374,9 +390,9 @@
        <br>UTC: <span class="ok">${fmtHuman(utc)}</span>
        <br><span class="hint">ISO (UTC): <code>${isoZ}</code></span>`;
 
-    localStorage.setItem(LS.recOne, selOne.value || '');
-    localStorage.setItem(LS.date, d);
-    localStorage.setItem(LS.time, t);
+    storageSet(LS.recOne, selOne.value || '');
+    storageSet(LS.date, d);
+    storageSet(LS.time, t);
   }
 
   $$('#form-one [data-quick]').forEach(btn=>{
@@ -419,30 +435,30 @@
   });
 
   selOne?.addEventListener('change', ()=>{
-    localStorage.setItem(LS.recOne, selOne.value||'');
+    storageSet(LS.recOne, selOne.value||'');
     updateCityOptions(selOne, cityOne, cityHintOne);
     updateOne();
   });
   dateOne?.addEventListener('input', updateOne);
   timeOne?.addEventListener('input', updateOne);
   cityOne?.addEventListener('change', ()=>{
-    localStorage.setItem(LS.cityOne, cityOne.value||'');
+    storageSet(LS.cityOne, cityOne.value||'');
     updateOne();
   });
 
   (function restoreOne(){
-    const r = localStorage.getItem(LS.recOne);
+    const r = storageGet(LS.recOne);
     if (r) selOne.value = r;
     updateCityOptions(selOne, cityOne, cityHintOne);
-    const savedCity = localStorage.getItem(LS.cityOne);
+    const savedCity = storageGet(LS.cityOne);
     if (savedCity && cityOne){
       const match = cityOne.querySelector(`option[value="${savedCity}"][data-rec="${selOne.value}"]`);
       if (match && !match.disabled){
         cityOne.value = savedCity;
       }
     }
-    const d = localStorage.getItem(LS.date);   if (d) dateOne.value = d;
-    const t = localStorage.getItem(LS.time);   if (t) timeOne.value = t;
+    const d = storageGet(LS.date);   if (d) dateOne.value = d;
+    const t = storageGet(LS.time);   if (t) timeOne.value = t;
     updateOne();
   })();
 
@@ -527,7 +543,7 @@
 
     const s = sd.value, e = ed.value;
     const cityVal = cityBulk ? cityBulk.value : '';
-    if (cityBulk) localStorage.setItem(LS.cityBulk, cityVal || '');
+    if (cityBulk) storageSet(LS.cityBulk, cityVal || '');
     const ready = !!(selBulk.value && hasCities && cityVal && s && e);
     btnBulk.disabled = !ready;
 
@@ -554,26 +570,26 @@
        <br>Итого слотов: <b class="${total? 'ok':''}">${total}</b> ${warn ? '· ' + warn : ''}
        <br><span class="hint">Примеры времени в день: ${previewTimes || '—'}</span>`;
 
-    localStorage.setItem(LS.recBulk, selBulk.value||'');
+    storageSet(LS.recBulk, selBulk.value||'');
   }
 
   selBulk?.addEventListener('change', ()=>{
-    localStorage.setItem(LS.recBulk, selBulk.value||'');
+    storageSet(LS.recBulk, selBulk.value||'');
     updateCityOptions(selBulk, cityBulk, cityHintBulk);
     updateBulk();
   });
   sd?.addEventListener('input', ()=>{ if(!ed.value) ed.value = sd.value; updateBulk(); });
   ed?.addEventListener('input', updateBulk);
   cityBulk?.addEventListener('change', ()=>{
-    localStorage.setItem(LS.cityBulk, cityBulk.value||'');
+    storageSet(LS.cityBulk, cityBulk.value||'');
     updateBulk();
   });
 
   (function restoreBulk(){
-    const r = localStorage.getItem(LS.recBulk);
+    const r = storageGet(LS.recBulk);
     if(r) selBulk.value = r;
     updateCityOptions(selBulk, cityBulk, cityHintBulk);
-    const savedCity = localStorage.getItem(LS.cityBulk);
+    const savedCity = storageGet(LS.cityBulk);
     if (savedCity && cityBulk){
       const match = cityBulk.querySelector(`option[value="${savedCity}"][data-rec="${selBulk.value}"]`);
       if (match && !match.disabled){
@@ -587,7 +603,7 @@
 
   window.addEventListener('keydown', (e)=>{
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase()==='enter'){
-      const activeTab = localStorage.getItem(LS.tab) || 'one';
+      const activeTab = storageGet(LS.tab) || 'one';
       const form = activeTab==='one' ? document.getElementById('form-one') : document.getElementById('form-bulk');
       if (form){ e.preventDefault(); form.requestSubmit(); }
     }

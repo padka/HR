@@ -23,15 +23,6 @@ async def devtools_probe() -> Response:
     return Response(status_code=204)
 
 
-@router.get("/__routes", include_in_schema=False)
-async def list_routes(request: Request):
-    routes = []
-    for item in request.app.routes:
-        methods = sorted(list(getattr(item, "methods", []))) if hasattr(item, "methods") else []
-        routes.append({"path": getattr(item, "path", None), "methods": methods, "name": getattr(item, "name", None)})
-    return {"routes": routes}
-
-
 @router.get("/health", include_in_schema=False)
 async def health_check(request: Request) -> JSONResponse:
     checks = {

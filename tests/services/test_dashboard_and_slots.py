@@ -47,6 +47,7 @@ async def test_dashboard_and_slot_listing():
     )
     assert listing["total"] == 1
     assert listing["items"][0].recruiter_id == recruiter.id
+    assert listing["status_counts"] == {"FREE": 1}
 
 
 @pytest.mark.asyncio

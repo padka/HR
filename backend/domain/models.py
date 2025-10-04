@@ -43,6 +43,10 @@ class City(Base):
     responsible_recruiter_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("recruiters.id", ondelete="SET NULL"), nullable=True
     )
+    criteria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    experts: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    plan_week: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    plan_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     templates: Mapped[List["Template"]] = relationship(back_populates="city", cascade="all, delete-orphan")
     slots: Mapped[List["Slot"]] = relationship(back_populates="city", foreign_keys="Slot.city_id")

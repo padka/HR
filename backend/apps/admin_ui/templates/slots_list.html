@@ -13,6 +13,7 @@
     </div>
     <div class="page-actions">
       <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+      <button type="button" class="btn btn-danger" id="delete_all_slots">Удалить все</button>
     </div>
   </header>
 
@@ -194,8 +195,7 @@
               <button type="button" class="btn btn-soft btn--small" data-action="open-slot">Подробнее</button>
               <button type="button"
                       class="btn btn-danger btn--small"
-                      data-action="delete-slot"
-                      {% if st not in ['FREE', 'PENDING'] %}disabled{% endif %}>
+                      data-action="delete-slot">
                 Удалить
               </button>
             </td>
@@ -308,8 +308,8 @@
         <div class="slot-panel__body">
           <p class="muted" id="slot_sheet_outcome_hint">Доступно после назначения кандидата.</p>
           <div class="slot-outcome__actions" id="slot_sheet_outcome_actions">
-            <button type="button" class="btn btn-ghost btn--small" data-outcome="passed">Прошёл</button>
-            <button type="button" class="btn btn-ghost btn--small" data-outcome="failed">Не прошёл</button>
+            <button type="button" class="btn btn-ghost btn--small" data-outcome="success">Прошёл</button>
+            <button type="button" class="btn btn-ghost btn--small" data-outcome="reject">Не прошёл</button>
           </div>
           <p class="slot-outcome__status" id="slot_sheet_outcome_status">Исход не выбран</p>
         </div>
@@ -353,6 +353,7 @@
   const onlyFuture = $('#only_future');
   const candToggle = $('#toggle_cand_tz');
   const emptyCard = $('#slot_empty_state');
+  const deleteAllBtn = $('#delete_all_slots');
 
   const chipTotal = $('#cnt-total');
   const chipFree = $('#cnt-free');
@@ -605,6 +606,8 @@
     if (slotDeleteBtn){
       slotDeleteBtn.disabled = true;
       slotDeleteBtn.dataset.slotId = '';
+      slotDeleteBtn.dataset.forceAllowed = '0';
+      slotDeleteBtn.textContent = 'Удалить слот';
     }
   }
 
@@ -617,7 +620,9 @@
 
   function normalizeOutcome(raw){
     const value = (raw || '').toLowerCase();
-    return value === 'passed' || value === 'failed' ? value : '';
+    if (value === 'passed' || value === 'success') return 'success';
+    if (value === 'failed' || value === 'reject') return 'reject';
+    return '';
   }
 
   function setOutcomeButtonsEnabled(enabled){
@@ -637,7 +642,7 @@
       slotOutcomeStatus.textContent = 'Исход не выбран';
       return;
     }
-    slotOutcomeStatus.textContent = normalized === 'passed'
+    slotOutcomeStatus.textContent = normalized === 'success'
       ? 'Кандидат прошёл интервью'
       : 'Кандидат не прошёл интервью';
   }
@@ -729,10 +734,12 @@
 
     if (slotDeleteBtn){
       const canDelete = row.dataset.canDelete === '1';
-      slotDeleteBtn.disabled = !canDelete;
+      slotDeleteBtn.disabled = false;
       slotDeleteBtn.dataset.slotId = id;
       slotDeleteBtn.dataset.status = status;
       slotDeleteBtn.dataset.recruiter = recruiterName || '';
+      slotDeleteBtn.dataset.forceAllowed = canDelete ? '0' : '1';
+      slotDeleteBtn.textContent = canDelete ? 'Удалить слот' : 'Удалить принудительно';
     }
 
   }
@@ -785,37 +792,55 @@
     openSheet();
   }
 
-  async function performDelete(row){
+  async function performDelete(row, options = {}){
     if (!row) return;
+    const { force = false, skipConfirm = false } = options;
     const id = row.dataset.id;
     if (!id) return;
 
+    const canDelete = row.dataset.canDelete === '1';
+    const status = row.dataset.status || '';
     const recruiterName = row.dataset.recruiter ? ` (${row.dataset.recruiter})` : '';
-    const confirmation = window.confirm(`Удалить слот #${id}${recruiterName}? Действие нельзя отменить.`);
-    if (!confirmation) return;
+
+    if (!force && !canDelete){
+      const confirmForce = window.confirm(
+        status
+          ? `Слот #${id}${recruiterName} имеет статус ${status}. Удалить принудительно?`
+          : `Удалить слот #${id}${recruiterName} принудительно?`
+      );
+      if (!confirmForce) return;
+      return await performDelete(row, { force: true, skipConfirm: true });
+    }
+
+    const confirmationText = force
+      ? `Удалить слот #${id}${recruiterName}? Это принудительное удаление.`
+      : `Удалить слот #${id}${recruiterName}? Действие нельзя отменить.`;
+
+    if (!skipConfirm && !window.confirm(confirmationText)) return;
 
     const rowDeleteBtn = row.querySelector('[data-action="delete-slot"]');
     if (rowDeleteBtn) rowDeleteBtn.disabled = true;
     if (slotDeleteBtn && currentRow === row) slotDeleteBtn.disabled = true;
 
     try {
-      const response = await fetch(`/slots/${id}`, {
+      const response = await fetch(`/slots/${id}?force=${force ? 1 : 0}`, {
         method: 'DELETE',
         headers: { 'Accept': 'application/json' },
       });
-      let payload = null;
-      try {
-        payload = await response.json();
-      } catch (_err) {
-        payload = null;
-      }
+      const payload = await response.json().catch(() => null);
 
       if (!response.ok || !payload || payload.ok !== true){
         const message = payload && payload.message ? payload.message : 'Не удалось удалить слот.';
+        if (!force && payload && payload.code === 'requires_force'){
+          const askForce = window.confirm(`${message} Выполнить принудительное удаление?`);
+          if (askForce){
+            return await performDelete(row, { force: true, skipConfirm: true });
+          }
+        }
         toast(message, 'error');
-        if (rowDeleteBtn) rowDeleteBtn.disabled = row.dataset.canDelete !== '1';
+        if (rowDeleteBtn) rowDeleteBtn.disabled = false;
         if (slotDeleteBtn && currentRow === row){
-          slotDeleteBtn.disabled = row.dataset.canDelete !== '1';
+          slotDeleteBtn.disabled = false;
         }
         return;
       }
@@ -830,10 +855,61 @@
     } catch (err){
       console.error(err);
       toast('Не удалось удалить слот.', 'error');
-      if (rowDeleteBtn) rowDeleteBtn.disabled = row.dataset.canDelete !== '1';
+      if (rowDeleteBtn) rowDeleteBtn.disabled = false;
       if (slotDeleteBtn && currentRow === row){
-        slotDeleteBtn.disabled = row.dataset.canDelete !== '1';
+        slotDeleteBtn.disabled = false;
       }
+    }
+  }
+
+  async function deleteAllSlots(force = false){
+    const confirmationText = force
+      ? 'Удалить все слоты принудительно? Это удалит даже забронированные интервальные окна.'
+      : 'Удалить все свободные и ожидающие слоты? Действие нельзя отменить.';
+
+    if (!window.confirm(confirmationText)) return;
+
+    if (deleteAllBtn) deleteAllBtn.disabled = true;
+
+    try {
+      const response = await fetch('/slots/delete_all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ force })
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload || payload.ok !== true){
+        const message = payload && payload.error ? payload.error : 'Не удалось удалить слоты.';
+        if (!force && payload && typeof payload.remaining === 'number' && payload.remaining > 0){
+          const askForce = window.confirm(`${message} Удалить оставшиеся слоты принудительно?`);
+          if (askForce){
+            return await deleteAllSlots(true);
+          }
+        }
+        toast(message, 'error');
+        return;
+      }
+
+      const deletedCount = Number(payload.deleted || 0);
+      const remaining = Number(payload.remaining || 0);
+
+      if (!force && remaining > 0){
+        toast(`Удалено ${deletedCount} слот(ов). Осталось ${remaining}.`, 'info');
+        const askForce = window.confirm('Некоторые слоты остались. Удалить их принудительно?');
+        if (askForce){
+          return await deleteAllSlots(true);
+        }
+        return;
+      }
+
+      toast(`Удалено ${deletedCount} слот(ов).`, 'success');
+      window.location.reload();
+    } catch (err){
+      console.error(err);
+      toast('Не удалось удалить слоты.', 'error');
+    } finally {
+      if (deleteAllBtn) deleteAllBtn.disabled = false;
     }
   }
 
@@ -933,6 +1009,10 @@
 
   on(slotDeleteBtn, 'click', () => {
     if (currentRow) performDelete(currentRow);
+  });
+
+  on(deleteAllBtn, 'click', () => {
+    deleteAllSlots(false);
   });
 
   on(slotBackdrop, 'click', closeSheet);

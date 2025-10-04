@@ -26,8 +26,21 @@ async def test_template_payloads_and_city_owner_assignment():
         city_id=city.id,
         responsible_id=recruiter.id,
         templates={stage_key: "custom text"},
+        criteria="Опыт продаж",
+        experts="Эксперт А",
+        plan_week=12,
+        plan_month=48,
     )
     assert error is None
+
+    async with async_session() as session:
+        refreshed_city = await session.get(models.City, city.id)
+        assert refreshed_city is not None
+        assert refreshed_city.responsible_recruiter_id == recruiter.id
+        assert refreshed_city.criteria == "Опыт продаж"
+        assert refreshed_city.experts == "Эксперт А"
+        assert refreshed_city.plan_week == 12
+        assert refreshed_city.plan_month == 48
 
     owners_payload = await api_city_owners_payload()
     assert owners_payload["ok"]
@@ -53,6 +66,10 @@ async def test_update_city_settings_rolls_back_on_template_error():
         city_id=city.id,
         responsible_id=recruiter.id,
         templates={"invalid_key": "should fail"},
+        criteria="",
+        experts="",
+        plan_week=None,
+        plan_month=None,
     )
 
     assert error is not None

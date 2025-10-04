@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 from dataclasses import dataclass
 from functools import lru_cache
@@ -26,6 +27,11 @@ class Settings:
     admin_chat_id: int
     timezone: str
     session_secret: str
+    admin_username: str
+    admin_password: str
+    admin_docs_enabled: bool
+    session_cookie_secure: bool
+    session_cookie_samesite: str
 
 
 load_env()
@@ -107,8 +113,16 @@ def get_settings() -> Settings:
     session_secret = (
         os.getenv("SESSION_SECRET")
         or os.getenv("SECRET_KEY")
-        or "dev-admin-session"
+        or secrets.token_urlsafe(32)
     )
+
+    admin_username = os.getenv("ADMIN_USER", "").strip()
+    admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
+    admin_docs_enabled = _get_bool("ADMIN_DOCS_ENABLED", default=False)
+    session_cookie_secure = _get_bool("SESSION_COOKIE_SECURE", default=True)
+    session_cookie_samesite = os.getenv("SESSION_COOKIE_SAMESITE", "strict").strip().lower() or "strict"
+    if session_cookie_samesite not in {"strict", "lax", "none"}:
+        session_cookie_samesite = "strict"
 
     return Settings(
         data_dir=data_dir,
@@ -126,4 +140,9 @@ def get_settings() -> Settings:
         admin_chat_id=admin_chat_id,
         timezone=timezone,
         session_secret=session_secret,
+        admin_username=admin_username,
+        admin_password=admin_password,
+        admin_docs_enabled=admin_docs_enabled,
+        session_cookie_secure=session_cookie_secure,
+        session_cookie_samesite=session_cookie_samesite,
     )

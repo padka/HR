@@ -3,12 +3,14 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from backend.core.db import init_models
 from backend.apps.admin_ui.state import setup_bot_state, BotIntegration
 from backend.apps.admin_ui.config import STATIC_DIR, register_template_globals
+from backend.apps.admin_ui.security import require_admin
+from backend.core.settings import get_settings
 from backend.apps.admin_ui.routers import (
     api,
     cities,
@@ -35,17 +37,28 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="TG Bot Admin UI", lifespan=lifespan)
+    settings = get_settings()
+    docs_url = "/docs" if settings.admin_docs_enabled else None
+    redoc_url = "/redoc" if settings.admin_docs_enabled else None
+    openapi_url = "/openapi.json" if settings.admin_docs_enabled else None
+
+    app = FastAPI(
+        title="TG Bot Admin UI",
+        lifespan=lifespan,
+        docs_url=docs_url,
+        redoc_url=redoc_url,
+        openapi_url=openapi_url,
+    )
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     app.include_router(system.router)
-    app.include_router(dashboard.router)
-    app.include_router(slots.router)
-    app.include_router(recruiters.router)
-    app.include_router(cities.router)
-    app.include_router(templates.router)
-    app.include_router(questions.router)
-    app.include_router(api.router)
+    app.include_router(dashboard.router, dependencies=[Depends(require_admin)])
+    app.include_router(slots.router, dependencies=[Depends(require_admin)])
+    app.include_router(recruiters.router, dependencies=[Depends(require_admin)])
+    app.include_router(cities.router, dependencies=[Depends(require_admin)])
+    app.include_router(templates.router, dependencies=[Depends(require_admin)])
+    app.include_router(questions.router, dependencies=[Depends(require_admin)])
+    app.include_router(api.router, dependencies=[Depends(require_admin)])
 
     return app
 

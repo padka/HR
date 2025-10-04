@@ -77,11 +77,12 @@ async def test_bulk_create_slots_creates_unique_series():
     assert created_third == 0
 
     async with async_session() as session:
-        stored = set(
+        stored_slots = list(
             await session.scalars(
-                select(models.Slot.start_utc).where(models.Slot.recruiter_id == recruiter.id)
+                select(models.Slot).where(models.Slot.recruiter_id == recruiter.id)
             )
         )
+        stored = {slot.start_utc for slot in stored_slots}
 
     expected = {
         recruiter_time_to_utc(start.isoformat(), "10:00", recruiter.tz),
@@ -93,6 +94,10 @@ async def test_bulk_create_slots_creates_unique_series():
         return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
     assert {_as_utc(dt) for dt in stored} == {_as_utc(dt) for dt in expected}
+
+    for slot in stored_slots:
+        assert slot.duration_min == 30
+
     async with async_session() as session:
         city_ids = set(
             await session.scalars(

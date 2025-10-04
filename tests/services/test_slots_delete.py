@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select
 
-from backend.apps.admin_ui.services.slots import delete_slot, create_slot
+from backend.apps.admin_ui.services.slots import delete_slot, delete_all_slots, create_slot
 from backend.core.db import async_session
 from backend.domain import models
 
@@ -70,9 +70,56 @@ async def test_delete_slot_allows_free_and_pending_blocks_booked():
     assert free_slot.id not in remaining_ids
     assert pending_slot.id not in remaining_ids
 
+    ok_forced, err_forced = await delete_slot(booked_slot.id, force=True)
+    assert ok_forced is True
+    assert err_forced is None
+
+    async with async_session() as session:
+        remaining_after_force = set(await session.scalars(select(models.Slot.id).where(models.Slot.recruiter_id == recruiter_id)))
+    assert booked_slot.id not in remaining_after_force
+
 
 @pytest.mark.asyncio
 async def test_delete_slot_missing_returns_error():
     ok, err = await delete_slot(999999)
     assert ok is False
     assert err == "Слот не найден"
+
+
+@pytest.mark.asyncio
+async def test_delete_all_slots_handles_force():
+    recruiter_id, city_id = await _setup_recruiter_with_city()
+
+    async with async_session() as session:
+        now = datetime.now(timezone.utc)
+        session.add_all(
+            [
+                models.Slot(
+                    recruiter_id=recruiter_id,
+                    city_id=city_id,
+                    start_utc=now,
+                    status=models.SlotStatus.FREE,
+                ),
+                models.Slot(
+                    recruiter_id=recruiter_id,
+                    city_id=city_id,
+                    start_utc=now + timedelta(hours=1),
+                    status=models.SlotStatus.PENDING,
+                ),
+                models.Slot(
+                    recruiter_id=recruiter_id,
+                    city_id=city_id,
+                    start_utc=now + timedelta(hours=2),
+                    status=models.SlotStatus.BOOKED,
+                ),
+            ]
+        )
+        await session.commit()
+
+    deleted, remaining = await delete_all_slots(force=False)
+    assert deleted == 2
+    assert remaining == 1
+
+    deleted_force, remaining_force = await delete_all_slots(force=True)
+    assert deleted_force == 1
+    assert remaining_force == 0

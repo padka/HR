@@ -3,56 +3,83 @@
 {% block title %}Вопросы{% endblock %}
 
 {% block content %}
-<section class="page">
+<section class="page page--questions">
   <header class="page-header">
     <div>
       <h1 class="page-title">База вопросов</h1>
       <p class="page-description">
-        Здесь собраны вопросы для всех тестов. Вы можете открыть вопрос и изменить его текст, варианты ответов или структуру JSON.
+        Просматривайте и редактируйте вопросы для всех тестов. Выберите раздел ниже или пролистайте карточки.
       </p>
     </div>
   </header>
 
   {% if tests %}
+    <nav class="questions-nav" aria-label="Навигация по тестам">
+      {% for test in tests %}
+        <a class="questions-nav__chip" href="#test-{{ test.test_id }}">
+          <strong>{{ test.title }}</strong>
+          <span>{{ test.questions|length }} шт.</span>
+        </a>
+      {% endfor %}
+    </nav>
+
     {% for test in tests %}
-      <section class="test-section" data-tilt>
+      <section class="test-section" id="test-{{ test.test_id }}" data-tilt>
         <header class="test-section__header">
-          <h2 class="card-title">{{ test.title }}</h2>
-          <span class="badge">{{ test.test_id }}</span>
-          <span class="test-section__meta">{{ test.questions|length }} вопросов</span>
+          <div>
+            <h2 class="card-title">{{ test.title }}</h2>
+            <p class="test-section__hint">Идентификатор теста: <code>{{ test.test_id }}</code></p>
+          </div>
+          <span class="badge">{{ test.questions|length }} вопрос(ов)</span>
         </header>
+
         <div class="question-list">
           {% for item in test.questions %}
-            <article class="question-card">
-              <div class="question-card__header">
-                <span class="badge">№ {{ item.index }}</span>
-                <h3 class="question-title">{{ item.title }}</h3>
-                {% if item.kind == 'choice' %}
-                  <span class="badge">Варианты</span>
-                {% else %}
-                  <span class="badge">Свободный ответ</span>
+            <article class="question-card" data-status="{{ 'active' if item.is_active else 'hidden' }}">
+              <header class="question-card__header">
+                <div class="question-card__identity">
+                  <span class="badge badge--index">№ {{ item.index }}</span>
+                  <h3 class="question-title">{{ item.title }}</h3>
+                </div>
+                <div class="question-card__tags">
+                  {% if item.kind == 'choice' %}
+                    <span class="badge">С вариантами</span>
+                  {% else %}
+                    <span class="badge">Свободный ответ</span>
+                  {% endif %}
+                  {% if item.is_active %}
+                    <span class="question-pill" data-tone="success">Активен</span>
+                  {% else %}
+                    <span class="question-pill" data-tone="danger">Скрыт</span>
+                  {% endif %}
+                </div>
+              </header>
+
+              <div class="question-card__body">
+                {% if item.prompt %}
+                  <p class="question-meta">{{ item.prompt }}</p>
                 {% endif %}
+
+                <dl class="question-facts">
+                  <div>
+                    <dt>Последнее изменение</dt>
+                    <dd>{% if item.updated_at %}{{ fmt_utc(item.updated_at) }} UTC{% else %}—{% endif %}</dd>
+                  </div>
+                  {% if item.options_count %}
+                    <div>
+                      <dt>Вариантов</dt>
+                      <dd>{{ item.options_count }}{% if item.correct_label %} · верный: <strong>{{ item.correct_label }}</strong>{% endif %}</dd>
+                    </div>
+                  {% endif %}
+                </dl>
               </div>
-              {% if item.prompt %}
-                <p class="question-meta">{{ item.prompt }}</p>
-              {% endif %}
-              <div class="question-card__meta">
-                {% if item.options_count %}
-                  <span>Вариантов: {{ item.options_count }}{% if item.correct_label %}, верный: {{ item.correct_label }}{% endif %}</span>
-                {% endif %}
-                <span>Последнее изменение: {% if item.updated_at %}{{ fmt_utc(item.updated_at) }} UTC{% else %}—{% endif %}</span>
-              </div>
-              <div class="question-card__footer">
-                {% if item.is_active %}
-                  <span class="question-pill" data-tone="success">Активен</span>
-                {% else %}
-                  <span class="question-pill" data-tone="danger">Скрыт</span>
-                {% endif %}
-                <a class="btn btn-soft" href="/questions/{{ item.id }}/edit">Редактировать</a>
-              </div>
+
+              <footer class="question-card__footer">
+                <a class="btn btn-soft btn--grow" href="/questions/{{ item.id }}/edit">Редактировать</a>
+              </footer>
             </article>
           {% else %}
-            <div class="muted table-empty">Пока нет вопросов.</div>
+            <div class="muted question-empty">В этом тесте пока нет вопросов.</div>
           {% endfor %}
         </div>
       </section>

@@ -21,6 +21,14 @@ from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 router = APIRouter(prefix="/cities", tags=["cities"])
 
 
+def _coerce_plan(value: object) -> Optional[int]:
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
 @router.get("", response_class=HTMLResponse)
 async def cities_list(request: Request):
     cities = await list_cities()
@@ -80,10 +88,19 @@ async def update_city_settings(city_id: int, request: Request):
     if not isinstance(templates_payload, dict):
         templates_payload = {}
 
+    criteria = (payload.get("criteria") or "").strip()
+    experts = (payload.get("experts") or "").strip()
+    plan_week = _coerce_plan(payload.get("plan_week"))
+    plan_month = _coerce_plan(payload.get("plan_month"))
+
     error = await update_city_settings_service(
         city_id,
         responsible_id=responsible_id,
         templates=templates_payload,
+        criteria=criteria,
+        experts=experts,
+        plan_week=plan_week,
+        plan_month=plan_month,
     )
     if error:
         status = 404 if "not found" in error.lower() else 400
@@ -97,4 +114,3 @@ async def cities_delete(city_id: int):
     if not ok:
         return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
     return JSONResponse({"ok": True})
-

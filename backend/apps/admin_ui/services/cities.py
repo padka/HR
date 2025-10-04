@@ -58,6 +58,10 @@ async def update_city_settings(
     *,
     responsible_id: Optional[int],
     templates: Dict[str, Optional[str]],
+    criteria: Optional[str],
+    experts: Optional[str],
+    plan_week: Optional[int],
+    plan_month: Optional[int],
 ) -> Optional[str]:
     owner_field = city_owner_field_name()
     async with async_session() as session:
@@ -73,6 +77,16 @@ async def update_city_settings(
 
             if owner_field:
                 setattr(city, owner_field, responsible_id)
+
+            clean_criteria = (criteria or "").strip() or None
+            clean_experts = (experts or "").strip() or None
+            city.criteria = clean_criteria
+            city.experts = clean_experts
+
+            normalized_week = plan_week if plan_week is None or plan_week >= 0 else None
+            normalized_month = plan_month if plan_month is None or plan_month >= 0 else None
+            city.plan_week = normalized_week
+            city.plan_month = normalized_month
 
             error = await update_templates_for_city(city_id, templates, session=session)
             if error:
@@ -110,6 +124,10 @@ async def api_cities_payload() -> List[Dict[str, object]]:
             "name": c.name,
             "tz": getattr(c, "tz", None),
             "owner_recruiter_id": getattr(c, owner_field) if owner_field else None,
+            "criteria": getattr(c, "criteria", None),
+            "experts": getattr(c, "experts", None),
+            "plan_week": getattr(c, "plan_week", None),
+            "plan_month": getattr(c, "plan_month", None),
         }
         for c in cities
     ]

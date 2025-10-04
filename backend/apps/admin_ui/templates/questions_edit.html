@@ -44,9 +44,566 @@
 
   {% call forms.section("Данные вопроса") %}
     {% call forms.field("JSON", hint="Структура должна соответствовать формату, который использует бот.") %}
-      <textarea name="payload" rows="16" class="text-mono" required>{{ detail.payload_json }}</textarea>
-      {% call forms.note() %}Для вопросов с вариантами ответов укажите поля <code>options</code> и <code>correct</code>.{% endcall %}
+      <div class="payload-toolbar">
+        <button class="btn btn-soft btn--sm" type="button" id="btn-format-json">Форматировать JSON</button>
+        <button class="btn btn-ghost btn--sm" type="button" id="btn-template-choice">Шаблон «Варианты»</button>
+        <button class="btn btn-ghost btn--sm" type="button" id="btn-template-text">Шаблон «Свободный ответ»</button>
+      </div>
+
+      <div class="payload-designer" id="payload-designer">
+        <div class="payload-designer__header">
+          <div>
+            <h3>Конструктор вопроса</h3>
+            <p class="muted" id="builder-hint">Меняйте поля ниже — JSON обновится автоматически.</p>
+          </div>
+          <div class="payload-designer__type">
+            <label for="builder-type">Тип вопроса</label>
+            <select id="builder-type" data-builder-control>
+              <option value="choice">С вариантами</option>
+              <option value="text">Свободный ответ</option>
+            </select>
+          </div>
+        </div>
+        <fieldset class="payload-designer__body" id="builder-body">
+          <label class="designer-field">
+            <span>Формулировка</span>
+            <textarea id="builder-prompt" rows="3" data-builder-control spellcheck="false"></textarea>
+          </label>
+
+          <div id="builder-choice">
+            <div class="designer-subheader">
+              <span>Варианты ответов</span>
+              <button type="button" class="btn btn-ghost btn--sm" id="builder-add-option" data-builder-control>+ Добавить вариант</button>
+            </div>
+            <div class="builder-options" id="builder-options"></div>
+          </div>
+
+          <div id="builder-text">
+            <div class="designer-subheader">
+              <span>Ограничения по длине ответа</span>
+            </div>
+            <div class="designer-grid">
+              <label>Минимум (символов)
+                <input type="number" id="builder-min" min="0" step="1" data-builder-control>
+              </label>
+              <label>Максимум (символов)
+                <input type="number" id="builder-max" min="0" step="1" data-builder-control>
+              </label>
+            </div>
+          </div>
+
+          <label class="designer-field">
+            <span>Пояснение (опционально)</span>
+            <textarea id="builder-explanation" rows="2" data-builder-control spellcheck="false"></textarea>
+          </label>
+        </fieldset>
+        <div class="designer-disabled" id="builder-disabled" hidden>
+          Конструктор недоступен: исправьте JSON вручную или воспользуйтесь кнопками шаблонов.
+        </div>
+      </div>
+
+      <textarea name="payload" id="payload-editor" rows="18" class="text-mono" required spellcheck="false">{{ detail.payload_json }}</textarea>
+      <p class="payload-status" id="payload-status" aria-live="polite"></p>
+      <div class="payload-preview" id="payload-preview" aria-live="polite" aria-atomic="true"></div>
+      {% call forms.note() %}Поддерживаются ключи <code>prompt</code>, <code>options</code>, <code>correct</code>, <code>validation</code>, <code>hints</code> и др. Некорректный JSON не позволит сохранить изменения.{% endcall %}
     {% endcall %}
   {% endcall %}
+
+  {% call forms.section("Подсказки", span='full') %}
+    <div class="question-help">
+      <div>
+        <h3>Вопрос с выбором ответа</h3>
+        <pre><code>{
+  "prompt": "Выберите правильный ответ",
+  "options": ["Вариант А", "Вариант B", "Вариант C"],
+  "correct": 1,
+  "explanation": "Можно указать пояснение"
+}</code></pre>
+      </div>
+      <div>
+        <h3>Вопрос со свободным ответом</h3>
+        <pre><code>{
+  "prompt": "Расскажите о своём опыте",
+  "validation": {
+    "min_length": 20,
+    "max_length": 600
+  }
+}</code></pre>
+      </div>
+    </div>
+  {% endcall %}
 {% endcall %}
+
+<style>
+  .payload-toolbar { display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.75rem; }
+  .payload-designer { margin-bottom:1.25rem; border:1px solid var(--border, rgba(255,255,255,.15)); border-radius:var(--radius-lg, 16px); padding:1rem; background: var(--field-bg, rgba(255,255,255,.05)); }
+  .payload-designer__header { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; }
+  .payload-designer__type label { display:block; font-size:0.75rem; letter-spacing:.02em; text-transform:uppercase; margin-bottom:0.25rem; }
+  .payload-designer__body { margin-top:1rem; border:0; padding:0; display:flex; flex-direction:column; gap:1rem; }
+  .payload-designer__body[hidden] { display:none; }
+  .designer-field { display:flex; flex-direction:column; gap:0.5rem; }
+  .designer-field textarea, .designer-field input { width:100%; }
+  .designer-subheader { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; font-weight:600; }
+  .builder-options { display:flex; flex-direction:column; gap:0.5rem; }
+  .builder-option { display:flex; gap:0.75rem; align-items:flex-start; border:1px solid var(--border, rgba(255,255,255,.12)); padding:0.75rem; border-radius:var(--radius-md,12px); background:var(--field-bg, rgba(255,255,255,.03)); }
+  .builder-option__input { flex:1; display:flex; align-items:center; gap:0.5rem; }
+  .builder-option__input input { width:100%; }
+  .builder-option__controls { display:flex; gap:0.75rem; align-items:center; }
+  .builder-option__correct { display:flex; align-items:center; gap:0.35rem; font-size:0.85rem; }
+  .builder-options .muted { margin:0; }
+  .designer-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:0.75rem; }
+  .designer-disabled { margin-top:0.75rem; padding:0.85rem; border:1px dashed var(--border, rgba(255,255,255,.18)); border-radius:var(--radius-md,12px); font-size:0.9rem; }
+  .payload-status { margin-top:0.5rem; font-weight:600; }
+  .payload-status[data-state="ok"] { color: var(--ok, #23d18b); }
+  .payload-status[data-state="error"] { color: var(--bad, #ff6b6b); }
+  .preview-list { display:grid; gap:0.5rem; margin:0; }
+  .preview-list dt { font-size:0.75rem; text-transform:uppercase; letter-spacing:.04em; opacity:0.7; }
+  .preview-options { margin:0.25rem 0 0; padding-left:1.4rem; display:flex; flex-direction:column; gap:0.25rem; }
+  .preview-options li[data-correct="true"] { font-weight:600; color: var(--accent, #69b7ff); }
+  .builder-option .badge { font-size:0.75rem; }
+  @media (max-width: 640px) {
+    .payload-designer__header { flex-direction:column; align-items:stretch; }
+    .builder-option { flex-direction:column; }
+    .builder-option__controls { justify-content:space-between; width:100%; }
+  }
+</style>
+
+{% raw %}
+<script>
+(function(){
+  const $ = (s, r=document)=>r.querySelector(s);
+  const editor = $('#payload-editor');
+  const status = $('#payload-status');
+  const preview = $('#payload-preview');
+  const btnFormat = $('#btn-format-json');
+  const btnChoice = $('#btn-template-choice');
+  const btnText = $('#btn-template-text');
+  const form = document.getElementById('question-form');
+  const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+  const designer = $('#payload-designer');
+  const builderBody = $('#builder-body');
+  const builderDisabled = $('#builder-disabled');
+  const builderType = $('#builder-type');
+  const builderPrompt = $('#builder-prompt');
+  const builderExplanation = $('#builder-explanation');
+  const builderChoice = $('#builder-choice');
+  const builderOptions = $('#builder-options');
+  const addOptionBtn = $('#builder-add-option');
+  const builderText = $('#builder-text');
+  const builderMin = $('#builder-min');
+  const builderMax = $('#builder-max');
+
+  if (!editor) return;
+
+  const choiceTemplate = {
+    prompt: "Выберите правильный вариант",
+    options: ["Вариант 1", "Вариант 2", "Вариант 3"],
+    correct: 0,
+    explanation: "Комментарий появляется после ответа"
+  };
+
+  const textTemplate = {
+    prompt: "Расскажите о своём опыте",
+    validation: {
+      min_length: 30,
+      max_length: 500
+    }
+  };
+
+  const defaultDisabledMessage = builderDisabled ? builderDisabled.textContent : '';
+  let builderState = null;
+  let populatingBuilder = false;
+  let syncingFromBuilder = false;
+
+  function setBuilderEnabled(enabled, reason){
+    if (!builderBody || !builderDisabled) return;
+    if (enabled){
+      builderBody.hidden = false;
+      builderBody.disabled = false;
+      builderDisabled.hidden = true;
+      if (designer) designer.dataset.state = 'ready';
+    } else {
+      builderBody.hidden = true;
+      builderBody.disabled = true;
+      builderDisabled.hidden = false;
+      builderDisabled.textContent = reason || defaultDisabledMessage || 'Конструктор недоступен.';
+      if (designer) designer.dataset.state = 'disabled';
+    }
+  }
+
+  function escapeHtml(text){
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function escapeAttr(text){
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;');
+  }
+
+  function convertDataToState(data){
+    if (!data || typeof data !== 'object') return null;
+    const prompt = typeof data.prompt === 'string' ? data.prompt : '';
+    const explanation = typeof data.explanation === 'string' ? data.explanation : '';
+    const extras = {};
+    for (const [key, value] of Object.entries(data)){
+      if (['prompt', 'options', 'correct', 'explanation', 'validation'].includes(key)) continue;
+      extras[key] = value;
+    }
+
+    if (Array.isArray(data.options)){
+      const options = data.options.length
+        ? data.options.map(opt => typeof opt === 'string' ? opt : JSON.stringify(opt))
+        : ['Вариант 1', 'Вариант 2'];
+      let correct = typeof data.correct === 'number' ? data.correct : 0;
+      if (Number.isNaN(correct) || correct < 0) correct = 0;
+      if (correct >= options.length) correct = options.length - 1;
+      return {
+        type: 'choice',
+        prompt,
+        explanation,
+        options,
+        correct,
+        validation: {},
+        validationExtra: {},
+        extra: extras,
+      };
+    }
+
+    let min = null;
+    let max = null;
+    let validationExtra = {};
+    if (data.validation && typeof data.validation === 'object'){
+      const { min_length, max_length, ...rest } = data.validation;
+      if (typeof min_length === 'number') min = min_length;
+      if (typeof max_length === 'number') max = max_length;
+      validationExtra = rest;
+    }
+
+    return {
+      type: 'text',
+      prompt,
+      explanation,
+      options: [],
+      correct: 0,
+      validation: { min_length: min, max_length: max },
+      validationExtra,
+      extra: extras,
+    };
+  }
+
+  function toggleTypeSections(){
+    if (!builderState) return;
+    if (builderChoice) builderChoice.hidden = builderState.type !== 'choice';
+    if (builderText) builderText.hidden = builderState.type !== 'text';
+    if (builderType) builderType.value = builderState.type;
+  }
+
+  function renderOptionsList(){
+    if (!builderOptions) return;
+    builderOptions.innerHTML = '';
+    if (!builderState || builderState.type !== 'choice'){
+      builderOptions.innerHTML = '<p class="muted">Для вопросов со свободным ответом варианты не используются.</p>';
+      return;
+    }
+    if (!builderState.options || !builderState.options.length){
+      builderState.options = ['Вариант 1', 'Вариант 2'];
+      builderState.correct = 0;
+    }
+    builderState.options.forEach((value, idx) => {
+      const row = document.createElement('div');
+      row.className = 'builder-option';
+      row.dataset.index = String(idx);
+      row.innerHTML = `
+        <div class="builder-option__input">
+          <span class="badge">${idx + 1}</span>
+          <input type="text" data-role="option-input" value="${escapeAttr(value)}" spellcheck="false">
+        </div>
+        <div class="builder-option__controls">
+          <label class="builder-option__correct"><input type="radio" name="option_correct" value="${idx}" ${builderState.correct === idx ? 'checked' : ''}>Верный</label>
+          <button type="button" class="btn btn-ghost btn--sm" data-role="remove-option">Удалить</button>
+        </div>`;
+      builderOptions.appendChild(row);
+    });
+  }
+
+  function applyBuilderState(){
+    if (!builderState) return;
+    populatingBuilder = true;
+    if (builderPrompt) builderPrompt.value = builderState.prompt || '';
+    if (builderExplanation) builderExplanation.value = builderState.explanation || '';
+    if (builderMin){
+      builderMin.value = builderState.type === 'text' && builderState.validation?.min_length != null
+        ? builderState.validation.min_length
+        : '';
+    }
+    if (builderMax){
+      builderMax.value = builderState.type === 'text' && builderState.validation?.max_length != null
+        ? builderState.validation.max_length
+        : '';
+    }
+    toggleTypeSections();
+    renderOptionsList();
+    populatingBuilder = false;
+  }
+
+  function updateBuilder(data){
+    const state = convertDataToState(data);
+    if (!state){
+      builderState = null;
+      setBuilderEnabled(false, 'Конструктор поддерживает базовые структуры с prompt/options/correct или prompt/validation.');
+      return;
+    }
+    builderState = state;
+    setBuilderEnabled(true);
+    applyBuilderState();
+  }
+
+  function buildPayload(){
+    if (!builderState) return null;
+    const payload = { ...builderState.extra };
+    const promptValue = builderPrompt ? builderPrompt.value.trim() : '';
+    payload.prompt = promptValue;
+
+    const explanationValue = builderExplanation ? builderExplanation.value.trim() : '';
+    if (explanationValue){
+      payload.explanation = explanationValue;
+    } else {
+      delete payload.explanation;
+    }
+
+    if (builderState.type === 'choice'){
+      const inputs = builderOptions ? builderOptions.querySelectorAll('[data-role="option-input"]') : [];
+      let options = Array.from(inputs).map(input => input.value.trim()).filter(opt => opt.length);
+      if (!options.length){
+        options = ['Вариант 1', 'Вариант 2'];
+      }
+      builderState.options = options;
+      let correctIndex = builderState.correct;
+      const checked = builderOptions ? builderOptions.querySelector('input[name="option_correct"]:checked') : null;
+      if (checked) correctIndex = Number(checked.value);
+      if (Number.isNaN(correctIndex) || correctIndex < 0) correctIndex = 0;
+      if (correctIndex >= options.length) correctIndex = options.length - 1;
+      builderState.correct = correctIndex;
+      payload.options = options;
+      payload.correct = correctIndex;
+
+      if (builderState.validationExtra && Object.keys(builderState.validationExtra).length){
+        payload.validation = { ...builderState.validationExtra };
+      } else {
+        delete payload.validation;
+      }
+    } else {
+      delete payload.options;
+      delete payload.correct;
+
+      const validation = { ...(builderState.validationExtra || {}) };
+      const minValue = builderMin && builderMin.value !== '' ? Number(builderMin.value) : null;
+      const maxValue = builderMax && builderMax.value !== '' ? Number(builderMax.value) : null;
+
+      if (minValue != null && !Number.isNaN(minValue)) validation.min_length = minValue;
+      else delete validation.min_length;
+      if (maxValue != null && !Number.isNaN(maxValue)) validation.max_length = maxValue;
+      else delete validation.max_length;
+
+      if (Object.keys(validation).length){
+        payload.validation = validation;
+      } else {
+        delete payload.validation;
+      }
+    }
+
+    return payload;
+  }
+
+  function propagateBuilder(){
+    if (populatingBuilder || !builderState) return;
+    const payload = buildPayload();
+    if (!payload) return;
+    syncingFromBuilder = true;
+    editor.value = JSON.stringify(payload, null, 2);
+    syncingFromBuilder = false;
+    renderPreview(true);
+  }
+
+  function renderPreview(fromBuilder = false){
+    const raw = editor.value.trim();
+    if (!raw){
+      status.textContent = 'Введите JSON для вопроса.';
+      status.dataset.state = 'empty';
+      preview.innerHTML = '';
+      if (submitBtn) submitBtn.disabled = true;
+      setBuilderEnabled(false, 'Введите JSON или воспользуйтесь шаблоном.');
+      return;
+    }
+    try {
+      const data = JSON.parse(raw);
+      status.textContent = 'JSON корректен';
+      status.dataset.state = 'ok';
+      if (submitBtn) submitBtn.disabled = false;
+
+      if (!fromBuilder){
+        updateBuilder(data);
+      }
+
+      const items = [];
+      if (data.prompt){
+        items.push(`<dt>Формулировка</dt><dd>${escapeHtml(data.prompt)}</dd>`);
+      }
+      if (Array.isArray(data.options)){
+        const list = data.options
+          .map((opt, idx) => {
+            const label = typeof opt === 'string' ? opt : JSON.stringify(opt);
+            const mark = data.correct === idx ? ' data-correct="true"' : '';
+            return `<li${mark}><span class="badge">${idx + 1}</span> ${escapeHtml(label)}</li>`;
+          })
+          .join('');
+        items.push(`<dt>Варианты</dt><dd><ol class="preview-options">${list}</ol></dd>`);
+      }
+      if (data.validation){
+        const v = JSON.stringify(data.validation, null, 2);
+        items.push(`<dt>Валидация</dt><dd><pre><code>${escapeHtml(v)}</code></pre></dd>`);
+      }
+      if (data.explanation){
+        items.push(`<dt>Пояснение</dt><dd>${escapeHtml(data.explanation)}</dd>`);
+      }
+
+      preview.innerHTML = items.length
+        ? `<dl class="preview-list">${items.join('')}</dl>`
+        : '<p class="muted">Нет данных для предпросмотра.</p>';
+    } catch (err) {
+      status.textContent = `Ошибка JSON: ${err.message}`;
+      status.dataset.state = 'error';
+      preview.innerHTML = '';
+      if (submitBtn) submitBtn.disabled = true;
+      setBuilderEnabled(false, 'Конструктор недоступен: JSON содержит ошибку.');
+    }
+  }
+
+  let renderTimer = null;
+  editor.addEventListener('input', () => {
+    if (syncingFromBuilder) return;
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => renderPreview(false), 200);
+  });
+
+  btnFormat?.addEventListener('click', () => {
+    try {
+      const formatted = JSON.stringify(JSON.parse(editor.value), null, 2);
+      editor.value = formatted;
+      renderPreview(false);
+    } catch (err) {
+      alert('Не удалось форматировать: ' + err.message);
+    }
+  });
+
+  btnChoice?.addEventListener('click', () => {
+    editor.value = JSON.stringify(choiceTemplate, null, 2);
+    renderPreview(false);
+    editor.focus();
+  });
+
+  btnText?.addEventListener('click', () => {
+    editor.value = JSON.stringify(textTemplate, null, 2);
+    renderPreview(false);
+    editor.focus();
+  });
+
+  builderType?.addEventListener('change', () => {
+    if (!builderState || populatingBuilder) return;
+    builderState.type = builderType.value === 'text' ? 'text' : 'choice';
+    if (builderState.type === 'text' && !builderState.validation){
+      builderState.validation = { min_length: null, max_length: null };
+    }
+    toggleTypeSections();
+    renderOptionsList();
+    propagateBuilder();
+  });
+
+  builderPrompt?.addEventListener('input', () => {
+    if (!builderState || populatingBuilder) return;
+    builderState.prompt = builderPrompt.value;
+    propagateBuilder();
+  });
+
+  builderExplanation?.addEventListener('input', () => {
+    if (!builderState || populatingBuilder) return;
+    builderState.explanation = builderExplanation.value;
+    propagateBuilder();
+  });
+
+  builderMin?.addEventListener('input', () => {
+    if (!builderState || populatingBuilder) return;
+    if (!builderState.validation) builderState.validation = { min_length: null, max_length: null };
+    builderState.validation.min_length = builderMin.value === '' ? null : Number(builderMin.value);
+    propagateBuilder();
+  });
+
+  builderMax?.addEventListener('input', () => {
+    if (!builderState || populatingBuilder) return;
+    if (!builderState.validation) builderState.validation = { min_length: null, max_length: null };
+    builderState.validation.max_length = builderMax.value === '' ? null : Number(builderMax.value);
+    propagateBuilder();
+  });
+
+  builderOptions?.addEventListener('input', (event) => {
+    if (!builderState || populatingBuilder) return;
+    const row = event.target.closest('.builder-option');
+    if (!row) return;
+    const idx = Number(row.dataset.index);
+    if (Number.isNaN(idx)) return;
+    if (event.target.matches('[data-role="option-input"]')){
+      builderState.options[idx] = event.target.value;
+      propagateBuilder();
+    }
+  });
+
+  builderOptions?.addEventListener('change', (event) => {
+    if (!builderState || populatingBuilder) return;
+    if (event.target.name === 'option_correct'){
+      builderState.correct = Number(event.target.value);
+      propagateBuilder();
+    }
+  });
+
+  builderOptions?.addEventListener('click', (event) => {
+    if (!builderState || populatingBuilder) return;
+    if (!event.target.matches('[data-role="remove-option"]')) return;
+    const row = event.target.closest('.builder-option');
+    if (!row) return;
+    const idx = Number(row.dataset.index);
+    if (Number.isNaN(idx)) return;
+    builderState.options.splice(idx, 1);
+    if (builderState.correct >= builderState.options.length){
+      builderState.correct = Math.max(0, builderState.options.length - 1);
+    }
+    renderOptionsList();
+    propagateBuilder();
+  });
+
+  addOptionBtn?.addEventListener('click', () => {
+    if (!builderState) return;
+    builderState.options = builderState.options || [];
+    builderState.options.push(`Новый вариант ${builderState.options.length + 1}`);
+    renderOptionsList();
+    propagateBuilder();
+  });
+
+  form?.addEventListener('submit', (event) => {
+    renderPreview(false);
+    if (status.dataset.state !== 'ok'){
+      event.preventDefault();
+      alert('Перед сохранением исправьте JSON: ' + status.textContent);
+      editor.focus();
+    }
+  });
+
+  renderPreview(false);
+})();
+</script>
+{% endraw %}
 {% endblock %}

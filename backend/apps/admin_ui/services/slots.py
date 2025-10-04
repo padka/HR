@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import logging
-import logging
 from dataclasses import dataclass, field
 from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
@@ -28,6 +27,7 @@ __all__ = [
     "bulk_create_slots",
     "api_slots_payload",
     "delete_slot",
+    "delete_all_slots",
     "set_slot_outcome",
     "get_state_manager",
     "execute_bot_dispatch",
@@ -54,17 +54,31 @@ async def list_slots(
     per_page: int,
 ) -> Dict[str, object]:
     async with async_session() as session:
-        base = select(Slot)
+        filtered = select(Slot)
         if recruiter_id is not None:
-            base = base.where(Slot.recruiter_id == recruiter_id)
+            filtered = filtered.where(Slot.recruiter_id == recruiter_id)
         if status:
-            base = base.where(Slot.status == status_to_db(status))
+            filtered = filtered.where(Slot.status == status_to_db(status))
 
-        total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
+        subquery = filtered.subquery()
+        total = await session.scalar(select(func.count()).select_from(subquery)) or 0
+
+        status_rows = (
+            await session.execute(
+                select(subquery.c.status, func.count())
+                .select_from(subquery)
+                .group_by(subquery.c.status)
+            )
+        ).all()
+
+        aggregated: Dict[str, int] = {}
+        for raw_status, count in status_rows:
+            aggregated[norm_status(raw_status)] = int(count or 0)
+
         pages_total, page, offset = paginate(total, page, per_page)
 
         query = (
-            base.options(selectinload(Slot.recruiter))
+            filtered.options(selectinload(Slot.recruiter))
             .order_by(Slot.start_utc.desc())
             .offset(offset)
             .limit(per_page)
@@ -76,6 +90,7 @@ async def list_slots(
         "total": total,
         "page": page,
         "pages_total": pages_total,
+        "status_counts": aggregated,
     }
 
 
@@ -143,19 +158,42 @@ async def create_slot(
         return True
 
 
-async def delete_slot(slot_id: int) -> Tuple[bool, Optional[str]]:
+async def delete_slot(slot_id: int, *, force: bool = False) -> Tuple[bool, Optional[str]]:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if not slot:
             return False, "Слот не найден"
 
         status = norm_status(slot.status)
-        if status not in {"FREE", "PENDING"}:
+        if not force and status not in {"FREE", "PENDING"}:
             return False, f"Нельзя удалить слот со статусом {status or 'UNKNOWN'}"
 
         await session.delete(slot)
         await session.commit()
         return True, None
+
+
+async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
+    async with async_session() as session:
+        total_before = await session.scalar(select(func.count()).select_from(Slot)) or 0
+        if total_before == 0:
+            return 0, 0
+
+        if force:
+            await session.execute(delete(Slot))
+            await session.commit()
+            return total_before, 0
+
+        allowed_statuses = {
+            status_to_db("FREE"),
+            status_to_db("PENDING"),
+        }
+        await session.execute(delete(Slot).where(Slot.status.in_(allowed_statuses)))
+        await session.commit()
+
+        remaining_after = await session.scalar(select(func.count()).select_from(Slot)) or 0
+        deleted = total_before - remaining_after
+        return deleted, remaining_after
 
 
 @dataclass
@@ -186,6 +224,8 @@ async def set_slot_outcome(
     bot_service: Optional[BotService] = None,
 ) -> Tuple[bool, Optional[str], Optional[str], Optional[BotDispatch]]:
     normalized = (outcome or "").strip().lower()
+    aliases = {"passed": "success", "failed": "reject"}
+    normalized = aliases.get(normalized, normalized)
     if normalized not in {"success", "reject"}:
         return (
             False,
@@ -576,6 +616,7 @@ async def bulk_create_slots(
                     city_id=city_id,
                     start_utc=dt,
                     status=status_free,
+                    duration_min=max(step_min, 1),
                 )
                 for dt in to_insert
             ]
