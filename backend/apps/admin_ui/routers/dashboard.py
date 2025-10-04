@@ -2,9 +2,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from backend.apps.admin_ui.config import templates
+from backend.apps.admin_ui.services.bot_service import (
+    BOT_RUNTIME_AVAILABLE,
+    IntegrationSwitch,
+)
+from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
 from backend.apps.admin_ui.services.recruiters import list_recruiters
-from backend.apps.admin_ui.services.cities import list_cities
+from backend.core.settings import get_settings
 
 router = APIRouter()
 
@@ -15,6 +20,29 @@ async def index(request: Request):
     recruiter_rows = await list_recruiters()
     recruiters = [row["rec"] for row in recruiter_rows]
     cities = await list_cities()
+    switch: IntegrationSwitch | None = getattr(
+        request.app.state, "bot_integration_switch", None
+    )
+    bot_service = getattr(request.app.state, "bot_service", None)
+    settings = get_settings()
+    runtime_enabled = (
+        switch.is_enabled() if switch else settings.bot_integration_enabled
+    )
+    health = bot_service.health_status if bot_service else "missing"
+    ready = bot_service.is_ready() if bot_service else False
+    mode = (
+        "real"
+        if bot_service and bot_service.configured and BOT_RUNTIME_AVAILABLE
+        else "null"
+    )
+    bot_status = {
+        "config_enabled": settings.bot_integration_enabled,
+        "runtime_enabled": runtime_enabled,
+        "updated_at": switch.updated_at.isoformat() if switch else None,
+        "health": health,
+        "ready": ready,
+        "mode": mode,
+    }
     return templates.TemplateResponse(
         "index.html",
         {
@@ -22,5 +50,6 @@ async def index(request: Request):
             "counts": counts,
             "recruiters": recruiters,
             "cities": cities,
+            "bot_status": bot_status,
         },
     )

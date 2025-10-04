@@ -8,26 +8,28 @@ import logging
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, TypeVar, cast, overload
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Literal
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, ForceReply, Message, FSInputFile
 
+from pydantic import ValidationError
+
 from backend.core.settings import get_settings
-from backend.domain.models import SlotStatus
+from backend.domain.models import SlotStatus, Slot
 from backend.domain.repositories import (
     approve_slot,
     get_active_recruiters_for_city,
-    get_candidate_cities,
-    get_city_by_name,
     get_free_slots_by_recruiter,
     get_recruiter,
     get_slot,
     reject_slot,
     reserve_slot,
     set_recruiter_chat_id_by_command,
+    ReservationResult,
 )
 
 from . import templates
@@ -36,9 +38,9 @@ from .config import (
     FOLLOWUP_NOTICE_PERIOD,
     FOLLOWUP_STUDY_MODE,
     FOLLOWUP_STUDY_SCHEDULE,
+    FOLLOWUP_STUDY_FLEX,
     MAX_ATTEMPTS,
     PASS_THRESHOLD,
-    RemKey,
     State,
     TEST1_QUESTIONS,
     TEST2_QUESTIONS,
@@ -53,7 +55,19 @@ from .keyboards import (
     kb_slots_for_recruiter,
     kb_start,
 )
+from .city_registry import (
+    CityInfo,
+    find_candidate_city_by_id,
+    find_candidate_city_by_name,
+    list_candidate_cities,
+)
+from .metrics import record_test1_completion, record_test1_rejection
+from .state_store import StateManager
+from .test1_validation import Test1Payload, apply_partial_validation, convert_age
+from .reminders import get_reminder_service
 
+
+logger = logging.getLogger(__name__)
 
 _settings = get_settings()
 REPORTS_DIR: Path = _settings.data_dir / "reports"
@@ -64,47 +78,169 @@ for _path in (REPORTS_DIR, TEST1_DIR, UPLOADS_DIR):
     _path.mkdir(parents=True, exist_ok=True)
 
 
-T = TypeVar("T")
-
-
-class StateManager:
-    """Simple in-memory state storage for bot flows."""
-
-    def __init__(self) -> None:
-        self._storage: Dict[int, State] = {}
-
-    @overload
-    def get(self, user_id: int) -> Optional[State]:
-        ...
-
-    @overload
-    def get(self, user_id: int, default: T) -> State | T:
-        ...
-
-    def get(self, user_id: int, default: T | None = None) -> State | T | None:
-        return self._storage.get(user_id, default)
-
-    def ensure(self, user_id: int) -> State:
-        state = self._storage.get(user_id)
-        if state is None:
-            state = cast(State, {})
-            self._storage[user_id] = state
-        return state
-
-    def set(self, user_id: int, state: State) -> None:
-        self._storage[user_id] = state
-
-    def pop(self, user_id: int) -> Optional[State]:
-        return self._storage.pop(user_id, None)
-
-    def clear(self) -> None:
-        self._storage.clear()
-
 
 _bot: Optional[Bot] = None
 _state_manager: Optional[StateManager] = None
-REMINDERS: Dict[RemKey, asyncio.Task] = {}
-CONFIRM_TASKS: Dict[RemKey, asyncio.Task] = {}
+
+
+@dataclass
+class Test1AnswerResult:
+    status: Literal["ok", "invalid", "reject"]
+    message: Optional[str] = None
+    hints: List[str] = field(default_factory=list)
+    reason: Optional[str] = None
+    template_key: Optional[str] = None
+    template_context: Dict[str, Any] = field(default_factory=dict)
+
+
+REJECTION_TEMPLATES: Dict[str, str] = {
+    "format_not_ready": "t1_format_reject",
+    "schedule_conflict": "t1_schedule_reject",
+    "study_flex_declined": "t1_schedule_reject",
+}
+
+
+async def _resolve_candidate_city(answer: str, metadata: Dict[str, Any]) -> Optional[CityInfo]:
+    meta_city_id = metadata.get("city_id") or metadata.get("value")
+    if meta_city_id is not None:
+        try:
+            city = await find_candidate_city_by_id(int(meta_city_id))
+            if city is not None:
+                return city
+        except (TypeError, ValueError):
+            pass
+
+    meta_label = metadata.get("name") or metadata.get("label")
+    if isinstance(meta_label, str):
+        city = await find_candidate_city_by_name(meta_label)
+        if city is not None:
+            return city
+
+    if answer:
+        city = await find_candidate_city_by_name(answer)
+        if city is not None:
+            return city
+
+    return None
+
+
+def _validation_feedback(qid: str, exc: ValidationError) -> Tuple[str, List[str]]:
+    hints: List[str] = []
+    if qid == "fio":
+        return (
+            "Укажите полные фамилию, имя и отчество кириллицей.",
+            ["Иванов Иван Иванович", "Петрова Мария Сергеевна"],
+        )
+    if qid == "age":
+        return (
+            "Возраст должен быть от 18 до 60 лет. Укажите возраст цифрами.",
+            ["Например: 23"],
+        )
+    if qid in {"status", "format", FOLLOWUP_STUDY_MODE["id"], FOLLOWUP_STUDY_SCHEDULE["id"], FOLLOWUP_STUDY_FLEX["id"]}:
+        return ("Выберите один из вариантов в списке.", hints)
+
+    errors = exc.errors()
+    if errors:
+        return (errors[0].get("msg", "Проверьте ответ."), hints)
+    return ("Проверьте ответ.", hints)
+
+
+def _should_insert_study_flex(validated: Test1Payload, schedule_answer: str) -> bool:
+    study_mode = (validated.study_mode or "").lower()
+    if "очно" not in study_mode:
+        return False
+    normalized = schedule_answer.strip()
+    if normalized == "Нет, не смогу":
+        return False
+    return normalized in {
+        "Да, смогу",
+        "Смогу, но нужен запас по времени",
+        "Будет сложно",
+    }
+
+
+def _determine_test1_branch(
+    qid: str,
+    answer: str,
+    payload: Test1Payload,
+) -> Optional[Test1AnswerResult]:
+    if qid == "format" and answer.strip() == "Пока не готов":
+        return Test1AnswerResult(
+            status="reject",
+            reason="format_not_ready",
+            template_key=REJECTION_TEMPLATES["format_not_ready"],
+        )
+
+    if qid == FOLLOWUP_STUDY_SCHEDULE["id"]:
+        normalized = answer.strip()
+        if normalized == "Нет, не смогу":
+            return Test1AnswerResult(
+                status="reject",
+                reason="schedule_conflict",
+                template_key=REJECTION_TEMPLATES["schedule_conflict"],
+            )
+
+    if qid == FOLLOWUP_STUDY_FLEX["id"]:
+        if answer.strip().lower().startswith("нет"):
+            return Test1AnswerResult(
+                status="reject",
+                reason="study_flex_declined",
+                template_key=REJECTION_TEMPLATES["study_flex_declined"],
+            )
+
+    return None
+
+
+def _format_validation_feedback(result: Test1AnswerResult) -> str:
+    lines = [result.message or "Проверьте ответ."]
+    if result.hints:
+        lines.append("")
+        lines.append("Примеры:")
+        lines.extend(f"• {hint}" for hint in result.hints)
+    return "\n".join(lines)
+
+
+async def _handle_test1_rejection(user_id: int, result: Test1AnswerResult) -> None:
+    state_manager = get_state_manager()
+    state = await state_manager.get(user_id) or {}
+    city_id = state.get("city_id")
+    template_key = result.template_key or REJECTION_TEMPLATES.get(result.reason or "", "")
+    context = dict(result.template_context)
+    context.setdefault("city_name", state.get("city_name") or "")
+    message = await templates.tpl(city_id, template_key or "t1_schedule_reject", **context)
+    if not message:
+        message = (
+            "Спасибо за ответы! На данном этапе мы не продолжаем процесс."
+        )
+
+    await get_bot().send_message(user_id, message)
+    await record_test1_rejection(result.reason or "unknown")
+    logger.info(
+        "Test1 rejection emitted",
+        extra={
+            "user_id": user_id,
+            "reason": result.reason,
+            "city_id": city_id,
+            "city_name": state.get("city_name"),
+        },
+    )
+    await state_manager.delete(user_id)
+
+
+async def _notify_existing_reservation(callback: CallbackQuery, slot: Slot) -> None:
+    user_id = callback.from_user.id
+    state_manager = get_state_manager()
+    state = await state_manager.get(user_id) or {}
+    tz = state.get("candidate_tz") or slot.candidate_tz or DEFAULT_TZ
+    labels = slot_local_labels(slot.start_utc, tz)
+    message = await templates.tpl(
+        getattr(slot, "candidate_city_id", None),
+        "existing_reservation",
+        recruiter_name=slot.recruiter.name if slot.recruiter else "",
+        dt=labels["slot_datetime_local"],
+    )
+    await callback.answer("Бронь уже оформлена", show_alert=True)
+    await get_bot().send_message(user_id, message)
 
 
 def configure(bot: Optional[Bot], state_manager: StateManager) -> None:
@@ -184,109 +320,10 @@ async def safe_remove_reply_markup(cb_msg) -> None:
         pass
 
 
-async def schedule_reminder(slot_id: int, candidate_id: int) -> None:
-    bot = get_bot()
-    key: RemKey = (slot_id, candidate_id)
-    t2 = REMINDERS.pop(key, None)
-    if t2 and not t2.done():
-        t2.cancel()
-
-    slot = await get_slot(slot_id)
-    if not slot:
-        return
-
-    start_utc = slot.start_utc
-    delay = (start_utc - now_utc()).total_seconds() - 3600  # -1h
-    if delay <= 0:
-        return
-
-    async def _rem() -> None:
-        try:
-            await asyncio.sleep(delay)
-            fresh = await get_slot(slot_id)
-            if not fresh or fresh.candidate_tg_id != candidate_id:
-                return
-            tz = fresh.candidate_tz or DEFAULT_TZ
-            labels = slot_local_labels(fresh.start_utc, tz)
-            text = await templates.tpl(
-                getattr(fresh, "candidate_city_id", None),
-                "reminder_1h",
-                candidate_fio=getattr(fresh, "candidate_fio", "") or "",
-                dt=fmt_dt_local(fresh.start_utc, tz),
-                **labels,
-            )
-            await bot.send_message(candidate_id, text)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:  # pragma: no cover - logging path
-            logging.exception("Reminder error: %s", exc)
-
-    REMINDERS[key] = asyncio.create_task(_rem())
-
-
-async def schedule_confirm_prompt(slot_id: int, candidate_id: int) -> None:
-    bot = get_bot()
-    key: RemKey = (slot_id, candidate_id)
-    t = CONFIRM_TASKS.pop(key, None)
-    if t and not t.done():
-        t.cancel()
-
-    slot = await get_slot(slot_id)
-    if not slot:
-        return
-
-    start_utc = slot.start_utc
-    delay = (start_utc - now_utc()).total_seconds() - 7200  # -2h
-
-    async def _ask_now() -> None:
-        try:
-            fresh = await get_slot(slot_id)
-            if not fresh or fresh.candidate_tg_id != candidate_id:
-                return
-            tz = fresh.candidate_tz or DEFAULT_TZ
-            labels = slot_local_labels(fresh.start_utc, tz)
-            key_name = (
-                "stage4_intro_reminder"
-                if getattr(fresh, "purpose", "interview") == "intro_day"
-                else "stage2_interview_reminder"
-            )
-            state = get_state_manager().get(candidate_id) or {}
-            text = await templates.tpl(
-                getattr(fresh, "candidate_city_id", None),
-                key_name,
-                candidate_fio=getattr(fresh, "candidate_fio", "") or "",
-                city_name=state.get("city_name") or "",
-                dt=fmt_dt_local(fresh.start_utc, tz),
-                **labels,
-            )
-            await bot.send_message(
-                candidate_id, text, reply_markup=kb_attendance_confirm(slot_id)
-            )
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:  # pragma: no cover - logging path
-            logging.exception("Confirm prompt error: %s", exc)
-
-    if delay <= 0:
-        await _ask_now()
-        return
-
-    async def _rem() -> None:
-        try:
-            await asyncio.sleep(delay)
-            await _ask_now()
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:  # pragma: no cover - logging path
-            logging.exception("Confirm scheduler error: %s", exc)
-
-    CONFIRM_TASKS[key] = asyncio.create_task(_rem())
-
-
 async def begin_interview(user_id: int) -> None:
     state_manager = get_state_manager()
     bot = get_bot()
-    state_manager.set(
+    await state_manager.set(
         user_id,
         State(
             flow="interview",
@@ -303,6 +340,7 @@ async def begin_interview(user_id: int) -> None:
             t2_attempts={},
             picked_recruiter_id=None,
             picked_slot_id=None,
+            test1_payload={},
         ),
     )
     intro = await templates.tpl(None, "t1_intro")
@@ -344,8 +382,8 @@ async def handle_recruiter_identity_command(message: Message) -> None:
 async def start_introday_flow(message: Message) -> None:
     state_manager = get_state_manager()
     user_id = message.from_user.id
-    prev = state_manager.get(user_id) or {}
-    state_manager.set(
+    prev = await state_manager.get(user_id) or {}
+    await state_manager.set(
         user_id,
         State(
             flow="intro",
@@ -362,6 +400,11 @@ async def start_introday_flow(message: Message) -> None:
             t2_attempts={},
             picked_recruiter_id=None,
             picked_slot_id=None,
+            test1_payload=prev.get("test1_payload", {}),
+            format_choice=prev.get("format_choice"),
+            study_mode=prev.get("study_mode"),
+            study_schedule=prev.get("study_schedule"),
+            study_flex=prev.get("study_flex"),
         ),
     )
     await start_test2(user_id)
@@ -376,44 +419,78 @@ def _format_prompt(prompt: Any) -> str:
 async def send_test1_question(user_id: int) -> None:
     bot = get_bot()
     state_manager = get_state_manager()
-    state = state_manager.ensure(user_id)
-    sequence = state.get("t1_sequence") or list(TEST1_QUESTIONS)
-    idx = state.get("t1_idx", 0)
-    total = len(sequence)
-    if idx >= total:
+    def _prepare(state: State) -> Tuple[State, Dict[str, Any]]:
+        working = state
+        sequence = list(working.get("t1_sequence") or TEST1_QUESTIONS)
+        working["t1_sequence"] = sequence
+        idx = int(working.get("t1_idx") or 0)
+        total = len(sequence)
+        if idx >= total:
+            return working, {"done": True}
+        question = dict(sequence[idx])
+        sequence[idx] = question
+        return working, {
+            "done": False,
+            "idx": idx,
+            "total": total,
+            "question": question,
+            "city_id": working.get("city_id"),
+        }
+
+    ctx = await state_manager.atomic_update(user_id, _prepare)
+    if ctx.get("done"):
         await finalize_test1(user_id)
         return
-    q = dict(sequence[idx])
-    sequence[idx] = q
-    state["t1_sequence"] = sequence
-    progress = await templates.tpl(state.get("city_id"), "t1_progress", n=idx + 1, total=total)
+
+    idx = ctx["idx"]
+    total = ctx["total"]
+    question: Dict[str, Any] = ctx["question"]
+    city_id = ctx.get("city_id")
+
+    progress = await templates.tpl(city_id, "t1_progress", n=idx + 1, total=total)
     progress_bar = create_progress_bar(idx, total)
-    helper = q.get("helper")
-    base_text = f"{progress}\n{progress_bar}\n\n{_format_prompt(q['prompt'])}"
+    helper = question.get("helper")
+    base_text = f"{progress}\n{progress_bar}\n\n{_format_prompt(question['prompt'])}"
     if helper:
         base_text += f"\n\n<i>{helper}</i>"
 
-    resolved_options = await _resolve_test1_options(q)
+    resolved_options = await _resolve_test1_options(question)
     if resolved_options is not None:
-        q["options"] = resolved_options
+        question["options"] = resolved_options
 
-    options = q.get("options") or []
+        def _attach_options(state: State) -> Tuple[State, None]:
+            sequence = list(state.get("t1_sequence") or [])
+            if idx < len(sequence):
+                stored = dict(sequence[idx])
+                stored["options"] = resolved_options
+                sequence[idx] = stored
+                state["t1_sequence"] = sequence
+            return state, None
+
+        await state_manager.atomic_update(user_id, _attach_options)
+
+    options = question.get("options") or []
     if options:
         markup = _build_test1_options_markup(idx, options)
         sent = await bot.send_message(user_id, base_text, reply_markup=markup)
-        state["t1_requires_free_text"] = False
+        requires_free_text = False
     else:
-        placeholder = q.get("placeholder", "Введите ответ…")[:64]
+        placeholder = question.get("placeholder", "Введите ответ…")[:64]
         sent = await bot.send_message(
             user_id,
             base_text,
             reply_markup=ForceReply(selective=True, input_field_placeholder=placeholder),
         )
-        state["t1_requires_free_text"] = True
+        requires_free_text = True
 
-    state["t1_last_prompt_id"] = sent.message_id
-    state["t1_last_question_text"] = base_text
-    state["t1_current_idx"] = idx
+    def _store_prompt(state: State) -> Tuple[State, None]:
+        state["t1_last_prompt_id"] = sent.message_id
+        state["t1_last_question_text"] = base_text
+        state["t1_current_idx"] = idx
+        state["t1_requires_free_text"] = requires_free_text
+        return state, None
+
+    await state_manager.atomic_update(user_id, _store_prompt)
 
 
 def _build_test1_options_markup(question_idx: int, options: List[Any]) -> Optional[Any]:
@@ -453,7 +530,7 @@ def _extract_option_value(option: Any) -> str:
 async def _resolve_test1_options(question: Dict[str, Any]) -> Optional[List[Any]]:
     qid = question.get("id")
     if qid == "city":
-        cities = await get_candidate_cities()
+        cities = await list_candidate_cities()
         return [
             {
                 "label": city.name,
@@ -475,7 +552,8 @@ def _shorten_answer(text: str, limit: int = 80) -> str:
 
 async def _mark_test1_question_answered(user_id: int, summary: str) -> None:
     bot = get_bot()
-    state = get_state_manager().get(user_id)
+    state_manager = get_state_manager()
+    state = await state_manager.get(user_id)
     if not state:
         return
     prompt_id = state.get("t1_last_prompt_id")
@@ -487,9 +565,14 @@ async def _mark_test1_question_answered(user_id: int, summary: str) -> None:
         await bot.edit_message_text(updated, chat_id=user_id, message_id=prompt_id)
     except TelegramBadRequest:
         pass
-    state["t1_last_prompt_id"] = None
-    state["t1_last_question_text"] = ""
-    state["t1_requires_free_text"] = False
+
+    def _cleanup(st: State) -> Tuple[State, None]:
+        st["t1_last_prompt_id"] = None
+        st["t1_last_question_text"] = ""
+        st["t1_requires_free_text"] = False
+        return st, None
+
+    await state_manager.atomic_update(user_id, _cleanup)
 
 
 def _recruiter_header(name: str, tz_label: str) -> str:
@@ -506,75 +589,151 @@ async def save_test1_answer(
     answer: str,
     *,
     metadata: Optional[Dict[str, Any]] = None,
-) -> None:
+) -> Test1AnswerResult:
     state_manager = get_state_manager()
-    state = state_manager.ensure(user_id)
-    state.setdefault("test1_answers", {})
-    sequence = state.setdefault("t1_sequence", list(TEST1_QUESTIONS))
+    state = await state_manager.get(user_id) or {}
+    qid = str(question.get("id") or "")
+    meta = metadata or {}
+    payload_data: Dict[str, Any] = dict(state.get("test1_payload") or {})
+    answer_clean = answer.strip()
 
-    if question["id"] == "fio":
-        state["fio"] = answer
-    elif question["id"] == "city":
-        meta = metadata or {}
-        resolved_name = str(
-            meta.get("name")
-            or meta.get("label")
-            or meta.get("value")
-            or answer
-        )
-        state["city_name"] = resolved_name
+    city_info = None
+    should_insert_flex = False
 
-        meta_city_id = meta.get("city_id")
-        meta_tz = meta.get("tz")
-        candidate_tz: Optional[str] = None
-        resolved_city = None
+    if qid == "fio":
+        payload_data["fio"] = answer_clean
+    elif qid == "city":
+        city_info = await _resolve_candidate_city(answer_clean, meta)
+        if city_info is None:
+            city_names = [city.name for city in await list_candidate_cities()][:5]
+            return Test1AnswerResult(
+                status="invalid",
+                message="Пока работаем в указанных городах. Выберите подходящий вариант из списка.",
+                hints=city_names,
+            )
+        payload_data["city_id"] = city_info.id
+        payload_data["city_name"] = city_info.name
+    elif qid == "age":
+        try:
+            payload_data["age"] = convert_age(answer_clean)
+        except ValueError as exc:
+            return Test1AnswerResult(
+                status="invalid",
+                message=str(exc),
+                hints=["Например: 23", "Возраст указываем цифрами"],
+            )
+    elif qid == "status":
+        payload_data["status"] = answer
+    elif qid == "format":
+        payload_data["format_choice"] = answer
+    elif qid == FOLLOWUP_STUDY_MODE["id"]:
+        payload_data["study_mode"] = answer
+    elif qid == FOLLOWUP_STUDY_SCHEDULE["id"]:
+        payload_data["study_schedule"] = answer
+    elif qid == FOLLOWUP_STUDY_FLEX["id"]:
+        payload_data["study_flex"] = answer
 
-        if meta_city_id is not None:
-            try:
-                state["city_id"] = int(meta_city_id)
-            except (TypeError, ValueError):
-                state["city_id"] = None
-                resolved_city = await get_city_by_name(answer)
-            candidate_tz = str(meta_tz or DEFAULT_TZ)
+    try:
+        validated_model = apply_partial_validation(payload_data)
+    except ValidationError as exc:
+        message, hints = _validation_feedback(qid, exc)
+        return Test1AnswerResult(status="invalid", message=message, hints=hints)
+
+    if qid == FOLLOWUP_STUDY_SCHEDULE["id"]:
+        should_insert_flex = _should_insert_study_flex(validated_model, answer)
+
+    current_idx = int(state.get("t1_current_idx", state.get("t1_idx", 0)) or 0)
+
+    def _apply(state: State) -> Tuple[State, Dict[str, Any]]:
+        working = state
+        answers = working.setdefault("test1_answers", {})
+        sequence = list(working.get("t1_sequence") or TEST1_QUESTIONS)
+        working["t1_sequence"] = sequence
+
+        if qid == "fio":
+            working["fio"] = validated_model.fio or answer
+        elif qid == "city" and city_info is not None:
+            working["city_name"] = city_info.name
+            working["city_id"] = city_info.id
+            working["candidate_tz"] = city_info.tz or DEFAULT_TZ
+            answers[qid] = city_info.name
+        elif qid == "age":
+            answers[qid] = str(payload_data.get("age", answer))
+        elif qid == "status":
+            answers[qid] = answer
+            insert_pos = current_idx + 1
+            existing_ids = {item.get("id") for item in sequence}
+
+            lowered = answer.lower()
+            if "работ" in lowered:
+                if FOLLOWUP_NOTICE_PERIOD["id"] not in existing_ids:
+                    sequence.insert(insert_pos, FOLLOWUP_NOTICE_PERIOD.copy())
+                    existing_ids.add(FOLLOWUP_NOTICE_PERIOD["id"])
+                    insert_pos += 1
+            elif "уч" in lowered:
+                if FOLLOWUP_STUDY_MODE["id"] not in existing_ids:
+                    sequence.insert(insert_pos, FOLLOWUP_STUDY_MODE.copy())
+                    existing_ids.add(FOLLOWUP_STUDY_MODE["id"])
+                    insert_pos += 1
+                if FOLLOWUP_STUDY_SCHEDULE["id"] not in existing_ids:
+                    sequence.insert(insert_pos, FOLLOWUP_STUDY_SCHEDULE.copy())
+                    existing_ids.add(FOLLOWUP_STUDY_SCHEDULE["id"])
         else:
-            resolved_city = await get_city_by_name(answer)
+            if qid:
+                answers[qid] = answer
 
-        if resolved_city:
-            state["city_id"] = resolved_city.id
-            candidate_tz = resolved_city.tz
-            resolved_name = resolved_city.name
-        elif meta_city_id is None:
-            state["city_id"] = None
-            candidate_tz = candidate_tz or DEFAULT_TZ
+        if qid == FOLLOWUP_STUDY_MODE["id"]:
+            answers[qid] = answer
+        if qid == FOLLOWUP_STUDY_SCHEDULE["id"]:
+            answers[qid] = answer
+            if should_insert_flex:
+                existing_ids = {item.get("id") for item in sequence}
+                if FOLLOWUP_STUDY_FLEX["id"] not in existing_ids:
+                    sequence.insert(current_idx + 1, FOLLOWUP_STUDY_FLEX.copy())
+        if qid == FOLLOWUP_STUDY_FLEX["id"]:
+            answers[qid] = answer
 
-        state["candidate_tz"] = candidate_tz or DEFAULT_TZ
-        state["test1_answers"][question["id"]] = resolved_name
-    elif question["id"] == "status":
-        lower = answer.lower()
-        insert_pos = state.get("t1_idx", 0) + 1
-        existing_ids = {q.get("id") for q in sequence}
+        working["test1_answers"] = answers
+        working["test1_payload"] = validated_model.model_dump(exclude_none=True)
 
-        if "работ" in lower:
-            if FOLLOWUP_NOTICE_PERIOD["id"] not in existing_ids:
-                sequence.insert(insert_pos, FOLLOWUP_NOTICE_PERIOD.copy())
-                existing_ids.add(FOLLOWUP_NOTICE_PERIOD["id"])
-                insert_pos += 1
-        elif "уч" in lower:
-            if FOLLOWUP_STUDY_MODE["id"] not in existing_ids:
-                sequence.insert(insert_pos, FOLLOWUP_STUDY_MODE.copy())
-                existing_ids.add(FOLLOWUP_STUDY_MODE["id"])
-                insert_pos += 1
-            if FOLLOWUP_STUDY_SCHEDULE["id"] not in existing_ids:
-                sequence.insert(insert_pos, FOLLOWUP_STUDY_SCHEDULE.copy())
-                existing_ids.add(FOLLOWUP_STUDY_SCHEDULE["id"])
+        if qid == "city" and city_info is not None:
+            working.setdefault("candidate_tz", city_info.tz or DEFAULT_TZ)
 
-    if question["id"] != "city":
-        state["test1_answers"][question["id"]] = answer
+        if validated_model.format_choice is not None:
+            working["format_choice"] = validated_model.format_choice
+        if validated_model.study_mode is not None:
+            working["study_mode"] = validated_model.study_mode
+        if validated_model.study_schedule is not None:
+            working["study_schedule"] = validated_model.study_schedule
+        if validated_model.study_flex is not None:
+            working["study_flex"] = validated_model.study_flex
+
+        return working, {
+            "city_id": working.get("city_id"),
+            "city_name": working.get("city_name"),
+        }
+
+    update_info = await state_manager.atomic_update(user_id, _apply)
+
+    branch = _determine_test1_branch(qid, answer, validated_model)
+    if branch is not None:
+        if not branch.template_key:
+            branch.template_key = REJECTION_TEMPLATES.get(branch.reason or "", "")
+        if "city_name" not in branch.template_context and update_info.get("city_name"):
+            branch.template_context["city_name"] = update_info.get("city_name")
+        if validated_model.fio and "fio" not in branch.template_context:
+            branch.template_context["fio"] = validated_model.fio
+        if update_info.get("city_id") is not None:
+            branch.template_context.setdefault("city_id", update_info.get("city_id"))
+        return branch
+
+    return Test1AnswerResult(status="ok")
 
 
 async def handle_test1_answer(message: Message) -> None:
     user_id = message.from_user.id
-    state = get_state_manager().get(user_id)
+    state_manager = get_state_manager()
+    state = await state_manager.get(user_id)
     if not state or state.get("flow") != "interview":
         return
 
@@ -605,11 +764,37 @@ async def handle_test1_answer(message: Message) -> None:
         await message.reply("Ответ не распознан. Напишите текст или выберите вариант.")
         return
 
-    await save_test1_answer(user_id, question, answer_text)
+    result = await save_test1_answer(user_id, question, answer_text)
+
+    if result.status == "invalid":
+        feedback = _format_validation_feedback(result)
+        await message.reply(feedback)
+        return
+
     await _mark_test1_question_answered(user_id, _shorten_answer(answer_text))
 
-    state["t1_idx"] = idx + 1
-    if state["t1_idx"] >= total:
+    if result.status == "reject":
+        await _handle_test1_rejection(user_id, result)
+        return
+
+    def _advance(st: State) -> Tuple[State, Dict[str, int]]:
+        working = st
+        sequence_local = list(working.get("t1_sequence") or TEST1_QUESTIONS)
+        working["t1_sequence"] = sequence_local
+        current = int(working.get("t1_current_idx", working.get("t1_idx", 0)) or 0)
+        if current != idx:
+            return working, {"advanced": 0, "total": len(sequence_local)}
+        next_idx = idx + 1
+        working["t1_idx"] = next_idx
+        return working, {"advanced": 1, "total": len(sequence_local), "next_idx": next_idx}
+
+    advance_info = await state_manager.atomic_update(user_id, _advance)
+    if not advance_info.get("advanced"):
+        return
+
+    next_idx = advance_info.get("next_idx", idx + 1)
+    total = advance_info.get("total", len(sequence))
+    if next_idx >= total:
         await finalize_test1(user_id)
     else:
         await send_test1_question(user_id)
@@ -617,7 +802,8 @@ async def handle_test1_answer(message: Message) -> None:
 
 async def handle_test1_option(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
-    state = get_state_manager().get(user_id)
+    state_manager = get_state_manager()
+    state = await state_manager.get(user_id)
     if not state or state.get("flow") != "interview":
         await callback.answer("Сценарий неактивен", show_alert=True)
         return
@@ -656,14 +842,38 @@ async def handle_test1_option(callback: CallbackQuery) -> None:
 
     metadata = option_meta if isinstance(option_meta, dict) else None
 
-    await save_test1_answer(user_id, question, value, metadata=metadata)
+    result = await save_test1_answer(user_id, question, value, metadata=metadata)
+
+    if result.status == "invalid":
+        short_msg = result.message or "Проверьте ответ"
+        await callback.answer(short_msg[:150], show_alert=True)
+        feedback = _format_validation_feedback(result)
+        await callback.message.answer(feedback)
+        return
+
     await _mark_test1_question_answered(user_id, label)
 
-    state["t1_idx"] = idx + 1
+    def _advance(st: State) -> Tuple[State, Dict[str, int]]:
+        working = st
+        sequence_local = list(working.get("t1_sequence") or TEST1_QUESTIONS)
+        working["t1_sequence"] = sequence_local
+        current = int(working.get("t1_current_idx", working.get("t1_idx", 0)) or 0)
+        if current != idx:
+            return working, {"advanced": 0, "total": len(sequence_local)}
+        next_idx = idx + 1
+        working["t1_idx"] = next_idx
+        return working, {"advanced": 1, "total": len(sequence_local), "next_idx": next_idx}
+
+    advance_info = await state_manager.atomic_update(user_id, _advance)
 
     await callback.answer(f"Выбрано: {label}")
 
-    if state["t1_idx"] >= len(sequence):
+    if not advance_info.get("advanced"):
+        return
+
+    next_idx = advance_info.get("next_idx", idx + 1)
+    total = advance_info.get("total", len(sequence))
+    if next_idx >= total:
         await finalize_test1(user_id)
     else:
         await send_test1_question(user_id)
@@ -672,7 +882,7 @@ async def handle_test1_option(callback: CallbackQuery) -> None:
 async def finalize_test1(user_id: int) -> None:
     bot = get_bot()
     state_manager = get_state_manager()
-    state = state_manager.ensure(user_id)
+    state = await state_manager.get(user_id) or {}
     sequence = state.get("t1_sequence", list(TEST1_QUESTIONS))
     lines = [
         "📋 Анкета кандидата (Тест 1)",
@@ -706,21 +916,32 @@ async def finalize_test1(user_id: int) -> None:
 
     await show_recruiter_menu(user_id)
 
-    state["t1_idx"] = None
-    state["t1_last_prompt_id"] = None
-    state["t1_last_question_text"] = ""
-    state["t1_requires_free_text"] = False
+    await record_test1_completion()
+
+    def _reset(st: State) -> Tuple[State, None]:
+        st["t1_idx"] = None
+        st["t1_last_prompt_id"] = None
+        st["t1_last_question_text"] = ""
+        st["t1_requires_free_text"] = False
+        return st, None
+
+    await state_manager.atomic_update(user_id, _reset)
 
 
 async def start_test2(user_id: int) -> None:
     bot = get_bot()
-    state = get_state_manager().ensure(user_id)
-    state["t2_attempts"] = {
-        q_index: {"answers": [], "is_correct": False, "start_time": None}
-        for q_index in range(len(TEST2_QUESTIONS))
-    }
+    state_manager = get_state_manager()
+
+    def _init_attempts(state: State) -> Tuple[State, Dict[str, Optional[int]]]:
+        state["t2_attempts"] = {
+            q_index: {"answers": [], "is_correct": False, "start_time": None}
+            for q_index in range(len(TEST2_QUESTIONS))
+        }
+        return state, {"city_id": state.get("city_id")}
+
+    ctx = await state_manager.atomic_update(user_id, _init_attempts)
     intro = await templates.tpl(
-        state.get("city_id"),
+        ctx.get("city_id"),
         "t2_intro",
         qcount=len(TEST2_QUESTIONS),
         timelimit=TIME_LIMIT // 60,
@@ -732,8 +953,17 @@ async def start_test2(user_id: int) -> None:
 
 async def send_test2_question(user_id: int, q_index: int) -> None:
     bot = get_bot()
-    state = get_state_manager().ensure(user_id)
-    state["t2_attempts"][q_index]["start_time"] = datetime.now()
+    state_manager = get_state_manager()
+
+    def _mark_start(state: State) -> Tuple[State, None]:
+        attempts = state.setdefault("t2_attempts", {})
+        attempt = attempts.setdefault(
+            q_index, {"answers": [], "is_correct": False, "start_time": None}
+        )
+        attempt["start_time"] = datetime.now()
+        return state, None
+
+    await state_manager.atomic_update(user_id, _mark_start)
     question = TEST2_QUESTIONS[q_index]
     txt = (
         f"🔹 <b>Вопрос {q_index + 1}/{len(TEST2_QUESTIONS)}</b>\n"
@@ -747,7 +977,8 @@ async def send_test2_question(user_id: int, q_index: int) -> None:
 
 async def handle_test2_answer(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
-    state = get_state_manager().get(user_id)
+    state_manager = get_state_manager()
+    state = await state_manager.get(user_id)
     if not state or "t2_attempts" not in state or state.get("flow") != "intro":
         await callback.answer()
         return
@@ -760,19 +991,52 @@ async def handle_test2_answer(callback: CallbackQuery) -> None:
         await callback.answer()
         return
 
-    attempt = state["t2_attempts"][q_index]
     question = TEST2_QUESTIONS[q_index]
 
     now = datetime.now()
-    start_time = attempt.get("start_time")
-    time_spent = (now - start_time).seconds if start_time else 0
-    overtime = time_spent > TIME_LIMIT
+    correct_answer = question.get("correct")
 
-    attempt["answers"].append(
-        {"answer": answer_index, "time": now.isoformat(), "overtime": overtime}
-    )
-    is_correct = answer_index == question["correct"]
-    attempt["is_correct"] = is_correct
+    def _apply(state: State) -> Tuple[State, Dict[str, Any]]:
+        attempts = state.get("t2_attempts")
+        if not isinstance(attempts, dict):
+            return state, {"skip": True}
+        attempt = attempts.get(q_index)
+        if attempt is None:
+            attempt = {"answers": [], "is_correct": False, "start_time": None}
+            attempts[q_index] = attempt
+
+        answers = attempt.setdefault("answers", [])
+        start_time = attempt.get("start_time")
+        time_spent = (now - start_time).seconds if isinstance(start_time, datetime) else 0
+        overtime = time_spent > TIME_LIMIT
+
+        answers.append(
+            {"answer": answer_index, "time": now.isoformat(), "overtime": overtime}
+        )
+        is_correct = answer_index == correct_answer
+        attempt["is_correct"] = is_correct
+
+        attempts_left = MAX_ATTEMPTS - len(answers)
+        if attempts_left < 0:
+            attempts_left = 0
+
+        return state, {
+            "skip": False,
+            "is_correct": is_correct,
+            "answers_count": len(answers),
+            "attempts_left": attempts_left,
+            "overtime": overtime,
+        }
+
+    result = await state_manager.atomic_update(user_id, _apply)
+    if result.get("skip"):
+        await callback.answer()
+        return
+
+    is_correct = bool(result.get("is_correct"))
+    attempts_left = int(result.get("attempts_left", 0))
+    overtime = bool(result.get("overtime"))
+    answers_count = int(result.get("answers_count", 0))
 
     feedback = question.get("feedback")
     if isinstance(feedback, list):
@@ -784,9 +1048,9 @@ async def handle_test2_answer(callback: CallbackQuery) -> None:
         final_feedback = f"{feedback_message}"
         if overtime:
             final_feedback += "\n⏰ <i>Превышено время</i>"
-        if len(attempt["answers"]) > 1:
-            penalty = 10 * (len(attempt["answers"]) - 1)
-            final_feedback += f"\n⚠️ <i>Попыток: {len(attempt['answers'])} (-{penalty}%)</i>"
+        if answers_count > 1:
+            penalty = 10 * (answers_count - 1)
+            final_feedback += f"\n⚠️ <i>Попыток: {answers_count} (-{penalty}%)</i>"
         await callback.message.edit_text(final_feedback)
 
         if q_index < len(TEST2_QUESTIONS) - 1:
@@ -794,7 +1058,6 @@ async def handle_test2_answer(callback: CallbackQuery) -> None:
         else:
             await finalize_test2(user_id)
     else:
-        attempts_left = MAX_ATTEMPTS - len(attempt["answers"])
         final_feedback = f"{feedback_message}"
         if attempts_left > 0:
             final_feedback += f"\nОсталось попыток: {attempts_left}"
@@ -814,7 +1077,7 @@ async def handle_test2_answer(callback: CallbackQuery) -> None:
 async def finalize_test2(user_id: int) -> None:
     bot = get_bot()
     state_manager = get_state_manager()
-    state = state_manager.ensure(user_id)
+    state = await state_manager.get(user_id) or {}
     attempts = state.get("t2_attempts", {})
     correct_answers = sum(1 for attempt in attempts.values() if attempt["is_correct"])
     score = calculate_score(attempts)
@@ -831,7 +1094,7 @@ async def finalize_test2(user_id: int) -> None:
     if pct < PASS_THRESHOLD:
         fail_text = await templates.tpl(state.get("city_id"), "result_fail")
         await bot.send_message(user_id, fail_text)
-        get_state_manager().pop(user_id)
+        await state_manager.delete(user_id)
         return
 
     await show_recruiter_menu(user_id)
@@ -839,7 +1102,8 @@ async def finalize_test2(user_id: int) -> None:
 
 async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> None:
     bot = get_bot()
-    state = get_state_manager().get(user_id) or {}
+    state_manager = get_state_manager()
+    state = await state_manager.get(user_id) or {}
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
     kb = await kb_recruiters(tz_label, city_id=state.get("city_id"))
     text = await templates.tpl(state.get("city_id"), "choose_recruiter")
@@ -858,14 +1122,18 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
     rid_s = callback.data.split(":", 1)[1]
 
     state_manager = get_state_manager()
-    state = state_manager.get(user_id)
+    state = await state_manager.get(user_id)
 
     if rid_s == "__again__":
         tz_label = (state or {}).get("candidate_tz", DEFAULT_TZ)
         kb = await kb_recruiters(tz_label, city_id=(state or {}).get("city_id"))
         text = await templates.tpl(state.get("city_id") if state else None, "choose_recruiter")
         if state is not None:
-            state["picked_recruiter_id"] = None
+            def _clear_pick(st: State) -> Tuple[State, None]:
+                st["picked_recruiter_id"] = None
+                return st, None
+
+            await state_manager.atomic_update(user_id, _clear_pick)
         try:
             await callback.message.edit_text(text, reply_markup=kb)
         except TelegramBadRequest:
@@ -897,7 +1165,11 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
             await show_recruiter_menu(user_id)
             return
 
-    state["picked_recruiter_id"] = rid
+    def _pick(st: State) -> Tuple[State, None]:
+        st["picked_recruiter_id"] = rid
+        return st, None
+
+    await state_manager.atomic_update(user_id, _pick)
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
     slots_list = await get_free_slots_by_recruiter(rid, city_id=city_id)
     kb = await kb_slots_for_recruiter(rid, tz_label, slots=slots_list, city_id=city_id)
@@ -921,7 +1193,7 @@ async def handle_refresh_slots(callback: CallbackQuery) -> None:
         await callback.answer("Рекрутёр не найден", show_alert=True)
         return
 
-    state = get_state_manager().get(user_id)
+    state = await get_state_manager().get(user_id)
     if not state:
         await callback.answer("Сессия истекла. Введите /start", show_alert=True)
         return
@@ -958,14 +1230,15 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         await callback.answer("Слот не найден", show_alert=True)
         return
 
-    state = get_state_manager().get(user_id)
+    state_manager = get_state_manager()
+    state = await state_manager.get(user_id)
     if not state:
         await callback.answer("Сессия истекла. Введите /start", show_alert=True)
         return
 
     is_intro = state.get("flow") == "intro"
     city_id = state.get("city_id")
-    slot = await reserve_slot(
+    reservation = await reserve_slot(
         slot_id,
         candidate_tg_id=user_id,
         candidate_fio=state.get("fio", str(user_id)),
@@ -975,7 +1248,8 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         expected_recruiter_id=recruiter_id,
         expected_city_id=city_id,
     )
-    if not slot:
+
+    if reservation.status == "slot_taken":
         text = await templates.tpl(state.get("city_id"), "slot_taken")
         if is_intro:
             try:
@@ -997,6 +1271,15 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
                 await callback.message.edit_reply_markup(reply_markup=kb)
 
         await callback.answer("Слот уже занят.")
+        return
+
+    slot = reservation.slot
+    if slot is None:
+        await callback.answer("Ошибка бронирования.", show_alert=True)
+        return
+
+    if reservation.status in {"duplicate_candidate", "already_reserved"}:
+        await _notify_existing_reservation(callback, slot)
         return
 
     rec = await get_recruiter(slot.recruiter_id)
@@ -1047,6 +1330,13 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
     )
     await callback.answer()
 
+    try:
+        reminder_service = get_reminder_service()
+    except RuntimeError:
+        reminder_service = None
+    if reminder_service is not None:
+        await reminder_service.schedule_for_slot(slot.id)
+
 
 async def handle_approve_slot(callback: CallbackQuery) -> None:
     slot_id = int(callback.data.split(":", 1)[1])
@@ -1078,7 +1368,8 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         if getattr(slot, "purpose", "interview") == "intro_day"
         else "approved_msg"
     )
-    state = get_state_manager().get(slot.candidate_tg_id) or {}
+    state_manager = get_state_manager()
+    state = await state_manager.get(slot.candidate_tg_id) or {}
     text = await templates.tpl(
         getattr(slot, "candidate_city_id", None),
         template_key,
@@ -1088,7 +1379,13 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         **labels,
     )
     await get_bot().send_message(slot.candidate_tg_id, text)
-    await schedule_confirm_prompt(slot.id, slot.candidate_tg_id)
+
+    try:
+        reminder_service = get_reminder_service()
+    except RuntimeError:
+        reminder_service = None
+    if reminder_service is not None:
+        await reminder_service.schedule_for_slot(slot.id)
 
     confirm_text = (
         f"✅ Согласовано: {slot.candidate_fio or slot.candidate_tg_id} — "
@@ -1114,10 +1411,18 @@ async def handle_reject_slot(callback: CallbackQuery) -> None:
 
     await reject_slot(slot_id)
 
+    try:
+        reminder_service = get_reminder_service()
+    except RuntimeError:
+        reminder_service = None
+    if reminder_service is not None:
+        await reminder_service.cancel_for_slot(slot_id)
+
     bot = get_bot()
     await bot.send_message(slot.candidate_tg_id, "К сожалению, выбранное время недоступно.")
 
-    st = get_state_manager().get(slot.candidate_tg_id) or {}
+    state_manager = get_state_manager()
+    st = await state_manager.get(slot.candidate_tg_id) or {}
     if st.get("flow") == "intro":
         await show_recruiter_menu(slot.candidate_tg_id)
     else:
@@ -1143,11 +1448,6 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         await callback.answer("Заявка не найдена или ещё не подтверждена рекрутёром.", show_alert=True)
         return
 
-    key: RemKey = (slot_id, callback.from_user.id)
-    t = CONFIRM_TASKS.pop(key, None)
-    if t and not t.done():
-        t.cancel()
-
     rec = await get_recruiter(slot.recruiter_id)
     link = (
         rec.telemost_url if rec and rec.telemost_url else "https://telemost.yandex.ru/j/REPLACE_ME"
@@ -1162,7 +1462,13 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
     bot = get_bot()
     await bot.send_message(slot.candidate_tg_id, text)
 
-    await schedule_reminder(slot_id, slot.candidate_tg_id)
+    try:
+        reminder_service = get_reminder_service()
+    except RuntimeError:
+        reminder_service = None
+    if reminder_service is not None:
+        await reminder_service.cancel_for_slot(slot_id)
+        await reminder_service.schedule_for_slot(slot_id)
 
     try:
         await callback.message.edit_text("Спасибо! Участие подтверждено. Ссылка отправлена.")
@@ -1184,15 +1490,14 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
         await safe_remove_reply_markup(callback.message)
         return
 
-    key: RemKey = (slot_id, slot.candidate_tg_id)
-    t = CONFIRM_TASKS.pop(key, None)
-    if t and not t.done():
-        t.cancel()
-    t2 = REMINDERS.pop(key, None)
-    if t2 and not t2.done():
-        t2.cancel()
-
     await reject_slot(slot_id)
+
+    try:
+        reminder_service = get_reminder_service()
+    except RuntimeError:
+        reminder_service = None
+    if reminder_service is not None:
+        await reminder_service.cancel_for_slot(slot_id)
 
     rec = await get_recruiter(slot.recruiter_id)
     bot = get_bot()
@@ -1206,7 +1511,7 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
         except Exception:
             pass
 
-    st = get_state_manager().get(callback.from_user.id) or {}
+    st = await get_state_manager().get(callback.from_user.id) or {}
     await bot.send_message(
         callback.from_user.id,
         await templates.tpl(getattr(slot, "candidate_city_id", None), "att_declined"),
@@ -1266,8 +1571,6 @@ __all__ = [
     "get_state_manager",
     "now_utc",
     "save_test1_answer",
-    "schedule_confirm_prompt",
-    "schedule_reminder",
     "send_test1_question",
     "send_test2_question",
     "show_recruiter_menu",

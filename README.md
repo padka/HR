@@ -1,5 +1,8 @@
 # HR Bot Project
 
+[![CI](https://github.com/OWNER/HR/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-85%25+-brightgreen.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
+
 ## Admin UI
 The admin interface is served by a single FastAPI application located at
 `backend.apps.admin_ui.app:app`. Any ASGI server (for example, Uvicorn) can
@@ -20,6 +23,22 @@ python bot.py
 
 The same behaviour can be reproduced programmatically via
 `backend.apps.bot.app.create_application()`.
+
+## Development workflow
+
+Install the development dependencies, enable the local Git hooks, and run the
+test suite from the project root:
+
+```bash
+python -m pip install --upgrade pip
+pip install -r requirements-dev.txt
+pre-commit install
+pytest --cov=backend --cov=tests --cov-report=term
+```
+
+The default configuration runs the admin UI with a "NullBot" when `BOT_TOKEN`
+is not provided, which allows the smoke checks in CI to execute without access
+to Telegram credentials.
 
 ### Bot integration configuration
 

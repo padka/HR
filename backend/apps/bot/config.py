@@ -49,6 +49,12 @@ class State(TypedDict, total=False):
     picked_recruiter_id: Optional[int]
     picked_slot_id: Optional[int]
 
+    format_choice: Optional[str]
+    study_mode: Optional[str]
+    study_schedule: Optional[str]
+    study_flex: Optional[str]
+    test1_payload: Dict[str, Any]
+
 
 try:
     _QUESTIONS_BANK = load_all_test_questions()
@@ -99,6 +105,18 @@ FOLLOWUP_STUDY_SCHEDULE = {
     ],
 }
 
+FOLLOWUP_STUDY_FLEX = {
+    "id": "study_flex",
+    "prompt": (
+        "🧭 Если понадобится гибкость, готовы обсудить индивидуальный график или перенос занятий?"
+    ),
+    "options": [
+        "Да, готов обсудить",
+        "Нужна частичная занятость",
+        "Нет, не смогу",
+    ],
+}
+
 __all__ = [
     "BOT_TOKEN",
     "DEFAULT_BOT_PROPERTIES",
@@ -106,6 +124,7 @@ __all__ = [
     "FOLLOWUP_NOTICE_PERIOD",
     "FOLLOWUP_STUDY_MODE",
     "FOLLOWUP_STUDY_SCHEDULE",
+    "FOLLOWUP_STUDY_FLEX",
     "MAX_ATTEMPTS",
     "PASS_THRESHOLD",
     "RemKey",

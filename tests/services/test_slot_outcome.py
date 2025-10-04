@@ -5,8 +5,13 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from backend.apps.admin_ui.services import slots as slot_services
-from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService
+from backend.apps.admin_ui.services.bot_service import (
+    BotSendResult,
+    BotService,
+    IntegrationSwitch,
+)
 from backend.apps.bot.services import StateManager
+from backend.apps.bot.state_store import build_state_manager
 from backend.core.db import async_session
 from backend.domain import models
 
@@ -48,10 +53,12 @@ async def test_set_slot_outcome_triggers_test2(monkeypatch):
 
     monkeypatch.setattr(slot_services, "_trigger_test2", fake_send)
 
+    state_manager = build_state_manager(redis_url=None, ttl_seconds=604800)
     service = BotService(
-        state_manager=StateManager(),
+        state_manager=state_manager,
         enabled=True,
         configured=True,
+        integration_switch=IntegrationSwitch(initial=True),
         required=False,
     )
 
@@ -72,6 +79,9 @@ async def test_set_slot_outcome_triggers_test2(monkeypatch):
     assert dispatch.plan.candidate_name == "Иван Тест"
 
     await slot_services.execute_bot_dispatch(dispatch.plan, stored or "", service)
+
+    await state_manager.clear()
+    await state_manager.close()
 
     assert calls["args"] == (5555, "Europe/Moscow", city_id, "Иван Тест")
 

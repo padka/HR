@@ -10,3 +10,11 @@ SQLAlchemy==2.0.32
 starlette==0.37.2
 pytest-asyncio==0.23.8
 alembic==1.13.2
+redis==5.0.7
+fakeredis==2.23.2
+APScheduler==3.10.4
+black==24.4.2
+isort==5.13.2
+mypy==1.11.1
+pre-commit==3.8.0
+ruff==0.6.3

@@ -9,10 +9,12 @@ from typing import Tuple
 from aiogram import Bot, Dispatcher
 
 from backend.core.db import init_models
+from backend.core.settings import get_settings
 
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
 from .services import StateManager, configure as configure_services
+from .state_store import build_state_manager
 
 __all__ = ["create_application", "create_bot", "create_dispatcher", "main"]
 
@@ -36,7 +38,11 @@ def create_application(token: str | None = None) -> Tuple[Bot, Dispatcher, State
     """Create and configure the bot application components."""
     bot = create_bot(token)
     dispatcher = create_dispatcher()
-    state_manager = StateManager()
+    settings = get_settings()
+    state_manager = build_state_manager(
+        redis_url=getattr(settings, "redis_url", None),
+        ttl_seconds=getattr(settings, "state_ttl_seconds", 604800),
+    )
     configure_services(bot, state_manager)
     return bot, dispatcher, state_manager
 

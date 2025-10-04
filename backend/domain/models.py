@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Optional, List
 
 from sqlalchemy import (
@@ -6,6 +6,7 @@ from sqlalchemy import (
     Integer,
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Text,
     ForeignKey,
@@ -128,6 +129,47 @@ class Slot(Base):
             return value
         raw_value = value.value if hasattr(value, "value") else value
         return str(raw_value).strip().lower()
+
+
+class SlotReservationLock(Base):
+    __tablename__ = "slot_reservation_locks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slot_id: Mapped[int] = mapped_column(ForeignKey("slots.id", ondelete="CASCADE"), nullable=False)
+    candidate_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    recruiter_id: Mapped[int] = mapped_column(ForeignKey("recruiters.id", ondelete="CASCADE"), nullable=False)
+    reservation_date: Mapped[date] = mapped_column(Date, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class SlotReminderJob(Base):
+    __tablename__ = "slot_reminder_jobs"
+    __table_args__ = (
+        UniqueConstraint("slot_id", "kind", name="uq_slot_reminder_slot_kind"),
+        UniqueConstraint("job_id", name="uq_slot_reminder_job"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slot_id: Mapped[int] = mapped_column(ForeignKey("slots.id", ondelete="CASCADE"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    job_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
 
 class TestQuestion(Base):

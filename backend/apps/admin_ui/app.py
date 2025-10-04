@@ -6,28 +6,28 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from backend.core.db import init_models
-from backend.apps.admin_ui.state import setup_bot_state, BotIntegration
 from backend.apps.admin_ui.config import STATIC_DIR, register_template_globals
-from backend.apps.admin_ui.security import require_admin
-from backend.core.settings import get_settings
 from backend.apps.admin_ui.routers import (
     api,
     cities,
     dashboard,
+    questions,
     recruiters,
     slots,
     system,
     templates,
-    questions,
 )
+from backend.apps.admin_ui.security import require_admin
+from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
+from backend.core.db import init_models
+from backend.core.settings import get_settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_models()
     register_template_globals()
-    integration: BotIntegration = setup_bot_state(app)
+    integration: BotIntegration = await setup_bot_state(app)
     routes = [r.path for r in app.routes if hasattr(r, "path")]
     logging.warning("ROUTES LOADED: %s", routes)
     try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Dict, Optional
 
@@ -16,8 +17,10 @@ except Exception:  # pragma: no cover - optional dependency
 
 try:  # pragma: no cover - optional dependency handling
     from backend.apps.bot import templates as bot_templates
-    from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS, State as BotState
+    from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS
+    from backend.apps.bot.config import State as BotState
     from backend.apps.bot.services import StateManager, get_bot, start_test2
+
     BOT_RUNTIME_AVAILABLE = True
 except Exception:  # pragma: no cover - fallback when bot package is unavailable
     DEFAULT_TZ = "Europe/Moscow"
@@ -27,23 +30,36 @@ except Exception:  # pragma: no cover - fallback when bot package is unavailable
     class _DummyStateManager:  # type: ignore[too-few-public-methods]
         """Fallback state manager used when bot runtime is unavailable."""
 
-        def get(self, *_args, **_kwargs):  # pragma: no cover - runtime safety net
+        async def get(self, *_args, **_kwargs):  # pragma: no cover - runtime safety net
             return {}
 
-        def set(self, *_args, **_kwargs) -> None:  # pragma: no cover - runtime safety net
+        async def set(
+            self, *_args, **_kwargs
+        ) -> None:  # pragma: no cover - runtime safety net
             return None
 
-        def ensure(self, *_args, **_kwargs):  # pragma: no cover - runtime safety net
+        async def update(
+            self, *_args, **_kwargs
+        ):  # pragma: no cover - runtime safety net
             return {}
+
+        async def atomic_update(
+            self, *_args, **_kwargs
+        ):  # pragma: no cover - runtime safety net
+            return None
 
     StateManager = _DummyStateManager  # type: ignore[assignment]
 
-    async def start_test2(user_id: int) -> None:  # pragma: no cover - runtime safety net
+    async def start_test2(
+        user_id: int,
+    ) -> None:  # pragma: no cover - runtime safety net
         raise RuntimeError("Bot runtime is unavailable")
 
     BotState = dict  # type: ignore[assignment]
 
-    async def _dummy_tpl(*_args, **_kwargs) -> str:  # pragma: no cover - runtime safety net
+    async def _dummy_tpl(
+        *_args, **_kwargs
+    ) -> str:  # pragma: no cover - runtime safety net
         return ""
 
     bot_templates = SimpleNamespace(tpl=_dummy_tpl)
@@ -53,6 +69,31 @@ except Exception:  # pragma: no cover - fallback when bot package is unavailable
 
 
 logger = logging.getLogger(__name__)
+
+
+class IntegrationSwitch:
+    """Runtime toggle over the bot integration."""
+
+    def __init__(self, *, initial: bool) -> None:
+        self._enabled = bool(initial)
+        self._updated_at = datetime.now(timezone.utc)
+
+    def is_enabled(self) -> bool:
+        return self._enabled
+
+    def set(self, value: bool) -> None:
+        self._enabled = bool(value)
+        self._updated_at = datetime.now(timezone.utc)
+
+    @property
+    def updated_at(self) -> datetime:
+        return self._updated_at
+
+    def snapshot(self) -> Dict[str, object]:
+        return {
+            "enabled": self._enabled,
+            "updated_at": self._updated_at,
+        }
 
 
 @dataclass
@@ -72,6 +113,7 @@ class BotService:
     state_manager: StateManager
     enabled: bool
     configured: bool
+    integration_switch: IntegrationSwitch
 
     required: bool
     skip_message: str = "Отправка Теста 2 отключена в текущем окружении."
@@ -83,7 +125,12 @@ class BotService:
     def is_ready(self) -> bool:
         """Return whether the bot can be used for Test 2 dispatches."""
 
-        return self.enabled and BOT_RUNTIME_AVAILABLE and self.configured
+        return (
+            self.enabled
+            and self.integration_switch.is_enabled()
+            and BOT_RUNTIME_AVAILABLE
+            and self.configured
+        )
 
     @property
     def health_status(self) -> str:
@@ -91,6 +138,8 @@ class BotService:
 
         if not self.enabled:
             return "disabled"
+        if not self.integration_switch.is_enabled():
+            return "disabled_runtime"
         if not BOT_RUNTIME_AVAILABLE:
             return "unavailable"
         if not self.configured:
@@ -104,6 +153,7 @@ class BotService:
             state_manager=self.state_manager,
             enabled=self.enabled,
             configured=configured,
+            integration_switch=self.integration_switch,
             required=self.required,
             skip_message=self.skip_message,
             not_configured_message=self.not_configured_message,
@@ -122,10 +172,20 @@ class BotService:
     ) -> BotSendResult:
         """Launch Test 2 for a candidate."""
 
+        if not self.integration_switch.is_enabled():
+            logger.info("Bot integration switch is disabled; skipping Test 2 launch.")
+            return BotSendResult(
+                ok=True,
+                status="skipped:disabled",
+                message=self.skip_message,
+            )
+
         must_succeed = self.required if required is None else required
 
         if not self.enabled:
-            logger.info("Test 2 bot integration disabled via feature flag; skipping launch.")
+            logger.info(
+                "Test 2 bot integration disabled via feature flag; skipping launch."
+            )
             return BotSendResult(
                 ok=True,
                 status="skipped:not_configured",
@@ -148,7 +208,9 @@ class BotService:
                 message=self.not_configured_message,
             )
 
-        previous_state: Dict[str, object] = self.state_manager.get(candidate_id) or {}
+        previous_state: Dict[str, object] = (
+            await self.state_manager.get(candidate_id) or {}
+        )
 
         sequence = previous_state.get("t1_sequence")
         if sequence:
@@ -177,7 +239,7 @@ class BotService:
             picked_slot_id=None,
         )
 
-        self.state_manager.set(candidate_id, new_state)
+        await self.state_manager.set(candidate_id, new_state)
 
         try:
             await start_test2(candidate_id)
@@ -227,8 +289,18 @@ class BotService:
                 message=self.skip_message,
             )
 
+        if not self.integration_switch.is_enabled():
+            logger.info("Bot integration switch disabled; skipping rejection message.")
+            return BotSendResult(
+                ok=True,
+                status="skipped:disabled",
+                message=self.skip_message,
+            )
+
         if not BOT_RUNTIME_AVAILABLE or not self.configured:
-            logger.warning("Bot integration is not configured; cannot send rejection message.")
+            logger.warning(
+                "Bot integration is not configured; cannot send rejection message."
+            )
             return BotSendResult(
                 ok=False,
                 status="skipped:not_configured",
@@ -238,7 +310,9 @@ class BotService:
         try:
             bot = get_bot()
         except Exception:  # pragma: no cover - runtime safety net
-            logger.exception("Bot runtime is unavailable; cannot send rejection message.")
+            logger.exception(
+                "Bot runtime is unavailable; cannot send rejection message."
+            )
             return BotSendResult(
                 ok=False,
                 status="skipped:not_configured",
@@ -265,7 +339,9 @@ class BotService:
                     error=self.transient_message,
                 )
 
-            logger.exception("Failed to send rejection message to candidate %s", candidate_id)
+            logger.exception(
+                "Failed to send rejection message to candidate %s", candidate_id
+            )
             return BotSendResult(
                 ok=False,
                 status="skipped:error",

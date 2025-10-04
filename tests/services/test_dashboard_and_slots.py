@@ -11,10 +11,16 @@ from backend.apps.admin_ui.services.dashboard import dashboard_counts
 from backend.apps.admin_ui.services.slots import api_slots_payload, create_slot, list_slots
 from backend.core.db import async_session
 from backend.domain import models
+from backend.apps.bot.metrics import (
+    record_test1_completion,
+    record_test1_rejection,
+    reset_test1_metrics,
+)
 
 
 @pytest.mark.asyncio
 async def test_dashboard_and_slot_listing():
+    await reset_test1_metrics()
     async with async_session() as session:
         recruiter = models.Recruiter(name="UI", tz="Europe/Moscow", active=True)
         city = models.City(name="UI City", tz="Europe/Moscow", active=True)
@@ -38,6 +44,8 @@ async def test_dashboard_and_slot_listing():
     assert counts["recruiters"] == 1
     assert counts["cities"] == 1
     assert counts["slots_total"] == 1
+    assert counts["test1_rejections_total"] == 0
+    assert counts["test1_rejections_percent"] == 0.0
 
     listing = await list_slots(
         recruiter_id=None,
@@ -48,6 +56,19 @@ async def test_dashboard_and_slot_listing():
     assert listing["total"] == 1
     assert listing["items"][0].recruiter_id == recruiter.id
     assert listing["status_counts"] == {"FREE": 1}
+
+
+@pytest.mark.asyncio
+async def test_dashboard_reports_test1_metrics():
+    await reset_test1_metrics()
+    await record_test1_rejection("format_not_ready")
+    await record_test1_completion()
+
+    counts = await dashboard_counts()
+    assert counts["test1_rejections_total"] == 1
+    assert counts["test1_total_seen"] == 2
+    assert counts["test1_rejections_percent"] == 50.0
+    assert counts["test1_rejections_breakdown"]["format_not_ready"] == 1
 
 
 @pytest.mark.asyncio

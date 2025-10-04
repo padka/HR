@@ -2,23 +2,35 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
+from datetime import date as date_type
+from datetime import datetime
+from datetime import time as time_type
+from datetime import timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
+from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService
 from backend.apps.admin_ui.services.bot_service import (
-    BotSendResult,
-    BotService,
     get_bot_service as resolve_bot_service,
 )
 from backend.apps.bot.services import get_state_manager as _get_state_manager
-from backend.apps.admin_ui.utils import paginate, recruiter_time_to_utc, norm_status, status_to_db
+
+try:  # pragma: no cover - optional dependency during tests
+    from backend.apps.bot.reminders import get_reminder_service
+except Exception:  # pragma: no cover - safe fallback when bot package unavailable
+    get_reminder_service = None  # type: ignore[assignment]
+from backend.apps.admin_ui.utils import (
+    norm_status,
+    paginate,
+    recruiter_time_to_utc,
+    status_to_db,
+)
 from backend.core.db import async_session
 from backend.core.settings import get_settings
-from backend.domain.models import Recruiter, Slot, SlotStatus, City
+from backend.domain.models import City, Recruiter, Slot, SlotStatus
 
 __all__ = [
     "list_slots",
@@ -120,10 +132,7 @@ async def recruiters_for_slot_form() -> List[Dict[str, object]]:
                 continue
             city_map.setdefault(city.responsible_recruiter_id, []).append(city)
 
-    return [
-        {"rec": rec, "cities": city_map.get(rec.id, [])}
-        for rec in recs
-    ]
+    return [{"rec": rec, "cities": city_map.get(rec.id, [])} for rec in recs]
 
 
 async def create_slot(
@@ -158,7 +167,9 @@ async def create_slot(
         return True
 
 
-async def delete_slot(slot_id: int, *, force: bool = False) -> Tuple[bool, Optional[str]]:
+async def delete_slot(
+    slot_id: int, *, force: bool = False
+) -> Tuple[bool, Optional[str]]:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if not slot:
@@ -170,7 +181,14 @@ async def delete_slot(slot_id: int, *, force: bool = False) -> Tuple[bool, Optio
 
         await session.delete(slot)
         await session.commit()
-        return True, None
+
+    if callable(get_reminder_service):
+        try:
+            await get_reminder_service().cancel_for_slot(slot_id)
+        except RuntimeError:
+            pass
+
+    return True, None
 
 
 async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
@@ -179,21 +197,40 @@ async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
         if total_before == 0:
             return 0, 0
 
+        slot_ids: List[int] = []
+
         if force:
+            result = await session.execute(select(Slot.id))
+            slot_ids = [row[0] for row in result]
             await session.execute(delete(Slot))
             await session.commit()
-            return total_before, 0
+            remaining_after = 0
+        else:
+            allowed_statuses = {
+                status_to_db("FREE"),
+                status_to_db("PENDING"),
+            }
+            result = await session.execute(
+                select(Slot.id).where(Slot.status.in_(allowed_statuses))
+            )
+            slot_ids = [row[0] for row in result]
+            if not slot_ids:
+                return 0, total_before
+            await session.execute(delete(Slot).where(Slot.id.in_(slot_ids)))
+            await session.commit()
+            remaining_after = (
+                await session.scalar(select(func.count()).select_from(Slot)) or 0
+            )
 
-        allowed_statuses = {
-            status_to_db("FREE"),
-            status_to_db("PENDING"),
-        }
-        await session.execute(delete(Slot).where(Slot.status.in_(allowed_statuses)))
-        await session.commit()
+    if callable(get_reminder_service):
+        for sid in slot_ids:
+            try:
+                await get_reminder_service().cancel_for_slot(sid)
+            except RuntimeError:
+                break
 
-        remaining_after = await session.scalar(select(func.count()).select_from(Slot)) or 0
-        deleted = total_before - remaining_after
-        return deleted, remaining_after
+    deleted = total_before - remaining_after
+    return deleted, remaining_after
 
 
 @dataclass
@@ -250,7 +287,12 @@ async def set_slot_outcome(
         if not slot:
             return False, "Слот не найден.", None, None
         if not getattr(slot, "candidate_tg_id", None):
-            return False, "Слот не привязан к кандидату, отправить сообщение нельзя.", None, None
+            return (
+                False,
+                "Слот не привязан к кандидату, отправить сообщение нельзя.",
+                None,
+                None,
+            )
 
         slot.interview_outcome = normalized
 
@@ -263,6 +305,17 @@ async def set_slot_outcome(
         await session.commit()
 
     message = _format_outcome_message(normalized, dispatch.status if dispatch else None)
+    reminder_service = None
+    if callable(get_reminder_service):
+        try:
+            reminder_service = get_reminder_service()
+        except RuntimeError:
+            reminder_service = None
+    if reminder_service is not None:
+        if normalized == "success":
+            await reminder_service.schedule_for_slot(slot_id)
+        else:
+            await reminder_service.cancel_for_slot(slot_id)
     return True, message, normalized, dispatch
 
 
@@ -357,7 +410,9 @@ def _format_outcome_message(outcome: str, status: Optional[str]) -> str:
     return base
 
 
-async def execute_bot_dispatch(plan: BotDispatchPlan, outcome: str, service: BotService) -> None:
+async def execute_bot_dispatch(
+    plan: BotDispatchPlan, outcome: str, service: BotService
+) -> None:
     bot_ready = service.is_ready()
     action_result = "skipped:error"
     success = False
@@ -424,6 +479,8 @@ async def _mark_dispatch_state(slot_id: int, kind: str, success: bool) -> None:
         else:
             setattr(slot, field, None)
         await session.commit()
+
+
 async def _trigger_test2(
     candidate_id: int,
     candidate_tz: Optional[str],
@@ -473,7 +530,9 @@ async def _trigger_rejection(
         try:
             service = resolve_bot_service()
         except RuntimeError:
-            logger.warning("Bot services are not configured; cannot send rejection message.")
+            logger.warning(
+                "Bot services are not configured; cannot send rejection message."
+            )
             return BotSendResult(
                 ok=False,
                 status="skipped:not_configured",
@@ -576,7 +635,9 @@ async def bulk_create_slots(
 
                     hours, minutes = divmod(current_minutes, 60)
                     time_str = f"{hours:02d}:{minutes:02d}"
-                    dt_utc = recruiter_time_to_utc(current_date.isoformat(), time_str, tz)
+                    dt_utc = recruiter_time_to_utc(
+                        current_date.isoformat(), time_str, tz
+                    )
                     if not dt_utc:
                         return 0, "Не удалось преобразовать время в UTC"
                     norm_dt = _normalize_utc(dt_utc)
@@ -601,7 +662,9 @@ async def bulk_create_slots(
         )
         existing_norms = {_normalize_utc(dt) for dt in existing_rows}
 
-        to_insert = [original for original, norm in planned_pairs if norm not in existing_norms]
+        to_insert = [
+            original for original, norm in planned_pairs if norm not in existing_norms
+        ]
         if not to_insert:
             return 0, None
 
@@ -631,7 +694,11 @@ async def api_slots_payload(
     limit: int,
 ) -> List[Dict[str, object]]:
     async with async_session() as session:
-        query = select(Slot).options(selectinload(Slot.recruiter)).order_by(Slot.start_utc.asc())
+        query = (
+            select(Slot)
+            .options(selectinload(Slot.recruiter))
+            .order_by(Slot.start_utc.asc())
+        )
         if recruiter_id is not None:
             query = query.where(Slot.recruiter_id == recruiter_id)
         if status:

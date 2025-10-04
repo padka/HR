@@ -1,12 +1,14 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import aliased
+from sqlalchemy import and_, func, or_, select, delete
+from sqlalchemy.orm import aliased, selectinload
+from dataclasses import dataclass
+from typing import Literal
 
 
 from backend.core.db import async_session
-from .models import Recruiter, City, Template, Slot, SlotStatus
+from .models import Recruiter, City, Template, Slot, SlotStatus, SlotReservationLock
 
 
 def _to_aware_utc(dt: datetime) -> datetime:
@@ -227,6 +229,12 @@ async def get_template(city_id: Optional[int], key: str) -> Optional[Template]:
         return fallback.first()
 
 
+@dataclass
+class ReservationResult:
+    status: Literal["reserved", "slot_taken", "duplicate_candidate", "already_reserved"]
+    slot: Optional[Slot] = None
+
+
 async def reserve_slot(
     slot_id: int,
     candidate_tg_id: int,
@@ -238,24 +246,95 @@ async def reserve_slot(
     expected_recruiter_id: Optional[int] = None,
     expected_city_id: Optional[int] = None,
 ) -> Optional[Slot]:
+    now_utc = datetime.now(timezone.utc)
+
     async with async_session() as session:
-        slot = await session.get(Slot, slot_id, with_for_update=True)
-        if not slot or slot.status != SlotStatus.FREE:
-            return None
-        if expected_recruiter_id is not None and slot.recruiter_id != expected_recruiter_id:
-            return None
-        if expected_city_id is not None and slot.city_id != expected_city_id:
-            return None
-        slot.status = SlotStatus.PENDING
-        slot.candidate_tg_id = candidate_tg_id
-        slot.candidate_fio = candidate_fio
-        slot.candidate_tz = candidate_tz
-        slot.candidate_city_id = candidate_city_id
-        slot.purpose = purpose or "interview"
-        await session.commit()
-        await session.refresh(slot)
+        async with session.begin():
+            slot = await session.scalar(
+                select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                .where(Slot.id == slot_id)
+                .with_for_update()
+            )
+
+            if not slot:
+                return ReservationResult(status="slot_taken")
+
+            if slot.status != SlotStatus.FREE:
+                if (
+                    slot.candidate_tg_id == candidate_tg_id
+                    and (slot.status or "").lower() in (SlotStatus.PENDING, SlotStatus.BOOKED)
+                ):
+                    slot.start_utc = _to_aware_utc(slot.start_utc)
+                    return ReservationResult(status="already_reserved", slot=slot)
+                return ReservationResult(status="slot_taken", slot=slot)
+
+            if expected_recruiter_id is not None and slot.recruiter_id != expected_recruiter_id:
+                return ReservationResult(status="slot_taken")
+
+            if expected_city_id is not None and slot.city_id != expected_city_id:
+                return ReservationResult(status="slot_taken")
+
+            existing_active = await session.scalar(
+                select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                .where(
+                    Slot.recruiter_id == slot.recruiter_id,
+                    Slot.candidate_tg_id == candidate_tg_id,
+                    func.lower(Slot.status).in_([SlotStatus.PENDING, SlotStatus.BOOKED]),
+                )
+            )
+            if existing_active:
+                existing_active.start_utc = _to_aware_utc(existing_active.start_utc)
+                return ReservationResult(status="duplicate_candidate", slot=existing_active)
+
+            reservation_date = _to_aware_utc(slot.start_utc).date()
+
+            await session.execute(
+                delete(SlotReservationLock).where(SlotReservationLock.expires_at <= now_utc)
+            )
+
+            existing_lock = await session.scalar(
+                select(SlotReservationLock)
+                .where(
+                    SlotReservationLock.candidate_tg_id == candidate_tg_id,
+                    SlotReservationLock.recruiter_id == slot.recruiter_id,
+                    SlotReservationLock.reservation_date == reservation_date,
+                )
+                .with_for_update()
+            )
+
+            if existing_lock:
+                existing_slot = await session.scalar(
+                    select(Slot)
+                    .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                    .where(Slot.id == existing_lock.slot_id)
+                )
+                if existing_slot:
+                    existing_slot.start_utc = _to_aware_utc(existing_slot.start_utc)
+                    return ReservationResult(status="already_reserved", slot=existing_slot)
+                await session.delete(existing_lock)
+
+            slot.status = SlotStatus.PENDING
+            slot.candidate_tg_id = candidate_tg_id
+            slot.candidate_fio = candidate_fio
+            slot.candidate_tz = candidate_tz
+            slot.candidate_city_id = candidate_city_id
+            slot.purpose = purpose or "interview"
+
+            await session.flush()
+
+            lock = SlotReservationLock(
+                slot_id=slot.id,
+                candidate_tg_id=candidate_tg_id,
+                recruiter_id=slot.recruiter_id,
+                reservation_date=reservation_date,
+                expires_at=now_utc + timedelta(minutes=5),
+            )
+            session.add(lock)
+
         slot.start_utc = _to_aware_utc(slot.start_utc)
-        return slot
+        return ReservationResult(status="reserved", slot=slot)
 
 
 async def approve_slot(slot_id: int) -> Optional[Slot]:

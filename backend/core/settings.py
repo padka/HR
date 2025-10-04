@@ -20,10 +20,12 @@ class Settings:
     bot_provider: str
     bot_token: str
     bot_api_base: str
+    redis_url: str
     bot_use_webhook: bool
     bot_webhook_url: str
     test2_required: bool
     bot_failfast: bool
+    bot_integration_enabled: bool
     admin_chat_id: int
     timezone: str
     session_secret: str
@@ -32,6 +34,7 @@ class Settings:
     admin_docs_enabled: bool
     session_cookie_secure: bool
     session_cookie_samesite: str
+    state_ttl_seconds: int
 
 
 load_env()
@@ -104,6 +107,8 @@ def get_settings() -> Settings:
     bot_provider = os.getenv("BOT_PROVIDER", "telegram").strip().lower() or "telegram"
     bot_token = os.getenv("BOT_TOKEN", "")
     bot_api_base = os.getenv("BOT_API_BASE", "").strip()
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    bot_integration_enabled = _get_bool("BOT_INTEGRATION_ENABLED", default=True)
     bot_use_webhook = _get_bool("BOT_USE_WEBHOOK", default=False)
     bot_webhook_url = os.getenv("BOT_WEBHOOK_URL", "").strip()
     test2_required = _get_bool("TEST2_REQUIRED", default=False)
@@ -124,6 +129,14 @@ def get_settings() -> Settings:
     if session_cookie_samesite not in {"strict", "lax", "none"}:
         session_cookie_samesite = "strict"
 
+    ttl_raw = os.getenv("STATE_TTL_SECONDS", "604800").strip()
+    try:
+        state_ttl_seconds = int(ttl_raw)
+    except ValueError:
+        state_ttl_seconds = 604800
+    if state_ttl_seconds <= 0:
+        state_ttl_seconds = 604800
+
     return Settings(
         data_dir=data_dir,
         database_url_async=async_url,
@@ -133,6 +146,8 @@ def get_settings() -> Settings:
         bot_provider=bot_provider,
         bot_token=bot_token,
         bot_api_base=bot_api_base,
+        redis_url=redis_url,
+        bot_integration_enabled=bot_integration_enabled,
         bot_use_webhook=bot_use_webhook,
         bot_webhook_url=bot_webhook_url,
         test2_required=test2_required,
@@ -145,4 +160,5 @@ def get_settings() -> Settings:
         admin_docs_enabled=admin_docs_enabled,
         session_cookie_secure=session_cookie_secure,
         session_cookie_samesite=session_cookie_samesite,
+        state_ttl_seconds=state_ttl_seconds,
     )

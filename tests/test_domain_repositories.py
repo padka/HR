@@ -139,9 +139,10 @@ async def test_slot_workflow_and_templates():
         candidate_tz="Europe/Moscow",
         candidate_city_id=city.id,
     )
-    assert reserved is not None
-    assert reserved.status == models.SlotStatus.PENDING
-    assert reserved.candidate_city_id == city.id
+    assert reserved.status == "reserved"
+    assert reserved.slot is not None
+    assert reserved.slot.status == models.SlotStatus.PENDING
+    assert reserved.slot.candidate_city_id == city.id
 
     approved = await approve_slot(slot_free.id)
     assert approved is not None
@@ -152,8 +153,14 @@ async def test_slot_workflow_and_templates():
     assert rejected.status == models.SlotStatus.FREE
     assert rejected.candidate_tg_id is None
 
-    not_reserved = await reserve_slot(12345, candidate_tg_id=1, candidate_fio="", candidate_tz="", candidate_city_id=None)
-    assert not_reserved is None
+    not_reserved = await reserve_slot(
+        12345,
+        candidate_tg_id=1,
+        candidate_fio="",
+        candidate_tz="",
+        candidate_city_id=None,
+    )
+    assert not_reserved.status == "slot_taken"
 
     slot_loaded = await get_slot(slot_pending.id)
     assert slot_loaded is not None

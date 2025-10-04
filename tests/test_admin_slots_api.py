@@ -3,11 +3,13 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.services import slots as slot_services
 from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService, configure_bot_service
+from backend.core.settings import get_settings
 from backend.core.db import async_session
 from backend.domain import models
 
@@ -60,28 +62,32 @@ async def _async_request(
         with TestClient(app) as client:
             if before_request is not None:
                 before_request(client.app)
+            settings = get_settings()
+            if settings.admin_username and settings.admin_password:
+                client.auth = (settings.admin_username, settings.admin_password)
             response = client.request(method, path, **kwargs)
             return response
 
     return await asyncio.to_thread(_call)
 
 
-@pytest.fixture(autouse=True)
-def clear_state_manager():
+@pytest_asyncio.fixture(autouse=True)
+async def clear_state_manager():
     try:
         state_manager = slot_services.get_state_manager()
     except RuntimeError:
         yield
         return
-    state_manager.clear()
+    await state_manager.clear()
     yield
-    state_manager.clear()
+    await state_manager.clear()
 
 
 @pytest.mark.asyncio
 async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
     from backend.apps.admin_ui.state import BotIntegration
     from backend.apps.bot.services import StateManager, configure as configure_bot_services
+    from backend.apps.admin_ui.services.bot_service import IntegrationSwitch
 
     slot_id, candidate_id = await _create_booked_slot()
 
@@ -95,20 +101,46 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
         fake_start_test2,
     )
 
-    def fake_setup_bot_state(app):
-        state_manager = StateManager()
+    async def fake_setup_bot_state(app):
+        from backend.apps.bot.state_store import build_state_manager
+
+        state_manager = build_state_manager(redis_url=None, ttl_seconds=604800)
         configure_bot_services(None, state_manager)
+        switch = IntegrationSwitch(initial=True)
+        class _DummyReminderService:
+            async def schedule_for_slot(self, *_args, **_kwargs):
+                return None
+
+            async def cancel_for_slot(self, *_args, **_kwargs):
+                return None
+
+            async def shutdown(self):
+                return None
+
+            def stats(self):
+                return {"total": 0, "reminders": 0, "confirm_prompts": 0}
+
+        reminder_service = _DummyReminderService()
         service = BotService(
             state_manager=state_manager,
             enabled=True,
             configured=True,
+            integration_switch=switch,
             required=False,
         )
         configure_bot_service(service)
         app.state.bot = None
         app.state.state_manager = state_manager
         app.state.bot_service = service
-        return BotIntegration(state_manager=state_manager, bot=None, bot_service=service)
+        app.state.bot_integration_switch = switch
+        app.state.reminder_service = reminder_service
+        return BotIntegration(
+            state_manager=state_manager,
+            bot=None,
+            bot_service=service,
+            integration_switch=switch,
+            reminder_service=reminder_service,
+        )
 
     monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup_bot_state)
     monkeypatch.setattr("backend.apps.admin_ui.app.setup_bot_state", fake_setup_bot_state)
@@ -127,7 +159,7 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
     assert payload["outcome"] == "success"
     assert response.headers.get("X-Bot") == "sent_test2"
 
-    state = slot_services.get_state_manager().get(candidate_id)
+    state = await slot_services.get_state_manager().get(candidate_id)
     assert state is not None
     assert state.get("flow") == "intro"
     assert started.get("user_id") == candidate_id
@@ -267,5 +299,7 @@ async def test_bot_health_endpoint_reports_status(monkeypatch):
     response = await _async_request(app, "get", "/health/bot")
     assert response.status_code == 200
     payload = response.json()
-    assert set(payload.keys()) == {"enabled", "ready", "mode"}
-    assert payload["mode"] in {"real", "null"}
+    assert set(payload.keys()) == {"config", "runtime", "telegram", "state_store", "queues"}
+    assert payload["runtime"]["mode"] in {"real", "null"}
+    assert "switch_enabled" in payload["runtime"]
+    assert "integration_enabled" in payload["config"]

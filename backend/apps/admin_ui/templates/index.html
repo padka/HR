@@ -217,6 +217,47 @@
     display: none;
   }
 
+  .metric-card__badges,
+  .metric-card__list {
+    gap: 6px;
+  }
+
+  .metric-card__list {
+    padding-right: 4px;
+  }
+
+  .metric-card__pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--glass-tint) 70%, transparent);
+    color: color-mix(in srgb, var(--fg) 85%, var(--muted) 15%);
+    font-size: 12px;
+    line-height: 1.2;
+    letter-spacing: .08px;
+  }
+
+  .metric-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .metric-card__actions .btn[disabled] {
+    opacity: .55;
+    pointer-events: none;
+  }
+
+  .metric-card__note {
+    font-size: 12px;
+    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
+  }
+
+  .metric-card__meta-row:empty {
+    display: none;
+  }
+
   .metric-card__link {
     display: inline-flex;
     align-items: center;
@@ -465,6 +506,43 @@
   </article>
 
   <article class="card glass grain metric-card" data-tilt tabindex="0">
+    <span class="metric-card__label">Интеграция бота</span>
+    <div class="metric-card__value">{{ bot_status.runtime_enabled and 'ON' or 'OFF' }}</div>
+    <div class="metric-card__meta">
+      <div class="metric-card__meta-row metric-card__badges">
+        <span class="badge badge--soft">Config: {{ bot_status.config_enabled }}</span>
+        <span class="badge badge--soft">Health: {{ bot_status.health }}</span>
+        <span class="badge badge--soft">Mode: {{ bot_status.mode }}</span>
+      </div>
+      <div class="metric-card__meta-row metric-card__actions">
+        <button class="btn btn--ghost" data-bot-toggle data-enabled="1" {% if bot_status.runtime_enabled %}disabled{% endif %}>Включить</button>
+        <button class="btn btn--ghost" data-bot-toggle data-enabled="0" {% if not bot_status.runtime_enabled %}disabled{% endif %}>Выключить</button>
+      </div>
+      {% if bot_status.updated_at %}
+      <div class="metric-card__meta-row metric-card__note">Обновлено: {{ bot_status.updated_at }}</div>
+      {% endif %}
+    </div>
+  </article>
+
+  <article class="card glass grain metric-card" data-tilt tabindex="0">
+    <span class="metric-card__label">Автоотсев Теста 1</span>
+    <div class="metric-card__value">{{ counts.test1_rejections_percent }}%</div>
+    <div class="metric-card__meta">
+      <div class="metric-card__meta-row metric-card__badges">
+        <span class="badge badge--soft">Отказы: {{ counts.test1_rejections_total }}</span>
+        <span class="badge badge--soft">Всего: {{ counts.test1_total_seen }}</span>
+      </div>
+      {% if counts.test1_rejections_breakdown %}
+        <div class="metric-card__meta-row metric-card__list">
+          {% for reason, value in counts.test1_rejections_breakdown.items() %}
+            <span class="metric-card__pill">{{ reason | replace('_', ' ') }} — {{ value }}</span>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </article>
+
+  <article class="card glass grain metric-card" data-tilt tabindex="0">
     <span class="metric-card__label">Шаблоны</span>
     <div class="metric-card__value">{{ counts.templates|default(0) }}</div>
     <div class="metric-card__meta">
@@ -526,5 +604,35 @@
     {% endif %}
   </article>
 </section>
+
+<script>
+  (function () {
+    const buttons = document.querySelectorAll('[data-bot-toggle]');
+    if (!buttons.length) return;
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function (event) {
+        event.preventDefault();
+        const enabled = btn.dataset.enabled === '1';
+        fetch('/api/bot/integration', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        })
+          .then(function (response) {
+            if (!response.ok) {
+              throw new Error('Toggle failed');
+            }
+            return response.json();
+          })
+          .then(function () {
+            window.location.reload();
+          })
+          .catch(function () {
+            alert('Не удалось обновить состояние интеграции.');
+          });
+      });
+    });
+  })();
+</script>
 
 {% endblock %}
