@@ -266,7 +266,7 @@ def create_scheduler(redis_url: Optional[str]) -> AsyncIOScheduler:
         jobstores = {"default": RedisJobStore.from_url(redis_url)}
     else:
         jobstores = {"default": MemoryJobStore()}
-    return AsyncIOScheduler(jobstores=jobstores, timezone="UTC")
+    return AsyncIOScheduler(jobstores=jobstores, timezone=timezone.utc)
 
 
 __all__ = [

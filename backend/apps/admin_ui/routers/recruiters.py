@@ -1,16 +1,15 @@
-from typing import Dict, Optional, List
-
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import (
-    build_recruiter_payload,
     create_recruiter,
     delete_recruiter,
+    empty_recruiter_form_data,
     get_recruiter_detail,
     list_recruiters,
+    parse_recruiter_form,
     update_recruiter,
 )
 
@@ -30,26 +29,30 @@ async def recruiters_list(request: Request):
 @router.get("/new", response_class=HTMLResponse)
 async def recruiters_new(request: Request):
     cities = await list_cities()
-    return templates.TemplateResponse("recruiters_new.html", {"request": request, "cities": cities})
+    context = {
+        "request": request,
+        "cities": cities,
+        "form_data": empty_recruiter_form_data(),
+        "form_errors": [],
+    }
+    return templates.TemplateResponse("recruiters_new.html", context)
 
 
 @router.post("/create")
-async def recruiters_create(
-    name: str = Form(...),
-    tz: str = Form("Europe/Moscow"),
-    telemost: str = Form(""),
-    tg_chat_id: str = Form(""),
-    active: Optional[str] = Form(None),
-    cities: Optional[List[str]] = Form(None),
-):
-    payload: Dict[str, object] = build_recruiter_payload(
-        name=name,
-        tz=tz,
-        telemost=telemost,
-        tg_chat_id=tg_chat_id,
-        active=active,
-    )
-    await create_recruiter(payload, cities=cities)
+async def recruiters_create(request: Request):
+    form = await request.form()
+    result = parse_recruiter_form(form)
+    if result.errors or result.payload is None:
+        cities = await list_cities()
+        context = {
+            "request": request,
+            "cities": cities,
+            "form_data": result.form_data,
+            "form_errors": result.errors,
+        }
+        return templates.TemplateResponse("recruiters_new.html", context, status_code=400)
+
+    await create_recruiter(result.payload, cities=result.cities_raw or None)
     return RedirectResponse(url="/recruiters", status_code=303)
 
 
@@ -58,27 +61,39 @@ async def recruiters_edit(request: Request, rec_id: int):
     data = await get_recruiter_detail(rec_id)
     if not data:
         return RedirectResponse(url="/recruiters", status_code=303)
-    return templates.TemplateResponse("recruiters_edit.html", {"request": request, **data})
+    context = {
+        "request": request,
+        **data,
+        "form_errors": [],
+        "form_data": {
+            "name": data["recruiter"].name,
+            "tz": getattr(data["recruiter"], "tz", None) or empty_recruiter_form_data()["tz"],
+            "telemost": getattr(data["recruiter"], "telemost_url", None) or "",
+            "tg_chat_id": str(getattr(data["recruiter"], "tg_chat_id", "") or ""),
+            "active": bool(getattr(data["recruiter"], "active", True)),
+            "city_ids": data.get("selected_ids", set()),
+        },
+    }
+    return templates.TemplateResponse("recruiters_edit.html", context)
 
 
 @router.post("/{rec_id}/update")
-async def recruiters_update(
-    rec_id: int,
-    name: str = Form(...),
-    tz: str = Form("Europe/Moscow"),
-    telemost: str = Form(""),
-    tg_chat_id: str = Form(""),
-    active: Optional[str] = Form(None),
-    cities: Optional[List[str]] = Form(None),
-):
-    payload: Dict[str, object] = build_recruiter_payload(
-        name=name,
-        tz=tz,
-        telemost=telemost,
-        tg_chat_id=tg_chat_id,
-        active=active,
-    )
-    await update_recruiter(rec_id, payload, cities=cities)
+async def recruiters_update(request: Request, rec_id: int):
+    form = await request.form()
+    result = parse_recruiter_form(form)
+    if result.errors or result.payload is None:
+        data = await get_recruiter_detail(rec_id)
+        if not data:
+            return RedirectResponse(url="/recruiters", status_code=303)
+        context = {
+            "request": request,
+            **data,
+            "form_errors": result.errors,
+            "form_data": result.form_data,
+        }
+        return templates.TemplateResponse("recruiters_edit.html", context, status_code=400)
+
+    await update_recruiter(rec_id, result.payload, cities=result.cities_raw or None)
     return RedirectResponse(url="/recruiters", status_code=303)
 
 

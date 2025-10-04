@@ -94,9 +94,32 @@ def paginate(total: int, page: int, per_page: int) -> Tuple[int, int, int]:
 
 
 def recruiter_time_to_utc(date: str, time: str, recruiter_tz: Optional[str]) -> Optional[datetime]:
+    """Convert recruiter-local wall time to UTC.
+
+    The helper gracefully handles DST transitions. Ambiguous times (typically
+    during the autumn shift when the clock goes backwards) are interpreted as
+    the *first* occurrence, matching how people usually perceive the time they
+    type in. Non-existent times (during the spring shift when the clock skips
+    forwards) return ``None`` so the caller can surface a friendly validation
+    error instead of silently scheduling the interview at an unexpected time.
+    """
+
     try:
         dt_local = datetime.fromisoformat(f"{date}T{time}")
     except ValueError:
         return None
-    dt_local = dt_local.replace(tzinfo=safe_zone(recruiter_tz))
-    return dt_local.astimezone(timezone.utc)
+
+    tz = safe_zone(recruiter_tz)
+    aware_local = dt_local.replace(tzinfo=tz)
+    dt_utc = aware_local.astimezone(timezone.utc)
+
+    # ``datetime.fromisoformat`` does not understand DST gaps. For times that
+    # never occur (e.g. 02:30 during the spring forward shift) the conversion
+    # above yields the closest representable instant which, when converted back
+    # to the local timezone, differs from the user input. Detect the mismatch
+    # via a round-trip and surface it to the caller.
+    roundtrip = dt_utc.astimezone(tz).replace(tzinfo=None)
+    if roundtrip != dt_local:
+        return None
+
+    return dt_utc
