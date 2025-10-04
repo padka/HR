@@ -295,6 +295,10 @@
         <div class="slot-panel__body" id="slot_sheet_candidate">
           <p class="muted">Пока никто не забронировал слот.</p>
         </div>
+        <div class="slot-panel__actions" id="slot_sheet_candidate_actions">
+          <button type="button" class="btn btn-soft btn--small" id="slot_reschedule_btn" disabled>Перенести бронь</button>
+          <button type="button" class="btn btn-danger btn--small" id="slot_reject_btn" disabled>Отказать кандидату</button>
+        </div>
       </section>
 
       <section class="slot-panel" id="slot_sheet_outcome_section">
@@ -376,6 +380,9 @@
   const slotRecruiter = $('#slot_sheet_recruiter');
   const slotCandidateSection = $('#slot_sheet_candidate_section');
   const slotCandidate = $('#slot_sheet_candidate');
+  const slotCandidateActions = $('#slot_sheet_candidate_actions');
+  const slotRescheduleBtn = $('#slot_reschedule_btn');
+  const slotRejectBookingBtn = $('#slot_reject_btn');
   const slotOutcomeSection = $('#slot_sheet_outcome_section');
   const slotOutcomeHint = $('#slot_sheet_outcome_hint');
   const slotOutcomeActions = $('#slot_sheet_outcome_actions');
@@ -696,10 +703,21 @@
             </div>
             <p class="muted">tg_id: ${candidateId || '—'}</p>`;
         }
+        if (slotCandidateActions) slotCandidateActions.hidden = false;
       } else {
         slotCandidateSection.hidden = false;
         if (slotCandidate) slotCandidate.innerHTML = '<p class="muted">Пока никто не забронировал слот.</p>';
+        if (slotCandidateActions) slotCandidateActions.hidden = true;
       }
+    }
+
+    if (slotRescheduleBtn){
+      slotRescheduleBtn.disabled = !candidateName;
+      slotRescheduleBtn.dataset.slotId = id || '';
+    }
+    if (slotRejectBookingBtn){
+      slotRejectBookingBtn.disabled = !candidateName;
+      slotRejectBookingBtn.dataset.slotId = id || '';
     }
 
     if (slotOutcomeSection){
@@ -862,6 +880,91 @@
     }
   }
 
+  function markRowAsFree(row){
+    if (!row) return;
+    row.dataset.status = 'FREE';
+    row.dataset.statusOrder = '0';
+    row.dataset.candidate = '';
+    row.dataset.candidateId = '';
+    row.dataset.candidateTz = '';
+    row.dataset.outcome = '';
+    row.dataset.canDelete = '1';
+    row.dataset.startCand = '';
+
+    const statusCell = row.querySelector('[data-label="Статус"]');
+    if (statusCell) statusCell.innerHTML = '<span class="status-badge" data-tone="success">FREE</span>';
+
+    const candidateCell = row.querySelector('[data-label="Кандидат"]');
+    if (candidateCell) candidateCell.innerHTML = '<span class="badge badge--soft">—</span>';
+
+    const candTimeCell = row.querySelector('[data-label="Время (кандидат)"]');
+    if (candTimeCell) candTimeCell.innerHTML = '<span class="badge badge--soft">—</span>';
+  }
+
+  async function triggerReschedule(row){
+    if (!row) return;
+    const slotId = row.dataset.id;
+    if (!slotId) return;
+    if (slotRescheduleBtn) slotRescheduleBtn.disabled = true;
+    if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = true;
+    try {
+      const response = await fetch(`/slots/${slotId}/reschedule`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' },
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload || payload.ok !== true){
+        const message = payload && payload.message ? payload.message : 'Не удалось перенести бронь.';
+        toast(message, 'error');
+        return;
+      }
+      toast(payload.message || 'Слот освобождён.', 'success');
+      markRowAsFree(row);
+      hydrateSheet(row);
+      updateCounters();
+    } catch (err){
+      console.error(err);
+      toast('Не удалось перенести бронь.', 'error');
+    } finally {
+      const candidateValue = (row.dataset.candidate || '').trim();
+      const hasCandidate = candidateValue.length > 0;
+      if (slotRescheduleBtn) slotRescheduleBtn.disabled = !hasCandidate;
+      if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = !hasCandidate;
+    }
+  }
+
+  async function triggerReject(row){
+    if (!row) return;
+    const slotId = row.dataset.id;
+    if (!slotId) return;
+    if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = true;
+    if (slotRescheduleBtn) slotRescheduleBtn.disabled = true;
+    try {
+      const response = await fetch(`/slots/${slotId}/reject_booking`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' },
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload || payload.ok !== true){
+        const message = payload && payload.message ? payload.message : 'Не удалось отправить отказ.';
+        toast(message, 'error');
+        return;
+      }
+      toast(payload.message || 'Кандидату отправлен отказ.', 'success');
+      markRowAsFree(row);
+      hydrateSheet(row);
+      updateCounters();
+    } catch (err){
+      console.error(err);
+      toast('Не удалось отправить отказ.', 'error');
+    } finally {
+      const candidateValue = (row.dataset.candidate || '').trim();
+      const hasCandidate = candidateValue.length > 0;
+      if (slotRescheduleBtn) slotRescheduleBtn.disabled = !hasCandidate;
+      if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = !hasCandidate;
+    }
+  }
+
   async function deleteAllSlots(force = false){
     const confirmationText = force
       ? 'Удалить все слоты принудительно? Это удалит даже забронированные интервальные окна.'
@@ -1005,6 +1108,14 @@
     if (!btn || btn.disabled) return;
     e.preventDefault();
     submitOutcome(btn.dataset.outcome);
+  });
+
+  on(slotRescheduleBtn, 'click', () => {
+    if (currentRow) triggerReschedule(currentRow);
+  });
+
+  on(slotRejectBookingBtn, 'click', () => {
+    if (currentRow) triggerReject(currentRow);
   });
 
   on(slotDeleteBtn, 'click', () => {

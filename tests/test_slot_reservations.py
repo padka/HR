@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.core.db import async_session
 from backend.domain import models
-from backend.domain.repositories import reserve_slot, ReservationResult
+from backend.domain.repositories import reserve_slot, ReservationResult, reject_slot
 
 
 @pytest.mark.asyncio
@@ -172,3 +172,57 @@ async def test_unique_index_enforced():
         session.add_all([recruiter, city, slot_a, slot_b])
         with pytest.raises(IntegrityError):
             await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_reject_slot_removes_reservation_lock():
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Анна", tz="Europe/Moscow", active=True)
+        city = models.City(name="Уфа", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot_a = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=now + timedelta(hours=1),
+            status=models.SlotStatus.FREE,
+        )
+        slot_b = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=now + timedelta(hours=2),
+            status=models.SlotStatus.FREE,
+        )
+        session.add_all([slot_a, slot_b])
+        await session.commit()
+        await session.refresh(slot_a)
+        await session.refresh(slot_b)
+
+    first = await reserve_slot(
+        slot_a.id,
+        candidate_tg_id=404,
+        candidate_fio="Кандидат",
+        candidate_tz="Europe/Moscow",
+        candidate_city_id=city.id,
+        expected_recruiter_id=recruiter.id,
+        expected_city_id=city.id,
+    )
+    assert first.status == "reserved"
+
+    await reject_slot(slot_a.id)
+
+    second = await reserve_slot(
+        slot_b.id,
+        candidate_tg_id=404,
+        candidate_fio="Кандидат",
+        candidate_tz="Europe/Moscow",
+        candidate_city_id=city.id,
+        expected_recruiter_id=recruiter.id,
+        expected_city_id=city.id,
+    )
+    assert second.status == "reserved"

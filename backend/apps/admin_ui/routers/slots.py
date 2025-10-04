@@ -20,6 +20,8 @@ from backend.apps.admin_ui.services.slots import (
     delete_all_slots,
     set_slot_outcome,
     execute_bot_dispatch,
+    reschedule_slot_booking,
+    reject_slot_booking,
 )
 from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
 from backend.core.settings import get_settings
@@ -253,3 +255,23 @@ async def slots_set_outcome(
     )
     response.headers["X-Bot"] = bot_status
     return response
+
+
+@router.post("/{slot_id}/reschedule")
+async def slots_reschedule(slot_id: int):
+    ok, message, notified = await reschedule_slot_booking(slot_id)
+    status_code = 200 if ok else (404 if "не найден" in message.lower() else 400)
+    return JSONResponse(
+        {"ok": ok, "message": message, "bot_notified": notified},
+        status_code=status_code,
+    )
+
+
+@router.post("/{slot_id}/reject_booking")
+async def slots_reject_booking(slot_id: int):
+    ok, message, notified = await reject_slot_booking(slot_id)
+    status_code = 200 if ok else (404 if "не найден" in message.lower() else 400)
+    return JSONResponse(
+        {"ok": ok, "message": message, "bot_notified": notified},
+        status_code=status_code,
+    )

@@ -155,7 +155,10 @@ def kb_approve(slot_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Согласовано", callback_data=f"approve:{slot_id}")],
-            [InlineKeyboardButton(text="❌ Отказать", callback_data=f"reject:{slot_id}")],
+            [
+                InlineKeyboardButton(text="🔁 Перенести", callback_data=f"reschedule:{slot_id}"),
+                InlineKeyboardButton(text="⛔️ Отказать", callback_data=f"reject:{slot_id}"),
+            ],
         ]
     )
 
