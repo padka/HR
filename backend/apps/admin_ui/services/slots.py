@@ -16,7 +16,14 @@ from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService
 from backend.apps.admin_ui.services.bot_service import (
     get_bot_service as resolve_bot_service,
 )
-from backend.apps.bot.services import get_state_manager as _get_state_manager
+from backend.apps.bot.services import (
+    SlotSnapshot,
+    cancel_slot_reminders,
+    capture_slot_snapshot,
+    get_state_manager as _get_state_manager,
+    notify_rejection,
+    notify_reschedule,
+)
 
 try:  # pragma: no cover - optional dependency during tests
     from backend.apps.bot.reminders import get_reminder_service
@@ -31,6 +38,7 @@ from backend.apps.admin_ui.utils import (
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.repositories import reject_slot
 
 __all__ = [
     "list_slots",
@@ -43,6 +51,8 @@ __all__ = [
     "set_slot_outcome",
     "get_state_manager",
     "execute_bot_dispatch",
+    "reschedule_slot_booking",
+    "reject_slot_booking",
 ]
 
 
@@ -515,6 +525,53 @@ async def _trigger_test2(
         candidate_name,
         required=required,
     )
+
+
+async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
+    async with async_session() as session:
+        slot = await session.scalar(
+            select(Slot)
+            .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+            .where(Slot.id == slot_id)
+        )
+
+    if not slot:
+        return False, "Слот не найден.", False
+    if slot.candidate_tg_id is None:
+        return False, "Слот не привязан к кандидату.", False
+
+    snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
+    await reject_slot(slot_id)
+    await cancel_slot_reminders(slot_id)
+
+    sent = await notify_reschedule(snapshot)
+    if sent:
+        return True, "Слот освобождён. Кандидату отправлено уведомление о переносе.", True
+    return True, "Слот освобождён. Бот недоступен — сообщите кандидату вручную.", False
+
+
+async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
+    async with async_session() as session:
+        slot = await session.scalar(
+            select(Slot)
+            .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+            .where(Slot.id == slot_id)
+        )
+
+    if not slot:
+        return False, "Слот не найден.", False
+    if slot.candidate_tg_id is None:
+        return False, "Слот не привязан к кандидату.", False
+
+    snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
+    await reject_slot(slot_id)
+    await cancel_slot_reminders(slot_id)
+
+    sent = await notify_rejection(snapshot)
+    if sent:
+        return True, "Слот освобождён. Кандидату отправлен отказ.", True
+    return True, "Слот освобождён. Сообщите кандидату об отказе вручную.", False
+
 
 
 async def _trigger_rejection(

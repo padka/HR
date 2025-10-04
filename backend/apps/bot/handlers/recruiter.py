@@ -16,6 +16,11 @@ async def approve(callback: CallbackQuery) -> None:
     await services.handle_approve_slot(callback)
 
 
+@router.callback_query(F.data.startswith("reschedule:"))
+async def reschedule(callback: CallbackQuery) -> None:
+    await services.handle_reschedule_slot(callback)
+
+
 @router.callback_query(F.data.startswith("reject:"))
 async def reject(callback: CallbackQuery) -> None:
     await services.handle_reject_slot(callback)

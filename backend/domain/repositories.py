@@ -354,10 +354,26 @@ async def reject_slot(slot_id: int) -> Optional[Slot]:
         slot = await session.get(Slot, slot_id, with_for_update=True)
         if not slot:
             return None
+        reservation_date = _to_aware_utc(slot.start_utc).date()
+        candidate_tg_id = slot.candidate_tg_id
+        recruiter_id = slot.recruiter_id
+        await session.execute(
+            delete(SlotReservationLock).where(SlotReservationLock.slot_id == slot.id)
+        )
+        if candidate_tg_id is not None and recruiter_id is not None:
+            await session.execute(
+                delete(SlotReservationLock).where(
+                    SlotReservationLock.candidate_tg_id == candidate_tg_id,
+                    SlotReservationLock.recruiter_id == recruiter_id,
+                    SlotReservationLock.reservation_date == reservation_date,
+                )
+            )
         slot.status = SlotStatus.FREE
         slot.candidate_tg_id = None
         slot.candidate_fio = None
         slot.candidate_tz = None
+        slot.candidate_city_id = None
+        slot.purpose = "interview"
         await session.commit()
         await session.refresh(slot)
         slot.start_utc = _to_aware_utc(slot.start_utc)

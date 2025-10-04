@@ -93,6 +93,19 @@ class Test1AnswerResult:
     template_context: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class SlotSnapshot:
+    slot_id: int
+    start_utc: datetime
+    candidate_id: Optional[int]
+    candidate_fio: str
+    candidate_tz: str
+    candidate_city_id: Optional[int]
+    recruiter_id: Optional[int]
+    recruiter_name: str
+    recruiter_tz: str
+
+
 REJECTION_TEMPLATES: Dict[str, str] = {
     "format_not_ready": "t1_format_reject",
     "schedule_conflict": "t1_schedule_reject",
@@ -318,6 +331,193 @@ async def safe_remove_reply_markup(cb_msg) -> None:
         await cb_msg.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
         pass
+
+
+async def _cancel_reminders_for_slot(slot_id: int) -> None:
+    try:
+        reminder_service = get_reminder_service()
+    except RuntimeError:
+        reminder_service = None
+    if reminder_service is not None:
+        await reminder_service.cancel_for_slot(slot_id)
+
+
+async def _build_slot_snapshot(slot: Slot) -> SlotSnapshot:
+    recruiter = None
+    if slot.recruiter_id is not None:
+        recruiter = await get_recruiter(slot.recruiter_id)
+    recruiter_name = recruiter.name if recruiter else ""
+    recruiter_tz = (recruiter.tz if recruiter and recruiter.tz else DEFAULT_TZ)
+    candidate_tz = slot.candidate_tz or DEFAULT_TZ
+    candidate_id = int(slot.candidate_tg_id) if slot.candidate_tg_id is not None else None
+    return SlotSnapshot(
+        slot_id=slot.id,
+        start_utc=slot.start_utc,
+        candidate_id=candidate_id,
+        candidate_fio=slot.candidate_fio or "",
+        candidate_tz=candidate_tz,
+        candidate_city_id=getattr(slot, "candidate_city_id", None),
+        recruiter_id=slot.recruiter_id,
+        recruiter_name=recruiter_name,
+        recruiter_tz=recruiter_tz,
+    )
+
+
+async def _load_candidate_state(candidate_id: int) -> State:
+    try:
+        state_manager = get_state_manager()
+    except RuntimeError:
+        return {}
+    return await state_manager.get(candidate_id) or {}
+
+
+async def _update_candidate_state(candidate_id: int, updater) -> None:
+    try:
+        state_manager = get_state_manager()
+    except RuntimeError:
+        return
+    await state_manager.atomic_update(candidate_id, updater)
+
+
+async def _send_reschedule_prompt(snapshot: SlotSnapshot) -> bool:
+    if snapshot.candidate_id is None:
+        return False
+
+    def _clear_slot(st: State) -> Tuple[State, None]:
+        st["picked_slot_id"] = None
+        return st, None
+
+    await _update_candidate_state(snapshot.candidate_id, _clear_slot)
+
+    notice = await templates.tpl(
+        snapshot.candidate_city_id,
+        "slot_reschedule",
+        recruiter_name=snapshot.recruiter_name or "",
+        dt=fmt_dt_local(snapshot.start_utc, snapshot.candidate_tz or DEFAULT_TZ),
+    )
+
+    try:
+        await show_recruiter_menu(snapshot.candidate_id, notice=notice)
+        return True
+    except RuntimeError:
+        logger.warning("Bot is not configured; cannot send reschedule prompt")
+    except Exception:
+        logger.exception("Failed to send reschedule prompt")
+    return False
+
+
+async def _send_final_rejection_notice(snapshot: SlotSnapshot) -> bool:
+    if snapshot.candidate_id is None:
+        return False
+
+    state = await _load_candidate_state(snapshot.candidate_id)
+    context = {
+        "candidate_fio": snapshot.candidate_fio or state.get("fio", ""),
+        "city_name": state.get("city_name") or "",
+        "recruiter_name": snapshot.recruiter_name or "",
+    }
+    text = await templates.tpl(snapshot.candidate_city_id, "result_fail", **context)
+    text = text.strip()
+    if not text:
+        logger.warning("Rejection template produced empty message for candidate %s", snapshot.candidate_id)
+        return False
+
+    try:
+        await get_bot().send_message(snapshot.candidate_id, text)
+        def _mark_rejected(st: State) -> Tuple[State, None]:
+            st["flow"] = "rejected"
+            st["picked_slot_id"] = None
+            st["picked_recruiter_id"] = None
+            return st, None
+
+        await _update_candidate_state(snapshot.candidate_id, _mark_rejected)
+        return True
+    except RuntimeError:
+        logger.warning("Bot is not configured; cannot send rejection message")
+    except Exception:
+        logger.exception("Failed to send rejection message")
+    return False
+
+
+async def capture_slot_snapshot(slot: Slot) -> SlotSnapshot:
+    """Return a lightweight snapshot of slot and candidate data."""
+
+    return await _build_slot_snapshot(slot)
+
+
+async def cancel_slot_reminders(slot_id: int) -> None:
+    """Cancel reminder jobs for the provided slot."""
+
+    await _cancel_reminders_for_slot(slot_id)
+
+
+async def notify_reschedule(snapshot: SlotSnapshot) -> bool:
+    """Notify candidate about reschedule request."""
+
+    return await _send_reschedule_prompt(snapshot)
+
+
+async def notify_rejection(snapshot: SlotSnapshot) -> bool:
+    """Notify candidate about rejection."""
+
+    return await _send_final_rejection_notice(snapshot)
+
+
+async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Path) -> bool:
+    city_id = state.get("city_id")
+    try:
+        recruiters = await get_active_recruiters_for_city(city_id) if city_id else []
+    except Exception:
+        recruiters = []
+
+    recipients = [rec for rec in recruiters if getattr(rec, "tg_chat_id", None)]
+    if not recipients:
+        return False
+
+    bot = get_bot()
+    candidate_name = state.get("fio") or str(user_id)
+    city_name = state.get("city_name") or "—"
+    caption = (
+        "📋 <b>Новая анкета (Тест 1)</b>\n"
+        f"👤 {candidate_name}\n"
+        f"📍 {city_name}\n"
+        f"TG: {user_id}"
+    )
+
+    attachments = [
+        form_path,
+        REPORTS_DIR / f"report_{state.get('fio') or user_id}.txt",
+    ]
+
+    delivered = False
+    for recruiter in recipients:
+        sent = False
+        for path in attachments:
+            if not path.exists():
+                continue
+            try:
+                await bot.send_document(
+                    recruiter.tg_chat_id,
+                    FSInputFile(str(path)),
+                    caption=caption,
+                )
+                sent = True
+                delivered = True
+                break
+            except Exception:
+                logger.exception(
+                    "Failed to deliver Test 1 attachment to recruiter %s", recruiter.id
+                )
+        if sent:
+            continue
+        try:
+            await bot.send_message(recruiter.tg_chat_id, caption)
+            delivered = True
+        except Exception:
+            logger.exception(
+                "Failed to send Test 1 summary to recruiter %s", recruiter.id
+            )
+    return delivered
 
 
 async def begin_interview(user_id: int) -> None:
@@ -905,6 +1105,16 @@ async def finalize_test1(user_id: int) -> None:
     except Exception:
         pass
 
+    if not state.get("t1_notified"):
+        shared = await _share_test1_with_recruiters(user_id, state, fname)
+
+        if shared:
+            def _mark_shared(st: State) -> Tuple[State, None]:
+                st["t1_notified"] = True
+                return st, None
+
+            await state_manager.atomic_update(user_id, _mark_shared)
+
     invite_text = await templates.tpl(
         state.get("city_id"),
         "stage1_invite",
@@ -1404,41 +1614,60 @@ async def handle_reject_slot(callback: CallbackQuery) -> None:
         await safe_remove_reply_markup(callback.message)
         return
 
-    if slot.status == SlotStatus.BOOKED:
-        await callback.answer("Уже согласовано — слот занят.", show_alert=True)
+    if slot.status == SlotStatus.FREE or slot.candidate_tg_id is None:
+        await callback.answer("Слот уже освобождён.", show_alert=True)
         await safe_remove_reply_markup(callback.message)
         return
 
+    snapshot = await _build_slot_snapshot(slot)
     await reject_slot(slot_id)
+    await _cancel_reminders_for_slot(slot_id)
 
-    try:
-        reminder_service = get_reminder_service()
-    except RuntimeError:
-        reminder_service = None
-    if reminder_service is not None:
-        await reminder_service.cancel_for_slot(slot_id)
+    sent = await _send_final_rejection_notice(snapshot)
+    status_text = (
+        "⛔️ Отказано. Кандидат уведомлён."
+        if sent
+        else "⛔️ Отказано. Сообщите кандидату вручную — бот недоступен."
+    )
 
-    bot = get_bot()
-    await bot.send_message(slot.candidate_tg_id, "К сожалению, выбранное время недоступно.")
-
-    state_manager = get_state_manager()
-    st = await state_manager.get(slot.candidate_tg_id) or {}
-    if st.get("flow") == "intro":
-        await show_recruiter_menu(slot.candidate_tg_id)
-    else:
-        city_for_candidate = st.get("city_id") or getattr(slot, "candidate_city_id", None)
-        kb = await kb_recruiters(
-            st.get("candidate_tz", DEFAULT_TZ), city_id=city_for_candidate
-        )
-        await bot.send_message(
-            slot.candidate_tg_id,
-            await templates.tpl(getattr(slot, "candidate_city_id", None), "choose_recruiter"),
-            reply_markup=kb,
-        )
-
-    await safe_edit_text_or_caption(callback.message, "❌ Отказано. Слот освобождён.")
+    await safe_edit_text_or_caption(callback.message, status_text)
     await safe_remove_reply_markup(callback.message)
-    await callback.answer("Отказано")
+    await callback.answer(
+        "Отказано" if sent else "Бот недоступен — свяжитесь с кандидатом.",
+        show_alert=not sent,
+    )
+
+
+async def handle_reschedule_slot(callback: CallbackQuery) -> None:
+    slot_id = int(callback.data.split(":", 1)[1])
+    slot = await get_slot(slot_id)
+    if not slot:
+        await callback.answer("Заявка уже обработана.")
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    if slot.candidate_tg_id is None:
+        await callback.answer("Кандидат не найден.", show_alert=True)
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    snapshot = await _build_slot_snapshot(slot)
+    await reject_slot(slot_id)
+    await _cancel_reminders_for_slot(slot_id)
+
+    sent = await _send_reschedule_prompt(snapshot)
+    status_text = (
+        "🔁 Перенос: кандидат подберёт новое время."
+        if sent
+        else "🔁 Слот освобождён. Бот недоступен — свяжитесь с кандидатом."
+    )
+
+    await safe_edit_text_or_caption(callback.message, status_text)
+    await safe_remove_reply_markup(callback.message)
+    await callback.answer(
+        "Перенос оформлен." if sent else "Слот освобождён, бот недоступен.",
+        show_alert=not sent,
+    )
 
 
 async def handle_attendance_yes(callback: CallbackQuery) -> None:
@@ -1582,7 +1811,13 @@ __all__ = [
     "safe_edit_text_or_caption",
     "safe_remove_reply_markup",
     "handle_approve_slot",
+    "handle_reschedule_slot",
     "handle_reject_slot",
+    "capture_slot_snapshot",
+    "cancel_slot_reminders",
+    "notify_reschedule",
+    "notify_rejection",
+    "SlotSnapshot",
     "_extract_option_label",
     "_extract_option_value",
     "_mark_test1_question_answered",
