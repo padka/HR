@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, func, select, update
 from sqlalchemy.inspection import inspect as sa_inspect
 
-from backend.apps.admin_ui.utils import format_optional_local
+from backend.apps.admin_ui.utils import DEFAULT_TZ, format_optional_local
 from backend.core.db import async_session
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
 
@@ -17,6 +19,8 @@ __all__ = [
     "update_recruiter",
     "delete_recruiter",
     "build_recruiter_payload",
+    "empty_recruiter_form_data",
+    "parse_recruiter_form",
     "api_recruiters_payload",
 ]
 
@@ -248,3 +252,100 @@ async def api_recruiters_payload() -> List[Dict[str, object]]:
         }
         for r in recs
     ]
+
+
+@dataclass
+class RecruiterFormResult:
+    payload: Optional[Dict[str, object]]
+    cities_raw: List[str]
+    errors: List[str]
+    form_data: Dict[str, object]
+
+
+def empty_recruiter_form_data() -> Dict[str, object]:
+    """Default values for the recruiter form."""
+
+    return {
+        "name": "",
+        "tz": DEFAULT_TZ,
+        "telemost": "",
+        "tg_chat_id": "",
+        "active": True,
+        "city_ids": set(),
+    }
+
+
+def parse_recruiter_form(form: Any) -> RecruiterFormResult:
+    """Parse recruiter form data without triggering FastAPI validation errors."""
+
+    name = str(form.get("name", "")).strip()
+    tz_input = str(form.get("tz", "")).strip()
+    tz_candidate = tz_input or DEFAULT_TZ
+    telemost = str(form.get("telemost", "")).strip()
+    tg_chat_id = str(form.get("tg_chat_id", "")).strip()
+    active = bool(form.get("active"))
+
+    errors: List[str] = []
+    if not name:
+        errors.append("Укажите имя рекрутёра.")
+
+    tz_normalized = tz_candidate
+    try:
+        tz_normalized = ZoneInfo(tz_candidate).key
+    except Exception:
+        errors.append("Укажите корректный часовой пояс в формате IANA, например Europe/Moscow.")
+
+    cities_raw = _extract_list(form, "cities")
+    selected_ids = {
+        int(value)
+        for value in cities_raw
+        if isinstance(value, str) and value.isdigit()
+    }
+
+    form_data = {
+        "name": name,
+        "tz": tz_input or tz_candidate,
+        "telemost": telemost,
+        "tg_chat_id": tg_chat_id,
+        "active": active,
+        "city_ids": selected_ids,
+    }
+
+    payload: Optional[Dict[str, object]] = None
+    if not errors:
+        payload = build_recruiter_payload(
+            name=name,
+            tz=tz_normalized,
+            telemost=telemost,
+            tg_chat_id=tg_chat_id,
+            active=active,
+        )
+
+    return RecruiterFormResult(
+        payload=payload,
+        cities_raw=[str(value) for value in cities_raw],
+        errors=errors,
+        form_data=form_data,
+    )
+
+
+def _extract_list(source: Any, key: str) -> List[str]:
+    if hasattr(source, "getlist"):
+        values = source.getlist(key)
+    else:
+        raw = source.get(key) if isinstance(source, dict) else None
+        if raw is None:
+            values = []
+        elif isinstance(raw, (list, tuple, set)):
+            values = list(raw)
+        else:
+            values = [raw]
+
+    out: List[str] = []
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            out.append(text)
+    return out
