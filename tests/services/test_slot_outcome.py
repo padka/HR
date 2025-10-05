@@ -131,3 +131,29 @@ async def test_set_slot_outcome_requires_candidate():
     assert stored is None
     assert "Слот не привязан к кандидату" in (message or "")
     assert dispatch is None
+
+
+@pytest.mark.asyncio
+async def test_send_rejection_reports_unconfigured_bot():
+    state_manager = build_state_manager(redis_url=None, ttl_seconds=604800)
+    service = BotService(
+        state_manager=state_manager,
+        enabled=True,
+        configured=False,
+        integration_switch=IntegrationSwitch(initial=True),
+        required=False,
+    )
+
+    result = await service.send_rejection(
+        123,
+        city_id=None,
+        template_key="dummy",
+        context={},
+    )
+
+    assert result.ok is False
+    assert result.status == "skipped:not_configured"
+    assert result.error == service.rejection_failure_message
+
+    await state_manager.clear()
+    await state_manager.close()
