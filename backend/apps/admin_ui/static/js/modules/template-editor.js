@@ -236,7 +236,7 @@ export function initTemplateEditor(options = {}) {
     cityFilter.addEventListener('input', filterCities);
   }
 
-  ensureKey(true);
+  ensureKey();
   updateMeta();
   filterCities();
 

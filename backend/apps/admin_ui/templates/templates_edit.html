@@ -16,6 +16,15 @@
     {"href": "/templates", "text": "Отмена", "variant": "ghost"}
   ]
 ) %}
+  {% if errors %}
+    <div class="alert alert--danger mt-sm">
+      <ul>
+        {% for err in errors %}
+          <li>{{ err }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
   {% call forms.section("Назначение") %}
     {% call forms.field("Глобальный шаблон", hint="Если включено — используется по умолчанию для всех городов") %}
       {{ forms.switch(

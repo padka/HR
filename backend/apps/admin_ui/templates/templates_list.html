@@ -9,6 +9,9 @@
         Настройте тексты, которые бот отправляет кандидату на каждом шаге процесса. Пустые поля используют текст по умолчанию.
       </p>
     </div>
+    <div class="page-actions">
+      <a class="btn btn-primary" href="/templates/new">Новый шаблон</a>
+    </div>
   </header>
 
   <div class="card glass grain">
@@ -96,6 +99,53 @@
         <p class="page-description">Добавьте город, чтобы настроить городские сообщения.</p>
       </div>
     {% endfor %}
+  </section>
+
+  <section class="card glass grain template-table-card">
+    <h2 class="section-title">Индивидуальные шаблоны</h2>
+    <p class="section-subtitle">Свободные сообщения, которые можно использовать в интеграциях и ручных рассылках.</p>
+
+    {% if custom_templates %}
+      <div class="list-table-wrapper">
+        <table class="list-table list-table--responsive">
+          <thead>
+            <tr>
+              <th scope="col">ID</th>
+              <th scope="col">Ключ</th>
+              <th scope="col">Назначение</th>
+              <th scope="col" class="is-optional">Фрагмент</th>
+              <th scope="col" class="col-align-end">Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in custom_templates %}
+              <tr>
+                <td data-label="ID">#{{ item.id }}</td>
+                <td data-label="Ключ"><code class="text-mono">{{ item.key }}</code></td>
+                <td data-label="Назначение">
+                  {% if item.is_global %}
+                    <span class="badge">Глобальный</span>
+                  {% elif item.city_name %}
+                    <span class="badge">{{ item.city_name }}</span>
+                    {% if item.city_tz %}
+                      <span class="muted">({{ item.city_tz }})</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="muted">Город удалён</span>
+                  {% endif %}
+                </td>
+                <td data-label="Фрагмент" class="is-optional">{{ item.preview }}</td>
+                <td data-label="Действия" class="col-align-end">
+                  <a class="btn btn-soft btn--small" href="/templates/{{ item.id }}/edit">Редактировать</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert mt-sm">Дополнительных шаблонов пока нет. Создайте первый, чтобы использовать его в интеграциях.</div>
+    {% endif %}
   </section>
 </section>
 
