@@ -52,6 +52,7 @@ from .keyboards import (
     create_keyboard,
     kb_approve,
     kb_attendance_confirm,
+    kb_send_confirmation,
     kb_recruiters,
     kb_slots_for_recruiter,
     kb_start,
@@ -1588,6 +1589,39 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         await reminder_service.schedule_for_slot(slot.id)
 
 
+async def _resolve_candidate_state_for_slot(slot: Slot) -> Dict[str, Any]:
+    if slot.candidate_tg_id is None:
+        return {}
+    try:
+        state_manager = get_state_manager()
+    except RuntimeError:
+        return {}
+    try:
+        return await state_manager.get(slot.candidate_tg_id) or {}
+    except Exception:
+        return {}
+
+
+async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str]:
+    tz = slot.candidate_tz or DEFAULT_TZ
+    labels = slot_local_labels(slot.start_utc, tz)
+    template_key = (
+        "stage3_intro_invite"
+        if getattr(slot, "purpose", "interview") == "intro_day"
+        else "approved_msg"
+    )
+    state = await _resolve_candidate_state_for_slot(slot)
+    text = await templates.tpl(
+        getattr(slot, "candidate_city_id", None),
+        template_key,
+        candidate_fio=slot.candidate_fio or "",
+        city_name=state.get("city_name") or "",
+        dt=fmt_dt_local(slot.start_utc, tz),
+        **labels,
+    )
+    return text, tz, state.get("city_name") or ""
+
+
 async def handle_approve_slot(callback: CallbackQuery) -> None:
     slot_id = int(callback.data.split(":", 1)[1])
     slot = await get_slot(slot_id)
@@ -1613,24 +1647,79 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         await callback.answer("Не удалось согласовать.", show_alert=True)
         return
 
-    tz = slot.candidate_tz or DEFAULT_TZ
-    labels = slot_local_labels(slot.start_utc, tz)
-    template_key = (
-        "stage3_intro_invite"
-        if getattr(slot, "purpose", "interview") == "intro_day"
-        else "approved_msg"
+    message_text, candidate_tz, candidate_city = await _render_candidate_notification(slot)
+    candidate_label = (
+        slot.candidate_fio
+        or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "—")
     )
-    state_manager = get_state_manager()
-    state = await state_manager.get(slot.candidate_tg_id) or {}
-    text = await templates.tpl(
-        getattr(slot, "candidate_city_id", None),
-        template_key,
-        candidate_fio=slot.candidate_fio or "",
-        city_name=state.get("city_name") or "",
-        dt=fmt_dt_local(slot.start_utc, tz),
-        **labels,
+
+    confirm_text = (
+        f"✅ Слот подтверждён: {html.escape(candidate_label)} — "
+        f"{fmt_dt_local(slot.start_utc, DEFAULT_TZ)}\n\n"
+        "Проверьте текст сообщения кандидату ниже и отправьте его вручную."
     )
-    await get_bot().send_message(slot.candidate_tg_id, text)
+    await safe_edit_text_or_caption(callback.message, confirm_text)
+    await safe_remove_reply_markup(callback.message)
+
+    preview_parts = [
+        "📝 <b>Проверьте сообщение для кандидата</b>",
+        f"👤 {html.escape(candidate_label)}",
+        f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
+    ]
+    if candidate_city:
+        preview_parts.append(f"📍 {html.escape(candidate_city)}")
+    preview_parts.extend(
+        [
+            "",
+            "<b>Сообщение кандидату:</b>",
+            f"<blockquote>{message_text}</blockquote>",
+            "Отправить сообщение?",
+        ]
+    )
+    preview_text = "\n".join(preview_parts)
+
+    try:
+        await callback.message.answer(
+            preview_text, reply_markup=kb_send_confirmation(slot.id)
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            "Проверьте сообщение для кандидата и отправьте при необходимости."
+        )
+        await callback.message.answer(
+            message_text, reply_markup=kb_send_confirmation(slot.id)
+        )
+
+    await callback.answer("Проверьте сообщение перед отправкой кандидату.")
+
+
+async def handle_send_slot_message(callback: CallbackQuery) -> None:
+    slot_id = int(callback.data.split(":", 1)[1])
+    slot = await get_slot(slot_id)
+    if not slot:
+        await callback.answer("Заявка уже обработана.", show_alert=True)
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    if slot.candidate_tg_id is None:
+        await callback.answer("Кандидат не найден.", show_alert=True)
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    status_value = (slot.status or "").lower()
+    if status_value != SlotStatus.BOOKED:
+        await callback.answer("Слот ещё не подтверждён.", show_alert=True)
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    message_text, candidate_tz, candidate_city = await _render_candidate_notification(slot)
+    bot = get_bot()
+    try:
+        await bot.send_message(slot.candidate_tg_id, message_text)
+    except Exception:
+        logger.exception("Failed to send approval message to candidate")
+        await callback.answer("Не удалось отправить сообщение кандидату.", show_alert=True)
+        return
 
     try:
         reminder_service = get_reminder_service()
@@ -1639,13 +1728,29 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
     if reminder_service is not None:
         await reminder_service.schedule_for_slot(slot.id)
 
-    confirm_text = (
-        f"✅ Согласовано: {slot.candidate_fio or slot.candidate_tg_id} — "
-        f"{fmt_dt_local(slot.start_utc, DEFAULT_TZ)}"
+    candidate_label = (
+        slot.candidate_fio
+        or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "—")
     )
-    await safe_edit_text_or_caption(callback.message, confirm_text)
+    summary_parts = [
+        "✅ Сообщение отправлено кандидату.",
+        f"👤 {html.escape(candidate_label)}",
+        f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
+    ]
+    if candidate_city:
+        summary_parts.append(f"📍 {html.escape(candidate_city)}")
+    summary_parts.extend(
+        [
+            "",
+            "<b>Текст сообщения:</b>",
+            f"<blockquote>{message_text}</blockquote>",
+        ]
+    )
+    summary_text = "\n".join(summary_parts)
+
+    await safe_edit_text_or_caption(callback.message, summary_text)
     await safe_remove_reply_markup(callback.message)
-    await callback.answer("Согласовано")
+    await callback.answer("Сообщение отправлено.")
 
 
 async def handle_reject_slot(callback: CallbackQuery) -> None:
@@ -1839,6 +1944,7 @@ __all__ = [
     "handle_test1_answer",
     "handle_test1_option",
     "handle_test2_answer",
+    "handle_send_slot_message",
     "get_bot",
     "get_rating",
     "get_state_manager",
