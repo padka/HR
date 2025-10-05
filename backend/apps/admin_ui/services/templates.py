@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Sequence
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.core.db import async_session
 from backend.domain.models import City, Template
@@ -162,9 +163,48 @@ async def update_templates_for_city(
     return await _apply(session)
 
 
+def _preview_text(text: str, limit: int = 140) -> str:
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
+
+
 async def list_templates() -> Dict[str, object]:
     overview = await templates_overview()
-    return overview
+
+    async with async_session() as session:
+        items = (
+            await session.scalars(
+                select(Template)
+                .options(selectinload(Template.city))
+                .order_by(Template.id.desc())
+            )
+        ).all()
+
+    custom_templates: List[Dict[str, object]] = []
+    for item in items:
+        if item.key in STAGE_KEYS:
+            continue
+        city = getattr(item, "city", None)
+        preview = _preview_text(item.content)
+        custom_templates.append(
+            {
+                "id": item.id,
+                "key": item.key,
+                "city_id": item.city_id,
+                "city_name": getattr(city, "name", None),
+                "city_tz": getattr(city, "tz", None),
+                "is_global": item.city_id is None,
+                "length": len(item.content or ""),
+                "preview": preview,
+            }
+        )
+
+    return {
+        "overview": overview,
+        "custom_templates": custom_templates,
+    }
 
 
 async def create_template(text: str, city_id: Optional[int], *, key: Optional[str] = None) -> str:
