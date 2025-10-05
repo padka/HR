@@ -159,6 +159,101 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+.template-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(20px, 6vw, 48px);
+  background: color-mix(in srgb, rgba(6, 10, 18, 0.85) 82%, transparent);
+  backdrop-filter: blur(calc(var(--blur) * 1.1)) saturate(calc(var(--sat) * 1.05));
+  -webkit-backdrop-filter: blur(calc(var(--blur) * 1.1)) saturate(calc(var(--sat) * 1.05));
+  z-index: 3000;
+}
+
+.template-modal-backdrop[hidden] {
+  display: none;
+}
+
+.template-modal {
+  width: min(720px, 100%);
+  display: grid;
+  gap: clamp(18px, 3vw, 28px);
+  padding: clamp(22px, 4vw, 32px);
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--glass-stroke) 78%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 88%, transparent), rgba(0,0,0,0.18)),
+    linear-gradient(0deg, rgba(255,255,255,0.02), rgba(255,255,255,0.02));
+  box-shadow: 0 40px 90px rgba(0,0,0,0.45);
+}
+
+.template-modal__header {
+  display: grid;
+  gap: 6px;
+}
+
+.template-modal__title {
+  margin: 0;
+  font-size: clamp(18px, 2.6vw, 22px);
+  font-weight: 600;
+  color: var(--fg-strong);
+}
+
+.template-modal__meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.template-modal__body {
+  display: grid;
+  gap: 10px;
+}
+
+.template-modal__body label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.template-modal textarea {
+  width: 100%;
+  min-height: clamp(160px, 30vh, 240px);
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--field-border) 78%, transparent);
+  background: var(--field-bg);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+  box-shadow: var(--field-shadow);
+}
+
+.template-modal textarea:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.template-modal__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.template-modal__footer .status-badge {
+  margin-right: auto;
+}
+
+.template-modal__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .form-shell__actions .btn.btn--primary {
   color: var(--fg-strong);
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 35%, transparent), rgba(255,255,255,0.06));

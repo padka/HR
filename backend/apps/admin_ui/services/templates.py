@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.apps.bot import templates as bot_templates
 from backend.core.db import async_session
 from backend.domain.models import City, Template
 from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
@@ -158,9 +159,11 @@ async def update_templates_for_city(
             except Exception:
                 await own_session.rollback()
                 raise
-            return None
+        bot_templates.clear_cache()
+        return None
 
-    return await _apply(session)
+    result = await _apply(session)
+    return result
 
 
 def _preview_text(text: str, limit: int = 140) -> str:
@@ -225,6 +228,7 @@ async def create_template(text: str, city_id: Optional[int], *, key: Optional[st
                 # Retry with a freshly generated key
                 key = None
                 continue
+            bot_templates.clear_cache()
             return final_key
 
 
@@ -246,6 +250,7 @@ async def update_template(tmpl_id: int, *, key: str, text: str, city_id: Optiona
         except IntegrityError:
             await session.rollback()
             return False
+        bot_templates.clear_cache()
         return True
 
 
@@ -253,6 +258,7 @@ async def delete_template(tmpl_id: int) -> None:
     async with async_session() as session:
         await session.execute(delete(Template).where(Template.id == tmpl_id))
         await session.commit()
+    bot_templates.clear_cache()
 
 
 async def api_templates_payload(

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from sqlalchemy import select, update
 from sqlalchemy.inspection import inspect as sa_inspect
 
+from backend.apps.bot import templates as bot_templates
 from backend.core.db import async_session
 from backend.domain.models import City, Recruiter
 
@@ -94,6 +95,7 @@ async def update_city_settings(
                 return error
 
             await session.commit()
+            bot_templates.clear_cache()
         except Exception:
             await session.rollback()
             raise

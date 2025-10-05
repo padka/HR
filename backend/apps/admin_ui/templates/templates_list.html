@@ -35,70 +35,148 @@
   <section class="card glass tilt" data-tilt data-tilt-max="4" data-tilt-speed="400">
     <header class="page-header">
       <div>
-        <h3 class="card-title">Глобальные шаблоны</h3>
-        <p class="page-description">Используются, если для города нет собственного текста.</p>
+        <h3 class="card-title">Шаблоны этапов</h3>
+        <p class="page-description">Просматривайте и редактируйте глобальные тексты и шаблоны для городов.</p>
       </div>
     </header>
-    <form class="template-form" data-city="" autocomplete="off">
-      {% for stage in overview.global.stages %}
-        <div class="stage-field" data-stage="{{ stage.key }}">
-          <div class="stage-field__header">
-            <label for="global_{{ stage.key }}">{{ stage.title }}</label>
-            <button type="button" class="btn btn-soft btn--small stage-default">Стандартный текст</button>
-          </div>
-          <p class="stage-field__description">{{ stage.description }}</p>
-          <textarea
-            id="global_{{ stage.key }}"
-            data-stage="{{ stage.key }}"
-            data-default="{{ stage.default|e }}"
-            rows="6"
-            placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-        </div>
-      {% endfor %}
-      <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Сохранить глобальные</button>
-        <span class="badge muted save-status">Сохранено</span>
-      </div>
-    </form>
-  </section>
 
-  <section class="city-collection">
-    {% for entry in overview.cities %}
-      <article class="card glass grain city-card" data-city="{{ entry.city.id }}">
-        <header class="city-card__header">
-          <div class="city-card__title">
-            <span class="city-name">{{ entry.city.name }}</span>
-            <span class="badge" title="Часовой пояс">{{ entry.city.tz or "Europe/Moscow" }}</span>
-          </div>
-        </header>
-        <form class="template-form" data-city="{{ entry.city.id }}" autocomplete="off">
-          {% for stage in entry.stages %}
-            <div class="stage-field" data-stage="{{ stage.key }}">
-              <div class="stage-field__header">
-                <label for="stage_{{ entry.city.id }}_{{ stage.key }}">{{ stage.title }}</label>
-                <button type="button" class="btn btn-soft btn--small stage-default">Стандартный текст</button>
-              </div>
-              <p class="stage-field__description">{{ stage.description }}</p>
-              <textarea
-                id="stage_{{ entry.city.id }}_{{ stage.key }}"
-                data-stage="{{ stage.key }}"
-                data-default="{{ stage.default|e }}"
-                rows="6"
-                placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-            </div>
-          {% endfor %}
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Сохранить</button>
-            <span class="badge muted save-status">Сохранено</span>
-          </div>
-        </form>
-      </article>
-    {% else %}
-      <div class="card glass grain">
-        <h3 class="section-title">Пока нет городов</h3>
-        <p class="page-description">Добавьте город, чтобы настроить городские сообщения.</p>
+    <div class="template-tabbar" role="tablist">
+      <button type="button" class="template-tab is-active" data-tab-target="global" role="tab" aria-selected="true">
+        Глобальные шаблоны
+      </button>
+      <button type="button" class="template-tab" data-tab-target="cities" role="tab" aria-selected="false">
+        Шаблоны для городов
+      </button>
+    </div>
+
+    <div class="template-panels">
+      <div class="template-panel is-active" data-tab="global" role="tabpanel" aria-hidden="false">
+        <div class="list-table-wrapper">
+          <table class="list-table list-table--responsive template-stage-table">
+            <thead>
+              <tr>
+                <th scope="col">Этап</th>
+                <th scope="col">Статус</th>
+                <th scope="col" class="is-optional">Фрагмент</th>
+                <th scope="col" class="col-align-end">Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for stage in overview.global.stages %}
+                {% set custom_value = stage.value|default('')|trim %}
+                {% set default_value = stage.default|default('')|trim %}
+                {% set preview_source = custom_value if custom_value else default_value %}
+                <tr
+                  class="template-row"
+                  data-city=""
+                  data-stage="{{ stage.key }}"
+                  data-title="{{ stage.title|e }}"
+                  data-city-name="Глобальный"
+                >
+                  <td data-label="Этап">
+                    <div class="template-stage">
+                      <div class="template-stage__title">{{ stage.title }}</div>
+                      <div class="template-stage__description">{{ stage.description }}</div>
+                    </div>
+                    <textarea data-template-value hidden>{{ stage.value|default('')|e }}</textarea>
+                    <textarea data-template-default hidden>{{ stage.default|default('')|e }}</textarea>
+                  </td>
+                  <td data-label="Статус">
+                    <span class="status-badge" data-tone="{{ 'success' if stage.is_custom else 'info' }}" data-template-status>
+                      {{ 'Переопределён' if stage.is_custom else 'По умолчанию' }}
+                    </span>
+                  </td>
+                  <td data-label="Фрагмент" class="is-optional">
+                    <div class="template-preview" data-template-preview>
+                      {{ preview_source|replace('\n', ' ')|replace('\r', ' ')|truncate(140, True, '…') or '—' }}
+                    </div>
+                  </td>
+                  <td data-label="Действия" class="col-align-end template-actions">
+                    <div class="template-actions__group">
+                      <button type="button" class="btn btn-soft btn--small js-edit-template">Редактировать</button>
+                      <button type="button" class="btn btn-danger btn--small js-reset-template" {% if not stage.is_custom %}disabled{% endif %}>Удалить</button>
+                    </div>
+                    <span class="status-badge template-row-status" data-row-status hidden data-tone="info"></span>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
-    {% endfor %}
+      <div class="template-panel" data-tab="cities" role="tabpanel" aria-hidden="true">
+        {% if overview.cities %}
+          <div class="list-table-wrapper">
+            <table class="list-table list-table--responsive template-stage-table template-stage-table--cities">
+              <thead>
+                <tr>
+                  <th scope="col">Город</th>
+                  <th scope="col">Этап</th>
+                  <th scope="col">Статус</th>
+                  <th scope="col" class="is-optional">Фрагмент</th>
+                  <th scope="col" class="col-align-end">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for entry in overview.cities %}
+                  {% set stage_count = entry.stages|length %}
+                  {% for stage in entry.stages %}
+                    {% set custom_value = stage.value|default('')|trim %}
+                    {% set default_value = stage.default|default('')|trim %}
+                    {% set preview_source = custom_value if custom_value else default_value %}
+                    <tr
+                      class="template-row"
+                      data-city="{{ entry.city.id }}"
+                      data-stage="{{ stage.key }}"
+                      data-title="{{ stage.title|e }}"
+                      data-city-name="{{ entry.city.name|e }}"
+                    >
+                      {% if loop.first %}
+                        <td data-label="Город" rowspan="{{ stage_count }}">
+                          <div class="city-cell">
+                            <div class="city-cell__name">{{ entry.city.name }}</div>
+                            <div class="city-cell__meta">
+                              <span class="badge badge--soft">{{ entry.city.tz or "Europe/Moscow" }}</span>
+                            </div>
+                          </div>
+                        </td>
+                      {% endif %}
+                      <td data-label="Этап">
+                        <div class="template-stage">
+                          <div class="template-stage__title">{{ stage.title }}</div>
+                          <div class="template-stage__description">{{ stage.description }}</div>
+                        </div>
+                        <textarea data-template-value hidden>{{ stage.value|default('')|e }}</textarea>
+                        <textarea data-template-default hidden>{{ stage.default|default('')|e }}</textarea>
+                      </td>
+                      <td data-label="Статус">
+                        <span class="status-badge" data-tone="{{ 'success' if stage.is_custom else 'info' }}" data-template-status>
+                          {{ 'Переопределён' if stage.is_custom else 'По умолчанию' }}
+                        </span>
+                      </td>
+                      <td data-label="Фрагмент" class="is-optional">
+                        <div class="template-preview" data-template-preview>
+                          {{ preview_source|replace('\n', ' ')|replace('\r', ' ')|truncate(140, True, '…') or '—' }}
+                        </div>
+                      </td>
+                      <td data-label="Действия" class="col-align-end template-actions">
+                        <div class="template-actions__group">
+                          <button type="button" class="btn btn-soft btn--small js-edit-template">Редактировать</button>
+                          <button type="button" class="btn btn-danger btn--small js-reset-template" {% if not stage.is_custom %}disabled{% endif %}>Удалить</button>
+                        </div>
+                        <span class="status-badge template-row-status" data-row-status hidden data-tone="info"></span>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="alert mt-sm">Пока нет городов. Добавьте город, чтобы настроить локальные тексты.</div>
+        {% endif %}
+      </div>
+    </div>
   </section>
 
   <section class="card glass grain template-table-card">
@@ -149,61 +227,296 @@
   </section>
 </section>
 
+<div class="template-modal-backdrop" data-template-modal hidden>
+  <div class="template-modal card glass grain">
+    <header class="template-modal__header">
+      <h3 class="template-modal__title" data-modal-title>Редактирование шаблона</h3>
+      <p class="template-modal__meta" data-modal-meta></p>
+    </header>
+    <div class="template-modal__body">
+      <label for="template_modal_textarea">Текст сообщения</label>
+      <textarea id="template_modal_textarea" rows="8" data-modal-input></textarea>
+    </div>
+    <footer class="template-modal__footer">
+      <span class="status-badge" data-modal-status hidden data-tone="info"></span>
+      <div class="template-modal__actions">
+        <button type="button" class="btn btn-soft btn--small" data-modal-fill-default>Стандартный текст</button>
+        <button type="button" class="btn btn-soft" data-modal-cancel>Отмена</button>
+        <button type="button" class="btn btn-primary" data-modal-save>Сохранить</button>
+      </div>
+    </footer>
+  </div>
+</div>
+
 <script>
 (function(){
-  const forms = Array.from(document.querySelectorAll('.template-form'));
+  const tabButtons = Array.from(document.querySelectorAll('.template-tab'));
+  const tabPanels = Array.from(document.querySelectorAll('.template-panel'));
 
-  function gatherPayload(form){
-    const templates = {};
-    form.querySelectorAll('textarea[data-stage]').forEach(ta => {
-      const key = ta.dataset.stage;
-      if (key) templates[key] = ta.value.trim();
+  tabButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const target = button.dataset.tabTarget;
+      tabButtons.forEach((btn) => {
+        const isActive = btn === button;
+        btn.classList.toggle('is-active', isActive);
+        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
+      tabPanels.forEach((panel) => {
+        const isActive = panel.dataset.tab === target;
+        panel.classList.toggle('is-active', isActive);
+        panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+      });
     });
-    return templates;
+  });
+
+  const modalBackdrop = document.querySelector('[data-template-modal]');
+  const modalTextarea = modalBackdrop ? modalBackdrop.querySelector('[data-modal-input]') : null;
+  const modalSave = modalBackdrop ? modalBackdrop.querySelector('[data-modal-save]') : null;
+  const modalCancel = modalBackdrop ? modalBackdrop.querySelector('[data-modal-cancel]') : null;
+  const modalDefault = modalBackdrop ? modalBackdrop.querySelector('[data-modal-fill-default]') : null;
+  const modalTitle = modalBackdrop ? modalBackdrop.querySelector('[data-modal-title]') : null;
+  const modalMeta = modalBackdrop ? modalBackdrop.querySelector('[data-modal-meta]') : null;
+  const modalStatus = modalBackdrop ? modalBackdrop.querySelector('[data-modal-status]') : null;
+
+  let activeRow = null;
+
+  function previewText(text) {
+    const cleaned = (text || '').replace(/\s+/g, ' ').trim();
+    if (!cleaned) return '—';
+    if (cleaned.length <= 140) return cleaned;
+    return cleaned.slice(0, 139).trimEnd() + '…';
   }
 
-  forms.forEach(form => {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const saveBadge = form.querySelector('.save-status');
-      if (saveBadge) {
-        saveBadge.style.display = 'inline-block';
-        saveBadge.classList.remove('ok', 'err');
-        saveBadge.textContent = 'Сохранение…';
-      }
-      const cityId = form.dataset.city || null;
-      try {
-        const resp = await fetch('/templates/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ city_id: cityId && cityId !== 'undefined' ? cityId : null, templates: gatherPayload(form) })
-        });
-        const json = await resp.json();
-        if (!json || json.ok !== true) throw new Error(json && json.error || 'Ошибка сохранения');
-        if (saveBadge) {
-          saveBadge.textContent = 'Сохранено';
-          saveBadge.classList.add('ok');
-          setTimeout(() => { saveBadge.style.display = 'none'; saveBadge.classList.remove('ok'); }, 1400);
-        }
-      } catch (err) {
-        if (saveBadge) {
-          saveBadge.textContent = 'Ошибка';
-          saveBadge.classList.add('err');
-        }
-      }
-    });
-  });
+  function getRowValue(row) {
+    const field = row.querySelector('[data-template-value]');
+    return field ? field.value : '';
+  }
 
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('.stage-default');
-    if (!btn) return;
-    const field = btn.closest('.stage-field');
-    const textarea = field ? field.querySelector('textarea[data-stage]') : null;
-    if (textarea) {
-      textarea.value = textarea.dataset.default || '';
-      textarea.focus();
+  function setRowValue(row, value) {
+    const field = row.querySelector('[data-template-value]');
+    if (field) {
+      field.value = value;
+    }
+  }
+
+  function getRowDefault(row) {
+    const field = row.querySelector('[data-template-default]');
+    return field ? field.value : '';
+  }
+
+  function updateRowState(row) {
+    const statusBadge = row.querySelector('[data-template-status]');
+    const deleteButton = row.querySelector('.js-reset-template');
+    const preview = row.querySelector('[data-template-preview]');
+    const current = (getRowValue(row) || '').trim();
+    const fallback = (getRowDefault(row) || '').trim();
+    const hasCustom = current.length > 0;
+
+    if (statusBadge) {
+      statusBadge.textContent = hasCustom ? 'Переопределён' : 'По умолчанию';
+      statusBadge.dataset.tone = hasCustom ? 'success' : 'info';
+    }
+    if (deleteButton) {
+      deleteButton.disabled = !hasCustom;
+    }
+    if (preview) {
+      const text = hasCustom ? current : fallback;
+      preview.textContent = previewText(text);
+    }
+  }
+
+  function showRowStatus(row, text, tone = 'info', autoHide = false) {
+    const badge = row.querySelector('[data-row-status]');
+    if (!badge) return;
+    if (!text) {
+      badge.textContent = '';
+      badge.dataset.tone = 'info';
+      badge.setAttribute('hidden', '');
+      return;
+    }
+    badge.textContent = text;
+    badge.dataset.tone = tone;
+    badge.removeAttribute('hidden');
+    if (autoHide) {
+      const timeout = typeof autoHide === 'number' ? autoHide : 1600;
+      setTimeout(() => {
+        badge.setAttribute('hidden', '');
+      }, timeout);
+    }
+  }
+
+  function gatherCityPayload(cityId, stageKey, overrideValue) {
+    const selector = `.template-row[data-city="${cityId}"]`;
+    const rows = Array.from(document.querySelectorAll(selector));
+    const payload = {};
+    rows.forEach((row) => {
+      const key = row.dataset.stage;
+      if (!key) return;
+      let value = getRowValue(row);
+      if (key === stageKey) {
+        value = overrideValue;
+      }
+      payload[key] = value;
+    });
+    return payload;
+  }
+
+  async function persistTemplates(cityIdRaw, stageKey, value) {
+    const payload = gatherCityPayload(cityIdRaw, stageKey, value);
+    const numeric = cityIdRaw === '' ? null : Number(cityIdRaw);
+    const cityId = numeric === null || Number.isNaN(numeric) ? (cityIdRaw === '' ? null : cityIdRaw) : numeric;
+
+    const response = await fetch('/templates/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ city_id: cityId, templates: payload })
+    });
+
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (err) {
+      data = null;
+    }
+
+    if (!response.ok || !data || data.ok !== true) {
+      const detail = data && data.error ? data.error : 'Ошибка сохранения';
+      throw new Error(detail);
+    }
+  }
+
+  function setModalStatus(text, tone = 'info') {
+    if (!modalStatus) return;
+    if (!text) {
+      modalStatus.textContent = '';
+      modalStatus.dataset.tone = 'info';
+      modalStatus.setAttribute('hidden', '');
+      return;
+    }
+    modalStatus.textContent = text;
+    modalStatus.dataset.tone = tone;
+    modalStatus.removeAttribute('hidden');
+  }
+
+  function openModal(row) {
+    if (!modalBackdrop || !modalTextarea) return;
+    activeRow = row;
+    const cityId = row.dataset.city || '';
+    const stageTitle = row.dataset.title || 'Редактирование шаблона';
+    modalBackdrop.dataset.city = cityId;
+    modalBackdrop.dataset.stage = row.dataset.stage || '';
+    modalTextarea.value = getRowValue(row);
+    if (modalTitle) {
+      modalTitle.textContent = stageTitle;
+    }
+    if (modalMeta) {
+      modalMeta.textContent = cityId ? `Город: ${row.dataset.cityName || cityId}` : 'Глобальный шаблон';
+    }
+    setModalStatus('');
+    modalBackdrop.removeAttribute('hidden');
+    modalBackdrop.classList.add('is-visible');
+    setTimeout(() => {
+      modalTextarea.focus();
+    }, 0);
+  }
+
+  function closeModal() {
+    if (!modalBackdrop || !modalTextarea) return;
+    modalBackdrop.setAttribute('hidden', '');
+    modalBackdrop.classList.remove('is-visible');
+    modalBackdrop.dataset.city = '';
+    modalBackdrop.dataset.stage = '';
+    modalTextarea.value = '';
+    setModalStatus('');
+    activeRow = null;
+  }
+
+  document.addEventListener('click', (event) => {
+    const editBtn = event.target.closest('.js-edit-template');
+    if (editBtn) {
+      const row = editBtn.closest('.template-row');
+      if (row) {
+        openModal(row);
+      }
+      return;
+    }
+
+    const resetBtn = event.target.closest('.js-reset-template');
+    if (resetBtn) {
+      const row = resetBtn.closest('.template-row');
+      if (!row) return;
+      if (!window.confirm('Удалить текст шаблона? Будет использован текст по умолчанию.')) {
+        return;
+      }
+      const cityId = row.dataset.city || '';
+      const stageKey = row.dataset.stage;
+      showRowStatus(row, 'Сохранение…', 'info');
+      persistTemplates(cityId, stageKey, '')
+        .then(() => {
+          setRowValue(row, '');
+          updateRowState(row);
+          showRowStatus(row, 'Сброшено', 'success', true);
+        })
+        .catch(() => {
+          showRowStatus(row, 'Ошибка', 'danger');
+        });
     }
   });
+
+  if (modalBackdrop) {
+    modalBackdrop.addEventListener('click', (event) => {
+      if (event.target === modalBackdrop) {
+        closeModal();
+      }
+    });
+    modalBackdrop.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeModal();
+      }
+    });
+  }
+
+  if (modalCancel) {
+    modalCancel.addEventListener('click', closeModal);
+  }
+
+  if (modalDefault) {
+    modalDefault.addEventListener('click', () => {
+      if (!activeRow || !modalTextarea) return;
+      modalTextarea.value = getRowDefault(activeRow);
+      modalTextarea.focus();
+    });
+  }
+
+  if (modalSave) {
+    modalSave.addEventListener('click', async () => {
+      if (!activeRow || !modalBackdrop || !modalTextarea) return;
+      const cityId = modalBackdrop.dataset.city || '';
+      const stageKey = modalBackdrop.dataset.stage;
+      const newValue = modalTextarea.value || '';
+      setModalStatus('Сохранение…', 'info');
+      try {
+        await persistTemplates(cityId, stageKey, newValue);
+        setRowValue(activeRow, newValue);
+        updateRowState(activeRow);
+        showRowStatus(activeRow, 'Сохранено', 'success', true);
+        closeModal();
+      } catch (err) {
+        setModalStatus('Ошибка сохранения', 'danger');
+      }
+    });
+  }
+
+  if (modalTextarea) {
+    modalTextarea.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        closeModal();
+      }
+    });
+  }
+
+  document.querySelectorAll('.template-row').forEach(updateRowState);
 })();
 </script>
 {% endblock %}
