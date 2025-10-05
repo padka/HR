@@ -1614,13 +1614,6 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
     )
     await callback.answer()
 
-    try:
-        reminder_service = get_reminder_service()
-    except RuntimeError:
-        reminder_service = None
-    if reminder_service is not None:
-        await reminder_service.schedule_for_slot(slot.id)
-
 
 async def _resolve_candidate_state_for_slot(slot: Slot) -> Dict[str, Any]:
     if slot.candidate_tg_id is None:

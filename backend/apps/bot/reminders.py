@@ -101,10 +101,7 @@ class ReminderService:
                 return
             if slot.candidate_tg_id is None:
                 return
-            if (slot.status or "").lower() not in {
-                SlotStatus.PENDING,
-                SlotStatus.BOOKED,
-            }:
+            if (slot.status or "").lower() != SlotStatus.BOOKED:
                 return
 
             reminders = self._build_schedule(
@@ -296,8 +293,6 @@ class ReminderService:
         zone = _safe_zone(tz)
         start_local = start_utc.astimezone(zone)
         targets: List[tuple[ReminderKind, timedelta]] = [
-            (ReminderKind.REMIND_24H, timedelta(hours=24)),
-            (ReminderKind.CONFIRM_6H, timedelta(hours=6)),
             (ReminderKind.CONFIRM_2H, timedelta(hours=2)),
             (ReminderKind.REMIND_1H, timedelta(hours=1)),
         ]
