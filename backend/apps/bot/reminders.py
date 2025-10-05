@@ -6,9 +6,10 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from enum import Enum
 from typing import Dict, List, Optional
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.jobstores.memory import MemoryJobStore
@@ -23,6 +24,11 @@ from backend.domain.models import SlotReminderJob, SlotStatus
 from backend.domain.repositories import get_slot
 
 logger = logging.getLogger(__name__)
+
+
+_DEFAULT_ZONE = ZoneInfo(DEFAULT_TZ)
+_ZONE_ALIASES = {name.lower(): name for name in available_timezones()}
+_ZONE_ALIASES.setdefault(DEFAULT_TZ.lower(), DEFAULT_TZ)
 
 
 class ReminderKind(str, Enum):
@@ -338,10 +344,51 @@ __all__ = [
 
 
 def _safe_zone(tz: Optional[str]) -> ZoneInfo:
-    try:
-        return ZoneInfo(tz or DEFAULT_TZ)
-    except Exception:  # pragma: no cover - invalid timezone fallback
-        return ZoneInfo(DEFAULT_TZ)
+    if not tz:
+        return _DEFAULT_ZONE
+    return _resolve_zone(tz)
+
+
+@lru_cache(maxsize=None)
+def _resolve_zone(label: str) -> ZoneInfo:
+    cleaned = label.strip()
+    if not cleaned:
+        return _DEFAULT_ZONE
+
+    candidates = []
+    seen: set[str] = set()
+
+    def add(value: Optional[str]) -> None:
+        if not value:
+            return
+        if value not in seen:
+            seen.add(value)
+            candidates.append(value)
+
+    add(cleaned)
+    add(cleaned.replace(" ", ""))
+    add(cleaned.replace(" ", "_"))
+    add(cleaned.replace("-", "_"))
+    if "/" in cleaned:
+        parts = cleaned.split("/")
+        add("/".join(part.capitalize() for part in parts))
+        add("/".join(part.title() for part in parts))
+
+    add(cleaned.title())
+    add(cleaned.upper())
+    add(cleaned.lower())
+
+    for candidate in list(candidates):
+        canonical = _ZONE_ALIASES.get(candidate.lower())
+        if canonical:
+            add(canonical)
+
+    for candidate in candidates:
+        try:
+            return ZoneInfo(candidate)
+        except ZoneInfoNotFoundError:
+            continue
+    return _DEFAULT_ZONE
 
 
 def _slot_local_labels(dt_utc: datetime, tz: str) -> Dict[str, str]:

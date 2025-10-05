@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -150,3 +151,18 @@ async def test_reminders_sent_immediately_for_past_targets(monkeypatch):
         assert scheduler.get_jobs() == []
     finally:
         await service.shutdown()
+
+
+def test_schedule_respects_non_canonical_timezone():
+    scheduler = create_scheduler(redis_url=None)
+    service = ReminderService(scheduler=scheduler)
+
+    messy_tz = " asia/novosibirsk "
+    start_utc = datetime(2025, 2, 1, 9, 0, tzinfo=timezone.utc)
+
+    reminders = service._build_schedule(start_utc, messy_tz)
+
+    assert reminders
+    local_zone = reminders[0][2].tzinfo
+    assert local_zone is not None
+    assert getattr(local_zone, "key", str(local_zone)) == "Asia/Novosibirsk"
