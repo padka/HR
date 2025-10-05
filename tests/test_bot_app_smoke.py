@@ -14,13 +14,16 @@ async def test_create_application_smoke(monkeypatch):
 
     monkeypatch.setattr(bot_app, "init_models", dummy_init_models)
 
-    bot, dispatcher, state_manager = bot_app.create_application("123456:ABCDEF")
+    bot, dispatcher, state_manager, reminder_service = await bot_app.create_application(
+        "123456:ABCDEF"
+    )
 
     assert isinstance(state_manager, StateManager)
     assert dispatcher is not None
 
     await bot.session.close()
     await state_manager.close()
+    await reminder_service.shutdown()
 
 
 @pytest.mark.asyncio
