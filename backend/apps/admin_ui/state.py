@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from fastapi import FastAPI
 
 from backend.apps.admin_ui.services.bot_service import (
@@ -88,9 +91,20 @@ def _build_bot(settings) -> Tuple[Optional[Bot], bool]:
         logger.warning("%s; running with NullBot", message)
         return None, False
 
+    session = None
     try:
-        bot = Bot(token=token, default=DEFAULT_BOT_PROPERTIES)
+        if settings.bot_api_base:
+            api = TelegramAPIServer.from_base(settings.bot_api_base)
+            session = AiohttpSession(api=api)
+        bot = Bot(token=token, default=DEFAULT_BOT_PROPERTIES, session=session)
     except Exception:
+        if session is not None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None and not loop.is_closed():
+                loop.create_task(session.close())
         logger.exception("Failed to initialise Telegram bot; running with NullBot")
         if settings.bot_failfast:
             raise

@@ -38,3 +38,23 @@ async def test_setup_bot_state_without_token(monkeypatch):
         assert app.state.reminder_service is integration.reminder_service
     finally:
         await integration.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_setup_bot_state_with_custom_api_base(monkeypatch):
+    app = FastAPI()
+    base_url = "https://example.invalid"
+
+    monkeypatch.setattr(
+        state_module,
+        "get_settings",
+        lambda: DummySettings(bot_token="123:ABC", bot_api_base=base_url),
+    )
+
+    integration = await state_module.setup_bot_state(app)
+
+    try:
+        assert integration.bot is not None
+        assert integration.bot.session.api.base == base_url
+    finally:
+        await integration.shutdown()
