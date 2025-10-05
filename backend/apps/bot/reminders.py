@@ -30,6 +30,7 @@ class ReminderKind(str, Enum):
     REMIND_2H = "remind_2h"
     REMIND_1H = "remind_1h"
     CONFIRM_6H = "confirm_6h"
+    CONFIRM_2H = "confirm_2h"
 
 
 class ReminderService:
@@ -111,17 +112,31 @@ class ReminderService:
             now_local = datetime.now(candidate_zone)
 
             async with async_session() as session:
+                immediate: Dict[str, tuple[ReminderKind, datetime, datetime]] = {}
+                future: List[tuple[ReminderKind, datetime, datetime]] = []
+
                 for kind, run_at_utc, run_at_local in reminders:
                     if run_at_local <= now_local:
-                        await session.execute(
-                            SlotReminderJob.__table__.delete().where(
-                                SlotReminderJob.slot_id == slot_id,
-                                SlotReminderJob.kind == kind.value,
-                            )
+                        group = _immediate_group(kind)
+                        current = immediate.get(group)
+                        if current is None or run_at_local > current[2]:
+                            immediate[group] = (kind, run_at_utc, run_at_local)
+                    else:
+                        future.append((kind, run_at_utc, run_at_local))
+
+                for kind, run_at_utc, _run_at_local in sorted(
+                    immediate.values(), key=lambda item: item[2]
+                ):
+                    await session.execute(
+                        SlotReminderJob.__table__.delete().where(
+                            SlotReminderJob.slot_id == slot_id,
+                            SlotReminderJob.kind == kind.value,
                         )
-                        await session.commit()
-                        await self._execute_job(slot_id, kind)
-                        continue
+                    )
+                    await session.commit()
+                    await self._execute_job(slot_id, kind)
+
+                for kind, run_at_utc, _run_at_local in future:
                     job_id = self._job_id(slot_id, kind)
                     self._scheduler.add_job(
                         self._execute_job,
@@ -156,10 +171,14 @@ class ReminderService:
     def stats(self) -> Dict[str, int]:
         jobs = self._scheduler.get_jobs()
         total = len(jobs)
+        confirm_suffixes = {
+            ReminderKind.CONFIRM_6H.value,
+            ReminderKind.CONFIRM_2H.value,
+        }
         confirm = sum(
             1
             for job in jobs
-            if job.id and job.id.endswith(ReminderKind.CONFIRM_6H.value)
+            if job.id and any(job.id.endswith(suffix) for suffix in confirm_suffixes)
         )
         return {
             "total": total,
@@ -222,10 +241,16 @@ class ReminderService:
             logger.warning("Bot not configured; skipping reminder for slot %s", slot_id)
             return
 
-        if kind == ReminderKind.CONFIRM_6H:
+        confirm_templates = {
+            ReminderKind.CONFIRM_6H: "confirm_6h",
+            ReminderKind.CONFIRM_2H: "confirm_2h",
+            # Historical jobs stored as ``remind_2h`` should now behave like confirmations.
+            ReminderKind.REMIND_2H: "confirm_2h",
+        }
+        if kind in confirm_templates:
             text = await templates.tpl(
                 getattr(slot, "candidate_city_id", None),
-                "confirm_6h",
+                confirm_templates[kind],
                 candidate_fio=getattr(slot, "candidate_fio", "") or "",
                 dt=_fmt_dt_local(slot.start_utc, tz),
                 **labels,
@@ -242,7 +267,6 @@ class ReminderService:
 
         template_key = {
             ReminderKind.REMIND_24H: "reminder_24h",
-            ReminderKind.REMIND_2H: "reminder_2h",
             ReminderKind.REMIND_1H: "reminder_1h",
         }[kind]
 
@@ -268,7 +292,7 @@ class ReminderService:
         targets: List[tuple[ReminderKind, timedelta]] = [
             (ReminderKind.REMIND_24H, timedelta(hours=24)),
             (ReminderKind.CONFIRM_6H, timedelta(hours=6)),
-            (ReminderKind.REMIND_2H, timedelta(hours=2)),
+            (ReminderKind.CONFIRM_2H, timedelta(hours=2)),
             (ReminderKind.REMIND_1H, timedelta(hours=1)),
         ]
         schedule: List[tuple[ReminderKind, datetime, datetime]] = []
@@ -337,3 +361,18 @@ def _ensure_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _immediate_group(kind: ReminderKind) -> str:
+    if kind in {
+        ReminderKind.CONFIRM_6H,
+        ReminderKind.CONFIRM_2H,
+        ReminderKind.REMIND_2H,
+    }:
+        return "confirm"
+    if kind in {
+        ReminderKind.REMIND_24H,
+        ReminderKind.REMIND_1H,
+    }:
+        return "reminder"
+    return kind.value
