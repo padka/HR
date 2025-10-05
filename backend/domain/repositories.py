@@ -246,7 +246,8 @@ async def reserve_slot(
     purpose: str = "interview",
     expected_recruiter_id: Optional[int] = None,
     expected_city_id: Optional[int] = None,
-) -> Optional[Slot]:
+) -> ReservationResult:
+    """Attempt to reserve the slot and describe the outcome."""
     now_utc = datetime.now(timezone.utc)
 
     city_name: Optional[str] = None
