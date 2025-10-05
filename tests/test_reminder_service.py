@@ -40,12 +40,11 @@ async def test_reminder_service_schedules_and_reschedules(monkeypatch):
     try:
         await service.schedule_for_slot(slot_id)
         jobs = {job.id: job for job in scheduler.get_jobs()}
-        assert len(jobs) >= 1
-        assert f"slot:{slot_id}:{ReminderKind.REMIND_24H.value}" in jobs
-        assert f"slot:{slot_id}:{ReminderKind.CONFIRM_6H.value}" in jobs
-        assert f"slot:{slot_id}:{ReminderKind.CONFIRM_2H.value}" in jobs
-        assert f"slot:{slot_id}:{ReminderKind.REMIND_1H.value}" in jobs
-        assert all("remind_30m" not in job_id for job_id in jobs)
+        expected = {
+            f"slot:{slot_id}:{ReminderKind.CONFIRM_2H.value}",
+            f"slot:{slot_id}:{ReminderKind.REMIND_1H.value}",
+        }
+        assert set(jobs) == expected
 
         # Reschedule after moving the slot
         async with async_session() as session:
@@ -55,9 +54,9 @@ async def test_reminder_service_schedules_and_reschedules(monkeypatch):
 
         await service.schedule_for_slot(slot_id)
         jobs_after = {job.id: job for job in scheduler.get_jobs()}
-        assert len(jobs_after) >= 1
-        job24 = jobs_after[f"slot:{slot_id}:{ReminderKind.REMIND_24H.value}"]
-        assert job24.next_run_time > datetime.now(timezone.utc)
+        assert set(jobs_after) == expected
+        confirm_job = jobs_after[f"slot:{slot_id}:{ReminderKind.CONFIRM_2H.value}"]
+        assert confirm_job.next_run_time > datetime.now(timezone.utc)
 
     finally:
         await service.shutdown()
