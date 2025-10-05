@@ -41,6 +41,8 @@ async def test_reminder_service_schedules_and_reschedules(monkeypatch):
         jobs = {job.id: job for job in scheduler.get_jobs()}
         assert len(jobs) >= 1
         assert f"slot:{slot_id}:{ReminderKind.REMIND_24H.value}" in jobs
+        assert f"slot:{slot_id}:{ReminderKind.REMIND_1H.value}" in jobs
+        assert all("remind_30m" not in job_id for job_id in jobs)
 
         # Reschedule after moving the slot
         async with async_session() as session:

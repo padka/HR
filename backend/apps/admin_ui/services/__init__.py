@@ -1,4 +1,14 @@
 from .dashboard import dashboard_counts
+from .candidates import (
+    CandidateRow,
+    candidate_filter_options,
+    get_candidate_detail,
+    list_candidates,
+    delete_candidate,
+    toggle_candidate_activity,
+    upsert_candidate,
+    update_candidate,
+)
 from .recruiters import (
     api_recruiters_payload,
     build_recruiter_payload,
@@ -43,6 +53,14 @@ from .questions import (
 
 __all__ = [
     "dashboard_counts",
+    "CandidateRow",
+    "candidate_filter_options",
+    "list_candidates",
+    "get_candidate_detail",
+    "upsert_candidate",
+    "toggle_candidate_activity",
+    "update_candidate",
+    "delete_candidate",
     "list_recruiters",
     "create_recruiter",
     "get_recruiter_detail",
@@ -75,4 +93,3 @@ __all__ = [
     "get_test_question_detail",
     "update_test_question",
 ]
-

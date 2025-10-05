@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}Кандидаты{% endblock %}
+{% block content %}
+<style>
+  .candidate-analytics {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-bottom: 24px;
+  }
+
+  .metric-card {
+    padding: 18px;
+    border-radius: 18px;
+    display: grid;
+    gap: 8px;
+  }
+
+  .metric-card__label {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+
+  .metric-card__value {
+    font-size: 28px;
+    font-weight: 700;
+  }
+
+  .metric-card__meta {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .pipeline-board {
+    margin-bottom: 24px;
+  }
+
+  .pipeline-board h2 {
+    font-size: 18px;
+    margin-bottom: 12px;
+  }
+
+  .pipeline-list {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+
+  .pipeline-item {
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent 30%);
+    background: color-mix(in srgb, var(--bg) 88%, var(--surface) 12%);
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 14px;
+  }
+
+  .pipeline-item strong {
+    font-size: 18px;
+  }
+
+  .entity__meta .badge + .badge {
+    margin-left: 6px;
+  }
+
+  .page-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .search-inline {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: color-mix(in srgb, var(--surface) 70%, transparent 30%);
+    padding: 6px 10px;
+    border-radius: 12px;
+  }
+
+  .search-inline input[type="search"] {
+    border: none;
+    background: transparent;
+    outline: none;
+    color: inherit;
+  }
+
+  .search-inline button {
+    padding: 6px 12px;
+  }
+</style>
+<section class="page-header">
+  <div>
+    <h1 class="page-title">Кандидаты</h1>
+    <p class="page-description">Единая база кандидатов с аналитикой и быстрыми действиями.</p>
+  </div>
+  <div class="page-actions">
+    <form method="get" action="/candidates" class="search-inline">
+      <input type="search" name="search" value="{{ filters.search }}" placeholder="Поиск по ФИО или TG ID">
+      <button class="btn btn-ghost" type="submit">Найти</button>
+    </form>
+    <a class="btn btn-primary" href="/candidates/new">+ Добавить кандидата</a>
+  </div>
+</section>
+
+{% if analytics %}
+  <section class="candidate-analytics">
+    <a class="card glass grain metric-card" href="/candidates">
+      <span class="metric-card__label">Всего кандидатов</span>
+      <div class="metric-card__value">{{ analytics.total }}</div>
+      <div class="metric-card__meta">Активны: {{ analytics.active }} • Отключены: {{ analytics.inactive }}</div>
+    </a>
+    <a class="card glass grain metric-card" href="/candidates?stage=interviews">
+      <span class="metric-card__label">Интервью</span>
+      <div class="metric-card__value">{{ analytics.upcoming_interviews }}</div>
+      <div class="metric-card__meta">В ожидании подтверждения: {{ analytics.awaiting_confirmation }} • Завершено: {{ analytics.completed_interviews }}</div>
+    </a>
+    <article class="card glass grain metric-card">
+      <span class="metric-card__label">Активность за 7 дней</span>
+      <div class="metric-card__value">{{ analytics.tests_week }}</div>
+      <div class="metric-card__meta">Тестов • Сообщений: {{ analytics.messages_week }}</div>
+    </article>
+    <a class="card glass grain metric-card" href="/candidates?stage=alerts">
+      <span class="metric-card__label">Нужно внимание</span>
+      <div class="metric-card__value">{{ analytics.need_followup }}</div>
+      <div class="metric-card__meta">Без сообщений: {{ analytics.need_followup }} • Без тестов: {{ analytics.no_tests }}</div>
+    </a>
+  </section>
+
+  <section class="pipeline-board surface glass grain">
+    <h2>Воронка интервью</h2>
+    <div class="pipeline-list">
+      {% for stage in analytics.pipeline %}
+        {% if stage.slug %}
+          <a class="pipeline-item" href="/candidates?stage={{ stage.slug }}">
+            <span>{{ stage.label }}</span>
+            <strong>{{ stage.count }}</strong>
+          </a>
+        {% else %}
+          <div class="pipeline-item">
+            <span>{{ stage.label }}</span>
+            <strong>{{ stage.count }}</strong>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}
+
+{% if items %}
+  <div class="list-table-wrapper">
+    <table class="list-table">
+      <thead>
+        <tr>
+          <th scope="col">Кандидат</th>
+          <th scope="col">Telegram ID</th>
+          <th scope="col">Город</th>
+          <th scope="col">Последняя активность</th>
+          <th scope="col">Этап</th>
+          <th scope="col">Следующий шаг</th>
+          <th scope="col">Тесты</th>
+          <th scope="col">Последний результат</th>
+          <th scope="col">Сообщения</th>
+          <th scope="col" class="col-actions">Карточка</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in items %}
+        {% set user = row.user %}
+        {% set result = row.latest_result %}
+        {% set message = row.latest_message %}
+        <tr>
+          <td>
+            <div class="entity">
+              <span class="entity__title">{{ user.fio }}</span>
+              <span class="entity__meta">
+                {% if user.is_active %}
+                  <span class="badge badge--success">Активен</span>
+                {% else %}
+                  <span class="badge badge--muted">Отключен</span>
+                {% endif %}
+              </span>
+            </div>
+          </td>
+          <td>{{ user.telegram_id }}</td>
+          <td>{{ user.city or '—' }}</td>
+          <td>{{ user.last_activity.strftime('%d.%m.%Y %H:%M') if user.last_activity else '—' }}</td>
+          <td>
+            <div class="stack">
+              <span class="badge badge--soft">{{ row.stage }}</span>
+              {% if row.latest_slot %}
+                <span class="muted">{{ row.latest_slot.status|upper }} · {{ fmt_local(row.latest_slot.start_utc, row.latest_slot.candidate_tz or 'Europe/Moscow') }}</span>
+              {% else %}
+                <span class="muted">Нет слотов</span>
+              {% endif %}
+            </div>
+          </td>
+          <td>
+            {% if row.upcoming_slot %}
+              <div class="stack">
+                <span>{{ fmt_local(row.upcoming_slot.start_utc, row.upcoming_slot.candidate_tz or 'Europe/Moscow') }}</span>
+                <span class="muted">{{ row.upcoming_slot.recruiter.name if row.upcoming_slot.recruiter else '' }}</span>
+              </div>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.tests_total %}
+              <span class="badge badge--info">{{ row.tests_total }}</span>
+              {% if row.average_score is not none %}
+                <span class="muted">ср. {{ '%.2f'|format(row.average_score) }}</span>
+              {% endif %}
+            {% else %}
+              <span class="muted">Нет</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if result %}
+              <div class="stack">
+                <span><strong>{{ result.final_score }}</strong> ({{ result.rating }})</span>
+                <span class="muted">{{ result.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
+              </div>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.messages_total %}
+              <div class="stack">
+                <span class="badge badge--soft">{{ row.messages_total }}</span>
+                {% if message %}
+                  <span class="muted" title="{{ message.message_text }}">{{ message.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
+                {% endif %}
+              </div>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="col-actions">
+            <a class="btn btn-ghost" href="/candidates/{{ user.id }}">Открыть</a>
+            <form method="post" action="/candidates/{{ user.id }}/delete" class="inline-form" onsubmit="return confirm('Удалить кандидата {{ user.fio }}?');">
+              <button class="btn btn-soft" type="submit">Удалить</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% set qsearch = '&search=' ~ filters.search|urlencode if filters.search else '' %}
+  {% set qcity = '&city=' ~ filters.city|urlencode if filters.city else '' %}
+  {% set qactive = '' %}
+  {% if filters.is_active is sameas true %}
+    {% set qactive = '&active=true' %}
+  {% elif filters.is_active is sameas false %}
+    {% set qactive = '&active=false' %}
+  {% endif %}
+  {% set qrating = '&rating=' ~ filters.rating|urlencode if filters.rating else '' %}
+  {% set qtests = '' %}
+  {% if filters.has_tests is sameas true %}
+    {% set qtests = '&has_tests=true' %}
+  {% elif filters.has_tests is sameas false %}
+    {% set qtests = '&has_tests=false' %}
+  {% endif %}
+  {% set qmsgs = '' %}
+  {% if filters.has_messages is sameas true %}
+    {% set qmsgs = '&has_messages=true' %}
+  {% elif filters.has_messages is sameas false %}
+    {% set qmsgs = '&has_messages=false' %}
+  {% endif %}
+  {% set qpp = '&per_page=' ~ per_page if per_page else '' %}
+
+  <div class="pagination">
+    <span class="badge badge--soft">Страница {{ page }} из {{ pages_total }}</span>
+
+    {% if page > 1 %}
+      <a class="btn btn-ghost" href="/candidates?page=1{{ qsearch }}{{ qcity }}{{ qactive }}{{ qrating }}{{ qtests }}{{ qmsgs }}{{ qpp }}">« Первая</a>
+      <a class="btn btn-ghost" href="/candidates?page={{ page-1 }}{{ qsearch }}{{ qcity }}{{ qactive }}{{ qrating }}{{ qtests }}{{ qmsgs }}{{ qpp }}">‹ Назад</a>
+    {% else %}
+      <span class="btn btn-ghost" aria-disabled="true">« Первая</span>
+      <span class="btn btn-ghost" aria-disabled="true">‹ Назад</span>
+    {% endif %}
+
+    {% if page < pages_total %}
+      <a class="btn btn-ghost" href="/candidates?page={{ page+1 }}{{ qsearch }}{{ qcity }}{{ qactive }}{{ qrating }}{{ qtests }}{{ qmsgs }}{{ qpp }}">Вперёд ›</a>
+      <a class="btn btn-ghost" href="/candidates?page={{ pages_total }}{{ qsearch }}{{ qcity }}{{ qactive }}{{ qrating }}{{ qtests }}{{ qmsgs }}{{ qpp }}">Последняя »</a>
+    {% else %}
+      <span class="btn btn-ghost" aria-disabled="true">Вперёд ›</span>
+      <span class="btn btn-ghost" aria-disabled="true">Последняя »</span>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="card glass grain" role="status">
+    <h3 class="section-title">Список пуст</h3>
+    <p class="page-description">Добавьте кандидата или измените фильтры для отображения данных.</p>
+  </div>
+{% endif %}
+{% endblock %}

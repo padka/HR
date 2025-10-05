@@ -1,10 +1,13 @@
 import pytest
+from sqlalchemy import select
 
 from backend.apps.bot import templates
+from backend.apps.bot.config import TEST1_QUESTIONS
 from backend.apps.bot.services import StateManager, configure as configure_bot_services, finalize_test1
 from backend.apps.bot.state_store import InMemoryStateStore
 from backend.core.db import async_session
 from backend.domain import models
+from backend.domain.candidates.models import TestResult, User
 
 
 class DummyBot:
@@ -48,7 +51,7 @@ async def test_finalize_test1_notifies_recruiter():
             "city_name": "Казань",
             "city_id": city.id,
             "candidate_tz": "Europe/Moscow",
-            "test1_answers": {},
+            "test1_answers": {TEST1_QUESTIONS[0]["id"]: "Answer"},
         },
     )
 
@@ -60,7 +63,16 @@ async def test_finalize_test1_notifies_recruiter():
     assert bot.documents, "Recruiter should receive Test 1 document"
     doc_entry = bot.documents[0]
     assert doc_entry[0] == recruiter.tg_chat_id
-    assert "test1_Test User" in str(doc_entry[1])
+    file_obj = doc_entry[1]
+    file_path = getattr(file_obj, "path", str(file_obj))
+    assert "test1_Test User" in str(file_path)
 
     updated_state = await state_manager.get(user_id)
     assert updated_state.get("t1_notified") is True
+
+    async with async_session() as session:
+        db_user = await session.scalar(select(User).where(User.telegram_id == user_id))
+        assert db_user is not None
+        assert db_user.fio == "Test User"
+        result = await session.scalar(select(TestResult).where(TestResult.user_id == db_user.id))
+        assert result is not None

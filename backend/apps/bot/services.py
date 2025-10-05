@@ -19,6 +19,7 @@ from aiogram.types import CallbackQuery, ForceReply, Message, FSInputFile
 from pydantic import ValidationError
 
 from backend.core.settings import get_settings
+from backend.domain.candidates import services as candidate_services
 from backend.domain.models import SlotStatus, Slot
 from backend.domain.repositories import (
     approve_slot,
@@ -1126,6 +1127,45 @@ async def finalize_test1(user_id: int) -> None:
 
     await show_recruiter_menu(user_id)
 
+    try:
+        fio = state.get("fio") or f"TG {user_id}"
+        city_name = state.get("city_name") or ""
+        candidate = await candidate_services.create_or_update_user(
+            telegram_id=user_id,
+            fio=fio,
+            city=city_name,
+        )
+
+        answers = state.get("test1_answers") or {}
+        question_data = []
+        for idx, question in enumerate(sequence, start=1):
+            prompt = question.get("prompt", "")
+            qid = question.get("id")
+            answer = answers.get(qid, "")
+            question_data.append(
+                {
+                    "question_index": idx,
+                    "question_text": prompt,
+                    "correct_answer": None,
+                    "user_answer": answer,
+                    "attempts_count": 1 if answer else 0,
+                    "time_spent": 0,
+                    "is_correct": True,
+                    "overtime": False,
+                }
+            )
+
+        await candidate_services.save_test_result(
+            user_id=candidate.id,
+            raw_score=len(question_data),
+            final_score=float(len(question_data)),
+            rating="TEST1",
+            total_time=int(state.get("test1_duration") or 0),
+            question_data=question_data,
+        )
+    except Exception:  # pragma: no cover - auxiliary sync must not break flow
+        logger.exception("Failed to persist candidate profile for Test1")
+
     await record_test1_completion()
 
     def _reset(st: State) -> Tuple[State, None]:
@@ -1556,12 +1596,14 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         await safe_remove_reply_markup(callback.message)
         return
 
-    if slot.status == SlotStatus.BOOKED:
+    status_value = (slot.status or "").lower()
+
+    if status_value == SlotStatus.BOOKED:
         await callback.answer("Уже согласовано ✔️")
         await safe_remove_reply_markup(callback.message)
         return
 
-    if slot.status == SlotStatus.FREE:
+    if status_value == SlotStatus.FREE:
         await callback.answer("Слот уже освобождён.", show_alert=True)
         await safe_remove_reply_markup(callback.message)
         return
@@ -1614,7 +1656,8 @@ async def handle_reject_slot(callback: CallbackQuery) -> None:
         await safe_remove_reply_markup(callback.message)
         return
 
-    if slot.status == SlotStatus.FREE or slot.candidate_tg_id is None:
+    status_value = (slot.status or "").lower()
+    if status_value == SlotStatus.FREE or slot.candidate_tg_id is None:
         await callback.answer("Слот уже освобождён.", show_alert=True)
         await safe_remove_reply_markup(callback.message)
         return
@@ -1673,7 +1716,8 @@ async def handle_reschedule_slot(callback: CallbackQuery) -> None:
 async def handle_attendance_yes(callback: CallbackQuery) -> None:
     slot_id = int(callback.data.split(":", 1)[1])
     slot = await get_slot(slot_id)
-    if not slot or slot.status != SlotStatus.BOOKED:
+    status_value = (slot.status or "").lower() if slot else None
+    if not slot or status_value != SlotStatus.BOOKED:
         await callback.answer("Заявка не найдена или ещё не подтверждена рекрутёром.", show_alert=True)
         return
 

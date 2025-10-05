@@ -571,7 +571,7 @@
           <li class="entity-card">
             <span class="entity-card__id">#{{ r.id }}</span>
             <span class="entity-card__title">{{ r.name }}</span>
-            <span class="entity-card__meta">{{ r.tz or "Europe/Moscow" }}</span>
+            <span class="entity-card__meta">{{ tz_display(r.tz) }}</span>
             <span class="entity-card__status"><span class="badge badge--success">Активен</span></span>
           </li>
         {% endfor %}

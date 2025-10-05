@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% import "partials/form_shell.html" as forms %}
+{% block title %}Новый кандидат{% endblock %}
+{% block content %}
+{% set error = request.query_params.get('error') %}
+{% if error %}
+  {% set messages = {
+    'validation': 'Проверьте корректность введённых данных.',
+    'duplicate': 'Кандидат с таким Telegram ID уже существует.'
+  } %}
+  <div class="surface glass grain alert" data-tone="danger" role="alert">
+    {{ messages.get(error, 'Не удалось сохранить кандидата.') }}
+  </div>
+{% endif %}
+{% call forms.shell(
+  title="Новый кандидат",
+  description="Создайте карточку кандидата для отслеживания тестов и уведомлений.",
+  form_id="candidate-form",
+  action="/candidates/create",
+  autocomplete="off",
+  actions=[
+    {"type": "submit", "text": "Сохранить", "variant": "primary"},
+    {"href": "/candidates", "text": "Отмена", "variant": "ghost"}
+  ]
+) %}
+  {% call forms.section("Основные данные") %}
+    <div class="form-grid form-grid--two">
+      {% call forms.field("ФИО") %}
+        <input type="text" name="fio" placeholder="Иван Иванов" required>
+      {% endcall %}
+      {% call forms.field("Telegram ID", hint="Числовой идентификатор кандидата в Telegram") %}
+        <input type="number" name="telegram_id" min="1" step="1" placeholder="123456789" required>
+      {% endcall %}
+    </div>
+    <div class="form-grid form-grid--two">
+      {% call forms.field("Город") %}
+        <input type="text" name="city" list="candidate-cities" placeholder="Москва">
+        <datalist id="candidate-cities">
+          {% for c in cities %}
+            <option value="{{ c }}">
+          {% endfor %}
+        </datalist>
+      {% endcall %}
+      {% call forms.field("Статус") %}
+        {{ forms.switch(id='is_active', name='is_active', value='true', checked=True, label='Активен') }}
+      {% endcall %}
+    </div>
+  {% endcall %}
+{% endcall %}
+{% endblock %}

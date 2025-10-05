@@ -41,7 +41,7 @@
               <h2 class="recruiter-card__name">{{ r.name }}</h2>
               {% call meta_list() %}
                 <span>#{{ r.id }}</span>
-                <span title="Часовой пояс">{{ r.tz or 'Europe/Moscow' }}</span>
+              <span title="Часовой пояс">{{ tz_display(r.tz) }}</span>
                 {% if r.tg_chat_id %}
                   <span title="ID чата в Telegram">chat_id {{ r.tg_chat_id }}</span>
                 {% endif %}

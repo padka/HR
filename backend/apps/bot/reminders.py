@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class ReminderKind(str, Enum):
     REMIND_24H = "remind_24h"
     REMIND_2H = "remind_2h"
-    REMIND_30M = "remind_30m"
+    REMIND_1H = "remind_1h"
     CONFIRM_6H = "confirm_6h"
 
 
@@ -59,6 +59,20 @@ class ReminderService:
 
         for row in result:
             job_id = row.job_id
+            try:
+                kind = ReminderKind(row.kind)
+            except ValueError:
+                logger.warning(
+                    "Removing unknown reminder kind '%s' for slot %s", row.kind, row.slot_id
+                )
+                async with async_session() as session:
+                    await session.execute(
+                        SlotReminderJob.__table__.delete().where(
+                            SlotReminderJob.job_id == job_id
+                        )
+                    )
+                    await session.commit()
+                continue
             if self._scheduler.get_job(job_id) is None:
                 run_at = _ensure_aware(row.scheduled_at)
                 if run_at <= datetime.now(timezone.utc):
@@ -68,7 +82,7 @@ class ReminderService:
                     "date",
                     run_date=run_at,
                     id=job_id,
-                    args=[row.slot_id, ReminderKind(row.kind)],
+                    args=[row.slot_id, kind],
                     replace_existing=True,
                 )
 
@@ -86,17 +100,33 @@ class ReminderService:
             }:
                 return
 
-            reminders = self._build_schedule(slot.start_utc)
+            reminders = self._build_schedule(
+                slot.start_utc,
+                slot.candidate_tz or DEFAULT_TZ,
+            )
             if not reminders:
                 return
 
+            candidate_zone = _safe_zone(slot.candidate_tz)
+            now_local = datetime.now(candidate_zone)
+
             async with async_session() as session:
-                for kind, run_at in reminders:
+                for kind, run_at_utc, run_at_local in reminders:
+                    if run_at_local <= now_local:
+                        await session.execute(
+                            SlotReminderJob.__table__.delete().where(
+                                SlotReminderJob.slot_id == slot_id,
+                                SlotReminderJob.kind == kind.value,
+                            )
+                        )
+                        await session.commit()
+                        await self._execute_job(slot_id, kind)
+                        continue
                     job_id = self._job_id(slot_id, kind)
                     self._scheduler.add_job(
                         self._execute_job,
                         "date",
-                        run_date=_ensure_aware(run_at),
+                        run_date=_ensure_aware(run_at_utc),
                         id=job_id,
                         args=[slot_id, kind],
                         replace_existing=True,
@@ -112,7 +142,7 @@ class ReminderService:
                             slot_id=slot_id,
                             kind=kind.value,
                             job_id=job_id,
-                            scheduled_at=_ensure_aware(run_at),
+                            scheduled_at=_ensure_aware(run_at_utc),
                             created_at=datetime.now(timezone.utc),
                             updated_at=datetime.now(timezone.utc),
                         )
@@ -213,7 +243,7 @@ class ReminderService:
         template_key = {
             ReminderKind.REMIND_24H: "reminder_24h",
             ReminderKind.REMIND_2H: "reminder_2h",
-            ReminderKind.REMIND_30M: "reminder_30m",
+            ReminderKind.REMIND_1H: "reminder_1h",
         }[kind]
 
         text = await templates.tpl(
@@ -231,16 +261,21 @@ class ReminderService:
             logger.exception("Failed to send reminder %s for slot %s", kind, slot_id)
 
     def _build_schedule(
-        self, start_utc: datetime
-    ) -> List[tuple[ReminderKind, datetime]]:
-        now = datetime.now(timezone.utc)
-        targets: List[tuple[ReminderKind, datetime]] = [
-            (ReminderKind.REMIND_24H, start_utc - timedelta(hours=24)),
-            (ReminderKind.CONFIRM_6H, start_utc - timedelta(hours=6)),
-            (ReminderKind.REMIND_2H, start_utc - timedelta(hours=2)),
-            (ReminderKind.REMIND_30M, start_utc - timedelta(minutes=30)),
+        self, start_utc: datetime, tz: Optional[str]
+    ) -> List[tuple[ReminderKind, datetime, datetime]]:
+        zone = _safe_zone(tz)
+        start_local = start_utc.astimezone(zone)
+        targets: List[tuple[ReminderKind, timedelta]] = [
+            (ReminderKind.REMIND_24H, timedelta(hours=24)),
+            (ReminderKind.CONFIRM_6H, timedelta(hours=6)),
+            (ReminderKind.REMIND_2H, timedelta(hours=2)),
+            (ReminderKind.REMIND_1H, timedelta(hours=1)),
         ]
-        return [(kind, target) for kind, target in targets if target > now]
+        schedule: List[tuple[ReminderKind, datetime, datetime]] = []
+        for kind, delta in targets:
+            local_time = start_local - delta
+            schedule.append((kind, local_time.astimezone(timezone.utc), local_time))
+        return schedule
 
     def _job_id(self, slot_id: int, kind: ReminderKind) -> str:
         return f"slot:{slot_id}:{kind.value}"

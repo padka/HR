@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.apps.admin_ui.config import STATIC_DIR, register_template_globals
 from backend.apps.admin_ui.routers import (
     api,
+    candidates,
     cities,
     dashboard,
     questions,
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(system.router)
     app.include_router(dashboard.router, dependencies=[Depends(require_admin)])
     app.include_router(slots.router, dependencies=[Depends(require_admin)])
+    app.include_router(candidates.router, dependencies=[Depends(require_admin)])
     app.include_router(recruiters.router, dependencies=[Depends(require_admin)])
     app.include_router(cities.router, dependencies=[Depends(require_admin)])
     app.include_router(templates.router, dependencies=[Depends(require_admin)])

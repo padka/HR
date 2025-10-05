@@ -2,10 +2,12 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.db import async_session
 from backend.domain import models
+from backend.domain.candidates.models import User
 from backend.domain.repositories import reserve_slot, ReservationResult, reject_slot
 
 
@@ -226,3 +228,42 @@ async def test_reject_slot_removes_reservation_lock():
         expected_city_id=city.id,
     )
     assert second.status == "reserved"
+
+
+@pytest.mark.asyncio
+async def test_reserve_slot_syncs_candidate_directory():
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Инга", tz="Europe/Moscow", active=True)
+        city = models.City(name="Томск", tz="Europe/Tomsk", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=now + timedelta(hours=2),
+            status=models.SlotStatus.FREE,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    await reserve_slot(
+        slot.id,
+        candidate_tg_id=98765,
+        candidate_fio="Кандидат Тестовый",
+        candidate_tz="Asia/Novosibirsk",
+        candidate_city_id=city.id,
+        expected_recruiter_id=recruiter.id,
+        expected_city_id=city.id,
+    )
+
+    async with async_session() as session:
+        profile = await session.scalar(select(User).where(User.telegram_id == 98765))
+        assert profile is not None
+        assert profile.fio == "Кандидат Тестовый"
+        assert profile.city == city.name

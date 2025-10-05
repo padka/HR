@@ -18,19 +18,14 @@
       {% call forms.field("Имя") %}
         <input id="name" type="text" name="name" placeholder="Михаил" required>
       {% endcall %}
-      {% call forms.field("Часовой пояс", hint="IANA TZ, например Europe/Moscow") %}
-        <input id="tz" type="text" name="tz" value="Europe/Moscow" list="tz-list" required>
-        <datalist id="tz-list">
-          <option value="Europe/Moscow">
-          <option value="Europe/Samara">
-          <option value="Europe/Kaliningrad">
-          <option value="Asia/Yekaterinburg">
-          <option value="Asia/Novosibirsk">
-          <option value="Asia/Krasnoyarsk">
-          <option value="Asia/Irkutsk">
-          <option value="Asia/Vladivostok">
-          <option value="Asia/Almaty">
-        </datalist>
+      {% call forms.field("Регион", hint="Определяет локальное время рекрутёра при создании слотов") %}
+        <select id="tz" name="tz" required>
+          {% for option in tz_options %}
+            <option value="{{ option.value }}" {% if option.value == 'Europe/Moscow' %}selected{% endif %}>
+              {{ option.label }}
+            </option>
+          {% endfor %}
+        </select>
       {% endcall %}
     </div>
     <div class="form-grid form-grid--two">

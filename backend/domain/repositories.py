@@ -8,6 +8,7 @@ from typing import Literal
 
 
 from backend.core.db import async_session
+from backend.domain.candidates.services import create_or_update_user
 from .models import Recruiter, City, Template, Slot, SlotStatus, SlotReservationLock
 
 
@@ -248,6 +249,8 @@ async def reserve_slot(
 ) -> Optional[Slot]:
     now_utc = datetime.now(timezone.utc)
 
+    city_name: Optional[str] = None
+
     async with async_session() as session:
         async with session.begin():
             slot = await session.scalar(
@@ -260,10 +263,12 @@ async def reserve_slot(
             if not slot:
                 return ReservationResult(status="slot_taken")
 
-            if slot.status != SlotStatus.FREE:
+            status_value = (slot.status or "").lower()
+
+            if status_value != SlotStatus.FREE:
                 if (
                     slot.candidate_tg_id == candidate_tg_id
-                    and (slot.status or "").lower() in (SlotStatus.PENDING, SlotStatus.BOOKED)
+                    and status_value in (SlotStatus.PENDING, SlotStatus.BOOKED)
                 ):
                     slot.start_utc = _to_aware_utc(slot.start_utc)
                     return ReservationResult(status="already_reserved", slot=slot)
@@ -332,15 +337,30 @@ async def reserve_slot(
                 expires_at=now_utc + timedelta(minutes=5),
             )
             session.add(lock)
+            city_name = slot.city.name if slot.city else None
+            if city_name is None and candidate_city_id is not None:
+                city = await session.get(City, candidate_city_id)
+                if city:
+                    city_name = city.name
 
         slot.start_utc = _to_aware_utc(slot.start_utc)
-        return ReservationResult(status="reserved", slot=slot)
+    try:
+        await create_or_update_user(
+            telegram_id=candidate_tg_id,
+            fio=candidate_fio,
+            city=city_name or "",
+        )
+    except Exception:
+        # Candidate directory sync should not break reservation flow
+        pass
+    return ReservationResult(status="reserved", slot=slot)
 
 
 async def approve_slot(slot_id: int) -> Optional[Slot]:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id, with_for_update=True)
-        if not slot or slot.status not in (SlotStatus.PENDING, SlotStatus.BOOKED):
+        status_value = (slot.status or "").lower() if slot else None
+        if not slot or status_value not in (SlotStatus.PENDING, SlotStatus.BOOKED):
             return None
         slot.status = SlotStatus.BOOKED
         await session.commit()

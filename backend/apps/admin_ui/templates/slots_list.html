@@ -60,7 +60,7 @@
         <option value="">— Все —</option>
         {% for r in recruiter_options %}
           <option value="{{ r.id }}" {% if filter_recruiter_id and filter_recruiter_id == r.id %}selected{% endif %}>
-            {{ r.name }} ({{ r.tz or "Europe/Moscow" }})
+            {{ r.name }} ({{ tz_display(r.tz) }})
           </option>
         {% endfor %}
       </select>
@@ -153,7 +153,7 @@
             <td data-label="ID">ID {{ s.id }}</td>
             <td data-label="Рекрутёр">
               <div class="slot-cell-primary">{{ s.recruiter.name if s.recruiter else "—" }}</div>
-              <span class="badge badge--soft">{{ tz_rec }}</span>
+              <span class="badge badge--soft">{{ tz_display(tz_rec) }}</span>
             </td>
             <td data-label="UTC">
               <div class="slot-time">
@@ -166,7 +166,7 @@
             </td>
             <td data-label="Время (кандидат)" class="col-cand-tz is-optional">
               {% if cand_tz %}
-                <div class="badge badge--soft">{{ cand_tz }}</div>
+                <div class="badge badge--soft">{{ tz_display(cand_tz) }}</div>
                 <span class="slot-time__value">{{ fmt_local(s.start_utc, cand_tz) }}</span>
               {% else %}
                 <span class="badge badge--soft">—</span>

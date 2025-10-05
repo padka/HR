@@ -13,6 +13,7 @@ from backend.apps.admin_ui.services.recruiters import (
     list_recruiters,
     update_recruiter,
 )
+from backend.apps.admin_ui.timezones import DEFAULT_TZ, timezone_options
 
 router = APIRouter(prefix="/recruiters", tags=["recruiters"])
 
@@ -30,21 +31,27 @@ async def recruiters_list(request: Request):
 @router.get("/new", response_class=HTMLResponse)
 async def recruiters_new(request: Request):
     cities = await list_cities()
-    return templates.TemplateResponse("recruiters_new.html", {"request": request, "cities": cities})
+    context = {
+        "request": request,
+        "cities": cities,
+        "tz_options": timezone_options(),
+    }
+    return templates.TemplateResponse("recruiters_new.html", context)
 
 
 @router.post("/create")
 async def recruiters_create(
     name: str = Form(...),
-    tz: str = Form("Europe/Moscow"),
+    tz: str = Form(DEFAULT_TZ),
     telemost: str = Form(""),
     tg_chat_id: str = Form(""),
     active: Optional[str] = Form(None),
     cities: Optional[List[str]] = Form(None),
 ):
+    tz_value = (tz or DEFAULT_TZ).strip() or DEFAULT_TZ
     payload: Dict[str, object] = build_recruiter_payload(
         name=name,
-        tz=tz,
+        tz=tz_value,
         telemost=telemost,
         tg_chat_id=tg_chat_id,
         active=active,
@@ -58,22 +65,29 @@ async def recruiters_edit(request: Request, rec_id: int):
     data = await get_recruiter_detail(rec_id)
     if not data:
         return RedirectResponse(url="/recruiters", status_code=303)
-    return templates.TemplateResponse("recruiters_edit.html", {"request": request, **data})
+    tz_current = getattr(data.get("recruiter"), "tz", None) if data else None
+    context = {
+        "request": request,
+        **data,
+        "tz_options": timezone_options(include_extra=[tz_current] if tz_current else None),
+    }
+    return templates.TemplateResponse("recruiters_edit.html", context)
 
 
 @router.post("/{rec_id}/update")
 async def recruiters_update(
     rec_id: int,
     name: str = Form(...),
-    tz: str = Form("Europe/Moscow"),
+    tz: str = Form(DEFAULT_TZ),
     telemost: str = Form(""),
     tg_chat_id: str = Form(""),
     active: Optional[str] = Form(None),
     cities: Optional[List[str]] = Form(None),
 ):
+    tz_value = (tz or DEFAULT_TZ).strip() or DEFAULT_TZ
     payload: Dict[str, object] = build_recruiter_payload(
         name=name,
-        tz=tz,
+        tz=tz_value,
         telemost=telemost,
         tg_chat_id=tg_chat_id,
         active=active,

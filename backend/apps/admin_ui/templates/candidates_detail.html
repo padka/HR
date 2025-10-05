@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% import "partials/form_shell.html" as forms %}
+{% block title %}Кандидат {{ user.fio }}{% endblock %}
+{% block content %}
+<style>
+  .cards-grid {
+    display: grid;
+    gap: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    margin-bottom: 24px;
+  }
+
+  .candidate-card .data-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .candidate-card .data-list div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .surface.mt-lg {
+    margin-top: 32px;
+  }
+
+  .text-prewrap {
+    white-space: pre-wrap;
+  }
+</style>
+{% set saved = request.query_params.get('saved') %}
+{% set error = request.query_params.get('error') %}
+{% if saved %}
+  <div class="surface glass grain alert" data-tone="success" role="status">
+    Данные кандидата обновлены.
+  </div>
+{% elif error %}
+  <div class="surface glass grain alert" data-tone="danger" role="alert">
+    Не удалось обновить данные кандидата.
+  </div>
+{% endif %}
+<section class="page-header">
+  <div>
+    <a class="muted" href="/candidates">← К списку кандидатов</a>
+    <h1 class="page-title">{{ user.fio }}</h1>
+    <p class="page-description">Telegram ID {{ user.telegram_id }} · {{ user.city or 'Город не указан' }}</p>
+  </div>
+  <div class="page-actions">
+    <form method="post" action="/candidates/{{ user.id }}/toggle">
+      {% if user.is_active %}
+        <input type="hidden" name="active" value="false">
+        <button class="btn btn-ghost" type="submit">Отключить</button>
+      {% else %}
+        <input type="hidden" name="active" value="true">
+        <button class="btn btn-primary" type="submit">Активировать</button>
+      {% endif %}
+    </form>
+    <form method="post" action="/candidates/{{ user.id }}/delete" onsubmit="return confirm('Удалить кандидата {{ user.fio }}?');">
+      <button class="btn btn-soft" type="submit">Удалить</button>
+    </form>
+  </div>
+</section>
+
+<div class="cards-grid">
+  <article class="glass grain candidate-card">
+    <h2 class="section-title">Сводка</h2>
+    <dl class="data-list">
+      <div>
+        <dt>Статус</dt>
+        <dd>
+          {% if user.is_active %}
+            <span class="badge badge--success">Активен</span>
+          {% else %}
+            <span class="badge badge--muted">Отключен</span>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Город</dt>
+        <dd>{{ user.city or '—' }}</dd>
+      </div>
+      <div>
+        <dt>Последняя активность</dt>
+        <dd>{{ user.last_activity.strftime('%d.%m.%Y %H:%M') if user.last_activity else '—' }}</dd>
+      </div>
+      <div>
+        <dt>Тестов пройдено</dt>
+        <dd>{{ stats.tests_total }}</dd>
+      </div>
+      <div>
+        <dt>Средний балл</dt>
+        <dd>{{ '%.2f'|format(stats.average_score) if stats.average_score is not none else '—' }}</dd>
+      </div>
+    </dl>
+  </article>
+
+  {% call forms.shell(
+    title="Редактирование",
+    description="Обновите данные кандидата.",
+    form_id="candidate-update",
+    action='/candidates/' ~ user.id ~ '/update',
+    actions=[{"type": "submit", "text": "Сохранить", "variant": "primary"}]
+  ) %}
+    {% call forms.section("Основные поля") %}
+      <div class="form-grid form-grid--two">
+        {% call forms.field("ФИО") %}
+          <input type="text" name="fio" value="{{ user.fio }}" required>
+        {% endcall %}
+        {% call forms.field("Telegram ID") %}
+          <input type="number" name="telegram_id" value="{{ user.telegram_id }}" min="1" step="1" required>
+        {% endcall %}
+      </div>
+      <div class="form-grid form-grid--two">
+        {% call forms.field("Город") %}
+          <input type="text" name="city" value="{{ user.city or '' }}" placeholder="Москва">
+        {% endcall %}
+        {% call forms.field("Статус") %}
+          {{ forms.switch(name='is_active', value='true', checked=user.is_active, label='Активен') }}
+        {% endcall %}
+      </div>
+    {% endcall %}
+  {% endcall %}
+</div>
+
+<section class="surface glass grain mt-lg">
+  <header class="section-header">
+    <h2 class="section-title">Результаты тестов</h2>
+    <p class="section-hint">Полная история прохождений с ключевыми показателями.</p>
+  </header>
+  {% if tests %}
+    <div class="list-table-wrapper">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th scope="col">Дата</th>
+            <th scope="col">Балл</th>
+            <th scope="col">Рейтинг</th>
+            <th scope="col">Время (сек)</th>
+            <th scope="col">Ответы</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for result in tests %}
+          {% set answers = answers_map.get(result.id, {}) %}
+          <tr>
+            <td>{{ result.created_at.strftime('%d.%m.%Y %H:%M') if result.created_at else '—' }}</td>
+            <td><strong>{{ result.final_score }}</strong> из {{ result.raw_score }}</td>
+            <td>{{ result.rating }}</td>
+            <td>{{ result.total_time }}</td>
+            <td>
+              {% if answers %}
+                {{ answers.questions_correct }}/{{ answers.questions_total }} верно
+                {% if answers.questions_overtime %}
+                  · <span class="muted">{{ answers.questions_overtime }} проср.</span>
+                {% endif %}
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">Тесты пока не пройдены.</p>
+  {% endif %}
+</section>
+
+<section class="surface glass grain mt-lg">
+  <header class="section-header">
+    <h2 class="section-title">Сообщения кандидату</h2>
+    <p class="section-hint">Отображаются авто-сообщения, назначенные на Telegram ID кандидата.</p>
+  </header>
+  {% if messages %}
+    <div class="list-table-wrapper">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th scope="col">Создано</th>
+            <th scope="col">Отправка</th>
+            <th scope="col">Текст</th>
+            <th scope="col">Статус</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for msg in messages %}
+          <tr>
+            <td>{{ msg.created_at.strftime('%d.%m.%Y %H:%M') if msg.created_at else '—' }}</td>
+            <td>{{ msg.send_time }}</td>
+            <td class="text-prewrap">{{ msg.message_text }}</td>
+            <td>
+              {% if msg.is_active %}
+                <span class="badge badge--success">Активно</span>
+              {% else %}
+                <span class="badge badge--muted">Отключено</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">Сообщений пока нет.</p>
+  {% endif %}
+</section>
+
+<section class="surface glass grain mt-lg">
+  <header class="section-header">
+    <h2 class="section-title">Хронология действий</h2>
+    <p class="section-hint">События объединяют интервью, тесты и сообщения.</p>
+  </header>
+  {% if timeline %}
+    <div class="timeline">
+      {% for event in timeline %}
+        <article class="timeline-item">
+          <div class="timeline-item__meta">{{ fmt_local(event.dt, event.tz or 'Europe/Moscow') }}</div>
+          {% if event.kind == 'slot' %}
+            <strong>Интервью · {{ event.status|upper }}</strong>
+            <span class="timeline-item__meta">{{ event.recruiter or 'Рекрутёр не указан' }} · {{ event.city or 'Город не указан' }}</span>
+          {% elif event.kind == 'test' %}
+            <strong>Тест</strong>
+            <span class="timeline-item__meta">Баллы: {{ event.score }} · Рейтинг {{ event.rating }}</span>
+          {% elif event.kind == 'message' %}
+            <strong>Сообщение</strong>
+            <span class="timeline-item__meta">План: {{ event.send_time }}{% if not event.is_active %} · отключено{% endif %}</span>
+            <span class="text-prewrap">{{ event.text }}</span>
+          {% endif %}
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="muted">События ещё не зафиксированы.</p>
+  {% endif %}
+</section>
+{% endblock %}
