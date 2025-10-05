@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import select
 
@@ -76,3 +78,64 @@ async def test_finalize_test1_notifies_recruiter():
         assert db_user.fio == "Test User"
         result = await session.scalar(select(TestResult).where(TestResult.user_id == db_user.id))
         assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_finalize_test1_deduplicates_by_chat_id():
+    templates.clear_cache()
+
+    async with async_session() as session:
+        shared_chat = 5555
+        recruiter = models.Recruiter(
+            name="Ответственный",
+            tz="Europe/Moscow",
+            active=True,
+            tg_chat_id=shared_chat,
+        )
+        backup = models.Recruiter(
+            name="Бэкап",
+            tz="Europe/Moscow",
+            active=True,
+            tg_chat_id=shared_chat,
+        )
+        city = models.City(name="Уфа", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, backup, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(backup)
+        await session.refresh(city)
+        city.responsible_recruiter_id = recruiter.id
+        await session.commit()
+
+        session.add(
+            models.Slot(
+                recruiter_id=backup.id,
+                city_id=city.id,
+                start_utc=datetime.now(timezone.utc) + timedelta(hours=2),
+                status=models.SlotStatus.FREE,
+            )
+        )
+        await session.commit()
+
+    store = InMemoryStateStore(ttl_seconds=60)
+    state_manager = StateManager(store)
+    user_id = 7373
+    await state_manager.set(
+        user_id,
+        {
+            "fio": "Дубликат",
+            "city_name": "Уфа",
+            "city_id": city.id,
+            "candidate_tz": "Europe/Moscow",
+            "test1_answers": {TEST1_QUESTIONS[0]["id"]: "Answer"},
+        },
+    )
+
+    bot = DummyBot()
+    configure_bot_services(bot, state_manager)
+
+    await finalize_test1(user_id)
+
+    assert len(bot.documents) == 1, "expected single notification per chat"
+    chat_id, *_ = bot.documents[0]
+    assert chat_id == shared_chat

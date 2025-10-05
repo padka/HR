@@ -192,3 +192,23 @@ async def test_kb_recruiters_filters_by_city():
     assert buttons
     assert any(btn.callback_data.endswith(str(rec1.id)) for btn in buttons)
     assert all(not btn.callback_data.endswith(str(rec2.id)) for btn in buttons)
+
+
+@pytest.mark.asyncio
+async def test_kb_recruiters_no_slots_has_contact_button():
+    async with async_session() as session:
+        city = models.City(name="Без слотов", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+
+    keyboard = await kb_recruiters(candidate_tz=DEFAULT_TZ, city_id=city.id)
+
+    contact_buttons = [
+        btn
+        for row in keyboard.inline_keyboard
+        for btn in row
+        if getattr(btn, "callback_data", "") == "contact:manual"
+    ]
+
+    assert contact_buttons, "expected contact button when no recruiters are available"

@@ -471,7 +471,16 @@ async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Pa
     except Exception:
         recruiters = []
 
-    recipients = [rec for rec in recruiters if getattr(rec, "tg_chat_id", None)]
+    recipients: List[Any] = []
+    seen_chats: set[Any] = set()
+    for rec in recruiters:
+        chat_id = getattr(rec, "tg_chat_id", None)
+        if not chat_id:
+            continue
+        if chat_id in seen_chats:
+            continue
+        recipients.append(rec)
+        seen_chats.add(chat_id)
     if not recipients:
         return False
 
@@ -1367,6 +1376,30 @@ async def handle_home_start(callback: CallbackQuery) -> None:
     await begin_interview(callback.from_user.id)
 
 
+async def send_manual_scheduling_prompt(user_id: int) -> None:
+    """Prompt the candidate to reach out when no automatic slots are available."""
+
+    bot = get_bot()
+    state_manager = get_state_manager()
+    try:
+        state = await state_manager.get(user_id)
+    except Exception:
+        state = None
+
+    city_id: Optional[int] = None
+    if isinstance(state, dict):
+        city_id = state.get("city_id")
+
+    message = await templates.tpl(city_id, "manual_schedule_prompt")
+    if not message:
+        message = (
+            "Свободных слотов сейчас нет. Напишите, пожалуйста, когда вам удобно, "
+            "и мы подберём время вручную."
+        )
+
+    await bot.send_message(user_id, message)
+
+
 async def handle_pick_recruiter(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     rid_s = callback.data.split(":", 1)[1]
@@ -1846,6 +1879,7 @@ __all__ = [
     "save_test1_answer",
     "send_test1_question",
     "send_test2_question",
+    "send_manual_scheduling_prompt",
     "show_recruiter_menu",
     "slot_local_labels",
     "start_introday_flow",
