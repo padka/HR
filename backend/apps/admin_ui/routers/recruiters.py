@@ -41,6 +41,7 @@ async def recruiters_new(request: Request):
 
 @router.post("/create")
 async def recruiters_create(
+    request: Request,
     name: str = Form(...),
     tz: str = Form(DEFAULT_TZ),
     telemost: str = Form(""),
@@ -56,7 +57,27 @@ async def recruiters_create(
         tg_chat_id=tg_chat_id,
         active=active,
     )
-    await create_recruiter(payload, cities=cities)
+    form_state = {
+        "name": name,
+        "tz": tz_value,
+        "telemost": telemost,
+        "tg_chat_id": tg_chat_id,
+        "active": bool(active),
+        "cities": [int(cid.strip()) for cid in (cities or []) if cid and cid.strip().isdigit()],
+    }
+    result = await create_recruiter(payload, cities=cities)
+    if not result.get("ok"):
+        cities_list = await list_cities()
+        context = {
+            "request": request,
+            "cities": cities_list,
+            "tz_options": timezone_options(),
+            "form_error": result.get("error", {}).get("message"),
+            "error_field": result.get("error", {}).get("field"),
+            "form_data": form_state,
+        }
+        return templates.TemplateResponse("recruiters_new.html", context, status_code=400)
+
     return RedirectResponse(url="/recruiters", status_code=303)
 
 
@@ -76,6 +97,7 @@ async def recruiters_edit(request: Request, rec_id: int):
 
 @router.post("/{rec_id}/update")
 async def recruiters_update(
+    request: Request,
     rec_id: int,
     name: str = Form(...),
     tz: str = Form(DEFAULT_TZ),
@@ -92,7 +114,33 @@ async def recruiters_update(
         tg_chat_id=tg_chat_id,
         active=active,
     )
-    await update_recruiter(rec_id, payload, cities=cities)
+    form_state = {
+        "name": name,
+        "tz": tz_value,
+        "telemost": telemost,
+        "tg_chat_id": tg_chat_id,
+        "active": bool(active) if active is not None else False,
+        "cities": [int(cid.strip()) for cid in (cities or []) if cid and cid.strip().isdigit()],
+    }
+    result = await update_recruiter(rec_id, payload, cities=cities)
+    if not result.get("ok"):
+        error = result.get("error", {})
+        if error.get("type") == "not_found":
+            return RedirectResponse(url="/recruiters", status_code=303)
+        data = await get_recruiter_detail(rec_id)
+        if not data:
+            return RedirectResponse(url="/recruiters", status_code=303)
+        tz_current = getattr(data.get("recruiter"), "tz", None) if data else None
+        context = {
+            "request": request,
+            **data,
+            "tz_options": timezone_options(include_extra=[tz_current] if tz_current else None),
+            "form_error": error.get("message"),
+            "error_field": error.get("field"),
+            "form_data": form_state,
+        }
+        return templates.TemplateResponse("recruiters_edit.html", context, status_code=400)
+
     return RedirectResponse(url="/recruiters", status_code=303)
 
 

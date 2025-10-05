@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, select, update
 from sqlalchemy.inspection import inspect as sa_inspect
+from sqlalchemy.exc import IntegrityError
 
 from backend.apps.admin_ui.utils import format_optional_local
 from backend.core.db import async_session
@@ -105,25 +106,33 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
     return out
 
 
-async def create_recruiter(payload: Dict[str, object], *, cities: Optional[List[str]] = None) -> None:
+async def create_recruiter(
+    payload: Dict[str, object], *, cities: Optional[List[str]] = None
+) -> Dict[str, object]:
     async with async_session() as session:
-        recruiter = Recruiter(**payload)
-        session.add(recruiter)
-        await session.commit()
-        await session.refresh(recruiter)
-
-        selected: List[int] = []
-        if cities:
-            for cid in cities:
-                if cid and cid.strip().isdigit():
-                    selected.append(int(cid.strip()))
-        if selected:
-            await session.execute(
-                update(City)
-                .where(City.id.in_(selected))
-                .values(responsible_recruiter_id=recruiter.id)
-            )
+        try:
+            recruiter = Recruiter(**payload)
+            session.add(recruiter)
             await session.commit()
+            await session.refresh(recruiter)
+
+            selected: List[int] = []
+            if cities:
+                for cid in cities:
+                    if cid and cid.strip().isdigit():
+                        selected.append(int(cid.strip()))
+            if selected:
+                await session.execute(
+                    update(City)
+                    .where(City.id.in_(selected))
+                    .values(responsible_recruiter_id=recruiter.id)
+                )
+                await session.commit()
+        except IntegrityError as exc:  # pragma: no cover - defensive, regression covered by tests
+            await session.rollback()
+            return {"ok": False, "error": _integrity_error_payload(exc)}
+
+    return {"ok": True, "recruiter_id": recruiter.id}
 
 
 async def get_recruiter_detail(rec_id: int) -> Optional[Dict[str, object]]:
@@ -145,36 +154,43 @@ async def update_recruiter(
     payload: Dict[str, object],
     *,
     cities: Optional[List[str]] = None,
-) -> bool:
+) -> Dict[str, object]:
     async with async_session() as session:
         recruiter = await session.get(Recruiter, rec_id)
         if not recruiter:
-            return False
+            return {
+                "ok": False,
+                "error": {"type": "not_found", "message": "Рекрутёр не найден."},
+            }
 
-        for key, value in payload.items():
-            setattr(recruiter, key, value)
+        try:
+            for key, value in payload.items():
+                setattr(recruiter, key, value)
 
-        selected: List[int] = []
-        if cities:
-            for cid in cities:
-                if cid and cid.strip().isdigit():
-                    selected.append(int(cid.strip()))
+            selected: List[int] = []
+            if cities:
+                for cid in cities:
+                    if cid and cid.strip().isdigit():
+                        selected.append(int(cid.strip()))
 
-        await session.execute(
-            update(City)
-            .where(City.responsible_recruiter_id == rec_id)
-            .values(responsible_recruiter_id=None)
-        )
-        if selected:
             await session.execute(
                 update(City)
-                .where(City.id.in_(selected))
-                .values(responsible_recruiter_id=rec_id)
+                .where(City.responsible_recruiter_id == rec_id)
+                .values(responsible_recruiter_id=None)
             )
+            if selected:
+                await session.execute(
+                    update(City)
+                    .where(City.id.in_(selected))
+                    .values(responsible_recruiter_id=rec_id)
+                )
 
-        await session.commit()
+            await session.commit()
+        except IntegrityError as exc:  # pragma: no cover - defensive, regression covered by tests
+            await session.rollback()
+            return {"ok": False, "error": _integrity_error_payload(exc)}
 
-    return True
+    return {"ok": True, "recruiter_id": rec_id}
 
 
 async def delete_recruiter(rec_id: int) -> None:
@@ -233,6 +249,20 @@ def _pick_field(allowed: Sequence[str], candidates: Sequence[str]) -> Optional[s
         if name in allowed:
             return name
     return None
+
+
+def _integrity_error_payload(exc: IntegrityError) -> Dict[str, object]:
+    message = "Не удалось сохранить рекрутёра: проверьте корректность данных."
+    field: Optional[str] = None
+    detail = str(getattr(exc, "orig", exc)).lower()
+    if "tg_chat_id" in detail or "telegram" in detail:
+        message = "Рекрутёр с таким Telegram chat ID уже существует."
+        field = "tg_chat_id"
+
+    payload: Dict[str, object] = {"type": "integrity_error", "message": message}
+    if field:
+        payload["field"] = field
+    return payload
 
 
 async def api_recruiters_payload() -> List[Dict[str, object]]:
