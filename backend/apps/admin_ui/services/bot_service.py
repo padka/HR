@@ -304,7 +304,7 @@ class BotService:
             return BotSendResult(
                 ok=False,
                 status="skipped:not_configured",
-                error=self.failure_message,
+                error=self.rejection_failure_message,
             )
 
         try:
@@ -316,7 +316,7 @@ class BotService:
             return BotSendResult(
                 ok=False,
                 status="skipped:not_configured",
-                error=self.failure_message,
+                error=self.rejection_failure_message,
             )
 
         text = await bot_templates.tpl(city_id, template_key, **context)
