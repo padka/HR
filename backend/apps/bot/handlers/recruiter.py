@@ -16,6 +16,11 @@ async def approve(callback: CallbackQuery) -> None:
     await services.handle_approve_slot(callback)
 
 
+@router.callback_query(F.data.startswith("sendmsg:"))
+async def send_slot_message(callback: CallbackQuery) -> None:
+    await services.handle_send_slot_message(callback)
+
+
 @router.callback_query(F.data.startswith("reschedule:"))
 async def reschedule(callback: CallbackQuery) -> None:
     await services.handle_reschedule_slot(callback)
