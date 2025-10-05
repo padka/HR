@@ -132,3 +132,42 @@ async def test_update_recruiter_duplicate_chat_id_returns_validation_message(adm
         updated_two = await session.get(models.Recruiter, recruiter_two_id)
         assert updated_two is not None
         assert updated_two.tg_chat_id == 888000
+
+
+@pytest.mark.asyncio
+async def test_update_recruiter_single_city_checkbox_value(admin_app) -> None:
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Cityless",
+            tz="Europe/Moscow",
+            active=True,
+        )
+        city = models.City(name="Test City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        recruiter_id = recruiter.id
+        city_id = city.id
+
+    response_ok = await _async_request(
+        admin_app,
+        "post",
+        f"/recruiters/{recruiter_id}/update",
+        data={
+            "name": "Cityless",
+            "tz": "Europe/Moscow",
+            "telemost": "",
+            "tg_chat_id": "",
+            "active": "1",
+            "cities": str(city_id),
+        },
+        allow_redirects=False,
+    )
+
+    assert response_ok.status_code == 303
+
+    async with async_session() as session:
+        updated_city = await session.get(models.City, city_id)
+        assert updated_city is not None
+        assert updated_city.responsible_recruiter_id == recruiter_id
