@@ -4,7 +4,7 @@ from backend.apps.admin_ui.services.cities import (
     api_city_owners_payload,
     update_city_settings,
 )
-from backend.apps.admin_ui.services.templates import api_templates_payload
+from backend.apps.admin_ui.services.templates import api_templates_payload, update_template
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.template_stages import CITY_TEMPLATE_STAGES
@@ -80,3 +80,38 @@ async def test_update_city_settings_rolls_back_on_template_error():
         assert refreshed_city.responsible_recruiter_id is None
         await session.refresh(refreshed_city, attribute_names=["templates"])
         assert refreshed_city.templates == []
+
+
+@pytest.mark.asyncio
+async def test_update_template_returns_false_on_duplicate_key():
+    async with async_session() as session:
+        city = models.City(name="Template City", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+
+        original = models.Template(city_id=city.id, key="greeting", content="Hello")
+        conflicting = models.Template(city_id=city.id, key="farewell", content="Bye")
+        session.add_all([original, conflicting])
+        await session.commit()
+        await session.refresh(original)
+        await session.refresh(conflicting)
+
+        original_id = original.id
+        conflicting_key = conflicting.key
+        city_id = city.id
+
+    result = await update_template(
+        original_id,
+        key=conflicting_key,
+        text="Updated",
+        city_id=city_id,
+    )
+
+    assert result is False
+
+    async with async_session() as session:
+        persisted = await session.get(models.Template, original_id)
+        assert persisted is not None
+        assert persisted.key == "greeting"
+        assert persisted.content == "Hello"

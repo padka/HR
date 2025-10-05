@@ -201,7 +201,11 @@ async def update_template(tmpl_id: int, *, key: str, text: str, city_id: Optiona
         tmpl.city_id = city_id
         tmpl.key = key.strip()
         tmpl.content = text
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return False
         return True
 
 
