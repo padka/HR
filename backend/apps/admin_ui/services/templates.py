@@ -20,6 +20,7 @@ __all__ = [
     "templates_overview",
     "update_templates_for_city",
     "list_templates",
+    "notify_templates_changed",
     "generate_template_key",
     "create_template",
     "get_template",
@@ -33,6 +34,20 @@ STAGE_KEYS: List[str] = [stage.key for stage in CITY_TEMPLATE_STAGES]
 
 
 KEY_ALPHABET = string.ascii_lowercase + string.digits
+
+
+def notify_templates_changed() -> None:
+    """Tell the bot runtime to refresh its template cache."""
+
+    try:  # pragma: no cover - optional dependency wiring
+        from backend.apps.bot import templates as bot_templates
+    except Exception:  # pragma: no cover - bot runtime might be unavailable
+        return
+
+    try:
+        bot_templates.clear_cache()
+    except Exception:  # pragma: no cover - guard against runtime issues
+        pass
 
 
 def generate_template_key(prefix: str = "tmpl") -> str:

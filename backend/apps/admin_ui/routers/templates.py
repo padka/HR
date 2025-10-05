@@ -12,6 +12,7 @@ from backend.apps.admin_ui.services.templates import (
     delete_template,
     get_template,
     list_templates,
+    notify_templates_changed,
     update_template,
     update_templates_for_city,
 )
@@ -78,6 +79,7 @@ async def templates_create(
         return jinja_templates.TemplateResponse("templates_new.html", context, status_code=400)
 
     await create_template(text_value, parsed_city)
+    notify_templates_changed()
     return RedirectResponse(url="/templates", status_code=303)
 
 
@@ -100,6 +102,7 @@ async def templates_save(request: Request):
     error = await update_templates_for_city(city_id, templates_payload)
     if error:
         return JSONResponse({"ok": False, "error": error}, status_code=400)
+    notify_templates_changed()
     return JSONResponse({"ok": True})
 
 
@@ -227,10 +230,12 @@ async def templates_update(
         }
         return jinja_templates.TemplateResponse("templates_edit.html", context, status_code=400)
 
+    notify_templates_changed()
     return RedirectResponse(url="/templates", status_code=303)
 
 
 @router.post("/{tmpl_id}/delete")
 async def templates_delete(tmpl_id: int):
     await delete_template(tmpl_id)
+    notify_templates_changed()
     return RedirectResponse(url="/templates", status_code=303)
