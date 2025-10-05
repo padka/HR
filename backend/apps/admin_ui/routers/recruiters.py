@@ -1,4 +1,4 @@
-from typing import Dict, Optional, List
+from typing import Dict, Iterable, List, Optional, Union
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -47,9 +47,10 @@ async def recruiters_create(
     telemost: str = Form(""),
     tg_chat_id: str = Form(""),
     active: Optional[str] = Form(None),
-    cities: Optional[List[str]] = Form(None),
+    cities: Union[str, List[str], None] = Form(None),
 ):
     tz_value = (tz or DEFAULT_TZ).strip() or DEFAULT_TZ
+    city_values = _normalize_cities_form_value(cities)
     payload: Dict[str, object] = build_recruiter_payload(
         name=name,
         tz=tz_value,
@@ -63,9 +64,9 @@ async def recruiters_create(
         "telemost": telemost,
         "tg_chat_id": tg_chat_id,
         "active": bool(active),
-        "cities": [int(cid.strip()) for cid in (cities or []) if cid and cid.strip().isdigit()],
+        "cities": [int(cid.strip()) for cid in city_values if cid and cid.strip().isdigit()],
     }
-    result = await create_recruiter(payload, cities=cities)
+    result = await create_recruiter(payload, cities=city_values)
     if not result.get("ok"):
         cities_list = await list_cities()
         context = {
@@ -104,9 +105,10 @@ async def recruiters_update(
     telemost: str = Form(""),
     tg_chat_id: str = Form(""),
     active: Optional[str] = Form(None),
-    cities: Optional[List[str]] = Form(None),
+    cities: Union[str, List[str], None] = Form(None),
 ):
     tz_value = (tz or DEFAULT_TZ).strip() or DEFAULT_TZ
+    city_values = _normalize_cities_form_value(cities)
     payload: Dict[str, object] = build_recruiter_payload(
         name=name,
         tz=tz_value,
@@ -120,9 +122,9 @@ async def recruiters_update(
         "telemost": telemost,
         "tg_chat_id": tg_chat_id,
         "active": bool(active) if active is not None else False,
-        "cities": [int(cid.strip()) for cid in (cities or []) if cid and cid.strip().isdigit()],
+        "cities": [int(cid.strip()) for cid in city_values if cid and cid.strip().isdigit()],
     }
-    result = await update_recruiter(rec_id, payload, cities=cities)
+    result = await update_recruiter(rec_id, payload, cities=city_values)
     if not result.get("ok"):
         error = result.get("error", {})
         if error.get("type") == "not_found":
@@ -148,3 +150,13 @@ async def recruiters_update(
 async def recruiters_delete(rec_id: int):
     await delete_recruiter(rec_id)
     return RedirectResponse(url="/recruiters", status_code=303)
+
+
+def _normalize_cities_form_value(raw: Union[str, Iterable[str], None]) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        values = [raw]
+    else:
+        values = list(raw)
+    return [value for value in values if isinstance(value, str) and value]
