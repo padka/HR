@@ -40,6 +40,17 @@ async def cb_home_start(callback: CallbackQuery) -> None:
     await services.handle_home_start(callback)
 
 
+@router.callback_query(F.data == "contact:manual")
+async def cb_contact_manual(callback: CallbackQuery) -> None:
+    user = callback.from_user
+    if not user:
+        await callback.answer()
+        return
+
+    await services.send_manual_scheduling_prompt(user.id)
+    await callback.answer("Напишите нам в ответном сообщении")
+
+
 @router.callback_query(F.data.startswith("noop:"))
 async def cb_noop_hint(callback: CallbackQuery) -> None:
     hints = {

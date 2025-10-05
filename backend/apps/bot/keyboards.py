@@ -61,6 +61,13 @@ def _slot_button_label(
     return label
 
 
+def _contact_support_button() -> InlineKeyboardButton:
+    return InlineKeyboardButton(
+        text="Напиши нам, подберем для вас время",
+        callback_data="contact:manual",
+    )
+
+
 async def kb_recruiters(
     candidate_tz: str = DEFAULT_TZ,
     *,
@@ -77,7 +84,8 @@ async def kb_recruiters(
                     InlineKeyboardButton(
                         text="Рекрутёры не найдены", callback_data="noop:no_recruiters"
                     )
-                ]
+                ],
+                [_contact_support_button()],
             ]
         )
 
@@ -109,7 +117,8 @@ async def kb_recruiters(
                 InlineKeyboardButton(
                     text="Временно нет свободных рекрутёров", callback_data="noop:no_slots"
                 )
-            ]
+            ],
+            [_contact_support_button()],
         ]
         return InlineKeyboardMarkup(inline_keyboard=no_rows)
 
