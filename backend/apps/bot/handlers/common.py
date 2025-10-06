@@ -47,8 +47,11 @@ async def cb_contact_manual(callback: CallbackQuery) -> None:
         await callback.answer()
         return
 
-    await services.send_manual_scheduling_prompt(user.id)
-    await callback.answer("Напишите нам в ответном сообщении")
+    sent = await services.send_manual_scheduling_prompt(user.id)
+    if sent:
+        await callback.answer("Откройте чат с рекрутёром по кнопке ниже")
+    else:
+        await callback.answer("Ссылка на рекрутёра уже отправлена выше")
 
 
 @router.callback_query(F.data.startswith("noop:"))
