@@ -1,638 +1,144 @@
 {% extends "base.html" %}
 {% block title %}Дашборд{% endblock %}
 {% block content %}
-<style>
-  .dashboard-hero {
-    position: relative;
-    margin-bottom: 28px;
-    padding: clamp(24px, 4vw, 36px);
-    display: grid;
-    gap: clamp(20px, 3vw, 40px);
-    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
-    grid-template-areas: "hero-text hero-actions";
-    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 24%, transparent) 0%, transparent 60%),
-                linear-gradient(200deg, color-mix(in srgb, var(--accent-2) 20%, transparent) 8%, transparent 70%),
-                linear-gradient(180deg, var(--glass-tint), rgba(0,0,0,.18));
-    border-radius: clamp(var(--radius-lg), 5vw, 32px);
-    border: 1px solid var(--glass-stroke);
-    box-shadow: var(--shadow-3);
-    overflow: hidden;
-  }
-
-  .dashboard-hero::before {
-    content: "";
-    position: absolute;
-    inset: -60% -20% auto;
-    height: 120%;
-    background: radial-gradient(45% 45% at 12% 24%, color-mix(in srgb, var(--accent) 60%, transparent), transparent 70%);
-    opacity: .45;
-    pointer-events: none;
-    filter: blur(18px) saturate(1.2);
-  }
-
-  .dashboard-hero::after {
-    content: "";
-    position: absolute;
-    inset: auto -40% -70% 50%;
-    width: 320px;
-    height: 320px;
-    transform: translateX(-50%);
-    background: radial-gradient(50% 50% at 50% 50%, color-mix(in srgb, var(--accent-2) 55%, transparent) 0%, transparent 70%);
-    opacity: .28;
-    pointer-events: none;
-    filter: blur(30px);
-  }
-
-  .hero__copy {
-    position: relative;
-    z-index: 1;
-    grid-area: hero-text;
-    display: grid;
-    gap: 14px;
-  }
-
-  .hero__eyebrow {
-    margin: 0;
-    font-size: 12px;
-    letter-spacing: .38px;
-    text-transform: uppercase;
-    font-weight: 700;
-    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
-  }
-
-  .hero__title {
-    margin: 0;
-    font-size: clamp(26px, 4vw, 38px);
-    font-weight: 800;
-    letter-spacing: -.4px;
-    color: var(--fg-strong);
-    text-shadow: var(--brand-shadow);
-  }
-
-  .hero__description {
-    margin: 0;
-    font-size: 15px;
-    color: color-mix(in srgb, var(--fg) 85%, var(--muted) 15%);
-    max-width: 520px;
-    line-height: 1.6;
-  }
-
-  .hero__actions {
-    position: relative;
-    z-index: 1;
-    grid-area: hero-actions;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 16px;
-  }
-
-  .hero__actions-title {
-    margin: 0;
-    font-size: 13px;
-    letter-spacing: .32px;
-    text-transform: uppercase;
-    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
-  }
-
-  .hero__cta-group {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .hero__cta-secondary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .btn--primary {
-    --btn-primary-bg: linear-gradient(135deg, color-mix(in srgb, var(--accent) 82%, transparent) 0%, color-mix(in srgb, var(--accent) 35%, transparent) 100%);
-    background: var(--btn-primary-bg);
-    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-    color: var(--fg-strong);
-    box-shadow: 0 12px 30px rgba(45,124,255,.24), inset 0 1px 0 rgba(255,255,255,.28);
-  }
-
-  .btn--primary:hover {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 92%, transparent) 0%, color-mix(in srgb, var(--accent) 45%, transparent) 100%);
-  }
-
-  .btn--ghost {
-    background: color-mix(in srgb, var(--bg) 60%, transparent 40%);
-    border-color: color-mix(in srgb, var(--glass-stroke) 60%, transparent);
-    color: var(--fg);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
-  }
-
-  .btn--ghost:hover {
-    background: color-mix(in srgb, var(--bg) 75%, transparent 25%);
-  }
-
-  .dashboard-metrics {
-    display: grid;
-    gap: 16px;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    margin-bottom: 32px;
-  }
-
-  @media (max-width: 640px) {
-    .dashboard-hero {
-      grid-template-columns: 1fr;
-      grid-template-areas:
-        "hero-text"
-        "hero-actions";
-      text-align: left;
-    }
-
-    .hero__actions {
-      align-items: flex-start;
-    }
-
-    .dashboard-metrics {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-
-  @media (max-width: 420px) {
-    .dashboard-metrics {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .hero__cta-group,
-    .hero__cta-secondary {
-      width: 100%;
-    }
-
-    .hero__cta-group .btn,
-    .hero__cta-secondary .btn {
-      flex: 1 1 auto;
-      justify-content: center;
-    }
-  }
-
-  .metric-card {
-    position: relative;
-    display: grid;
-    grid-template-rows: auto auto 1fr;
-    gap: 16px;
-    padding: 24px;
-    min-height: 220px;
-  }
-
-  .metric-card__label {
-    font-size: 13px;
-    letter-spacing: .32px;
-    text-transform: uppercase;
-    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
-    font-weight: 700;
-  }
-
-  .metric-card__value {
-    font-size: clamp(30px, 6vw, 42px);
-    font-weight: 900;
-    letter-spacing: -.2px;
-    color: var(--fg-strong);
-  }
-
-  .metric-card__meta {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-top: auto;
-    padding-top: 14px;
-    border-top: 1px solid color-mix(in srgb, var(--glass-stroke) 60%, transparent);
-  }
-
-  .metric-card__meta-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
-    min-height: 24px;
-  }
-
-  .metric-card__meta-row:empty {
-    display: none;
-  }
-
-  .metric-card__badges,
-  .metric-card__list {
-    gap: 6px;
-  }
-
-  .metric-card__list {
-    padding-right: 4px;
-  }
-
-  .metric-card__pill {
-    display: inline-flex;
-    align-items: center;
-    padding: 4px 10px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--glass-tint) 70%, transparent);
-    color: color-mix(in srgb, var(--fg) 85%, var(--muted) 15%);
-    font-size: 12px;
-    line-height: 1.2;
-    letter-spacing: .08px;
-  }
-
-  .metric-card__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .metric-card__actions .btn[disabled] {
-    opacity: .55;
-    pointer-events: none;
-  }
-
-  .metric-card__note {
-    font-size: 12px;
-    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
-  }
-
-  .metric-card__meta-row:empty {
-    display: none;
-  }
-
-  .metric-card__link {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 600;
-    color: var(--accent);
-    text-decoration: none;
-    transition: color .2s ease, gap .2s ease;
-  }
-
-  .metric-card__link:hover {
-    color: color-mix(in srgb, var(--accent) 75%, var(--fg) 25%);
-    gap: 8px;
-  }
-
-  .metric-card__badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .badge--soft {
-    border-color: color-mix(in srgb, var(--badge-border) 60%, transparent);
-    background: color-mix(in srgb, var(--badge-bg) 75%, transparent 25%);
-  }
-
-  .badge--success {
-    border-color: color-mix(in srgb, var(--ok) 30%, transparent);
-    background: color-mix(in srgb, var(--ok) 15%, transparent);
-    color: color-mix(in srgb, var(--fg) 85%, var(--ok) 15%);
-  }
-
-  .dashboard-panels {
-    display: grid;
-    gap: 18px;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  }
-
-  .panel {
-    position: relative;
-    display: grid;
-    gap: clamp(14px, 2.4vw, 20px);
-    padding: clamp(18px, 2.6vw, 24px);
-    border-radius: var(--radius-lg);
-  }
-
-  .panel--minimal {
-    border: 1px solid color-mix(in srgb, var(--glass-stroke) 55%, transparent);
-    background: color-mix(in srgb, var(--bg) 92%, rgba(255,255,255,.06) 8%);
-    box-shadow: none;
-  }
-
-  .panel--minimal .panel__header {
-    align-items: center;
-  }
-
-  .panel--minimal:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
-    outline-offset: 4px;
-  }
-
-  .panel__header {
-    display: flex;
-    gap: 18px;
-    align-items: flex-start;
-    justify-content: space-between;
-  }
-
-  .panel__eyebrow {
-    margin: 0;
-    font-size: 12px;
-    letter-spacing: .32px;
-    text-transform: uppercase;
-    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
-    font-weight: 700;
-  }
-
-  .panel__title {
-    margin: 4px 0 0;
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--fg-strong);
-  }
-
-  .panel__subtitle {
-    margin: 6px 0 0;
-    color: var(--muted);
-    font-size: 13px;
-  }
-
-  .panel__empty {
-    margin: 0;
-  }
-
-  .entity-list {
-    display: grid;
-    gap: 0;
-    margin: 0;
-    padding: 6px;
-    list-style: none;
-    border-radius: var(--radius-md);
-    border: 1px solid color-mix(in srgb, var(--glass-stroke) 45%, transparent);
-    background: color-mix(in srgb, var(--bg) 95%, rgba(255,255,255,.05) 5%);
-  }
-
-  .entity-card {
-    display: grid;
-    gap: 4px 12px;
-    grid-template-columns: auto 1fr auto;
-    grid-template-areas:
-      "entity-id entity-title entity-status"
-      "entity-id entity-meta entity-status";
-    padding: 12px 10px;
-    border-radius: calc(var(--radius-md) - 4px);
-    border-bottom: 1px solid color-mix(in srgb, var(--glass-stroke) 40%, transparent);
-    background: transparent;
-    transition: background .2s ease, border-color .2s ease;
-  }
-
-  .entity-card:last-child {
-    border-bottom-color: transparent;
-  }
-
-  .entity-card:hover {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-bottom-color: color-mix(in srgb, var(--accent) 35%, var(--glass-stroke));
-  }
-
-  .entity-card__id {
-    grid-area: entity-id;
-    font-weight: 600;
-    font-size: 13px;
-    color: color-mix(in srgb, var(--muted) 70%, var(--fg) 30%);
-  }
-
-  .entity-card__title {
-    grid-area: entity-title;
-    font-weight: 600;
-    font-size: 15px;
-    color: var(--fg-strong);
-  }
-
-  .entity-card__meta {
-    grid-area: entity-meta;
-    color: color-mix(in srgb, var(--muted) 85%, var(--fg) 15%);
-    font-size: 13px;
-  }
-
-  .entity-card__status {
-    grid-area: entity-status;
-    justify-self: end;
-    align-self: center;
-  }
-
-  .panel__footer {
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  @media (max-width: 900px) {
-    .dashboard-panels {
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    }
-  }
-
-  @media (max-width: 720px) {
-    .dashboard-panels {
-      grid-auto-flow: column;
-      grid-auto-columns: minmax(80%, 1fr);
-      overflow-x: auto;
-      padding-bottom: 8px;
-      margin: 0 -8px;
-      padding-inline: 8px;
-      scroll-snap-type: x mandatory;
-    }
-
-    .panel {
-      scroll-snap-align: start;
-      min-height: 100%;
-    }
-
-    .entity-card {
-      grid-template-columns: auto 1fr;
-      grid-template-areas:
-        "entity-id entity-title"
-        "entity-status entity-meta";
-      align-items: center;
-    }
-
-    .entity-card__status {
-      justify-self: flex-start;
-      margin-bottom: 0;
-    }
-  }
-</style>
-
-<section class="dashboard-hero glass grain" data-tilt tabindex="0">
+<section class="dashboard-hero">
   <div class="hero__copy">
-    <p class="hero__eyebrow">Оперативная панель</p>
-    <h1 class="hero__title">Дашборд найма</h1>
-    <p class="hero__description">Следите за ключевыми метриками, создавайте новые сущности и держите команды в курсе прогресса, не покидая главную страницу.</p>
+    <p class="hero__eyebrow">TG Bot · HR Operations</p>
+    <h1 class="hero__title">Центр управления рекрутингом</h1>
+    <p class="hero__description">Следите за воронкой кандидатов, слотами и продуктивностью команды в режиме реального времени.</p>
+    <div class="hero__cta-group">
+      <a class="btn btn-primary" href="/candidates">К кандидатам</a>
+      <a class="btn btn-secondary" href="/recruiters">Управление рекрутёрами</a>
+    </div>
   </div>
   <div class="hero__actions">
     <p class="hero__actions-title">Быстрые действия</p>
-    <div class="hero__cta-group">
-      <a class="btn btn--primary" href="/slots/new">Создать слот</a>
-      <a class="btn btn--primary" href="/recruiters/new">Добавить рекрутёра</a>
-    </div>
     <div class="hero__cta-secondary">
-      <a class="btn btn--ghost" href="/cities/new">Добавить город</a>
-      <a class="btn btn--ghost" href="/templates/new">Новый шаблон</a>
+      <a class="btn btn-ghost" href="/slots/new">Создать слот</a>
+      <a class="btn btn-ghost" href="/templates/new">Добавить шаблон</a>
+      <a class="btn btn-ghost" href="/questions/new">Новый вопрос</a>
     </div>
   </div>
 </section>
 
 <section class="dashboard-metrics">
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">Рекрутёры</span>
-    <div class="metric-card__value">{{ counts.recruiters }}</div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row"></div>
-      <a class="metric-card__link" href="/recruiters">Перейти к списку<span aria-hidden="true">→</span></a>
-    </div>
+  <article class="metric-card">
+    <span class="metric-card__label">Активных кандидатов</span>
+    <span class="metric-card__value">{{ metrics.active_candidates }}</span>
+    <span class="metric-card__meta">Новых за 7 дней: {{ metrics.new_week }} • Повторных: {{ metrics.repeat_week }}</span>
   </article>
-
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">Города</span>
-    <div class="metric-card__value">{{ counts.cities }}</div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row"></div>
-      <a class="metric-card__link" href="/cities">Перейти к списку<span aria-hidden="true">→</span></a>
-    </div>
+  <article class="metric-card">
+    <span class="metric-card__label">Заполненных слотов</span>
+    <span class="metric-card__value">{{ metrics.scheduled_slots }}</span>
+    <span class="metric-card__meta">На сегодня: {{ metrics.scheduled_today }} • На неделю: {{ metrics.scheduled_week }}</span>
   </article>
-
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">Слоты всего</span>
-    <div class="metric-card__value">{{ counts.slots_total }}</div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row metric-card__badges">
-        <span class="badge badge--soft">FREE: {{ counts.slots_free }}</span>
-        <span class="badge badge--soft">PENDING: {{ counts.slots_pending }}</span>
-        <span class="badge badge--soft">BOOKED: {{ counts.slots_booked }}</span>
-      </div>
-      <a class="metric-card__link" href="/slots">Перейти к слотам<span aria-hidden="true">→</span></a>
-    </div>
+  <article class="metric-card">
+    <span class="metric-card__label">Прохождение тестов</span>
+    <span class="metric-card__value">{{ metrics.tests_completed }}</span>
+    <span class="metric-card__meta">Средний балл: {{ metrics.tests_avg_score }} • Ошибок: {{ metrics.tests_failures }}</span>
   </article>
-
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">Интеграция бота</span>
-    <div class="metric-card__value">{{ bot_status.runtime_enabled and 'ON' or 'OFF' }}</div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row metric-card__badges">
-        <span class="badge badge--soft">Config: {{ bot_status.config_enabled }}</span>
-        <span class="badge badge--soft">Health: {{ bot_status.health }}</span>
-        <span class="badge badge--soft">Mode: {{ bot_status.mode }}</span>
-      </div>
-      <div class="metric-card__meta-row metric-card__actions">
-        <button class="btn btn--ghost" data-bot-toggle data-enabled="1" {% if bot_status.runtime_enabled %}disabled{% endif %}>Включить</button>
-        <button class="btn btn--ghost" data-bot-toggle data-enabled="0" {% if not bot_status.runtime_enabled %}disabled{% endif %}>Выключить</button>
-      </div>
-      {% if bot_status.updated_at %}
-      <div class="metric-card__meta-row metric-card__note">Обновлено: {{ bot_status.updated_at }}</div>
-      {% endif %}
-    </div>
-  </article>
-
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">Автоотсев Теста 1</span>
-    <div class="metric-card__value">{{ counts.test1_rejections_percent }}%</div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row metric-card__badges">
-        <span class="badge badge--soft">Отказы: {{ counts.test1_rejections_total }}</span>
-        <span class="badge badge--soft">Всего: {{ counts.test1_total_seen }}</span>
-      </div>
-      {% if counts.test1_rejections_breakdown %}
-        <div class="metric-card__meta-row metric-card__list">
-          {% for reason, value in counts.test1_rejections_breakdown.items() %}
-            <span class="metric-card__pill">{{ reason | replace('_', ' ') }} — {{ value }}</span>
-          {% endfor %}
-        </div>
-      {% endif %}
-    </div>
-  </article>
-
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">Шаблоны</span>
-    <div class="metric-card__value">{{ counts.templates|default(0) }}</div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row"></div>
-      <a class="metric-card__link" href="/templates">Перейти к списку<span aria-hidden="true">→</span></a>
-    </div>
+  <article class="metric-card">
+    <span class="metric-card__label">Сообщения бота</span>
+    <span class="metric-card__value">{{ metrics.messages_sent }}</span>
+    <span class="metric-card__meta">Автоматических: {{ metrics.messages_auto }} • Ручных: {{ metrics.messages_manual }}</span>
   </article>
 </section>
 
-{% set actives = recruiters | selectattr('active') | list %}
-<section class="dashboard-panels">
-  <article class="panel panel--minimal" tabindex="0">
-    <header class="panel__header">
-      <div>
-        <p class="panel__eyebrow">Команда</p>
-        <h3 class="panel__title">Активные рекрутёры</h3>
-        <p class="panel__subtitle">Следите за ответственными и их часовыми поясами.</p>
-      </div>
-      <a class="btn btn--ghost" href="/recruiters">Открыть все</a>
+{% if recent_slots %}
+  <section class="surface">
+    <header class="section-header">
+      <h2 class="section-title">Ближайшие интервью</h2>
+      <p class="section-hint">Следующие подтверждённые слоты по часовым поясам кандидатов.</p>
     </header>
-    {% if not actives %}
-      <p class="panel__empty muted">Пока пусто. <a href="/recruiters/new">Добавить рекрутёра</a></p>
-    {% else %}
-      <ul class="entity-list">
-        {% for r in actives %}
-          <li class="entity-card">
-            <span class="entity-card__id">#{{ r.id }}</span>
-            <span class="entity-card__title">{{ r.name }}</span>
-            <span class="entity-card__meta">{{ tz_display(r.tz) }}</span>
-            <span class="entity-card__status"><span class="badge badge--success">Активен</span></span>
-          </li>
+    <div class="list-table-wrapper">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th scope="col">Кандидат</th>
+            <th scope="col">Рекрутёр</th>
+            <th scope="col">Город</th>
+            <th scope="col">Дата/время</th>
+            <th scope="col">Статус</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for slot in recent_slots %}
+          <tr>
+            <td>
+              <div class="entity">
+                <span class="entity__title">{{ slot.candidate.fio }}</span>
+                <span class="muted">{{ slot.candidate.telegram_id }}</span>
+              </div>
+            </td>
+            <td>{{ slot.recruiter.name }}</td>
+            <td>{{ slot.city or '—' }}</td>
+            <td>{{ fmt_local(slot.start_utc, slot.candidate_tz or 'Europe/Moscow') }}</td>
+            <td>{{ slot.status }}</td>
+          </tr>
         {% endfor %}
-      </ul>
-    {% endif %}
-  </article>
-
-  <article class="panel panel--minimal" tabindex="0">
-    <header class="panel__header">
-      <div>
-        <p class="panel__eyebrow">География</p>
-        <h3 class="panel__title">Города в работе</h3>
-        <p class="panel__subtitle">Контролируйте покрытие и операционные временные зоны.</p>
-      </div>
-      <a class="btn btn--ghost" href="/cities">Открыть все</a>
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% else %}
+  <section class="surface">
+    <header class="section-header">
+      <h2 class="section-title">Ближайшие интервью</h2>
+      <p class="section-hint">Следующие подтверждённые слоты по часовым поясам кандидатов.</p>
     </header>
-    {% if not cities %}
-      <p class="panel__empty muted">Пока пусто. <a href="/cities/new">Добавить город</a></p>
-    {% else %}
-      <ul class="entity-list">
-        {% for c in cities %}
-          <li class="entity-card">
-            <span class="entity-card__id">#{{ c.id }}</span>
-            <span class="entity-card__title">{{ c.name }}</span>
-            <span class="entity-card__meta">{{ c.tz or "Europe/Moscow" }}</span>
-            <span class="entity-card__status"></span>
-          </li>
+    <p class="muted">Пока нет запланированных интервью. Добавьте новые слоты или отправьте приглашения кандидатам.</p>
+  </section>
+{% endif %}
+
+{% if recent_candidates %}
+  <section class="surface">
+    <header class="section-header">
+      <h2 class="section-title">Недавние кандидаты</h2>
+      <p class="section-hint">Последние подключившиеся кандидаты и их статус.</p>
+    </header>
+    <div class="list-table-wrapper">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th scope="col">Кандидат</th>
+            <th scope="col">Город</th>
+            <th scope="col">Статус</th>
+            <th scope="col">Последняя активность</th>
+            <th scope="col">Карточка</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for item in recent_candidates %}
+          <tr>
+            <td>
+              <div class="entity">
+                <span class="entity__title">{{ item.user.fio }}</span>
+                <span class="muted">TG {{ item.user.telegram_id }}</span>
+              </div>
+            </td>
+            <td>{{ item.user.city or '—' }}</td>
+            <td>
+              {% if item.user.is_active %}
+                <span class="badge badge--success">Активен</span>
+              {% else %}
+                <span class="badge badge--muted">Отключен</span>
+              {% endif %}
+            </td>
+            <td>{{ item.user.last_activity.strftime('%d.%m.%Y %H:%M') if item.user.last_activity else '—' }}</td>
+            <td><a class="btn btn-ghost btn-sm" href="/candidates/{{ item.user.id }}">Открыть</a></td>
+          </tr>
         {% endfor %}
-      </ul>
-    {% endif %}
-  </article>
-</section>
-
-<script>
-  (function () {
-    const buttons = document.querySelectorAll('[data-bot-toggle]');
-    if (!buttons.length) return;
-    buttons.forEach(function (btn) {
-      btn.addEventListener('click', function (event) {
-        event.preventDefault();
-        const enabled = btn.dataset.enabled === '1';
-        fetch('/api/bot/integration', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled })
-        })
-          .then(function (response) {
-            if (!response.ok) {
-              throw new Error('Toggle failed');
-            }
-            return response.json();
-          })
-          .then(function () {
-            window.location.reload();
-          })
-          .catch(function () {
-            alert('Не удалось обновить состояние интеграции.');
-          });
-      });
-    });
-  })();
-</script>
-
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% else %}
+  <section class="surface">
+    <header class="section-header">
+      <h2 class="section-title">Недавние кандидаты</h2>
+      <p class="section-hint">Последние подключившиеся кандидаты и их статус.</p>
+    </header>
+    <p class="muted">Пока нет новых кандидатов. Добавьте пользователя вручную или пригласите через бота.</p>
+  </section>
+{% endif %}
 {% endblock %}
