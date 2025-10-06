@@ -186,9 +186,19 @@ def _determine_test1_branch(
             template_key=REJECTION_TEMPLATES["format_not_ready"],
         )
 
+    if qid == "format" and answer.strip() == "Нужен гибкий график":
+        return Test1AnswerResult(
+            status="ok",
+            template_key="t1_format_clarify",
+        )
+
     if qid == FOLLOWUP_STUDY_SCHEDULE["id"]:
         normalized = answer.strip()
-        if normalized == "Нет, не смогу":
+        normalized_lower = normalized.lower()
+        if normalized in {"Нет, не смогу", "Будет сложно"} or normalized_lower in {
+            "нет, не смогу",
+            "будет сложно",
+        }:
             return Test1AnswerResult(
                 status="reject",
                 reason="schedule_conflict",
@@ -240,6 +250,24 @@ async def _handle_test1_rejection(user_id: int, result: Test1AnswerResult) -> No
         },
     )
     await state_manager.delete(user_id)
+
+
+async def _resolve_followup_message(
+    result: Test1AnswerResult, state: State | Dict[str, Any]
+) -> Optional[str]:
+    if result.template_key is None and not result.message:
+        return None
+
+    city_id = result.template_context.get("city_id")
+    if city_id is None and isinstance(state, dict):
+        city_id = state.get("city_id")
+
+    if result.template_key:
+        text = await templates.tpl(city_id, result.template_key, **result.template_context)
+        if text:
+            return text
+
+    return result.message
 
 
 async def _notify_existing_reservation(callback: CallbackQuery, slot: Slot) -> None:
@@ -982,11 +1010,17 @@ async def handle_test1_answer(message: Message) -> None:
         await message.reply(feedback)
         return
 
-    await _mark_test1_question_answered(user_id, _shorten_answer(answer_text))
+    updated_state = await state_manager.get(user_id) or {}
 
     if result.status == "reject":
         await _handle_test1_rejection(user_id, result)
         return
+
+    followup_text = await _resolve_followup_message(result, updated_state)
+    if followup_text:
+        await message.answer(followup_text)
+
+    await _mark_test1_question_answered(user_id, _shorten_answer(answer_text))
 
     def _advance(st: State) -> Tuple[State, Dict[str, int]]:
         working = st
@@ -1062,6 +1096,16 @@ async def handle_test1_option(callback: CallbackQuery) -> None:
         await callback.message.answer(feedback)
         return
 
+    updated_state = await state_manager.get(user_id) or {}
+
+    if result.status == "reject":
+        await _handle_test1_rejection(user_id, result)
+        return
+
+    followup_text = await _resolve_followup_message(result, updated_state)
+    if followup_text:
+        await callback.message.answer(followup_text)
+
     await _mark_test1_question_answered(user_id, label)
 
     def _advance(st: State) -> Tuple[State, Dict[str, int]]:
@@ -1126,16 +1170,10 @@ async def finalize_test1(user_id: int) -> None:
 
             await state_manager.atomic_update(user_id, _mark_shared)
 
-    invite_text = await templates.tpl(
-        state.get("city_id"),
-        "stage1_invite",
-        candidate_fio=state.get("fio") or "",
-        city_name=state.get("city_name") or "",
-        interview_dt_hint="выберите удобное время из списка ниже (по-вашему времени)",
-    )
-    await bot.send_message(user_id, invite_text)
-
-    await show_recruiter_menu(user_id)
+    final_notice = await templates.tpl(state.get("city_id"), "slot_sent")
+    if not final_notice:
+        final_notice = "Заявка отправлена. Ожидайте подтверждения."
+    await bot.send_message(user_id, final_notice)
 
     try:
         fio = state.get("fio") or f"TG {user_id}"
@@ -1357,7 +1395,10 @@ async def finalize_test2(user_id: int) -> None:
         await state_manager.delete(user_id)
         return
 
-    await show_recruiter_menu(user_id)
+    final_notice = await templates.tpl(state.get("city_id"), "slot_sent")
+    if not final_notice:
+        final_notice = "Заявка отправлена. Ожидайте подтверждения."
+    await bot.send_message(user_id, final_notice)
 
 
 async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> None:

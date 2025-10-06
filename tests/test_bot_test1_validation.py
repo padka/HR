@@ -197,3 +197,70 @@ async def test_study_schedule_branch_and_reject(bot_context, monkeypatch):
     result_flex = await save_test1_answer(USER_ID, flex_question, "Нет, не смогу")
     assert result_flex.status == "reject"
     assert result_flex.reason == "study_flex_declined"
+
+
+@pytest.mark.asyncio
+async def test_study_schedule_hard_response_rejects(bot_context):
+    manager, _ = bot_context
+
+    await manager.set(
+        USER_ID,
+        State(
+            flow="interview",
+            t1_idx=0,
+            t1_current_idx=0,
+            test1_answers={},
+            t1_last_prompt_id=None,
+            t1_last_question_text="",
+            t1_requires_free_text=False,
+            t1_sequence=[FOLLOWUP_STUDY_MODE.copy(), FOLLOWUP_STUDY_SCHEDULE.copy()],
+            fio="Иванов Иван",
+            city_name="Москва",
+            city_id=1,
+            candidate_tz=DEFAULT_TZ,
+            t2_attempts={},
+            picked_recruiter_id=None,
+            picked_slot_id=None,
+            test1_payload={"city_id": 1, "city_name": "Москва"},
+        ),
+    )
+
+    state = await manager.get(USER_ID)
+    schedule_question = state["t1_sequence"][1]
+
+    result_schedule = await save_test1_answer(USER_ID, schedule_question, "Будет сложно")
+
+    assert result_schedule.status == "reject"
+    assert result_schedule.reason == "schedule_conflict"
+
+
+@pytest.mark.asyncio
+async def test_format_flexible_request_triggers_clarification(bot_context):
+    manager, _ = bot_context
+
+    await manager.set(
+        USER_ID,
+        State(
+            flow="interview",
+            t1_idx=0,
+            t1_current_idx=0,
+            test1_answers={},
+            t1_last_prompt_id=None,
+            t1_last_question_text="",
+            t1_requires_free_text=False,
+            t1_sequence=[{"id": "format"}],
+            fio="Иванов Иван",
+            city_name="Москва",
+            city_id=1,
+            candidate_tz=DEFAULT_TZ,
+            t2_attempts={},
+            picked_recruiter_id=None,
+            picked_slot_id=None,
+            test1_payload={"fio": "Иванов Иван", "city_id": 1, "city_name": "Москва"},
+        ),
+    )
+
+    result = await save_test1_answer(USER_ID, {"id": "format"}, "Нужен гибкий график")
+
+    assert result.status == "ok"
+    assert result.template_key == "t1_format_clarify"
