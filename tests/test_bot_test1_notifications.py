@@ -5,7 +5,11 @@ from sqlalchemy import select
 
 from backend.apps.bot import templates
 from backend.apps.bot.config import TEST1_QUESTIONS
-from backend.apps.bot.services import StateManager, configure as configure_bot_services, finalize_test1
+from backend.apps.bot.services import (
+    StateManager,
+    configure as configure_bot_services,
+    finalize_test1,
+)
 from backend.apps.bot.state_store import InMemoryStateStore
 from backend.core.db import async_session
 from backend.domain import models
@@ -139,3 +143,59 @@ async def test_finalize_test1_deduplicates_by_chat_id():
     assert len(bot.documents) == 1, "expected single notification per chat"
     chat_id, *_ = bot.documents[0]
     assert chat_id == shared_chat
+
+
+@pytest.mark.asyncio
+async def test_finalize_test1_prompts_candidate_to_schedule():
+    templates.clear_cache()
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Собеседующий",
+            tz="Europe/Moscow",
+            active=True,
+            tg_chat_id=4242,
+        )
+        city = models.City(name="Ижевск", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        city.responsible_recruiter_id = recruiter.id
+        await session.commit()
+
+        session.add(
+            models.Slot(
+                recruiter_id=recruiter.id,
+                city_id=city.id,
+                start_utc=datetime.now(timezone.utc) + timedelta(hours=3),
+                status=models.SlotStatus.FREE,
+                duration_min=30,
+            )
+        )
+        await session.commit()
+
+    store = InMemoryStateStore(ttl_seconds=60)
+    state_manager = StateManager(store)
+    user_id = 9393
+    await state_manager.set(
+        user_id,
+        {
+            "fio": "Планировщик",
+            "city_name": "Ижевск",
+            "city_id": city.id,
+            "candidate_tz": "Europe/Moscow",
+            "test1_answers": {TEST1_QUESTIONS[0]["id"]: "Answer"},
+            "t1_sequence": list(TEST1_QUESTIONS),
+        },
+    )
+
+    bot = DummyBot()
+    configure_bot_services(bot, state_manager)
+
+    await finalize_test1(user_id)
+
+    assert bot.messages, "Candidate should receive follow-up messages"
+    combined = "\n".join(text for _, text in bot.messages)
+    assert "Анкета получена" in combined
+    assert "Выбор рекрутёра" in combined
