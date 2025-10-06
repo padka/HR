@@ -231,6 +231,7 @@ async def _handle_test1_rejection(user_id: int, result: Test1AnswerResult) -> No
     city_id = state.get("city_id")
     template_key = result.template_key or REJECTION_TEMPLATES.get(result.reason or "", "")
     context = dict(result.template_context)
+    context.pop("city_id", None)
     context.setdefault("city_name", state.get("city_name") or "")
     message = await templates.tpl(city_id, template_key or "t1_schedule_reject", **context)
     if not message:
@@ -258,12 +259,13 @@ async def _resolve_followup_message(
     if result.template_key is None and not result.message:
         return None
 
-    city_id = result.template_context.get("city_id")
+    template_context = dict(result.template_context)
+    city_id = template_context.pop("city_id", None)
     if city_id is None and isinstance(state, dict):
         city_id = state.get("city_id")
 
     if result.template_key:
-        text = await templates.tpl(city_id, result.template_key, **result.template_context)
+        text = await templates.tpl(city_id, result.template_key, **template_context)
         if text:
             return text
 
