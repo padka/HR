@@ -82,6 +82,7 @@ async def test_candidate_confirmation_idempotent(monkeypatch):
         await session.commit()
         await session.refresh(slot)
         slot_id = slot.id
+        candidate_id = slot.candidate_tg_id
 
     send_calls = []
 
@@ -116,10 +117,12 @@ async def test_candidate_confirmation_idempotent(monkeypatch):
                 select(NotificationLog).where(
                     NotificationLog.booking_id == slot_id,
                     NotificationLog.type == "candidate_confirm",
+                    NotificationLog.candidate_tg_id == candidate_id,
                 )
             )
         ).scalars().all()
         assert len(logs) == 1
+        assert logs[0].candidate_tg_id == candidate_id
         cb_logs = (
             await session.execute(
                 select(TelegramCallbackLog).where(
@@ -143,7 +146,10 @@ async def test_candidate_confirmation_idempotent(monkeypatch):
     async with async_session() as session:
         logs = (
             await session.execute(
-                select(NotificationLog).where(NotificationLog.booking_id == slot_id)
+                select(NotificationLog).where(
+                    NotificationLog.booking_id == slot_id,
+                    NotificationLog.candidate_tg_id == candidate_id,
+                )
             )
         ).scalars().all()
         assert len(logs) == 1
@@ -187,6 +193,7 @@ async def test_recruiter_approval_message_idempotent(monkeypatch):
         await session.commit()
         await session.refresh(slot)
         slot_id = slot.id
+        candidate_id = slot.candidate_tg_id
 
     send_calls = []
 
@@ -216,10 +223,12 @@ async def test_recruiter_approval_message_idempotent(monkeypatch):
                 select(NotificationLog).where(
                     NotificationLog.booking_id == slot_id,
                     NotificationLog.type == "candidate_interview_confirmed",
+                    NotificationLog.candidate_tg_id == candidate_id,
                 )
             )
         ).scalars().all()
         assert len(logs) == 1
+        assert logs[0].candidate_tg_id == candidate_id
 
     assert responses[-1] == ("Сообщение отправлено кандидату.", False)
     assert message.edit_reply_markup.await_count == 1
@@ -236,6 +245,7 @@ async def test_recruiter_approval_message_idempotent(monkeypatch):
                 select(NotificationLog).where(
                     NotificationLog.booking_id == slot_id,
                     NotificationLog.type == "candidate_interview_confirmed",
+                    NotificationLog.candidate_tg_id == candidate_id,
                 )
             )
         ).scalars().all()
@@ -266,10 +276,15 @@ async def test_notification_log_unique_constraint():
         await session.commit()
         await session.refresh(slot)
         slot_id = slot.id
+        candidate_id = slot.candidate_tg_id
 
-    first = await add_notification_log("candidate_confirm", slot_id)
+    first = await add_notification_log(
+        "candidate_confirm", slot_id, candidate_tg_id=candidate_id
+    )
     assert first is True
-    second = await add_notification_log("candidate_confirm", slot_id)
+    second = await add_notification_log(
+        "candidate_confirm", slot_id, candidate_tg_id=candidate_id
+    )
     assert second is False
 
     async with async_session() as session:
@@ -277,6 +292,7 @@ async def test_notification_log_unique_constraint():
             select(func.count()).select_from(NotificationLog).where(
                 NotificationLog.booking_id == slot_id,
                 NotificationLog.type == "candidate_confirm",
+                NotificationLog.candidate_tg_id == candidate_id,
             )
         )
         assert count == 1

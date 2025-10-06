@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 from backend.apps.bot import templates
 from backend.apps.bot.services import (
@@ -102,6 +103,11 @@ async def test_reapprove_after_reschedule_notifies_new_candidate(monkeypatch):
         return SimpleNamespace(message_id=1)
 
     monkeypatch.setattr("backend.apps.bot.services._send_with_retry", fake_send)
+    reminder_service = SimpleNamespace(schedule_for_slot=AsyncMock())
+    monkeypatch.setattr(
+        "backend.apps.bot.services.get_reminder_service",
+        lambda: reminder_service,
+    )
 
     responses = []
     approve_cb = DummyApproveCallback("cb-1", slot_id, DummyMessage(), responses)
@@ -109,7 +115,26 @@ async def test_reapprove_after_reschedule_notifies_new_candidate(monkeypatch):
 
     assert len(send_calls) == 1, "Первый кандидат должен получить сообщение"
 
+    async with async_session() as session:
+        log = await session.scalar(
+            select(models.NotificationLog)
+            .where(models.NotificationLog.booking_id == slot_id)
+            .where(models.NotificationLog.candidate_tg_id == 111)
+            .where(models.NotificationLog.type == "candidate_interview_confirmed")
+        )
+        assert log is not None, "Запись лога должна сохраниться для первого кандидата"
+
+    assert reminder_service.schedule_for_slot.await_count == 1
+
     await reject_slot(slot_id)
+
+    async with async_session() as session:
+        remaining = await session.scalars(
+            select(models.NotificationLog).where(
+                models.NotificationLog.booking_id == slot_id
+            )
+        )
+        assert not list(remaining), "Логи должны удаляться при освобождении слота"
 
     await state_manager.set(
         222,
@@ -136,6 +161,21 @@ async def test_reapprove_after_reschedule_notifies_new_candidate(monkeypatch):
     await handle_approve_slot(second_cb)
 
     assert len(send_calls) == 2, "Новый кандидат должен получить уведомление после рескейла"
+    assert reminder_service.schedule_for_slot.await_count == 2
+
+    async with async_session() as session:
+        log = await session.scalar(
+            select(models.NotificationLog)
+            .where(models.NotificationLog.booking_id == slot_id)
+            .where(models.NotificationLog.candidate_tg_id == 222)
+            .where(models.NotificationLog.type == "candidate_interview_confirmed")
+        )
+        assert log is not None, "Второй кандидат должен иметь собственную запись"
+
+    assert [call.args for call in reminder_service.schedule_for_slot.await_args_list] == [
+        (slot_id,),
+        (slot_id,),
+    ]
 
     await state_manager.clear()
     await state_manager.close()

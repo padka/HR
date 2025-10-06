@@ -55,7 +55,7 @@ async def test_dashboard_and_slot_listing():
     )
     assert listing["total"] == 1
     assert listing["items"][0].recruiter_id == recruiter.id
-    assert listing["status_counts"] == {"FREE": 1}
+    assert listing["status_counts"] == {"FREE": 1, "CONFIRMED_BY_CANDIDATE": 0}
 
 
 @pytest.mark.asyncio
@@ -105,12 +105,23 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
                     start_utc=now + timedelta(hours=2),
                     status=models.SlotStatus.BOOKED,
                 ),
+                models.Slot(
+                    recruiter_id=recruiter.id,
+                    city_id=city.id,
+                    start_utc=now + timedelta(hours=3),
+                    status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
+                ),
             ]
         )
         await session.commit()
 
     payload = await api_slots_payload(recruiter_id=None, status=None, limit=10)
-    assert {item["status"] for item in payload} == {"FREE", "PENDING", "BOOKED"}
+    assert {item["status"] for item in payload} == {
+        "FREE",
+        "PENDING",
+        "BOOKED",
+        "CONFIRMED_BY_CANDIDATE",
+    }
 
     register_template_globals()
     scope = {
@@ -123,4 +134,10 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
     request = Request(scope)
     response = await slots_list(request, recruiter_id=None, status=None, page=1, per_page=10)
     status_counts = response.context["status_counts"]
-    assert status_counts == {"total": 3, "FREE": 1, "PENDING": 1, "BOOKED": 1}
+    assert status_counts == {
+        "total": 4,
+        "FREE": 1,
+        "PENDING": 1,
+        "BOOKED": 1,
+        "CONFIRMED_BY_CANDIDATE": 1,
+    }

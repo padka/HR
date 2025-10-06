@@ -40,6 +40,11 @@
       <span class="slot-summary__value" id="cnt-booked">{{ status_counts.BOOKED }}</span>
       <p class="slot-summary__hint">Интервью назначены кандидатам</p>
     </article>
+    <article class="slot-summary__item" data-tone="primary">
+      <span class="slot-summary__label">Подтверждены</span>
+      <span class="slot-summary__value" id="cnt-confirmed">{{ status_counts.CONFIRMED_BY_CANDIDATE }}</span>
+      <p class="slot-summary__hint">Кандидаты подтвердили участие</p>
+    </article>
     <article class="slot-summary__item" data-tone="neutral">
       <span class="slot-summary__label">Всего</span>
       <span class="slot-summary__value" id="cnt-total">{{ status_counts.total }}</span>
@@ -73,6 +78,7 @@
         <option value="FREE" {% if filter_status == 'FREE' %}selected{% endif %}>FREE</option>
         <option value="PENDING" {% if filter_status == 'PENDING' %}selected{% endif %}>PENDING</option>
         <option value="BOOKED" {% if filter_status == 'BOOKED' %}selected{% endif %}>BOOKED</option>
+        <option value="CONFIRMED_BY_CANDIDATE" {% if filter_status == 'CONFIRMED_BY_CANDIDATE' %}selected{% endif %}>CONFIRMED_BY_CANDIDATE</option>
       </select>
     </div>
 

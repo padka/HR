@@ -273,12 +273,31 @@ async def register_callback(callback_id: str) -> bool:
     return True
 
 
-async def notification_log_exists(notification_type: str, booking_id: int) -> bool:
+def _log_candidate_clause(candidate_tg_id: Optional[int]):
+    if candidate_tg_id is None:
+        return NotificationLog.candidate_tg_id.is_(None)
+    return or_(
+        NotificationLog.candidate_tg_id == candidate_tg_id,
+        NotificationLog.candidate_tg_id.is_(None),
+    )
+
+
+async def notification_log_exists(
+    notification_type: str,
+    booking_id: int,
+    *,
+    candidate_tg_id: Optional[int] = None,
+) -> bool:
     async with async_session() as session:
+        if candidate_tg_id is None:
+            candidate_tg_id = await session.scalar(
+                select(Slot.candidate_tg_id).where(Slot.id == booking_id)
+            )
         existing = await session.scalar(
             select(NotificationLog.id).where(
                 NotificationLog.type == notification_type,
                 NotificationLog.booking_id == booking_id,
+                _log_candidate_clause(candidate_tg_id),
             )
         )
         return existing is not None
@@ -288,15 +307,21 @@ async def add_notification_log(
     notification_type: str,
     booking_id: int,
     *,
+    candidate_tg_id: Optional[int] = None,
     payload: Optional[str] = None,
 ) -> bool:
     async with async_session() as session:
         async with session.begin():
+            if candidate_tg_id is None:
+                candidate_tg_id = await session.scalar(
+                    select(Slot.candidate_tg_id).where(Slot.id == booking_id)
+                )
             exists = await session.scalar(
                 select(NotificationLog.id)
                 .where(
                     NotificationLog.type == notification_type,
                     NotificationLog.booking_id == booking_id,
+                    _log_candidate_clause(candidate_tg_id),
                 )
                 .with_for_update()
             )
@@ -305,6 +330,7 @@ async def add_notification_log(
             session.add(
                 NotificationLog(
                     booking_id=booking_id,
+                    candidate_tg_id=candidate_tg_id,
                     type=notification_type,
                     payload=payload,
                     created_at=datetime.now(timezone.utc),
@@ -335,11 +361,13 @@ async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult
                 slot.start_utc = _to_aware_utc(slot.start_utc)
                 return CandidateConfirmationResult(status="invalid_status", slot=slot)
 
+            candidate_tg_id = slot.candidate_tg_id
             existing_log = await session.scalar(
                 select(NotificationLog.id)
                 .where(
                     NotificationLog.booking_id == slot_id,
                     NotificationLog.type == "candidate_confirm",
+                    _log_candidate_clause(candidate_tg_id),
                 )
                 .with_for_update()
             )
@@ -352,6 +380,7 @@ async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult
             session.add(
                 NotificationLog(
                     booking_id=slot.id,
+                    candidate_tg_id=candidate_tg_id,
                     type="candidate_confirm",
                     created_at=datetime.now(timezone.utc),
                 )
@@ -394,7 +423,12 @@ async def reserve_slot(
             if status_value != SlotStatus.FREE:
                 if (
                     slot.candidate_tg_id == candidate_tg_id
-                    and status_value in (SlotStatus.PENDING, SlotStatus.BOOKED)
+                    and status_value
+                    in (
+                        SlotStatus.PENDING,
+                        SlotStatus.BOOKED,
+                        SlotStatus.CONFIRMED_BY_CANDIDATE,
+                    )
                 ):
                     slot.start_utc = _to_aware_utc(slot.start_utc)
                     return ReservationResult(status="already_reserved", slot=slot)
@@ -412,7 +446,13 @@ async def reserve_slot(
                 .where(
                     Slot.recruiter_id == slot.recruiter_id,
                     Slot.candidate_tg_id == candidate_tg_id,
-                    func.lower(Slot.status).in_([SlotStatus.PENDING, SlotStatus.BOOKED]),
+                    func.lower(Slot.status).in_(
+                        [
+                            SlotStatus.PENDING,
+                            SlotStatus.BOOKED,
+                            SlotStatus.CONFIRMED_BY_CANDIDATE,
+                        ]
+                    ),
                 )
             )
             if existing_active:
@@ -514,6 +554,16 @@ async def reject_slot(slot_id: int) -> Optional[Slot]:
         recruiter_id = slot.recruiter_id
         await session.execute(
             delete(SlotReservationLock).where(SlotReservationLock.slot_id == slot.id)
+        )
+        await session.execute(
+            delete(NotificationLog).where(NotificationLog.booking_id == slot.id)
+        )
+        # Legacy notification logs (pre candidate binding) may still exist with NULL
+        # ``candidate_tg_id``; remove them as well to avoid blocking future reuse.
+        await session.execute(
+            delete(NotificationLog)
+            .where(NotificationLog.booking_id == slot.id)
+            .where(NotificationLog.candidate_tg_id.is_(None))
         )
         if candidate_tg_id is not None and recruiter_id is not None:
             await session.execute(
