@@ -390,8 +390,10 @@ def _resolve_zone(label: str) -> ZoneInfo:
             add(canonical)
 
     for candidate in candidates:
+        lookup = _ZONE_ALIASES.get(candidate.lower())
+        target = lookup or candidate
         try:
-            return ZoneInfo(candidate)
+            return ZoneInfo(target)
         except ZoneInfoNotFoundError:
             continue
     return _DEFAULT_ZONE

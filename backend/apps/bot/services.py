@@ -1983,11 +1983,15 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         rec.telemost_url if rec and rec.telemost_url else "https://telemost.yandex.ru/j/REPLACE_ME"
     )
     tz = slot.candidate_tz or DEFAULT_TZ
+    dt_local = fmt_dt_local(slot.start_utc, tz)
+    city_id = getattr(slot, "candidate_city_id", None)
+    labels = slot_local_labels(slot.start_utc, tz)
     text = await templates.tpl(
-        getattr(slot, "candidate_city_id", None),
+        city_id,
         "att_confirmed_link",
         link=link,
-        dt=fmt_dt_local(slot.start_utc, tz),
+        dt=dt_local,
+        **labels,
     )
     bot = get_bot()
     await bot.send_message(slot.candidate_tg_id, text)
@@ -2003,8 +2007,10 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         )
 
     ack_text = await templates.tpl(
-        getattr(slot, "candidate_city_id", None),
+        city_id,
         "att_confirmed_ack",
+        dt=dt_local,
+        **labels,
     )
     if ack_text:
         try:
