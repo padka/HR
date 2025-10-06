@@ -1,15 +1,13 @@
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Iterable, List, Optional, Tuple
-
-from sqlalchemy import and_, func, or_, select, delete
-from sqlalchemy.orm import aliased, selectinload
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
-from typing import Literal
+from typing import Dict, Iterable, List, Literal, Optional, Tuple
 
+from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy.orm import aliased, selectinload
 
 from backend.core.db import async_session
 from backend.domain.candidates.services import create_or_update_user
-from .models import Recruiter, City, Template, Slot, SlotStatus, SlotReservationLock
+from .models import City, Recruiter, Slot, SlotReservationLock, SlotStatus, Template
 
 
 def _to_aware_utc(dt: datetime) -> datetime:
@@ -212,6 +210,8 @@ async def get_slot(slot_id: int) -> Optional[Slot]:
         slot = await session.get(Slot, slot_id)
         if slot:
             slot.start_utc = _to_aware_utc(slot.start_utc)
+            if slot.attendance_confirmed_at:
+                slot.attendance_confirmed_at = _to_aware_utc(slot.attendance_confirmed_at)
         return slot
 
 
@@ -327,6 +327,7 @@ async def reserve_slot(
             slot.candidate_tz = candidate_tz
             slot.candidate_city_id = candidate_city_id
             slot.purpose = purpose or "interview"
+            slot.attendance_confirmed_at = None
 
             await session.flush()
 
@@ -395,9 +396,25 @@ async def reject_slot(slot_id: int) -> Optional[Slot]:
         slot.candidate_tz = None
         slot.candidate_city_id = None
         slot.purpose = "interview"
+        slot.attendance_confirmed_at = None
         await session.commit()
         await session.refresh(slot)
         slot.start_utc = _to_aware_utc(slot.start_utc)
+        return slot
+
+
+async def mark_slot_attendance_confirmed(slot_id: int) -> Optional[Slot]:
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id, with_for_update=True)
+        if not slot:
+            return None
+        slot.attendance_confirmed_at = now
+        await session.commit()
+        await session.refresh(slot)
+        slot.start_utc = _to_aware_utc(slot.start_utc)
+        if slot.attendance_confirmed_at:
+            slot.attendance_confirmed_at = _to_aware_utc(slot.attendance_confirmed_at)
         return slot
 
 

@@ -22,15 +22,16 @@ from backend.core.settings import get_settings
 from backend.domain.candidates import services as candidate_services
 from backend.domain.models import SlotStatus, Slot
 from backend.domain.repositories import (
+    ReservationResult,
     approve_slot,
     get_active_recruiters_for_city,
     get_free_slots_by_recruiter,
     get_recruiter,
     get_slot,
+    mark_slot_attendance_confirmed,
     reject_slot,
     reserve_slot,
     set_recruiter_chat_id_by_command,
-    ReservationResult,
 )
 
 from . import templates
@@ -1923,6 +1924,11 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         await callback.answer("Заявка не найдена или ещё не подтверждена рекрутёром.", show_alert=True)
         return
 
+    if slot.attendance_confirmed_at is not None:
+        await callback.answer("Уже подтверждено ✔️")
+        await safe_remove_reply_markup(callback.message)
+        return
+
     rec = await get_recruiter(slot.recruiter_id)
     link = (
         rec.telemost_url if rec and rec.telemost_url else "https://telemost.yandex.ru/j/REPLACE_ME"
@@ -1937,22 +1943,49 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
     bot = get_bot()
     await bot.send_message(slot.candidate_tg_id, text)
 
+    updated_slot = await mark_slot_attendance_confirmed(slot_id)
+    if updated_slot is not None:
+        slot = updated_slot
+
     try:
         reminder_service = get_reminder_service()
     except RuntimeError:
         reminder_service = None
     if reminder_service is not None:
         await reminder_service.cancel_for_slot(slot_id)
-        await reminder_service.schedule_for_slot(slot_id)
+        await reminder_service.schedule_for_slot(
+            slot_id, skip_confirmation_prompts=True
+        )
 
-    try:
-        await callback.message.edit_text("Спасибо! Участие подтверждено. Ссылка отправлена.")
-    except TelegramBadRequest:
-        pass
+    ack_text = await templates.tpl(
+        getattr(slot, "candidate_city_id", None),
+        "att_confirmed_ack",
+    )
+    if ack_text:
+        try:
+            await callback.message.edit_text(ack_text)
+        except TelegramBadRequest:
+            pass
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
         pass
+
+    if rec and rec.tg_chat_id:
+        recruiter_notice = await templates.tpl(
+            getattr(slot, "candidate_city_id", None),
+            "att_confirmed_recruiter",
+            candidate=(
+                slot.candidate_fio
+                or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "")
+            ).strip(),
+            dt=fmt_dt_local(slot.start_utc, rec.tz or DEFAULT_TZ),
+        )
+        if recruiter_notice:
+            try:
+                await bot.send_message(rec.tg_chat_id, recruiter_notice)
+            except Exception:
+                logger.exception("Failed to notify recruiter about attendance confirmation")
 
     await callback.answer("Подтверждено")
 

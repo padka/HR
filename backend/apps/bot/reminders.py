@@ -93,7 +93,9 @@ class ReminderService:
                     replace_existing=True,
                 )
 
-    async def schedule_for_slot(self, slot_id: int) -> None:
+    async def schedule_for_slot(
+        self, slot_id: int, *, skip_confirmation_prompts: bool = False
+    ) -> None:
         async with self._lock:
             await self._cancel_jobs(slot_id)
             slot = await get_slot(slot_id)
@@ -108,6 +110,18 @@ class ReminderService:
                 slot.start_utc,
                 slot.candidate_tz or DEFAULT_TZ,
             )
+            skip_prompts = skip_confirmation_prompts or bool(
+                getattr(slot, "attendance_confirmed_at", None)
+            )
+            if skip_prompts:
+                confirm_kinds = {
+                    ReminderKind.CONFIRM_6H,
+                    ReminderKind.CONFIRM_2H,
+                    ReminderKind.REMIND_2H,
+                }
+                reminders = [
+                    item for item in reminders if item[0] not in confirm_kinds
+                ]
             if not reminders:
                 return
 
@@ -251,6 +265,8 @@ class ReminderService:
             ReminderKind.REMIND_2H: "confirm_2h",
         }
         if kind in confirm_templates:
+            if getattr(slot, "attendance_confirmed_at", None):
+                return
             text = await templates.tpl(
                 getattr(slot, "candidate_city_id", None),
                 confirm_templates[kind],
