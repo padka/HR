@@ -267,3 +267,54 @@ async def test_reserve_slot_syncs_candidate_directory():
         assert profile is not None
         assert profile.fio == "Кандидат Тестовый"
         assert profile.city == city.name
+
+
+@pytest.mark.asyncio
+async def test_slot_updated_at_reflects_status_changes():
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Виктория", tz="Europe/Moscow", active=True)
+        city = models.City(name="Тула", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=now + timedelta(hours=1),
+            status=models.SlotStatus.FREE,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        initial_updated_at = slot.updated_at
+        slot_id = slot.id
+        recruiter_id = recruiter.id
+        city_id = city.id
+
+    reservation = await reserve_slot(
+        slot_id,
+        candidate_tg_id=55555,
+        candidate_fio="Кандидат",
+        candidate_tz="Europe/Moscow",
+        candidate_city_id=city_id,
+        expected_recruiter_id=recruiter_id,
+        expected_city_id=city_id,
+    )
+    assert reservation.status == "reserved"
+
+    async with async_session() as session:
+        pending_slot = await session.get(models.Slot, slot_id)
+        assert pending_slot is not None
+        assert pending_slot.updated_at > initial_updated_at
+        pending_updated_at = pending_slot.updated_at
+
+    await reject_slot(slot_id)
+
+    async with async_session() as session:
+        freed_slot = await session.get(models.Slot, slot_id)
+        assert freed_slot is not None
+        assert freed_slot.updated_at > pending_updated_at
