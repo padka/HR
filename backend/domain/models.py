@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     UniqueConstraint,
+    JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
@@ -222,6 +223,16 @@ class NotificationLog(Base):
     candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     type: Mapped[str] = mapped_column(String(50), nullable=False)
     payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    delivery_status: Mapped[str] = mapped_column(
+        "status", String(20), default="sent", nullable=False
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    template_key: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    template_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -239,3 +250,53 @@ class TelegramCallbackLog(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+class MessageTemplate(Base):
+    __tablename__ = "message_templates"
+    __table_args__ = (
+        UniqueConstraint(
+            "key", "locale", "channel", "version", name="uq_template_key_locale_channel_version"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    locale: Mapped[str] = mapped_column(String(16), nullable=False, default="ru")
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="tg")
+    body_md: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<MessageTemplate {self.key} v{self.version} locale={self.locale}>"
+
+
+class OutboxNotification(Base):
+    __tablename__ = "outbox_notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    booking_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("slots.id", ondelete="CASCADE"), nullable=True
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    recruiter_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<OutboxNotification {self.type} booking={self.booking_id} status={self.status}>"

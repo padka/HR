@@ -17,12 +17,13 @@ from backend.apps.admin_ui.services.bot_service import (
     get_bot_service as resolve_bot_service,
 )
 from backend.apps.bot.services import (
+    BookingNotificationStatus,
+    NotificationService,
     SlotSnapshot,
     cancel_slot_reminders,
     capture_slot_snapshot,
+    get_notification_service,
     get_state_manager as _get_state_manager,
-    notify_rejection,
-    notify_reschedule,
 )
 
 try:  # pragma: no cover - optional dependency during tests
@@ -544,11 +545,30 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
     await reject_slot(slot_id)
     await cancel_slot_reminders(slot_id)
+    try:
+        notification_service = get_notification_service()
+    except RuntimeError:
+        notification_service = NotificationService()
 
-    sent = await notify_reschedule(snapshot)
-    if sent:
+    result = await notification_service.on_booking_status_changed(
+        slot_id,
+        BookingNotificationStatus.RESCHEDULE_REQUESTED,
+        snapshot=snapshot,
+    )
+
+    if result.status == "sent":
         return True, "Слот освобождён. Кандидату отправлено уведомление о переносе.", True
-    return True, "Слот освобождён. Бот недоступен — сообщите кандидату вручную.", False
+    if result.status == "failed":
+        return (
+            True,
+            "Слот освобождён. Бот недоступен — сообщите кандидату вручную.",
+            False,
+        )
+    return (
+        True,
+        "Слот освобождён. Уведомление не отправлено.",
+        False,
+    )
 
 
 async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
@@ -567,11 +587,30 @@ async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
     await reject_slot(slot_id)
     await cancel_slot_reminders(slot_id)
+    try:
+        notification_service = get_notification_service()
+    except RuntimeError:
+        notification_service = NotificationService()
 
-    sent = await notify_rejection(snapshot)
-    if sent:
+    result = await notification_service.on_booking_status_changed(
+        slot_id,
+        BookingNotificationStatus.CANCELLED,
+        snapshot=snapshot,
+    )
+
+    if result.status == "sent":
         return True, "Слот освобождён. Кандидату отправлен отказ.", True
-    return True, "Слот освобождён. Сообщите кандидату об отказе вручную.", False
+    if result.status == "failed":
+        return (
+            True,
+            "Слот освобождён. Сообщите кандидату об отказе вручную.",
+            False,
+        )
+    return (
+        True,
+        "Слот освобождён. Уведомление не отправлено.",
+        False,
+    )
 
 
 

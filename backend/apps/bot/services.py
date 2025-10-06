@@ -6,10 +6,13 @@ import asyncio
 import html
 import logging
 import math
+import random
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Literal
 from zoneinfo import ZoneInfo
 
@@ -35,21 +38,31 @@ from pydantic import ValidationError
 from backend.core.settings import get_settings
 from backend.domain.candidates import services as candidate_services
 from backend.domain.models import SlotStatus, Slot
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from backend.domain.repositories import (
     ReservationResult,
+    OutboxItem,
     add_notification_log,
+    add_outbox_notification,
     approve_slot,
+    claim_outbox_batch,
     confirm_slot_by_candidate,
     get_active_recruiters_for_city,
     get_city,
     get_free_slots_by_recruiter,
+    get_notification_log,
+    get_outbox_queue_depth,
     get_recruiter,
     get_slot,
     notification_log_exists,
     register_callback,
     reject_slot,
     reserve_slot,
+    reset_outbox_entry,
     set_recruiter_chat_id_by_command,
+    update_notification_log_fields,
+    update_outbox_entry,
 )
 
 from . import templates
@@ -81,10 +94,19 @@ from .city_registry import (
     find_candidate_city_by_name,
     list_candidate_cities,
 )
-from .metrics import record_test1_completion, record_test1_rejection
+from .metrics import (
+    record_circuit_open,
+    record_notification_failed,
+    record_notification_sent,
+    record_send_retry,
+    record_test1_completion,
+    record_test1_rejection,
+    set_outbox_queue_depth,
+)
 from .state_store import StateManager
 from .test1_validation import Test1Payload, apply_partial_validation, convert_age
 from .reminders import get_reminder_service
+from .template_provider import TemplateProvider, RenderedTemplate
 
 
 logger = logging.getLogger(__name__)
@@ -143,6 +165,1017 @@ for _path in (REPORTS_DIR, TEST1_DIR, UPLOADS_DIR):
 
 _bot: Optional[Bot] = None
 _state_manager: Optional[StateManager] = None
+_notification_service: Optional["NotificationService"] = None
+_template_provider: Optional[TemplateProvider] = None
+
+
+def get_template_provider() -> TemplateProvider:
+    global _template_provider
+    if _template_provider is None:
+        _template_provider = TemplateProvider()
+    return _template_provider
+
+
+def reset_template_provider() -> None:
+    global _template_provider
+    _template_provider = None
+_notification_service: Optional["NotificationService"] = None
+
+
+@dataclass
+class NotificationResult:
+    status: Literal["queued", "sent", "skipped", "scheduled_retry", "failed"]
+    reason: Optional[str] = None
+    payload: Optional[str] = None
+
+
+class NotificationService:
+    """Minimal outbox worker for interview confirmation notifications."""
+
+    def __init__(
+        self,
+        *,
+        scheduler: Optional[AsyncIOScheduler] = None,
+        template_provider: Optional[TemplateProvider] = None,
+        poll_interval: float = 1.0,
+        batch_size: int = 10,
+        rate_limit_per_sec: float = 5.0,
+        max_attempts: int = 8,
+        retry_base_delay: int = 30,
+        retry_max_delay: int = 3600,
+        circuit_break_window: tuple[int, int] = (30, 60),
+    ) -> None:
+        self._scheduler = scheduler
+        if template_provider is None:
+            self._template_provider = get_template_provider()
+        else:
+            self._template_provider = template_provider
+            global _template_provider
+            _template_provider = template_provider
+        self._poll_interval = max(poll_interval, 0.5)
+        self._batch_size = max(1, batch_size)
+        self._max_attempts = max(1, max_attempts)
+        self._retry_base = max(1, retry_base_delay)
+        self._retry_max = max(self._retry_base, retry_max_delay)
+        low, high = circuit_break_window
+        self._breaker_window = (max(1, low), max(1, high))
+        self._breaker_open_until: float = 0.0
+        self._token_bucket = (
+            _TokenBucket(rate_limit_per_sec, max(1, int(rate_limit_per_sec) * 2))
+            if rate_limit_per_sec > 0
+            else None
+        )
+        self._job_id = "notification:outbox_worker"
+        self._lock = asyncio.Lock()
+        self._task: Optional[asyncio.Task] = None
+
+    def start(self) -> None:
+        if self._scheduler is not None:
+            if self._scheduler.get_job(self._job_id) is None:
+                self._scheduler.add_job(
+                    self._poll_once,
+                    "interval",
+                    seconds=self._poll_interval,
+                    id=self._job_id,
+                    replace_existing=True,
+                )
+            if not self._scheduler.running:
+                self._scheduler.start()
+        else:
+            if self._task is None or self._task.done():
+                self._task = asyncio.create_task(self._poll_loop())
+
+    async def shutdown(self) -> None:
+        if self._scheduler is not None:
+            try:
+                self._scheduler.remove_job(self._job_id)
+            except Exception:
+                pass
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    async def on_booking_status_changed(
+        self,
+        booking_id: int,
+        status: Any,
+        *,
+        snapshot: Optional[SlotSnapshot] = None,
+    ) -> "NotificationResult":
+        return NotificationResult(status="queued")
+
+    async def retry_notification(self, outbox_id: int) -> "NotificationResult":
+        await reset_outbox_entry(outbox_id)
+        return NotificationResult(status="queued")
+
+    async def _poll_loop(self) -> None:
+        try:
+            while True:
+                await self._poll_once()
+                await asyncio.sleep(self._poll_interval)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("notification.worker.loop_failed")
+
+    async def _poll_once(self) -> None:
+        if self._lock.locked():
+            return
+        async with self._lock:
+            items = await claim_outbox_batch(batch_size=self._batch_size)
+            if not items:
+                await set_outbox_queue_depth(0)
+                return
+            await set_outbox_queue_depth(len(items))
+            for item in items:
+                await self._process_item(item)
+            await set_outbox_queue_depth(0)
+
+    async def _process_item(self, item: OutboxItem) -> None:
+        handlers = {
+            "interview_confirmed_candidate": self._process_candidate_confirmation,
+            "candidate_reschedule_prompt": self._process_candidate_reschedule,
+            "candidate_rejection": self._process_candidate_rejection,
+            "recruiter_candidate_confirmed_notice": self._process_recruiter_notice,
+            "interview_reminder_2h": self._process_interview_reminder,
+        }
+        handler = handlers.get(item.type)
+        if handler is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                item.type,
+                item.type,
+                "unsupported_type",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+        await handler(item)
+
+    async def _has_sent_log(
+        self,
+        log_type: str,
+        booking_id: Optional[int],
+        candidate_tg_id: Optional[int],
+    ) -> bool:
+        if booking_id is None:
+            return False
+        existing = await get_notification_log(
+            log_type, booking_id, candidate_tg_id=candidate_tg_id
+        )
+        return existing is not None and getattr(existing, "delivery_status", "") == "sent"
+
+    async def _process_candidate_confirmation(self, item: OutboxItem) -> None:
+        slot = await get_slot(item.booking_id) if item.booking_id is not None else None
+        if not slot or slot.candidate_tg_id != item.candidate_tg_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "candidate_interview_confirmed",
+                "interview_confirmed_candidate",
+                "slot_mismatch",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        candidate_id = slot.candidate_tg_id
+        if await self._has_sent_log("candidate_interview_confirmed", slot.id, candidate_id):
+            await update_outbox_entry(
+                item.id,
+                status="sent",
+                attempts=item.attempts,
+                next_retry_at=None,
+                last_error=None,
+            )
+            return
+
+        rendered, _, _ = await _render_candidate_notification(slot)
+        attempt = item.attempts + 1
+        await self._ensure_log(
+            "candidate_interview_confirmed",
+            item,
+            attempt,
+            rendered,
+            candidate_id,
+        )
+
+        if self._is_circuit_open():
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="candidate_interview_confirmed",
+                notification_type="interview_confirmed_candidate",
+                error="circuit_open",
+                rendered=rendered,
+                retry_after=self._breaker_remaining(),
+                candidate_tg_id=candidate_id,
+                count_failure=False,
+            )
+            return
+
+        await self._throttle()
+
+        bot = get_bot()
+        try:
+            await _send_with_retry(
+                bot,
+                SendMessage(chat_id=candidate_id, text=rendered.text),
+                correlation_id=f"outbox:{slot.id}:{uuid.uuid4().hex}",
+            )
+        except TelegramRetryAfter as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="candidate_interview_confirmed",
+                notification_type="interview_confirmed_candidate",
+                error=str(exc),
+                rendered=rendered,
+                retry_after=exc.retry_after,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except (TelegramServerError, asyncio.TimeoutError, ClientError) as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="candidate_interview_confirmed",
+                notification_type="interview_confirmed_candidate",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except TelegramBadRequest as exc:
+            await self._mark_failed(
+                item,
+                attempt,
+                "candidate_interview_confirmed",
+                "interview_confirmed_candidate",
+                str(exc),
+                rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="candidate_interview_confirmed",
+                notification_type="interview_confirmed_candidate",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        await self._mark_sent(
+            item,
+            attempt,
+            "candidate_interview_confirmed",
+            "interview_confirmed_candidate",
+            rendered,
+            candidate_id,
+        )
+
+        try:
+            reminder_service = get_reminder_service()
+        except RuntimeError:
+            reminder_service = None
+        if reminder_service is not None and item.booking_id is not None:
+            await reminder_service.schedule_for_slot(item.booking_id)
+
+    async def _process_candidate_reschedule(self, item: OutboxItem) -> None:
+        slot = await get_slot(item.booking_id) if item.booking_id is not None else None
+        if not slot or slot.candidate_tg_id != item.candidate_tg_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "candidate_reschedule_prompt",
+                "candidate_reschedule_prompt",
+                "slot_mismatch",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        candidate_id = slot.candidate_tg_id
+        if await self._has_sent_log("candidate_reschedule_prompt", slot.id, candidate_id):
+            await update_outbox_entry(
+                item.id,
+                status="sent",
+                attempts=item.attempts,
+                next_retry_at=None,
+                last_error=None,
+            )
+            return
+
+        snapshot = await _build_slot_snapshot(slot)
+        context = {
+            "candidate_name": snapshot.candidate_fio or str(candidate_id or ""),
+            "recruiter_name": snapshot.recruiter_name,
+            "dt_local": TemplateProvider.format_local_dt(
+                snapshot.start_utc, snapshot.candidate_tz
+            ),
+            "tz_name": snapshot.candidate_tz,
+            "join_link": "",
+        }
+        rendered = await self._template_provider.render(
+            "candidate_reschedule_prompt", context
+        )
+        if rendered is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "candidate_reschedule_prompt",
+                "candidate_reschedule_prompt",
+                "template_missing",
+                None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        attempt = item.attempts + 1
+        await self._ensure_log(
+            "candidate_reschedule_prompt",
+            item,
+            attempt,
+            rendered,
+            candidate_id,
+        )
+
+        await self._throttle()
+        sent = await self._send_reschedule_message(snapshot, rendered.text)
+        if not sent:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="candidate_reschedule_prompt",
+                notification_type="candidate_reschedule_prompt",
+                error="bot_unavailable",
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        await self._mark_sent(
+            item,
+            attempt,
+            "candidate_reschedule_prompt",
+            "candidate_reschedule_prompt",
+            rendered,
+            candidate_id,
+        )
+
+    async def _process_candidate_rejection(self, item: OutboxItem) -> None:
+        slot = await get_slot(item.booking_id) if item.booking_id is not None else None
+        if not slot or slot.candidate_tg_id != item.candidate_tg_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "candidate_rejection",
+                "candidate_rejection",
+                "slot_mismatch",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        candidate_id = slot.candidate_tg_id
+        if await self._has_sent_log("candidate_rejection", slot.id, candidate_id):
+            await update_outbox_entry(
+                item.id,
+                status="sent",
+                attempts=item.attempts,
+                next_retry_at=None,
+                last_error=None,
+            )
+            return
+
+        snapshot = await _build_slot_snapshot(slot)
+        state = await _load_candidate_state(candidate_id)
+        context = {
+            "candidate_name": snapshot.candidate_fio or state.get("fio") or str(candidate_id or ""),
+            "recruiter_name": snapshot.recruiter_name,
+            "dt_local": TemplateProvider.format_local_dt(
+                snapshot.start_utc, snapshot.candidate_tz
+            ),
+            "tz_name": snapshot.candidate_tz,
+            "join_link": "",
+        }
+        rendered = await self._template_provider.render(
+            "candidate_rejection", context
+        )
+        if rendered is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "candidate_rejection",
+                "candidate_rejection",
+                "template_missing",
+                None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        attempt = item.attempts + 1
+        await self._ensure_log(
+            "candidate_rejection",
+            item,
+            attempt,
+            rendered,
+            candidate_id,
+        )
+
+        if self._is_circuit_open():
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="candidate_rejection",
+                notification_type="candidate_rejection",
+                error="circuit_open",
+                rendered=rendered,
+                retry_after=self._breaker_remaining(),
+                candidate_tg_id=candidate_id,
+                count_failure=False,
+            )
+            return
+
+        await self._throttle()
+
+        bot = get_bot()
+        try:
+            await _send_with_retry(
+                bot,
+                SendMessage(chat_id=candidate_id, text=rendered.text),
+                correlation_id=f"outbox:{slot.id}:{uuid.uuid4().hex}",
+            )
+        except TelegramRetryAfter as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="candidate_rejection",
+                notification_type="candidate_rejection",
+                error=str(exc),
+                rendered=rendered,
+                retry_after=exc.retry_after,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except (TelegramServerError, asyncio.TimeoutError, ClientError) as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="candidate_rejection",
+                notification_type="candidate_rejection",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except TelegramBadRequest as exc:
+            await self._mark_failed(
+                item,
+                attempt,
+                "candidate_rejection",
+                "candidate_rejection",
+                str(exc),
+                rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="candidate_rejection",
+                notification_type="candidate_rejection",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        await self._mark_sent(
+            item,
+            attempt,
+            "candidate_rejection",
+            "candidate_rejection",
+            rendered,
+            candidate_id,
+        )
+        await self._mark_candidate_rejected(candidate_id)
+
+    async def _process_recruiter_notice(self, item: OutboxItem) -> None:
+        slot = await get_slot(item.booking_id) if item.booking_id is not None else None
+        if not slot:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "recruiter_candidate_confirmed_notice",
+                "recruiter_candidate_confirmed_notice",
+                "slot_mismatch",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        recruiter = await get_recruiter(slot.recruiter_id) if slot.recruiter_id else None
+        if recruiter is None or recruiter.tg_chat_id is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "recruiter_candidate_confirmed_notice",
+                "recruiter_candidate_confirmed_notice",
+                "recruiter_chat_missing",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        if await self._has_sent_log(
+            "recruiter_candidate_confirmed_notice",
+            slot.id,
+            item.candidate_tg_id,
+        ):
+            await update_outbox_entry(
+                item.id,
+                status="sent",
+                attempts=item.attempts,
+                next_retry_at=None,
+                last_error=None,
+            )
+            return
+
+        context = {
+            "candidate_name": slot.candidate_fio or str(slot.candidate_tg_id or ""),
+            "recruiter_name": recruiter.name or "",
+            "dt_local": TemplateProvider.format_local_dt(
+                slot.start_utc, recruiter.tz or DEFAULT_TZ
+            ),
+            "tz_name": recruiter.tz or DEFAULT_TZ,
+            "join_link": getattr(recruiter, "telemost_url", "") or "",
+        }
+        rendered = await self._template_provider.render(
+            "recruiter_candidate_confirmed_notice", context
+        )
+        if rendered is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "recruiter_candidate_confirmed_notice",
+                "recruiter_candidate_confirmed_notice",
+                "template_missing",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        attempt = item.attempts + 1
+        await self._ensure_log(
+            "recruiter_candidate_confirmed_notice",
+            item,
+            attempt,
+            rendered,
+            item.candidate_tg_id,
+        )
+
+        if self._is_circuit_open():
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="recruiter_candidate_confirmed_notice",
+                notification_type="recruiter_candidate_confirmed_notice",
+                error="circuit_open",
+                rendered=rendered,
+                retry_after=self._breaker_remaining(),
+                candidate_tg_id=item.candidate_tg_id,
+                count_failure=False,
+            )
+            return
+
+        await self._throttle()
+        bot = get_bot()
+        try:
+            await _send_with_retry(
+                bot,
+                SendMessage(chat_id=recruiter.tg_chat_id, text=rendered.text),
+                correlation_id=f"outbox:{slot.id}:{uuid.uuid4().hex}",
+            )
+        except TelegramRetryAfter as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="recruiter_candidate_confirmed_notice",
+                notification_type="recruiter_candidate_confirmed_notice",
+                error=str(exc),
+                rendered=rendered,
+                retry_after=exc.retry_after,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+        except (TelegramServerError, asyncio.TimeoutError, ClientError) as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="recruiter_candidate_confirmed_notice",
+                notification_type="recruiter_candidate_confirmed_notice",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="recruiter_candidate_confirmed_notice",
+                notification_type="recruiter_candidate_confirmed_notice",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        await self._mark_sent(
+            item,
+            attempt,
+            "recruiter_candidate_confirmed_notice",
+            "recruiter_candidate_confirmed_notice",
+            rendered,
+            item.candidate_tg_id,
+        )
+        await record_candidate_confirmed_notice()
+
+    async def _process_interview_reminder(self, item: OutboxItem) -> None:
+        slot = await get_slot(item.booking_id) if item.booking_id is not None else None
+        if not slot or slot.candidate_tg_id != item.candidate_tg_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "interview_reminder_2h",
+                "interview_reminder_2h",
+                "slot_mismatch",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        candidate_id = slot.candidate_tg_id
+        if await self._has_sent_log("interview_reminder_2h", slot.id, candidate_id):
+            await update_outbox_entry(
+                item.id,
+                status="sent",
+                attempts=item.attempts,
+                next_retry_at=None,
+                last_error=None,
+            )
+            return
+
+        recruiter = await get_recruiter(slot.recruiter_id) if slot.recruiter_id else None
+        context = {
+            "candidate_name": slot.candidate_fio or str(candidate_id or ""),
+            "recruiter_name": recruiter.name if recruiter else "",
+            "dt_local": TemplateProvider.format_local_dt(
+                slot.start_utc, slot.candidate_tz or DEFAULT_TZ
+            ),
+            "tz_name": slot.candidate_tz or DEFAULT_TZ,
+            "join_link": getattr(recruiter, "telemost_url", "") or "",
+        }
+        rendered = await self._template_provider.render(
+            "interview_reminder_2h", context
+        )
+        if rendered is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "interview_reminder_2h",
+                "interview_reminder_2h",
+                "template_missing",
+                None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        attempt = item.attempts + 1
+        await self._ensure_log(
+            "interview_reminder_2h",
+            item,
+            attempt,
+            rendered,
+            candidate_id,
+        )
+
+        if self._is_circuit_open():
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="interview_reminder_2h",
+                notification_type="interview_reminder_2h",
+                error="circuit_open",
+                rendered=rendered,
+                retry_after=self._breaker_remaining(),
+                candidate_tg_id=candidate_id,
+                count_failure=False,
+            )
+            return
+
+        await self._throttle()
+        bot = get_bot()
+        try:
+            await _send_with_retry(
+                bot,
+                SendMessage(chat_id=candidate_id, text=rendered.text),
+                correlation_id=f"outbox:{slot.id}:{uuid.uuid4().hex}",
+            )
+        except TelegramRetryAfter as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="interview_reminder_2h",
+                notification_type="interview_reminder_2h",
+                error=str(exc),
+                rendered=rendered,
+                retry_after=exc.retry_after,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except (TelegramServerError, asyncio.TimeoutError, ClientError) as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="interview_reminder_2h",
+                notification_type="interview_reminder_2h",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except TelegramBadRequest as exc:
+            await self._mark_failed(
+                item,
+                attempt,
+                "interview_reminder_2h",
+                "interview_reminder_2h",
+                str(exc),
+                rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="interview_reminder_2h",
+                notification_type="interview_reminder_2h",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        await self._mark_sent(
+            item,
+            attempt,
+            "interview_reminder_2h",
+            "interview_reminder_2h",
+            rendered,
+            candidate_id,
+        )
+
+    async def _send_reschedule_message(self, snapshot: SlotSnapshot, text: str) -> bool:
+        if snapshot.candidate_id is None:
+            return False
+
+        def _clear_slot(st: State) -> Tuple[State, None]:
+            st["picked_slot_id"] = None
+            return st, None
+
+        await _update_candidate_state(snapshot.candidate_id, _clear_slot)
+
+        try:
+            await show_recruiter_menu(snapshot.candidate_id, notice=text)
+            return True
+        except RuntimeError:
+            logger.warning("Bot is not configured; cannot show reschedule prompt")
+        except Exception:
+            logger.exception("Failed to send reschedule prompt to candidate %s", snapshot.candidate_id)
+        return False
+
+    async def _mark_candidate_rejected(self, candidate_id: Optional[int]) -> None:
+        if candidate_id is None:
+            return
+
+        def _mark_rejected(st: State) -> Tuple[State, None]:
+            st["flow"] = "rejected"
+            st["picked_slot_id"] = None
+            st["picked_recruiter_id"] = None
+            return st, None
+
+        await _update_candidate_state(candidate_id, _mark_rejected)
+
+
+    async def _ensure_log(
+        self,
+        log_type: str,
+        item: OutboxItem,
+        attempt: int,
+        rendered: "RenderedTemplate",
+        candidate_tg_id: Optional[int],
+    ) -> None:
+        await add_notification_log(
+            log_type,
+            item.booking_id or 0,
+            candidate_tg_id=candidate_tg_id,
+            payload=rendered.text,
+            delivery_status="pending",
+            attempts=attempt,
+            last_error=None,
+            overwrite=True,
+            template_key=rendered.key,
+            template_version=rendered.version,
+        )
+
+    async def _mark_sent(
+        self,
+        item: OutboxItem,
+        attempt: int,
+        rendered: "RenderedTemplate",
+        candidate_tg_id: Optional[int],
+    ) -> None:
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=attempt,
+            next_retry_at=None,
+            last_error=None,
+        )
+        await add_notification_log(
+            "candidate_interview_confirmed",
+            item.booking_id or 0,
+            candidate_tg_id=candidate_tg_id,
+            payload=rendered.text,
+            delivery_status="sent",
+            attempts=attempt,
+            last_error=None,
+            next_retry_at=None,
+            overwrite=True,
+            template_key=rendered.key,
+            template_version=rendered.version,
+        )
+        await record_notification_sent("interview_confirmed_candidate")
+
+    async def _mark_failed(
+        self,
+        item: OutboxItem,
+        attempt: int,
+        error: str,
+        rendered: Optional["RenderedTemplate"],
+    ) -> None:
+        await update_outbox_entry(
+            item.id,
+            status="failed",
+            attempts=max(attempt, item.attempts),
+            next_retry_at=None,
+            last_error=error,
+        )
+        await add_notification_log(
+            "candidate_interview_confirmed",
+            item.booking_id or 0,
+            candidate_tg_id=item.candidate_tg_id,
+            payload=rendered.text if rendered else None,
+            delivery_status="failed",
+            attempts=max(attempt, item.attempts),
+            last_error=error,
+            next_retry_at=None,
+            overwrite=True,
+            template_key=rendered.key if rendered else None,
+            template_version=rendered.version if rendered else None,
+        )
+        await record_notification_failed("interview_confirmed_candidate")
+
+    async def _schedule_retry(
+        self,
+        item: OutboxItem,
+        *,
+        attempt: int,
+        error: str,
+        rendered: Optional["RenderedTemplate"],
+        retry_after: Optional[float] = None,
+        count_failure: bool = True,
+    ) -> None:
+        if attempt >= self._max_attempts:
+            await self._mark_failed(item, attempt, error, rendered)
+            return
+
+        delay = self._compute_retry_delay(attempt)
+        if retry_after is not None:
+            delay = max(delay, float(retry_after))
+        delay = self._apply_jitter(delay)
+        next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+
+        await update_outbox_entry(
+            item.id,
+            status="pending",
+            attempts=max(attempt, item.attempts),
+            next_retry_at=next_retry_at,
+            last_error=error,
+        )
+        await add_notification_log(
+            "candidate_interview_confirmed",
+            item.booking_id or 0,
+            candidate_tg_id=item.candidate_tg_id,
+            payload=rendered.text if rendered else None,
+            delivery_status="failed",
+            attempts=max(attempt, item.attempts),
+            last_error=error,
+            next_retry_at=next_retry_at,
+            overwrite=True,
+            template_key=rendered.key if rendered else None,
+            template_version=rendered.version if rendered else None,
+        )
+        if count_failure:
+            await record_notification_failed("interview_confirmed_candidate")
+        await record_send_retry()
+
+    def _compute_retry_delay(self, attempt: int) -> float:
+        base = self._retry_base * (2 ** max(0, attempt - 1))
+        return float(min(self._retry_max, base))
+
+    def _apply_jitter(self, delay: float) -> float:
+        return max(1.0, delay * random.uniform(0.85, 1.15))
+
+    async def _throttle(self) -> None:
+        if self._token_bucket is None:
+            return
+        await self._token_bucket.consume()
+
+    def _is_circuit_open(self) -> bool:
+        return time.monotonic() < self._breaker_open_until
+
+    def _breaker_remaining(self) -> float:
+        remaining = self._breaker_open_until - time.monotonic()
+        return max(0.0, remaining)
+
+    def _open_circuit(self) -> None:
+        low, high = self._breaker_window
+        duration = random.uniform(low, high)
+        self._breaker_open_until = max(self._breaker_open_until, time.monotonic() + duration)
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(record_circuit_open())
+        except RuntimeError:
+            pass
+
+
+class _TokenBucket:
+    def __init__(self, rate_per_sec: float, capacity: int) -> None:
+        self._rate = max(rate_per_sec, 0.1)
+        self._capacity = float(max(1, capacity))
+        self._tokens = self._capacity
+        self._updated = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def consume(self, tokens: float = 1.0) -> None:
+        tokens = max(tokens, 0.0)
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                delta = now - self._updated
+                if delta > 0:
+                    self._tokens = min(self._capacity, self._tokens + delta * self._rate)
+                    self._updated = now
+                if self._tokens >= tokens:
+                    self._tokens -= tokens
+                    return
+                deficit = tokens - self._tokens
+                wait_time = deficit / self._rate if self._rate else 0.1
+            await asyncio.sleep(max(wait_time, 0.05))
+
+
+def configure_notification_service(service: NotificationService) -> None:
+    global _notification_service
+    _notification_service = service
+    service.start()
+
+
+def get_notification_service() -> NotificationService:
+    if _notification_service is None:
+        raise RuntimeError("Notification service is not configured")
+    return _notification_service
 
 
 @dataclass
@@ -166,6 +1199,12 @@ class SlotSnapshot:
     recruiter_id: Optional[int]
     recruiter_name: str
     recruiter_tz: str
+
+
+class BookingNotificationStatus(str, Enum):
+    APPROVED = "approved"
+    RESCHEDULE_REQUESTED = "reschedule_requested"
+    CANCELLED = "cancelled"
 
 
 REJECTION_TEMPLATES: Dict[str, str] = {
@@ -2202,6 +3241,10 @@ def get_rating(score: float) -> str:
 
 __all__ = [
     "StateManager",
+    "BookingNotificationStatus",
+    "NotificationService",
+    "configure_notification_service",
+    "get_notification_service",
     "calculate_score",
     "configure",
     "finalize_test1",
