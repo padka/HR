@@ -55,6 +55,8 @@ class State(TypedDict, total=False):
     study_flex: Optional[str]
     test1_payload: Dict[str, Any]
 
+    manual_contact_prompt_sent: bool
+
 
 try:
     _QUESTIONS_BANK = load_all_test_questions()

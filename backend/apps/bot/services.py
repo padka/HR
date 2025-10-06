@@ -14,7 +14,14 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, ForceReply, Message, FSInputFile
+from aiogram.types import (
+    CallbackQuery,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    FSInputFile,
+)
 
 from pydantic import ValidationError
 
@@ -26,6 +33,7 @@ from backend.domain.repositories import (
     get_active_recruiters_for_city,
     get_free_slots_by_recruiter,
     get_recruiter,
+    get_city,
     get_slot,
     reject_slot,
     reserve_slot,
@@ -1424,8 +1432,12 @@ async def handle_home_start(callback: CallbackQuery) -> None:
     await begin_interview(callback.from_user.id)
 
 
-async def send_manual_scheduling_prompt(user_id: int) -> None:
-    """Prompt the candidate to reach out when no automatic slots are available."""
+async def send_manual_scheduling_prompt(user_id: int) -> bool:
+    """Prompt the candidate to reach out when no automatic slots are available.
+
+    Returns ``True`` when a new prompt was sent and ``False`` when the candidate
+    has already received the manual contact instructions earlier.
+    """
 
     bot = get_bot()
     state_manager = get_state_manager()
@@ -1435,8 +1447,13 @@ async def send_manual_scheduling_prompt(user_id: int) -> None:
         state = None
 
     city_id: Optional[int] = None
+    manual_prompt_sent = False
     if isinstance(state, dict):
         city_id = state.get("city_id")
+        manual_prompt_sent = bool(state.get("manual_contact_prompt_sent"))
+
+    if manual_prompt_sent:
+        return False
 
     message = await templates.tpl(city_id, "manual_schedule_prompt")
     if not message:
@@ -1445,7 +1462,45 @@ async def send_manual_scheduling_prompt(user_id: int) -> None:
             "и мы подберём время вручную."
         )
 
-    await bot.send_message(user_id, message)
+    reply_markup: Optional[InlineKeyboardMarkup] = None
+    recruiter_label: Optional[str] = None
+
+    if city_id is not None:
+        try:
+            city = await get_city(city_id)
+        except Exception:
+            city = None
+
+        recruiter_id = getattr(city, "responsible_recruiter_id", None)
+        if recruiter_id:
+            try:
+                recruiter = await get_recruiter(int(recruiter_id))
+            except Exception:
+                recruiter = None
+
+            if recruiter and recruiter.tg_chat_id and recruiter.tg_chat_id > 0:
+                recruiter_label = recruiter.name.strip() or "рекрутёром"
+                button = InlineKeyboardButton(
+                    text=f"Написать {recruiter_label}",
+                    url=f"tg://user?id={int(recruiter.tg_chat_id)}",
+                )
+                reply_markup = InlineKeyboardMarkup(inline_keyboard=[[button]])
+
+    if recruiter_label:
+        safe_label = html.escape(recruiter_label)
+        message = (
+            f"{message}\n\nНажмите кнопку ниже, чтобы написать {safe_label}."
+        )
+
+    await bot.send_message(user_id, message, reply_markup=reply_markup)
+
+    def _mark_prompt_sent(st: State) -> Tuple[State, None]:
+        st["manual_contact_prompt_sent"] = True
+        return st, None
+
+    await state_manager.atomic_update(user_id, _mark_prompt_sent)
+
+    return True
 
 
 async def handle_pick_recruiter(callback: CallbackQuery) -> None:
