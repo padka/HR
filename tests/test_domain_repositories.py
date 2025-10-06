@@ -17,6 +17,7 @@ from backend.domain.repositories import (
     get_recruiter,
     get_slot,
     get_template,
+    mark_slot_attendance_confirmed,
     reserve_slot,
     reject_slot,
     set_recruiter_chat_id_by_command,
@@ -211,3 +212,35 @@ async def test_iam_command_updates_recruiter_chat_id():
         assert updated.tg_chat_id == 987654321
 
     assert any("Готово" in resp for resp in responses)
+
+
+@pytest.mark.asyncio
+async def test_mark_slot_attendance_confirmed_idempotent():
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Notifier", tz="Europe/Moscow", active=True)
+        city = models.City(name="Attendance City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=4),
+            status=models.SlotStatus.BOOKED,
+            candidate_tg_id=1001,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    first = await mark_slot_attendance_confirmed(slot_id)
+    assert first is not None
+    assert first.attendance_confirmed_at is not None
+    first_ts = first.attendance_confirmed_at
+
+    second = await mark_slot_attendance_confirmed(slot_id)
+    assert second is not None
+    assert second.attendance_confirmed_at == first_ts

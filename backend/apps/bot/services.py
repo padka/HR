@@ -1929,23 +1929,27 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         await safe_remove_reply_markup(callback.message)
         return
 
+    updated_slot = await mark_slot_attendance_confirmed(slot_id)
+    if updated_slot is not None:
+        slot = updated_slot
+
     rec = await get_recruiter(slot.recruiter_id)
     link = (
         rec.telemost_url if rec and rec.telemost_url else "https://telemost.yandex.ru/j/REPLACE_ME"
     )
     tz = slot.candidate_tz or DEFAULT_TZ
-    text = await templates.tpl(
+    candidate_notice = await templates.tpl(
         getattr(slot, "candidate_city_id", None),
         "att_confirmed_link",
         link=link,
         dt=fmt_dt_local(slot.start_utc, tz),
     )
     bot = get_bot()
-    await bot.send_message(slot.candidate_tg_id, text)
-
-    updated_slot = await mark_slot_attendance_confirmed(slot_id)
-    if updated_slot is not None:
-        slot = updated_slot
+    if candidate_notice:
+        try:
+            await bot.send_message(slot.candidate_tg_id, candidate_notice)
+        except Exception:
+            logger.exception("Failed to send attendance confirmation to candidate")
 
     try:
         reminder_service = get_reminder_service()
@@ -1962,14 +1966,8 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         "att_confirmed_ack",
     )
     if ack_text:
-        try:
-            await callback.message.edit_text(ack_text)
-        except TelegramBadRequest:
-            pass
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
+        await safe_edit_text_or_caption(callback.message, ack_text)
+    await safe_remove_reply_markup(callback.message)
 
     if rec and rec.tg_chat_id:
         recruiter_notice = await templates.tpl(

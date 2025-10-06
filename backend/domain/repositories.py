@@ -409,7 +409,8 @@ async def mark_slot_attendance_confirmed(slot_id: int) -> Optional[Slot]:
         slot = await session.get(Slot, slot_id, with_for_update=True)
         if not slot:
             return None
-        slot.attendance_confirmed_at = now
+        if slot.attendance_confirmed_at is None:
+            slot.attendance_confirmed_at = now
         await session.commit()
         await session.refresh(slot)
         slot.start_utc = _to_aware_utc(slot.start_utc)
