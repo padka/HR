@@ -1943,12 +1943,19 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         reminder_service = None
     if reminder_service is not None:
         await reminder_service.cancel_for_slot(slot_id)
-        await reminder_service.schedule_for_slot(slot_id)
+        await reminder_service.schedule_for_slot(
+            slot_id, skip_confirmation_prompts=True
+        )
 
-    try:
-        await callback.message.edit_text("Спасибо! Участие подтверждено. Ссылка отправлена.")
-    except TelegramBadRequest:
-        pass
+    ack_text = await templates.tpl(
+        getattr(slot, "candidate_city_id", None),
+        "att_confirmed_ack",
+    )
+    if ack_text:
+        try:
+            await callback.message.edit_text(ack_text)
+        except TelegramBadRequest:
+            pass
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
