@@ -58,7 +58,7 @@ def norm_status(st) -> Optional[str]:
     return str(raw_value).upper()
 
 
-STATUS_FILTERS = {"FREE", "PENDING", "BOOKED"}
+STATUS_FILTERS = {"FREE", "PENDING", "BOOKED", "CONFIRMED_BY_CANDIDATE"}
 
 
 def status_filter(value: Optional[str]) -> Optional[str]:

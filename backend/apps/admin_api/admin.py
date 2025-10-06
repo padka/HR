@@ -67,6 +67,7 @@ class SlotAdmin(ModelView, model=Slot):
             (SlotStatus.FREE, "free"),
             (SlotStatus.PENDING, "pending"),
             (SlotStatus.BOOKED, "booked"),
+            (SlotStatus.CONFIRMED_BY_CANDIDATE, "confirmed_by_candidate"),
             (SlotStatus.CANCELED, "canceled"),
         ]
     }

@@ -42,7 +42,17 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
                         func.count().label("total"),
                         func.sum(case((status_lower == SlotStatus.FREE, 1), else_=0)).label("free"),
                         func.sum(case((status_lower == SlotStatus.PENDING, 1), else_=0)).label("pending"),
-                        func.sum(case((status_lower == SlotStatus.BOOKED, 1), else_=0)).label("booked"),
+                        func.sum(
+                            case(
+                                (
+                                    status_lower.in_(
+                                        [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
+                                    ),
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        ).label("booked"),
                         func.min(case((status_lower == SlotStatus.FREE, Slot.start_utc), else_=None)).label(
                             "next_free"
                         ),

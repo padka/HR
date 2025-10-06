@@ -1,7 +1,7 @@
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import and_, func, or_, select, delete
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import aliased, selectinload
 from dataclasses import dataclass
 from typing import Literal
@@ -9,7 +9,16 @@ from typing import Literal
 
 from backend.core.db import async_session
 from backend.domain.candidates.services import create_or_update_user
-from .models import Recruiter, City, Template, Slot, SlotStatus, SlotReservationLock
+from .models import (
+    City,
+    NotificationLog,
+    Recruiter,
+    Slot,
+    SlotReservationLock,
+    SlotStatus,
+    TelegramCallbackLog,
+    Template,
+)
 
 
 def _to_aware_utc(dt: datetime) -> datetime:
@@ -236,6 +245,122 @@ class ReservationResult:
     slot: Optional[Slot] = None
 
 
+@dataclass
+class CandidateConfirmationResult:
+    status: Literal["not_found", "invalid_status", "already_confirmed", "confirmed"]
+    slot: Optional[Slot] = None
+
+
+async def register_callback(callback_id: str) -> bool:
+    if not callback_id:
+        return True
+
+    async with async_session() as session:
+        async with session.begin():
+            exists = await session.scalar(
+                select(TelegramCallbackLog.id)
+                .where(TelegramCallbackLog.callback_id == callback_id)
+                .with_for_update()
+            )
+            if exists:
+                return False
+            session.add(
+                TelegramCallbackLog(
+                    callback_id=callback_id,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+    return True
+
+
+async def notification_log_exists(notification_type: str, booking_id: int) -> bool:
+    async with async_session() as session:
+        existing = await session.scalar(
+            select(NotificationLog.id).where(
+                NotificationLog.type == notification_type,
+                NotificationLog.booking_id == booking_id,
+            )
+        )
+        return existing is not None
+
+
+async def add_notification_log(
+    notification_type: str,
+    booking_id: int,
+    *,
+    payload: Optional[str] = None,
+) -> bool:
+    async with async_session() as session:
+        async with session.begin():
+            exists = await session.scalar(
+                select(NotificationLog.id)
+                .where(
+                    NotificationLog.type == notification_type,
+                    NotificationLog.booking_id == booking_id,
+                )
+                .with_for_update()
+            )
+            if exists:
+                return False
+            session.add(
+                NotificationLog(
+                    booking_id=booking_id,
+                    type=notification_type,
+                    payload=payload,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+    return True
+
+
+async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult:
+    async with async_session() as session:
+        async with session.begin():
+            slot = await session.scalar(
+                select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                .where(Slot.id == slot_id)
+                .with_for_update()
+            )
+
+            if slot is None:
+                return CandidateConfirmationResult(status="not_found", slot=None)
+
+            status_value = (slot.status or "").lower()
+            if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
+                slot.start_utc = _to_aware_utc(slot.start_utc)
+                return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+
+            if status_value not in {SlotStatus.BOOKED, SlotStatus.PENDING}:
+                slot.start_utc = _to_aware_utc(slot.start_utc)
+                return CandidateConfirmationResult(status="invalid_status", slot=slot)
+
+            existing_log = await session.scalar(
+                select(NotificationLog.id)
+                .where(
+                    NotificationLog.booking_id == slot_id,
+                    NotificationLog.type == "candidate_confirm",
+                )
+                .with_for_update()
+            )
+            if existing_log:
+                slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
+                slot.start_utc = _to_aware_utc(slot.start_utc)
+                return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+
+            slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
+            session.add(
+                NotificationLog(
+                    booking_id=slot.id,
+                    type="candidate_confirm",
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+
+        slot.start_utc = _to_aware_utc(slot.start_utc)
+    return CandidateConfirmationResult(status="confirmed", slot=slot)
+
+
 async def reserve_slot(
     slot_id: int,
     candidate_tg_id: int,
@@ -361,8 +486,17 @@ async def approve_slot(slot_id: int) -> Optional[Slot]:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id, with_for_update=True)
         status_value = (slot.status or "").lower() if slot else None
-        if not slot or status_value not in (SlotStatus.PENDING, SlotStatus.BOOKED):
+        allowed_statuses = {
+            SlotStatus.PENDING,
+            SlotStatus.BOOKED,
+            SlotStatus.CONFIRMED_BY_CANDIDATE,
+        }
+        if not slot or status_value not in allowed_statuses:
             return None
+        if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
+            await session.commit()
+            slot.start_utc = _to_aware_utc(slot.start_utc)
+            return slot
         slot.status = SlotStatus.BOOKED
         await session.commit()
         await session.refresh(slot)

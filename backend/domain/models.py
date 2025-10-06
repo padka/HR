@@ -80,6 +80,7 @@ class SlotStatus:
     FREE = "free"
     PENDING = "pending"
     BOOKED = "booked"
+    CONFIRMED_BY_CANDIDATE = "confirmed_by_candidate"
     CANCELED = "canceled"
 
 
@@ -97,7 +98,7 @@ class Slot(Base):
     start_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_min: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
 
-    status: Mapped[str] = mapped_column(String(20), default=SlotStatus.FREE, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default=SlotStatus.FREE, nullable=False)
 
     candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     candidate_fio: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
@@ -199,3 +200,34 @@ class TestQuestion(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<TestQuestion {self.test_id}#{self.question_index} active={self.is_active}>"
+
+
+class NotificationLog(Base):
+    __tablename__ = "notification_logs"
+    __table_args__ = (
+        UniqueConstraint("type", "booking_id", name="uq_notification_logs_type_booking"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    booking_id: Mapped[int] = mapped_column(
+        ForeignKey("slots.id", ondelete="CASCADE"), nullable=False
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class TelegramCallbackLog(Base):
+    __tablename__ = "telegram_callback_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    callback_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )

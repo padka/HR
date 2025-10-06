@@ -103,7 +103,10 @@ class ReminderService:
                 return
             if slot.candidate_tg_id is None:
                 return
-            if (slot.status or "").lower() != SlotStatus.BOOKED:
+            if (slot.status or "").lower() not in {
+                SlotStatus.BOOKED,
+                SlotStatus.CONFIRMED_BY_CANDIDATE,
+            }:
                 return
 
             reminders = self._build_schedule(
@@ -235,7 +238,11 @@ class ReminderService:
         if not slot:
             return
         status = (slot.status or "").lower()
-        if status not in {SlotStatus.PENDING, SlotStatus.BOOKED}:
+        if status not in {
+            SlotStatus.PENDING,
+            SlotStatus.BOOKED,
+            SlotStatus.CONFIRMED_BY_CANDIDATE,
+        }:
             return
         candidate_id = slot.candidate_tg_id
         if candidate_id is None:
