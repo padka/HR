@@ -31,10 +31,11 @@ try:  # pragma: no cover - optional dependency during tests
 except Exception:  # pragma: no cover - safe fallback when bot package unavailable
     get_reminder_service = None  # type: ignore[assignment]
 from backend.apps.admin_ui.utils import (
+    local_naive_to_utc,
     norm_status,
     paginate,
-    recruiter_time_to_utc,
     status_to_db,
+    validate_timezone_name,
 )
 from backend.core.db import async_session
 from backend.core.settings import get_settings
@@ -153,30 +154,39 @@ async def create_slot(
     time: str,
     *,
     city_id: int,
-) -> bool:
+) -> Tuple[bool, Optional[Slot]]:
+    try:
+        local_dt = datetime.fromisoformat(f"{date}T{time}")
+    except ValueError:
+        return False, None
+
     async with async_session() as session:
         recruiter = await session.get(Recruiter, recruiter_id)
         if not recruiter:
-            return False
+            return False, None
         city = await session.get(City, city_id)
         if not city or city.responsible_recruiter_id != recruiter_id:
-            return False
-        dt_utc = recruiter_time_to_utc(date, time, getattr(recruiter, "tz", None))
-        if not dt_utc:
-            return False
+            return False, None
+        try:
+            tz_name = validate_timezone_name(city.tz)
+        except ValueError:
+            return False, None
+
+        dt_utc = local_naive_to_utc(local_dt, tz_name)
         status_free = getattr(SlotStatus, "FREE", "FREE")
         if hasattr(status_free, "value"):
             status_free = status_free.value
-        session.add(
-            Slot(
-                recruiter_id=recruiter_id,
-                city_id=city_id,
-                start_utc=dt_utc,
-                status=status_free,
-            )
+
+        slot = Slot(
+            recruiter_id=recruiter_id,
+            city_id=city_id,
+            start_utc=dt_utc,
+            status=status_free,
         )
+        session.add(slot)
         await session.commit()
-        return True
+        await session.refresh(slot)
+        return True, slot
 
 
 async def delete_slot(
@@ -713,7 +723,10 @@ async def bulk_create_slots(
         break_start_minutes = pause_start.hour * 60 + pause_start.minute
         break_end_minutes = pause_end.hour * 60 + pause_end.minute
 
-        tz = getattr(recruiter, "tz", None)
+        try:
+            tz = validate_timezone_name(city.tz)
+        except ValueError:
+            return 0, "Некорректный часовой пояс региона"
 
         planned_pairs: List[Tuple[datetime, datetime]] = []  # (original, normalized)
         planned_norms = set()
@@ -732,11 +745,13 @@ async def bulk_create_slots(
 
                     hours, minutes = divmod(current_minutes, 60)
                     time_str = f"{hours:02d}:{minutes:02d}"
-                    dt_utc = recruiter_time_to_utc(
-                        current_date.isoformat(), time_str, tz
-                    )
-                    if not dt_utc:
-                        return 0, "Не удалось преобразовать время в UTC"
+                    try:
+                        dt_local = datetime.fromisoformat(
+                            f"{current_date.isoformat()}T{time_str}"
+                        )
+                    except ValueError:
+                        return 0, "Некорректное время"
+                    dt_utc = local_naive_to_utc(dt_local, tz)
                     norm_dt = _normalize_utc(dt_utc)
                     if norm_dt not in planned_norms:
                         planned_norms.add(norm_dt)

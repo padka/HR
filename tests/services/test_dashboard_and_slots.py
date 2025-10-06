@@ -32,7 +32,7 @@ async def test_dashboard_and_slot_listing():
         await session.commit()
         await session.refresh(city)
 
-    created = await create_slot(
+    created, _ = await create_slot(
         recruiter_id=recruiter.id,
         date=str(date.today()),
         time="10:00",
