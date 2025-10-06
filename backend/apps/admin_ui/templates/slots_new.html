@@ -73,7 +73,11 @@
           {% for item in recruiters %}
             {% set r = item.rec %}
             {% for city in item.cities %}
-              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.name }} ({{ city.tz or "Europe/Moscow" }})</option>
+              {% set city_tz = city.tz or 'Europe/Moscow' %}
+              <option value="{{ city.id }}"
+                      data-rec="{{ r.id }}"
+                      data-tz="{{ city_tz }}"
+                      data-tz-label="{{ tz_display(city_tz) }}">{{ city.name }} ({{ city_tz }})</option>
             {% endfor %}
           {% endfor %}
         </select>
@@ -102,9 +106,12 @@
             <button class="btn btn--ghost btn--sm" type="button" data-time="13:00">13:00</button>
             <button class="btn btn--ghost btn--sm" type="button" data-time="15:00">15:00</button>
           </div>
+          <p class="form-note" id="time_hint_one">Время указывается по региону: —</p>
         {% endcall %}
       </div>
     {% endcall %}
+
+    <input type="hidden" name="starts_at_local" id="starts_at_local_one" value="">
 
     <div class="preview-panel" id="preview-one" aria-live="polite">
       <b>Превью</b><br>
@@ -146,7 +153,11 @@
           {% for item in recruiters %}
             {% set r = item.rec %}
             {% for city in item.cities %}
-              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.name }} ({{ city.tz or "Europe/Moscow" }})</option>
+              {% set city_tz = city.tz or 'Europe/Moscow' %}
+              <option value="{{ city.id }}"
+                      data-rec="{{ r.id }}"
+                      data-tz="{{ city_tz }}"
+                      data-tz-label="{{ tz_display(city_tz) }}">{{ city.name }} ({{ city_tz }})</option>
             {% endfor %}
           {% endfor %}
         </select>
@@ -346,18 +357,6 @@
 
   function toISOZ(d){ if(!d) return ''; const s = d.toISOString(); return s.replace('.000',''); }
 
-  const nowChip = $('#now_text');
-  const nowChipWrap = $('#now_chip');
-  function updateNowChip(){
-    const selector = $('#recruiter_id');
-    const hasSelection = !!(selector && selector.value);
-    const tz = hasSelection ? currentTZ(selector) : null;
-    nowChip.textContent = tz ? tzNowText(tz) : '—:—';
-    if (nowChipWrap){
-      nowChipWrap.title = hasSelection ? currentTZLabel(selector) : 'Выберите рекрутёра';
-    }
-  }
-
   const selOne = $('#recruiter_id');
   const cityOne = $('#city_id');
   const cityHintOne = $('#city_hint_one');
@@ -367,24 +366,49 @@
   const prevOne= $('#preview-one');
   const btnOne = $('#btn-create-one');
   const offsetText = $('#offset_text');
+  const timeHintOne = $('#time_hint_one');
+  const startsAtLocalOne = $('#starts_at_local_one');
 
-  function currentTZ(selectEl){
-    const el = selectEl || selOne;
-    const opt = el ? el.selectedOptions[0] : null;
-    return opt ? (opt.getAttribute('data-tz') || 'Europe/Moscow') : 'Europe/Moscow';
+  function selectedOption(selectEl){
+    if (!selectEl) return null;
+    const opt = selectEl.selectedOptions[0];
+    if (!opt || opt.disabled || opt.hidden) return null;
+    return opt;
   }
 
-  function currentTZLabel(selectEl){
-    const el = selectEl || selOne;
-    const opt = el ? el.selectedOptions[0] : null;
+  function optionTZ(opt){
+    if (!opt) return null;
+    const tz = (opt.getAttribute('data-tz') || '').trim();
+    return tz || null;
+  }
+
+  function currentRegionTZ(selectEl){
+    const opt = selectedOption(selectEl || cityOne);
+    return optionTZ(opt) || 'Europe/Moscow';
+  }
+
+  function currentRegionLabel(selectEl){
+    const opt = selectedOption(selectEl || cityOne);
     if (!opt) return '—';
-    const raw = opt.getAttribute('data-tz-label') || opt.textContent;
-    if (raw && raw.trim()) return raw.trim();
-    const tz = opt.getAttribute('data-tz');
-    if (tz && tz.trim()){
-      return `${tz.trim()} (UTC${getOffsetLabel(tz.trim(), new Date())})`;
+    const raw = (opt.getAttribute('data-tz-label') || opt.textContent || '').trim();
+    if (raw) return raw;
+    const tz = optionTZ(opt);
+    if (tz){
+      return `${tz} (UTC${getOffsetLabel(tz, new Date())})`;
     }
     return '—';
+  }
+
+  const nowChip = $('#now_text');
+  const nowChipWrap = $('#now_chip');
+  function updateNowChip(){
+    const selector = cityOne || $('#city_id');
+    const hasSelection = !!selectedOption(selector);
+    const tz = hasSelection ? currentRegionTZ(selector) : null;
+    nowChip.textContent = tz ? tzNowText(tz) : '—:—';
+    if (nowChipWrap){
+      nowChipWrap.title = hasSelection ? currentRegionLabel(selector) : 'Выберите регион';
+    }
   }
 
   function updateCityOptions(recSelect, citySelect, hintEl){
@@ -435,21 +459,28 @@
 
   function updateOne(){
     const hasCities = updateCityOptions(selOne, cityOne, cityHintOne);
-    const tz = currentTZ(selOne);
-    const hasRecruiter = !!selOne?.value;
-    const tzLabel = hasRecruiter ? currentTZLabel(selOne) : '—';
+    const regionSelected = !!selectedOption(cityOne);
+    const tz = regionSelected ? currentRegionTZ(cityOne) : 'Europe/Moscow';
+    const tzLabel = regionSelected ? currentRegionLabel(cityOne) : '—';
     tzOne.textContent = `Регион: ${tzLabel}`;
-    offsetText.textContent = hasRecruiter ? getOffsetLabel(tz, new Date()) : '±0';
+    if (timeHintOne){
+      timeHintOne.textContent = `Время указывается по региону: ${tzLabel}`;
+    }
+    offsetText.textContent = regionSelected ? getOffsetLabel(tz, new Date()) : '±0';
     updateNowChip();
 
     const d = dateOne.value, t = timeOne.value;
     const cityVal = cityOne ? cityOne.value : '';
     if (cityOne) storageSet(LS.cityOne, cityVal || '');
-    const ready = !!(selOne.value && hasCities && cityVal && d && t);
+    const ready = !!(selOne.value && hasCities && regionSelected && d && t);
     btnOne.disabled = !ready;
 
+    if (startsAtLocalOne){
+      startsAtLocalOne.value = ready ? `${d}T${t}` : '';
+    }
+
     if (!ready){
-      prevOne.innerHTML = '<b>Превью</b><br>Укажите рекрутёра, дату и время — покажем UTC.';
+      prevOne.innerHTML = '<b>Превью</b><br>Укажите рекрутёра, регион, дату и время — покажем UTC.';
       return;
     }
     const localIso = `${d}T${t}:00`;
@@ -497,7 +528,7 @@
   $$('#form-one [data-time]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const kind = btn.getAttribute('data-time');
-      const tz = currentTZ(selOne);
+      const tz = currentRegionTZ(cityOne);
       let base = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
       if (dateOne.value){ base = new Date(`${dateOne.value}T${timeOne.value||'09:00'}:00`); }
       if (kind==='next30') base = new Date(base.getTime() + 30*60000);
@@ -533,6 +564,13 @@
   timeOne?.addEventListener('input', updateOne);
   cityOne?.addEventListener('change', ()=>{
     storageSet(LS.cityOne, cityOne.value||'');
+    if (timeOne && timeOne.value){
+      timeOne.value = '';
+      storageSet(LS.time, '');
+    }
+    if (startsAtLocalOne){
+      startsAtLocalOne.value = '';
+    }
     updateOne();
   });
 
@@ -629,14 +667,15 @@
   function updateBulk(){
     const hasCities = updateCityOptions(selBulk, cityBulk, cityHintBulk);
     const hasRecruiter = !!selBulk?.value;
-    const tz = currentTZ(selBulk);
-    const tzLabel = hasRecruiter ? currentTZLabel(selBulk) : '—';
+    const regionSelected = !!selectedOption(cityBulk);
+    const tz = regionSelected ? currentRegionTZ(cityBulk) : 'Europe/Moscow';
+    const tzLabel = regionSelected ? currentRegionLabel(cityBulk) : '—';
     tzBulk.textContent = `Регион: ${tzLabel}`;
 
     const s = sd.value, e = ed.value;
     const cityVal = cityBulk ? cityBulk.value : '';
     if (cityBulk) storageSet(LS.cityBulk, cityVal || '');
-    const ready = !!(selBulk.value && hasCities && cityVal && s && e);
+    const ready = !!(selBulk.value && hasCities && regionSelected && s && e);
     btnBulk.disabled = !ready;
 
     const st = hid.start.value, en = hid.end.value, bs = hid.bstart.value, be = hid.bend.value, step = parseInt(hid.step.value||'30',10);

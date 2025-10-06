@@ -1,10 +1,10 @@
 import pytest
-from datetime import date, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 
 from backend.apps.admin_ui.services.slots import bulk_create_slots
-from backend.apps.admin_ui.utils import recruiter_time_to_utc
+from backend.apps.admin_ui.utils import local_naive_to_utc
 from backend.core.db import async_session
 from backend.domain import models
 
@@ -85,9 +85,9 @@ async def test_bulk_create_slots_creates_unique_series():
         stored = {slot.start_utc for slot in stored_slots}
 
     expected = {
-        recruiter_time_to_utc(start.isoformat(), "10:00", recruiter.tz),
-        recruiter_time_to_utc(start.isoformat(), "10:30", recruiter.tz),
-        recruiter_time_to_utc(start.isoformat(), "11:00", recruiter.tz),
+        local_naive_to_utc(datetime.fromisoformat(f"{start.isoformat()}T10:00"), city.tz),
+        local_naive_to_utc(datetime.fromisoformat(f"{start.isoformat()}T10:30"), city.tz),
+        local_naive_to_utc(datetime.fromisoformat(f"{start.isoformat()}T11:00"), city.tz),
     }
 
     def _as_utc(dt):

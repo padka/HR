@@ -20,6 +20,43 @@ def safe_zone(tz_str: Optional[str]) -> ZoneInfo:
         return ZoneInfo(DEFAULT_TZ)
 
 
+def validate_timezone_name(tz_str: Optional[str]) -> str:
+    candidate = (tz_str or "").strip()
+    if not candidate:
+        raise ValueError("Timezone must be provided")
+    try:
+        ZoneInfo(candidate)
+    except Exception as exc:
+        raise ValueError(f"Invalid timezone: {candidate}") from exc
+    return candidate
+
+
+def ensure_timezone(tz_str: Optional[str]) -> ZoneInfo:
+    return ZoneInfo(validate_timezone_name(tz_str))
+
+
+def local_naive_to_utc(local_dt: datetime, tz_str: str) -> datetime:
+    zone = ensure_timezone(tz_str)
+    if local_dt.tzinfo is None:
+        localized = local_dt.replace(tzinfo=zone)
+    else:
+        localized = local_dt.astimezone(zone)
+    return localized.astimezone(timezone.utc)
+
+
+def utc_to_local_naive(utc_dt: datetime, tz_str: str) -> datetime:
+    zone = ensure_timezone(tz_str)
+    aware = utc_dt if utc_dt.tzinfo is not None else utc_dt.replace(tzinfo=timezone.utc)
+    local = aware.astimezone(zone)
+    return local.replace(tzinfo=None)
+
+
+def ensure_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def fmt_local(dt_utc: datetime, tz_str: str) -> str:
     if dt_utc.tzinfo is None:
         dt_utc = dt_utc.replace(tzinfo=timezone.utc)
