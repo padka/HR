@@ -12,6 +12,7 @@ from backend.apps.admin_ui.routers import (
     candidates,
     cities,
     dashboard,
+    regions,
     questions,
     recruiters,
     slots,
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(candidates.router, dependencies=[Depends(require_admin)])
     app.include_router(recruiters.router, dependencies=[Depends(require_admin)])
     app.include_router(cities.router, dependencies=[Depends(require_admin)])
+    app.include_router(regions.router, dependencies=[Depends(require_admin)])
     app.include_router(templates.router, dependencies=[Depends(require_admin)])
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
     app.include_router(api.router, dependencies=[Depends(require_admin)])

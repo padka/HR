@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, date
 from typing import Optional, List
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     String,
@@ -58,6 +59,17 @@ class City(Base):
 
     def __repr__(self) -> str:
         return f"<City {self.name} ({self.tz})>"
+
+    @validates("tz")
+    def _validate_timezone(self, _key, value: Optional[str]) -> str:
+        candidate = (value or "").strip()
+        if not candidate:
+            raise ValueError("Timezone must be provided")
+        try:
+            ZoneInfo(candidate)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise ValueError(f"Invalid timezone: {candidate}") from exc
+        return candidate
 
 
 class Template(Base):

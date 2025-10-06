@@ -4,9 +4,11 @@ import hmac
 import json
 from typing import Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
+from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
@@ -23,8 +25,18 @@ from backend.apps.admin_ui.services.slots import (
     reschedule_slot_booking,
     reject_slot_booking,
 )
-from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
+from backend.apps.admin_ui.utils import (
+    ensure_utc,
+    local_naive_to_utc,
+    norm_status,
+    parse_optional_int,
+    status_filter,
+    utc_to_local_naive,
+    validate_timezone_name,
+)
+from backend.core.db import async_session
 from backend.core.settings import get_settings
+from backend.domain.models import City, Recruiter, Slot, SlotStatus
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
@@ -66,6 +78,65 @@ def _set_flash(response: RedirectResponse, status: str, message: str) -> None:
         secure=_SETTINGS.session_cookie_secure,
         samesite=_SETTINGS.session_cookie_samesite,
     )
+
+
+def _slot_payload(slot: Slot, tz_name: Optional[str]) -> Dict[str, object]:
+    starts_at_local: Optional[datetime] = None
+    if tz_name:
+        try:
+            starts_at_local = utc_to_local_naive(slot.start_utc, tz_name)
+        except ValueError:
+            starts_at_local = None
+    return {
+        "id": slot.id,
+        "recruiter_id": slot.recruiter_id,
+        "city_id": slot.city_id,
+        "region_id": slot.city_id,
+        "starts_at_utc": ensure_utc(slot.start_utc),
+        "starts_at_local": starts_at_local,
+        "duration_min": slot.duration_min,
+        "status": norm_status(slot.status),
+    }
+
+
+class SlotPayloadBase(BaseModel):
+    region_id: Optional[int] = Field(default=None, alias="city_id")
+    starts_at_local: Optional[datetime] = None
+    starts_at_utc: Optional[datetime] = None
+    duration_min: Optional[int] = Field(default=None, ge=1)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("starts_at_local", mode="before")
+    @classmethod
+    def _parse_local(cls, value: object) -> Optional[datetime]:
+        if value in (None, "", b"", []):
+            return None
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError("starts_at_local must be ISO8601 without timezone") from exc
+        if isinstance(value, datetime):
+            return value
+        raise ValueError("starts_at_local must be a datetime string")
+
+    @field_validator("starts_at_local")
+    @classmethod
+    def _ensure_naive(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is not None and value.tzinfo is not None:
+            raise ValueError("starts_at_local must not include timezone information")
+        return value
+
+
+class SlotCreatePayload(SlotPayloadBase):
+    recruiter_id: int
+    region_id: int = Field(..., alias="city_id")
+
+
+class SlotUpdatePayload(SlotPayloadBase):
+    recruiter_id: Optional[int] = None
+    region_id: int = Field(..., alias="city_id")
 
 
 @router.get("", response_class=HTMLResponse)
@@ -143,7 +214,7 @@ async def slots_create(
     date: str = Form(...),
     time: str = Form(...),
 ):
-    ok = await create_slot(recruiter_id, date, time, city_id=city_id)
+    ok, _ = await create_slot(recruiter_id, date, time, city_id=city_id)
     redirect = "/slots" if ok else "/slots/new"
     response = RedirectResponse(url=redirect, status_code=303)
     if ok:
@@ -191,6 +262,138 @@ async def slots_bulk_create(
         _set_flash(response, "success", f"Создано {created} слот(ов).")
 
     return response
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def slots_api_create(payload: SlotCreatePayload):
+    async with async_session() as session:
+        recruiter = await session.get(Recruiter, payload.recruiter_id)
+        if recruiter is None:
+            raise HTTPException(status_code=404, detail="Recruiter not found")
+
+        region_id = payload.region_id
+        if region_id is None:
+            raise HTTPException(status_code=422, detail="region_id is required")
+
+        city = await session.get(City, region_id)
+        if city is None:
+            raise HTTPException(status_code=422, detail="Region not found")
+        if city.responsible_recruiter_id != recruiter.id:
+            raise HTTPException(
+                status_code=422,
+                detail="Region is not assigned to the recruiter",
+            )
+
+        try:
+            tz_name = validate_timezone_name(city.tz)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="Region timezone is invalid",
+            )
+
+        if payload.starts_at_local is not None:
+            start_utc = local_naive_to_utc(payload.starts_at_local, tz_name)
+        elif payload.starts_at_utc is not None:
+            start_utc = ensure_utc(payload.starts_at_utc)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="starts_at_local is required",
+            )
+
+        status_free = getattr(SlotStatus, "FREE", "FREE")
+        if hasattr(status_free, "value"):
+            status_free = status_free.value
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=start_utc,
+            status=status_free,
+        )
+        if payload.duration_min is not None:
+            slot.duration_min = max(int(payload.duration_min), 1)
+
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    return _slot_payload(slot, tz_name)
+
+
+@router.put("/{slot_id}")
+async def slots_api_update(slot_id: int, payload: SlotUpdatePayload):
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if slot is None:
+            raise HTTPException(status_code=404, detail="Slot not found")
+
+        recruiter_id = payload.recruiter_id or slot.recruiter_id
+        recruiter = await session.get(Recruiter, recruiter_id)
+        if recruiter is None:
+            raise HTTPException(status_code=404, detail="Recruiter not found")
+
+        region_id = payload.region_id
+        if region_id is None:
+            raise HTTPException(status_code=422, detail="region_id is required")
+
+        city = await session.get(City, region_id)
+        if city is None:
+            raise HTTPException(status_code=422, detail="Region not found")
+        if city.responsible_recruiter_id != recruiter.id:
+            raise HTTPException(
+                status_code=422,
+                detail="Region is not assigned to the recruiter",
+            )
+
+        try:
+            tz_name = validate_timezone_name(city.tz)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="Region timezone is invalid",
+            )
+
+        if payload.starts_at_local is not None:
+            start_utc = local_naive_to_utc(payload.starts_at_local, tz_name)
+        elif payload.starts_at_utc is not None:
+            start_utc = ensure_utc(payload.starts_at_utc)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="starts_at_local is required",
+            )
+
+        slot.recruiter_id = recruiter.id
+        slot.city_id = city.id
+        slot.start_utc = start_utc
+        if payload.duration_min is not None:
+            slot.duration_min = max(int(payload.duration_min), 1)
+
+        await session.commit()
+        await session.refresh(slot)
+
+    return _slot_payload(slot, tz_name)
+
+
+@router.get("/{slot_id}")
+async def slots_api_detail(slot_id: int):
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if slot is None:
+            raise HTTPException(status_code=404, detail="Slot not found")
+
+        tz_name: Optional[str] = None
+        if slot.city_id is not None:
+            city = await session.get(City, slot.city_id)
+            if city is not None:
+                try:
+                    tz_name = validate_timezone_name(city.tz)
+                except ValueError:
+                    tz_name = None
+
+    return _slot_payload(slot, tz_name)
 
 
 @router.post("/{slot_id}/delete")
