@@ -172,18 +172,6 @@ def kb_approve(slot_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def kb_send_confirmation(slot_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📨 Отправить кандидату", callback_data=f"sendmsg:{slot_id}")],
-            [
-                InlineKeyboardButton(text="🔁 Перенести", callback_data=f"reschedule:{slot_id}"),
-                InlineKeyboardButton(text="⛔️ Отказать", callback_data=f"reject:{slot_id}"),
-            ],
-        ]
-    )
-
-
 def kb_attendance_confirm(slot_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -199,7 +187,6 @@ __all__ = [
     "create_keyboard",
     "fmt_dt_local",
     "kb_approve",
-    "kb_send_confirmation",
     "kb_attendance_confirm",
     "kb_recruiters",
     "kb_slots_for_recruiter",
