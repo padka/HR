@@ -115,6 +115,7 @@ class Slot(Base):
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     recruiter: Mapped["Recruiter"] = relationship(back_populates="slots")
