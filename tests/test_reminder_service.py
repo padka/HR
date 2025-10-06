@@ -152,6 +152,55 @@ async def test_reminders_sent_immediately_for_past_targets(monkeypatch):
         await service.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_schedule_can_skip_confirmation_prompts(monkeypatch):
+    scheduler = create_scheduler(redis_url=None)
+    service = ReminderService(scheduler=scheduler)
+    service.start()
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Skip", tz="Europe/Moscow", active=True)
+        city = models.City(name="Skip City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=3),
+            status=models.SlotStatus.BOOKED,
+            candidate_tg_id=111,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    triggered: list[tuple[int, ReminderKind]] = []
+
+    async def fake_execute(slot_id: int, kind: ReminderKind) -> None:
+        triggered.append((slot_id, kind))
+
+    monkeypatch.setattr(service, "_execute_job", fake_execute)
+
+    try:
+        await service.schedule_for_slot(
+            slot_id, skip_confirmation_prompts=True
+        )
+        job_ids = {job.id for job in scheduler.get_jobs()}
+        assert (
+            f"slot:{slot_id}:{ReminderKind.CONFIRM_2H.value}" not in job_ids
+        )
+        assert f"slot:{slot_id}:{ReminderKind.REMIND_1H.value}" in job_ids
+        assert all(kind != ReminderKind.CONFIRM_2H for _, kind in triggered)
+        assert all(kind != ReminderKind.CONFIRM_6H for _, kind in triggered)
+    finally:
+        await service.shutdown()
+
+
 def test_schedule_respects_non_canonical_timezone():
     scheduler = create_scheduler(redis_url=None)
     service = ReminderService(scheduler=scheduler)
