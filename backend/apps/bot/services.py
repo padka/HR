@@ -1139,6 +1139,7 @@ async def finalize_test1(user_id: int) -> None:
     state_manager = get_state_manager()
     state = await state_manager.get(user_id) or {}
     sequence = state.get("t1_sequence", list(TEST1_QUESTIONS))
+    answers = state.get("test1_answers") or {}
     lines = [
         "📋 Анкета кандидата (Тест 1)",
         "━━━━━━━━━━━━━━━━━━━━",
@@ -1151,7 +1152,7 @@ async def finalize_test1(user_id: int) -> None:
     ]
     for q in sequence:
         qid = q["id"]
-        lines.append(f"- {q['prompt']}\n  {state['test1_answers'].get(qid, '—')}")
+        lines.append(f"- {q['prompt']}\n  {answers.get(qid, '—')}")
 
     fname = TEST1_DIR / f"test1_{(state.get('fio') or user_id)}.txt"
     try:
@@ -1170,10 +1171,14 @@ async def finalize_test1(user_id: int) -> None:
 
             await state_manager.atomic_update(user_id, _mark_shared)
 
-    final_notice = await templates.tpl(state.get("city_id"), "slot_sent")
-    if not final_notice:
-        final_notice = "Заявка отправлена. Ожидайте подтверждения."
-    await bot.send_message(user_id, final_notice)
+    done_text = await templates.tpl(state.get("city_id"), "t1_done")
+    if done_text:
+        await bot.send_message(user_id, done_text)
+
+    try:
+        await show_recruiter_menu(user_id)
+    except Exception:
+        logger.exception("Failed to present recruiter menu after Test 1 completion")
 
     try:
         fio = state.get("fio") or f"TG {user_id}"
