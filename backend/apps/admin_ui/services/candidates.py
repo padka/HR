@@ -43,7 +43,7 @@ def _stage_label(latest_slot: Optional[Slot], now: datetime) -> str:
     start = _ensure_aware(latest_slot.start_utc) or now
     if status == SlotStatus.PENDING:
         return "Ожидает подтверждения" if start >= now else "Требует реакции"
-    if status == SlotStatus.BOOKED:
+    if status in {SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE}:
         return "Интервью назначено" if start >= now else "Интервью завершено"
     if status == SlotStatus.CANCELED:
         return "Отменено"
@@ -156,7 +156,13 @@ async def list_candidates(
                     select(1)
                     .where(
                         Slot.candidate_tg_id == User.telegram_id,
-                        func.lower(Slot.status).in_([SlotStatus.PENDING, SlotStatus.BOOKED]),
+                        func.lower(Slot.status).in_(
+                            [
+                                SlotStatus.PENDING,
+                                SlotStatus.BOOKED,
+                                SlotStatus.CONFIRMED_BY_CANDIDATE,
+                            ]
+                        ),
                         Slot.start_utc >= now,
                     )
                     .correlate(User)
@@ -403,7 +409,7 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
             if start > now:
                 upcoming_count += 1
             awaiting_confirmation += 1
-        elif status_norm == SlotStatus.BOOKED:
+        elif status_norm in {SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE}:
             if start > now:
                 upcoming_count += 1
                 booked_active += 1
@@ -418,12 +424,14 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
     pipeline_labels = {
         SlotStatus.PENDING: "Ожидает подтверждения",
         SlotStatus.BOOKED: "Интервью назначено",
+        SlotStatus.CONFIRMED_BY_CANDIDATE: "Интервью назначено",
         SlotStatus.CANCELED: "Отменено",
         SlotStatus.FREE: "Свободные слоты",
     }
     stage_slug_map = {
         SlotStatus.PENDING: "interviews",
         SlotStatus.BOOKED: "interviews",
+        SlotStatus.CONFIRMED_BY_CANDIDATE: "interviews",
         SlotStatus.CANCELED: "alerts",
         SlotStatus.FREE: None,
     }

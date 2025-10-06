@@ -6,14 +6,21 @@ import asyncio
 import html
 import logging
 import math
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Literal
 from zoneinfo import ZoneInfo
 
+from aiohttp import ClientError
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramRetryAfter,
+    TelegramServerError,
+)
+from aiogram.methods import SendMessage
 from aiogram.types import (
     CallbackQuery,
     ForceReply,
@@ -29,16 +36,20 @@ from backend.core.settings import get_settings
 from backend.domain.candidates import services as candidate_services
 from backend.domain.models import SlotStatus, Slot
 from backend.domain.repositories import (
+    ReservationResult,
+    add_notification_log,
     approve_slot,
+    confirm_slot_by_candidate,
     get_active_recruiters_for_city,
+    get_city,
     get_free_slots_by_recruiter,
     get_recruiter,
-    get_city,
     get_slot,
+    notification_log_exists,
+    register_callback,
     reject_slot,
     reserve_slot,
     set_recruiter_chat_id_by_command,
-    ReservationResult,
 )
 
 from . import templates
@@ -77,6 +88,48 @@ from .reminders import get_reminder_service
 
 
 logger = logging.getLogger(__name__)
+
+
+async def _send_with_retry(bot: Bot, method: SendMessage, correlation_id: str) -> Any:
+    attempt = 0
+    delay = 1.0
+    method = method.as_(bot)
+    while True:
+        attempt += 1
+        try:
+            session = bot.session
+            client = await session.create_session()
+            url = session.api.api_url(token=bot.token, method=method.__api_method__)
+            form = session.build_form_data(bot=bot, method=method)
+            async with client.post(
+                url,
+                data=form,
+                headers={"X-Telegram-Bot-API-Request-ID": correlation_id},
+                timeout=session.timeout,
+            ) as resp:
+                raw_result = await resp.text()
+                status_code = resp.status
+            response = session.check_response(
+                bot=bot,
+                method=method,
+                status_code=status_code,
+                content=raw_result,
+            )
+            return response.result
+        except TelegramRetryAfter as exc:
+            if attempt >= 5:
+                raise
+            await asyncio.sleep(max(exc.retry_after, delay))
+        except TelegramServerError:
+            if attempt >= 5:
+                raise
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 10.0)
+        except (asyncio.TimeoutError, ClientError):
+            if attempt >= 5:
+                raise
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 10.0)
 
 _settings = get_settings()
 REPORTS_DIR: Path = _settings.data_dir / "reports"
@@ -1760,7 +1813,7 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
 
     status_value = (slot.status or "").lower()
 
-    if status_value == SlotStatus.BOOKED:
+    if status_value in {SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE}:
         await callback.answer("Уже согласовано ✔️")
         await safe_remove_reply_markup(callback.message)
         return
@@ -1780,69 +1833,92 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         await callback.answer("Не удалось согласовать.", show_alert=True)
         return
 
+    already_sent = await notification_log_exists(
+        "candidate_interview_confirmed", slot.id
+    )
+
     message_text, candidate_tz, candidate_city = await _render_candidate_notification(slot)
     bot = get_bot()
-    try:
-        await bot.send_message(slot.candidate_tg_id, message_text)
-    except Exception:
-        logger.exception("Failed to send approval message to candidate")
+
+    if not already_sent:
+        try:
+            await _send_with_retry(
+                bot,
+                SendMessage(chat_id=slot.candidate_tg_id, text=message_text),
+                correlation_id=f"approve:{slot.id}:{uuid.uuid4().hex}",
+            )
+        except Exception:
+            logger.exception("Failed to send approval message to candidate")
+            candidate_label = (
+                slot.candidate_fio
+                or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "—")
+            )
+            failure_parts = [
+                "⚠️ Слот подтверждён, но отправить сообщение кандидату не удалось.",
+                f"👤 {html.escape(candidate_label)}",
+                f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
+            ]
+            if candidate_city:
+                failure_parts.append(f"📍 {html.escape(candidate_city)}")
+            failure_parts.extend(
+                [
+                    "",
+                    "<b>Текст сообщения:</b>",
+                    f"<blockquote>{message_text}</blockquote>",
+                    "Свяжитесь с кандидатом вручную.",
+                ]
+            )
+            failure_text = "\n".join(failure_parts)
+
+            await safe_edit_text_or_caption(callback.message, failure_text)
+            await safe_remove_reply_markup(callback.message)
+            await callback.answer("Не удалось отправить сообщение кандидату.", show_alert=True)
+            return
+
+        logged = await add_notification_log(
+            "candidate_interview_confirmed",
+            slot.id,
+            payload=message_text,
+        )
+        if not logged:
+            logger.warning("Notification log already exists for slot %s", slot.id)
+
+        try:
+            reminder_service = get_reminder_service()
+        except RuntimeError:
+            reminder_service = None
+        if reminder_service is not None:
+            await reminder_service.schedule_for_slot(slot.id)
+
         candidate_label = (
             slot.candidate_fio
             or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "—")
         )
-        failure_parts = [
-            "⚠️ Слот подтверждён, но отправить сообщение кандидату не удалось.",
+
+        summary_parts = [
+            "✅ Слот подтверждён. Сообщение отправлено кандидату автоматически.",
             f"👤 {html.escape(candidate_label)}",
             f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
         ]
         if candidate_city:
-            failure_parts.append(f"📍 {html.escape(candidate_city)}")
-        failure_parts.extend(
+            summary_parts.append(f"📍 {html.escape(candidate_city)}")
+        summary_parts.extend(
             [
                 "",
                 "<b>Текст сообщения:</b>",
                 f"<blockquote>{message_text}</blockquote>",
-                "Свяжитесь с кандидатом вручную.",
             ]
         )
-        failure_text = "\n".join(failure_parts)
+        summary_text = "\n".join(summary_parts)
 
-        await safe_edit_text_or_caption(callback.message, failure_text)
+        await safe_edit_text_or_caption(callback.message, summary_text)
         await safe_remove_reply_markup(callback.message)
-        await callback.answer("Не удалось отправить сообщение кандидату.", show_alert=True)
+        await callback.answer("Сообщение отправлено кандидату.")
         return
 
-    try:
-        reminder_service = get_reminder_service()
-    except RuntimeError:
-        reminder_service = None
-    if reminder_service is not None:
-        await reminder_service.schedule_for_slot(slot.id)
-
-    candidate_label = (
-        slot.candidate_fio
-        or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "—")
-    )
-
-    summary_parts = [
-        "✅ Слот подтверждён. Сообщение отправлено кандидату автоматически.",
-        f"👤 {html.escape(candidate_label)}",
-        f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
-    ]
-    if candidate_city:
-        summary_parts.append(f"📍 {html.escape(candidate_city)}")
-    summary_parts.extend(
-        [
-            "",
-            "<b>Текст сообщения:</b>",
-            f"<blockquote>{message_text}</blockquote>",
-        ]
-    )
-    summary_text = "\n".join(summary_parts)
-
-    await safe_edit_text_or_caption(callback.message, summary_text)
+    await callback.answer("Уже согласовано ✔️")
     await safe_remove_reply_markup(callback.message)
-    await callback.answer("Сообщение отправлено кандидату.")
+    return
 
 
 async def handle_send_slot_message(callback: CallbackQuery) -> None:
@@ -1859,7 +1935,7 @@ async def handle_send_slot_message(callback: CallbackQuery) -> None:
         return
 
     status_value = (slot.status or "").lower()
-    if status_value != SlotStatus.BOOKED:
+    if status_value not in {SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE}:
         await callback.answer("Слот ещё не подтверждён.", show_alert=True)
         await safe_remove_reply_markup(callback.message)
         return
@@ -1972,10 +2048,27 @@ async def handle_reschedule_slot(callback: CallbackQuery) -> None:
 
 async def handle_attendance_yes(callback: CallbackQuery) -> None:
     slot_id = int(callback.data.split(":", 1)[1])
-    slot = await get_slot(slot_id)
-    status_value = (slot.status or "").lower() if slot else None
-    if not slot or status_value != SlotStatus.BOOKED:
-        await callback.answer("Заявка не найдена или ещё не подтверждена рекрутёром.", show_alert=True)
+
+    if not await register_callback(callback.id):
+        await callback.answer("Уже подтверждено")
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    result = await confirm_slot_by_candidate(slot_id)
+    slot = result.slot
+    if slot is None:
+        await callback.answer(
+            "Заявка не найдена или ещё не подтверждена рекрутёром.",
+            show_alert=True,
+        )
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    if result.status == "invalid_status":
+        await callback.answer(
+            "Заявка не найдена или ещё не подтверждена рекрутёром.",
+            show_alert=True,
+        )
         return
 
     rec = await get_recruiter(slot.recruiter_id)
@@ -1986,7 +2079,7 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
     dt_local = fmt_dt_local(slot.start_utc, tz)
     city_id = getattr(slot, "candidate_city_id", None)
     labels = slot_local_labels(slot.start_utc, tz)
-    text = await templates.tpl(
+    link_text = await templates.tpl(
         city_id,
         "att_confirmed_link",
         link=link,
@@ -1994,35 +2087,46 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         **labels,
     )
     bot = get_bot()
-    await bot.send_message(slot.candidate_tg_id, text)
 
-    try:
-        reminder_service = get_reminder_service()
-    except RuntimeError:
-        reminder_service = None
-    if reminder_service is not None:
-        await reminder_service.cancel_for_slot(slot_id)
-        await reminder_service.schedule_for_slot(
-            slot_id, skip_confirmation_prompts=True
-        )
-
-    ack_text = await templates.tpl(
-        city_id,
-        "att_confirmed_ack",
-        dt=dt_local,
-        **labels,
-    )
-    if ack_text:
+    if result.status == "confirmed":
         try:
-            await callback.message.edit_text(ack_text)
-        except TelegramBadRequest:
-            pass
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
+            await _send_with_retry(
+                bot,
+                SendMessage(chat_id=slot.candidate_tg_id, text=link_text),
+                correlation_id=f"attendance:{slot.id}:{uuid.uuid4().hex}",
+            )
+        except Exception:
+            logger.exception("Failed to send attendance confirmation to candidate")
+            await callback.answer("Не удалось отправить ссылку.", show_alert=True)
+            return
 
-    await callback.answer("Подтверждено")
+        try:
+            reminder_service = get_reminder_service()
+        except RuntimeError:
+            reminder_service = None
+        if reminder_service is not None:
+            await reminder_service.cancel_for_slot(slot_id)
+            await reminder_service.schedule_for_slot(
+                slot_id, skip_confirmation_prompts=True
+            )
+
+        ack_text = await templates.tpl(
+            city_id,
+            "att_confirmed_ack",
+            dt=dt_local,
+            **labels,
+        )
+        if ack_text:
+            try:
+                await callback.message.edit_text(ack_text)
+            except TelegramBadRequest:
+                pass
+        await safe_remove_reply_markup(callback.message)
+        await callback.answer("Подтверждено")
+        return
+
+    await safe_remove_reply_markup(callback.message)
+    await callback.answer("Уже подтверждено")
 
 
 async def handle_attendance_no(callback: CallbackQuery) -> None:
