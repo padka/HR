@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Text,
     ForeignKey,
+    Index,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
@@ -205,13 +206,20 @@ class TestQuestion(Base):
 class NotificationLog(Base):
     __tablename__ = "notification_logs"
     __table_args__ = (
-        UniqueConstraint("type", "booking_id", name="uq_notification_logs_type_booking"),
+        Index(
+            "uq_notif_type_booking_candidate",
+            "type",
+            "booking_id",
+            "candidate_tg_id",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     booking_id: Mapped[int] = mapped_column(
         ForeignKey("slots.id", ondelete="CASCADE"), nullable=False
     )
+    candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     type: Mapped[str] = mapped_column(String(50), nullable=False)
     payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

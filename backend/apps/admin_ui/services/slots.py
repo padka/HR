@@ -96,6 +96,7 @@ async def list_slots(
         aggregated: Dict[str, int] = {}
         for raw_status, count in status_rows:
             aggregated[norm_status(raw_status)] = int(count or 0)
+        aggregated.setdefault("CONFIRMED_BY_CANDIDATE", 0)
 
         pages_total, page, offset = paginate(total, page, per_page)
 

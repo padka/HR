@@ -1834,7 +1834,9 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         return
 
     already_sent = await notification_log_exists(
-        "candidate_interview_confirmed", slot.id
+        "candidate_interview_confirmed",
+        slot.id,
+        candidate_tg_id=slot.candidate_tg_id,
     )
 
     message_text, candidate_tz, candidate_city = await _render_candidate_notification(slot)
@@ -1878,6 +1880,7 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         logged = await add_notification_log(
             "candidate_interview_confirmed",
             slot.id,
+            candidate_tg_id=slot.candidate_tg_id,
             payload=message_text,
         )
         if not logged:

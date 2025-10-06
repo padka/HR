@@ -88,6 +88,9 @@ async def slots_list(
         "FREE": int(aggregated.get("FREE", 0)),
         "PENDING": int(aggregated.get("PENDING", 0)),
         "BOOKED": int(aggregated.get("BOOKED", 0)),
+        "CONFIRMED_BY_CANDIDATE": int(
+            aggregated.get("CONFIRMED_BY_CANDIDATE", 0)
+        ),
     }
     flash = _pop_flash(request)
     context = {
