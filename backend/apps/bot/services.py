@@ -1905,13 +1905,6 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         ]
         if candidate_city:
             summary_parts.append(f"📍 {html.escape(candidate_city)}")
-        summary_parts.extend(
-            [
-                "",
-                "<b>Текст сообщения:</b>",
-                f"<blockquote>{message_text}</blockquote>",
-            ]
-        )
         summary_text = "\n".join(summary_parts)
 
         await safe_edit_text_or_caption(callback.message, summary_text)
