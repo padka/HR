@@ -116,3 +116,5 @@ python -c "from backend.migrations import upgrade_to_head; upgrade_to_head()"
 
 The seeding step is idempotent and can be executed multiple times without
 creating duplicate cities, recruiters or test questions.
+
+> **Note:** The latest migrations require PostgreSQL because they rely on concurrent index operations.
