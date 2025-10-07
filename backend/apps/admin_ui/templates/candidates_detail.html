@@ -2,41 +2,14 @@
 {% import "partials/form_shell.html" as forms %}
 {% block title %}Кандидат {{ user.fio }}{% endblock %}
 {% block content %}
-<style>
-  .cards-grid {
-    display: grid;
-    gap: 24px;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    margin-bottom: 24px;
-  }
-
-  .candidate-card .data-list {
-    display: grid;
-    gap: 12px;
-  }
-
-  .candidate-card .data-list div {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .surface.mt-lg {
-    margin-top: 32px;
-  }
-
-  .text-prewrap {
-    white-space: pre-wrap;
-  }
-</style>
 {% set saved = request.query_params.get('saved') %}
 {% set error = request.query_params.get('error') %}
 {% if saved %}
-  <div class="surface glass grain alert" data-tone="success" role="status">
+  <div class="alert" data-tone="success" role="status">
     Данные кандидата обновлены.
   </div>
 {% elif error %}
-  <div class="surface glass grain alert" data-tone="danger" role="alert">
+  <div class="alert" data-tone="danger" role="alert">
     Не удалось обновить данные кандидата.
   </div>
 {% endif %}
@@ -63,10 +36,10 @@
 </section>
 
 <div class="cards-grid">
-  <article class="glass grain candidate-card">
+  <article class="surface">
     <h2 class="section-title">Сводка</h2>
     <dl class="data-list">
-      <div>
+      <div class="data-list__item">
         <dt>Статус</dt>
         <dd>
           {% if user.is_active %}
@@ -76,19 +49,19 @@
           {% endif %}
         </dd>
       </div>
-      <div>
+      <div class="data-list__item">
         <dt>Город</dt>
         <dd>{{ user.city or '—' }}</dd>
       </div>
-      <div>
+      <div class="data-list__item">
         <dt>Последняя активность</dt>
         <dd>{{ user.last_activity.strftime('%d.%m.%Y %H:%M') if user.last_activity else '—' }}</dd>
       </div>
-      <div>
+      <div class="data-list__item">
         <dt>Тестов пройдено</dt>
         <dd>{{ stats.tests_total }}</dd>
       </div>
-      <div>
+      <div class="data-list__item">
         <dt>Средний балл</dt>
         <dd>{{ '%.2f'|format(stats.average_score) if stats.average_score is not none else '—' }}</dd>
       </div>
@@ -123,7 +96,7 @@
   {% endcall %}
 </div>
 
-<section class="surface glass grain mt-lg">
+<section class="surface">
   <header class="section-header">
     <h2 class="section-title">Результаты тестов</h2>
     <p class="section-hint">Полная история прохождений с ключевыми показателями.</p>
@@ -168,7 +141,7 @@
   {% endif %}
 </section>
 
-<section class="surface glass grain mt-lg">
+<section class="surface">
   <header class="section-header">
     <h2 class="section-title">Сообщения кандидату</h2>
     <p class="section-hint">Отображаются авто-сообщения, назначенные на Telegram ID кандидата.</p>
@@ -203,36 +176,7 @@
       </table>
     </div>
   {% else %}
-    <p class="muted">Сообщений пока нет.</p>
-  {% endif %}
-</section>
-
-<section class="surface glass grain mt-lg">
-  <header class="section-header">
-    <h2 class="section-title">Хронология действий</h2>
-    <p class="section-hint">События объединяют интервью, тесты и сообщения.</p>
-  </header>
-  {% if timeline %}
-    <div class="timeline">
-      {% for event in timeline %}
-        <article class="timeline-item">
-          <div class="timeline-item__meta">{{ fmt_local(event.dt, event.tz or 'Europe/Moscow') }}</div>
-          {% if event.kind == 'slot' %}
-            <strong>Интервью · {{ event.status|upper }}</strong>
-            <span class="timeline-item__meta">{{ event.recruiter or 'Рекрутёр не указан' }} · {{ event.city or 'Город не указан' }}</span>
-          {% elif event.kind == 'test' %}
-            <strong>Тест</strong>
-            <span class="timeline-item__meta">Баллы: {{ event.score }} · Рейтинг {{ event.rating }}</span>
-          {% elif event.kind == 'message' %}
-            <strong>Сообщение</strong>
-            <span class="timeline-item__meta">План: {{ event.send_time }}{% if not event.is_active %} · отключено{% endif %}</span>
-            <span class="text-prewrap">{{ event.text }}</span>
-          {% endif %}
-        </article>
-      {% endfor %}
-    </div>
-  {% else %}
-    <p class="muted">События ещё не зафиксированы.</p>
+    <p class="muted">Сообщения не найдены.</p>
   {% endif %}
 </section>
 {% endblock %}
