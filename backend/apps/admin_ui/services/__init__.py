@@ -23,6 +23,7 @@ from .cities import (
     api_city_owners_payload,
     city_owner_field_name,
     create_city,
+    get_city,
     list_cities,
     update_city_settings,
 )
@@ -69,6 +70,7 @@ __all__ = [
     "build_recruiter_payload",
     "list_cities",
     "create_city",
+    "get_city",
     "update_city_settings",
     "city_owner_field_name",
     "get_stage_templates",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.inspection import inspect as sa_inspect
 
 from backend.core.db import async_session
@@ -14,6 +14,7 @@ __all__ = [
     "list_cities",
     "create_city",
     "update_city_settings",
+    "get_city",
     "delete_city",
     "city_owner_field_name",
     "api_cities_payload",
@@ -53,9 +54,17 @@ def city_owner_field_name() -> Optional[str]:
     return None
 
 
+async def get_city(city_id: int) -> Optional[City]:
+    async with async_session() as session:
+        return await session.get(City, city_id)
+
+
 async def update_city_settings(
     city_id: int,
     *,
+    name: Optional[str] = None,
+    tz: Optional[str] = None,
+    active: Optional[bool] = None,
     responsible_id: Optional[int],
     templates: Dict[str, Optional[str]],
     criteria: Optional[str],
@@ -69,6 +78,19 @@ async def update_city_settings(
             city = await session.get(City, city_id)
             if not city:
                 return "City not found"
+
+            if name is not None:
+                clean_name = name.strip()
+                if clean_name:
+                    city.name = clean_name
+
+            if tz is not None:
+                clean_tz = tz.strip()
+                if clean_tz:
+                    city.tz = clean_tz
+
+            if active is not None:
+                city.active = bool(active)
 
             if responsible_id is not None:
                 recruiter = await session.get(Recruiter, responsible_id)

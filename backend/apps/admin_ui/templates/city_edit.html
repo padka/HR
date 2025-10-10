@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}{{ city.name }} · Город{% endblock %}
+{% block content %}
+<section class="space-y-8" data-page="city-edit" aria-labelledby="city-edit-title">
+  <header class="flex flex-wrap items-center justify-between gap-4">
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center gap-3 text-sm text-fg-secondary">
+        <a class="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 transition hover:border-accent/40 hover:text-fg-primary" href="/cities" aria-label="Вернуться к списку городов">
+          ← Города
+        </a>
+        <span class="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-fg-secondary">ID {{ city.id }}</span>
+      </div>
+      <h1 id="city-edit-title" class="text-3xl font-semibold tracking-tight text-fg-primary">{{ city.name }}</h1>
+      <div class="flex flex-wrap items-center gap-3 text-sm text-fg-secondary">
+        <span class="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm font-medium text-fg-primary" data-city-chip>
+          {{ city.name }} · {{ city.tz or "Europe/Moscow" }}
+        </span>
+        <span class="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em]" data-active-badge data-state="{{ 'on' if city.active else 'off' }}">
+          <span data-active-label>{% if city.active %}Активен{% else %}Выключен{% endif %}</span>
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <form id="city_form" class="space-y-8" novalidate data-city-id="{{ city.id }}">
+    <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <section class="flex flex-col gap-5 rounded-3xl border border-white/15 bg-white/10 p-6 backdrop-blur-glass" aria-labelledby="panel-basics-title">
+        <header class="flex items-center justify-between">
+          <div>
+            <h2 id="panel-basics-title" class="text-lg font-semibold text-fg-primary">Основное</h2>
+            <p class="text-sm text-fg-muted">Название, часовой пояс, статус.</p>
+          </div>
+        </header>
+        <div class="space-y-4">
+          <div class="flex flex-col gap-2">
+            <label for="city_name" class="text-sm font-medium text-fg-primary">Название</label>
+            <input id="city_name" name="name" type="text" value="{{ city.name }}" required placeholder="Например, Екатеринбург" class="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40">
+          </div>
+          <div class="flex flex-col gap-2">
+            <label for="city_tz" class="text-sm font-medium text-fg-primary">Таймзона</label>
+            <input id="city_tz" name="tz" list="timezone-options" value="{{ city.tz or "Europe/Moscow" }}" placeholder="Europe/Moscow" class="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40">
+            <datalist id="timezone-options">
+              {% for tz_name in timezone_options %}
+                <option value="{{ tz_name }}"></option>
+              {% endfor %}
+            </datalist>
+            <span class="text-xs text-fg-muted">Начните вводить город или регион, чтобы отфильтровать список.</span>
+          </div>
+          <div class="flex items-center justify-between rounded-2xl border border-white/15 bg-white/5 px-4 py-3">
+            <div class="flex flex-col">
+              <span class="text-sm font-medium text-fg-primary">Активен</span>
+              <span class="text-xs text-fg-muted">Включает город в списке для кандидатов.</span>
+            </div>
+            <label class="form-switch" aria-live="polite">
+              <input id="city_active" name="active" type="checkbox" value="1" {% if city.active %}checked{% endif %}>
+              <span class="form-switch__track" aria-hidden="true">
+                <span class="form-switch__thumb"></span>
+              </span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="flex flex-col gap-5 rounded-3xl border border-white/15 bg-white/10 p-6 backdrop-blur-glass" aria-labelledby="panel-owner-title">
+        <header>
+          <h2 id="panel-owner-title" class="text-lg font-semibold text-fg-primary">Ответственный рекрутёр</h2>
+          <p class="text-sm text-fg-muted">Определяет, кто получает заявки из города.</p>
+        </header>
+        <div class="space-y-4">
+          <div class="flex flex-col gap-2">
+            <label for="city_owner" class="text-sm font-medium text-fg-primary">Рекрутёр</label>
+            <select id="city_owner" name="responsible_recruiter_id" class="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm text-fg-primary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40">
+              <option value="">Не назначен</option>
+              {% for rec in recruiters %}
+                <option value="{{ rec.id }}" {% if rec.id == responsible_id %}selected{% endif %}>{{ rec.name }}</option>
+              {% endfor %}
+            </select>
+            <p class="text-xs text-fg-muted">Назначенный рекрутёр автоматически получает новые лиды из этого города.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="flex flex-col gap-6 rounded-3xl border border-white/15 bg-white/10 p-6 backdrop-blur-glass lg:col-span-2" aria-labelledby="panel-settings-title">
+        <header>
+          <h2 id="panel-settings-title" class="text-lg font-semibold text-fg-primary">Настройки и этапы</h2>
+        </header>
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="flex flex-col gap-2">
+            <label for="plan_week" class="text-sm font-medium text-fg-primary">План на неделю</label>
+            <input id="plan_week" name="plan_week" type="number" min="0" step="1" inputmode="numeric" value="{{ city.plan_week if city.plan_week is not none else '' }}" placeholder="Например, 12" class="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40">
+          </div>
+          <div class="flex flex-col gap-2">
+            <label for="plan_month" class="text-sm font-medium text-fg-primary">План на месяц</label>
+            <input id="plan_month" name="plan_month" type="number" min="0" step="1" inputmode="numeric" value="{{ city.plan_month if city.plan_month is not none else '' }}" placeholder="Например, 48" class="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40">
+          </div>
+        </div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="flex flex-col gap-2">
+            <label for="criteria" class="text-sm font-medium text-fg-primary">Критерии отбора</label>
+            <textarea id="criteria" name="criteria" rows="3" placeholder="Коротко: опыт, навыки, формат работы" class="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40">{{ city.criteria or '' }}</textarea>
+          </div>
+          <div class="flex flex-col gap-2">
+            <label for="experts" class="text-sm font-medium text-fg-primary">Ресурсы экспертов</label>
+            <textarea id="experts" name="experts" rows="3" placeholder="Кто проводит интервью, когда доступны" class="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40">{{ city.experts or '' }}</textarea>
+          </div>
+        </div>
+        <div class="space-y-3" data-stage-editor>
+          {% for stage in stages %}
+            <details class="rounded-2xl border border-white/15 bg-white/5 p-4 transition duration-150 ease-snap open" data-stage-item="{{ stage.key }}">
+              <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                <div class="flex flex-col">
+                  <span class="text-sm font-semibold text-fg-primary">{{ stage.title }}</span>
+                  <span class="text-xs text-fg-muted">{{ stage.description }}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-fg-secondary" data-stage-status>{% if stage.is_custom %}Своя версия{% else %}По умолчанию{% endif %}</span>
+                  <button type="button" class="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium text-fg-secondary transition hover:border-accent/40 hover:text-fg-primary" data-stage-default="{{ stage.key }}" title="Подставить текст по умолчанию">
+                    По умолчанию
+                  </button>
+                </div>
+              </summary>
+              <div class="mt-3 space-y-2">
+                <textarea
+                  class="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm text-fg-primary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40"
+                  name="stage__{{ stage.key }}"
+                  rows="4"
+                  data-stage-input="{{ stage.key }}"
+                  data-stage-default-text="{{ stage.default|e }}"
+                  placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
+              </div>
+            </details>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+
+    <footer class="flex flex-col gap-4 rounded-3xl border border-white/15 bg-white/10 p-6 backdrop-blur-glass">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <span class="text-sm text-fg-muted" data-status-text>Изменений нет</span>
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="button" class="rounded-xl border border-transparent px-4 py-2 text-sm font-medium text-fg-secondary transition hover:text-fg-primary" data-cancel>Отмена</button>
+          <button type="button" class="rounded-xl border border-white/20 bg-[rgba(249,110,101,0.12)] px-4 py-2 text-sm font-medium text-[rgb(249,110,101)] transition hover:border-[rgba(249,110,101,0.6)]" data-delete>Удалить</button>
+          <button type="submit" class="rounded-xl bg-accent px-5 py-2 text-sm font-semibold text-slate-900 transition hover:bg-accent-strong" data-save>Сохранить</button>
+        </div>
+      </div>
+    </footer>
+  </form>
+</section>
+{% endblock %}
+{% block extra_js %}
+  <script type="module" src="/static/js/city-edit.js"></script>
+{% endblock %}
