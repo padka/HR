@@ -1,3 +1,4 @@
+from datetime import date as date_type
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request
@@ -7,7 +8,10 @@ from backend.apps.admin_ui.services.cities import (
     api_cities_payload,
     api_city_owners_payload,
 )
-from backend.apps.admin_ui.services.dashboard import dashboard_counts
+from backend.apps.admin_ui.services.dashboard import (
+    dashboard_calendar_snapshot,
+    dashboard_counts,
+)
 from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
 from backend.apps.admin_ui.services.slots import api_slots_payload
 from backend.apps.admin_ui.services.templates import api_templates_payload
@@ -21,6 +25,23 @@ router = APIRouter(prefix="/api", tags=["api"])
 async def api_health():
     counts = await dashboard_counts()
     return counts
+
+
+@router.get("/dashboard/calendar")
+async def api_dashboard_calendar(
+    date: Optional[str] = Query(default=None),
+    days: int = Query(default=14, ge=1, le=60),
+):
+    target_date: Optional[date_type] = None
+    if date:
+        try:
+            target_date = date_type.fromisoformat(date)
+        except ValueError:
+            return JSONResponse(
+                {"ok": False, "error": "invalid_date"}, status_code=400
+            )
+    snapshot = await dashboard_calendar_snapshot(target_date, days=days)
+    return JSONResponse(snapshot)
 
 
 @router.get("/recruiters")

@@ -32,81 +32,95 @@
     <span class="metric-card__value">{{ counts.slots_total }}</span>
     <span class="metric-card__meta">Свободно: {{ counts.slots_free }} • В ожидании: {{ counts.slots_pending }} • Забронировано: {{ counts.slots_booked }}</span>
   </article>
-  <article class="metric-card glass-card">
-    <span class="metric-card__label">Тест 1</span>
-    <span class="metric-card__value">{{ counts.test1_total_seen }}</span>
-    <span class="metric-card__meta">Отказы: {{ counts.test1_rejections_total }} ({{ counts.test1_rejections_percent }}%)</span>
+  <article class="metric-card glass-card calendar-summary">
+    <span class="metric-card__label">Интервью · <span data-calendar-label>{{ calendar.selected_label }}</span></span>
+    <span class="metric-card__value" data-calendar-total>{{ calendar.events_total }}</span>
+    <span class="metric-card__meta" data-calendar-meta>{{ calendar.meta }}</span>
+    <span class="metric-card__meta muted" data-calendar-updated>{{ calendar.updated_label }}</span>
   </article>
-  <article class="metric-card glass-card">
-    <span class="metric-card__label">Интеграция бота</span>
-    <span class="metric-card__value">{{ bot_status.mode|upper }}</span>
-    <span class="metric-card__meta">Готов к работе: {{ 'да' if bot_status.ready else 'нет' }}</span>
+  <article class="metric-card glass-card calendar-status-card">
+    <span class="metric-card__label">Статусы интервью</span>
+    <ul class="calendar-status-list" data-calendar-status>
+      <li class="calendar-status-list__item">
+        <span class="calendar-status-list__label">Подтверждено</span>
+        <span class="calendar-status-list__value" data-calendar-status-confirmed>{{ calendar.status_summary['CONFIRMED_BY_CANDIDATE'] }}</span>
+      </li>
+      <li class="calendar-status-list__item">
+        <span class="calendar-status-list__label">Назначено</span>
+        <span class="calendar-status-list__value" data-calendar-status-booked>{{ calendar.status_summary['BOOKED'] }}</span>
+      </li>
+      <li class="calendar-status-list__item">
+        <span class="calendar-status-list__label">Ожидает подтверждения</span>
+        <span class="calendar-status-list__value" data-calendar-status-pending>{{ calendar.status_summary['PENDING'] }}</span>
+      </li>
+      <li class="calendar-status-list__item">
+        <span class="calendar-status-list__label">Отменено</span>
+        <span class="calendar-status-list__value" data-calendar-status-canceled>{{ calendar.status_summary['CANCELED'] }}</span>
+      </li>
+    </ul>
+    <span class="metric-card__meta muted">Часовой пояс: {{ calendar.timezone }}</span>
   </article>
 </section>
 
-<section class="surface">
-  <header class="section-header">
-    <h2 class="section-title">Состояние интеграции бота</h2>
-    <p class="section-hint">Текущее состояние подключения к рантайму и конфигурации.</p>
-  </header>
-  <div class="list-table-wrapper">
-    <table class="list-table">
-      <tbody>
-        <tr>
-          <th scope="row">Конфигурация включена</th>
-          <td>{{ 'Да' if bot_status.config_enabled else 'Нет' }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Рантайм активен</th>
-          <td>{{ 'Да' if bot_status.runtime_enabled else 'Нет' }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Готовность сервиса</th>
-          <td>{{ 'Да' if bot_status.ready else 'Нет' }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Состояние здоровья</th>
-          <td>{{ bot_status.health or 'неизвестно' }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Режим</th>
-          <td>{{ bot_status.mode }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Последнее обновление</th>
-          <td>{{ bot_status.updated_at or '—' }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<section class="surface">
-  <header class="section-header">
-    <h2 class="section-title">Статистика теста 1</h2>
-    <p class="section-hint">Распределение отказов и общее количество прохождений.</p>
-  </header>
-  {% if counts.test1_rejections_breakdown %}
-    <div class="list-table-wrapper">
-      <table class="list-table">
-        <thead>
-          <tr>
-            <th scope="col">Причина отказа</th>
-            <th scope="col">Количество</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for reason, total in counts.test1_rejections_breakdown.items() %}
-            <tr>
-              <td>{{ reason }}</td>
-              <td>{{ total }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+<section class="surface calendar-surface" data-calendar-root data-calendar-endpoint="/api/dashboard/calendar" data-calendar-initial='{{ calendar | tojson }}'>
+  <header class="section-header calendar-header">
+    <div>
+      <h2 class="section-title">Календарь собеседований</h2>
+      <p class="section-hint">Выбирайте дату, чтобы видеть интервью в реальном времени и переходить к карточке кандидата.</p>
     </div>
-  {% else %}
-    <p class="muted">Пока нет зарегистрированных отказов по тесту.</p>
-  {% endif %}
+    <div class="calendar-controls">
+      <label class="calendar-date-picker">
+        <span class="calendar-date-picker__label">Дата</span>
+        <input type="date" value="{{ calendar.selected_date }}" data-calendar-input>
+      </label>
+      <button type="button" class="btn btn-ghost btn-sm" data-calendar-refresh>Обновить</button>
+    </div>
+  </header>
+  <div class="calendar-board">
+    <div class="calendar-days" data-calendar-days>
+      {% for day in calendar.days %}
+        <button type="button" class="calendar-day{% if day.is_selected %} is-active{% endif %}{% if day.is_today %} is-today{% endif %}" data-calendar-day="{{ day.date }}">
+          <span class="calendar-day__weekday">{{ day.weekday }}</span>
+          <span class="calendar-day__date">{{ day.label }}</span>
+          <span class="calendar-day__count">{{ day.count }}</span>
+        </button>
+      {% endfor %}
+    </div>
+    <div class="calendar-events" data-calendar-events>
+      {% if calendar.events %}
+        {% for event in calendar.events %}
+          <article class="calendar-event glass-card" data-calendar-event-id="{{ event.id }}">
+            <div class="calendar-event__clock">
+              <span class="calendar-event__start">{{ event.start_time }}</span>
+              <span class="calendar-event__end">до {{ event.end_time }}</span>
+            </div>
+            <div class="calendar-event__details">
+              <div class="calendar-event__header">
+                <h3 class="calendar-event__title">
+                  {% if event.candidate.profile_url %}
+                    <a href="{{ event.candidate.profile_url }}" class="calendar-event__candidate">{{ event.candidate.name }}</a>
+                  {% else %}
+                    {{ event.candidate.name }}
+                  {% endif %}
+                </h3>
+                <span class="badge badge--{{ event.status_variant }}">{{ event.status_label }}</span>
+              </div>
+              <p class="calendar-event__meta">{{ event.recruiter.name or 'Без рекрутёра' }}{% if event.city.name %} · {{ event.city.name }}{% endif %}</p>
+              {% if event.candidate.telegram_id %}
+                <p class="calendar-event__meta muted">tg: {{ event.candidate.telegram_id }}</p>
+              {% endif %}
+            </div>
+          </article>
+        {% endfor %}
+      {% else %}
+        <p class="calendar-empty">На выбранную дату интервью не запланировано.</p>
+      {% endif %}
+    </div>
+  </div>
+  <div class="calendar-feedback" data-calendar-feedback role="status" aria-live="polite"></div>
 </section>
+{% endblock %}
+
+{% block extra_js %}
+  <script type="module" src="/static/js/modules/dashboard-calendar.js"></script>
 {% endblock %}
