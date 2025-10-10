@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
     register_template_globals()
     integration: BotIntegration = await setup_bot_state(app)
     routes = [r.path for r in app.routes if hasattr(r, "path")]
-    logging.warning("ROUTES LOADED: %s", routes)
+    logging.debug("ROUTES LOADED: %s", routes)
     try:
         yield
     finally:
