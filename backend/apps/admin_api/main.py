@@ -2,13 +2,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from backend.core.db import init_models, async_engine
+from backend.core.bootstrap import ensure_database_ready
+from backend.core.db import async_engine
 from backend.apps.admin_api.admin import mount_admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_models()
+    await ensure_database_ready()
     yield
 
 

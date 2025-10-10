@@ -8,7 +8,7 @@ from typing import Tuple
 
 from aiogram import Bot, Dispatcher
 
-from backend.core.db import init_models
+from backend.core.bootstrap import ensure_database_ready
 from backend.core.settings import get_settings
 
 from .api_client import create_api_session
@@ -78,7 +78,7 @@ async def main() -> None:
         await bot.delete_webhook(drop_pending_updates=True)
         me = await bot.get_me()
         logging.warning("BOOT: using bot id=%s, username=@%s", me.id, me.username)
-        await init_models()
+        await ensure_database_ready()
         await dispatcher.start_polling(bot)
     finally:
         await reminder_service.shutdown()

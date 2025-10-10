@@ -27,6 +27,8 @@ def configure_backend(tmp_path_factory):
 
     db_module = importlib.import_module("backend.core.db")
     importlib.reload(db_module)
+    bootstrap_module = importlib.import_module("backend.core.bootstrap")
+    importlib.reload(bootstrap_module)
 
     modules_to_reload = [
         "backend.domain.repositories",
@@ -40,7 +42,7 @@ def configure_backend(tmp_path_factory):
             importlib.import_module(module_name)
 
     loop = asyncio.new_event_loop()
-    loop.run_until_complete(db_module.init_models())
+    loop.run_until_complete(bootstrap_module.ensure_database_ready())
     loop.close()
 
     yield

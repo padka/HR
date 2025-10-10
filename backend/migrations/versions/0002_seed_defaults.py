@@ -3,48 +3,16 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable
 
 import sqlalchemy as sa
 
+from backend.domain.default_data import DEFAULT_CITIES, default_recruiters
 from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS
 
 revision = "0002_seed_defaults"
 down_revision = "0001_initial_schema"
-
-DEFAULT_CITIES = [
-    {"name": "Москва", "tz": "Europe/Moscow"},
-    {"name": "Санкт-Петербург", "tz": "Europe/Moscow"},
-    {"name": "Новосибирск", "tz": "Asia/Novosibirsk"},
-    {"name": "Екатеринбург", "tz": "Asia/Yekaterinburg"},
-]
-
-_SEED_RECRUITERS = os.getenv("SEED_DEFAULT_RECRUITERS", "0").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-
-DEFAULT_RECRUITERS = (
-    [
-        {
-            "name": "Михаил Шеншин",
-            "tz": "Europe/Moscow",
-            "telemost_url": "https://telemost.yandex.ru/j/SMART_ONBOARDING",
-            "active": True,
-        },
-        {
-            "name": "Юлия Начауридзе",
-            "tz": "Europe/Moscow",
-            "telemost_url": "https://telemost.yandex.ru/j/SMART_RECRUIT",
-            "active": True,
-        },
-    ]
-    if _SEED_RECRUITERS
-    else []
-)
 
 
 def _table(name: str, *columns: sa.Column) -> sa.Table:
@@ -91,8 +59,9 @@ def upgrade(conn):
     )
 
     _ensure_entries(conn, cities, unique_field="name", rows=DEFAULT_CITIES)
-    if DEFAULT_RECRUITERS:
-        _ensure_entries(conn, recruiters, unique_field="name", rows=DEFAULT_RECRUITERS)
+    recruiter_rows = default_recruiters()
+    if recruiter_rows:
+        _ensure_entries(conn, recruiters, unique_field="name", rows=recruiter_rows)
 
     existing_questions = conn.execute(sa.select(sa.func.count()).select_from(test_questions)).scalar()
     if existing_questions:

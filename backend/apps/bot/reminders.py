@@ -8,13 +8,85 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
-from apscheduler.jobstores.base import JobLookupError
-from apscheduler.jobstores.memory import MemoryJobStore
-from apscheduler.jobstores.redis import RedisJobStore
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+try:  # pragma: no cover - optional dependency handling
+    from apscheduler.jobstores.base import JobLookupError
+    from apscheduler.jobstores.memory import MemoryJobStore
+    from apscheduler.jobstores.redis import RedisJobStore
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    APSCHEDULER_AVAILABLE = True
+except Exception:  # pragma: no cover - fallback when apscheduler is missing
+    APSCHEDULER_AVAILABLE = False
+
+    class JobLookupError(Exception):  # type: ignore[override]
+        """Fallback error mirroring APScheduler's JobLookupError."""
+
+        pass
+
+    @dataclass
+    class _StubJob:  # pragma: no cover - lightweight scheduler artefact
+        id: str
+        func: Optional[Callable[..., object]]
+        args: List[object]
+        next_run_time: Optional[datetime]
+
+    class AsyncIOScheduler:  # type: ignore[override]
+        """Minimal scheduler stub used when APScheduler is unavailable."""
+
+        def __init__(self, *_, **__):
+            self._jobs: Dict[str, _StubJob] = {}
+            self.running = False
+
+        def start(self) -> None:
+            self.running = True
+
+        def shutdown(self, wait: bool = False) -> None:  # pragma: no cover - trivial
+            self.running = False
+            self._jobs.clear()
+
+        def add_job(
+            self,
+            func,
+            trigger,
+            *,
+            run_date: Optional[datetime] = None,
+            id: Optional[str] = None,
+            args: Optional[List[object]] = None,
+            replace_existing: bool = False,
+            **_: object,
+        ) -> _StubJob:
+            if id is None:
+                raise ValueError("Stub scheduler requires explicit job id")
+            if not replace_existing and id in self._jobs:
+                raise RuntimeError(f"Job {id} already exists")
+            job = _StubJob(id=id, func=func, args=list(args or []), next_run_time=run_date)
+            self._jobs[id] = job
+            return job
+
+        def remove_job(self, job_id: str) -> None:
+            if job_id not in self._jobs:
+                raise JobLookupError(job_id)
+            self._jobs.pop(job_id, None)
+
+        def get_job(self, job_id: str) -> Optional[_StubJob]:
+            return self._jobs.get(job_id)
+
+        def get_jobs(self) -> List[_StubJob]:
+            return list(self._jobs.values())
+
+    class MemoryJobStore:  # type: ignore[override]
+        def __init__(self, *_, **__):
+            return None
+
+    class RedisJobStore:  # type: ignore[override]
+        @classmethod
+        def from_url(cls, *_args, **_kwargs):  # pragma: no cover - stub guard
+            raise RuntimeError(
+                "APScheduler with redis extra is required for Redis job store",
+            )
 
 from backend.apps.bot import templates
 from backend.apps.bot.config import DEFAULT_TZ
@@ -340,6 +412,13 @@ def get_reminder_service() -> ReminderService:
 
 
 def create_scheduler(redis_url: Optional[str]) -> AsyncIOScheduler:
+    if not APSCHEDULER_AVAILABLE:
+        if redis_url:
+            logger.warning(
+                "APScheduler is not installed; Redis job store is unavailable. Using stub scheduler.",
+            )
+        return AsyncIOScheduler()
+
     if redis_url:
         jobstores = {"default": RedisJobStore.from_url(redis_url)}
     else:
