@@ -24,22 +24,33 @@ name = "hr-admin-ui"
 version = "0.1.0"
 description = "Liquid Glass admin preview tooling"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "aiogram>=3.9,<3.11",
+  "aiosqlite>=0.19,<0.21",
+  "alembic>=1.13,<1.14",
+  "apscheduler>=3.10,<3.11",
+  "fastapi>=0.110,<0.113",
+  "httpx>=0.27,<0.28",
+  "jinja2>=3.1,<3.2",
+  "python-multipart>=0.0.9,<0.1.0",
+  "redis>=5.0,<6.0",
+  "sqladmin>=0.21,<0.22",
+  "sqlalchemy[asyncio]>=2.0,<2.1",
+  "starlette>=0.37,<0.38",
+  "uvicorn[standard]>=0.30,<0.31",
+]
 
 [project.optional-dependencies]
 dev = [
-  "fastapi",
-  "uvicorn",
-  "jinja2",
-  "sqlalchemy[asyncio]",
-  "aiogram",
-  "aiosqlite",
-  "redis",
-  "httpx",
-  "pytest",
-  "pytest-asyncio",
-  "playwright",
-  "ruff",
+  "black>=24.4,<25.0",
+  "fakeredis>=2.23,<3.0",
+  "isort>=5.13,<6.0",
+  "mypy>=1.10,<2.0",
+  "playwright>=1.45,<1.46",
+  "pre-commit>=3.7,<4.0",
+  "pytest>=8.2,<9.0",
+  "pytest-asyncio>=0.23,<0.24",
+  "ruff>=0.6,<0.7",
 ]
 
 [tool.setuptools]

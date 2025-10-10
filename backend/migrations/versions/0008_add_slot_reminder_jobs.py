@@ -6,6 +6,10 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 
 
+UNIQUE_SLOT_KIND = "uq_slot_reminder_jobs_slot_kind"
+UNIQUE_JOB_ID = "uq_slot_reminder_jobs_job_id"
+
+
 revision = "0008_add_slot_reminder_jobs"
 down_revision = "0007_prevent_duplicate_slot_reservations"
 branch_labels = None
@@ -16,23 +20,39 @@ TABLE_NAME = "slot_reminder_jobs"
 
 
 def upgrade(conn: Connection) -> None:
-    conn.execute(
-        sa.text(
-            f"""
-            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                slot_id INTEGER NOT NULL REFERENCES slots(id) ON DELETE CASCADE,
-                kind VARCHAR(32) NOT NULL,
-                job_id VARCHAR(255) NOT NULL,
-                scheduled_at TIMESTAMP NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-                updated_at TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-                UNIQUE(slot_id, kind),
-                UNIQUE(job_id)
+    inspector = sa.inspect(conn)
+    if not inspector.has_table(TABLE_NAME):
+        conn.execute(
+            sa.text(
+                f"""
+                CREATE TABLE {TABLE_NAME} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slot_id INTEGER NOT NULL REFERENCES slots(id) ON DELETE CASCADE,
+                    kind VARCHAR(32) NOT NULL,
+                    job_id VARCHAR(255) NOT NULL,
+                    scheduled_at TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+                    updated_at TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+                )
+                """
             )
-            """
         )
-    )
+
+    existing_indexes = {index["name"] for index in inspector.get_indexes(TABLE_NAME)}
+    if UNIQUE_SLOT_KIND not in existing_indexes:
+        conn.execute(
+            sa.text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {UNIQUE_SLOT_KIND}"
+                f" ON {TABLE_NAME} (slot_id, kind)"
+            )
+        )
+    if UNIQUE_JOB_ID not in existing_indexes:
+        conn.execute(
+            sa.text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {UNIQUE_JOB_ID}"
+                f" ON {TABLE_NAME} (job_id)"
+            )
+        )
 
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover - symmetry only

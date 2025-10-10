@@ -36,10 +36,21 @@ def admin_app(monkeypatch) -> Any:
 
 
 async def _async_request(app, method: str, path: str, **kwargs) -> Any:
+    follow_redirects = kwargs.pop("follow_redirects", None)
+    if follow_redirects is None and "allow_redirects" in kwargs:
+        follow_redirects = kwargs.pop("allow_redirects")
+    if follow_redirects is None:
+        follow_redirects = True
+
     def _call() -> Any:
         with TestClient(app) as client:
             client.auth = ("admin", "admin")
-            return client.request(method, path, **kwargs)
+            return client.request(
+                method,
+                path,
+                follow_redirects=follow_redirects,
+                **kwargs,
+            )
 
     return await asyncio.to_thread(_call)
 
@@ -59,7 +70,7 @@ async def test_create_recruiter_duplicate_chat_id_returns_validation_message(adm
         "post",
         "/recruiters/create",
         data=first_payload,
-        allow_redirects=False,
+        follow_redirects=False,
     )
     assert response_ok.status_code == 303
 
@@ -76,7 +87,7 @@ async def test_create_recruiter_duplicate_chat_id_returns_validation_message(adm
         "post",
         "/recruiters/create",
         data=second_payload,
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response_error.status_code == 400
@@ -122,7 +133,7 @@ async def test_update_recruiter_duplicate_chat_id_returns_validation_message(adm
         "post",
         f"/recruiters/{recruiter_two_id}/update",
         data=update_payload,
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response_error.status_code == 400
@@ -162,7 +173,7 @@ async def test_update_recruiter_single_city_checkbox_value(admin_app) -> None:
             "active": "1",
             "cities": str(city_id),
         },
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response_ok.status_code == 303

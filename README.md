@@ -31,9 +31,22 @@ test suite from the project root:
 
 ```bash
 python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
+python -m pip install -e ".[dev]"
+python -m playwright install --with-deps
 pre-commit install
 pytest --cov=backend --cov=tests --cov-report=term
+```
+
+> **Note:** `requirements-dev.txt` is a thin wrapper around the editable
+> installation (`-e .[dev]`), so both `pip install -r requirements-dev.txt` and
+> `pip install -e .[dev]` keep the local environment in sync with CI.
+
+For a quick local bootstrap that also creates the SQLite development database
+and validates the admin UI endpoints, run:
+
+```bash
+make setup
+make dev-db
 ```
 
 The default configuration runs the admin UI with a "NullBot" when `BOT_TOKEN`
@@ -90,10 +103,11 @@ environment variable.
 Project level tests should be executed with the Python module runner to avoid
 PATH issues. The test suite relies on optional dependencies that are not part
 of the standard library, therefore make sure to install the development
-requirements before invoking pytest:
+requirements (including the Playwright browsers) before invoking pytest:
 
 ```bash
-pip install -r requirements-dev.txt
+python -m pip install -e ".[dev]"
+python -m playwright install --with-deps
 python3 -m pytest
 ```
 

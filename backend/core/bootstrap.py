@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List
 
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -39,6 +39,7 @@ async def ensure_database_ready() -> None:
         await init_models()
 
         await asyncio.to_thread(_ensure_schema)
+        await asyncio.to_thread(_ensure_scheduler_tables)
         await asyncio.to_thread(_seed_defaults)
 
         _bootstrap_complete = True
@@ -52,6 +53,18 @@ def _ensure_schema() -> None:
         Base.metadata.create_all(bind=sync_engine)
     except SQLAlchemyError:
         logger.exception("Failed to ensure ORM metadata tables exist")
+        raise
+
+
+def _ensure_scheduler_tables() -> None:
+    """Validate that critical scheduler tables exist after migrations."""
+
+    try:
+        inspector = inspect(sync_engine)
+        if not inspector.has_table("slot_reminder_jobs"):
+            raise RuntimeError("slot_reminder_jobs table missing after migrations")
+    except Exception:
+        logger.exception("Slot reminder jobs table is unavailable")
         raise
 
 

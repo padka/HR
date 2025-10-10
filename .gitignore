@@ -8,6 +8,7 @@ data/
 storage/
 *.sqlite3
 *.db
+*.egg-info/
 uploads/
 report_*.txt
 test1_*.txt
