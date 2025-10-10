@@ -2,9 +2,15 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
+import os
+
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+
+os.environ.setdefault("ADMIN_USER", "test-admin")
+os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
+os.environ.setdefault("SESSION_COOKIE_SECURE", "false")
 
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.services import slots as slot_services

@@ -7,8 +7,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import update
 
-os.environ.setdefault("ADMIN_USER", "admin")
-os.environ.setdefault("ADMIN_PASSWORD", "secret")
+os.environ.setdefault("ADMIN_USER", "test-admin")
+os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
+os.environ.setdefault("SESSION_COOKIE_SECURE", "false")
 
 from backend.apps.admin_ui.app import create_app
 from backend.core.db import async_session

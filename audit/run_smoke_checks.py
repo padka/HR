@@ -38,7 +38,7 @@ def make_client(skip_bootstrap: bool) -> TestClient:
 
 def run_checks(skip_bootstrap: bool) -> List[Tuple[str, str, int | None, str]]:
     results: List[Tuple[str, str, int | None, str]] = []
-    auth = ("admin", "admin")
+    auth = ("test-admin", "test-admin-password")
     try:
         with make_client(skip_bootstrap) as client:
             for name, path in TARGET_PATHS:
@@ -61,8 +61,9 @@ def main() -> None:
     args = parser.parse_args()
 
     os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./dev.db")
-    os.environ.setdefault("ADMIN_USER", "admin")
-    os.environ.setdefault("ADMIN_PASSWORD", "admin")
+    os.environ.setdefault("ADMIN_USER", "test-admin")
+    os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
+    os.environ.setdefault("SESSION_COOKIE_SECURE", "false")
     os.environ.setdefault("BOT_ENABLED", "0")
     os.environ.setdefault("BOT_INTEGRATION_ENABLED", "0")
 

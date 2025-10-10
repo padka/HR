@@ -6,6 +6,7 @@ import shutil
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Iterable, Tuple
 
 from backend.core.env import load_env
 
@@ -29,12 +30,16 @@ class Settings:
     admin_chat_id: int
     timezone: str
     session_secret: str
+    session_cookie_name: str
     admin_username: str
     admin_password: str
     admin_docs_enabled: bool
     session_cookie_secure: bool
     session_cookie_samesite: str
     state_ttl_seconds: int
+    admin_trusted_hosts: Tuple[str, ...]
+    admin_rate_limit_attempts: int
+    admin_rate_limit_window_seconds: int
 
 
 load_env()
@@ -82,6 +87,77 @@ def _get_bool_with_fallback(*names: str, default: bool = False) -> bool:
     return default
 
 
+def _get_int(name: str, default: int, *, minimum: int | None = None) -> int:
+    raw = os.getenv(name)
+    try:
+        value = int(raw) if raw is not None else int(default)
+    except (TypeError, ValueError):
+        value = int(default)
+    if minimum is not None and value < minimum:
+        return minimum
+    return value
+
+
+def _split_csv(name: str, default: Iterable[str]) -> Tuple[str, ...]:
+    raw = os.getenv(name, "")
+    if not raw:
+        return tuple(default)
+    values = [item.strip() for item in raw.split(",") if item.strip()]
+    return tuple(values or tuple(default))
+
+
+_PLACEHOLDER_VALUES = {
+    "change-me",
+    "changeme",
+    "changeme-session-secret",
+    "changeme-session",
+    "changeme-secret",
+    "password",
+    "secret",
+    "admin",
+    "123456",
+    "example",
+    "sample",
+}
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    slug = value.strip().lower()
+    if not slug:
+        return True
+    if slug in _PLACEHOLDER_VALUES:
+        return True
+    return slug.startswith("change_me") or slug.startswith("changeme")
+
+
+def validate_settings(settings: Settings) -> None:
+    """Validate critical secrets and fail-fast when placeholders leak in."""
+
+    errors: list[str] = []
+
+    if _looks_like_placeholder(settings.admin_username):
+        errors.append("ADMIN_USER must be defined and use a non-default value")
+
+    if _looks_like_placeholder(settings.admin_password):
+        errors.append("ADMIN_PASSWORD must be defined and use a non-default value")
+
+    secret_source = os.getenv("SESSION_SECRET") or os.getenv("SECRET_KEY")
+    if secret_source:
+        if _looks_like_placeholder(secret_source) or len(secret_source) < 32:
+            errors.append("SESSION_SECRET must contain at least 32 characters and avoid placeholder values")
+    else:
+        if len(settings.session_secret) < 32:
+            errors.append("Generated SESSION_SECRET is unexpectedly short")
+
+    raw_bot_token = os.getenv("BOT_TOKEN")
+    if raw_bot_token is not None and _looks_like_placeholder(raw_bot_token):
+        errors.append("BOT_TOKEN must be replaced with a real value or left unset")
+
+    if errors:
+        joined = "\n - ".join(errors)
+        raise RuntimeError(f"Invalid sensitive configuration detected:\n - {joined}")
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     data_dir = _default_data_dir()
@@ -118,11 +194,14 @@ def get_settings() -> Settings:
     session_secret = (
         os.getenv("SESSION_SECRET")
         or os.getenv("SECRET_KEY")
-        or secrets.token_urlsafe(32)
+        or secrets.token_urlsafe(64)
     )
 
     admin_username = os.getenv("ADMIN_USER", "").strip()
     admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
+    session_cookie_name = (
+        os.getenv("SESSION_COOKIE_NAME", "hr_admin_session").strip() or "hr_admin_session"
+    )
     admin_docs_enabled = _get_bool("ADMIN_DOCS_ENABLED", default=False)
     session_cookie_secure = _get_bool("SESSION_COOKIE_SECURE", default=True)
     session_cookie_samesite = os.getenv("SESSION_COOKIE_SAMESITE", "strict").strip().lower() or "strict"
@@ -136,6 +215,14 @@ def get_settings() -> Settings:
         state_ttl_seconds = 604800
     if state_ttl_seconds <= 0:
         state_ttl_seconds = 604800
+
+    admin_trusted_hosts = _split_csv(
+        "ADMIN_TRUSTED_HOSTS", ("localhost", "127.0.0.1", "testserver")
+    )
+    admin_rate_limit_attempts = _get_int("ADMIN_RATE_LIMIT_ATTEMPTS", 5, minimum=1)
+    admin_rate_limit_window_seconds = _get_int(
+        "ADMIN_RATE_LIMIT_WINDOW_SECONDS", 300, minimum=10
+    )
 
     return Settings(
         data_dir=data_dir,
@@ -155,10 +242,17 @@ def get_settings() -> Settings:
         admin_chat_id=admin_chat_id,
         timezone=timezone,
         session_secret=session_secret,
+        session_cookie_name=session_cookie_name,
         admin_username=admin_username,
         admin_password=admin_password,
         admin_docs_enabled=admin_docs_enabled,
         session_cookie_secure=session_cookie_secure,
         session_cookie_samesite=session_cookie_samesite,
         state_ttl_seconds=state_ttl_seconds,
+        admin_trusted_hosts=admin_trusted_hosts,
+        admin_rate_limit_attempts=admin_rate_limit_attempts,
+        admin_rate_limit_window_seconds=admin_rate_limit_window_seconds,
     )
+
+
+__all__ = ["Settings", "get_settings", "validate_settings"]
