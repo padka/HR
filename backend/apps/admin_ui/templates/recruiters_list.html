@@ -1,17 +1,4 @@
-{% extends "base.html" %}
-{% macro initials(name) -%}
-  {%- set cleaned = (name or '')|trim -%}
-  {%- if not cleaned -%}
-    ∅
-  {%- else -%}
-    {%- set parts = cleaned.split() -%}
-    {%- if parts|length > 1 -%}
-      {{ (parts[0][:1] ~ parts[1][:1]).upper() }}
-    {%- else -%}
-      {{ cleaned[:2].upper() }}
-    {%- endif -%}
-  {%- endif -%}
-{%- endmacro %}
+
 {% block title %}Рекрутёры{% endblock %}
 {% block content %}
 <section class="space-y-8 pb-12">
