@@ -1,8 +1,8 @@
 :root {
-  --bg-base: 240 244 245;
+  --bg-base: 238 244 240;
   --bg-elev-1: 255 255 255;
-  --bg-elev-2: 244 249 247;
-  --bg-elev-3: 236 244 239;
+  --bg-elev-2: 248 254 249;
+  --bg-elev-3: 240 246 242;
   --glass-surface-1: rgb(var(--bg-elev-1) / 0.78);
   --glass-surface-2: rgb(var(--bg-elev-2) / 0.52);
   --glass-surface-3: rgb(var(--bg-elev-3) / 0.36);
@@ -10,8 +10,8 @@
   --glass-divider-color: rgb(18 24 32 / 0.08);
   --fg-primary: 16 22 24;
   --fg-secondary: 16 22 24;
-  --fg-secondary-alpha: 0.72;
-  --fg-muted-alpha: 0.42;
+  --fg-secondary-alpha: 0.68;
+  --fg-muted-alpha: 0.36;
   --accent: 147 254 191;
   --accent-soft: 255 209 68;
   --accent-strong: 239 154 104;
@@ -21,12 +21,12 @@
   --danger: 249 110 101;
   --info: 239 154 104;
   --border: 255 255 255;
-  --border-alpha: 0.46;
+  --border-alpha: 0.38;
   --stroke: 18 24 32;
   --stroke-alpha: 0.1;
-  --shadow-soft: 18 24 32 / 0.16;
-  --shadow-strong: 18 24 32 / 0.24;
-  --shadow-focus: 147 254 191 / 0.32;
+  --shadow-soft: 18 24 32 / 0.12;
+  --shadow-strong: 18 24 32 / 0.2;
+  --shadow-focus: 147 254 191 / 0.4;
   --shadow-inset: 255 255 255 / 0.24;
   --radius-xs: 10px;
   --radius-sm: 12px;
@@ -43,8 +43,8 @@
 [data-theme="dark"] {
   --bg-base: 9 12 14;
   --bg-elev-1: 20 28 30;
-  --bg-elev-2: 18 26 28;
-  --bg-elev-3: 16 24 26;
+  --bg-elev-2: 18 27 29;
+  --bg-elev-3: 15 24 26;
   --glass-surface-1: rgb(var(--bg-elev-1) / 0.82);
   --glass-surface-2: rgb(var(--bg-elev-2) / 0.62);
   --glass-surface-3: rgb(var(--bg-elev-3) / 0.5);
@@ -63,12 +63,12 @@
   --danger: 249 110 101;
   --info: 239 154 104;
   --border: 226 244 236;
-  --border-alpha: 0.2;
+  --border-alpha: 0.26;
   --stroke: 226 244 236;
   --stroke-alpha: 0.18;
-  --shadow-soft: 0 0 0 / 0.52;
-  --shadow-strong: 0 0 0 / 0.62;
-  --shadow-focus: 147 254 191 / 0.45;
+  --shadow-soft: 0 0 0 / 0.48;
+  --shadow-strong: 0 0 0 / 0.58;
+  --shadow-focus: 147 254 191 / 0.55;
   --shadow-inset: 255 255 255 / 0.12;
   --surface-noise: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140" viewBox="0 0 140 140"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.75" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.05"/></svg>');
   --blur: 22px;
@@ -79,8 +79,8 @@
     color-scheme: dark;
     --bg-base: 9 12 14;
     --bg-elev-1: 20 28 30;
-    --bg-elev-2: 18 26 28;
-    --bg-elev-3: 16 24 26;
+    --bg-elev-2: 18 27 29;
+    --bg-elev-3: 15 24 26;
     --glass-surface-1: rgb(var(--bg-elev-1) / 0.82);
     --glass-surface-2: rgb(var(--bg-elev-2) / 0.62);
     --glass-surface-3: rgb(var(--bg-elev-3) / 0.5);
@@ -99,12 +99,12 @@
     --danger: 249 110 101;
     --info: 239 154 104;
     --border: 226 244 236;
-    --border-alpha: 0.2;
+    --border-alpha: 0.26;
     --stroke: 226 244 236;
     --stroke-alpha: 0.18;
-    --shadow-soft: 0 0 0 / 0.52;
-    --shadow-strong: 0 0 0 / 0.62;
-    --shadow-focus: 147 254 191 / 0.45;
+    --shadow-soft: 0 0 0 / 0.48;
+    --shadow-strong: 0 0 0 / 0.58;
+    --shadow-focus: 147 254 191 / 0.55;
     --shadow-inset: 255 255 255 / 0.12;
     --surface-noise: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140" viewBox="0 0 140 140"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.75" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.05"/></svg>');
     --blur: 22px;
