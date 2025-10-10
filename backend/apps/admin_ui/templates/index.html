@@ -5,7 +5,7 @@
   <div class="hero__copy">
     <p class="hero__eyebrow">TG Bot · HR Operations</p>
     <h1 class="hero__title">Центр управления рекрутингом</h1>
-    <p class="hero__description">Следите за воронкой кандидатов, слотами и продуктивностью команды в режиме реального времени.</p>
+    <p class="hero__description">Следите за воронкой кандидатов, слотами и продуктивностью команды в режиме реального времени. Настраивайте процессы и реагируйте на изменения на любых устройствах.</p>
     <div class="hero__cta-group">
       <a class="btn btn-primary" href="/candidates">К кандидатам</a>
       <a class="btn btn-secondary" href="/recruiters">Управление рекрутёрами</a>
@@ -21,27 +21,76 @@
   </div>
 </section>
 
-<section class="dashboard-metrics">
-  <article class="metric-card glass-card">
-    <span class="metric-card__label">Рекрутёры</span>
-    <span class="metric-card__value">{{ counts.recruiters }}</span>
-    <span class="metric-card__meta">Активных городов: {{ counts.cities }}</span>
-  </article>
-  <article class="metric-card glass-card">
-    <span class="metric-card__label">Слоты</span>
-    <span class="metric-card__value">{{ counts.slots_total }}</span>
-    <span class="metric-card__meta">Свободно: {{ counts.slots_free }} • В ожидании: {{ counts.slots_pending }} • Забронировано: {{ counts.slots_booked }}</span>
-  </article>
-  <article class="metric-card glass-card">
-    <span class="metric-card__label">Тест 1</span>
-    <span class="metric-card__value">{{ counts.test1_total_seen }}</span>
-    <span class="metric-card__meta">Отказы: {{ counts.test1_rejections_total }} ({{ counts.test1_rejections_percent }}%)</span>
-  </article>
-  <article class="metric-card glass-card">
-    <span class="metric-card__label">Интеграция бота</span>
-    <span class="metric-card__value">{{ bot_status.mode|upper }}</span>
-    <span class="metric-card__meta">Готов к работе: {{ 'да' if bot_status.ready else 'нет' }}</span>
-  </article>
+<section class="dashboard-insights">
+  <header class="section-header section-header--inline">
+    <h2 class="section-title">Ключевые показатели</h2>
+    <p class="section-hint">Актуальные метрики продукта и состояния платформы.</p>
+  </header>
+  <div class="metric-grid">
+    <article class="metric-card glass-card">
+      <div class="metric-card__head">
+        <span class="metric-card__icon" aria-hidden="true">👥</span>
+        <div class="metric-card__title-block">
+          <span class="metric-card__label">Рекрутёры</span>
+          <span class="metric-card__hint">Команда и покрытие</span>
+        </div>
+      </div>
+      <div class="metric-card__body">
+        <span class="metric-card__value">{{ counts.recruiters }}</span>
+        <ul class="metric-card__meta-list" aria-label="Дополнительные показатели по рекрутёрам">
+          <li class="metric-card__meta-pill">Активных городов: {{ counts.cities }}</li>
+        </ul>
+      </div>
+    </article>
+    <article class="metric-card glass-card">
+      <div class="metric-card__head">
+        <span class="metric-card__icon" aria-hidden="true">🗓️</span>
+        <div class="metric-card__title-block">
+          <span class="metric-card__label">Слоты</span>
+          <span class="metric-card__hint">Загруженность расписания</span>
+        </div>
+      </div>
+      <div class="metric-card__body">
+        <span class="metric-card__value">{{ counts.slots_total }}</span>
+        <ul class="metric-card__meta-list" aria-label="Статусы слотов">
+          <li class="metric-card__meta-pill">Свободно: {{ counts.slots_free }}</li>
+          <li class="metric-card__meta-pill">В ожидании: {{ counts.slots_pending }}</li>
+          <li class="metric-card__meta-pill">Забронировано: {{ counts.slots_booked }}</li>
+        </ul>
+      </div>
+    </article>
+    <article class="metric-card glass-card">
+      <div class="metric-card__head">
+        <span class="metric-card__icon" aria-hidden="true">🧪</span>
+        <div class="metric-card__title-block">
+          <span class="metric-card__label">Тест 1</span>
+          <span class="metric-card__hint">Прохождения и отказы</span>
+        </div>
+      </div>
+      <div class="metric-card__body">
+        <span class="metric-card__value">{{ counts.test1_total_seen }}</span>
+        <ul class="metric-card__meta-list" aria-label="Детализация отказов">
+          <li class="metric-card__meta-pill">Отказы: {{ counts.test1_rejections_total }}</li>
+          <li class="metric-card__meta-pill">Конверсия: {{ counts.test1_rejections_percent }}%</li>
+        </ul>
+      </div>
+    </article>
+    <article class="metric-card glass-card">
+      <div class="metric-card__head">
+        <span class="metric-card__icon" aria-hidden="true">🤖</span>
+        <div class="metric-card__title-block">
+          <span class="metric-card__label">Интеграция бота</span>
+          <span class="metric-card__hint">Текущее состояние</span>
+        </div>
+      </div>
+      <div class="metric-card__body">
+        <span class="metric-card__value">{{ bot_status.mode|upper }}</span>
+        <ul class="metric-card__meta-list" aria-label="Готовность бота">
+          <li class="metric-card__meta-pill">Готов к работе: {{ 'да' if bot_status.ready else 'нет' }}</li>
+        </ul>
+      </div>
+    </article>
+  </div>
 </section>
 
 <section class="surface">
@@ -49,35 +98,31 @@
     <h2 class="section-title">Состояние интеграции бота</h2>
     <p class="section-hint">Текущее состояние подключения к рантайму и конфигурации.</p>
   </header>
-  <div class="list-table-wrapper">
-    <table class="list-table">
-      <tbody>
-        <tr>
-          <th scope="row">Конфигурация включена</th>
-          <td>{{ 'Да' if bot_status.config_enabled else 'Нет' }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Рантайм активен</th>
-          <td>{{ 'Да' if bot_status.runtime_enabled else 'Нет' }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Готовность сервиса</th>
-          <td>{{ 'Да' if bot_status.ready else 'Нет' }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Состояние здоровья</th>
-          <td>{{ bot_status.health or 'неизвестно' }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Режим</th>
-          <td>{{ bot_status.mode }}</td>
-        </tr>
-        <tr>
-          <th scope="row">Последнее обновление</th>
-          <td>{{ bot_status.updated_at or '—' }}</td>
-        </tr>
-      </tbody>
-    </table>
+  <div class="info-grid" role="list">
+    <article class="info-card" role="listitem">
+      <span class="info-card__label">Конфигурация включена</span>
+      <span class="info-card__value {{ 'info-card__value--positive' if bot_status.config_enabled else 'info-card__value--negative' }}">{{ 'Да' if bot_status.config_enabled else 'Нет' }}</span>
+    </article>
+    <article class="info-card" role="listitem">
+      <span class="info-card__label">Рантайм активен</span>
+      <span class="info-card__value {{ 'info-card__value--positive' if bot_status.runtime_enabled else 'info-card__value--negative' }}">{{ 'Да' if bot_status.runtime_enabled else 'Нет' }}</span>
+    </article>
+    <article class="info-card" role="listitem">
+      <span class="info-card__label">Готовность сервиса</span>
+      <span class="info-card__value {{ 'info-card__value--positive' if bot_status.ready else 'info-card__value--negative' }}">{{ 'Да' if bot_status.ready else 'Нет' }}</span>
+    </article>
+    <article class="info-card" role="listitem">
+      <span class="info-card__label">Состояние здоровья</span>
+      <span class="info-card__value info-card__value--muted">{{ bot_status.health or 'неизвестно' }}</span>
+    </article>
+    <article class="info-card" role="listitem">
+      <span class="info-card__label">Режим</span>
+      <span class="info-card__value info-card__value--muted">{{ bot_status.mode }}</span>
+    </article>
+    <article class="info-card" role="listitem">
+      <span class="info-card__label">Последнее обновление</span>
+      <span class="info-card__value info-card__value--muted">{{ bot_status.updated_at or '—' }}</span>
+    </article>
   </div>
 </section>
 
