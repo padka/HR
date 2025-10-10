@@ -25,8 +25,9 @@ def admin_app(monkeypatch) -> Any:
         app.state.reminder_service = None
         return _DummyIntegration()
 
-    monkeypatch.setenv("ADMIN_USER", "admin")
-    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+    monkeypatch.setenv("ADMIN_USER", "test-admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "test-admin-password")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
     from backend.core import settings as settings_module
 
     settings_module.get_settings.cache_clear()
@@ -38,7 +39,7 @@ def admin_app(monkeypatch) -> Any:
 async def _async_request(app, method: str, path: str, **kwargs) -> Any:
     def _call() -> Any:
         with TestClient(app) as client:
-            client.auth = ("admin", "admin")
+            client.auth = ("test-admin", "test-admin-password")
             return client.request(method, path, **kwargs)
 
     return await asyncio.to_thread(_call)

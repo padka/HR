@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
+
+os.environ.setdefault("ADMIN_USER", "test-admin")
+os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
+os.environ.setdefault("SESSION_COOKIE_SECURE", "false")
 
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.services.bot_service import (
@@ -59,7 +65,7 @@ def test_api_integration_toggle(monkeypatch):
     app = create_app()
 
     with TestClient(app) as client:
-        client.auth = ("admin", "Nafetomn2001")
+        client.auth = ("test-admin", "test-admin-password")
 
         status_initial = client.get("/api/bot/integration").json()
         assert status_initial["runtime_enabled"] in {True, False}

@@ -12,6 +12,11 @@ load it directly:
 python3 -m uvicorn backend.apps.admin_ui.app:app
 ```
 
+> **Security prerequisites:** configure `ADMIN_USER`, `ADMIN_PASSWORD` and
+> `SESSION_SECRET` before starting the service. Placeholder values such as
+> `admin`/`change-me` are rejected during startup. For local development over
+> HTTP set `SESSION_COOKIE_SECURE=false` to disable automatic HTTPS redirects.
+
 ## Telegram bot
 The Telegram bot is exposed through a small CLI wrapper (`bot.py`) that calls
 the new application factory defined in `backend.apps.bot.app`. To launch the
@@ -26,19 +31,25 @@ The same behaviour can be reproduced programmatically via
 
 ## Development workflow
 
-Install the development dependencies, enable the local Git hooks, and run the
-test suite from the project root:
+The project now provides dedicated Make targets that orchestrate the Python and
+frontend tooling. To bootstrap a workstation, initialise the database and run
+the full test suite execute the following commands:
 
 ```bash
-python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
-pre-commit install
-pytest --cov=backend --cov=tests --cov-report=term
+make bootstrap   # install Python (pip/Poetry) and Node dependencies
+make dev-db      # apply migrations and seed the default data locally
+make test        # execute the Python test suite
 ```
+
+The bootstrap target prefers Poetry when it is available on the system and
+falls back to `pip install -e ".[dev]"` otherwise. It also provisions Playwright
+browsers so that UI screenshot tests can run without manual intervention.
 
 The default configuration runs the admin UI with a "NullBot" when `BOT_TOKEN`
 is not provided, which allows the smoke checks in CI to execute without access
-to Telegram credentials.
+to Telegram credentials. Refer to `docs/DEVEX.md` for a complete set of backend
+and frontend workflows, Playwright usage guidelines, smoke-test procedures and
+Liquid Glass token rotation notes.
 
 ### Bot integration configuration
 
