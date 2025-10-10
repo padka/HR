@@ -30,7 +30,7 @@
     </div>
     <a class="weekly-kpi__history" href="/api/kpis/history" target="_blank" rel="noopener">История &rarr;</a>
   </header>
-  <div class="weekly-kpi-grid" role="list">
+  <div class="weekly-kpi-grid">
     {% for card in weekly_kpis.current.metrics %}
       {% set trend = card.trend %}
       <button
@@ -41,7 +41,7 @@
         aria-controls="kpi_drawer"
         aria-label="{{ card.label }}: {{ card.value }} за неделю. {{ trend.label }}"
       >
-        <span class="kpi-card__body" role="listitem">
+        <span class="kpi-card__body">
           <span class="kpi-card__label">{{ card.label }}</span>
           <span class="kpi-card__value">{{ card.value }}</span>
           <span class="kpi-card__hint">за эту неделю</span>
