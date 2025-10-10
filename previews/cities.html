@@ -1,0 +1,1425 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Города · TG Bot Admin</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      try {
+        const stored = window.localStorage.getItem(storageKey);
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored || (prefersDark ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      } catch (err) {
+        document.documentElement.dataset.theme = 'light';
+        document.documentElement.style.colorScheme = 'light';
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/build/main.css">
+  
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar" data-topbar>
+      <div class="topbar__content">
+        <button class="topbar__burger" type="button" aria-label="Открыть меню" aria-expanded="false" data-topbar-toggle>
+          <span aria-hidden="true">☰</span>
+        </button>
+        <a class="topbar__brand" href="/">
+          <span>TG</span>
+          Bot Admin
+        </a>
+        <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
+          <ul class="nav-links">
+            <li class="nav-links__item">
+              <a href="/" class="nav-link">Дашборд</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/recruiters" class="nav-link">Рекрутёры</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/cities" class="nav-link" aria-current="page">Города</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/slots" class="nav-link">Слоты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/candidates" class="nav-link">Кандидаты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/templates" class="nav-link">Шаблоны</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/questions" class="nav-link">Вопросы</a>
+            </li>
+          </ul>
+        </nav>
+        <div class="topbar__actions">
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Переключить тему">
+            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+            <span class="theme-toggle__label">Тёмная тема</span>
+          </button>
+          <span class="topbar__badge">demo.local</span>
+        </div>
+      </div>
+    </header>
+    <div class="topbar__scrim" data-topbar-scrim></div>
+    <main class="app-main">
+      <div class="container">
+        
+
+<section class="page page--cities" data-page="cities" aria-labelledby="cities-title">
+  <header class="page-header">
+    <div>
+      <h1 id="cities-title" class="page-title">Города</h1>
+      <p class="page-description">
+        Табличный список городов. Редактирование и тексты для этапов — во всплывающей панели «Настроить».
+      </p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn-primary" href="/cities/new" aria-label="Добавить новый город">+ Новый город</a>
+    </div>
+  </header>
+
+  
+  
+  
+  
+  <section class="list-toolbar glass-card">
+    <form id="city_filters" class="list-toolbar__form" action="#" method="get" novalidate>
+      <div class="list-toolbar__filters">
+        
+    <p class="form-note form-note--inline">
+      Наведите курсор или щёлкните по строке таблицы, чтобы увидеть детали и открыть панель настроек справа.
+    </p>
+  
+      </div>
+      
+      
+    </form>
+    
+      <div class="list-toolbar__chips">
+        
+          
+  
+  
+  
+  
+  
+  
+  <span class="chip chip--info" >
+    
+    <span class="chip__label">Всего городов</span>
+    <span class="chip__value" id="total_count">2</span>
+  </span>
+
+        
+      </div>
+    
+  </section>
+
+
+  
+    <article class="card glass grain city-table-card">
+      <div class="list-table-wrapper">
+        <table class="list-table list-table--responsive city-table" id="city_table">
+          <thead>
+            <tr>
+              <th scope="col" class="col-toggle">
+                <span class="visually-hidden">Подробнее</span>
+              </th>
+              <th scope="col" class="sortable">
+                <button class="sort" type="button" data-key="name" aria-sort="ascending">
+                  Город <span class="arrow" aria-hidden="true"></span>
+                </button>
+              </th>
+              <th scope="col" class="sortable">
+                <button class="sort" type="button" data-key="tz" aria-sort="none">
+                  Часовой пояс <span class="arrow" aria-hidden="true"></span>
+                </button>
+              </th>
+              <th scope="col" class="sortable">
+                <button class="sort" type="button" data-key="owner" aria-sort="none">
+                  Ответственный <span class="arrow" aria-hidden="true"></span>
+                </button>
+              </th>
+              <th scope="col" class="sortable col-align-end is-optional">
+                <button class="sort" type="button" data-key="week" aria-sort="none">
+                  План · нед <span class="arrow" aria-hidden="true"></span>
+                </button>
+              </th>
+              <th scope="col" class="sortable col-align-end is-optional">
+                <button class="sort" type="button" data-key="month" aria-sort="none">
+                  План · мес <span class="arrow" aria-hidden="true"></span>
+                </button>
+              </th>
+              <th scope="col" class="col-actions">Действия</th>
+            </tr>
+          </thead>
+          <tbody id="cities_tbody">
+            
+              
+              
+              
+              
+              
+              
+              
+              
+              <tr class="city-row"
+                  tabindex="0"
+                  data-id="1"
+                  data-name="москва"
+                  data-tz="europe/moscow"
+                  data-owner="алексей захаров"
+                  data-criteria="Опыт работы в рознице от 1 года"
+                  data-experts="2 наставника, 1 тимлид"
+                  data-plan-week="12"
+                  data-plan-month="48"
+                  data-owner-id="10">
+                <td class="col-toggle" data-label="">
+                  <button type="button"
+                          class="row-expand"
+                          aria-expanded="false"
+                          aria-label="Показать детали по городу Москва">
+                    <span class="row-expand__icon" aria-hidden="true"></span>
+                  </button>
+                </td>
+                <td data-label="Город" class="col-name">
+                  <span class="cell-title">Москва</span>
+                </td>
+                <td data-label="Часовой пояс" class="col-tz">
+                  <span class="badge badge--soft"><code>Europe/Moscow</code></span>
+                </td>
+                <td data-label="Ответственный" class="col-owner">
+                  <span class="owner-label ">
+                    Алексей Захаров
+                  </span>
+                </td>
+                <td data-label="План · нед" class="col-week is-optional" data-sort="12">
+                  12
+                </td>
+                <td data-label="План · мес" class="col-month is-optional" data-sort="48">
+                  48
+                </td>
+                <td data-label="" class="cell-actions">
+                  <button class="btn btn-soft btn--small btn-edit" type="button">Настроить</button>
+                </td>
+              </tr>
+              
+              <tr class="city-row city-row--details" data-details-for="1" hidden>
+                <td colspan="7">
+                  <section class="city-insight" aria-label="Детали по городу Москва">
+                    <header class="city-insight__header">
+                      <div class="city-insight__title">
+                        <h3>Москва</h3>
+                        <p class="muted">Часовой пояс: Europe/Moscow</p>
+                      </div>
+                      <div class="city-insight__meta">
+                        <span class="badge badge--soft" data-field="id">ID 1</span>
+                        <span class="badge badge--soft" data-field="plan-week">План нед: 12</span>
+                        <span class="badge badge--soft" data-field="plan-month">План мес: 48</span>
+                      </div>
+                    </header>
+
+                    <div class="city-insight__grid">
+                      <article class="city-insight__block">
+                        <h4>Критерии отбора</h4>
+                        
+                        
+                          <p data-field="criteria">Опыт работы в рознице от 1 года</p>
+                        
+                      </article>
+                      <article class="city-insight__block">
+                        <h4>Ресурсы экспертов</h4>
+                        
+                        
+                          <p data-field="experts">2 наставника, 1 тимлид</p>
+                        
+                      </article>
+                      <article class="city-insight__block city-insight__block--stages">
+                        <h4>Этапы сообщений</h4>
+                        
+                          <ul class="stage-summary" role="list">
+                            
+                              
+                              
+                              
+                              
+                              
+                              <li class="stage-summary__item is-custom"
+                                  data-stage="invite"
+                                  data-default="Добрый день! Выберите время интервью по ссылке...">
+                                <span class="stage-summary__title">Приглашение</span>
+                                <span class="stage-summary__status" data-role="stage-status">Своя версия</span>
+                                <p class="stage-summary__excerpt" data-role="stage-preview">Москва ждёт вас {{slot_date_local}} в офисе на Новослободской.</p>
+                              </li>
+                            
+                              
+                              
+                              
+                              
+                              
+                              <li class="stage-summary__item is-custom"
+                                  data-stage="reminder"
+                                  data-default="Напоминаем про интервью сегодня в {{slot_time_local}}.">
+                                <span class="stage-summary__title">Напоминание</span>
+                                <span class="stage-summary__status" data-role="stage-status">Своя версия</span>
+                                <p class="stage-summary__excerpt" data-role="stage-preview">None</p>
+                              </li>
+                            
+                          </ul>
+                        
+                      </article>
+                    </div>
+
+                    <footer class="city-insight__footer">
+                      
+                        <span class="city-insight__owner">Ответственный: <strong>Алексей Захаров</strong></span>
+                      
+                      <div class="city-insight__actions">
+                        <button type="button" class="btn btn-soft btn--small btn-edit" data-action="open-sheet" data-target="1">Настроить</button>
+                        
+                          <span class="muted" data-role="stage-count">Кастомных этапов: 2/2</span>
+                        
+                      </div>
+                    </footer>
+                  </section>
+                </td>
+              </tr>
+              <template id="tpl-stages-1">
+                <div class="stage-accordion">
+                  
+                    <details class="stage-item" data-stage="invite">
+                      <summary>
+                        <div class="stage-item__summary">
+                          <span class="stage-item__title">Приглашение</span>
+                          <span class="stage-item__preview muted">Текст по умолчанию</span>
+                        </div>
+                      </summary>
+                      <div class="stage-item__body">
+                        <textarea
+                          id="stage_invite_1"
+                          name="stage__invite"
+                          data-stage="invite"
+                          data-default="Добрый день! Выберите время интервью по ссылке..."
+                          rows="5"
+                          placeholder="Добрый день! Выберите время интервью по ссылке...">Москва ждёт вас {{slot_date_local}} в офисе на Новослободской.</textarea>
+                        <div class="stage-controls">
+                          <button type="button" class="btn btn-ghost btn--small stage-default-btn" data-stage="invite">Вставить по умолчанию</button>
+                          <span class="muted"></span>
+                        </div>
+                      </div>
+                    </details>
+                  
+                    <details class="stage-item" data-stage="reminder">
+                      <summary>
+                        <div class="stage-item__summary">
+                          <span class="stage-item__title">Напоминание</span>
+                          <span class="stage-item__preview muted">Текст по умолчанию</span>
+                        </div>
+                      </summary>
+                      <div class="stage-item__body">
+                        <textarea
+                          id="stage_reminder_1"
+                          name="stage__reminder"
+                          data-stage="reminder"
+                          data-default="Напоминаем про интервью сегодня в {{slot_time_local}}."
+                          rows="5"
+                          placeholder="Напоминаем про интервью сегодня в {{slot_time_local}}.">None</textarea>
+                        <div class="stage-controls">
+                          <button type="button" class="btn btn-ghost btn--small stage-default-btn" data-stage="reminder">Вставить по умолчанию</button>
+                          <span class="muted"></span>
+                        </div>
+                      </div>
+                    </details>
+                  
+                </div>
+              </template>
+            
+              
+              
+              
+              
+              
+              
+              
+              
+              <tr class="city-row"
+                  tabindex="0"
+                  data-id="2"
+                  data-name="казань"
+                  data-tz="europe/moscow"
+                  data-owner=""
+                  data-criteria="Отличное знание города"
+                  data-experts="1 наставник"
+                  data-plan-week="6"
+                  data-plan-month="24"
+                  data-owner-id="">
+                <td class="col-toggle" data-label="">
+                  <button type="button"
+                          class="row-expand"
+                          aria-expanded="false"
+                          aria-label="Показать детали по городу Казань">
+                    <span class="row-expand__icon" aria-hidden="true"></span>
+                  </button>
+                </td>
+                <td data-label="Город" class="col-name">
+                  <span class="cell-title">Казань</span>
+                </td>
+                <td data-label="Часовой пояс" class="col-tz">
+                  <span class="badge badge--soft"><code>Europe/Moscow</code></span>
+                </td>
+                <td data-label="Ответственный" class="col-owner">
+                  <span class="owner-label muted">
+                    Не назначен
+                  </span>
+                </td>
+                <td data-label="План · нед" class="col-week is-optional" data-sort="6">
+                  6
+                </td>
+                <td data-label="План · мес" class="col-month is-optional" data-sort="24">
+                  24
+                </td>
+                <td data-label="" class="cell-actions">
+                  <button class="btn btn-soft btn--small btn-edit" type="button">Настроить</button>
+                </td>
+              </tr>
+              
+              <tr class="city-row city-row--details" data-details-for="2" hidden>
+                <td colspan="7">
+                  <section class="city-insight" aria-label="Детали по городу Казань">
+                    <header class="city-insight__header">
+                      <div class="city-insight__title">
+                        <h3>Казань</h3>
+                        <p class="muted">Часовой пояс: Europe/Moscow</p>
+                      </div>
+                      <div class="city-insight__meta">
+                        <span class="badge badge--soft" data-field="id">ID 2</span>
+                        <span class="badge badge--soft" data-field="plan-week">План нед: 6</span>
+                        <span class="badge badge--soft" data-field="plan-month">План мес: 24</span>
+                      </div>
+                    </header>
+
+                    <div class="city-insight__grid">
+                      <article class="city-insight__block">
+                        <h4>Критерии отбора</h4>
+                        
+                        
+                          <p data-field="criteria">Отличное знание города</p>
+                        
+                      </article>
+                      <article class="city-insight__block">
+                        <h4>Ресурсы экспертов</h4>
+                        
+                        
+                          <p data-field="experts">1 наставник</p>
+                        
+                      </article>
+                      <article class="city-insight__block city-insight__block--stages">
+                        <h4>Этапы сообщений</h4>
+                        
+                          <p class="muted">Этапы не настроены</p>
+                        
+                      </article>
+                    </div>
+
+                    <footer class="city-insight__footer">
+                      
+                        <span class="city-insight__owner muted">Ответственный не назначен</span>
+                      
+                      <div class="city-insight__actions">
+                        <button type="button" class="btn btn-soft btn--small btn-edit" data-action="open-sheet" data-target="2">Настроить</button>
+                        
+                          <span class="muted" data-role="stage-count">Этапы не подключены</span>
+                        
+                      </div>
+                    </footer>
+                  </section>
+                </td>
+              </tr>
+              <template id="tpl-stages-2">
+                <div class="stage-accordion">
+                  
+                </div>
+              </template>
+            
+          </tbody>
+        </table>
+      </div>
+    </article>
+  
+
+  <div id="sheet_backdrop" class="sheet-backdrop" hidden></div>
+  <aside id="sheet" class="sheet city-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="sheet-title">
+    <header class="sheet-header">
+      <div>
+        <h3 id="sheet-title" class="sheet-title">Настройки города</h3>
+        <p id="sheet-sub" class="sheet-sub muted">Выберите город в таблице.</p>
+      </div>
+      <button id="sheet_close" class="btn btn-ghost btn--small" type="button" aria-label="Закрыть">✕</button>
+    </header>
+
+    <form id="sheet_form" class="sheet-body city-sheet" novalidate>
+      <input type="hidden" name="city_id" id="city_id">
+
+      <section class="city-overview" aria-live="polite">
+        <div class="city-overview__top">
+          <div class="city-overview__identity">
+            <span class="badge badge--soft city-overview__id" id="city_overview_id">ID —</span>
+            <h4 class="city-overview__title" id="city_overview_name">Город не выбран</h4>
+            <p class="city-overview__tz muted" id="city_overview_tz">Часовой пояс: —</p>
+          </div>
+          <div class="city-overview__metrics">
+            <span class="badge badge--soft" id="city_overview_week">План нед: —</span>
+            <span class="badge badge--soft" id="city_overview_month">План мес: —</span>
+          </div>
+        </div>
+        <div class="city-overview__foot">
+          <p class="city-overview__owner muted" id="city_overview_owner">Ответственный не назначен</p>
+          <span class="badge badge--soft" id="city_overview_stages">Этапы не подключены</span>
+        </div>
+      </section>
+
+      <section class="city-panel">
+        <div class="city-panel__header">
+          <span class="city-panel__icon" aria-hidden="true">🏙</span>
+          <div>
+            <h4 class="city-panel__title">Основные параметры</h4>
+            <p class="city-panel__hint">Ответственный и цели по найму.</p>
+          </div>
+        </div>
+        <div class="city-panel__body">
+          <div class="form-field">
+            <label for="owner_select">Ответственный рекрутёр</label>
+            <select id="owner_select" name="responsible_id">
+              <option value="">— Не назначен —</option>
+              
+            </select>
+            <p class="form-note">Назначьте ответственного, чтобы заявки автоматически падали к нужному рекрутёру.</p>
+          </div>
+          <div class="form-grid form-grid--two">
+            <div class="form-field form-field--compact">
+              <label for="plan_week">План на неделю</label>
+              <input id="plan_week" name="plan_week" type="number" inputmode="numeric" min="0" step="1" placeholder="Например, 12">
+              <p class="form-note">Используется в отчётах и сводках.</p>
+            </div>
+            <div class="form-field form-field--compact">
+              <label for="plan_month">План на месяц</label>
+              <input id="plan_month" name="plan_month" type="number" inputmode="numeric" min="0" step="1" placeholder="Например, 48">
+              <p class="form-note">Можно оставить пустым, если пока нет цели.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="city-panel">
+        <div class="city-panel__header">
+          <span class="city-panel__icon" aria-hidden="true">🗂</span>
+          <div>
+            <h4 class="city-panel__title">Профиль города</h4>
+            <p class="city-panel__hint">Критерии и ресурсы.</p>
+          </div>
+        </div>
+        <div class="city-panel__body city-panel__body--stacked">
+          <details class="city-collapse" open>
+            <summary>
+              <span>Критерии отбора</span>
+              <span id="crit_preview" class="muted">—</span>
+            </summary>
+            <div class="city-collapse__body">
+              <textarea id="criteria" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…"></textarea>
+            </div>
+          </details>
+          <details class="city-collapse">
+            <summary>
+              <span>Ресурсы экспертов</span>
+              <span id="exp_preview" class="muted">—</span>
+            </summary>
+            <div class="city-collapse__body">
+              <textarea id="experts" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: реферальный, ярмарки вакансий…"></textarea>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section class="city-panel city-panel--stages" id="sheet_stages">
+        <div class="city-panel__header">
+          <span class="city-panel__icon" aria-hidden="true">✉️</span>
+          <div class="city-panel__headline">
+            <h4 class="city-panel__title">Этапы и сообщения</h4>
+            <p class="city-panel__hint">Тексты для кандидатов. Используйте кнопки справа, чтобы раскрыть или свернуть все секции.</p>
+          </div>
+          <div class="city-panel__header-actions">
+            <button id="stages_expand" class="btn btn-soft btn--small" type="button" disabled>Развернуть</button>
+            <button id="stages_collapse" class="btn btn-ghost btn--small" type="button" disabled>Свернуть</button>
+          </div>
+        </div>
+        <div id="sheet_stages_body" class="city-panel__body city-panel__body--stacked">
+          <p class="muted stage-placeholder">Выберите город в таблице, чтобы загрузить тексты.</p>
+        </div>
+      </section>
+    </form>
+
+    <footer class="sheet-footer">
+      <span id="save_status" class="save-status muted" aria-live="polite">Сохранено</span>
+      <div class="form-actions">
+        <button id="btn_delete" class="btn btn-danger" type="button" disabled>Удалить</button>
+        <button id="btn_save" class="btn btn-primary" type="button">Сохранить</button>
+        <button id="btn_cancel" class="btn btn-ghost" type="button">Отмена</button>
+      </div>
+    </footer>
+  </aside>
+
+  <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+</section>
+
+<script>
+(function(){
+  const $ = (s, r=document)=>r.querySelector(s);
+  const $$ = (s, r=document)=>Array.from(r.querySelectorAll(s));
+  const on = (el, ev, cb, opts)=>el && el.addEventListener(ev, cb, opts);
+
+  const table = $('#city_table');
+  const tbody = $('#cities_tbody');
+
+  const sheet = $('#sheet');
+  const sheetBackdrop = $('#sheet_backdrop');
+  const sheetForm = $('#sheet_form');
+  const sheetStages = $('#sheet_stages');
+  const sheetStagesBody = $('#sheet_stages_body');
+  const sheetTitle = $('#sheet-title');
+  const sheetSub = $('#sheet-sub');
+  const sheetClose = $('#sheet_close');
+  const btnSave = $('#btn_save');
+  const btnCancel = $('#btn_cancel');
+  const btnDelete = $('#btn_delete');
+  const saveStatus = $('#save_status');
+
+  const inputId = $('#city_id');
+  const selOwner = $('#owner_select');
+  const inWeek = $('#plan_week');
+  const inMonth = $('#plan_month');
+  const taCriteria = $('#criteria');
+  const taExperts = $('#experts');
+  const prevCrit = $('#crit_preview');
+  const prevExp = $('#exp_preview');
+
+  const overviewName = $('#city_overview_name');
+  const overviewTz = $('#city_overview_tz');
+  const overviewId = $('#city_overview_id');
+  const overviewOwner = $('#city_overview_owner');
+  const overviewWeek = $('#city_overview_week');
+  const overviewMonth = $('#city_overview_month');
+  const overviewStages = $('#city_overview_stages');
+  const btnExpandStages = $('#stages_expand');
+  const btnCollapseStages = $('#stages_collapse');
+  const totalCountEl = $('#total_count');
+
+  if (!tbody) return;
+
+  clearOverview();
+
+  const rows = $$('.city-row[data-id]', tbody);
+
+  const truncate = (v, n=120)=>!v ? '—' : (v.length>n ? v.slice(0,n).trimEnd()+'…' : v);
+
+  const stagePlaceholderHTML = '<p class="muted stage-placeholder">Выберите город в таблице, чтобы загрузить тексты.</p>';
+  function resetStagePlaceholder(){
+    if (sheetStagesBody){
+      sheetStagesBody.innerHTML = stagePlaceholderHTML;
+    }
+    setStageControlsDisabled(true);
+  }
+
+  function setStageControlsDisabled(disabled){
+    if (btnExpandStages) btnExpandStages.disabled = disabled;
+    if (btnCollapseStages) btnCollapseStages.disabled = disabled;
+  }
+
+  function toggleAllStageDetails(expand){
+    const scope = sheetStagesBody || sheetStages;
+    if (!scope) return;
+    scope.querySelectorAll('details.stage-item').forEach(item=>{
+      if (expand) item.setAttribute('open','');
+      else item.removeAttribute('open');
+    });
+  }
+
+  function updateTotalCount(){
+    if (totalCountEl) totalCountEl.textContent = rows.length;
+  }
+
+  function renderEmptyState(){
+    if (!tbody || rows.length) return;
+    if (tbody.querySelector('.city-row--empty')) return;
+    const emptyRow = document.createElement('tr');
+    emptyRow.className = 'city-row city-row--empty';
+    const cell = document.createElement('td');
+    cell.colSpan = 7;
+    cell.className = 'city-empty-cell';
+    cell.innerHTML = `
+      <div class="city-empty card glass grain">
+        <h3 class="section-title">Пока пусто</h3>
+        <p class="page-description">Добавьте первый город, чтобы настроить планы и сообщения.</p>
+        <div class="page-actions">
+          <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
+        </div>
+      </div>
+    `;
+    emptyRow.appendChild(cell);
+    tbody.appendChild(emptyRow);
+  }
+
+  function setOverviewStages(custom, total){
+    if (!overviewStages) return;
+    if (!total){
+      overviewStages.textContent = 'Этапы не подключены';
+      return;
+    }
+    overviewStages.textContent = `Кастомных этапов: ${custom}/${total}`;
+  }
+
+  function clearOverview(){
+    if (overviewName) overviewName.textContent = 'Город не выбран';
+    if (overviewTz) overviewTz.textContent = 'Часовой пояс: —';
+    if (overviewId) overviewId.textContent = 'ID —';
+    if (overviewWeek) overviewWeek.textContent = 'План нед: —';
+    if (overviewMonth) overviewMonth.textContent = 'План мес: —';
+    if (overviewOwner){
+      overviewOwner.textContent = 'Ответственный не назначен';
+      overviewOwner.classList.add('muted');
+    }
+    setOverviewStages(0, 0);
+    setStageControlsDisabled(true);
+  }
+
+  function updateOverviewFromRow(row){
+    if (!row) return;
+    const id = row.dataset.id || '—';
+    const nameText = row.querySelector('.col-name .cell-title')?.textContent?.trim() || 'Город';
+    const tzText = row.querySelector('.col-tz code')?.textContent?.trim() || 'Europe/Moscow';
+    const ownerNode = row.querySelector('.owner-label');
+    const ownerText = ownerNode?.textContent?.trim() || '';
+    const weekText = row.querySelector('.col-week')?.textContent?.trim() || '—';
+    const monthText = row.querySelector('.col-month')?.textContent?.trim() || '—';
+
+    if (overviewName) overviewName.textContent = nameText;
+    if (overviewTz) overviewTz.textContent = `Часовой пояс: ${tzText}`;
+    if (overviewId) overviewId.textContent = `ID ${id}`;
+    if (overviewWeek) overviewWeek.textContent = `План нед: ${weekText || '—'}`;
+    if (overviewMonth) overviewMonth.textContent = `План мес: ${monthText || '—'}`;
+
+    if (overviewOwner){
+      if (ownerNode && !ownerNode.classList.contains('muted') && ownerText){
+        overviewOwner.innerHTML = `Ответственный: <strong>${escapeHTML(ownerText)}</strong>`;
+        overviewOwner.classList.remove('muted');
+      } else {
+        overviewOwner.textContent = 'Ответственный не назначен';
+        overviewOwner.classList.add('muted');
+      }
+    }
+
+    updateOverviewStagesFromDetails(row);
+  }
+
+  function updateOverviewStagesFromDetails(row){
+    if (!overviewStages) return;
+    const details = getDetailsRow(row);
+    if (!details){
+      setOverviewStages(0, 0);
+      return;
+    }
+    const stageItems = Array.from(details.querySelectorAll('.stage-summary__item'));
+    if (!stageItems.length){
+      setOverviewStages(0, 0);
+      return;
+    }
+    let customCount = 0;
+    stageItems.forEach(item=>{
+      if (item.classList.contains('is-custom')) customCount += 1;
+    });
+    setOverviewStages(customCount, stageItems.length);
+  }
+
+  function refreshStageSummaryFromEditor(){
+    if (!sheetStagesBody){
+      setOverviewStages(0, 0);
+      setStageControlsDisabled(true);
+      return;
+    }
+    const areas = sheetStagesBody.querySelectorAll('textarea[data-stage]');
+    if (!areas.length){
+      setOverviewStages(0, 0);
+      setStageControlsDisabled(true);
+      return;
+    }
+    setStageControlsDisabled(false);
+    let total = 0;
+    let custom = 0;
+    areas.forEach(ta=>{
+      total += 1;
+      const val = ta.value.trim();
+      const def = (ta.dataset.default || '').trim();
+      if (val && val !== def) custom += 1;
+    });
+    setOverviewStages(custom, total);
+  }
+
+  function syncOverviewFromForm(){
+    if (!overviewWeek || !overviewMonth || !overviewOwner) return;
+    const weekVal = (inWeek?.value || '').trim();
+    const monthVal = (inMonth?.value || '').trim();
+    overviewWeek.textContent = `План нед: ${weekVal || '—'}`;
+    overviewMonth.textContent = `План мес: ${monthVal || '—'}`;
+
+    if (!selOwner) return;
+    const ownerId = (selOwner.value || '').trim();
+    const option = selOwner.options?.[selOwner.selectedIndex] || null;
+    const label = option ? option.textContent.trim() : '';
+
+    if (ownerId && label){
+      overviewOwner.innerHTML = `Ответственный: <strong>${escapeHTML(label)}</strong>`;
+      overviewOwner.classList.remove('muted');
+    } else {
+      overviewOwner.textContent = 'Ответственный не назначен';
+      overviewOwner.classList.add('muted');
+    }
+  }
+
+  function getDetailsRow(row){
+    if (!row) return null;
+    const next = row.nextElementSibling;
+    if (next && next.classList?.contains('city-row--details') && next.dataset.detailsFor === row.dataset.id){
+      return next;
+    }
+    return null;
+  }
+
+  let expandedRow = null;
+
+  function collapseRow(row){
+    if (!row) return;
+    const details = getDetailsRow(row);
+    if (!details) return;
+    details.hidden = true;
+    details.classList.remove('is-visible');
+    row.classList.remove('is-expanded');
+    row.querySelector('.row-expand')?.setAttribute('aria-expanded', 'false');
+    if (expandedRow === row) expandedRow = null;
+  }
+
+  function expandRow(row){
+    if (!row) return;
+    const details = getDetailsRow(row);
+    if (!details) return;
+    if (expandedRow && expandedRow !== row){
+      collapseRow(expandedRow);
+    }
+    details.hidden = false;
+    details.classList.add('is-visible');
+    row.classList.add('is-expanded');
+    row.querySelector('.row-expand')?.setAttribute('aria-expanded', 'true');
+    expandedRow = row;
+  }
+
+  function toggleRow(row){
+    if (!row) return;
+    if (row.classList.contains('is-expanded')) collapseRow(row);
+    else expandRow(row);
+  }
+
+  function escapeHTML(str=''){
+    return str.replace(/[&<>"']/g, (ch)=>({
+      '&':'&amp;',
+      '<':'&lt;',
+      '>':'&gt;',
+      '"':'&quot;',
+      "'":'&#39;'
+    }[ch] || ch));
+  }
+
+  function toast(text, kind='info'){
+    const wrap = $('#toasts');
+    if (!wrap) return;
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.dataset.kind = kind;
+    t.role = 'status';
+    t.textContent = text;
+    wrap.appendChild(t);
+    setTimeout(()=>{ t.classList.add('toast--hide'); }, 2000);
+    setTimeout(()=>{ t.remove(); }, 2600);
+  }
+
+  const sortState = { key: 'name', dir: 'asc' };
+  function getCellValue(row, key){
+    switch(key){
+      case 'name':  return row.dataset.name || '';
+      case 'tz':    return row.dataset.tz || '';
+      case 'owner': return row.dataset.owner || '';
+      case 'week':  return Number(row.querySelector('.col-week')?.dataset.sort || 0);
+      case 'month': return Number(row.querySelector('.col-month')?.dataset.sort || 0);
+      default: return '';
+    }
+  }
+  function applySort(){
+    const rowsArr = Array.from(rows).filter(r=>r.style.display !== 'none');
+    rowsArr.sort((a,b)=>{
+      const av = getCellValue(a, sortState.key);
+      const bv = getCellValue(b, sortState.key);
+      if (typeof av === 'number' || typeof bv === 'number'){
+        return sortState.dir === 'asc' ? (av - bv) : (bv - av);
+      }
+      const cmp = String(av).localeCompare(String(bv), 'ru', { sensitivity:'base' });
+      return sortState.dir === 'asc' ? cmp : -cmp;
+    });
+    rowsArr.forEach(r=>{
+      const details = getDetailsRow(r);
+      tbody.appendChild(r);
+      if (details){
+        tbody.appendChild(details);
+      }
+    });
+    $$('.sort', table).forEach(btn=>{
+      const dir = (btn.dataset.key === sortState.key) ? (sortState.dir==='asc'?'ascending':'descending') : 'none';
+      btn.setAttribute('aria-sort', dir);
+      btn.classList.toggle('is-active', btn.dataset.key === sortState.key);
+    });
+  }
+
+  on(table, 'click', (e)=>{
+    const btn = e.target.closest('button.sort'); if (!btn) return;
+    const key = btn.dataset.key;
+    if (!key) return;
+    if (sortState.key === key){
+      sortState.dir = (sortState.dir === 'asc') ? 'desc' : 'asc';
+    } else {
+      sortState.key = key; sortState.dir = 'asc';
+    }
+    applySort();
+  });
+
+  let currentRow = null;
+  let isDirty = false;
+  function setDirty(v){
+    isDirty = v;
+    saveStatus.textContent = v ? 'Есть несохранённые изменения' : 'Сохранено';
+    saveStatus.classList.toggle('ok', !v);
+    saveStatus.classList.toggle('err', false);
+  }
+
+  if (selOwner){
+    selOwner.addEventListener('change', ()=>{
+      setDirty(true);
+      if (!sheet.hidden) syncOverviewFromForm();
+    });
+  }
+  [inWeek, inMonth].forEach(input=>{
+    if (!input) return;
+    input.addEventListener('input', ()=>{
+      setDirty(true);
+      if (!sheet.hidden) syncOverviewFromForm();
+    });
+  });
+  on(btnExpandStages, 'click', ()=> toggleAllStageDetails(true));
+  on(btnCollapseStages, 'click', ()=> toggleAllStageDetails(false));
+
+  function openSheetForRow(row){
+    currentRow = row;
+    const id = row.dataset.id;
+    const name = row.querySelector('.col-name .cell-title')?.textContent?.trim() || 'Город';
+    const tzLabel = row.querySelector('.col-tz code')?.textContent?.trim() || 'Europe/Moscow';
+    sheetTitle.textContent = name;
+    sheetSub.textContent = `Часовой пояс: ${tzLabel}`;
+    updateOverviewFromRow(row);
+    inputId.value = id;
+    if (btnDelete){
+      btnDelete.disabled = false;
+      btnDelete.textContent = 'Удалить';
+    }
+
+    selOwner.value = row.dataset.ownerId || '';
+    inWeek.value = row.dataset.planWeek || '';
+    inMonth.value = row.dataset.planMonth || '';
+    taCriteria.value = row.dataset.criteria || '';
+    taExperts.value = row.dataset.experts || '';
+    prevCrit.textContent = truncate(taCriteria.value);
+    prevExp.textContent = truncate(taExperts.value);
+
+    if (sheetStagesBody){
+      sheetStagesBody.innerHTML = '';
+      const tplEl = document.getElementById(`tpl-stages-${id}`);
+      if (tplEl instanceof HTMLTemplateElement && tplEl.content){
+        const frag = tplEl.content.cloneNode(true);
+        sheetStagesBody.appendChild(frag);
+        sheetStagesBody.querySelectorAll('details.stage-item').forEach(d=>{
+          const ta = d.querySelector('textarea[data-stage]');
+          const prev = d.querySelector('.stage-item__preview');
+          const updatePrev = ()=>{ prev.textContent = (ta.value.trim() ? truncate(ta.value) : 'Текст по умолчанию'); };
+          if (ta){
+            ta.addEventListener('input', ()=>{ setDirty(true); updatePrev(); refreshStageSummaryFromEditor(); });
+            updatePrev();
+          }
+        });
+        sheetStagesBody.querySelectorAll('.stage-default-btn').forEach(btn=>{
+          btn.addEventListener('click', ()=>{
+            const key = btn.getAttribute('data-stage');
+            if (!key) return;
+            const ta = sheetStagesBody.querySelector(`textarea[data-stage="${CSS.escape(key)}"]`);
+            if (ta){
+              ta.value = ta.dataset.default || '';
+              ta.dispatchEvent(new Event('input',{bubbles:true}));
+              ta.focus();
+            }
+          });
+        });
+        refreshStageSummaryFromEditor();
+      } else {
+        resetStagePlaceholder();
+        refreshStageSummaryFromEditor();
+      }
+    }
+
+    sheet.hidden = false; sheetBackdrop.hidden = false;
+    document.body.classList.add('sheet-open');
+    requestAnimationFrame(()=>{
+      sheet.classList.add('open'); sheetBackdrop.classList.add('open');
+    });
+    setDirty(false);
+    selOwner.focus();
+    syncOverviewFromForm();
+  }
+
+  function tryCloseSheet(){
+    if (isDirty){
+      const ok = confirm('Есть несохранённые изменения. Закрыть без сохранения?');
+      if (!ok) return;
+    }
+    closeSheet(true);
+  }
+  function closeSheet(reset=false){
+    sheet.classList.remove('open'); sheetBackdrop.classList.remove('open');
+    setTimeout(()=>{
+      sheet.hidden = true; sheetBackdrop.hidden = true;
+      document.body.classList.remove('sheet-open');
+      if (reset){ sheetForm.reset(); resetStagePlaceholder(); prevCrit.textContent = '—'; prevExp.textContent = '—'; }
+      sheetTitle.textContent = 'Настройки города';
+      sheetSub.textContent = 'Выберите город в таблице.';
+      if (btnDelete){
+        btnDelete.disabled = true;
+        btnDelete.textContent = 'Удалить';
+      }
+      clearOverview();
+      refreshStageSummaryFromEditor();
+      currentRow = null; isDirty = false;
+    }, 220);
+  }
+
+  on(sheetBackdrop, 'click', tryCloseSheet);
+  on(sheetClose, 'click', tryCloseSheet);
+  on(btnCancel, 'click', tryCloseSheet);
+
+  on(document, 'keydown', (e)=>{
+    if (!sheet.hidden){
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){ e.preventDefault(); doSave(); }
+      if (e.key === 'Escape'){ e.preventDefault(); tryCloseSheet(); }
+    } else {
+      const focusRow = document.activeElement?.closest?.('tr.city-row[data-id]');
+      if (e.code === 'Space' && focusRow){ e.preventDefault(); toggleRow(focusRow); return; }
+      if (e.key === 'Enter' && focusRow){ e.preventDefault(); focusRow.querySelector('.btn-edit')?.click(); }
+      if (['ArrowDown','ArrowUp'].includes(e.key)){
+        e.preventDefault();
+        const visibleRows = rows;
+        const idx = visibleRows.indexOf(focusRow);
+        let next = null;
+        if (e.key === 'ArrowDown'){ next = visibleRows[Math.min(idx+1, visibleRows.length-1)] || visibleRows[0]; }
+        else { next = visibleRows[Math.max(idx-1, 0)] || visibleRows[0]; }
+        next?.focus();
+      }
+    }
+  });
+
+  on(tbody,'click',(e)=>{
+    const expandBtn = e.target.closest('.row-expand');
+    if (expandBtn){
+      const row = expandBtn.closest('tr.city-row[data-id]');
+      toggleRow(row);
+      return;
+    }
+
+    const explicitOpen = e.target.closest('[data-action="open-sheet"]');
+    if (explicitOpen){
+      const targetId = explicitOpen.getAttribute('data-target');
+      let row = explicitOpen.closest('tr.city-row[data-id]');
+      if (!row && targetId){
+        row = tbody.querySelector(`tr.city-row[data-id="${CSS.escape(targetId)}"]`);
+      }
+      if (row) openSheetForRow(row);
+      return;
+    }
+
+    const btn = e.target.closest('.btn-edit');
+    if (!btn) return;
+    const row = btn.closest('tr.city-row[data-id]');
+    if (!row) return;
+    openSheetForRow(row);
+  });
+  on(tbody,'dblclick',(e)=>{
+    const row = e.target.closest('tr.city-row[data-id]');
+    if (!row) return;
+    openSheetForRow(row);
+  });
+
+  async function doSave(){
+    if (!currentRow) return;
+    const id = inputId.value;
+
+    const ownerId = (selOwner.value || '').trim();
+    const plan_week = inWeek.value ? parseInt(inWeek.value,10) : null;
+    const plan_month = inMonth.value ? parseInt(inMonth.value,10) : null;
+
+    const templates = {};
+    const stageValues = {};
+    const stageDefaults = {};
+    const stageScope = sheetStagesBody || sheetStages;
+    stageScope?.querySelectorAll('textarea[data-stage]').forEach(ta=>{
+      const k = ta.dataset.stage; if (!k) return;
+      const val = ta.value.trim();
+      const def = (ta.dataset.default || '').trim();
+      templates[k] = val;
+      stageValues[k] = val;
+      stageDefaults[k] = def;
+    });
+
+    const ownerLabel = currentRow.querySelector('.owner-label');
+    const colWeek = currentRow.querySelector('.col-week');
+    const colMonth = currentRow.querySelector('.col-month');
+
+    const prev = {
+      criteria: currentRow.dataset.criteria,
+      experts: currentRow.dataset.experts,
+      planWeek: currentRow.dataset.planWeek,
+      planMonth: currentRow.dataset.planMonth,
+      ownerId: currentRow.dataset.ownerId,
+      ownerText: ownerLabel?.textContent,
+      weekText: colWeek?.textContent,
+      monthText: colMonth?.textContent,
+      weekSort: colWeek?.dataset.sort,
+      monthSort: colMonth?.dataset.sort
+    };
+
+    saveStatus.textContent = 'Сохранение…';
+    saveStatus.classList.add('ok'); saveStatus.classList.remove('err');
+
+    currentRow.dataset.criteria = taCriteria.value.trim();
+    currentRow.dataset.experts = taExperts.value.trim();
+    currentRow.dataset.planWeek = plan_week ?? '';
+    currentRow.dataset.planMonth = plan_month ?? '';
+    currentRow.dataset.ownerId = ownerId ? String(Number(ownerId)) : '';
+    currentRow.dataset.owner = ownerId ? selOwner.options[selOwner.selectedIndex].textContent.trim().toLowerCase() : '';
+
+    if (ownerLabel){
+      if (ownerId){
+        ownerLabel.textContent = selOwner.options[selOwner.selectedIndex].textContent;
+        ownerLabel.classList.remove('muted');
+      } else {
+        ownerLabel.textContent = 'Не назначен';
+        ownerLabel.classList.add('muted');
+      }
+    }
+    if (colWeek){ colWeek.textContent = plan_week ?? '—'; colWeek.dataset.sort = String(plan_week ?? 0); }
+    if (colMonth){ colMonth.textContent = plan_month ?? '—'; colMonth.dataset.sort = String(plan_month ?? 0); }
+
+    try{
+      const resp = await fetch(`/cities/${id}/settings`, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({
+          criteria: taCriteria.value.trim(),
+          experts: taExperts.value.trim(),
+          plan_week, plan_month,
+          templates,
+          responsible_recruiter_id: ownerId ? Number(ownerId) : null
+        })
+      });
+      const json = await resp.json();
+      if (!json || json.ok !== true) throw new Error(json && json.error || 'Ошибка сохранения');
+
+      setDirty(false);
+      saveStatus.textContent = 'Сохранено';
+      saveStatus.classList.add('ok'); saveStatus.classList.remove('err');
+
+      const detailsRow = getDetailsRow(currentRow);
+      if (detailsRow){
+        const updateRich = (field, value, emptyLabel)=>{
+          const target = detailsRow.querySelector(`[data-field="${field}"]`);
+          if (!target) return;
+          const text = (value || '').trim();
+          if (text){
+            target.innerHTML = escapeHTML(text).replace(/\n/g, '<br>');
+            target.classList.remove('muted');
+          } else {
+            target.textContent = emptyLabel;
+            target.classList.add('muted');
+          }
+        };
+        updateRich('criteria', taCriteria.value, 'Нет описания');
+        updateRich('experts', taExperts.value, 'Не заполнено');
+
+        const weekBadge = detailsRow.querySelector('[data-field="plan-week"]');
+        if (weekBadge){
+          weekBadge.textContent = `План нед: ${plan_week ?? '—'}`;
+        }
+        const monthBadge = detailsRow.querySelector('[data-field="plan-month"]');
+        if (monthBadge){
+          monthBadge.textContent = `План мес: ${plan_month ?? '—'}`;
+        }
+
+        const ownerInfo = detailsRow.querySelector('.city-insight__owner');
+        if (ownerInfo){
+          if (ownerId){
+            ownerInfo.innerHTML = `Ответственный: <strong>${escapeHTML(selOwner.options[selOwner.selectedIndex].textContent.trim())}</strong>`;
+            ownerInfo.classList.remove('muted');
+          } else {
+            ownerInfo.textContent = 'Ответственный не назначен';
+            ownerInfo.classList.add('muted');
+          }
+        }
+
+        const stageItems = Array.from(detailsRow.querySelectorAll('.stage-summary__item'));
+        let customCount = 0;
+        stageItems.forEach(item=>{
+          const key = item.dataset.stage;
+          const status = item.querySelector('[data-role="stage-status"]');
+          const preview = item.querySelector('[data-role="stage-preview"]');
+          const val = (stageValues[key] || '').trim();
+          const def = (stageDefaults[key] || '').trim();
+          const isCustom = Boolean(val) && val !== def;
+          item.classList.toggle('is-custom', isCustom);
+          if (status) status.textContent = isCustom ? 'Своя версия' : 'По умолчанию';
+          if (preview){
+            if (isCustom){
+              const compact = val.replace(/\s+/g,' ').trim();
+              preview.textContent = truncate(compact, 120);
+              preview.hidden = false;
+            } else {
+              preview.hidden = true;
+            }
+          }
+          if (isCustom) customCount += 1;
+        });
+        const countLabel = detailsRow.querySelector('[data-role="stage-count"]');
+        if (countLabel){
+          if (stageItems.length){
+            countLabel.textContent = `Кастомных этапов: ${customCount}/${stageItems.length}`;
+          } else {
+            countLabel.textContent = 'Этапы не подключены';
+          }
+        }
+      }
+
+      updateOverviewFromRow(currentRow);
+
+      toast('Изменения сохранены', 'success');
+      closeSheet(false);
+      applySort();
+    }catch(err){
+      currentRow.dataset.criteria = prev.criteria ?? '';
+      currentRow.dataset.experts = prev.experts ?? '';
+      currentRow.dataset.planWeek = prev.planWeek ?? '';
+      currentRow.dataset.planMonth = prev.planMonth ?? '';
+      currentRow.dataset.ownerId = prev.ownerId ?? '';
+      if (ownerLabel){ ownerLabel.textContent = prev.ownerText ?? ownerLabel.textContent; }
+      if (colWeek){ colWeek.textContent = prev.weekText ?? colWeek.textContent; colWeek.dataset.sort = prev.weekSort ?? '0'; }
+      if (colMonth){ colMonth.textContent = prev.monthText ?? colMonth.textContent; colMonth.dataset.sort = prev.monthSort ?? '0'; }
+      saveStatus.textContent = 'Ошибка';
+      saveStatus.classList.remove('ok'); saveStatus.classList.add('err');
+      if (navigator.vibrate) navigator.vibrate(60);
+      toast('Не удалось сохранить', 'error');
+    }
+  }
+
+  async function doDelete(){
+    if (!currentRow || !btnDelete) return;
+    const id = inputId.value;
+    const cityName = sheetTitle.textContent?.trim() || 'город';
+    const ok = confirm(`Удалить город «${cityName}»? Действие нельзя отменить.`);
+    if (!ok) return;
+
+    const prevLabel = btnDelete.textContent;
+    btnDelete.disabled = true;
+    btnDelete.textContent = 'Удаление…';
+
+    try{
+      const resp = await fetch(`/cities/${id}/delete`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' }
+      });
+      let json = null;
+      try {
+        json = await resp.json();
+      } catch(_err) {
+        json = null;
+      }
+      if (!resp.ok || !json || json.ok !== true){
+        throw new Error(json && json.error ? json.error : 'delete_failed');
+      }
+
+      const detailsRow = getDetailsRow(currentRow);
+      if (detailsRow){
+        detailsRow.remove();
+      }
+      const tplEl = document.getElementById(`tpl-stages-${id}`);
+      tplEl?.remove();
+
+      const idx = rows.indexOf(currentRow);
+      if (idx >= 0){
+        rows.splice(idx, 1);
+      }
+      if (expandedRow === currentRow){
+        expandedRow = null;
+      }
+      currentRow.remove();
+
+      updateTotalCount();
+      renderEmptyState();
+      toast('Город удалён', 'success');
+      closeSheet(true);
+      applySort();
+    } catch(err){
+      console.error(err);
+      toast('Не удалось удалить', 'error');
+      btnDelete.disabled = false;
+      btnDelete.textContent = prevLabel;
+      return;
+    }
+  }
+
+  on(btnSave, 'click', doSave);
+  on(btnDelete, 'click', doDelete);
+  on(taCriteria, 'input', ()=>{ prevCrit.textContent = truncate(taCriteria.value); setDirty(true); });
+  on(taExperts, 'input', ()=>{ prevExp.textContent = truncate(taExperts.value); setDirty(true); });
+
+  window.addEventListener('beforeunload', (e)=>{
+    if (!sheet.hidden && isDirty){ e.preventDefault(); e.returnValue = ''; }
+  });
+
+  resetStagePlaceholder();
+  applySort();
+  refreshStageSummaryFromEditor();
+  updateTotalCount();
+  renderEmptyState();
+})();
+</script>
+
+      </div>
+    </main>
+  </div>
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      const docEl = document.documentElement;
+      const toggle = document.getElementById('theme-toggle');
+      const nav = document.querySelector('[data-topbar-nav]');
+      const burger = document.querySelector('[data-topbar-toggle]');
+      const scrim = document.querySelector('[data-topbar-scrim]');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+      function storeTheme(theme) {
+        try {
+          window.localStorage.setItem(storageKey, theme);
+        } catch (err) {
+          /* noop */
+        }
+      }
+
+      function getStoredTheme() {
+        try {
+          return window.localStorage.getItem(storageKey);
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function applyTheme(theme, persist = true) {
+        const value = theme === 'dark' ? 'dark' : 'light';
+        docEl.dataset.theme = value;
+        docEl.style.colorScheme = value;
+        if (persist) {
+          storeTheme(value);
+        }
+        reflectTheme(value);
+      }
+
+      function reflectTheme(theme) {
+        if (!toggle) return;
+        const isDark = theme === 'dark';
+        toggle.setAttribute('aria-pressed', isDark);
+        toggle.querySelector('.theme-toggle__icon').textContent = isDark ? '🌞' : '🌙';
+        toggle.querySelector('.theme-toggle__label').textContent = isDark ? 'Светлая тема' : 'Тёмная тема';
+        toggle.title = isDark ? 'Переключить на светлую тему' : 'Переключить на тёмную тему';
+      }
+
+      applyTheme(getStoredTheme() || docEl.dataset.theme || (prefersDark.matches ? 'dark' : 'light'), false);
+
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const next = docEl.dataset.theme === 'dark' ? 'light' : 'dark';
+          applyTheme(next);
+        });
+      }
+
+      if (prefersDark && typeof prefersDark.addEventListener === 'function') {
+        prefersDark.addEventListener('change', (event) => {
+          if (!getStoredTheme()) {
+            applyTheme(event.matches ? 'dark' : 'light', false);
+          }
+        });
+      }
+
+      function setNavOpen(open) {
+        if (!nav || !burger) return;
+        nav.dataset.open = open ? 'true' : 'false';
+        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (scrim) {
+          scrim.dataset.open = open ? 'true' : 'false';
+        }
+      }
+
+      if (burger) {
+        burger.addEventListener('click', () => {
+          const next = nav && nav.dataset.open !== 'true';
+          setNavOpen(next);
+        });
+      }
+
+      if (scrim) {
+        scrim.addEventListener('click', () => setNavOpen(false));
+      }
+
+      if (nav) {
+        nav.addEventListener('click', (event) => {
+          const target = event.target;
+          if (window.innerWidth <= 768 && target instanceof HTMLElement && target.closest('a')) {
+            setNavOpen(false);
+          }
+        });
+      }
+
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+          setNavOpen(false);
+        }
+      });
+    })();
+  </script>
+  
+</body>
+</html>

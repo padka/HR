@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Кандидаты · TG Bot Admin</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      try {
+        const stored = window.localStorage.getItem(storageKey);
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored || (prefersDark ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      } catch (err) {
+        document.documentElement.dataset.theme = 'light';
+        document.documentElement.style.colorScheme = 'light';
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/build/main.css">
+  
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar" data-topbar>
+      <div class="topbar__content">
+        <button class="topbar__burger" type="button" aria-label="Открыть меню" aria-expanded="false" data-topbar-toggle>
+          <span aria-hidden="true">☰</span>
+        </button>
+        <a class="topbar__brand" href="/">
+          <span>TG</span>
+          Bot Admin
+        </a>
+        <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
+          <ul class="nav-links">
+            <li class="nav-links__item">
+              <a href="/" class="nav-link">Дашборд</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/recruiters" class="nav-link">Рекрутёры</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/cities" class="nav-link">Города</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/slots" class="nav-link">Слоты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/candidates" class="nav-link" aria-current="page">Кандидаты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/templates" class="nav-link">Шаблоны</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/questions" class="nav-link">Вопросы</a>
+            </li>
+          </ul>
+        </nav>
+        <div class="topbar__actions">
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Переключить тему">
+            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+            <span class="theme-toggle__label">Тёмная тема</span>
+          </button>
+          <span class="topbar__badge">demo.local</span>
+        </div>
+      </div>
+    </header>
+    <div class="topbar__scrim" data-topbar-scrim></div>
+    <main class="app-main">
+      <div class="container">
+        
+<section class="page">
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">Кандидаты</h1>
+      <p class="page-description">Единая база кандидатов с аналитикой и быстрыми действиями.</p>
+    </div>
+    <div class="page-actions">
+      <form method="get" action="/candidates" class="search-inline">
+        <input type="search" name="search" value="" placeholder="Поиск по ФИО или TG ID">
+        <button class="btn btn-ghost" type="submit">Найти</button>
+      </form>
+      <a class="btn btn-primary" href="/candidates/new">+ Добавить кандидата</a>
+    </div>
+  </header>
+
+  
+    <section class="analytics-grid">
+      <a class="metric-card" href="/candidates">
+        <span class="metric-card__label">Всего кандидатов</span>
+        <span class="metric-card__value">248</span>
+        <span class="metric-card__meta">Активны: 186 • Отключены: 62</span>
+      </a>
+      <a class="metric-card" href="/candidates?stage=interviews">
+        <span class="metric-card__label">Интервью</span>
+        <span class="metric-card__value">14</span>
+        <span class="metric-card__meta">В ожидании подтверждения: 4 • Завершено: 112</span>
+      </a>
+      <article class="metric-card">
+        <span class="metric-card__label">Активность за 7 дней</span>
+        <span class="metric-card__value">46</span>
+        <span class="metric-card__meta">Тестов • Сообщений: 132</span>
+      </article>
+      <a class="metric-card" href="/candidates?stage=alerts">
+        <span class="metric-card__label">Нужно внимание</span>
+        <span class="metric-card__value">8</span>
+        <span class="metric-card__meta">Без сообщений: 8 • Без тестов: 3</span>
+      </a>
+    </section>
+
+    <section class="pipeline-board">
+      <h2 class="section-title">Воронка интервью</h2>
+      <div class="pipeline-grid">
+        
+          
+            <a class="pipeline-item" href="/candidates?stage=new">
+              <span>Новые</span>
+              <strong>32</strong>
+            </a>
+          
+        
+          
+            <a class="pipeline-item" href="/candidates?stage=interviews">
+              <span>Интервью</span>
+              <strong>14</strong>
+            </a>
+          
+        
+          
+            <a class="pipeline-item" href="/candidates?stage=offers">
+              <span>Офферы</span>
+              <strong>5</strong>
+            </a>
+          
+        
+          
+            <div class="pipeline-item">
+              <span>Отклонено</span>
+              <strong>9</strong>
+            </div>
+          
+        
+      </div>
+    </section>
+  
+
+  
+    <div class="list-table-wrapper">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th scope="col">Кандидат</th>
+            <th scope="col">Telegram ID</th>
+            <th scope="col">Город</th>
+            <th scope="col">Последняя активность</th>
+            <th scope="col">Этап</th>
+            <th scope="col">Следующий шаг</th>
+            <th scope="col">Тесты</th>
+            <th scope="col">Последний результат</th>
+            <th scope="col">Сообщения</th>
+            <th scope="col" class="col-actions">Карточка</th>
+          </tr>
+        </thead>
+        <tbody>
+        
+          
+          
+          
+          <tr>
+            <td>
+              <div class="entity">
+                <span class="entity__title">Анна Смирнова</span>
+                <span class="entity__meta">
+                  
+                    <span class="badge badge--success">Активен</span>
+                  
+                </span>
+              </div>
+            </td>
+            <td>438201239</td>
+            <td>Москва</td>
+            <td>10.10.2025 08:53</td>
+            <td>
+              <div class="stack">
+                <span class="badge badge--soft">Интервью</span>
+                
+                  <span class="muted">BOOKED · 11.10.2025 16:08</span>
+                
+              </div>
+            </td>
+            <td>
+              
+                Подтвердить участие
+              
+            </td>
+            <td>
+              
+                4
+              
+            </td>
+            <td>
+              
+                86 / 100
+              
+            </td>
+            <td>
+              
+                Мы назначили интервью на завтра в 15:00.
+              
+            </td>
+            <td>
+              <a class="btn btn-ghost btn-sm" href="/candidates/1">Открыть</a>
+            </td>
+          </tr>
+        
+          
+          
+          
+          <tr>
+            <td>
+              <div class="entity">
+                <span class="entity__title">Егор Кравцов</span>
+                <span class="entity__meta">
+                  
+                    <span class="badge badge--muted">Отключен</span>
+                  
+                </span>
+              </div>
+            </td>
+            <td>522118002</td>
+            <td>Санкт-Петербург</td>
+            <td>08.10.2025 07:08</td>
+            <td>
+              <div class="stack">
+                <span class="badge badge--soft">Тест</span>
+                
+                  <span class="muted">Нет слотов</span>
+                
+              </div>
+            </td>
+            <td>
+              
+                Напомнить о тесте
+              
+            </td>
+            <td>
+              
+                1
+              
+            </td>
+            <td>
+              
+                <span class="muted">—</span>
+              
+            </td>
+            <td>
+              
+                <span class="muted">—</span>
+              
+            </td>
+            <td>
+              <a class="btn btn-ghost btn-sm" href="/candidates/2">Открыть</a>
+            </td>
+          </tr>
+        
+        </tbody>
+      </table>
+    </div>
+  
+</section>
+
+      </div>
+    </main>
+  </div>
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      const docEl = document.documentElement;
+      const toggle = document.getElementById('theme-toggle');
+      const nav = document.querySelector('[data-topbar-nav]');
+      const burger = document.querySelector('[data-topbar-toggle]');
+      const scrim = document.querySelector('[data-topbar-scrim]');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+      function storeTheme(theme) {
+        try {
+          window.localStorage.setItem(storageKey, theme);
+        } catch (err) {
+          /* noop */
+        }
+      }
+
+      function getStoredTheme() {
+        try {
+          return window.localStorage.getItem(storageKey);
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function applyTheme(theme, persist = true) {
+        const value = theme === 'dark' ? 'dark' : 'light';
+        docEl.dataset.theme = value;
+        docEl.style.colorScheme = value;
+        if (persist) {
+          storeTheme(value);
+        }
+        reflectTheme(value);
+      }
+
+      function reflectTheme(theme) {
+        if (!toggle) return;
+        const isDark = theme === 'dark';
+        toggle.setAttribute('aria-pressed', isDark);
+        toggle.querySelector('.theme-toggle__icon').textContent = isDark ? '🌞' : '🌙';
+        toggle.querySelector('.theme-toggle__label').textContent = isDark ? 'Светлая тема' : 'Тёмная тема';
+        toggle.title = isDark ? 'Переключить на светлую тему' : 'Переключить на тёмную тему';
+      }
+
+      applyTheme(getStoredTheme() || docEl.dataset.theme || (prefersDark.matches ? 'dark' : 'light'), false);
+
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const next = docEl.dataset.theme === 'dark' ? 'light' : 'dark';
+          applyTheme(next);
+        });
+      }
+
+      if (prefersDark && typeof prefersDark.addEventListener === 'function') {
+        prefersDark.addEventListener('change', (event) => {
+          if (!getStoredTheme()) {
+            applyTheme(event.matches ? 'dark' : 'light', false);
+          }
+        });
+      }
+
+      function setNavOpen(open) {
+        if (!nav || !burger) return;
+        nav.dataset.open = open ? 'true' : 'false';
+        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (scrim) {
+          scrim.dataset.open = open ? 'true' : 'false';
+        }
+      }
+
+      if (burger) {
+        burger.addEventListener('click', () => {
+          const next = nav && nav.dataset.open !== 'true';
+          setNavOpen(next);
+        });
+      }
+
+      if (scrim) {
+        scrim.addEventListener('click', () => setNavOpen(false));
+      }
+
+      if (nav) {
+        nav.addEventListener('click', (event) => {
+          const target = event.target;
+          if (window.innerWidth <= 768 && target instanceof HTMLElement && target.closest('a')) {
+            setNavOpen(false);
+          }
+        });
+      }
+
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+          setNavOpen(false);
+        }
+      });
+    })();
+  </script>
+  
+</body>
+</html>

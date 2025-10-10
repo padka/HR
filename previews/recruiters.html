@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Рекрутёры · TG Bot Admin</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      try {
+        const stored = window.localStorage.getItem(storageKey);
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored || (prefersDark ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      } catch (err) {
+        document.documentElement.dataset.theme = 'light';
+        document.documentElement.style.colorScheme = 'light';
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/build/main.css">
+  
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar" data-topbar>
+      <div class="topbar__content">
+        <button class="topbar__burger" type="button" aria-label="Открыть меню" aria-expanded="false" data-topbar-toggle>
+          <span aria-hidden="true">☰</span>
+        </button>
+        <a class="topbar__brand" href="/">
+          <span>TG</span>
+          Bot Admin
+        </a>
+        <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
+          <ul class="nav-links">
+            <li class="nav-links__item">
+              <a href="/" class="nav-link">Дашборд</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/recruiters" class="nav-link" aria-current="page">Рекрутёры</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/cities" class="nav-link">Города</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/slots" class="nav-link">Слоты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/candidates" class="nav-link">Кандидаты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/templates" class="nav-link">Шаблоны</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/questions" class="nav-link">Вопросы</a>
+            </li>
+          </ul>
+        </nav>
+        <div class="topbar__actions">
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Переключить тему">
+            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+            <span class="theme-toggle__label">Тёмная тема</span>
+          </button>
+          <span class="topbar__badge">demo.local</span>
+        </div>
+      </div>
+    </header>
+    <div class="topbar__scrim" data-topbar-scrim></div>
+    <main class="app-main">
+      <div class="container">
+        
+<section class="page">
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">Рекрутёры</h1>
+      <p class="page-description">
+        Следите за нагрузкой, ближайшими слотами и ответственными городами каждого рекрутёра.
+      </p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
+    </div>
+  </header>
+
+  
+    <div id="recs_grid" class="card-grid">
+      
+        
+        
+        
+        
+        
+          
+        
+        <article class="glass-card recruiter-card">
+          <header class="recruiter-card__header">
+            <div class="recruiter-card__identity">
+              <h2 class="recruiter-card__name">Алексей Захаров</h2>
+              <div class="meta-list">
+    
+      
+                <span>#10</span>
+              <span title="Часовой пояс">UTC+03:00 (Europe/Moscow)</span>
+                
+                  <span title="ID чата в Telegram">chat_id 748293002</span>
+                
+              
+    
+  </div>
+            </div>
+            <span class="status-pill" data-tone="success">
+    
+    <span class="status-pill__label">Активен</span>
+  </span>
+          </header>
+
+          <div class="recruiter-card__body">
+            <section class="card-surface recruiter-card__section recruiter-card__section--metrics">
+              <h3 class="section-title">Нагрузка</h3>
+              <dl class="recruiter-metrics">
+                <div>
+                  <dt>Свободно</dt>
+                  <dd>3</dd>
+                </div>
+                <div>
+                  <dt>Ожидают</dt>
+                  <dd>2</dd>
+                </div>
+                <div>
+                  <dt>Занято</dt>
+                  <dd>4</dd>
+                </div>
+                <div>
+                  <dt>Всего</dt>
+                  <dd>9</dd>
+                </div>
+              </dl>
+            </section>
+
+            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
+              <summary>
+                <div class="recruiter-card__fold-head">
+                  <h3 class="section-title">Города</h3>
+                  
+                    
+                    <span class="recruiter-card__fold-hint">2 города</span>
+                  
+                </div>
+              </summary>
+              <div class="recruiter-card__fold-body">
+                
+    
+    
+  
+  <div class="badge-row">
+    
+      
+                  
+                    
+                      <span class="badge" title="Europe/Moscow">Москва</span>
+                    
+                      <span class="badge" title="Europe/Moscow">Казань</span>
+                    
+                  
+                
+    
+  </div>
+              </div>
+            </details>
+
+            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
+              <summary>
+                <div class="recruiter-card__fold-head">
+                  <h3 class="section-title">Ближайший свободный слот</h3>
+                  <span class="recruiter-card__fold-hint">12 сентября, 14:00</span>
+                </div>
+              </summary>
+              <div class="recruiter-card__fold-body">
+                
+                  <span class="badge">12 сентября, 14:00</span>
+                
+              </div>
+            </details>
+          </div>
+
+          <footer class="recruiter-card__footer">
+            <a class="btn btn-soft btn--grow" href="/recruiters/10/edit">Редактировать</a>
+            <form class="inline-form" method="post" action="/recruiters/10/delete" onsubmit="return confirm('Удалить рекрутёра Алексей Захаров?');">
+              <button class="btn btn-danger btn--grow" type="submit">Удалить</button>
+            </form>
+          </footer>
+        </article>
+      
+        
+        
+        
+        
+        
+          
+        
+        <article class="glass-card recruiter-card">
+          <header class="recruiter-card__header">
+            <div class="recruiter-card__identity">
+              <h2 class="recruiter-card__name">Мария Орлова</h2>
+              <div class="meta-list">
+    
+      
+                <span>#11</span>
+              <span title="Часовой пояс">UTC+04:00 (Europe/Samara)</span>
+                
+              
+    
+  </div>
+            </div>
+            <span class="status-pill" data-tone="success">
+    
+    <span class="status-pill__label">Активен</span>
+  </span>
+          </header>
+
+          <div class="recruiter-card__body">
+            <section class="card-surface recruiter-card__section recruiter-card__section--metrics">
+              <h3 class="section-title">Нагрузка</h3>
+              <dl class="recruiter-metrics">
+                <div>
+                  <dt>Свободно</dt>
+                  <dd>2</dd>
+                </div>
+                <div>
+                  <dt>Ожидают</dt>
+                  <dd>1</dd>
+                </div>
+                <div>
+                  <dt>Занято</dt>
+                  <dd>1</dd>
+                </div>
+                <div>
+                  <dt>Всего</dt>
+                  <dd>4</dd>
+                </div>
+              </dl>
+            </section>
+
+            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
+              <summary>
+                <div class="recruiter-card__fold-head">
+                  <h3 class="section-title">Города</h3>
+                  
+                    
+                    <span class="recruiter-card__fold-hint">1 город</span>
+                  
+                </div>
+              </summary>
+              <div class="recruiter-card__fold-body">
+                
+    
+    
+  
+  <div class="badge-row">
+    
+      
+                  
+                    
+                      <span class="badge" title="Europe/Samara">Самара</span>
+                    
+                  
+                
+    
+  </div>
+              </div>
+            </details>
+
+            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
+              <summary>
+                <div class="recruiter-card__fold-head">
+                  <h3 class="section-title">Ближайший свободный слот</h3>
+                  <span class="recruiter-card__fold-hint">14 сентября, 10:30</span>
+                </div>
+              </summary>
+              <div class="recruiter-card__fold-body">
+                
+                  <span class="badge">14 сентября, 10:30</span>
+                
+              </div>
+            </details>
+          </div>
+
+          <footer class="recruiter-card__footer">
+            <a class="btn btn-soft btn--grow" href="/recruiters/11/edit">Редактировать</a>
+            <form class="inline-form" method="post" action="/recruiters/11/delete" onsubmit="return confirm('Удалить рекрутёра Мария Орлова?');">
+              <button class="btn btn-danger btn--grow" type="submit">Удалить</button>
+            </form>
+          </footer>
+        </article>
+      
+    </div>
+  
+</section>
+
+
+<script>
+(function () {
+  const BREAKPOINT = 600;
+  const folds = Array.from(document.querySelectorAll('.recruiter-card [data-collapsible]'));
+  if (!folds.length) return;
+
+  let isWide = window.innerWidth >= BREAKPOINT;
+
+  function applyState(forceOpen) {
+    folds.forEach((fold) => {
+      if (forceOpen) {
+        fold.setAttribute('open', '');
+      } else {
+        fold.removeAttribute('open');
+      }
+    });
+  }
+
+  applyState(isWide);
+
+  window.addEventListener('resize', () => {
+    const next = window.innerWidth >= BREAKPOINT;
+    if (next === isWide) return;
+    isWide = next;
+    applyState(isWide);
+  });
+})();
+</script>
+
+
+      </div>
+    </main>
+  </div>
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      const docEl = document.documentElement;
+      const toggle = document.getElementById('theme-toggle');
+      const nav = document.querySelector('[data-topbar-nav]');
+      const burger = document.querySelector('[data-topbar-toggle]');
+      const scrim = document.querySelector('[data-topbar-scrim]');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+      function storeTheme(theme) {
+        try {
+          window.localStorage.setItem(storageKey, theme);
+        } catch (err) {
+          /* noop */
+        }
+      }
+
+      function getStoredTheme() {
+        try {
+          return window.localStorage.getItem(storageKey);
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function applyTheme(theme, persist = true) {
+        const value = theme === 'dark' ? 'dark' : 'light';
+        docEl.dataset.theme = value;
+        docEl.style.colorScheme = value;
+        if (persist) {
+          storeTheme(value);
+        }
+        reflectTheme(value);
+      }
+
+      function reflectTheme(theme) {
+        if (!toggle) return;
+        const isDark = theme === 'dark';
+        toggle.setAttribute('aria-pressed', isDark);
+        toggle.querySelector('.theme-toggle__icon').textContent = isDark ? '🌞' : '🌙';
+        toggle.querySelector('.theme-toggle__label').textContent = isDark ? 'Светлая тема' : 'Тёмная тема';
+        toggle.title = isDark ? 'Переключить на светлую тему' : 'Переключить на тёмную тему';
+      }
+
+      applyTheme(getStoredTheme() || docEl.dataset.theme || (prefersDark.matches ? 'dark' : 'light'), false);
+
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const next = docEl.dataset.theme === 'dark' ? 'light' : 'dark';
+          applyTheme(next);
+        });
+      }
+
+      if (prefersDark && typeof prefersDark.addEventListener === 'function') {
+        prefersDark.addEventListener('change', (event) => {
+          if (!getStoredTheme()) {
+            applyTheme(event.matches ? 'dark' : 'light', false);
+          }
+        });
+      }
+
+      function setNavOpen(open) {
+        if (!nav || !burger) return;
+        nav.dataset.open = open ? 'true' : 'false';
+        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (scrim) {
+          scrim.dataset.open = open ? 'true' : 'false';
+        }
+      }
+
+      if (burger) {
+        burger.addEventListener('click', () => {
+          const next = nav && nav.dataset.open !== 'true';
+          setNavOpen(next);
+        });
+      }
+
+      if (scrim) {
+        scrim.addEventListener('click', () => setNavOpen(false));
+      }
+
+      if (nav) {
+        nav.addEventListener('click', (event) => {
+          const target = event.target;
+          if (window.innerWidth <= 768 && target instanceof HTMLElement && target.closest('a')) {
+            setNavOpen(false);
+          }
+        });
+      }
+
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+          setNavOpen(false);
+        }
+      });
+    })();
+  </script>
+  
+</body>
+</html>

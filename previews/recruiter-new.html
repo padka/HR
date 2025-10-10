@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Админка{% endblock %} · TG Bot Admin</title>
+  <title>Новый рекрутёр · TG Bot Admin</title>
   <link rel="icon" href="/static/favicon.ico">
   <script>
     (function () {
@@ -22,7 +22,7 @@
   </script>
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/build/main.css">
-  {% block extra_css %}{% endblock %}
+  
 </head>
 <body>
   <div class="app-shell">
@@ -38,25 +38,25 @@
         <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
           <ul class="nav-links">
             <li class="nav-links__item">
-              <a href="/" class="nav-link"{% if request.url.path == '/' %} aria-current="page"{% endif %}>Дашборд</a>
+              <a href="/" class="nav-link">Дашборд</a>
             </li>
             <li class="nav-links__item">
-              <a href="/recruiters" class="nav-link"{% if request.url.path.startswith('/recruiters') %} aria-current="page"{% endif %}>Рекрутёры</a>
+              <a href="/recruiters" class="nav-link" aria-current="page">Рекрутёры</a>
             </li>
             <li class="nav-links__item">
-              <a href="/cities" class="nav-link"{% if request.url.path.startswith('/cities') %} aria-current="page"{% endif %}>Города</a>
+              <a href="/cities" class="nav-link">Города</a>
             </li>
             <li class="nav-links__item">
-              <a href="/slots" class="nav-link"{% if request.url.path.startswith('/slots') %} aria-current="page"{% endif %}>Слоты</a>
+              <a href="/slots" class="nav-link">Слоты</a>
             </li>
             <li class="nav-links__item">
-              <a href="/candidates" class="nav-link"{% if request.url.path.startswith('/candidates') %} aria-current="page"{% endif %}>Кандидаты</a>
+              <a href="/candidates" class="nav-link">Кандидаты</a>
             </li>
             <li class="nav-links__item">
-              <a href="/templates" class="nav-link"{% if request.url.path.startswith('/templates') %} aria-current="page"{% endif %}>Шаблоны</a>
+              <a href="/templates" class="nav-link">Шаблоны</a>
             </li>
             <li class="nav-links__item">
-              <a href="/questions" class="nav-link"{% if request.url.path.startswith('/questions') %} aria-current="page"{% endif %}>Вопросы</a>
+              <a href="/questions" class="nav-link">Вопросы</a>
             </li>
           </ul>
         </nav>
@@ -65,14 +65,163 @@
             <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
             <span class="theme-toggle__label">Тёмная тема</span>
           </button>
-          <span class="topbar__badge">{{ request.url.hostname or 'localhost' }}</span>
+          <span class="topbar__badge">demo.local</span>
         </div>
       </div>
     </header>
     <div class="topbar__scrim" data-topbar-scrim></div>
     <main class="app-main">
       <div class="container">
-        {% block content %}{% endblock %}
+        
+
+
+
+<section class="form-shell glass-card">
+  <header class="form-shell__header">
+    
+    <div class="form-shell__heading">
+      <h1 class="form-shell__title">Новый рекрутёр</h1>
+      <p class="form-shell__description">Создайте запись, чтобы бот мог назначать встречи.</p>
+    </div>
+    
+  </header>
+  <form class="form-shell__form " id="recForm" action="/recruiters/create" method="post" autocomplete="off">
+    <div class="form-shell__body">
+      
+  <section class="form-shell__section">
+  <div class="form-shell__section-header">
+    <h2 class="form-shell__section-title">Основные данные</h2>
+    
+  </div>
+  <div class="form-shell__section-content">
+    
+    <div class="form-grid form-grid--two">
+      <label class="form-field">
+  <span class="form-field__label">Имя</span>
+  <div class="form-field__surface">
+    
+        <input id="name" type="text" name="name" value="" placeholder="Михаил" required>
+      
+  </div>
+  
+</label>
+      <label class="form-field">
+  <span class="form-field__label">Регион</span>
+  <div class="form-field__surface">
+    
+        
+        <select id="tz" name="tz" required>
+          
+            <option value="Europe/Moscow" selected>
+              UTC+03:00 (Europe/Moscow)
+            </option>
+          
+            <option value="Europe/Samara" >
+              UTC+04:00 (Europe/Samara)
+            </option>
+          
+            <option value="Asia/Yekaterinburg" >
+              UTC+05:00 (Asia/Yekaterinburg)
+            </option>
+          
+        </select>
+      
+  </div>
+  <span class="form-field__hint">Определяет локальное время рекрутёра при создании слотов</span>
+</label>
+    </div>
+    <div class="form-grid form-grid--two">
+      <label class="form-field">
+  <span class="form-field__label">Ссылка на Телемост</span>
+  <div class="form-field__surface">
+    
+        <input id="telemost" type="url" name="telemost" value="">
+      
+  </div>
+  <span class="form-field__hint">Например: https://telemost.yandex.ru/j/XXXXX</span>
+</label>
+      <label class="form-field">
+  <span class="form-field__label">Telegram chat_id</span>
+  <div class="form-field__surface">
+    
+        <input id="tg_chat_id" type="number" name="tg_chat_id" value="" min="1" step="1" placeholder="7588303412">
+      
+  </div>
+  <span class="form-field__hint">Можно оставить пустым, если чат ещё не связан</span>
+</label>
+    </div>
+  
+  </div>
+</section>
+
+  <section class="form-shell__section">
+  <div class="form-shell__section-header">
+    <h2 class="form-shell__section-title">Ответственные города</h2>
+    <p class="form-shell__section-hint">Выберите несколько — бот будет назначать им заявки</p>
+  </div>
+  <div class="form-shell__section-content">
+    
+    <div class="choice-grid" role="group" aria-label="Ответственные города">
+      
+        <label class="choice-tile">
+          
+          <input type="checkbox" name="cities" value="1" >
+          <span class="choice-tile__title">Москва</span>
+          <span class="choice-tile__meta">Europe/Moscow</span>
+        </label>
+      
+        <label class="choice-tile">
+          
+          <input type="checkbox" name="cities" value="2" >
+          <span class="choice-tile__title">Казань</span>
+          <span class="choice-tile__meta">Europe/Moscow</span>
+        </label>
+      
+    </div>
+  
+  </div>
+</section>
+
+  <label class="form-field">
+  <span class="form-field__label">Статус</span>
+  <div class="form-field__surface">
+    
+    <label class="form-switch">
+  <input type="checkbox" value="1" id="active" name="active" checked>
+  <span class="form-switch__track" aria-hidden="true">
+    <span class="form-switch__thumb"></span>
+  </span>
+  
+    <span class="form-switch__label">Активен</span>
+  
+  
+</label>
+  
+  </div>
+  
+</label>
+
+    </div>
+    
+      <footer class="form-shell__footer">
+        <div class="form-shell__actions">
+          
+            
+            
+              <button type="submit" class="btn btn--primary" value="">Сохранить</button>
+            
+          
+            
+            
+              <a href="/recruiters" class="btn btn--ghost">Отмена</a>
+            
+          
+        </div>
+      </footer>
+    
+  </form>
+</section>
+
       </div>
     </main>
   </div>
@@ -174,6 +323,6 @@
       });
     })();
   </script>
-  {% block extra_js %}{% endblock %}
+  
 </body>
 </html>

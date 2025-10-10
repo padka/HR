@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Админка{% endblock %} · TG Bot Admin</title>
+  <title>Дашборд · TG Bot Admin</title>
   <link rel="icon" href="/static/favicon.ico">
   <script>
     (function () {
@@ -22,7 +22,7 @@
   </script>
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/build/main.css">
-  {% block extra_css %}{% endblock %}
+  
 </head>
 <body>
   <div class="app-shell">
@@ -38,25 +38,25 @@
         <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
           <ul class="nav-links">
             <li class="nav-links__item">
-              <a href="/" class="nav-link"{% if request.url.path == '/' %} aria-current="page"{% endif %}>Дашборд</a>
+              <a href="/" class="nav-link" aria-current="page">Дашборд</a>
             </li>
             <li class="nav-links__item">
-              <a href="/recruiters" class="nav-link"{% if request.url.path.startswith('/recruiters') %} aria-current="page"{% endif %}>Рекрутёры</a>
+              <a href="/recruiters" class="nav-link">Рекрутёры</a>
             </li>
             <li class="nav-links__item">
-              <a href="/cities" class="nav-link"{% if request.url.path.startswith('/cities') %} aria-current="page"{% endif %}>Города</a>
+              <a href="/cities" class="nav-link">Города</a>
             </li>
             <li class="nav-links__item">
-              <a href="/slots" class="nav-link"{% if request.url.path.startswith('/slots') %} aria-current="page"{% endif %}>Слоты</a>
+              <a href="/slots" class="nav-link">Слоты</a>
             </li>
             <li class="nav-links__item">
-              <a href="/candidates" class="nav-link"{% if request.url.path.startswith('/candidates') %} aria-current="page"{% endif %}>Кандидаты</a>
+              <a href="/candidates" class="nav-link">Кандидаты</a>
             </li>
             <li class="nav-links__item">
-              <a href="/templates" class="nav-link"{% if request.url.path.startswith('/templates') %} aria-current="page"{% endif %}>Шаблоны</a>
+              <a href="/templates" class="nav-link">Шаблоны</a>
             </li>
             <li class="nav-links__item">
-              <a href="/questions" class="nav-link"{% if request.url.path.startswith('/questions') %} aria-current="page"{% endif %}>Вопросы</a>
+              <a href="/questions" class="nav-link">Вопросы</a>
             </li>
           </ul>
         </nav>
@@ -65,14 +65,131 @@
             <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
             <span class="theme-toggle__label">Тёмная тема</span>
           </button>
-          <span class="topbar__badge">{{ request.url.hostname or 'localhost' }}</span>
+          <span class="topbar__badge">demo.local</span>
         </div>
       </div>
     </header>
     <div class="topbar__scrim" data-topbar-scrim></div>
     <main class="app-main">
       <div class="container">
-        {% block content %}{% endblock %}
+        
+<section class="dashboard-hero">
+  <div class="hero__copy">
+    <p class="hero__eyebrow">TG Bot · HR Operations</p>
+    <h1 class="hero__title">Центр управления рекрутингом</h1>
+    <p class="hero__description">Следите за воронкой кандидатов, слотами и продуктивностью команды в режиме реального времени.</p>
+    <div class="hero__cta-group">
+      <a class="btn btn-primary" href="/candidates">К кандидатам</a>
+      <a class="btn btn-secondary" href="/recruiters">Управление рекрутёрами</a>
+    </div>
+  </div>
+  <div class="hero__actions">
+    <p class="hero__actions-title">Быстрые действия</p>
+    <div class="hero__cta-secondary">
+      <a class="btn btn-ghost" href="/slots/new">Создать слот</a>
+      <a class="btn btn-ghost" href="/templates/new">Добавить шаблон</a>
+      <a class="btn btn-ghost" href="/questions/new">Новый вопрос</a>
+    </div>
+  </div>
+</section>
+
+<section class="dashboard-metrics">
+  <article class="metric-card glass-card">
+    <span class="metric-card__label">Рекрутёры</span>
+    <span class="metric-card__value">5</span>
+    <span class="metric-card__meta">Активных городов: 8</span>
+  </article>
+  <article class="metric-card glass-card">
+    <span class="metric-card__label">Слоты</span>
+    <span class="metric-card__value">24</span>
+    <span class="metric-card__meta">Свободно: 8 • В ожидании: 5 • Забронировано: 9</span>
+  </article>
+  <article class="metric-card glass-card">
+    <span class="metric-card__label">Тест 1</span>
+    <span class="metric-card__value">156</span>
+    <span class="metric-card__meta">Отказы: 18 (11.5%)</span>
+  </article>
+  <article class="metric-card glass-card">
+    <span class="metric-card__label">Интеграция бота</span>
+    <span class="metric-card__value">PRODUCTION</span>
+    <span class="metric-card__meta">Готов к работе: да</span>
+  </article>
+</section>
+
+<section class="surface">
+  <header class="section-header">
+    <h2 class="section-title">Состояние интеграции бота</h2>
+    <p class="section-hint">Текущее состояние подключения к рантайму и конфигурации.</p>
+  </header>
+  <div class="list-table-wrapper">
+    <table class="list-table">
+      <tbody>
+        <tr>
+          <th scope="row">Конфигурация включена</th>
+          <td>Да</td>
+        </tr>
+        <tr>
+          <th scope="row">Рантайм активен</th>
+          <td>Да</td>
+        </tr>
+        <tr>
+          <th scope="row">Готовность сервиса</th>
+          <td>Да</td>
+        </tr>
+        <tr>
+          <th scope="row">Состояние здоровья</th>
+          <td>ok</td>
+        </tr>
+        <tr>
+          <th scope="row">Режим</th>
+          <td>production</td>
+        </tr>
+        <tr>
+          <th scope="row">Последнее обновление</th>
+          <td>10.10.2025 10:56</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="surface">
+  <header class="section-header">
+    <h2 class="section-title">Статистика теста 1</h2>
+    <p class="section-hint">Распределение отказов и общее количество прохождений.</p>
+  </header>
+  
+    <div class="list-table-wrapper">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th scope="col">Причина отказа</th>
+            <th scope="col">Количество</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+            <tr>
+              <td>Не пришёл на интервью</td>
+              <td>7</td>
+            </tr>
+          
+            <tr>
+              <td>Не прошёл тест</td>
+              <td>5</td>
+            </tr>
+          
+            <tr>
+              <td>Отказался</td>
+              <td>6</td>
+            </tr>
+          
+        </tbody>
+      </table>
+    </div>
+  
+</section>
+
       </div>
     </main>
   </div>
@@ -174,6 +291,6 @@
       });
     })();
   </script>
-  {% block extra_js %}{% endblock %}
+  
 </body>
 </html>

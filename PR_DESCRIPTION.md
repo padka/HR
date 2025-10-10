@@ -1,18 +1,17 @@
-# Liquid Glass UI Migration
-
+# Liquid Glass UI Toolkit
 ## Summary
-- Introduced design tokens (`tokens.css`) with light/dark palettes, blur and noise presets.
-- Added Tailwind toolchain with custom config, generated `globals.css` to restyle navigation, tables, forms and feedback surfaces.
-- Documented design principles (`DesignSystem.md`) and audit findings (`Audit.md`).
-
+- Перенесена сборка CSS на `static/css/main.css` → `static/build/main.css`, обновлены токены и Tailwind для Apple Liquid Glass.
+- Добавлены документы `docs/Audit.md` и `docs/DesignSystem.md` с анализом проблем и системой токенов.
+- Реализован офлайн-демо `app_demo.py`, генератор превью и тест Playwright для автоскриншотов.
+- Настроены Makefile-команды и GitHub Actions workflow для сборки CSS, превью и скриншотов.
 ## Rollout
-1. Install Node dev deps: `npm install`.
-2. Build CSS bundle: `npm run build:css` (generates `backend/apps/admin_ui/static/css/globals.css`).
-3. Restart FastAPI app to load new assets.
-
+1. Установить зависимости: `make setup` (Python dev extras + npm + playwright).
+2. Собрать стили: `make ui` (генерирует `backend/apps/admin_ui/static/build/main.css`).
+3. Запустить демо: `make demo` (FastAPI на http://127.0.0.1:8000).
+4. Сгенерировать превью/скриншоты: `make previews` и `make screens`.
 ## Regression checklist
-- [ ] Dashboard metrics and tables render with glass layering.
-- [ ] Recruiter/cards, list toolbars and filters keep spacing in both themes.
-- [ ] Forms support keyboard navigation and visible focus states.
-- [ ] Toasts/modals inherit glass styling.
-- [ ] Theme toggle persists preference across reloads.
+- [ ] Dashboard метрики и карточки отображаются со стеклянными слоями в обеих темах.
+- [ ] Списки/таблицы имеют липкий заголовок, зебру и сортировку.
+- [ ] Формы показывают акцентный focus, ошибки и переключатели тем.
+- [ ] Модалки/тосты анимируются c cubic-bezier(0.16, 1, 0.3, 1).
+- [ ] Генерация превью и скриншотов проходит без обращения к боевому бэкенду.

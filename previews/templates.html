@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Шаблоны сообщений · TG Bot Admin</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      try {
+        const stored = window.localStorage.getItem(storageKey);
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored || (prefersDark ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      } catch (err) {
+        document.documentElement.dataset.theme = 'light';
+        document.documentElement.style.colorScheme = 'light';
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/build/main.css">
+  
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar" data-topbar>
+      <div class="topbar__content">
+        <button class="topbar__burger" type="button" aria-label="Открыть меню" aria-expanded="false" data-topbar-toggle>
+          <span aria-hidden="true">☰</span>
+        </button>
+        <a class="topbar__brand" href="/">
+          <span>TG</span>
+          Bot Admin
+        </a>
+        <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
+          <ul class="nav-links">
+            <li class="nav-links__item">
+              <a href="/" class="nav-link">Дашборд</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/recruiters" class="nav-link">Рекрутёры</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/cities" class="nav-link">Города</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/slots" class="nav-link">Слоты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/candidates" class="nav-link">Кандидаты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/templates" class="nav-link" aria-current="page">Шаблоны</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/questions" class="nav-link">Вопросы</a>
+            </li>
+          </ul>
+        </nav>
+        <div class="topbar__actions">
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Переключить тему">
+            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+            <span class="theme-toggle__label">Тёмная тема</span>
+          </button>
+          <span class="topbar__badge">demo.local</span>
+        </div>
+      </div>
+    </header>
+    <div class="topbar__scrim" data-topbar-scrim></div>
+    <main class="app-main">
+      <div class="container">
+        
+<section class="page">
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">Шаблоны сообщений</h1>
+      <p class="page-description">
+        Управляйте текстами, которые бот отправляет кандидату на каждом шаге процесса. Любые изменения
+        сразу становятся доступными боту и автоматической рассылке.
+      </p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn-primary" href="/templates/new">Новый шаблон</a>
+    </div>
+  </header>
+
+  <div class="card glass grain">
+    <h2 class="section-title">Этапы коммуникации</h2>
+    <p class="section-subtitle">Ключевые шаги, на которых кандидат взаимодействует с ботом.</p>
+    <ol class="stage-flow muted">
+      <li><strong>Шаг 1.</strong> Приглашение выбрать время для видеоинтервью.</li>
+      <li><strong>Шаг 2.</strong> Напоминание за 2 часа до интервью с подтверждением.</li>
+      <li><strong>Шаг 3.</strong> Приглашение на ознакомительный день после согласования даты.</li>
+      <li><strong>Шаг 4.</strong> Напоминание и подтверждение явки за 2 часа до ознакомительного дня.</li>
+    </ol>
+    <div class="badge info-badge">
+      
+      Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>,
+      <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>,
+      <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
+      
+    </div>
+  </div>
+
+  <nav class="template-tabs" role="tablist" aria-label="Типы шаблонов">
+    <button type="button" class="template-tab is-active" data-tab-target="global">Глобальные шаблоны</button>
+    <button type="button" class="template-tab" data-tab-target="cities">Шаблоны городов</button>
+  </nav>
+
+  <section class="card glass grain template-panel is-active" data-panel="global">
+    <header class="template-panel__header">
+      <div>
+        <h3 class="card-title">Глобальные шаблоны</h3>
+        <p class="page-description">Используются, если для города нет собственного текста.</p>
+      </div>
+    </header>
+    <div class="list-table-wrapper">
+      <table class="list-table template-table" data-template-table="global">
+        <thead>
+          <tr>
+            <th scope="col">Этап</th>
+            <th scope="col" class="is-optional">Описание</th>
+            <th scope="col">Текст</th>
+            <th scope="col" class="col-align-end">Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+            
+            <tr
+              class="template-row is-custom"
+              data-template-row
+              data-stage="invite"
+              data-stage-title="Приглашение"
+              data-city=""
+              data-default="Добрый день! Выберите время интервью по ссылке..."
+              data-current="Здравствуйте! Выберите удобный слот по ссылке {{slot_datetime_local}}."
+            >
+              <td data-label="Этап">
+                <div class="template-stage">
+                  <strong>Приглашение</strong>
+                  <span class="template-stage__key"><code class="text-mono">invite</code></span>
+                </div>
+              </td>
+              <td data-label="Описание" class="template-description is-optional">Предлагаем выбрать слот для интервью.</td>
+              <td data-label="Текст" class="template-cell">
+                <div class="template-preview" data-role="preview">Здравствуйте! Выберите удобный слот по ссылке {{slot_datetime_local}}.</div>
+                <div class="template-status-line">
+                  <span class="badge template-status template-status--custom" data-role="status">
+                    Свой текст
+                  </span>
+                  <span class="badge muted template-save-indicator" data-role="save-indicator" hidden>Сохранено</span>
+                </div>
+                <textarea
+                  class="template-editor"
+                  data-role="editor"
+                  data-default="Добрый день! Выберите время интервью по ссылке..."
+                  rows="6"
+                  hidden
+                >Здравствуйте! Выберите удобный слот по ссылке {{slot_datetime_local}}.</textarea>
+              </td>
+              <td data-label="Действия" class="col-align-end">
+                <div class="template-actions" data-role="view-actions">
+                  <button type="button" class="btn btn-soft btn--small" data-action="edit">Редактировать</button>
+                  <button type="button" class="btn btn-ghost btn--small template-action--danger" data-action="clear">Удалить</button>
+                </div>
+                <div class="template-actions" data-role="edit-actions" hidden>
+                  <button type="button" class="btn btn-primary btn--small" data-action="save">Сохранить</button>
+                  <button type="button" class="btn btn-soft btn--small" data-action="cancel">Отмена</button>
+                </div>
+              </td>
+            </tr>
+          
+            
+            <tr
+              class="template-row"
+              data-template-row
+              data-stage="reminder"
+              data-stage-title="Напоминание"
+              data-city=""
+              data-default="Напоминаем про интервью сегодня в {{slot_time_local}}."
+              data-current="None"
+            >
+              <td data-label="Этап">
+                <div class="template-stage">
+                  <strong>Напоминание</strong>
+                  <span class="template-stage__key"><code class="text-mono">reminder</code></span>
+                </div>
+              </td>
+              <td data-label="Описание" class="template-description is-optional">Сообщение за 2 часа до встречи.</td>
+              <td data-label="Текст" class="template-cell">
+                <div class="template-preview" data-role="preview">Напоминаем про интервью сегодня в {{slot_time_local}}.</div>
+                <div class="template-status-line">
+                  <span class="badge template-status" data-role="status">
+                    По умолчанию
+                  </span>
+                  <span class="badge muted template-save-indicator" data-role="save-indicator" hidden>Сохранено</span>
+                </div>
+                <textarea
+                  class="template-editor"
+                  data-role="editor"
+                  data-default="Напоминаем про интервью сегодня в {{slot_time_local}}."
+                  rows="6"
+                  hidden
+                ></textarea>
+              </td>
+              <td data-label="Действия" class="col-align-end">
+                <div class="template-actions" data-role="view-actions">
+                  <button type="button" class="btn btn-soft btn--small" data-action="edit">Редактировать</button>
+                  <button type="button" class="btn btn-ghost btn--small template-action--danger" data-action="clear">Удалить</button>
+                </div>
+                <div class="template-actions" data-role="edit-actions" hidden>
+                  <button type="button" class="btn btn-primary btn--small" data-action="save">Сохранить</button>
+                  <button type="button" class="btn btn-soft btn--small" data-action="cancel">Отмена</button>
+                </div>
+              </td>
+            </tr>
+          
+            
+            <tr
+              class="template-row"
+              data-template-row
+              data-stage="followup"
+              data-stage-title="Подтверждение"
+              data-city=""
+              data-default="Подтвердите участие, ответив на это сообщение."
+              data-current="None"
+            >
+              <td data-label="Этап">
+                <div class="template-stage">
+                  <strong>Подтверждение</strong>
+                  <span class="template-stage__key"><code class="text-mono">followup</code></span>
+                </div>
+              </td>
+              <td data-label="Описание" class="template-description is-optional">Просим подтвердить участие.</td>
+              <td data-label="Текст" class="template-cell">
+                <div class="template-preview" data-role="preview">Подтвердите участие, ответив на это сообщение.</div>
+                <div class="template-status-line">
+                  <span class="badge template-status" data-role="status">
+                    По умолчанию
+                  </span>
+                  <span class="badge muted template-save-indicator" data-role="save-indicator" hidden>Сохранено</span>
+                </div>
+                <textarea
+                  class="template-editor"
+                  data-role="editor"
+                  data-default="Подтвердите участие, ответив на это сообщение."
+                  rows="6"
+                  hidden
+                ></textarea>
+              </td>
+              <td data-label="Действия" class="col-align-end">
+                <div class="template-actions" data-role="view-actions">
+                  <button type="button" class="btn btn-soft btn--small" data-action="edit">Редактировать</button>
+                  <button type="button" class="btn btn-ghost btn--small template-action--danger" data-action="clear">Удалить</button>
+                </div>
+                <div class="template-actions" data-role="edit-actions" hidden>
+                  <button type="button" class="btn btn-primary btn--small" data-action="save">Сохранить</button>
+                  <button type="button" class="btn btn-soft btn--small" data-action="cancel">Отмена</button>
+                </div>
+              </td>
+            </tr>
+          
+            
+            <tr
+              class="template-row is-custom"
+              data-template-row
+              data-stage="welcome_day"
+              data-stage-title="Ознакомительный день"
+              data-city=""
+              data-default="Мы ждём вас на ознакомительный день {{slot_date_local}}."
+              data-current="Спасибо за интервью! Ждём вас {{slot_date_local}} по адресу {{address}}."
+            >
+              <td data-label="Этап">
+                <div class="template-stage">
+                  <strong>Ознакомительный день</strong>
+                  <span class="template-stage__key"><code class="text-mono">welcome_day</code></span>
+                </div>
+              </td>
+              <td data-label="Описание" class="template-description is-optional">Информация после прохождения интервью.</td>
+              <td data-label="Текст" class="template-cell">
+                <div class="template-preview" data-role="preview">Спасибо за интервью! Ждём вас {{slot_date_local}} по адресу {{address}}.</div>
+                <div class="template-status-line">
+                  <span class="badge template-status template-status--custom" data-role="status">
+                    Свой текст
+                  </span>
+                  <span class="badge muted template-save-indicator" data-role="save-indicator" hidden>Сохранено</span>
+                </div>
+                <textarea
+                  class="template-editor"
+                  data-role="editor"
+                  data-default="Мы ждём вас на ознакомительный день {{slot_date_local}}."
+                  rows="6"
+                  hidden
+                >Спасибо за интервью! Ждём вас {{slot_date_local}} по адресу {{address}}.</textarea>
+              </td>
+              <td data-label="Действия" class="col-align-end">
+                <div class="template-actions" data-role="view-actions">
+                  <button type="button" class="btn btn-soft btn--small" data-action="edit">Редактировать</button>
+                  <button type="button" class="btn btn-ghost btn--small template-action--danger" data-action="clear">Удалить</button>
+                </div>
+                <div class="template-actions" data-role="edit-actions" hidden>
+                  <button type="button" class="btn btn-primary btn--small" data-action="save">Сохранить</button>
+                  <button type="button" class="btn btn-soft btn--small" data-action="cancel">Отмена</button>
+                </div>
+              </td>
+            </tr>
+          
+        </tbody>
+      </table>
+    </div>
+    <footer class="template-hint muted">Удаление очищает текст и возвращает стандартный шаблон.</footer>
+  </section>
+
+  <section class="card glass grain template-panel" data-panel="cities">
+    <header class="template-panel__header">
+      <div>
+        <h3 class="card-title">Шаблоны по городам</h3>
+        <p class="page-description">Локальные тексты перекрывают глобальные шаблоны.</p>
+      </div>
+      
+        <div class="template-filters">
+          <label class="form-field form-field--wide">
+            <span>Город</span>
+            <select id="city-filter" class="template-filter">
+              <option value="">Все города</option>
+              
+                <option value="1">Москва</option>
+              
+            </select>
+          </label>
+        </div>
+      
+    </header>
+    
+      <div class="list-table-wrapper">
+        <table class="list-table template-table" data-template-table="cities">
+          <thead>
+            <tr>
+              <th scope="col">Город</th>
+              <th scope="col">Этап</th>
+              <th scope="col">Текст</th>
+              <th scope="col" class="col-align-end">Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+              
+                
+                <tr
+                  class="template-row is-custom"
+                  data-template-row
+                  data-city="1"
+                  data-city-name="Москва"
+                  data-stage="invite"
+                  data-stage-title="Приглашение"
+                  data-default="Добрый день! Выберите время интервью по ссылке..."
+                  data-current="Московская команда приглашает вас на интервью {{slot_datetime_local}}."
+                >
+                  <td data-label="Город">
+                    <div class="template-city">
+                      <strong>Москва</strong>
+                      <span class="badge" title="Часовой пояс">Europe/Moscow</span>
+                    </div>
+                  </td>
+                  <td data-label="Этап">
+                    <div class="template-stage">
+                      <strong>Приглашение</strong>
+                      <span class="template-stage__key"><code class="text-mono">invite</code></span>
+                    </div>
+                  </td>
+                  <td data-label="Текст" class="template-cell">
+                    <div class="template-preview" data-role="preview">Московская команда приглашает вас на интервью {{slot_datetime_local}}.</div>
+                    <div class="template-status-line">
+                      <span class="badge template-status template-status--custom" data-role="status">
+                        Свой текст
+                      </span>
+                      <span class="badge muted template-save-indicator" data-role="save-indicator" hidden>Сохранено</span>
+                    </div>
+                    <textarea
+                      class="template-editor"
+                      data-role="editor"
+                      data-default="Добрый день! Выберите время интервью по ссылке..."
+                      rows="6"
+                      hidden
+                    >Московская команда приглашает вас на интервью {{slot_datetime_local}}.</textarea>
+                  </td>
+                  <td data-label="Действия" class="col-align-end">
+                    <div class="template-actions" data-role="view-actions">
+                      <button type="button" class="btn btn-soft btn--small" data-action="edit">Редактировать</button>
+                      <button type="button" class="btn btn-ghost btn--small template-action--danger" data-action="clear">Удалить</button>
+                    </div>
+                    <div class="template-actions" data-role="edit-actions" hidden>
+                      <button type="button" class="btn btn-primary btn--small" data-action="save">Сохранить</button>
+                      <button type="button" class="btn btn-soft btn--small" data-action="cancel">Отмена</button>
+                    </div>
+                  </td>
+                </tr>
+              
+                
+                <tr
+                  class="template-row"
+                  data-template-row
+                  data-city="1"
+                  data-city-name="Москва"
+                  data-stage="reminder"
+                  data-stage-title="Напоминание"
+                  data-default="Напоминаем про интервью сегодня в {{slot_time_local}}."
+                  data-current="None"
+                >
+                  <td data-label="Город">
+                    <div class="template-city">
+                      <strong>Москва</strong>
+                      <span class="badge" title="Часовой пояс">Europe/Moscow</span>
+                    </div>
+                  </td>
+                  <td data-label="Этап">
+                    <div class="template-stage">
+                      <strong>Напоминание</strong>
+                      <span class="template-stage__key"><code class="text-mono">reminder</code></span>
+                    </div>
+                  </td>
+                  <td data-label="Текст" class="template-cell">
+                    <div class="template-preview" data-role="preview">Напоминаем про интервью сегодня в {{slot_time_local}}.</div>
+                    <div class="template-status-line">
+                      <span class="badge template-status" data-role="status">
+                        По умолчанию
+                      </span>
+                      <span class="badge muted template-save-indicator" data-role="save-indicator" hidden>Сохранено</span>
+                    </div>
+                    <textarea
+                      class="template-editor"
+                      data-role="editor"
+                      data-default="Напоминаем про интервью сегодня в {{slot_time_local}}."
+                      rows="6"
+                      hidden
+                    ></textarea>
+                  </td>
+                  <td data-label="Действия" class="col-align-end">
+                    <div class="template-actions" data-role="view-actions">
+                      <button type="button" class="btn btn-soft btn--small" data-action="edit">Редактировать</button>
+                      <button type="button" class="btn btn-ghost btn--small template-action--danger" data-action="clear">Удалить</button>
+                    </div>
+                    <div class="template-actions" data-role="edit-actions" hidden>
+                      <button type="button" class="btn btn-primary btn--small" data-action="save">Сохранить</button>
+                      <button type="button" class="btn btn-soft btn--small" data-action="cancel">Отмена</button>
+                    </div>
+                  </td>
+                </tr>
+              
+            
+          </tbody>
+        </table>
+      </div>
+      <div class="alert mt-sm" data-role="city-empty" hidden>Для выбранного города нет шаблонов.</div>
+      <footer class="template-hint muted">Удаление очищает текст и включает глобальный шаблон.</footer>
+    
+  </section>
+
+  <section class="card glass grain template-table-card">
+    <h2 class="section-title">Индивидуальные шаблоны</h2>
+    <p class="section-subtitle">Свободные сообщения, которые можно использовать в интеграциях и ручных рассылках.</p>
+
+    
+      <div class="alert mt-sm">Дополнительных шаблонов пока нет. Создайте первый, чтобы использовать его в интеграциях.</div>
+    
+  </section>
+</section>
+
+<script>
+(function () {
+  const tabButtons = Array.from(document.querySelectorAll('[data-tab-target]'));
+  const panels = Array.from(document.querySelectorAll('[data-panel]'));
+  const rows = Array.from(document.querySelectorAll('[data-template-row]'));
+  const cityFilter = document.getElementById('city-filter');
+  const cityEmptyState = document.querySelector('[data-role="city-empty"]');
+
+  function activateTab(target) {
+    tabButtons.forEach((btn) => {
+      const isActive = btn.dataset.tabTarget === target;
+      btn.classList.toggle('is-active', isActive);
+      btn.setAttribute('aria-selected', String(isActive));
+    });
+    panels.forEach((panel) => {
+      panel.classList.toggle('is-active', panel.dataset.panel === target);
+    });
+  }
+
+  tabButtons.forEach((btn) => {
+    btn.addEventListener('click', () => activateTab(btn.dataset.tabTarget));
+  });
+
+  function updateRowPreview(row, value) {
+    const preview = row.querySelector('[data-role="preview"]');
+    const status = row.querySelector('[data-role="status"]');
+    const indicator = row.querySelector('[data-role="save-indicator"]');
+    const defaultText = row.dataset.default || '';
+    const trimmed = value.trim();
+    const hasCustom = Boolean(trimmed);
+    const text = hasCustom ? trimmed : (defaultText || '');
+    row.dataset.current = value;
+    row.classList.toggle('is-custom', hasCustom);
+    if (preview) {
+      preview.textContent = text || '—';
+    }
+    if (status) {
+      status.textContent = hasCustom ? 'Свой текст' : 'По умолчанию';
+      status.classList.toggle('template-status--custom', hasCustom);
+    }
+    if (indicator) {
+      indicator.hidden = true;
+      indicator.classList.remove('is-ok', 'is-error');
+    }
+  }
+
+  function setEditing(row, editing) {
+    const editor = row.querySelector('[data-role="editor"]');
+    const viewActions = row.querySelector('[data-role="view-actions"]');
+    const editActions = row.querySelector('[data-role="edit-actions"]');
+    row.classList.toggle('is-editing', editing);
+    if (editor) {
+      editor.hidden = !editing;
+      if (editing) {
+        editor.focus();
+        editor.setSelectionRange(editor.value.length, editor.value.length);
+      }
+    }
+    if (viewActions) viewActions.hidden = editing;
+    if (editActions) editActions.hidden = !editing;
+  }
+
+  function setLoading(row, loading) {
+    row.classList.toggle('is-loading', loading);
+    row.querySelectorAll('button').forEach((btn) => {
+      btn.disabled = loading;
+    });
+  }
+
+  async function persistRow(row, nextValue) {
+    const key = row.dataset.stage;
+    if (!key) return false;
+    const cityId = row.dataset.city;
+    const indicator = row.querySelector('[data-role="save-indicator"]');
+    const payload = {
+      city_id: cityId ? cityId : null,
+      templates: { [key]: nextValue.trim() },
+    };
+
+    if (indicator) {
+      indicator.hidden = false;
+      indicator.textContent = 'Сохранение…';
+      indicator.classList.remove('is-ok', 'is-error');
+    }
+
+    setLoading(row, true);
+    try {
+      const response = await fetch('/templates/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data || data.ok !== true) {
+        throw new Error(data && data.error ? data.error : 'Ошибка сохранения');
+      }
+      if (indicator) {
+        indicator.textContent = 'Сохранено';
+        indicator.classList.add('is-ok');
+        window.setTimeout(() => {
+          indicator.hidden = true;
+          indicator.classList.remove('is-ok');
+        }, 1400);
+      }
+      updateRowPreview(row, nextValue);
+      setEditing(row, false);
+      return true;
+    } catch (err) {
+      if (indicator) {
+        indicator.textContent = 'Ошибка';
+        indicator.classList.add('is-error');
+      }
+      console.error(err);
+      return false;
+    } finally {
+      setLoading(row, false);
+    }
+  }
+
+  function handleAction(event) {
+    const actionEl = event.target.closest('[data-action]');
+    if (!actionEl) return;
+    const row = actionEl.closest('[data-template-row]');
+    if (!row) return;
+
+    const editor = row.querySelector('[data-role="editor"]');
+    const action = actionEl.dataset.action;
+    if (action === 'edit') {
+      if (editor) editor.value = row.dataset.current || '';
+      setEditing(row, true);
+      return;
+    }
+    if (action === 'cancel') {
+      if (editor) editor.value = row.dataset.current || '';
+      setEditing(row, false);
+      return;
+    }
+    if (action === 'save') {
+      if (!editor) return;
+      const value = editor.value || '';
+      void persistRow(row, value);
+      return;
+    }
+    if (action === 'clear') {
+      const stageTitle = row.dataset.stageTitle || 'шаг';
+      const cityName = row.dataset.cityName;
+      const message = cityName
+        ? `Удалить текст для города «${cityName}» (${stageTitle}) и использовать глобальный шаблон?`
+        : `Удалить глобальный текст для «${stageTitle}» и вернуться к стандартному шаблону?`;
+      if (!window.confirm(message)) {
+        return;
+      }
+      if (editor) editor.value = '';
+      void persistRow(row, '');
+    }
+  }
+
+  document.addEventListener('click', handleAction);
+
+  function applyCityFilter() {
+    if (!cityFilter) return;
+    const value = cityFilter.value;
+    const table = document.querySelector('[data-template-table="cities"]');
+    if (!table) return;
+    const tableRows = Array.from(table.querySelectorAll('[data-template-row]'));
+    let visibleCount = 0;
+    tableRows.forEach((row) => {
+      const matches = !value || row.dataset.city === value;
+      row.hidden = !matches;
+      if (matches) visibleCount += 1;
+    });
+    if (cityEmptyState) {
+      cityEmptyState.hidden = visibleCount !== 0;
+    }
+  }
+
+  if (cityFilter) {
+    cityFilter.addEventListener('change', applyCityFilter);
+  }
+
+  rows.forEach((row) => {
+    updateRowPreview(row, row.dataset.current || '');
+  });
+
+  applyCityFilter();
+})();
+</script>
+
+      </div>
+    </main>
+  </div>
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      const docEl = document.documentElement;
+      const toggle = document.getElementById('theme-toggle');
+      const nav = document.querySelector('[data-topbar-nav]');
+      const burger = document.querySelector('[data-topbar-toggle]');
+      const scrim = document.querySelector('[data-topbar-scrim]');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+      function storeTheme(theme) {
+        try {
+          window.localStorage.setItem(storageKey, theme);
+        } catch (err) {
+          /* noop */
+        }
+      }
+
+      function getStoredTheme() {
+        try {
+          return window.localStorage.getItem(storageKey);
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function applyTheme(theme, persist = true) {
+        const value = theme === 'dark' ? 'dark' : 'light';
+        docEl.dataset.theme = value;
+        docEl.style.colorScheme = value;
+        if (persist) {
+          storeTheme(value);
+        }
+        reflectTheme(value);
+      }
+
+      function reflectTheme(theme) {
+        if (!toggle) return;
+        const isDark = theme === 'dark';
+        toggle.setAttribute('aria-pressed', isDark);
+        toggle.querySelector('.theme-toggle__icon').textContent = isDark ? '🌞' : '🌙';
+        toggle.querySelector('.theme-toggle__label').textContent = isDark ? 'Светлая тема' : 'Тёмная тема';
+        toggle.title = isDark ? 'Переключить на светлую тему' : 'Переключить на тёмную тему';
+      }
+
+      applyTheme(getStoredTheme() || docEl.dataset.theme || (prefersDark.matches ? 'dark' : 'light'), false);
+
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const next = docEl.dataset.theme === 'dark' ? 'light' : 'dark';
+          applyTheme(next);
+        });
+      }
+
+      if (prefersDark && typeof prefersDark.addEventListener === 'function') {
+        prefersDark.addEventListener('change', (event) => {
+          if (!getStoredTheme()) {
+            applyTheme(event.matches ? 'dark' : 'light', false);
+          }
+        });
+      }
+
+      function setNavOpen(open) {
+        if (!nav || !burger) return;
+        nav.dataset.open = open ? 'true' : 'false';
+        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (scrim) {
+          scrim.dataset.open = open ? 'true' : 'false';
+        }
+      }
+
+      if (burger) {
+        burger.addEventListener('click', () => {
+          const next = nav && nav.dataset.open !== 'true';
+          setNavOpen(next);
+        });
+      }
+
+      if (scrim) {
+        scrim.addEventListener('click', () => setNavOpen(false));
+      }
+
+      if (nav) {
+        nav.addEventListener('click', (event) => {
+          const target = event.target;
+          if (window.innerWidth <= 768 && target instanceof HTMLElement && target.closest('a')) {
+            setNavOpen(false);
+          }
+        });
+      }
+
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+          setNavOpen(false);
+        }
+      });
+    })();
+  </script>
+  
+</body>
+</html>

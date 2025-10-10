@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вопросы · TG Bot Admin</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      try {
+        const stored = window.localStorage.getItem(storageKey);
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored || (prefersDark ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      } catch (err) {
+        document.documentElement.dataset.theme = 'light';
+        document.documentElement.style.colorScheme = 'light';
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/build/main.css">
+  
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar" data-topbar>
+      <div class="topbar__content">
+        <button class="topbar__burger" type="button" aria-label="Открыть меню" aria-expanded="false" data-topbar-toggle>
+          <span aria-hidden="true">☰</span>
+        </button>
+        <a class="topbar__brand" href="/">
+          <span>TG</span>
+          Bot Admin
+        </a>
+        <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
+          <ul class="nav-links">
+            <li class="nav-links__item">
+              <a href="/" class="nav-link">Дашборд</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/recruiters" class="nav-link">Рекрутёры</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/cities" class="nav-link">Города</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/slots" class="nav-link">Слоты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/candidates" class="nav-link">Кандидаты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/templates" class="nav-link">Шаблоны</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/questions" class="nav-link" aria-current="page">Вопросы</a>
+            </li>
+          </ul>
+        </nav>
+        <div class="topbar__actions">
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Переключить тему">
+            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+            <span class="theme-toggle__label">Тёмная тема</span>
+          </button>
+          <span class="topbar__badge">demo.local</span>
+        </div>
+      </div>
+    </header>
+    <div class="topbar__scrim" data-topbar-scrim></div>
+    <main class="app-main">
+      <div class="container">
+        
+<section class="page page--questions">
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">База вопросов</h1>
+      <p class="page-description">
+        Просматривайте и редактируйте вопросы для всех тестов. Выберите раздел ниже или пролистайте карточки.
+      </p>
+    </div>
+  </header>
+
+  
+    <nav class="questions-nav" aria-label="Навигация по тестам">
+      
+        <a class="questions-nav__chip" href="#test-test-1">
+          <strong>Оценка сервиса</strong>
+          <span>2 шт.</span>
+        </a>
+      
+        <a class="questions-nav__chip" href="#test-test-2">
+          <strong>Поведение в конфликте</strong>
+          <span>1 шт.</span>
+        </a>
+      
+    </nav>
+
+    
+      <section class="test-section" id="test-test-1" data-tilt>
+        <header class="test-section__header">
+          <div>
+            <h2 class="card-title">Оценка сервиса</h2>
+            <p class="test-section__hint">Идентификатор теста: <code>test-1</code></p>
+          </div>
+          <span class="badge">2 вопрос(ов)</span>
+        </header>
+
+        <div class="question-list">
+          
+            <article class="question-card" data-status="active">
+              <header class="question-card__header">
+                <div class="question-card__identity">
+                  <span class="badge badge--index">№ 1</span>
+                  <h3 class="question-title">Почему вам интересна наша компания?</h3>
+                </div>
+                <div class="question-card__tags">
+                  
+                    <span class="badge">С вариантами</span>
+                  
+                  
+                    <span class="question-pill" data-tone="success">Активен</span>
+                  
+                </div>
+              </header>
+
+              <div class="question-card__body">
+                
+                  <p class="question-meta">Выберите один вариант</p>
+                
+
+                <dl class="question-facts">
+                  <div>
+                    <dt>Последнее изменение</dt>
+                    <dd>09.10.2025 08:08 UTC</dd>
+                  </div>
+                  
+                    <div>
+                      <dt>Вариантов</dt>
+                      <dd>4 · верный: <strong>Гибкий график</strong></dd>
+                    </div>
+                  
+                </dl>
+              </div>
+
+              <footer class="question-card__footer">
+                <a class="btn btn-soft btn--grow" href="/questions/1/edit">Редактировать</a>
+              </footer>
+            </article>
+          
+            <article class="question-card" data-status="active">
+              <header class="question-card__header">
+                <div class="question-card__identity">
+                  <span class="badge badge--index">№ 2</span>
+                  <h3 class="question-title">Опишите ваш опыт общения с клиентами</h3>
+                </div>
+                <div class="question-card__tags">
+                  
+                    <span class="badge">Свободный ответ</span>
+                  
+                  
+                    <span class="question-pill" data-tone="success">Активен</span>
+                  
+                </div>
+              </header>
+
+              <div class="question-card__body">
+                
+                  <p class="question-meta">Свободный ответ</p>
+                
+
+                <dl class="question-facts">
+                  <div>
+                    <dt>Последнее изменение</dt>
+                    <dd>05.10.2025 11:08 UTC</dd>
+                  </div>
+                  
+                </dl>
+              </div>
+
+              <footer class="question-card__footer">
+                <a class="btn btn-soft btn--grow" href="/questions/2/edit">Редактировать</a>
+              </footer>
+            </article>
+          
+        </div>
+      </section>
+    
+      <section class="test-section" id="test-test-2" data-tilt>
+        <header class="test-section__header">
+          <div>
+            <h2 class="card-title">Поведение в конфликте</h2>
+            <p class="test-section__hint">Идентификатор теста: <code>test-2</code></p>
+          </div>
+          <span class="badge">1 вопрос(ов)</span>
+        </header>
+
+        <div class="question-list">
+          
+            <article class="question-card" data-status="hidden">
+              <header class="question-card__header">
+                <div class="question-card__identity">
+                  <span class="badge badge--index">№ 1</span>
+                  <h3 class="question-title">Как вы решите конфликт в чате?</h3>
+                </div>
+                <div class="question-card__tags">
+                  
+                    <span class="badge">Свободный ответ</span>
+                  
+                  
+                    <span class="question-pill" data-tone="danger">Скрыт</span>
+                  
+                </div>
+              </header>
+
+              <div class="question-card__body">
+                
+
+                <dl class="question-facts">
+                  <div>
+                    <dt>Последнее изменение</dt>
+                    <dd>26.09.2025 11:08 UTC</dd>
+                  </div>
+                  
+                </dl>
+              </div>
+
+              <footer class="question-card__footer">
+                <a class="btn btn-soft btn--grow" href="/questions/3/edit">Редактировать</a>
+              </footer>
+            </article>
+          
+        </div>
+      </section>
+    
+  
+</section>
+
+      </div>
+    </main>
+  </div>
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      const docEl = document.documentElement;
+      const toggle = document.getElementById('theme-toggle');
+      const nav = document.querySelector('[data-topbar-nav]');
+      const burger = document.querySelector('[data-topbar-toggle]');
+      const scrim = document.querySelector('[data-topbar-scrim]');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+      function storeTheme(theme) {
+        try {
+          window.localStorage.setItem(storageKey, theme);
+        } catch (err) {
+          /* noop */
+        }
+      }
+
+      function getStoredTheme() {
+        try {
+          return window.localStorage.getItem(storageKey);
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function applyTheme(theme, persist = true) {
+        const value = theme === 'dark' ? 'dark' : 'light';
+        docEl.dataset.theme = value;
+        docEl.style.colorScheme = value;
+        if (persist) {
+          storeTheme(value);
+        }
+        reflectTheme(value);
+      }
+
+      function reflectTheme(theme) {
+        if (!toggle) return;
+        const isDark = theme === 'dark';
+        toggle.setAttribute('aria-pressed', isDark);
+        toggle.querySelector('.theme-toggle__icon').textContent = isDark ? '🌞' : '🌙';
+        toggle.querySelector('.theme-toggle__label').textContent = isDark ? 'Светлая тема' : 'Тёмная тема';
+        toggle.title = isDark ? 'Переключить на светлую тему' : 'Переключить на тёмную тему';
+      }
+
+      applyTheme(getStoredTheme() || docEl.dataset.theme || (prefersDark.matches ? 'dark' : 'light'), false);
+
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const next = docEl.dataset.theme === 'dark' ? 'light' : 'dark';
+          applyTheme(next);
+        });
+      }
+
+      if (prefersDark && typeof prefersDark.addEventListener === 'function') {
+        prefersDark.addEventListener('change', (event) => {
+          if (!getStoredTheme()) {
+            applyTheme(event.matches ? 'dark' : 'light', false);
+          }
+        });
+      }
+
+      function setNavOpen(open) {
+        if (!nav || !burger) return;
+        nav.dataset.open = open ? 'true' : 'false';
+        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (scrim) {
+          scrim.dataset.open = open ? 'true' : 'false';
+        }
+      }
+
+      if (burger) {
+        burger.addEventListener('click', () => {
+          const next = nav && nav.dataset.open !== 'true';
+          setNavOpen(next);
+        });
+      }
+
+      if (scrim) {
+        scrim.addEventListener('click', () => setNavOpen(false));
+      }
+
+      if (nav) {
+        nav.addEventListener('click', (event) => {
+          const target = event.target;
+          if (window.innerWidth <= 768 && target instanceof HTMLElement && target.closest('a')) {
+            setNavOpen(false);
+          }
+        });
+      }
+
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+          setNavOpen(false);
+        }
+      });
+    })();
+  </script>
+  
+</body>
+</html>

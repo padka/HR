@@ -56,8 +56,8 @@
 
   .topbar {
     @apply sticky top-0 z-50 backdrop-blur-glass shadow-glass transition-shadow duration-300 ease-snap;
-    background: linear-gradient(135deg, rgb(var(--bg-elev-1)), rgb(var(--bg-elev-2)) 70%);
-    border-bottom: 1px solid rgb(var(--border));
+    background: linear-gradient(135deg, var(--glass-surface-1), var(--glass-surface-2) 70%);
+    border-bottom: 1px solid rgb(var(--border) / var(--border-alpha));
   }
 
   .topbar__content {
@@ -66,25 +66,31 @@
 
   .topbar__brand {
     @apply inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold uppercase tracking-[0.2em] text-fg-secondary;
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.08));
-    border: 1px solid rgb(var(--border));
+    background: var(--glass-highlight);
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
     box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
   }
 
   .topbar__badge {
-    @apply rounded-full border border-white/40 bg-white/20 px-3 py-1 text-xs font-medium text-fg-secondary backdrop-blur-glass;
+    @apply rounded-full px-3 py-1 text-xs font-medium text-fg-secondary backdrop-blur-glass;
+    border: 1px solid rgb(var(--border) / 0.5);
+    background: rgb(var(--border) / 0.25);
   }
 
   .topbar__burger {
-    @apply inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/30 bg-white/10 text-lg text-fg-primary transition-all duration-200 ease-snap lg:hidden;
+    @apply inline-flex h-10 w-10 items-center justify-center rounded-full text-lg text-fg-primary transition-all duration-200 ease-snap lg:hidden;
+    border: 1px solid rgb(var(--border) / 0.4);
+    background: rgb(var(--border) / 0.2);
   }
 
   .topbar__burger:hover {
-    @apply bg-white/20;
+    background: rgb(var(--border) / 0.3);
   }
 
   .topbar__nav {
-    @apply fixed left-1/2 top-24 z-40 hidden flex-col gap-2 rounded-2xl border border-white/30 bg-white/40 p-4 shadow-glass backdrop-blur-glass lg:static lg:flex lg:flex-row lg:items-center lg:gap-2 lg:border-none lg:bg-transparent lg:p-0 lg:shadow-none;
+    @apply fixed left-1/2 top-24 z-40 hidden flex-col gap-2 rounded-2xl p-4 shadow-glass backdrop-blur-glass lg:static lg:flex lg:flex-row lg:items-center lg:gap-2 lg:border-none lg:bg-transparent lg:p-0 lg:shadow-none;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-2);
     width: min(640px, calc(100% - 2.5rem));
     transform: translateX(-50%);
   }
@@ -161,18 +167,16 @@
   }
 
   .surface {
-    @apply relative overflow-hidden rounded-lg border border-white/30 bg-white/40 p-8 text-fg-primary shadow-glass backdrop-blur-glass transition-all duration-300 ease-snap;
-  }
-
-  [data-theme='dark'] .surface {
-    background: linear-gradient(150deg, rgb(var(--bg-elev-1)), rgb(var(--bg-elev-2)));
-    border-color: rgb(var(--border));
+    @apply relative overflow-hidden rounded-lg p-8 text-fg-primary shadow-glass transition-all duration-300 ease-snap;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-1);
+    backdrop-filter: blur(var(--blur));
   }
 
   .surface::before {
     content: '';
     @apply pointer-events-none absolute inset-0 rounded-[inherit];
-    background: linear-gradient(150deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05));
+    background: var(--glass-highlight);
     mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
     mask-composite: exclude;
     -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
@@ -204,7 +208,9 @@
   }
 
   .dashboard-hero {
-    @apply grid gap-10 rounded-xl border border-white/35 bg-white/45 p-10 shadow-glass backdrop-blur-glass lg:grid-cols-2;
+    @apply grid gap-10 rounded-xl p-10 shadow-glass backdrop-blur-glass lg:grid-cols-2;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-1);
   }
 
   @media (min-width: 1024px) {
@@ -231,7 +237,10 @@
   }
 
   .hero__actions {
-    @apply flex flex-col gap-4 rounded-xl border border-white/35 bg-white/30 p-6 shadow-inner;
+    @apply flex flex-col gap-4 rounded-xl p-6;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-2);
+    box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
   }
 
   .hero__actions-title {
@@ -259,7 +268,9 @@
   }
 
   .list-table-wrapper {
-    @apply relative overflow-hidden rounded-xl border border-white/25 bg-white/25 backdrop-blur-glass;
+    @apply relative overflow-hidden rounded-xl backdrop-blur-glass;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-2);
   }
 
   .list-table {
@@ -267,11 +278,9 @@
   }
 
   .list-table thead {
-    @apply sticky top-0 bg-white/55 text-xs uppercase tracking-[0.18em] text-fg-secondary backdrop-blur-glass;
-  }
-
-  [data-theme='dark'] .list-table thead {
-    background: rgb(var(--bg-elev-2));
+    @apply sticky top-0 text-xs uppercase tracking-[0.18em] text-fg-secondary backdrop-blur-glass;
+    background: var(--glass-surface-1);
+    border-bottom: 1px solid rgb(var(--border) / 0.35);
   }
 
   .list-table th,
@@ -284,7 +293,7 @@
   }
 
   .list-table tbody tr:nth-child(even) {
-    background-color: rgb(var(--bg-elev-3));
+    background-color: var(--glass-surface-3);
   }
 
   .list-table tbody tr:hover {
@@ -355,16 +364,16 @@
   .btn-secondary,
   .btn-soft,
   .btn--soft {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.2));
-    border: 1px solid rgb(var(--border));
+    background: linear-gradient(135deg, rgb(var(--border) / 0.55), rgb(var(--border) / 0.3));
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
     color: rgb(var(--fg-primary));
     box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
   }
 
   .btn-ghost,
   .btn--ghost {
-    background: rgba(255, 255, 255, 0.12);
-    border: 1px solid rgb(var(--border));
+    background: rgb(var(--border) / 0.2);
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
     color: rgb(var(--fg-secondary));
   }
 
@@ -489,7 +498,18 @@
   input[type='tel'],
   select,
   textarea {
-    @apply w-full rounded-lg border border-white/40 bg-white/60 px-3 py-2 text-sm text-fg-primary shadow-inner transition-all duration-200 ease-snap focus:border-transparent focus:bg-white focus:shadow-focus-ring focus:outline-none;
+    @apply w-full rounded-lg px-3 py-2 text-sm text-fg-primary transition-all duration-200 ease-snap focus:outline-none;
+    border: 1px solid rgb(var(--border) / 0.38);
+    background: rgb(var(--border) / 0.55);
+    box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus {
+    border-color: transparent;
+    background: rgb(var(--border) / 0.72);
+    box-shadow: 0 0 0 3px rgb(var(--shadow-focus));
   }
 
   [data-theme='dark'] input[type='text'],
@@ -502,8 +522,8 @@
   [data-theme='dark'] input[type='tel'],
   [data-theme='dark'] select,
   [data-theme='dark'] textarea {
-    background: rgb(var(--bg-elev-2));
-    border-color: rgb(var(--border));
+    background: var(--glass-surface-2);
+    border-color: rgb(var(--border) / var(--border-alpha));
     color: rgb(var(--fg-primary));
   }
 
@@ -552,7 +572,10 @@
   }
 
   .form-shell__section {
-    @apply rounded-xl border border-white/25 bg-white/20 p-6 shadow-inner;
+    @apply rounded-xl p-6;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-2);
+    box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
   }
 
   .form-shell__section--full {
@@ -580,7 +603,10 @@
   }
 
   .form-shell__footer {
-    @apply sticky bottom-6 mt-4 rounded-2xl border border-white/20 bg-white/30 p-4 backdrop-blur-glass;
+    @apply sticky bottom-6 mt-4 rounded-2xl p-4 backdrop-blur-glass;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-2);
+    box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
   }
 
   .form-switch {
@@ -592,13 +618,13 @@
     width: 46px;
     height: 26px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.22);
-    border: 1px solid rgb(var(--border));
+    background: rgb(var(--border) / 0.35);
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
     transition: all 180ms var(--transition-snap);
   }
 
   [data-theme='dark'] .form-switch__track {
-    background: rgb(var(--bg-elev-2));
+    background: var(--glass-surface-2);
   }
 
   .form-switch__thumb {
@@ -608,8 +634,8 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: rgb(255 255 255 / 0.95);
-    box-shadow: 0 6px 14px rgb(var(--shadow-color));
+    background: rgb(var(--accent-contrast) / 0.96);
+    box-shadow: 0 6px 14px rgb(var(--shadow-soft));
     transform: translate(0, -50%);
     transition: all 180ms var(--transition-snap);
   }
@@ -716,7 +742,9 @@
   }
 
   .glass-card {
-    @apply relative flex flex-col gap-5 overflow-hidden rounded-2xl border border-white/35 bg-white/35 p-6 shadow-glass backdrop-blur-glass;
+    @apply relative flex flex-col gap-5 overflow-hidden rounded-2xl p-6 shadow-glass backdrop-blur-glass;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-1);
   }
 
   .glass-card::before {
@@ -744,7 +772,10 @@
   }
 
   .card-surface {
-    @apply flex flex-col gap-3 rounded-xl border border-white/20 bg-white/25 p-5 shadow-inner;
+    @apply flex flex-col gap-3 rounded-xl p-5;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-2);
+    box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
   }
 
   .recruiter-card__header {
@@ -768,7 +799,9 @@
   }
 
   .recruiter-card__fold {
-    @apply rounded-xl border border-white/25 bg-white/15 p-5;
+    @apply rounded-xl p-5;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-2);
   }
 
   .recruiter-card__fold summary {
@@ -830,9 +863,9 @@
 
   .toast {
     @apply fixed right-6 top-6 z-[100] max-w-sm animate-glass-in;
-    background: linear-gradient(140deg, rgb(var(--bg-elev-1)), rgb(var(--bg-elev-2)));
+    background: linear-gradient(140deg, var(--glass-surface-1), var(--glass-surface-2));
     border-radius: var(--radius-lg);
-    border: 1px solid rgb(var(--border));
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
     box-shadow: 0 18px 44px rgb(var(--shadow-strong)), inset 0 1px 0 rgb(var(--shadow-inset));
     padding: 1.25rem;
     backdrop-filter: blur(var(--blur));
@@ -845,9 +878,9 @@
 
   .modal {
     @apply fixed inset-x-4 top-[10%] z-50 mx-auto max-w-2xl;
-    background: linear-gradient(160deg, rgb(var(--bg-elev-1)), rgb(var(--bg-elev-2)));
+    background: linear-gradient(160deg, var(--glass-surface-1), var(--glass-surface-2));
     border-radius: var(--radius-xl);
-    border: 1px solid rgb(var(--border));
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
     box-shadow: 0 28px 64px rgb(var(--shadow-strong));
     padding: 2.5rem;
     backdrop-filter: blur(var(--blur));

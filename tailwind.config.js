@@ -11,14 +11,14 @@ export default {
       colors: {
         bg: {
           base: 'rgb(var(--bg-base) / <alpha-value>)',
-          elev1: 'rgb(var(--bg-elev-1))',
-          elev2: 'rgb(var(--bg-elev-2))',
-          elev3: 'rgb(var(--bg-elev-3))',
+          elev1: 'rgb(var(--bg-elev-1) / <alpha-value>)',
+          elev2: 'rgb(var(--bg-elev-2) / <alpha-value>)',
+          elev3: 'rgb(var(--bg-elev-3) / <alpha-value>)',
         },
         fg: {
           primary: 'rgb(var(--fg-primary) / <alpha-value>)',
-          secondary: 'rgb(var(--fg-secondary) / <alpha-value>)',
-          muted: 'rgb(var(--fg-muted) / <alpha-value>)',
+          secondary: 'rgb(var(--fg-secondary) / var(--fg-secondary-alpha))',
+          muted: 'rgb(var(--fg-secondary) / var(--fg-muted-alpha))',
         },
         accent: 'rgb(var(--accent) / <alpha-value>)',
         'accent-soft': 'rgb(var(--accent-soft) / <alpha-value>)',
@@ -26,8 +26,9 @@ export default {
         success: 'rgb(var(--success) / <alpha-value>)',
         warning: 'rgb(var(--warning) / <alpha-value>)',
         danger: 'rgb(var(--danger) / <alpha-value>)',
+        info: 'rgb(var(--info) / <alpha-value>)',
         stroke: 'rgb(var(--stroke) / <alpha-value>)',
-        border: 'rgb(var(--border))',
+        border: 'rgb(var(--border) / var(--border-alpha))',
       },
       fontFamily: {
         sans: ['"SF Pro Display"', 'Inter', 'var(--font-sans)', ...defaultTheme.fontFamily.sans],
@@ -38,9 +39,9 @@ export default {
         xl: 'var(--radius-xl)',
       },
       boxShadow: {
-        glass: '0 16px 40px 0 rgb(var(--shadow-color))',
-        'glass-strong': '0 24px 60px 0 rgb(var(--shadow-strong))',
-        'focus-ring': '0 0 0 4px rgb(var(--accent) / 0.28)',
+        glass: '0 18px 40px 0 rgb(var(--shadow-soft))',
+        'glass-strong': '0 28px 70px 0 rgb(var(--shadow-strong))',
+        'focus-ring': '0 0 0 4px rgb(var(--shadow-focus))',
       },
       backdropBlur: {
         glass: 'var(--blur)',
