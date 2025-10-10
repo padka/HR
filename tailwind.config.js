@@ -17,6 +17,7 @@ export default {
           elev2: 'rgb(var(--bg-elev-2) / <alpha-value>)',
           elev3: 'rgb(var(--bg-elev-3) / <alpha-value>)',
         },
+        primary: 'rgb(var(--accent) / <alpha-value>)',
         fg: {
           primary: 'rgb(var(--fg-primary) / <alpha-value>)',
           secondary: 'rgb(var(--fg-secondary) / var(--fg-secondary-alpha))',

@@ -1,4 +1,4 @@
-.PHONY: setup bootstrap doctor dev-db test ui demo previews screens kpi-weekly run
+.PHONY: setup bootstrap doctor dev-db test ui demo previews screens kpi-weekly run lint
 
 VENV ?= .venv
 PYTHON ?= python3
@@ -29,8 +29,9 @@ dev-db: $(VENV)/bin/python
 test: dev-db
 	. $(VENV)/bin/activate && pytest
 
-ui:
+ui: $(VENV)/bin/python
 	npm run build:css
+	. $(VENV)/bin/activate && python tools/report_css_size.py
 
 demo: $(VENV)/bin/python
 	. $(VENV)/bin/activate && uvicorn app_demo:app --reload
@@ -39,7 +40,12 @@ previews: $(VENV)/bin/python
 	. $(VENV)/bin/activate && python tools/render_previews.py
 
 screens: $(VENV)/bin/python
+	rm -rf ui_screenshots
 	. $(VENV)/bin/activate && pytest tests/test_ui_screenshots.py
 
 kpi-weekly: $(VENV)/bin/python
 	. $(VENV)/bin/activate && python tools/recompute_weekly_kpis.py --weeks 8
+lint: $(VENV)/bin/python
+	. $(VENV)/bin/activate && ruff check tests/test_ui_screenshots.py tools/report_css_size.py
+	npm run lint:deps
+	npm run lint:cssjs

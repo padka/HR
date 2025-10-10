@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from typing import List
 
 
-PYTHON_REQUIRED = (3, 13)
+PYTHON_MINIMUM = (3, 11)
+PYTHON_TARGET = (3, 12)
 MODULE_REQUIREMENTS = {
     "fastapi": "fastapi==0.112.0",
     "starlette": "starlette==0.37.2",
@@ -20,6 +21,7 @@ MODULE_REQUIREMENTS = {
     "jinja2": "Jinja2==3.1.4",
     "aiosqlite": "aiosqlite==0.20.0",
     "sqlalchemy": "SQLAlchemy[asyncio]==2.0.32",
+    "pydantic": "pydantic==2.8.2",
 }
 
 
@@ -38,21 +40,38 @@ def format_status(status: str) -> str:
     return f"[{status:>4}]"
 
 
+def _fmt_version(version: tuple[int, int]) -> str:
+    return ".".join(map(str, version))
+
+
 def check_python() -> CheckResult:
     current = sys.version_info
-    required = ".".join(map(str, PYTHON_REQUIRED))
     detected = f"{current.major}.{current.minor}.{current.micro}"
-    if current >= PYTHON_REQUIRED:
+    if current >= PYTHON_TARGET:
         return CheckResult(
             label="Python runtime",
             status="OK",
             detail=f"Detected Python {detected}",
         )
+    if current >= PYTHON_MINIMUM:
+        target = _fmt_version(PYTHON_TARGET)
+        return CheckResult(
+            label="Python runtime",
+            status="WARN",
+            detail=f"Detected Python {detected}",
+            hint=(
+                "Upgrade to Python "
+                f"{target} for full support; 3.11 remains temporarily allowed."
+            ),
+        )
+    minimum = _fmt_version(PYTHON_MINIMUM)
     return CheckResult(
         label="Python runtime",
         status="FAIL",
         detail=f"Detected Python {detected}",
-        hint=f"Use Python {required} or newer (e.g. pyenv install {required}).",
+        hint=(
+            f"Use Python {minimum} or newer (prefer {_fmt_version(PYTHON_TARGET)})."
+        ),
     )
 
 

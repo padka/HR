@@ -22,6 +22,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 NOW_UTC = datetime.now(timezone.utc)
+MOSCOW_TZ = "Europe/Moscow"
 
 
 class AttrDict(dict):
@@ -322,6 +323,85 @@ WEEKLY_KPIS_DATA = {
         },
         "computed_at": "2024-03-24T00:05:00+03:00",
     },
+}
+
+
+def _calendar_day(offset: int, count: int, *, selected_offset: int = 0) -> Dict[str, Any]:
+    local_dt = (NOW_UTC + timedelta(days=offset)).astimezone(ZoneInfo(MOSCOW_TZ))
+    return {
+        "date": local_dt.date().isoformat(),
+        "label": local_dt.strftime("%d.%m"),
+        "weekday": local_dt.strftime("%a"),
+        "count": count,
+        "is_selected": offset == selected_offset,
+        "is_today": offset == 0,
+    }
+
+
+CALENDAR_DATA = {
+    "selected_label": "Эта неделя",
+    "events_total": 6,
+    "meta": "6 интервью, 4 подтверждены",
+    "updated_label": fmt_utc(NOW_UTC - timedelta(minutes=9)),
+    "status_summary": {
+        "CONFIRMED_BY_CANDIDATE": 4,
+        "BOOKED": 3,
+        "PENDING": 2,
+        "CANCELED": 1,
+    },
+    "timezone": tz_display(MOSCOW_TZ),
+    "selected_date": (NOW_UTC.astimezone(ZoneInfo(MOSCOW_TZ))).date().isoformat(),
+    "days": [
+        _calendar_day(-1, 2),
+        _calendar_day(0, 4),
+        _calendar_day(1, 3),
+        _calendar_day(2, 1),
+        _calendar_day(3, 0),
+    ],
+    "events": [
+        {
+            "id": "evt-101",
+            "start_time": fmt_local(NOW_UTC + timedelta(hours=2), MOSCOW_TZ),
+            "end_time": fmt_local(NOW_UTC + timedelta(hours=3), MOSCOW_TZ),
+            "status_variant": "success",
+            "status_label": "Подтверждено",
+            "recruiter": {"name": "Анна Сергеева"},
+            "city": {"name": "Москва"},
+            "candidate": {
+                "name": "Андрей Петров",
+                "profile_url": "/candidates/101",
+                "telegram_id": "@andrey.petrov",
+            },
+        },
+        {
+            "id": "evt-102",
+            "start_time": fmt_local(NOW_UTC + timedelta(hours=5, minutes=15), MOSCOW_TZ),
+            "end_time": fmt_local(NOW_UTC + timedelta(hours=6, minutes=5), MOSCOW_TZ),
+            "status_variant": "progress",
+            "status_label": "Ожидает",
+            "recruiter": {"name": "Дмитрий Орлов"},
+            "city": {"name": "Санкт-Петербург"},
+            "candidate": {
+                "name": "Мария Лебедева",
+                "profile_url": "/candidates/205",
+                "telegram_id": "@lebedeva.m",
+            },
+        },
+        {
+            "id": "evt-103",
+            "start_time": fmt_local(NOW_UTC + timedelta(days=1, hours=1), MOSCOW_TZ),
+            "end_time": fmt_local(NOW_UTC + timedelta(days=1, hours=2), MOSCOW_TZ),
+            "status_variant": "danger",
+            "status_label": "Отменено",
+            "recruiter": {"name": "Без рекрутёра"},
+            "city": {"name": "Новосибирск"},
+            "candidate": {
+                "name": "Игорь Ефимов",
+                "profile_url": None,
+                "telegram_id": None,
+            },
+        },
+    ],
 }
 
 ANALYTICS_DATA = {
@@ -691,6 +771,7 @@ def dashboard_context() -> Dict[str, Any]:
         "counts": build(COUNTS_DATA),
         "bot_status": build(BOT_STATUS_DATA),
         "weekly_kpis": build(WEEKLY_KPIS_DATA),
+        "calendar": build(CALENDAR_DATA),
     }
 
 
