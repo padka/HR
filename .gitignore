@@ -12,3 +12,22 @@ uploads/
 report_*.txt
 test1_*.txt
 node_modules/
+
+# Generated previews and visual artifacts (kept out of git)
+ui_screenshots/
+previews/
+playwright-report/
+test-results/
+
+# Binary assets are forbidden in git history
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.ico
+*.svgz
+*.woff
+*.woff2
+*.zip
+*.db

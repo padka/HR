@@ -2,7 +2,7 @@ import logging
 from typing import Dict
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 
 from backend.apps.admin_ui.services.bot_service import (
@@ -22,9 +22,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+FAVICON_SVG = """
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
+  <defs>
+    <linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+      <stop offset='0%' stop-color='#93FEBF'/>
+      <stop offset='48%' stop-color='#FFD144'/>
+      <stop offset='100%' stop-color='#F96E65'/>
+    </linearGradient>
+  </defs>
+  <rect width='64' height='64' rx='14' fill='#071221'/>
+  <path d='M18 44h9.6l5.4-9.3 5.4 9.3H48L34 20z' fill='url(#g)'/>
+</svg>
+"""
+
+
 @router.get("/favicon.ico", include_in_schema=False)
-async def favicon_redirect() -> RedirectResponse:
-    return RedirectResponse(url="/static/favicon.ico")
+async def favicon_inline() -> Response:
+    return Response(content=FAVICON_SVG, media_type="image/svg+xml")
 
 
 @router.get(

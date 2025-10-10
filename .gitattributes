@@ -1,1 +1,12 @@
+# Binary assets must never enter git history. Use CI artifacts or external storage.
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.webp -text
+*.gif -text
+*.ico -text
+*.woff2 -text
+*.zip -text
+*.db -text
+
 backend/apps/admin_ui/static/build/main.css merge=ours
