@@ -1,0 +1,477 @@
+# Audit Command Logs
+
+## pip install
+```
+Obtaining file:///workspace/HR
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Collecting fastapi (from hr-admin-ui==0.1.0)
+  Downloading fastapi-0.118.3-py3-none-any.whl.metadata (28 kB)
+Collecting uvicorn (from hr-admin-ui==0.1.0)
+  Downloading uvicorn-0.37.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting jinja2 (from hr-admin-ui==0.1.0)
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting sqlalchemy[asyncio] (from hr-admin-ui==0.1.0)
+  Downloading sqlalchemy-2.0.43-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (9.6 kB)
+Collecting aiogram (from hr-admin-ui==0.1.0)
+  Downloading aiogram-3.22.0-py3-none-any.whl.metadata (7.7 kB)
+Collecting aiosqlite (from hr-admin-ui==0.1.0)
+  Downloading aiosqlite-0.21.0-py3-none-any.whl.metadata (4.3 kB)
+Collecting redis (from hr-admin-ui==0.1.0)
+  Downloading redis-6.4.0-py3-none-any.whl.metadata (10 kB)
+Collecting httpx (from hr-admin-ui==0.1.0)
+  Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Requirement already satisfied: pytest in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from hr-admin-ui==0.1.0) (8.4.1)
+Collecting pytest-asyncio (from hr-admin-ui==0.1.0)
+  Downloading pytest_asyncio-1.2.0-py3-none-any.whl.metadata (4.1 kB)
+Collecting playwright (from hr-admin-ui==0.1.0)
+  Downloading playwright-1.55.0-py3-none-manylinux1_x86_64.whl.metadata (3.5 kB)
+Requirement already satisfied: ruff in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from hr-admin-ui==0.1.0) (0.12.11)
+Collecting aiofiles<24.2,>=23.2.1 (from aiogram->hr-admin-ui==0.1.0)
+  Downloading aiofiles-24.1.0-py3-none-any.whl.metadata (10 kB)
+Collecting aiohttp<3.13,>=3.9.0 (from aiogram->hr-admin-ui==0.1.0)
+  Downloading aiohttp-3.12.15-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (7.7 kB)
+Collecting certifi>=2023.7.22 (from aiogram->hr-admin-ui==0.1.0)
+  Downloading certifi-2025.10.5-py3-none-any.whl.metadata (2.5 kB)
+Collecting magic-filter<1.1,>=1.0.12 (from aiogram->hr-admin-ui==0.1.0)
+  Downloading magic_filter-1.0.12-py3-none-any.whl.metadata (1.5 kB)
+Collecting pydantic<2.12,>=2.4.1 (from aiogram->hr-admin-ui==0.1.0)
+  Downloading pydantic-2.11.10-py3-none-any.whl.metadata (68 kB)
+Requirement already satisfied: typing-extensions<=5.0,>=4.7.0 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from aiogram->hr-admin-ui==0.1.0) (4.15.0)
+Collecting aiohappyeyeballs>=2.5.0 (from aiohttp<3.13,>=3.9.0->aiogram->hr-admin-ui==0.1.0)
+  Downloading aiohappyeyeballs-2.6.1-py3-none-any.whl.metadata (5.9 kB)
+Collecting aiosignal>=1.4.0 (from aiohttp<3.13,>=3.9.0->aiogram->hr-admin-ui==0.1.0)
+  Downloading aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting attrs>=17.3.0 (from aiohttp<3.13,>=3.9.0->aiogram->hr-admin-ui==0.1.0)
+  Downloading attrs-25.4.0-py3-none-any.whl.metadata (10 kB)
+Collecting frozenlist>=1.1.1 (from aiohttp<3.13,>=3.9.0->aiogram->hr-admin-ui==0.1.0)
+  Downloading frozenlist-1.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (20 kB)
+Collecting multidict<7.0,>=4.5 (from aiohttp<3.13,>=3.9.0->aiogram->hr-admin-ui==0.1.0)
+  Downloading multidict-6.7.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.3 kB)
+Collecting propcache>=0.2.0 (from aiohttp<3.13,>=3.9.0->aiogram->hr-admin-ui==0.1.0)
+  Downloading propcache-0.4.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (13 kB)
+Collecting yarl<2.0,>=1.17.0 (from aiohttp<3.13,>=3.9.0->aiogram->hr-admin-ui==0.1.0)
+  Downloading yarl-1.22.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (75 kB)
+Collecting annotated-types>=0.6.0 (from pydantic<2.12,>=2.4.1->aiogram->hr-admin-ui==0.1.0)
+  Downloading annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.33.2 (from pydantic<2.12,>=2.4.1->aiogram->hr-admin-ui==0.1.0)
+  Downloading pydantic_core-2.33.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.8 kB)
+Collecting typing-inspection>=0.4.0 (from pydantic<2.12,>=2.4.1->aiogram->hr-admin-ui==0.1.0)
+  Downloading typing_inspection-0.4.2-py3-none-any.whl.metadata (2.6 kB)
+Collecting idna>=2.0 (from yarl<2.0,>=1.17.0->aiohttp<3.13,>=3.9.0->aiogram->hr-admin-ui==0.1.0)
+  Downloading idna-3.10-py3-none-any.whl.metadata (10 kB)
+Collecting starlette<0.49.0,>=0.40.0 (from fastapi->hr-admin-ui==0.1.0)
+  Downloading starlette-0.48.0-py3-none-any.whl.metadata (6.3 kB)
+Collecting anyio<5,>=3.6.2 (from starlette<0.49.0,>=0.40.0->fastapi->hr-admin-ui==0.1.0)
+  Downloading anyio-4.11.0-py3-none-any.whl.metadata (4.1 kB)
+Collecting sniffio>=1.1 (from anyio<5,>=3.6.2->starlette<0.49.0,>=0.40.0->fastapi->hr-admin-ui==0.1.0)
+  Downloading sniffio-1.3.1-py3-none-any.whl.metadata (3.9 kB)
+Collecting httpcore==1.* (from httpx->hr-admin-ui==0.1.0)
+  Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Collecting h11>=0.16 (from httpcore==1.*->httpx->hr-admin-ui==0.1.0)
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting MarkupSafe>=2.0 (from jinja2->hr-admin-ui==0.1.0)
+  Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+Collecting pyee<14,>=13 (from playwright->hr-admin-ui==0.1.0)
+  Downloading pyee-13.0.0-py3-none-any.whl.metadata (2.9 kB)
+Collecting greenlet<4.0.0,>=3.1.1 (from playwright->hr-admin-ui==0.1.0)
+  Downloading greenlet-3.2.4-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (4.1 kB)
+Requirement already satisfied: iniconfig>=1 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from pytest->hr-admin-ui==0.1.0) (2.1.0)
+Requirement already satisfied: packaging>=20 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from pytest->hr-admin-ui==0.1.0) (25.0)
+Requirement already satisfied: pluggy<2,>=1.5 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from pytest->hr-admin-ui==0.1.0) (1.6.0)
+Requirement already satisfied: pygments>=2.7.2 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from pytest->hr-admin-ui==0.1.0) (2.19.2)
+Requirement already satisfied: click>=7.0 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from uvicorn->hr-admin-ui==0.1.0) (8.2.1)
+Downloading aiogram-3.22.0-py3-none-any.whl (698 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 698.2/698.2 kB 9.2 MB/s  0:00:00
+Downloading aiofiles-24.1.0-py3-none-any.whl (15 kB)
+Downloading aiohttp-3.12.15-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (1.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.7/1.7 MB 14.7 MB/s  0:00:00
+Downloading magic_filter-1.0.12-py3-none-any.whl (11 kB)
+Downloading multidict-6.7.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (246 kB)
+Downloading pydantic-2.11.10-py3-none-any.whl (444 kB)
+Downloading pydantic_core-2.33.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.0/2.0 MB 11.9 MB/s  0:00:00
+Downloading yarl-1.22.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (365 kB)
+Downloading aiohappyeyeballs-2.6.1-py3-none-any.whl (15 kB)
+Downloading aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Downloading annotated_types-0.7.0-py3-none-any.whl (13 kB)
+Downloading attrs-25.4.0-py3-none-any.whl (67 kB)
+Downloading certifi-2025.10.5-py3-none-any.whl (163 kB)
+Downloading frozenlist-1.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (231 kB)
+Downloading idna-3.10-py3-none-any.whl (70 kB)
+Downloading propcache-0.4.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (210 kB)
+Downloading typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+Downloading aiosqlite-0.21.0-py3-none-any.whl (15 kB)
+Downloading fastapi-0.118.3-py3-none-any.whl (97 kB)
+Downloading starlette-0.48.0-py3-none-any.whl (73 kB)
+Downloading anyio-4.11.0-py3-none-any.whl (109 kB)
+Downloading sniffio-1.3.1-py3-none-any.whl (10 kB)
+Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+Downloading playwright-1.55.0-py3-none-manylinux1_x86_64.whl (45.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 45.9/45.9 MB 15.8 MB/s  0:00:02
+Downloading greenlet-3.2.4-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (587 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 587.7/587.7 kB 20.7 MB/s  0:00:00
+Downloading pyee-13.0.0-py3-none-any.whl (15 kB)
+Downloading pytest_asyncio-1.2.0-py3-none-any.whl (15 kB)
+Downloading redis-6.4.0-py3-none-any.whl (279 kB)
+Downloading sqlalchemy-2.0.43-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.3/3.3 MB 20.9 MB/s  0:00:00
+Downloading uvicorn-0.37.0-py3-none-any.whl (67 kB)
+Building wheels for collected packages: hr-admin-ui
+  Building editable for hr-admin-ui (pyproject.toml): started
+  Building editable for hr-admin-ui (pyproject.toml): finished with status 'done'
+  Created wheel for hr-admin-ui: filename=hr_admin_ui-0.1.0-0.editable-py3-none-any.whl size=2868 sha256=8033d5bc07342876fa247613f2801ad634db6119d232a15bdc615744f0aa49ae
+  Stored in directory: /tmp/pip-ephem-wheel-cache-mi0e16tr/wheels/7b/31/5d/86a4158b28009af35ee6746f8b722b675f9d8deab134f9d70d
+Successfully built hr-admin-ui
+Installing collected packages: typing-inspection, sniffio, redis, pyee, pydantic-core, propcache, multidict, MarkupSafe, magic-filter, idna, hr-admin-ui, h11, greenlet, frozenlist, certifi, attrs, annotated-types, aiosqlite, aiohappyeyeballs, aiofiles, yarl, uvicorn, sqlalchemy, pytest-asyncio, pydantic, playwright, jinja2, httpcore, anyio, aiosignal, starlette, httpx, aiohttp, fastapi, aiogram
+
+Successfully installed MarkupSafe-3.0.3 aiofiles-24.1.0 aiogram-3.22.0 aiohappyeyeballs-2.6.1 aiohttp-3.12.15 aiosignal-1.4.0 aiosqlite-0.21.0 annotated-types-0.7.0 anyio-4.11.0 attrs-25.4.0 certifi-2025.10.5 fastapi-0.118.3 frozenlist-1.8.0 greenlet-3.2.4 h11-0.16.0 hr-admin-ui-0.1.0 httpcore-1.0.9 httpx-0.28.1 idna-3.10 jinja2-3.1.6 magic-filter-1.0.12 multidict-6.7.0 playwright-1.55.0 propcache-0.4.1 pydantic-2.11.10 pydantic-core-2.33.2 pyee-13.0.0 pytest-asyncio-1.2.0 redis-6.4.0 sniffio-1.3.1 sqlalchemy-2.0.43 starlette-0.48.0 typing-inspection-0.4.2 uvicorn-0.37.0 yarl-1.22.0
+Collecting apscheduler
+  Downloading APScheduler-3.11.0-py3-none-any.whl.metadata (6.4 kB)
+Collecting tzlocal>=3.0 (from apscheduler)
+  Downloading tzlocal-5.3.1-py3-none-any.whl.metadata (7.6 kB)
+Downloading APScheduler-3.11.0-py3-none-any.whl (64 kB)
+Downloading tzlocal-5.3.1-py3-none-any.whl (18 kB)
+Installing collected packages: tzlocal, apscheduler
+
+Successfully installed apscheduler-3.11.0 tzlocal-5.3.1
+Collecting python-multipart
+  Downloading python_multipart-0.0.20-py3-none-any.whl.metadata (1.8 kB)
+Downloading python_multipart-0.0.20-py3-none-any.whl (24 kB)
+Installing collected packages: python-multipart
+Successfully installed python-multipart-0.0.20
+Collecting alembic
+  Downloading alembic-1.16.5-py3-none-any.whl.metadata (7.3 kB)
+Requirement already satisfied: SQLAlchemy>=1.4.0 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from alembic) (2.0.43)
+Collecting Mako (from alembic)
+  Downloading mako-1.3.10-py3-none-any.whl.metadata (2.9 kB)
+Requirement already satisfied: typing-extensions>=4.12 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from alembic) (4.15.0)
+Requirement already satisfied: greenlet>=1 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from SQLAlchemy>=1.4.0->alembic) (3.2.4)
+Requirement already satisfied: MarkupSafe>=0.9.2 in /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages (from Mako->alembic) (3.0.3)
+Downloading alembic-1.16.5-py3-none-any.whl (247 kB)
+Downloading mako-1.3.10-py3-none-any.whl (78 kB)
+Installing collected packages: Mako, alembic
+
+Successfully installed Mako-1.3.10 alembic-1.16.5
+```
+
+## npm ci
+```
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+added 126 packages, and audited 127 packages in 3s
+
+34 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+```
+
+## tailwind build
+```
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> hr-admin-ui@0.1.0 build:css
+> tailwindcss -i backend/apps/admin_ui/static/css/main.css -o backend/apps/admin_ui/static/build/main.css --minify
+
+Browserslist: caniuse-lite is outdated. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+
+Rebuilding...
+
+Done in 2188ms.
+```
+
+## smoke without db
+```
+Falling back to default test questions; database is not available.
+SMOKE RESULTS [NO_DB]
+- startup: <lifespan> → EXCEPTION
+  detail: OperationalError: (sqlite3.OperationalError) no such table: slot_reminder_jobs
+[SQL: SELECT slot_reminder_jobs.id, slot_reminder_jobs.slot_id, slot_reminder_jobs.kind, slot_reminder_jobs.job_id, slot_reminder_jobs.scheduled_at, slot_reminder_jobs.created_at, slot_reminder_jobs.updated_at 
+FROM slot_reminder_jobs]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+```
+
+## smoke with db
+```
+WARNING:root:ROUTES LOADED: ['/static', '/favicon.ico', '/.well-known/appspecific/com.chrome.devtools.json', '/health', '/health/bot', '/', '/slots', '/slots/new', '/slots/create', '/slots/bulk_create', '/slots', '/slots/{slot_id}', '/slots/{slot_id}', '/slots/{slot_id}/delete', '/slots/{slot_id}', '/slots/delete_all', '/slots/{slot_id}/outcome', '/slots/{slot_id}/reschedule', '/slots/{slot_id}/reject_booking', '/candidates', '/candidates/new', '/candidates/create', '/candidates/{candidate_id}', '/candidates/{candidate_id}/update', '/candidates/{candidate_id}/toggle', '/candidates/{candidate_id}/delete', '/recruiters', '/recruiters/new', '/recruiters/create', '/recruiters/{rec_id}/edit', '/recruiters/{rec_id}/update', '/recruiters/{rec_id}/delete', '/cities', '/cities/new', '/cities/create', '/cities/{city_id}/settings', '/cities/{city_id}/delete', '/regions/{region_id}/timezone', '/templates', '/templates/new', '/templates/create', '/templates/save', '/templates/{tmpl_id}/edit', '/templates/{tmpl_id}/update', '/templates/{tmpl_id}/delete', '/questions', '/questions/{question_id}/edit', '/questions/{question_id}/update', '/api/health', '/api/recruiters', '/api/cities', '/api/slots', '/api/templates', '/api/template_keys', '/api/city_owners', '/api/bot/integration', '/api/bot/integration']
+SMOKE RESULTS [WITH_DB]
+- dashboard: / → 200
+- recruiters: /recruiters → 200
+- questions: /questions → 200
+- templates: /templates → 200
+- slots: /slots → 200
+```
+
+## pytest
+```
+...........................FFF..................F........................................s.s.s...F                       [100%]
+=========================================================== FAILURES ===========================================================
+______________________________ test_create_recruiter_duplicate_chat_id_returns_validation_message ______________________________
+
+admin_app = <fastapi.applications.FastAPI object at 0x7f3a337a3a10>
+
+    @pytest.mark.asyncio
+    async def test_create_recruiter_duplicate_chat_id_returns_validation_message(admin_app) -> None:
+        first_payload = {
+            "name": "Recruiter One",
+            "tz": "Europe/Moscow",
+            "telemost": "",
+            "tg_chat_id": "123456",
+            "active": "1",
+        }
+    
+>       response_ok = await _async_request(
+            admin_app,
+            "post",
+            "/recruiters/create",
+            data=first_payload,
+            allow_redirects=False,
+        )
+
+tests/test_admin_recruiters_ui.py:57: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_admin_recruiters_ui.py:44: in _async_request
+    return await asyncio.to_thread(_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.pyenv/versions/3.11.12/lib/python3.11/asyncio/threads.py:25: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.pyenv/versions/3.11.12/lib/python3.11/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _call() -> Any:
+        with TestClient(app) as client:
+            client.auth = ("admin", "admin")
+>           return client.request(method, path, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: TestClient.request() got an unexpected keyword argument 'allow_redirects'
+
+tests/test_admin_recruiters_ui.py:42: TypeError
+------------------------------------------------------ Captured log call -------------------------------------------------------
+WARNING  root:app.py:34 ROUTES LOADED: ['/static', '/favicon.ico', '/.well-known/appspecific/com.chrome.devtools.json', '/health', '/health/bot', '/', '/slots', '/slots/new', '/slots/create', '/slots/bulk_create', '/slots', '/slots/{slot_id}', '/slots/{slot_id}', '/slots/{slot_id}/delete', '/slots/{slot_id}', '/slots/delete_all', '/slots/{slot_id}/outcome', '/slots/{slot_id}/reschedule', '/slots/{slot_id}/reject_booking', '/candidates', '/candidates/new', '/candidates/create', '/candidates/{candidate_id}', '/candidates/{candidate_id}/update', '/candidates/{candidate_id}/toggle', '/candidates/{candidate_id}/delete', '/recruiters', '/recruiters/new', '/recruiters/create', '/recruiters/{rec_id}/edit', '/recruiters/{rec_id}/update', '/recruiters/{rec_id}/delete', '/cities', '/cities/new', '/cities/create', '/cities/{city_id}/settings', '/cities/{city_id}/delete', '/regions/{region_id}/timezone', '/templates', '/templates/new', '/templates/create', '/templates/save', '/templates/{tmpl_id}/edit', '/templates/{tmpl_id}/update', '/templates/{tmpl_id}/delete', '/questions', '/questions/{question_id}/edit', '/questions/{question_id}/update', '/api/health', '/api/recruiters', '/api/cities', '/api/slots', '/api/templates', '/api/template_keys', '/api/city_owners', '/api/bot/integration', '/api/bot/integration']
+______________________________ test_update_recruiter_duplicate_chat_id_returns_validation_message ______________________________
+
+admin_app = <fastapi.applications.FastAPI object at 0x7f3a32340ad0>
+
+    @pytest.mark.asyncio
+    async def test_update_recruiter_duplicate_chat_id_returns_validation_message(admin_app) -> None:
+        async with async_session() as session:
+            recruiter_one = models.Recruiter(
+                name="First",
+                tz="Europe/Moscow",
+                tg_chat_id=999000,
+                active=True,
+            )
+            recruiter_two = models.Recruiter(
+                name="Second",
+                tz="Europe/Moscow",
+                tg_chat_id=888000,
+                active=True,
+            )
+            session.add_all([recruiter_one, recruiter_two])
+            await session.commit()
+            await session.refresh(recruiter_one)
+            await session.refresh(recruiter_two)
+            recruiter_two_id = recruiter_two.id
+    
+        update_payload: Dict[str, Optional[str]] = {
+            "name": "Second",
+            "tz": "Europe/Moscow",
+            "telemost": "",
+            "tg_chat_id": "999000",
+            "active": "1",
+        }
+    
+>       response_error = await _async_request(
+            admin_app,
+            "post",
+            f"/recruiters/{recruiter_two_id}/update",
+            data=update_payload,
+            allow_redirects=False,
+        )
+
+tests/test_admin_recruiters_ui.py:120: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_admin_recruiters_ui.py:44: in _async_request
+    return await asyncio.to_thread(_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.pyenv/versions/3.11.12/lib/python3.11/asyncio/threads.py:25: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.pyenv/versions/3.11.12/lib/python3.11/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _call() -> Any:
+        with TestClient(app) as client:
+            client.auth = ("admin", "admin")
+>           return client.request(method, path, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: TestClient.request() got an unexpected keyword argument 'allow_redirects'
+
+tests/test_admin_recruiters_ui.py:42: TypeError
+------------------------------------------------------ Captured log call -------------------------------------------------------
+WARNING  root:app.py:34 ROUTES LOADED: ['/static', '/favicon.ico', '/.well-known/appspecific/com.chrome.devtools.json', '/health', '/health/bot', '/', '/slots', '/slots/new', '/slots/create', '/slots/bulk_create', '/slots', '/slots/{slot_id}', '/slots/{slot_id}', '/slots/{slot_id}/delete', '/slots/{slot_id}', '/slots/delete_all', '/slots/{slot_id}/outcome', '/slots/{slot_id}/reschedule', '/slots/{slot_id}/reject_booking', '/candidates', '/candidates/new', '/candidates/create', '/candidates/{candidate_id}', '/candidates/{candidate_id}/update', '/candidates/{candidate_id}/toggle', '/candidates/{candidate_id}/delete', '/recruiters', '/recruiters/new', '/recruiters/create', '/recruiters/{rec_id}/edit', '/recruiters/{rec_id}/update', '/recruiters/{rec_id}/delete', '/cities', '/cities/new', '/cities/create', '/cities/{city_id}/settings', '/cities/{city_id}/delete', '/regions/{region_id}/timezone', '/templates', '/templates/new', '/templates/create', '/templates/save', '/templates/{tmpl_id}/edit', '/templates/{tmpl_id}/update', '/templates/{tmpl_id}/delete', '/questions', '/questions/{question_id}/edit', '/questions/{question_id}/update', '/api/health', '/api/recruiters', '/api/cities', '/api/slots', '/api/templates', '/api/template_keys', '/api/city_owners', '/api/bot/integration', '/api/bot/integration']
+_______________________________________ test_update_recruiter_single_city_checkbox_value _______________________________________
+
+admin_app = <fastapi.applications.FastAPI object at 0x7f3a32e33990>
+
+    @pytest.mark.asyncio
+    async def test_update_recruiter_single_city_checkbox_value(admin_app) -> None:
+        async with async_session() as session:
+            recruiter = models.Recruiter(
+                name="Cityless",
+                tz="Europe/Moscow",
+                active=True,
+            )
+            city = models.City(name="Test City", tz="Europe/Moscow", active=True)
+            session.add_all([recruiter, city])
+            await session.commit()
+            await session.refresh(recruiter)
+            await session.refresh(city)
+            recruiter_id = recruiter.id
+            city_id = city.id
+    
+>       response_ok = await _async_request(
+            admin_app,
+            "post",
+            f"/recruiters/{recruiter_id}/update",
+            data={
+                "name": "Cityless",
+                "tz": "Europe/Moscow",
+                "telemost": "",
+                "tg_chat_id": "",
+                "active": "1",
+                "cities": str(city_id),
+            },
+            allow_redirects=False,
+        )
+
+tests/test_admin_recruiters_ui.py:153: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_admin_recruiters_ui.py:44: in _async_request
+    return await asyncio.to_thread(_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.pyenv/versions/3.11.12/lib/python3.11/asyncio/threads.py:25: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.pyenv/versions/3.11.12/lib/python3.11/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _call() -> Any:
+        with TestClient(app) as client:
+            client.auth = ("admin", "admin")
+>           return client.request(method, path, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: TestClient.request() got an unexpected keyword argument 'allow_redirects'
+
+tests/test_admin_recruiters_ui.py:42: TypeError
+------------------------------------------------------ Captured log call -------------------------------------------------------
+WARNING  root:app.py:34 ROUTES LOADED: ['/static', '/favicon.ico', '/.well-known/appspecific/com.chrome.devtools.json', '/health', '/health/bot', '/', '/slots', '/slots/new', '/slots/create', '/slots/bulk_create', '/slots', '/slots/{slot_id}', '/slots/{slot_id}', '/slots/{slot_id}/delete', '/slots/{slot_id}', '/slots/delete_all', '/slots/{slot_id}/outcome', '/slots/{slot_id}/reschedule', '/slots/{slot_id}/reject_booking', '/candidates', '/candidates/new', '/candidates/create', '/candidates/{candidate_id}', '/candidates/{candidate_id}/update', '/candidates/{candidate_id}/toggle', '/candidates/{candidate_id}/delete', '/recruiters', '/recruiters/new', '/recruiters/create', '/recruiters/{rec_id}/edit', '/recruiters/{rec_id}/update', '/recruiters/{rec_id}/delete', '/cities', '/cities/new', '/cities/create', '/cities/{city_id}/settings', '/cities/{city_id}/delete', '/regions/{region_id}/timezone', '/templates', '/templates/new', '/templates/create', '/templates/save', '/templates/{tmpl_id}/edit', '/templates/{tmpl_id}/update', '/templates/{tmpl_id}/delete', '/questions', '/questions/{question_id}/edit', '/questions/{question_id}/update', '/api/health', '/api/recruiters', '/api/cities', '/api/slots', '/api/templates', '/api/template_keys', '/api/city_owners', '/api/bot/integration', '/api/bot/integration']
+_________________________________________________ test_api_integration_toggle __________________________________________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f3a323fd690>
+
+    def test_api_integration_toggle(monkeypatch):
+        monkeypatch.setattr(
+            "backend.apps.admin_ui.state._build_bot",
+            lambda settings: (None, False),
+        )
+    
+        app = create_app()
+    
+        with TestClient(app) as client:
+            client.auth = ("admin", "Nafetomn2001")
+    
+            status_initial = client.get("/api/bot/integration").json()
+>           assert status_initial["runtime_enabled"] in {True, False}
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'runtime_enabled'
+
+tests/test_bot_integration_toggle.py:65: KeyError
+------------------------------------------------------ Captured log call -------------------------------------------------------
+WARNING  root:app.py:34 ROUTES LOADED: ['/static', '/favicon.ico', '/.well-known/appspecific/com.chrome.devtools.json', '/health', '/health/bot', '/', '/slots', '/slots/new', '/slots/create', '/slots/bulk_create', '/slots', '/slots/{slot_id}', '/slots/{slot_id}', '/slots/{slot_id}/delete', '/slots/{slot_id}', '/slots/delete_all', '/slots/{slot_id}/outcome', '/slots/{slot_id}/reschedule', '/slots/{slot_id}/reject_booking', '/candidates', '/candidates/new', '/candidates/create', '/candidates/{candidate_id}', '/candidates/{candidate_id}/update', '/candidates/{candidate_id}/toggle', '/candidates/{candidate_id}/delete', '/recruiters', '/recruiters/new', '/recruiters/create', '/recruiters/{rec_id}/edit', '/recruiters/{rec_id}/update', '/recruiters/{rec_id}/delete', '/cities', '/cities/new', '/cities/create', '/cities/{city_id}/settings', '/cities/{city_id}/delete', '/regions/{region_id}/timezone', '/templates', '/templates/new', '/templates/create', '/templates/save', '/templates/{tmpl_id}/edit', '/templates/{tmpl_id}/update', '/templates/{tmpl_id}/delete', '/questions', '/questions/{question_id}/edit', '/questions/{question_id}/update', '/api/health', '/api/recruiters', '/api/cities', '/api/slots', '/api/templates', '/api/template_keys', '/api/city_owners', '/api/bot/integration', '/api/bot/integration']
+_____________________________________________________ test_ui_screenshots ______________________________________________________
+
+demo_server = 'http://127.0.0.1:8055'
+
+    def test_ui_screenshots(demo_server: str) -> None:
+        with sync_playwright() as p:
+            try:
+>               browser = p.chromium.launch()
+                          ^^^^^^^^^^^^^^^^^^^
+
+tests/test_ui_screenshots.py:64: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/root/.pyenv/versions/3.11.12/lib/python3.11/site-packages/playwright/sync_api/_generated.py:14502: in launch
+    self._sync(
+/root/.pyenv/versions/3.11.12/lib/python3.11/site-packages/playwright/_impl/_browser_type.py:98: in launch
+    await self._channel.send(
+/root/.pyenv/versions/3.11.12/lib/python3.11/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <playwright._impl._connection.Connection object at 0x7f3a31585d50>
+cb = <function Channel.send.<locals>.<lambda> at 0x7f3a336e2340>, is_internal = False, title = None
+
+    async def wrap_api_call(
+        self, cb: Callable[[], Any], is_internal: bool = False, title: str = None
+    ) -> Any:
+        if self._api_zone.get():
+            return await cb()
+        task = asyncio.current_task(self._loop)
+        st: List[inspect.FrameInfo] = getattr(
+            task, "__pw_stack__", None
+        ) or inspect.stack(0)
+    
+        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal, title)
+        self._api_zone.set(parsed_st)
+        try:
+            return await cb()
+        except Exception as error:
+>           raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E           playwright._impl._errors.Error: BrowserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1187/chrome-linux/headless_shell
+E           ╔════════════════════════════════════════════════════════════╗
+E           ║ Looks like Playwright was just installed or updated.       ║
+E           ║ Please run the following command to download new browsers: ║
+E           ║                                                            ║
+E           ║     playwright install                                     ║
+E           ║                                                            ║
+E           ║ <3 Playwright Team                                         ║
+E           ╚════════════════════════════════════════════════════════════╝
+
+/root/.pyenv/versions/3.11.12/lib/python3.11/site-packages/playwright/_impl/_connection.py:558: Error
+======================================================= warnings summary =======================================================
+tests/services/test_dashboard_and_slots.py::test_slots_list_status_counts_and_api_payload_normalizes_statuses
+tests/test_ui_screenshots.py::test_ui_screenshots
+  /root/.pyenv/versions/3.11.12/lib/python3.11/site-packages/starlette/templating.py:162: DeprecationWarning: The `name` is not the first parameter anymore. The first parameter should be the `Request` instance.
+  Replace `TemplateResponse(name, {"request": request})` by `TemplateResponse(request, name)`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=================================================== short test summary info ====================================================
+FAILED tests/test_admin_recruiters_ui.py::test_create_recruiter_duplicate_chat_id_returns_validation_message - TypeError: Tes...
+FAILED tests/test_admin_recruiters_ui.py::test_update_recruiter_duplicate_chat_id_returns_validation_message - TypeError: Tes...
+FAILED tests/test_admin_recruiters_ui.py::test_update_recruiter_single_city_checkbox_value - TypeError: TestClient.request() ...
+FAILED tests/test_bot_integration_toggle.py::test_api_integration_toggle - KeyError: 'runtime_enabled'
+FAILED tests/test_ui_screenshots.py::test_ui_screenshots - playwright._impl._errors.Error: BrowserType.launch: Executable doe...
+5 failed, 90 passed, 3 skipped, 2 warnings in 44.06s
+```

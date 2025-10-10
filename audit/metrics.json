@@ -1,0 +1,48 @@
+{
+  "cold_start_seconds": 0.0011943049994442845,
+  "route_count": 57,
+  "model_count": 16,
+  "test_file_count": 32,
+  "css_bundle": {
+    "exists": true,
+    "size_bytes": 39528,
+    "class_count": 60
+  },
+  "template_tailwind": {
+    "unique_classes": 386,
+    "total_class_tokens": 1256
+  },
+  "smoke_no_db": {
+    "entries": [
+      "- startup: <lifespan> → EXCEPTION",
+      "detail: OperationalError: (sqlite3.OperationalError) no such table: slot_reminder_jobs"
+    ],
+    "raw": [
+      "Falling back to default test questions; database is not available.",
+      "SMOKE RESULTS [NO_DB]",
+      "- startup: <lifespan> → EXCEPTION",
+      "  detail: OperationalError: (sqlite3.OperationalError) no such table: slot_reminder_jobs",
+      "[SQL: SELECT slot_reminder_jobs.id, slot_reminder_jobs.slot_id, slot_reminder_jobs.kind, slot_reminder_jobs.job_id, slot_reminder_jobs.scheduled_at, slot_reminder_jobs.created_at, slot_reminder_jobs.updated_at ",
+      "FROM slot_reminder_jobs]",
+      "(Background on this error at: https://sqlalche.me/e/20/e3q8)"
+    ]
+  },
+  "smoke_with_db": {
+    "entries": [
+      "- dashboard: / → 200",
+      "- recruiters: /recruiters → 200",
+      "- questions: /questions → 200",
+      "- templates: /templates → 200",
+      "- slots: /slots → 200"
+    ],
+    "raw": [
+      "WARNING:root:ROUTES LOADED: ['/static', '/favicon.ico', '/.well-known/appspecific/com.chrome.devtools.json', '/health', '/health/bot', '/', '/slots', '/slots/new', '/slots/create', '/slots/bulk_create', '/slots', '/slots/{slot_id}', '/slots/{slot_id}', '/slots/{slot_id}/delete', '/slots/{slot_id}', '/slots/delete_all', '/slots/{slot_id}/outcome', '/slots/{slot_id}/reschedule', '/slots/{slot_id}/reject_booking', '/candidates', '/candidates/new', '/candidates/create', '/candidates/{candidate_id}', '/candidates/{candidate_id}/update', '/candidates/{candidate_id}/toggle', '/candidates/{candidate_id}/delete', '/recruiters', '/recruiters/new', '/recruiters/create', '/recruiters/{rec_id}/edit', '/recruiters/{rec_id}/update', '/recruiters/{rec_id}/delete', '/cities', '/cities/new', '/cities/create', '/cities/{city_id}/settings', '/cities/{city_id}/delete', '/regions/{region_id}/timezone', '/templates', '/templates/new', '/templates/create', '/templates/save', '/templates/{tmpl_id}/edit', '/templates/{tmpl_id}/update', '/templates/{tmpl_id}/delete', '/questions', '/questions/{question_id}/edit', '/questions/{question_id}/update', '/api/health', '/api/recruiters', '/api/cities', '/api/slots', '/api/templates', '/api/template_keys', '/api/city_owners', '/api/bot/integration', '/api/bot/integration']",
+      "SMOKE RESULTS [WITH_DB]",
+      "- dashboard: / → 200",
+      "- recruiters: /recruiters → 200",
+      "- questions: /questions → 200",
+      "- templates: /templates → 200",
+      "- slots: /slots → 200"
+    ]
+  }
+}
