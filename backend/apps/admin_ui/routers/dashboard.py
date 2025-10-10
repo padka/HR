@@ -9,9 +9,7 @@ from backend.apps.admin_ui.services.bot_service import (
     IntegrationSwitch,
 )
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
-from backend.apps.admin_ui.services.dashboard_calendar import (
-    dashboard_calendar_snapshot,
-)
+
 from backend.core.settings import get_settings
 
 router = APIRouter()
@@ -43,13 +41,13 @@ async def index(request: Request):
         "ready": ready,
         "mode": mode,
     }
-    calendar = await dashboard_calendar_snapshot()
+
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "counts": counts,
             "bot_status": bot_status,
-            "calendar": calendar,
+
         },
     )

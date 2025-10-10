@@ -51,6 +51,52 @@ to Telegram credentials. Refer to `docs/DEVEX.md` for a complete set of backend
 and frontend workflows, Playwright usage guidelines, smoke-test procedures and
 Liquid Glass token rotation notes.
 
+### Weekly KPI dashboard
+
+The admin dashboard includes a liquid-glass KPI block that surfaces the core
+funnels for the current recruiting week (Sunday 00:00 — Saturday 23:59 in the
+company timezone). Raw counters are refreshed every minute and cached in memory
+so that repeated page loads stay below the 200&nbsp;ms budget. Every completed
+week is persisted into the `kpi_weekly` snapshot table; historical data powers
+trend comparisons, CSV exports from the UI and the `/api/kpis/history` endpoint.
+
+- **Timezone:** set the `COMPANY_TZ` environment variable (for example
+  `Europe/Moscow`) to change the aggregation zone. When it is not provided the
+  service falls back to `TZ` and finally to `UTC`.
+- **Time overrides:** for local experiments or automated tests you can set
+  `KPI_NOW` to an ISO 8601 timestamp (e.g. `2024-03-28T09:00:00+00:00`) so that
+  the dashboard recalculates metrics for a fixed reference week.
+- **Live counters:** API consumers can request the cached values via
+  `GET /api/kpis/current?company_tz=Europe/Moscow`.
+- **History:** the paginated `/api/kpis/history` endpoint returns stored
+  snapshots, making it trivial to build charts or export weekly archives.
+
+#### Recomputing and backfilling snapshots
+
+Use the management script to seed or refresh the KPI snapshots. The Make target
+below recalculates the last eight completed weeks and leaves the current week
+untouched:
+
+```bash
+make kpi-weekly
+```
+
+For fine-grained control run the tool directly:
+
+```bash
+# Recompute a specific historical week (week start date in company TZ)
+python tools/recompute_weekly_kpis.py --week 2024-03-24
+
+# Backfill the last 12 completed weeks and include the current week snapshot
+python tools/recompute_weekly_kpis.py --weeks 12 --include-current
+
+# Override the aggregation timezone for one-off jobs
+python tools/recompute_weekly_kpis.py --timezone Europe/Samara
+```
+
+The script runs migrations automatically and clears the in-memory cache once the
+job completes so that the dashboard reflects the updated numbers immediately.
+
 ### Bot integration configuration
 
 The admin UI integrates with the Telegram bot to automatically launch “Test 2”
