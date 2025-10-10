@@ -1,12 +1,29 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional, Sequence
 
 from sqlalchemy import func, select
 
 from backend.core.db import async_session
-from .models import AutoMessage, Notification, QuestionAnswer, TestResult, User
+from backend.core.settings import get_settings
+from .models import (
+    AutoMessage,
+    CandidateTestOutcome,
+    CandidateTestOutcomeDelivery,
+    Notification,
+    QuestionAnswer,
+    TestResult,
+    User,
+)
+
+
+@dataclass(slots=True)
+class PersistedOutcome:
+    outcome: CandidateTestOutcome
+    created: bool
 
 
 async def create_or_update_user(telegram_id: int, fio: str, city: str) -> User:
@@ -68,6 +85,136 @@ async def save_test_result(
         await session.commit()
         await session.refresh(test_result)
         return test_result
+
+
+async def record_candidate_test_outcome(
+    *,
+    user_id: int,
+    test_id: str,
+    status: str,
+    rating: Optional[str],
+    score: float,
+    correct_answers: int,
+    total_questions: int,
+    attempt_at: datetime,
+    artifact_path: str,
+    artifact_name: str,
+    artifact_mime: str,
+    artifact_size: int,
+    payload: Optional[dict] = None,
+) -> PersistedOutcome:
+    payload_data = payload or {}
+    attempt_value = attempt_at.astimezone(timezone.utc)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(CandidateTestOutcome)
+            .where(
+                CandidateTestOutcome.user_id == user_id,
+                CandidateTestOutcome.test_id == test_id,
+                CandidateTestOutcome.attempt_at == attempt_value,
+            )
+            .limit(1)
+        )
+        outcome = result.scalar_one_or_none()
+        created = False
+        if outcome is None:
+            outcome = CandidateTestOutcome(
+                user_id=user_id,
+                test_id=test_id,
+                status=status,
+                rating=rating,
+                score=score,
+                correct_answers=correct_answers,
+                total_questions=total_questions,
+                attempt_at=attempt_value,
+                artifact_path=artifact_path,
+                artifact_name=artifact_name,
+                artifact_mime=artifact_mime,
+                artifact_size=artifact_size,
+                payload=payload_data,
+            )
+            session.add(outcome)
+            created = True
+        else:
+            outcome.status = status
+            outcome.rating = rating
+            outcome.score = score
+            outcome.correct_answers = correct_answers
+            outcome.total_questions = total_questions
+            outcome.attempt_at = attempt_value
+            outcome.artifact_path = artifact_path
+            outcome.artifact_name = artifact_name
+            outcome.artifact_mime = artifact_mime
+            outcome.artifact_size = artifact_size
+            outcome.payload = payload_data
+
+        await session.commit()
+        await session.refresh(outcome)
+        return PersistedOutcome(outcome=outcome, created=created)
+
+
+async def list_candidate_test_outcomes(user_id: int) -> List[CandidateTestOutcome]:
+    async with async_session() as session:
+        rows = await session.execute(
+            select(CandidateTestOutcome)
+            .where(CandidateTestOutcome.user_id == user_id)
+            .order_by(
+                CandidateTestOutcome.attempt_at.desc(),
+                CandidateTestOutcome.id.desc(),
+            )
+        )
+        return list(rows.scalars().all())
+
+
+async def was_test_outcome_delivered(outcome_id: int, chat_id: int) -> bool:
+    async with async_session() as session:
+        exists_query = await session.execute(
+            select(CandidateTestOutcomeDelivery.id)
+            .where(
+                CandidateTestOutcomeDelivery.outcome_id == outcome_id,
+                CandidateTestOutcomeDelivery.chat_id == chat_id,
+            )
+            .limit(1)
+        )
+        return exists_query.scalar_one_or_none() is not None
+
+
+async def mark_test_outcome_delivered(
+    outcome_id: int, chat_id: int, *, message_id: Optional[int] = None
+) -> None:
+    async with async_session() as session:
+        existing = await session.execute(
+            select(CandidateTestOutcomeDelivery)
+            .where(
+                CandidateTestOutcomeDelivery.outcome_id == outcome_id,
+                CandidateTestOutcomeDelivery.chat_id == chat_id,
+            )
+            .limit(1)
+        )
+        delivery = existing.scalar_one_or_none()
+        if delivery is not None:
+            if message_id is not None and delivery.message_id != message_id:
+                delivery.message_id = message_id
+                await session.commit()
+            return
+
+        delivery = CandidateTestOutcomeDelivery(
+            outcome_id=outcome_id,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
+        session.add(delivery)
+        await session.commit()
+
+
+def resolve_test_outcome_artifact(artifact_path: str) -> Path:
+    base_dir = get_settings().data_dir
+    candidate_path = (base_dir / artifact_path).resolve()
+    base_resolved = base_dir.resolve()
+    if not str(candidate_path).startswith(str(base_resolved)):
+        raise ValueError("Invalid artifact path")
+    return candidate_path
 
 
 async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:

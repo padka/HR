@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import logging
 import math
 import random
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -153,13 +155,42 @@ async def _send_with_retry(bot: Bot, method: SendMessage, correlation_id: str) -
             await asyncio.sleep(delay)
             delay = min(delay * 2, 10.0)
 
-_settings = get_settings()
-REPORTS_DIR: Path = _settings.data_dir / "reports"
-TEST1_DIR: Path = _settings.data_dir / "test1"
-UPLOADS_DIR: Path = _settings.data_dir / "uploads"
+def _data_dir() -> Path:
+    return get_settings().data_dir
 
-for _path in (REPORTS_DIR, TEST1_DIR, UPLOADS_DIR):
-    _path.mkdir(parents=True, exist_ok=True)
+
+def _reports_dir() -> Path:
+    path = _data_dir() / "reports"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _test1_dir() -> Path:
+    path = _data_dir() / "test1"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _uploads_dir() -> Path:
+    path = _data_dir() / "uploads"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _results_dir() -> Path:
+    path = _data_dir() / "test_results"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _ensure_storage_dirs() -> None:
+    _reports_dir()
+    _test1_dir()
+    _uploads_dir()
+    _results_dir()
+
+
+_ensure_storage_dirs()
 
 
 
@@ -1446,6 +1477,82 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _slugify_label(label: str) -> str:
+    candidate = re.sub(r"[^0-9A-Za-z_-]+", "_", label).strip("_")
+    if not candidate:
+        return "candidate"
+    return candidate[:48]
+
+
+def _extract_attempt_timestamp(attempts: Dict[int, Dict[str, Any]]) -> datetime:
+    latest: Optional[datetime] = None
+    for attempt in attempts.values():
+        start_time = attempt.get("start_time")
+        if isinstance(start_time, datetime):
+            start_dt = start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
+            latest = start_dt if latest is None or start_dt > latest else latest
+        for answer in attempt.get("answers", []) or []:
+            raw_ts = answer.get("time")
+            if not raw_ts:
+                continue
+            try:
+                parsed = datetime.fromisoformat(raw_ts)
+            except (TypeError, ValueError):
+                continue
+            parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            latest = parsed if latest is None or parsed > latest else latest
+    return latest or datetime.now(timezone.utc)
+
+
+def _normalize_attempt_dump(attempts: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    serialized: List[Dict[str, Any]] = []
+    for index, attempt in sorted(attempts.items()):
+        answers: List[Dict[str, Any]] = []
+        for item in attempt.get("answers", []) or []:
+            answers.append(
+                {
+                    "answer": item.get("answer"),
+                    "time": item.get("time"),
+                    "overtime": bool(item.get("overtime")),
+                }
+            )
+        start_time = attempt.get("start_time")
+        start_value = None
+        if isinstance(start_time, datetime):
+            start_value = start_time.isoformat()
+        elif isinstance(start_time, str):
+            start_value = start_time
+        serialized.append(
+            {
+                "question_index": index,
+                "is_correct": bool(attempt.get("is_correct")),
+                "answers": answers,
+                "start_time": start_value,
+            }
+        )
+    return serialized
+
+
+def _persist_test_outcome_file(
+    *,
+    fio: str,
+    user_id: int,
+    attempt_at: datetime,
+    payload: Dict[str, Any],
+) -> Path:
+    stamp = attempt_at.astimezone(timezone.utc).strftime("%Y%m%d%H%M%S")
+    slug = _slugify_label(fio or f"tg_{user_id}")
+    filename = f"test2_{slug}_{stamp}.json"
+    path = _results_dir() / filename
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+    except Exception:
+        logger.exception("Failed to persist Test 2 outcome file %s", path)
+        raise
+    return path
+
+
 def create_progress_bar(current: int, total: int) -> str:
     filled = max(0, min(10, math.ceil((current / total) * 10)))
     return f"[{'🟩' * filled}{'⬜️' * (10 - filled)}]"
@@ -1643,7 +1750,7 @@ async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Pa
 
     attachments = [
         form_path,
-        REPORTS_DIR / f"report_{state.get('fio') or user_id}.txt",
+        _reports_dir() / f"report_{state.get('fio') or user_id}.txt",
     ]
 
     delivered = False
@@ -1676,6 +1783,73 @@ async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Pa
             )
     return delivered
 
+
+async def _share_test_outcome_with_recruiters(
+    candidate,
+    outcome,
+    state: State,
+) -> None:
+    city_id = state.get("city_id")
+    try:
+        recruiters = await get_active_recruiters_for_city(city_id) if city_id else []
+    except Exception:
+        recruiters = []
+
+    if not recruiters:
+        return
+
+    bot = get_bot()
+    seen: set[int] = set()
+    try:
+        artifact_path = candidate_services.resolve_test_outcome_artifact(
+            outcome.artifact_path
+        )
+    except Exception:
+        logger.exception("Failed to resolve artifact path for outcome %s", outcome.id)
+        return
+    if not artifact_path.exists():
+        logger.warning("Outcome artifact missing at %s", artifact_path)
+        return
+
+    city_name = state.get("city_name") or getattr(candidate, "city", None) or "—"
+    caption = (
+        "🧪 <b>Результат теста 2</b>\n"
+        f"👤 {getattr(candidate, 'fio', '—')}\n"
+        f"📍 {city_name}\n"
+        f"✅ Статус: {outcome.status}\n"
+        f"🎯 Балл: {outcome.score} ({outcome.correct_answers}/{outcome.total_questions})"
+    )
+
+    for recruiter in recruiters:
+        chat_id = getattr(recruiter, "tg_chat_id", None)
+        if not chat_id or chat_id in seen:
+            continue
+        seen.add(chat_id)
+        try:
+            if await candidate_services.was_test_outcome_delivered(outcome.id, chat_id):
+                continue
+        except Exception:
+            logger.exception(
+                "Failed to check delivery state for outcome %s and chat %s",
+                outcome.id,
+                chat_id,
+            )
+            continue
+
+        try:
+            fs_file = FSInputFile(str(artifact_path))
+            message = await bot.send_document(chat_id, fs_file, caption=caption)
+            await candidate_services.mark_test_outcome_delivered(
+                outcome.id,
+                chat_id,
+                message_id=getattr(message, "message_id", None),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to deliver Test 2 outcome %s to recruiter %s",
+                outcome.id,
+                recruiter.id,
+            )
 
 async def begin_interview(user_id: int) -> None:
     state_manager = get_state_manager()
@@ -2272,7 +2446,7 @@ async def finalize_test1(user_id: int) -> None:
         qid = q["id"]
         lines.append(f"- {q['prompt']}\n  {answers.get(qid, '—')}")
 
-    fname = TEST1_DIR / f"test1_{(state.get('fio') or user_id)}.txt"
+    fname = _test1_dir() / f"test1_{(state.get('fio') or user_id)}.txt"
     try:
         with open(fname, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
@@ -2522,6 +2696,68 @@ async def finalize_test2(user_id: int) -> None:
     if not final_notice:
         final_notice = "Заявка отправлена. Ожидайте подтверждения."
     await bot.send_message(user_id, final_notice)
+
+    try:
+        fio = state.get("fio") or f"TG {user_id}"
+        city_name = state.get("city_name") or ""
+        candidate = await candidate_services.create_or_update_user(
+            telegram_id=user_id,
+            fio=fio,
+            city=city_name,
+        )
+
+        attempt_at = _extract_attempt_timestamp(attempts)
+        attempt_dump = _normalize_attempt_dump(attempts)
+        payload = {
+            "candidate": {
+                "id": candidate.id,
+                "telegram_id": user_id,
+                "fio": fio,
+                "city": city_name,
+            },
+            "test": {
+                "id": "TEST2",
+                "status": "passed",
+                "score": score,
+                "rating": rating,
+                "correct_answers": correct_answers,
+                "total_questions": len(TEST2_QUESTIONS),
+                "attempt_at": attempt_at.astimezone(timezone.utc).isoformat(),
+                "attempts": attempt_dump,
+            },
+        }
+
+        file_path = _persist_test_outcome_file(
+            fio=fio,
+            user_id=user_id,
+            attempt_at=attempt_at,
+            payload=payload,
+        )
+        try:
+            relative_path = file_path.relative_to(_data_dir())
+        except ValueError:
+            relative_path = file_path.name
+
+        persisted = await candidate_services.record_candidate_test_outcome(
+            user_id=candidate.id,
+            test_id="TEST2",
+            status="passed",
+            rating=rating,
+            score=float(score),
+            correct_answers=int(correct_answers),
+            total_questions=len(TEST2_QUESTIONS),
+            attempt_at=attempt_at,
+            artifact_path=str(relative_path),
+            artifact_name=file_path.name,
+            artifact_mime="application/json",
+            artifact_size=file_path.stat().st_size if file_path.exists() else 0,
+            payload=payload,
+        )
+
+        if persisted.created:
+            await _share_test_outcome_with_recruiters(candidate, persisted.outcome, state)
+    except Exception:
+        logger.exception("Failed to persist or share Test 2 outcome for %s", user_id)
 
 
 async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> None:
@@ -2788,9 +3024,55 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
     )
 
     attached = False
+    if rec and rec.tg_chat_id:
+        try:
+            candidate_db = await candidate_services.get_user_by_telegram_id(user_id)
+        except Exception:
+            candidate_db = None
+        if candidate_db:
+            try:
+                outcomes = await candidate_services.list_candidate_test_outcomes(
+                    candidate_db.id
+                )
+            except Exception:
+                outcomes = []
+            for outcome in outcomes:
+                try:
+                    if await candidate_services.was_test_outcome_delivered(
+                        outcome.id, rec.tg_chat_id
+                    ):
+                        continue
+                    artifact_path = candidate_services.resolve_test_outcome_artifact(
+                        outcome.artifact_path
+                    )
+                except Exception:
+                    continue
+                if not artifact_path.exists():
+                    continue
+                try:
+                    message = await bot.send_document(
+                        rec.tg_chat_id,
+                        FSInputFile(str(artifact_path)),
+                        caption=caption,
+                        reply_markup=kb_approve(slot.id),
+                    )
+                    await candidate_services.mark_test_outcome_delivered(
+                        outcome.id,
+                        rec.tg_chat_id,
+                        message_id=getattr(message, "message_id", None),
+                    )
+                    attached = True
+                    break
+                except Exception:
+                    logger.exception(
+                        "Failed to deliver stored outcome %s to recruiter %s",
+                        outcome.id,
+                        rec.id if rec else "?",
+                    )
+
     for path in [
-        TEST1_DIR / f"test1_{state.get('fio') or user_id}.txt",
-        REPORTS_DIR / f"report_{state.get('fio') or user_id}.txt",
+        _test1_dir() / f"test1_{state.get('fio') or user_id}.txt",
+        _reports_dir() / f"report_{state.get('fio') or user_id}.txt",
     ]:
         if path.exists():
             try:

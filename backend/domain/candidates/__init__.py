@@ -11,6 +11,11 @@ from .services import (  # noqa: F401
     get_active_auto_messages,
     create_notification,
     mark_notification_sent,
+    record_candidate_test_outcome,
+    list_candidate_test_outcomes,
+    was_test_outcome_delivered,
+    mark_test_outcome_delivered,
+    resolve_test_outcome_artifact,
 )
 
 __all__ = [
@@ -23,4 +28,9 @@ __all__ = [
     "get_active_auto_messages",
     "create_notification",
     "mark_notification_sent",
+    "record_candidate_test_outcome",
+    "list_candidate_test_outcomes",
+    "was_test_outcome_delivered",
+    "mark_test_outcome_delivered",
+    "resolve_test_outcome_artifact",
 ]

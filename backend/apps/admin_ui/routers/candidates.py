@@ -1,7 +1,7 @@
 from typing import Optional
 
-from fastapi import APIRouter, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Form, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
 
 from backend.apps.admin_ui.config import templates
@@ -9,11 +9,13 @@ from backend.apps.admin_ui.services.candidates import (
     candidate_filter_options,
     delete_candidate,
     get_candidate_detail,
+    get_candidate_test_outcome,
     list_candidates,
     toggle_candidate_activity,
     update_candidate,
     upsert_candidate,
 )
+from backend.domain.candidates import resolve_test_outcome_artifact
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 
@@ -150,3 +152,46 @@ async def candidates_toggle(candidate_id: int, active: str = Form("true")):
 async def candidates_delete(candidate_id: int):
     await delete_candidate(candidate_id)
     return RedirectResponse(url="/candidates", status_code=303)
+@router.get(
+    "/{candidate_id}/test-results/{outcome_id}/file",
+    name="candidate_test_result_file",
+)
+async def candidate_test_result_file(candidate_id: int, outcome_id: int) -> FileResponse:
+    outcome = await get_candidate_test_outcome(candidate_id, outcome_id)
+    if not outcome:
+        raise HTTPException(status_code=404)
+    try:
+        file_path = resolve_test_outcome_artifact(outcome.artifact_path)
+    except ValueError:
+        raise HTTPException(status_code=404)
+    if not file_path.exists():
+        raise HTTPException(status_code=404)
+    media_type = outcome.artifact_mime or "application/octet-stream"
+    filename = outcome.artifact_name or file_path.name
+    return FileResponse(
+        path=str(file_path), media_type=media_type, filename=filename
+    )
+
+
+@router.get(
+    "/{candidate_id}/test-results/{outcome_id}/payload",
+    name="candidate_test_result_payload",
+)
+async def candidate_test_result_payload(candidate_id: int, outcome_id: int) -> JSONResponse:
+    outcome = await get_candidate_test_outcome(candidate_id, outcome_id)
+    if not outcome:
+        raise HTTPException(status_code=404)
+    body = {
+        "id": outcome.id,
+        "test_id": outcome.test_id,
+        "status": outcome.status,
+        "rating": outcome.rating,
+        "score": outcome.score,
+        "correct_answers": outcome.correct_answers,
+        "total_questions": outcome.total_questions,
+        "attempt_at": outcome.attempt_at.isoformat() if outcome.attempt_at else None,
+        "artifact_name": outcome.artifact_name,
+        "artifact_path": outcome.artifact_path,
+        "payload": outcome.payload,
+    }
+    return JSONResponse(body)

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from backend.apps.admin_ui.services.candidates import (
@@ -43,6 +45,23 @@ async def test_list_candidates_and_detail():
         target_chat_id=user.telegram_id,
     )
 
+    attempt_at = datetime.now(timezone.utc)
+    await candidate_services.record_candidate_test_outcome(
+        user_id=user.id,
+        test_id="TEST2",
+        status="passed",
+        rating="A",
+        score=8.5,
+        correct_answers=8,
+        total_questions=10,
+        attempt_at=attempt_at,
+        artifact_path="test_results/sample.json",
+        artifact_name="sample.json",
+        artifact_mime="application/json",
+        artifact_size=256,
+        payload={"sample": True},
+    )
+
     payload = await list_candidates(
         page=1,
         per_page=10,
@@ -68,5 +87,6 @@ async def test_list_candidates_and_detail():
     assert detail["stats"]["tests_total"] == 1
     assert detail["messages"]
     assert detail["tests"]
+    assert detail["test_outcomes"]
     assert "slots" in detail
     assert "timeline" in detail

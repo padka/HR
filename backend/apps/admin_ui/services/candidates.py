@@ -11,7 +11,13 @@ from sqlalchemy.sql import case, Select
 
 from backend.apps.admin_ui.utils import paginate
 from backend.core.db import async_session
-from backend.domain.candidates.models import AutoMessage, QuestionAnswer, TestResult, User
+from backend.domain.candidates.models import (
+    AutoMessage,
+    CandidateTestOutcome,
+    QuestionAnswer,
+    TestResult,
+    User,
+)
 from backend.domain.models import Slot, SlotStatus
 
 
@@ -512,6 +518,17 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
             )
         ).scalars().all()
 
+        test_outcomes = (
+            await session.execute(
+                select(CandidateTestOutcome)
+                .where(CandidateTestOutcome.user_id == user_id)
+                .order_by(
+                    CandidateTestOutcome.attempt_at.desc(),
+                    CandidateTestOutcome.id.desc(),
+                )
+            )
+        ).scalars().all()
+
         slots = (
             await session.execute(
                 select(Slot)
@@ -545,6 +562,17 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
                     "dt": _ensure_aware(result.created_at),
                     "score": result.final_score,
                     "rating": result.rating,
+                    "tz": None,
+                }
+            )
+        for outcome in test_outcomes:
+            timeline.append(
+                {
+                    "kind": "test_outcome",
+                    "dt": _ensure_aware(outcome.attempt_at),
+                    "status": outcome.status,
+                    "score": outcome.score,
+                    "rating": outcome.rating,
                     "tz": None,
                 }
             )
@@ -582,7 +610,23 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
             "tests_total": int(tests_total or 0),
             "average_score": float(avg_score) if avg_score is not None else None,
         },
+        "test_outcomes": test_outcomes,
     }
+
+
+async def get_candidate_test_outcome(
+    candidate_id: int, outcome_id: int
+) -> Optional[CandidateTestOutcome]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(CandidateTestOutcome)
+            .where(
+                CandidateTestOutcome.id == outcome_id,
+                CandidateTestOutcome.user_id == candidate_id,
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
 
 async def upsert_candidate(
@@ -690,6 +734,7 @@ __all__ = [
     "list_candidates",
     "candidate_filter_options",
     "get_candidate_detail",
+    "get_candidate_test_outcome",
     "upsert_candidate",
     "toggle_candidate_activity",
     "update_candidate",

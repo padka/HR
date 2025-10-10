@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -32,6 +33,9 @@ class User(Base):
     )
 
     test_results: Mapped[List["TestResult"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    test_outcomes: Mapped[List["CandidateTestOutcome"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -88,6 +92,89 @@ class QuestionAnswer(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<QuestionAnswer result={self.test_result_id} index={self.question_index}>"
+
+
+class CandidateTestOutcome(Base):
+    __tablename__ = "candidate_test_outcomes"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "test_id",
+            "attempt_at",
+            name="uq_candidate_test_outcome_attempt",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    test_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    rating: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    correct_answers: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_questions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    artifact_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    artifact_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    artifact_mime: Mapped[str] = mapped_column(String(100), nullable=False)
+    artifact_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    user: Mapped["User"] = relationship(back_populates="test_outcomes")
+    deliveries: Mapped[List["CandidateTestOutcomeDelivery"]] = relationship(
+        back_populates="outcome", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<CandidateTestOutcome id={self.id} user={self.user_id} "
+            f"test={self.test_id} status={self.status}>"
+        )
+
+
+class CandidateTestOutcomeDelivery(Base):
+    __tablename__ = "candidate_test_outcome_deliveries"
+    __table_args__ = (
+        UniqueConstraint(
+            "outcome_id", "chat_id", name="uq_candidate_test_outcome_delivery"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    outcome_id: Mapped[int] = mapped_column(
+        ForeignKey("candidate_test_outcomes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    delivered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+
+    outcome: Mapped["CandidateTestOutcome"] = relationship(
+        back_populates="deliveries"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<CandidateTestOutcomeDelivery outcome={self.outcome_id} chat={self.chat_id}>"
 
 
 class AutoMessage(Base):

@@ -98,6 +98,59 @@
 
 <section class="surface">
   <header class="section-header">
+    <h2 class="section-title">Результат теста</h2>
+    <p class="section-hint">Итоги прохождения последнего тестирования кандидата.</p>
+  </header>
+  {% if test_outcomes %}
+    <div class="list-table-wrapper">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th scope="col">Дата</th>
+            <th scope="col">Статус</th>
+            <th scope="col">Верно</th>
+            <th scope="col">Балл</th>
+            <th scope="col">Файл</th>
+            <th scope="col">JSON</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for outcome in test_outcomes %}
+          <tr>
+            <td>{{ outcome.attempt_at.strftime('%d.%m.%Y %H:%M') if outcome.attempt_at else '—' }}</td>
+            <td>
+              {% set status = (outcome.status or '').lower() %}
+              {% if status in ['passed', 'success', 'ok'] %}
+                <span class="badge badge--success">Пройдено</span>
+              {% elif status in ['failed', 'reject', 'error'] %}
+                <span class="badge badge--danger">Не пройдено</span>
+              {% else %}
+                <span class="badge badge--muted">{{ outcome.status }}</span>
+              {% endif %}
+            </td>
+            <td><strong>{{ outcome.correct_answers }}</strong> из {{ outcome.total_questions }}</td>
+            <td>{{ '%.1f'|format(outcome.score) }}</td>
+            <td>
+              <a class="btn btn-soft btn--small" href="{{ request.url_for('candidate_test_result_file', candidate_id=user.id, outcome_id=outcome.id) }}">Скачать</a>
+            </td>
+            <td>
+              <details class="details">
+                <summary class="btn btn-ghost btn--small">Показать</summary>
+                <pre class="text-prewrap text-xs mt-2">{{ outcome.payload | tojson(indent=2, ensure_ascii=False) }}</pre>
+              </details>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">Результаты финального теста ещё не загружены.</p>
+  {% endif %}
+</section>
+
+<section class="surface">
+  <header class="section-header">
     <h2 class="section-title">Результаты тестов</h2>
     <p class="section-hint">Полная история прохождений с ключевыми показателями.</p>
   </header>
