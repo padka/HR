@@ -13,10 +13,9 @@
 
   body {
     @apply bg-bg-base text-fg-primary font-sans transition-colors duration-500 ease-snap;
-    background-image: radial-gradient(circle at 20% -10%, rgba(147, 254, 191, 0.55), transparent 55%),
-      radial-gradient(circle at 82% 12%, rgba(255, 209, 68, 0.28), transparent 60%),
-      radial-gradient(circle at 10% 70%, rgba(249, 110, 101, 0.12), transparent 65%),
-      linear-gradient(165deg, rgb(var(--bg-base) / 1) 0%, rgb(var(--bg-base) / 1) 100%);
+    background-image: radial-gradient(circle at 20% -10%, rgba(255, 255, 255, 0.7), transparent 55%),
+      radial-gradient(circle at 85% 20%, rgba(140, 180, 255, 0.35), transparent 60%),
+      linear-gradient(160deg, rgb(var(--bg-base) / 1) 0%, rgb(var(--bg-base) / 1) 100%);
     min-height: 100vh;
     margin: 0;
   }
@@ -44,189 +43,106 @@
   }
 
   [data-theme='dark'] body {
-    background-image: radial-gradient(circle at 18% -12%, rgba(147, 254, 191, 0.22), transparent 60%),
-      radial-gradient(circle at 88% 6%, rgba(255, 209, 68, 0.18), transparent 65%),
-      radial-gradient(circle at 20% 75%, rgba(249, 110, 101, 0.2), transparent 70%),
-      linear-gradient(175deg, rgb(var(--bg-base) / 1) 0%, rgb(var(--bg-base) / 1) 100%);
+    background-image: radial-gradient(circle at 12% -10%, rgba(120, 178, 255, 0.16), transparent 58%),
+      radial-gradient(circle at 90% 10%, rgba(120, 178, 255, 0.12), transparent 60%),
+      linear-gradient(170deg, rgb(var(--bg-base) / 1) 0%, rgb(var(--bg-base) / 1) 100%);
   }
 }
 
 @layer components {
   .app-shell {
-    @apply min-h-screen text-fg-primary;
-    display: grid;
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
-    position: relative;
+    @apply flex min-h-screen flex-col text-fg-primary;
   }
 
   .topbar {
-    @apply z-50 backdrop-blur-glass shadow-glass transition-shadow duration-300 ease-snap;
-    position: sticky;
-    top: 0;
-    background: linear-gradient(140deg, rgba(147, 254, 191, 0.25), rgba(239, 154, 104, 0.18) 55%, rgba(255, 209, 68, 0.12));
-    border: none;
+    @apply sticky top-0 z-50 backdrop-blur-glass shadow-glass transition-shadow duration-300 ease-snap;
+    background: linear-gradient(135deg, var(--glass-surface-1), var(--glass-surface-2) 70%);
     border-bottom: 1px solid rgb(var(--border) / var(--border-alpha));
-    grid-column: 1 / -1;
-    grid-row: 1;
   }
 
   .topbar__content {
-    width: min(1200px, 100%);
-    margin-inline: auto;
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    align-items: center;
-    gap: 1.5rem;
-    padding: 1rem 1.5rem;
+    @apply mx-auto grid max-w-6xl grid-cols-[auto_1fr_auto] items-center gap-6 px-6 py-4;
   }
 
   .topbar__brand {
-    @apply inline-flex items-center gap-3 rounded-full px-4 py-2 text-sm font-semibold uppercase tracking-[0.3em] text-fg-secondary;
-    background: linear-gradient(135deg, rgba(147, 254, 191, 0.35), rgba(255, 209, 68, 0.25));
-    border: 1px solid rgba(147, 254, 191, 0.4);
+    @apply inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold uppercase tracking-[0.2em] text-fg-secondary;
+    background: var(--glass-highlight);
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
     box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
   }
 
-  .topbar__brand-accent {
-    display: inline-flex;
-    width: 0.875rem;
-    height: 0.875rem;
-    border-radius: 999px;
-    background: linear-gradient(160deg, rgba(147, 254, 191, 0.9), rgba(255, 209, 68, 0.9));
-    box-shadow: 0 0 0 2px rgba(147, 254, 191, 0.35), 0 0 18px rgba(239, 154, 104, 0.45);
-  }
-
-  .topbar__brand-text {
-    font-size: 0.74rem;
-    letter-spacing: 0.24em;
-  }
-
   .topbar__badge {
-    @apply rounded-full px-3 py-1 text-xs font-medium text-fg-secondary;
-    border: 1px solid rgba(255, 209, 68, 0.45);
-    background: rgba(255, 209, 68, 0.18);
-    backdrop-filter: blur(calc(var(--blur) / 2));
+    @apply rounded-full px-3 py-1 text-xs font-medium text-fg-secondary backdrop-blur-glass;
+    border: 1px solid rgb(var(--border) / 0.5);
+    background: rgb(var(--border) / 0.25);
   }
 
   .topbar__burger {
-    @apply inline-flex h-11 w-11 items-center justify-center rounded-full text-lg text-fg-primary transition-all duration-200 ease-snap;
-    border: 1px solid rgba(239, 154, 104, 0.35);
-    background: rgba(239, 154, 104, 0.18);
+    @apply inline-flex h-10 w-10 items-center justify-center rounded-full text-lg text-fg-primary transition-all duration-200 ease-snap lg:hidden;
+    border: 1px solid rgb(var(--border) / 0.4);
+    background: rgb(var(--border) / 0.2);
   }
 
   .topbar__burger:hover {
-    background: rgba(239, 154, 104, 0.28);
+    background: rgb(var(--border) / 0.3);
   }
 
   .topbar__nav {
-    position: fixed;
-    top: 5rem;
-    left: 50%;
+    @apply fixed left-1/2 top-24 z-40 hidden flex-col gap-2 rounded-2xl p-4 shadow-glass backdrop-blur-glass lg:static lg:flex lg:flex-row lg:items-center lg:gap-2 lg:border-none lg:bg-transparent lg:p-0 lg:shadow-none;
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    background: var(--glass-surface-2);
+    width: min(640px, calc(100% - 2.5rem));
     transform: translateX(-50%);
-    z-index: 40;
-    display: none;
-    flex-direction: column;
-    gap: 0.75rem;
-    border-radius: 1.5rem;
-    padding: 1.25rem;
-    border: 1px solid rgba(147, 254, 191, 0.45);
-    background: linear-gradient(155deg, rgba(147, 254, 191, 0.35), rgba(255, 209, 68, 0.22));
-    box-shadow: 0 20px 40px rgba(18, 24, 32, 0.22);
-    backdrop-filter: blur(calc(var(--blur) * 0.8));
-    width: min(20rem, calc(100% - 2.5rem));
+  }
+
+  @media (min-width: 1024px) {
+    .topbar__nav {
+      width: auto;
+      transform: none;
+    }
   }
 
   .topbar__nav[data-open='true'] {
-    display: flex;
+    @apply flex;
   }
 
   .nav-links {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+    @apply flex flex-col gap-2 lg:flex-row lg:items-center;
   }
 
   .nav-link {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.75rem;
-    border-radius: 999px;
-    padding: 0.75rem 1.25rem;
-    font-size: 0.95rem;
-    font-weight: 500;
-    color: rgb(var(--fg-secondary) / var(--fg-secondary-alpha));
-    transition: all 200ms var(--transition-snap);
+    @apply relative inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-fg-secondary transition-all duration-200 ease-snap;
   }
 
   .nav-link::after {
     content: '';
-    position: absolute;
-    left: 1.25rem;
-    right: 1.25rem;
-    bottom: 0.65rem;
-    height: 0.2rem;
-    border-radius: 999px;
-    background: linear-gradient(90deg, rgba(147, 254, 191, 0.8), rgba(255, 209, 68, 0.8));
-    opacity: 0;
-    transition: opacity 250ms var(--transition-snap);
+    @apply absolute inset-x-2 bottom-1 h-0.5 rounded-full bg-accent opacity-0 transition-opacity duration-300 ease-snap;
   }
 
   .nav-link[aria-current='page'] {
-    color: rgb(var(--fg-primary) / 1);
-    background: linear-gradient(135deg, rgba(147, 254, 191, 0.22), rgba(255, 209, 68, 0.16));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    @apply text-fg-primary;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.12));
+    box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
   }
 
   .nav-link[aria-current='page']::after {
-    opacity: 1;
+    @apply opacity-100;
   }
 
   .nav-link:hover {
-    color: rgb(var(--fg-primary) / 1);
-  }
-
-  .nav-link__icon {
-    display: inline-flex;
-    width: 1.4rem;
-    height: 1.4rem;
-    align-items: center;
-    justify-content: center;
-    color: inherit;
-  }
-
-  .nav-link__icon svg {
-    width: 100%;
-    height: 100%;
-    stroke: currentColor;
-  }
-
-  .nav-link[aria-current='page'] .nav-link__icon {
-    color: rgb(var(--accent-strong) / 1);
-  }
-
-  .nav-link__label {
-    display: inline-flex;
-    align-items: center;
+    @apply text-fg-primary;
   }
 
   .topbar__actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
+    @apply flex items-center gap-3;
   }
 
   .theme-toggle {
-    @apply inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 ease-snap;
-    border: 1px solid rgba(147, 254, 191, 0.45);
-    background: rgba(147, 254, 191, 0.16);
-    color: rgb(var(--fg-secondary) / var(--fg-secondary-alpha));
+    @apply inline-flex items-center gap-2 rounded-full border border-white/40 bg-white/10 px-4 py-2 text-sm font-medium text-fg-secondary transition-all duration-200 ease-snap;
   }
 
   .theme-toggle:hover {
-    background: rgba(147, 254, 191, 0.26);
-    color: rgb(var(--fg-primary) / 1);
+    @apply bg-white/20 text-fg-primary;
   }
 
   .topbar__scrim {
@@ -234,218 +150,12 @@
   }
 
   .topbar__scrim[data-open='true'] {
-    display: block;
+    @apply block;
   }
 
   .app-main {
-    background: linear-gradient(160deg, rgba(147, 254, 191, 0.08) 0%, rgba(255, 209, 68, 0.04) 45%, transparent 100%);
-    grid-column: 1;
-    grid-row: 2;
-    width: 100%;
-  }
-
-  @media (min-width: 768px) {
-    .app-shell {
-      grid-template-columns: 112px 1fr;
-      grid-template-rows: 1fr;
-    }
-
-    .topbar {
-      position: sticky;
-      top: 0;
-      height: 100vh;
-      border-bottom: none;
-      border-right: 1px solid rgb(var(--border) / var(--border-alpha));
-      border-left: none;
-      grid-column: 1;
-      grid-row: 1;
-    }
-
-    .topbar__content {
-      margin-inline: 0;
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: space-between;
-      padding: 2rem 1.25rem 1.5rem;
-      gap: 2rem;
-      height: 100%;
-    }
-
-    .topbar__brand {
-      flex-direction: column;
-      gap: 1rem;
-      width: 100%;
-      align-items: center;
-      padding: 0.75rem;
-      text-align: center;
-    }
-
-    .topbar__brand-text {
-      font-size: 0.7rem;
-      letter-spacing: 0.18em;
-      line-height: 1.4;
-    }
-
-    .topbar__nav {
-      position: static;
-      transform: none;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      height: 100%;
-      gap: 1.5rem;
-      border: none;
-      background: transparent;
-      box-shadow: none;
-      padding: 0;
-    }
-
-    .nav-links {
-      align-items: center;
-      gap: 1.25rem;
-    }
-
-    .nav-link {
-      width: 3.75rem;
-      height: 3.75rem;
-      justify-content: center;
-      padding: 0.75rem;
-      border-radius: 1.5rem;
-    }
-
-    .nav-link::after {
-      left: 1rem;
-      right: 1rem;
-      bottom: 0.45rem;
-    }
-
-    .nav-link__label {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
-    }
-
-    .topbar__actions {
-      flex-direction: column;
-      gap: 1.25rem;
-      margin-top: auto;
-    }
-
-    .topbar__badge {
-      font-size: 0.65rem;
-      padding-inline: 0.75rem;
-    }
-
-    .topbar__burger {
-      display: none;
-    }
-
-    .topbar__scrim {
-      display: none !important;
-    }
-
-    .app-main {
-      grid-column: 2;
-      grid-row: 1;
-    }
-  }
-
-  @media (min-width: 1024px) {
-    .app-shell {
-      grid-template-columns: 1fr;
-      grid-template-rows: auto 1fr;
-    }
-
-    .topbar {
-      height: auto;
-      border-right: none;
-      border-bottom: 1px solid rgb(var(--border) / var(--border-alpha));
-    }
-
-    .topbar__content {
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      align-items: center;
-      gap: 1.5rem;
-      padding: 1rem 1.5rem;
-    }
-
-    .topbar__brand {
-      flex-direction: row;
-      gap: 0.75rem;
-      padding: 0.75rem 1.25rem;
-    }
-
-    .topbar__brand-text {
-      font-size: 0.78rem;
-      letter-spacing: 0.24em;
-      line-height: 1.2;
-    }
-
-    .topbar__nav {
-      flex-direction: row;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-    }
-
-    .nav-links {
-      flex-direction: row;
-      align-items: center;
-      gap: 0.5rem;
-    }
-
-    .nav-link {
-      width: auto;
-      height: auto;
-      justify-content: flex-start;
-      padding: 0.65rem 1.1rem;
-      border-radius: 999px;
-    }
-
-    .nav-link::after {
-      left: 1.25rem;
-      right: 1.25rem;
-      bottom: 0.4rem;
-    }
-
-    .nav-link__label {
-      position: static;
-      width: auto;
-      height: auto;
-      padding: 0;
-      margin: 0;
-      overflow: visible;
-      clip: auto;
-      white-space: nowrap;
-      border: none;
-    }
-
-    .topbar__actions {
-      flex-direction: row;
-      align-items: center;
-      gap: 0.75rem;
-      margin-top: 0;
-    }
-
-    .topbar__badge {
-      font-size: 0.75rem;
-    }
-
-    .app-main {
-      grid-column: 1;
-      grid-row: 2;
-    }
+    @apply flex-1;
+    background: linear-gradient(160deg, transparent 0%, rgba(255, 255, 255, 0.3) 45%, transparent 100%);
   }
 
   .container {
@@ -622,12 +332,6 @@
     border-color: rgb(var(--warning) / 0.4);
     background-color: rgb(var(--warning) / 0.18);
     color: rgb(var(--warning) / 1);
-  }
-
-  .badge--accent {
-    border-color: rgb(var(--accent) / 0.35);
-    background-color: rgb(var(--accent) / 0.18);
-    color: rgb(var(--accent));
   }
 
   .badge--muted {
@@ -1223,156 +927,5 @@
   .backdrop-glass {
     backdrop-filter: blur(var(--blur));
     -webkit-backdrop-filter: blur(var(--blur));
-  }
-}
-
-@layer components {
-  .calendar-summary {
-    @apply relative;
-  }
-
-  .calendar-status-card {
-    @apply flex flex-col gap-4;
-  }
-
-  .calendar-status-list {
-    @apply grid gap-2;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  @media (max-width: 640px) {
-    .calendar-status-list {
-      grid-template-columns: repeat(1, minmax(0, 1fr));
-    }
-  }
-
-  .calendar-status-list__item {
-    @apply flex items-center justify-between rounded-lg bg-white/5 px-4 py-3 text-sm;
-    border: 1px solid rgb(var(--border) / 0.35);
-    backdrop-filter: blur(12px);
-  }
-
-  .calendar-status-list__label {
-    @apply text-fg-secondary;
-  }
-
-  .calendar-status-list__value {
-    @apply text-lg font-semibold text-fg-primary;
-  }
-
-  .calendar-surface {
-    @apply flex flex-col gap-6;
-  }
-
-  .calendar-header {
-    @apply flex flex-col gap-6 md:flex-row md:items-center md:justify-between;
-  }
-
-  .calendar-controls {
-    @apply flex flex-wrap items-end gap-4;
-  }
-
-  .calendar-date-picker {
-    @apply flex flex-col gap-1 text-sm;
-  }
-
-  .calendar-date-picker input[type='date'] {
-    @apply w-52 rounded-lg border border-transparent bg-white/10 px-3 py-2 text-base font-medium text-fg-primary shadow-inner transition focus:border-accent focus:outline-none;
-  }
-
-  .calendar-board {
-    @apply grid gap-6 lg:grid-cols-[minmax(220px,0.35fr)_minmax(0,1fr)];
-  }
-
-  .calendar-days {
-    @apply flex gap-3 overflow-x-auto rounded-xl p-3;
-    border: 1px solid rgb(var(--border) / var(--border-alpha));
-    background: var(--glass-surface-2);
-    box-shadow: inset 0 1px 0 rgb(var(--shadow-inset));
-  }
-
-  .calendar-day {
-    @apply flex min-w-[110px] flex-col items-start gap-2 rounded-lg border px-4 py-3 text-left transition duration-150 ease-snap;
-    border-color: rgb(var(--border) / 0.5);
-    background: linear-gradient(160deg, rgb(var(--glass-tint) / 0.35), transparent);
-    color: rgb(var(--fg-secondary));
-  }
-
-  .calendar-day.is-today {
-    @apply border-accent text-fg-primary;
-    box-shadow: 0 0 0 1px rgb(var(--accent) / 0.2);
-  }
-
-  .calendar-day.is-active {
-    background: linear-gradient(160deg, rgb(var(--accent) / 0.2), rgb(var(--accent-soft) / 0.25));
-    border-color: rgb(var(--accent) / 0.6);
-    color: rgb(var(--fg-primary));
-    box-shadow: 0 12px 24px rgb(var(--accent) / 0.18);
-  }
-
-  .calendar-day__weekday {
-    @apply text-xs font-semibold uppercase tracking-[0.2em];
-  }
-
-  .calendar-day__date {
-    @apply text-2xl font-semibold text-fg-primary;
-  }
-
-  .calendar-day__count {
-    @apply text-xs font-medium uppercase tracking-[0.18em] text-fg-secondary;
-  }
-
-  .calendar-events {
-    @apply flex flex-col gap-4;
-  }
-
-  .calendar-event {
-    @apply grid gap-4 rounded-xl p-5 sm:grid-cols-[120px_minmax(0,1fr)];
-    border: 1px solid rgb(var(--border) / var(--border-alpha));
-  }
-
-  .calendar-event__clock {
-    @apply flex flex-col justify-center gap-1 rounded-lg bg-white/5 px-4 py-3 text-center;
-    border: 1px solid rgb(var(--border) / 0.35);
-  }
-
-  .calendar-event__start {
-    @apply text-3xl font-semibold text-fg-primary;
-  }
-
-  .calendar-event__end {
-    @apply text-xs font-medium uppercase tracking-[0.2em] text-fg-secondary;
-  }
-
-  .calendar-event__details {
-    @apply flex flex-col gap-2;
-  }
-
-  .calendar-event__header {
-    @apply flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between;
-  }
-
-  .calendar-event__title {
-    @apply text-lg font-semibold text-fg-primary;
-  }
-
-  .calendar-event__candidate {
-    @apply text-fg-primary underline decoration-dashed underline-offset-4 transition hover:text-accent;
-  }
-
-  .calendar-event__meta {
-    @apply text-sm text-fg-secondary;
-  }
-
-  .calendar-empty {
-    @apply rounded-lg border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center text-sm text-fg-secondary;
-  }
-
-  .calendar-feedback {
-    @apply text-sm text-fg-secondary;
-  }
-
-  .calendar-feedback[data-state='error'] {
-    @apply text-danger;
   }
 }
