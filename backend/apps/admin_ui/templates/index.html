@@ -31,27 +31,33 @@
     <a class="weekly-kpi__history" href="/api/kpis/history" target="_blank" rel="noopener">История &rarr;</a>
   </header>
   <div class="weekly-kpi-grid">
-    {% for card in weekly_kpis.current.metrics %}
-      {% set trend = card.trend %}
-      <button
-        type="button"
-        class="kpi-card glass-card tone-{{ card.tone }}"
-        data-metric="{{ card.key }}"
-        aria-haspopup="dialog"
-        aria-controls="kpi_drawer"
-        aria-label="{{ card.label }}: {{ card.value }} за неделю. {{ trend.label }}"
-      >
-        <span class="kpi-card__body">
-          <span class="kpi-card__label">{{ card.label }}</span>
-          <span class="kpi-card__value">{{ card.value }}</span>
-          <span class="kpi-card__hint">за эту неделю</span>
-        </span>
-        <span class="kpi-card__aside">
-          <span class="kpi-card__trend trend--{{ trend.direction }}" aria-label="{{ trend.label }}">{{ trend.display }}</span>
-          <span class="kpi-card__icon" aria-hidden="true">{{ card.icon }}</span>
-        </span>
-      </button>
-    {% endfor %}
+    {% if weekly_kpis.get('is_placeholder') %}
+      <p class="weekly-kpi__empty muted">Показатели пока недоступны. Проверьте подключение базы данных или выполните миграции.</p>
+    {% elif weekly_kpis.current.metrics %}
+      {% for card in weekly_kpis.current.metrics %}
+        {% set trend = card.trend %}
+        <button
+          type="button"
+          class="kpi-card glass-card tone-{{ card.tone }}"
+          data-metric="{{ card.key }}"
+          aria-haspopup="dialog"
+          aria-controls="kpi_drawer"
+          aria-label="{{ card.label }}: {{ card.value }} за неделю. {{ trend.label }}"
+        >
+          <span class="kpi-card__body">
+            <span class="kpi-card__label">{{ card.label }}</span>
+            <span class="kpi-card__value">{{ card.value }}</span>
+            <span class="kpi-card__hint">за эту неделю</span>
+          </span>
+          <span class="kpi-card__aside">
+            <span class="kpi-card__trend trend--{{ trend.direction }}" aria-label="{{ trend.label }}">{{ trend.display }}</span>
+            <span class="kpi-card__icon" aria-hidden="true">{{ card.icon }}</span>
+          </span>
+        </button>
+      {% endfor %}
+    {% else %}
+      <p class="weekly-kpi__empty muted">Пока нет данных за текущую неделю.</p>
+    {% endif %}
   </div>
 </section>
 

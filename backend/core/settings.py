@@ -30,6 +30,7 @@ class Settings:
     admin_chat_id: int
     timezone: str
     session_secret: str
+    session_secret_provided: bool
     session_cookie_name: str
     admin_username: str
     admin_password: str
@@ -142,6 +143,8 @@ def validate_settings(settings: Settings) -> None:
         errors.append("ADMIN_PASSWORD must be defined and use a non-default value")
 
     secret_source = os.getenv("SESSION_SECRET") or os.getenv("SECRET_KEY")
+    if not secret_source:
+        secret_source = os.getenv("SESSION_SECRET_KEY")
     if secret_source:
         if _looks_like_placeholder(secret_source) or len(secret_source) < 32:
             errors.append("SESSION_SECRET must contain at least 32 characters and avoid placeholder values")
@@ -191,11 +194,19 @@ def get_settings() -> Settings:
     bot_failfast = _get_bool("BOT_FAILFAST", default=False)
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
-    session_secret = (
-        os.getenv("SESSION_SECRET")
-        or os.getenv("SECRET_KEY")
-        or secrets.token_urlsafe(64)
-    )
+    secret_env_names = ("SESSION_SECRET_KEY", "SESSION_SECRET", "SECRET_KEY")
+    session_secret_env = ""
+    for name in secret_env_names:
+        value = os.getenv(name)
+        if value and value.strip():
+            session_secret_env = value.strip()
+            break
+    if session_secret_env:
+        session_secret = session_secret_env
+        session_secret_provided = True
+    else:
+        session_secret = secrets.token_urlsafe(64)
+        session_secret_provided = False
 
     admin_username = os.getenv("ADMIN_USER", "").strip()
     admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
@@ -242,6 +253,7 @@ def get_settings() -> Settings:
         admin_chat_id=admin_chat_id,
         timezone=timezone,
         session_secret=session_secret,
+        session_secret_provided=session_secret_provided,
         session_cookie_name=session_cookie_name,
         admin_username=admin_username,
         admin_password=admin_password,

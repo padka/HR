@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
@@ -11,6 +13,28 @@ from backend.apps.admin_ui.services.kpis import get_weekly_kpis
 from backend.core.settings import get_settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _empty_weekly_kpis(timezone: str) -> dict[str, object]:
+    placeholder_label = "Нет данных"
+    return {
+        "timezone": timezone,
+        "current": {
+            "week_start": None,
+            "week_end": None,
+            "label": placeholder_label,
+            "metrics": [],
+        },
+        "previous": {
+            "week_start": None,
+            "week_end": None,
+            "label": placeholder_label,
+            "metrics": {},
+            "computed_at": None,
+        },
+        "is_placeholder": True,
+    }
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -39,7 +63,12 @@ async def index(request: Request):
         "ready": ready,
         "mode": mode,
     }
-    weekly = await get_weekly_kpis()
+    weekly = _empty_weekly_kpis(settings.timezone)
+    try:
+        weekly = await get_weekly_kpis()
+        weekly.pop("is_placeholder", None)
+    except Exception:
+        logger.exception("Failed to load weekly KPIs for admin dashboard.")
     return templates.TemplateResponse(
         "index.html",
         {
