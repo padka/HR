@@ -27,19 +27,35 @@
 </head>
 <body class="liquid-ui">
   <div class="app-shell">
-    <header class="topbar" data-topbar>
+    <header class="topbar glass" data-topbar>
       <div class="topbar__content">
-        <button class="topbar__burger" type="button" aria-label="Открыть меню" aria-expanded="false" data-topbar-toggle>
+        <button
+          class="topbar__burger focus-ring"
+          type="button"
+          aria-label="Открыть меню"
+          aria-expanded="false"
+          aria-controls="app-primary-nav"
+          data-topbar-toggle
+        >
           <span aria-hidden="true">☰</span>
         </button>
-        <a class="topbar__brand" href="/">
+        <a class="topbar__brand focus-ring" href="/">
           <span class="topbar__brand-accent" aria-hidden="true"></span>
           <span class="topbar__brand-text">TG Bot Admin</span>
         </a>
-        <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
+        <nav
+          id="app-primary-nav"
+          class="topbar__nav"
+          data-topbar-nav
+          aria-label="Основная навигация"
+        >
           <ul class="nav-links">
             <li class="nav-links__item">
-              <a href="/" class="nav-link"{% if request.url.path == '/' %} aria-current="page"{% endif %}>
+              <a
+                href="/"
+                class="nav-link focus-ring"
+                {% if request.url.path == '/' %}aria-current="page"{% endif %}
+              >
                 <span class="nav-link__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="3.5" y="3.5" width="7" height="7" rx="1.4"></rect>
@@ -52,7 +68,11 @@
               </a>
             </li>
             <li class="nav-links__item">
-              <a href="/recruiters" class="nav-link"{% if request.url.path.startswith('/recruiters') %} aria-current="page"{% endif %}>
+              <a
+                href="/recruiters"
+                class="nav-link focus-ring"
+                {% if request.url.path.startswith('/recruiters') %}aria-current="page"{% endif %}
+              >
                 <span class="nav-link__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="7.5" r="3.5"></circle>
@@ -63,7 +83,11 @@
               </a>
             </li>
             <li class="nav-links__item">
-              <a href="/cities" class="nav-link"{% if request.url.path.startswith('/cities') %} aria-current="page"{% endif %}>
+              <a
+                href="/cities"
+                class="nav-link focus-ring"
+                {% if request.url.path.startswith('/cities') %}aria-current="page"{% endif %}
+              >
                 <span class="nav-link__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M12 20.5c3.9-5 6-7.9 6-11a6 6 0 1 0-12 0c0 3.1 2.1 6 6 11Z"></path>
@@ -74,7 +98,11 @@
               </a>
             </li>
             <li class="nav-links__item">
-              <a href="/slots" class="nav-link"{% if request.url.path.startswith('/slots') %} aria-current="page"{% endif %}>
+              <a
+                href="/slots"
+                class="nav-link focus-ring"
+                {% if request.url.path.startswith('/slots') %}aria-current="page"{% endif %}
+              >
                 <span class="nav-link__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="4" y="5" width="16" height="15" rx="2"></rect>
@@ -87,7 +115,11 @@
               </a>
             </li>
             <li class="nav-links__item">
-              <a href="/candidates" class="nav-link"{% if request.url.path.startswith('/candidates') %} aria-current="page"{% endif %}>
+              <a
+                href="/candidates"
+                class="nav-link focus-ring"
+                {% if request.url.path.startswith('/candidates') %}aria-current="page"{% endif %}
+              >
                 <span class="nav-link__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="9" cy="9" r="3.2"></circle>
@@ -100,7 +132,11 @@
               </a>
             </li>
             <li class="nav-links__item">
-              <a href="/templates" class="nav-link"{% if request.url.path.startswith('/templates') %} aria-current="page"{% endif %}>
+              <a
+                href="/templates"
+                class="nav-link focus-ring"
+                {% if request.url.path.startswith('/templates') %}aria-current="page"{% endif %}
+              >
                 <span class="nav-link__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M7 4.5h7.2L19.5 9v10.5a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2Z"></path>
@@ -113,7 +149,11 @@
               </a>
             </li>
             <li class="nav-links__item">
-              <a href="/questions" class="nav-link"{% if request.url.path.startswith('/questions') %} aria-current="page"{% endif %}>
+              <a
+                href="/questions"
+                class="nav-link focus-ring"
+                {% if request.url.path.startswith('/questions') %}aria-current="page"{% endif %}
+              >
                 <span class="nav-link__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M12 21a9 9 0 1 1 9-9"></path>
@@ -127,7 +167,13 @@
           </ul>
         </nav>
         <div class="topbar__actions">
-          <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Переключить тему">
+          <button
+            id="theme-toggle"
+            class="theme-toggle focus-ring"
+            type="button"
+            aria-pressed="false"
+            aria-label="Переключить тему"
+          >
             <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
             <span class="theme-toggle__label">Тёмная тема</span>
           </button>
@@ -137,8 +183,12 @@
     </header>
     <div class="topbar__scrim" data-topbar-scrim></div>
     <main class="app-main">
-      <div class="container">
-        {% block content %}{% endblock %}
+      <div class="app-main__stage">
+        <div class="app-main__surface glass">
+          <div class="container">
+            {% block content %}{% endblock %}
+          </div>
+        </div>
       </div>
     </main>
   </div>
