@@ -1211,6 +1211,227 @@
     transform: translateX(-60%);
     animation: shimmer 1.8s ease-in-out infinite;
   }
+
+  .weekly-kpi {
+    @apply grid gap-10;
+    margin-block: clamp(1.5rem, 4vw, 2.75rem);
+  }
+
+  .weekly-kpi__header {
+    @apply flex flex-wrap items-center justify-between gap-4;
+  }
+
+  .weekly-kpi__heading {
+    @apply grid gap-1;
+  }
+
+  .weekly-kpi__eyebrow {
+    @apply text-xs font-semibold uppercase tracking-[0.18em] text-fg-secondary;
+  }
+
+  .weekly-kpi__title {
+    @apply text-2xl font-semibold text-fg-primary;
+  }
+
+  .weekly-kpi__meta {
+    @apply text-sm text-fg-secondary;
+  }
+
+  .weekly-kpi__history {
+    @apply inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/20 px-4 py-2 text-sm font-semibold text-fg-primary transition-all duration-200;
+  }
+
+  .weekly-kpi__history:hover {
+    @apply bg-primary/30;
+  }
+
+  .weekly-kpi-grid {
+    display: grid;
+    gap: clamp(1rem, 3vw, 1.75rem);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  @media (max-width: 1280px) {
+    .weekly-kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 720px) {
+    .weekly-kpi-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .kpi-card {
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    display: grid;
+    grid-template-columns: auto minmax(4rem, 1fr);
+    gap: 1rem;
+    padding: clamp(1.1rem, 3vw, 1.6rem);
+    align-items: center;
+    min-height: 9.5rem;
+    transition: transform 180ms var(--transition-snap);
+  }
+
+  .kpi-card:hover {
+    transform: translateY(-3px);
+  }
+
+  .kpi-card:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(147, 254, 191, 0.45);
+  }
+
+  .kpi-card__body {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .kpi-card__label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgb(var(--fg-secondary) / 0.75);
+  }
+
+  .kpi-card__value {
+    font-size: clamp(2rem, 4vw, 2.75rem);
+    font-weight: 700;
+    line-height: 1.1;
+  }
+
+  .kpi-card__hint {
+    font-size: 0.9rem;
+    color: rgb(var(--fg-secondary) / 0.7);
+  }
+
+  .kpi-card__aside {
+    display: grid;
+    justify-items: end;
+    gap: 0.75rem;
+  }
+
+  .kpi-card__trend {
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    backdrop-filter: blur(calc(var(--blur) / 2));
+  }
+
+  .trend--up {
+    color: #93febf;
+  }
+
+  .trend--down {
+    color: #f96e65;
+  }
+
+  .trend--flat {
+    color: rgb(var(--fg-secondary) / 0.75);
+  }
+
+  .kpi-card__icon {
+    font-size: clamp(2rem, 4vw, 2.5rem);
+    filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.15));
+  }
+
+  .tone-success .kpi-card__value,
+  .tone-success .kpi-card__icon {
+    color: #93febf;
+  }
+
+  .tone-warning .kpi-card__value,
+  .tone-warning .kpi-card__icon {
+    color: #ffd144;
+  }
+
+  .tone-progress .kpi-card__value,
+  .tone-progress .kpi-card__icon {
+    color: #ef9a68;
+  }
+
+  .tone-negative .kpi-card__value,
+  .tone-negative .kpi-card__icon {
+    color: #f96e65;
+  }
+
+  .kpi-drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    display: grid;
+  }
+
+  .kpi-drawer[hidden] {
+    display: none;
+  }
+
+  .kpi-drawer__scrim {
+    position: absolute;
+    inset: 0;
+    background: rgba(8, 12, 20, 0.55);
+  }
+
+  .kpi-drawer__panel {
+    position: relative;
+    margin-left: auto;
+    max-width: min(520px, 100%);
+    width: 100%;
+    background: linear-gradient(150deg, rgba(18, 24, 32, 0.78), rgba(18, 24, 32, 0.65));
+    backdrop-filter: blur(calc(var(--blur) * 1.2));
+    color: rgb(var(--fg-primary) / 1);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    box-shadow: -16px 0 40px rgba(8, 12, 20, 0.45);
+  }
+
+  .kpi-drawer__header {
+    @apply flex items-start justify-between gap-4 border-b border-white/10 px-6 py-6;
+  }
+
+  .kpi-drawer__eyebrow {
+    @apply text-xs font-semibold uppercase tracking-[0.2em] text-primary;
+  }
+
+  .kpi-drawer__title {
+    @apply text-2xl font-semibold text-fg-primary;
+  }
+
+  .kpi-drawer__subtitle {
+    @apply text-sm text-fg-secondary;
+  }
+
+  .kpi-drawer__actions {
+    @apply flex items-center gap-2;
+  }
+
+  .btn.btn-icon {
+    @apply inline-flex items-center justify-center rounded-full px-3 py-2 text-lg;
+  }
+
+  .kpi-drawer__content {
+    @apply grid gap-4 px-6 py-6;
+    overflow: auto;
+  }
+
+  .kpi-drawer__trend {
+    @apply text-sm text-fg-secondary;
+  }
+
+  .kpi-drawer__empty {
+    @apply text-sm text-fg-secondary;
+  }
+
+  .kpi-table td,
+  .kpi-table th {
+    white-space: nowrap;
+  }
 }
 
 @layer utilities {

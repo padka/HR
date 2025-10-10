@@ -7,6 +7,7 @@ from backend.apps.admin_ui.services.bot_service import (
     IntegrationSwitch,
 )
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
+from backend.apps.admin_ui.services.kpis import get_weekly_kpis
 from backend.core.settings import get_settings
 
 router = APIRouter()
@@ -38,11 +39,13 @@ async def index(request: Request):
         "ready": ready,
         "mode": mode,
     }
+    weekly = await get_weekly_kpis()
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "counts": counts,
             "bot_status": bot_status,
+            "weekly_kpis": weekly,
         },
     )

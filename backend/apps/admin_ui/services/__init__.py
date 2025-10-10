@@ -1,4 +1,11 @@
 from .dashboard import dashboard_counts
+from .kpis import (
+    get_weekly_kpis,
+    list_weekly_history,
+    get_week_window,
+    compute_weekly_snapshot,
+    store_weekly_snapshot,
+)
 from .candidates import (
     CandidateRow,
     candidate_filter_options,
@@ -53,6 +60,11 @@ from .questions import (
 
 __all__ = [
     "dashboard_counts",
+    "get_weekly_kpis",
+    "list_weekly_history",
+    "get_week_window",
+    "compute_weekly_snapshot",
+    "store_weekly_snapshot",
     "CandidateRow",
     "candidate_filter_options",
     "list_candidates",

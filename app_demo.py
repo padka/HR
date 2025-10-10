@@ -127,6 +127,203 @@ BOT_STATUS_DATA = {
     "updated_at": fmt_utc(NOW_UTC - timedelta(minutes=12)),
 }
 
+WEEKLY_KPIS_DATA = {
+    "timezone": "Europe/Moscow",
+    "current": {
+        "week_start": "2024-03-24",
+        "week_end": "2024-03-31",
+        "label": "24.03.2024 — 30.03.2024",
+        "metrics": [
+            {
+                "key": "tested",
+                "label": "Проходили тест",
+                "tone": "progress",
+                "icon": "🧪",
+                "value": 42,
+                "previous": 35,
+                "trend": {
+                    "direction": "up",
+                    "percent": 20.0,
+                    "display": "↑ 20%",
+                    "label": "Рост на 20%",
+                    "arrow": "↑",
+                    "magnitude": "20",
+                },
+                "details": [
+                    {
+                        "candidate": "Анна Смирнова",
+                        "recruiter": "—",
+                        "event_at": "2024-03-25T10:00:00+03:00",
+                        "event_label": "25.03.2024 10:00 MSK",
+                        "city": "Москва",
+                        "timezone": "Europe/Moscow",
+                    },
+                    {
+                        "candidate": "Павел Кузнецов",
+                        "recruiter": "—",
+                        "event_at": "2024-03-27T13:45:00+03:00",
+                        "event_label": "27.03.2024 13:45 MSK",
+                        "city": "Санкт-Петербург",
+                        "timezone": "Europe/Moscow",
+                    },
+                ],
+            },
+            {
+                "key": "completed_test",
+                "label": "Дошли до конца теста",
+                "tone": "success",
+                "icon": "🎯",
+                "value": 38,
+                "previous": 32,
+                "trend": {
+                    "direction": "up",
+                    "percent": 18.8,
+                    "display": "↑ 18.8%",
+                    "label": "Рост на 18.8%",
+                    "arrow": "↑",
+                    "magnitude": "18.8",
+                },
+                "details": [
+                    {
+                        "candidate": "Илья Фомин",
+                        "recruiter": "—",
+                        "event_at": "2024-03-26T12:15:00+03:00",
+                        "event_label": "26.03.2024 12:15 MSK",
+                        "city": "Казань",
+                        "timezone": "Europe/Moscow",
+                    }
+                ],
+            },
+            {
+                "key": "booked",
+                "label": "Записались на собеседование",
+                "tone": "progress",
+                "icon": "🗓",
+                "value": 24,
+                "previous": 28,
+                "trend": {
+                    "direction": "down",
+                    "percent": -14.3,
+                    "display": "↓ 14.3%",
+                    "label": "Снижение на 14.3%",
+                    "arrow": "↓",
+                    "magnitude": "14.3",
+                },
+                "details": [
+                    {
+                        "candidate": "Мария Лебедева",
+                        "recruiter": "Алексей Захаров",
+                        "event_at": "2024-03-28T15:00:00+03:00",
+                        "event_label": "28.03.2024 15:00 MSK",
+                        "city": "Москва",
+                        "timezone": "Europe/Moscow",
+                    },
+                    {
+                        "candidate": "Егор Кравцов",
+                        "recruiter": "Мария Орлова",
+                        "event_at": "2024-03-29T11:30:00+03:00",
+                        "event_label": "29.03.2024 11:30 MSK",
+                        "city": "Самара",
+                        "timezone": "Europe/Samara",
+                    },
+                ],
+            },
+            {
+                "key": "confirmed",
+                "label": "Подтвердили участие",
+                "tone": "success",
+                "icon": "✅",
+                "value": 19,
+                "previous": 20,
+                "trend": {
+                    "direction": "down",
+                    "percent": -5.0,
+                    "display": "↓ 5%",
+                    "label": "Снижение на 5%",
+                    "arrow": "↓",
+                    "magnitude": "5",
+                },
+                "details": [
+                    {
+                        "candidate": "Софья Егорова",
+                        "recruiter": "Мария Орлова",
+                        "event_at": "2024-03-27T18:10:00+03:00",
+                        "event_label": "27.03.2024 18:10 MSK",
+                        "city": "Самара",
+                        "timezone": "Europe/Samara",
+                    }
+                ],
+            },
+            {
+                "key": "interview_passed",
+                "label": "Прошли собеседование",
+                "tone": "success",
+                "icon": "🏁",
+                "value": 11,
+                "previous": 9,
+                "trend": {
+                    "direction": "up",
+                    "percent": 22.2,
+                    "display": "↑ 22.2%",
+                    "label": "Рост на 22.2%",
+                    "arrow": "↑",
+                    "magnitude": "22.2",
+                },
+                "details": [
+                    {
+                        "candidate": "Дмитрий Титов",
+                        "recruiter": "Алексей Захаров",
+                        "event_at": "2024-03-26T17:40:00+03:00",
+                        "event_label": "26.03.2024 17:40 MSK",
+                        "city": "Москва",
+                        "timezone": "Europe/Moscow",
+                    }
+                ],
+            },
+            {
+                "key": "intro_day",
+                "label": "Пришли на ознакомительный день",
+                "tone": "warning",
+                "icon": "🌅",
+                "value": 6,
+                "previous": 0,
+                "trend": {
+                    "direction": "up",
+                    "percent": None,
+                    "display": "—",
+                    "label": "Нет данных за прошлую неделю",
+                    "arrow": "→",
+                    "magnitude": None,
+                },
+                "details": [
+                    {
+                        "candidate": "Ирина Ким",
+                        "recruiter": "Наталья Соколова",
+                        "event_at": "2024-03-30T09:00:00+03:00",
+                        "event_label": "30.03.2024 09:00 MSK",
+                        "city": "Москва",
+                        "timezone": "Europe/Moscow",
+                    }
+                ],
+            },
+        ],
+    },
+    "previous": {
+        "week_start": "2024-03-17",
+        "week_end": "2024-03-24",
+        "label": "17.03.2024 — 23.03.2024",
+        "metrics": {
+            "tested": 35,
+            "completed_test": 32,
+            "booked": 28,
+            "confirmed": 20,
+            "interview_passed": 9,
+            "intro_day": 0,
+        },
+        "computed_at": "2024-03-24T00:05:00+03:00",
+    },
+}
+
 ANALYTICS_DATA = {
     "total": 248,
     "active": 186,
@@ -490,7 +687,11 @@ def register_route(path: str, template_name: str, slug: str, context_factory: Ca
 # --- Context factories ------------------------------------------------------
 
 def dashboard_context() -> Dict[str, Any]:
-    return {"counts": build(COUNTS_DATA), "bot_status": build(BOT_STATUS_DATA)}
+    return {
+        "counts": build(COUNTS_DATA),
+        "bot_status": build(BOT_STATUS_DATA),
+        "weekly_kpis": build(WEEKLY_KPIS_DATA),
+    }
 
 
 def candidates_list_context() -> Dict[str, Any]:
