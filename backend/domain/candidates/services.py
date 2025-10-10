@@ -104,7 +104,11 @@ async def record_candidate_test_outcome(
     payload: Optional[dict] = None,
 ) -> PersistedOutcome:
     payload_data = payload or {}
-    attempt_value = attempt_at.astimezone(timezone.utc)
+    attempt_value = attempt_at
+    if attempt_value.tzinfo is None:
+        attempt_value = attempt_value.replace(tzinfo=timezone.utc)
+    else:
+        attempt_value = attempt_value.astimezone(timezone.utc)
 
     async with async_session() as session:
         result = await session.execute(
