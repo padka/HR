@@ -27,12 +27,12 @@ work on the Liquid Glass admin UI.
 
 ## Frontend workflows
 
-* Build Tailwind assets on demand with `npm run build:css`. The output is
-  written to `backend/apps/admin_ui/static/build/main.css` and served directly by
-  FastAPI.
-* Tailwind configuration derives from `tailwind.config.js`. Extend the Liquid
-  Glass design tokens in that file and keep utility classes close to the
-  pre-defined palette to ensure a consistent look-and-feel.
+* Основная таблица стилей расположена в `backend/apps/admin_ui/static/css/main.css`
+  и подключается напрямую через базовый шаблон. Цветовые токены хранятся в
+  `backend/apps/admin_ui/static/css/tokens.css`.
+* При обновлении стилей правьте `main.css` и токены, после чего вручную
+  проверяйте ключевые страницы через `uvicorn`. Дополнительной сборки Tailwind
+  больше не требуется.
 
 ## Playwright and UI automation
 
@@ -63,15 +63,14 @@ work on the Liquid Glass admin UI.
 
 ## Liquid Glass token maintenance
 
-* Tailwind tokens that power the Liquid Glass look reside in
-  `tailwind.config.js`. Update colour ramps, blur strengths and gradient stops in
-  that file and document rationale in the accompanying comments.
-* When tokens change, rebuild CSS (`npm run build:css`) and refresh screenshot
-  baselines to capture the new appearance.
-* Template partials under `backend/apps/admin_ui/templates/` should only use
-  approved utility classes. Keep hover/focus/active states aligned with the
-  shared components catalogue and avoid embedding ad-hoc colours—prefer token
-  aliases defined in Tailwind.
+* Цветовые и радиусные токены, а также значения blur/shadow теперь описаны в
+  `backend/apps/admin_ui/static/css/tokens.css`. Обновляйте их там и фиксируйте
+  изменения в комментариях коммита.
+* После обновления токенов убедитесь, что связанные утилиты в `main.css`
+  используют `rgb(var(--token))` и при необходимости скорректируйте оттенки.
+* Шаблоны под `backend/apps/admin_ui/templates/` должны продолжать опираться на
+  существующие утилиты (`.glass`, `.badge-*`, `.btn-*`). Новые цвета или
+  тени добавляйте исключительно через токены.
 
 ## Liquid Glass template conventions
 

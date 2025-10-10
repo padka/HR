@@ -3,9 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "build:css": "tailwindcss -i backend/apps/admin_ui/static/css/main.css -o backend/apps/admin_ui/static/build/main.css --minify"
-  },
+  "scripts": {},
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.7",
     "@tailwindcss/typography": "^0.5.12",
