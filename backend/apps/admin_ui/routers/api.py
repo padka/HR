@@ -8,9 +8,9 @@ from backend.apps.admin_ui.services.cities import (
     api_cities_payload,
     api_city_owners_payload,
 )
-from backend.apps.admin_ui.services.dashboard import (
+from backend.apps.admin_ui.services.dashboard import dashboard_counts
+from backend.apps.admin_ui.services.dashboard_calendar import (
     dashboard_calendar_snapshot,
-    dashboard_counts,
 )
 from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
 from backend.apps.admin_ui.services.slots import api_slots_payload
