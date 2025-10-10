@@ -1,5 +1,5 @@
 {% macro shell(title, description='', form_id='', action='', method='post', autocomplete='off', enctype='', back_href='', back_label='Назад', meta=(), actions=(), form_class='', section_id='', hidden=False) -%}
-<section class="form-shell"{% if section_id %} id="{{ section_id }}"{% endif %}{% if hidden %} hidden{% endif %}>
+<section class="form-shell glass-card"{% if section_id %} id="{{ section_id }}"{% endif %}{% if hidden %} hidden{% endif %}>
   <header class="form-shell__header">
     {% if back_href %}
       <div class="form-shell__breadcrumbs">

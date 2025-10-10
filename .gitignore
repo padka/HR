@@ -11,3 +11,4 @@ storage/
 uploads/
 report_*.txt
 test1_*.txt
+node_modules/
