@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Кандидат Анна Смирнова · TG Bot Admin</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      try {
+        const stored = window.localStorage.getItem(storageKey);
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored || (prefersDark ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      } catch (err) {
+        document.documentElement.dataset.theme = 'light';
+        document.documentElement.style.colorScheme = 'light';
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/build/main.css">
+  
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar" data-topbar>
+      <div class="topbar__content">
+        <button class="topbar__burger" type="button" aria-label="Открыть меню" aria-expanded="false" data-topbar-toggle>
+          <span aria-hidden="true">☰</span>
+        </button>
+        <a class="topbar__brand" href="/">
+          <span>TG</span>
+          Bot Admin
+        </a>
+        <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
+          <ul class="nav-links">
+            <li class="nav-links__item">
+              <a href="/" class="nav-link">Дашборд</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/recruiters" class="nav-link">Рекрутёры</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/cities" class="nav-link">Города</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/slots" class="nav-link">Слоты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/candidates" class="nav-link" aria-current="page">Кандидаты</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/templates" class="nav-link">Шаблоны</a>
+            </li>
+            <li class="nav-links__item">
+              <a href="/questions" class="nav-link">Вопросы</a>
+            </li>
+          </ul>
+        </nav>
+        <div class="topbar__actions">
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Переключить тему">
+            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+            <span class="theme-toggle__label">Тёмная тема</span>
+          </button>
+          <span class="topbar__badge">demo.local</span>
+        </div>
+      </div>
+    </header>
+    <div class="topbar__scrim" data-topbar-scrim></div>
+    <main class="app-main">
+      <div class="container">
+        
+
+
+
+<section class="page-header">
+  <div>
+    <a class="muted" href="/candidates">← К списку кандидатов</a>
+    <h1 class="page-title">Анна Смирнова</h1>
+    <p class="page-description">Telegram ID 438201239 · Москва</p>
+  </div>
+  <div class="page-actions">
+    <form method="post" action="/candidates/1/toggle">
+      
+        <input type="hidden" name="active" value="false">
+        <button class="btn btn-ghost" type="submit">Отключить</button>
+      
+    </form>
+    <form method="post" action="/candidates/1/delete" onsubmit="return confirm('Удалить кандидата Анна Смирнова?');">
+      <button class="btn btn-soft" type="submit">Удалить</button>
+    </form>
+  </div>
+</section>
+
+<div class="cards-grid">
+  <article class="surface">
+    <h2 class="section-title">Сводка</h2>
+    <dl class="data-list">
+      <div class="data-list__item">
+        <dt>Статус</dt>
+        <dd>
+          
+            <span class="badge badge--success">Активен</span>
+          
+        </dd>
+      </div>
+      <div class="data-list__item">
+        <dt>Город</dt>
+        <dd>Москва</dd>
+      </div>
+      <div class="data-list__item">
+        <dt>Последняя активность</dt>
+        <dd>10.10.2025 08:53</dd>
+      </div>
+      <div class="data-list__item">
+        <dt>Тестов пройдено</dt>
+        <dd>4</dd>
+      </div>
+      <div class="data-list__item">
+        <dt>Средний балл</dt>
+        <dd>87.20</dd>
+      </div>
+    </dl>
+  </article>
+
+  <section class="form-shell glass-card">
+  <header class="form-shell__header">
+    
+    <div class="form-shell__heading">
+      <h1 class="form-shell__title">Редактирование</h1>
+      <p class="form-shell__description">Обновите данные кандидата.</p>
+    </div>
+    
+  </header>
+  <form class="form-shell__form " id="candidate-update" action="/candidates/1/update" method="post" autocomplete="off">
+    <div class="form-shell__body">
+      
+    <section class="form-shell__section">
+  <div class="form-shell__section-header">
+    <h2 class="form-shell__section-title">Основные поля</h2>
+    
+  </div>
+  <div class="form-shell__section-content">
+    
+      <div class="form-grid form-grid--two">
+        <label class="form-field">
+  <span class="form-field__label">ФИО</span>
+  <div class="form-field__surface">
+    
+          <input type="text" name="fio" value="Анна Смирнова" required>
+        
+  </div>
+  
+</label>
+        <label class="form-field">
+  <span class="form-field__label">Telegram ID</span>
+  <div class="form-field__surface">
+    
+          <input type="number" name="telegram_id" value="438201239" min="1" step="1" required>
+        
+  </div>
+  
+</label>
+      </div>
+      <div class="form-grid form-grid--two">
+        <label class="form-field">
+  <span class="form-field__label">Город</span>
+  <div class="form-field__surface">
+    
+          <input type="text" name="city" value="Москва" placeholder="Москва">
+        
+  </div>
+  
+</label>
+        <label class="form-field">
+  <span class="form-field__label">Статус</span>
+  <div class="form-field__surface">
+    
+          <label class="form-switch">
+  <input type="checkbox" value="true" name="is_active" checked>
+  <span class="form-switch__track" aria-hidden="true">
+    <span class="form-switch__thumb"></span>
+  </span>
+  
+    <span class="form-switch__label">Активен</span>
+  
+  
+</label>
+        
+  </div>
+  
+</label>
+      </div>
+    
+  </div>
+</section>
+  
+    </div>
+    
+      <footer class="form-shell__footer">
+        <div class="form-shell__actions">
+          
+            
+            
+              <button type="submit" class="btn btn--primary" value="">Сохранить</button>
+            
+          
+        </div>
+      </footer>
+    
+  </form>
+</section>
+</div>
+
+<section class="surface">
+  <header class="section-header">
+    <h2 class="section-title">Результаты тестов</h2>
+    <p class="section-hint">Полная история прохождений с ключевыми показателями.</p>
+  </header>
+  
+    <div class="list-table-wrapper">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th scope="col">Дата</th>
+            <th scope="col">Балл</th>
+            <th scope="col">Рейтинг</th>
+            <th scope="col">Время (сек)</th>
+            <th scope="col">Ответы</th>
+          </tr>
+        </thead>
+        <tbody>
+        
+          
+          <tr>
+            <td>07.10.2025 10:08</td>
+            <td><strong>88</strong> из 100</td>
+            <td>A</td>
+            <td>1250</td>
+            <td>
+              
+                18/20 верно
+                
+                  · <span class="muted">1 проср.</span>
+                
+              
+            </td>
+          </tr>
+        
+          
+          <tr>
+            <td>28.09.2025 11:08</td>
+            <td><strong>82</strong> из 100</td>
+            <td>B</td>
+            <td>1420</td>
+            <td>
+              
+                15/20 верно
+                
+              
+            </td>
+          </tr>
+        
+        </tbody>
+      </table>
+    </div>
+  
+</section>
+
+<section class="surface">
+  <header class="section-header">
+    <h2 class="section-title">Сообщения кандидату</h2>
+    <p class="section-hint">Отображаются авто-сообщения, назначенные на Telegram ID кандидата.</p>
+  </header>
+  
+    <div class="list-table-wrapper">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th scope="col">Создано</th>
+            <th scope="col">Отправка</th>
+            <th scope="col">Текст</th>
+            <th scope="col">Статус</th>
+          </tr>
+        </thead>
+        <tbody>
+        
+          <tr>
+            <td>09.10.2025 09:08</td>
+            <td>Сегодня 12:15</td>
+            <td class="text-prewrap">Напоминаем про интервью с Алексеем завтра в 15:00.</td>
+            <td>
+              
+                <span class="badge badge--success">Активно</span>
+              
+            </td>
+          </tr>
+        
+          <tr>
+            <td>05.10.2025 11:08</td>
+            <td>07.09 10:00</td>
+            <td class="text-prewrap">Спасибо за прохождение теста! Мы свяжемся в ближайшее время.</td>
+            <td>
+              
+                <span class="badge badge--muted">Отключено</span>
+              
+            </td>
+          </tr>
+        
+        </tbody>
+      </table>
+    </div>
+  
+</section>
+
+      </div>
+    </main>
+  </div>
+  <script>
+    (function () {
+      const storageKey = 'tg-admin-theme';
+      const docEl = document.documentElement;
+      const toggle = document.getElementById('theme-toggle');
+      const nav = document.querySelector('[data-topbar-nav]');
+      const burger = document.querySelector('[data-topbar-toggle]');
+      const scrim = document.querySelector('[data-topbar-scrim]');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+      function storeTheme(theme) {
+        try {
+          window.localStorage.setItem(storageKey, theme);
+        } catch (err) {
+          /* noop */
+        }
+      }
+
+      function getStoredTheme() {
+        try {
+          return window.localStorage.getItem(storageKey);
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function applyTheme(theme, persist = true) {
+        const value = theme === 'dark' ? 'dark' : 'light';
+        docEl.dataset.theme = value;
+        docEl.style.colorScheme = value;
+        if (persist) {
+          storeTheme(value);
+        }
+        reflectTheme(value);
+      }
+
+      function reflectTheme(theme) {
+        if (!toggle) return;
+        const isDark = theme === 'dark';
+        toggle.setAttribute('aria-pressed', isDark);
+        toggle.querySelector('.theme-toggle__icon').textContent = isDark ? '🌞' : '🌙';
+        toggle.querySelector('.theme-toggle__label').textContent = isDark ? 'Светлая тема' : 'Тёмная тема';
+        toggle.title = isDark ? 'Переключить на светлую тему' : 'Переключить на тёмную тему';
+      }
+
+      applyTheme(getStoredTheme() || docEl.dataset.theme || (prefersDark.matches ? 'dark' : 'light'), false);
+
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const next = docEl.dataset.theme === 'dark' ? 'light' : 'dark';
+          applyTheme(next);
+        });
+      }
+
+      if (prefersDark && typeof prefersDark.addEventListener === 'function') {
+        prefersDark.addEventListener('change', (event) => {
+          if (!getStoredTheme()) {
+            applyTheme(event.matches ? 'dark' : 'light', false);
+          }
+        });
+      }
+
+      function setNavOpen(open) {
+        if (!nav || !burger) return;
+        nav.dataset.open = open ? 'true' : 'false';
+        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (scrim) {
+          scrim.dataset.open = open ? 'true' : 'false';
+        }
+      }
+
+      if (burger) {
+        burger.addEventListener('click', () => {
+          const next = nav && nav.dataset.open !== 'true';
+          setNavOpen(next);
+        });
+      }
+
+      if (scrim) {
+        scrim.addEventListener('click', () => setNavOpen(false));
+      }
+
+      if (nav) {
+        nav.addEventListener('click', (event) => {
+          const target = event.target;
+          if (window.innerWidth <= 768 && target instanceof HTMLElement && target.closest('a')) {
+            setNavOpen(false);
+          }
+        });
+      }
+
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+          setNavOpen(false);
+        }
+      });
+    })();
+  </script>
+  
+</body>
+</html>

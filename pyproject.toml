@@ -15,3 +15,33 @@ ignore = ["E203", "E266"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hr-admin-ui"
+version = "0.1.0"
+description = "Liquid Glass admin preview tooling"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "fastapi",
+  "uvicorn",
+  "jinja2",
+  "sqlalchemy[asyncio]",
+  "aiogram",
+  "aiosqlite",
+  "redis",
+  "httpx",
+  "pytest",
+  "pytest-asyncio",
+  "playwright",
+  "ruff",
+]
+
+[tool.setuptools]
+packages = ["backend", "admin_server"]
+

@@ -22,47 +22,25 @@
 </section>
 
 <section class="dashboard-metrics">
-<<<<<<< Updated upstream
   <article class="metric-card glass-card">
-    <span class="metric-card__label">Активных кандидатов</span>
-    <span class="metric-card__value">{{ metrics.active_candidates }}</span>
-    <span class="metric-card__meta">Новых за 7 дней: {{ metrics.new_week }} • Повторных: {{ metrics.repeat_week }}</span>
-  </article>
-  <article class="metric-card glass-card">
-    <span class="metric-card__label">Заполненных слотов</span>
-    <span class="metric-card__value">{{ metrics.scheduled_slots }}</span>
-    <span class="metric-card__meta">На сегодня: {{ metrics.scheduled_today }} • На неделю: {{ metrics.scheduled_week }}</span>
-  </article>
-  <article class="metric-card glass-card">
-    <span class="metric-card__label">Прохождение тестов</span>
-    <span class="metric-card__value">{{ metrics.tests_completed }}</span>
-    <span class="metric-card__meta">Средний балл: {{ metrics.tests_avg_score }} • Ошибок: {{ metrics.tests_failures }}</span>
-  </article>
-  <article class="metric-card glass-card">
-    <span class="metric-card__label">Сообщения бота</span>
-    <span class="metric-card__value">{{ metrics.messages_sent }}</span>
-    <span class="metric-card__meta">Автоматических: {{ metrics.messages_auto }} • Ручных: {{ metrics.messages_manual }}</span>
-=======
-  <article class="metric-card">
     <span class="metric-card__label">Рекрутёры</span>
     <span class="metric-card__value">{{ counts.recruiters }}</span>
     <span class="metric-card__meta">Активных городов: {{ counts.cities }}</span>
   </article>
-  <article class="metric-card">
+  <article class="metric-card glass-card">
     <span class="metric-card__label">Слоты</span>
     <span class="metric-card__value">{{ counts.slots_total }}</span>
     <span class="metric-card__meta">Свободно: {{ counts.slots_free }} • В ожидании: {{ counts.slots_pending }} • Забронировано: {{ counts.slots_booked }}</span>
   </article>
-  <article class="metric-card">
+  <article class="metric-card glass-card">
     <span class="metric-card__label">Тест 1</span>
     <span class="metric-card__value">{{ counts.test1_total_seen }}</span>
     <span class="metric-card__meta">Отказы: {{ counts.test1_rejections_total }} ({{ counts.test1_rejections_percent }}%)</span>
   </article>
-  <article class="metric-card">
+  <article class="metric-card glass-card">
     <span class="metric-card__label">Интеграция бота</span>
     <span class="metric-card__value">{{ bot_status.mode|upper }}</span>
     <span class="metric-card__meta">Готов к работе: {{ 'да' if bot_status.ready else 'нет' }}</span>
->>>>>>> Stashed changes
   </article>
 </section>
 
