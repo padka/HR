@@ -58,15 +58,27 @@ def _slug(path: str, fallback: str) -> str:
     return slug or fallback
 
 
+def _launch_browser():
+    playwright = sync_playwright().start()
+    try:
+        browser = playwright.chromium.launch()
+    except Error as exc:
+        playwright.stop()
+        if "missing dependencies" in str(exc):
+            pytest.skip("Playwright browser dependencies are not available in the CI image")
+        raise
+    return playwright, browser
+
+
+def _close_browser(playwright, browser) -> None:
+    browser.close()
+    playwright.stop()
+
+
 def test_ui_screenshots(demo_server: str) -> None:
-    with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch()
-        except Error as exc:
-            if "missing dependencies" in str(exc):
-                pytest.skip("Playwright browser dependencies are not available in the CI image")
-            raise
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
+    playwright, browser = _launch_browser()
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    try:
         for route in DEMO_ROUTES:
             url = f"{demo_server}{route.path}"
             page.goto(url)
@@ -74,4 +86,29 @@ def test_ui_screenshots(demo_server: str) -> None:
             slug = _slug(route.path, route.slug)
             screenshot_path = SCREEN_DIR / f"{slug}.png"
             page.screenshot(path=str(screenshot_path), full_page=True)
-        browser.close()
+    finally:
+        _close_browser(playwright, browser)
+
+
+def test_recruiter_card_keyboard_accessibility(demo_server: str) -> None:
+    playwright, browser = _launch_browser()
+    page = browser.new_page(viewport={"width": 1280, "height": 768})
+    try:
+        page.goto(f"{demo_server}/recruiters")
+        page.wait_for_load_state("networkidle")
+
+        card = page.locator("[data-rec-card]").first
+        card.focus()
+        page.keyboard.press("Enter")
+        page.wait_for_url("**/recruiters/10/edit", wait_until="networkidle")
+        assert "/recruiters/10/edit" in page.url
+
+        page.go_back()
+        page.wait_for_load_state("networkidle")
+        card = page.locator("[data-rec-card]").first
+        card.focus()
+        page.keyboard.press("Space")
+        page.wait_for_url("**/recruiters/10/edit", wait_until="networkidle")
+        assert "/recruiters/10/edit" in page.url
+    finally:
+        _close_browser(playwright, browser)

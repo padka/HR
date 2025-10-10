@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import logging
+=======
+from __future__ import annotations
+>>>>>>> b3672573975ada7003f245221393aee8f94a23f1
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -9,7 +13,7 @@ from backend.apps.admin_ui.services.bot_service import (
     IntegrationSwitch,
 )
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
-from backend.apps.admin_ui.services.kpis import get_weekly_kpis
+
 from backend.core.settings import get_settings
 
 router = APIRouter()
@@ -63,18 +67,22 @@ async def index(request: Request):
         "ready": ready,
         "mode": mode,
     }
+<<<<<<< HEAD
     weekly = _empty_weekly_kpis(settings.timezone)
     try:
         weekly = await get_weekly_kpis()
         weekly.pop("is_placeholder", None)
     except Exception:
         logger.exception("Failed to load weekly KPIs for admin dashboard.")
+=======
+
+>>>>>>> b3672573975ada7003f245221393aee8f94a23f1
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "counts": counts,
             "bot_status": bot_status,
-            "weekly_kpis": weekly,
+
         },
     )

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Local Admin UI Development
 
 This guide captures everything needed to spin up the admin UI locally on Python&nbsp;3.13.
@@ -41,3 +42,21 @@ The `make setup` target installs Python dependencies (via `pip install -e ".[dev
 
 Run `make doctor` anytime you change environments to confirm everything is ready.
 
+=======
+# Local development for recruiters UI
+
+## Previewing the glass cards
+- `make demo` поднимает FastAPI демо на http://127.0.0.1:8000.
+- Страница `/recruiters` показывает стеклянную сетку карточек с быстрыми действиями (открыть, выключить, скопировать ссылку).
+- Карточки фокусируются через `Tab`; `Enter` или `Space` открывают профиль. Видимый focus-ring встроен в Tailwind (`ring-accent`).
+
+## Редактор рекрутёра
+- Страница `/recruiters/10/edit` использует новый мультиселектор городов (`data-city-selector`).
+- До 16 городов отображаются плитками; после — список с поиском и чекбоксами. `Select all` уважает текущий фильтр.
+- Форма помнит изменения: уход со страницы без сохранения покажет `beforeunload` предупреждение.
+
+## Тесты и скриншоты
+- `pytest tests/test_ui_screenshots.py` делает полный прогон: снимает скриншоты и проверяет клавиатурную навигацию карточек.
+- Скриншоты лежат в `ui_screenshots/`; их обновление требуется, если меняется UI демо.
+- При необходимости запускайте браузерные зависимости Playwright: `npx playwright install --with-deps`.
+>>>>>>> b3672573975ada7003f245221393aee8f94a23f1

@@ -1,124 +1,164 @@
-{% extends "base.html" %}
-{% from "partials/components.html" import status_pill, meta_list, badge_row %}
+
 {% block title %}Рекрутёры{% endblock %}
 {% block content %}
-<section class="page">
-  <header class="page-header">
-    <div>
-      <h1 class="page-title">Рекрутёры</h1>
-      <p class="page-description">
-        Следите за нагрузкой, ближайшими слотами и ответственными городами каждого рекрутёра.
+<section class="space-y-8 pb-12">
+  <header class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+    <div class="max-w-2xl space-y-2">
+      <h1 class="text-3xl font-semibold tracking-tight text-fg-primary sm:text-4xl">Рекрутёры</h1>
+      <p class="text-sm leading-relaxed text-fg-secondary">
+        Карточка открывает профиль, статус и закреплённые города видно сразу.
       </p>
     </div>
-    <div class="page-actions">
+    <div class="flex flex-wrap gap-3">
       <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
     </div>
   </header>
 
   {% if not recruiter_rows %}
-    <div class="glass-card glass-card--summary grain">
-      <h3 class="section-title">Пока пусто</h3>
-      <p class="page-description">Записи отсутствуют. Создайте первого рекрутёра, чтобы начать работу.</p>
-      <div class="page-actions">
-        <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
+    <div class="glass-empty">
+      <div class="glass-empty__icon" aria-hidden="true">☁️</div>
+      <div class="space-y-2">
+        <h2 class="text-xl font-semibold text-fg-primary">Рекрутёров нет</h2>
+        <p class="text-sm text-fg-secondary">
+          Создайте первого рекрутёра, чтобы закреплять города и выдавать слоты.
+        </p>
       </div>
+      <a class="btn btn-primary" href="/recruiters/new">Создать</a>
     </div>
   {% else %}
-    <div id="recs_grid" class="card-grid">
+    <div class="recruiter-grid" data-recruiter-grid>
       {% for item in recruiter_rows %}
         {% set r = item.rec %}
-        {% set stats = item.stats %}
         {% set active = r.active if r.active is not none else False %}
-        {% set city_count = item.cities|length if item.cities else 0 %}
-        {% if item.next_free_local %}
-          {% set next_slot_label = item.next_free_local ~ (" · истёк" if not item.next_is_future else "") %}
-        {% else %}
-          {% set next_slot_label = None %}
-        {% endif %}
-        <article class="glass-card recruiter-card">
-          <header class="recruiter-card__header">
+        {% set city_count = item.cities|length %}
+        {% set week_total = item.stats.get('week_total', 0) %}
+        {% set has_chat = r.tg_chat_id is not none %}
+        {% set telemost = r.telemost_url %}
+        {% set tz_label = tz_display(r.tz) %}
+        {% set card_id = 'rec-card-' ~ r.id %}
+        <article
+          class="recruiter-card group"
+          tabindex="0"
+          role="link"
+          aria-labelledby="{{ card_id }}"
+          data-rec-card
+          data-rec-id="{{ r.id }}"
+          data-rec-url="/recruiters/{{ r.id }}/edit"
+          data-rec-active="{{ 'true' if active else 'false' }}"
+        >
+          <div class="recruiter-card__head">
             <div class="recruiter-card__identity">
-              <h2 class="recruiter-card__name">{{ r.name }}</h2>
-              {% call meta_list() %}
-                <span>#{{ r.id }}</span>
-              <span title="Часовой пояс">{{ tz_display(r.tz) }}</span>
-                {% if r.tg_chat_id %}
-                  <span title="ID чата в Telegram">chat_id {{ r.tg_chat_id }}</span>
-                {% endif %}
-              {% endcall %}
+              <div class="recruiter-card__avatar" aria-hidden="true">{{ initials(r.name) }}</div>
+              <div class="min-w-0 space-y-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 id="{{ card_id }}" class="truncate text-lg font-semibold text-fg-primary">{{ r.name }}</h2>
+                  <span class="recruiter-status" data-state="{{ 'active' if active else 'inactive' }}">
+                    {{ 'Активен' if active else 'Неактивен' }}
+                  </span>
+                </div>
+                <p class="flex flex-wrap items-center gap-3 text-[0.7rem] font-medium uppercase tracking-[0.24em] text-fg-secondary">
+                  <span>#{{ r.id }}</span>
+                  <span class="inline-flex items-center gap-1 text-fg-muted">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4">
+                      <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" d="M12 6v6l3 1.8" />
+                      <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    </svg>
+                    {{ tz_label }}
+                  </span>
+                </p>
+              </div>
             </div>
-            {{ status_pill('Активен' if active else 'Отключен', tone='success' if active else 'muted') }}
-          </header>
+            <dl class="recruiter-card__stats" aria-label="Быстрые показатели">
+              <div>
+                <dt>Города</dt>
+                <dd>{{ city_count }}</dd>
+              </div>
+              <div>
+                <dt>Слоты (7д)</dt>
+                <dd>{{ week_total }}</dd>
+              </div>
+              <div>
+                <dt>Чат</dt>
+                <dd class="{{ 'text-success' if has_chat else 'text-fg-muted' }}">{{ 'Связан' if has_chat else 'Нет' }}</dd>
+              </div>
+            </dl>
+          </div>
 
           <div class="recruiter-card__body">
-            <section class="card-surface recruiter-card__section recruiter-card__section--metrics">
-              <h3 class="section-title">Нагрузка</h3>
-              <dl class="recruiter-metrics">
-                <div>
-                  <dt>Свободно</dt>
-                  <dd>{{ stats.free }}</dd>
-                </div>
-                <div>
-                  <dt>Ожидают</dt>
-                  <dd>{{ stats.pending }}</dd>
-                </div>
-                <div>
-                  <dt>Занято</dt>
-                  <dd>{{ stats.booked }}</dd>
-                </div>
-                <div>
-                  <dt>Всего</dt>
-                  <dd>{{ stats.total }}</dd>
-                </div>
-              </dl>
-            </section>
-
-            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
-              <summary>
-                <div class="recruiter-card__fold-head">
-                  <h3 class="section-title">Города</h3>
-                  {% if city_count %}
-                    {% set city_word = 'город' if city_count % 10 == 1 and city_count % 100 != 11 else ('города' if city_count % 10 in [2, 3, 4] and city_count % 100 not in [12, 13, 14] else 'городов') %}
-                    <span class="recruiter-card__fold-hint">{{ city_count }} {{ city_word }}</span>
-                  {% else %}
-                    <span class="recruiter-card__fold-hint">Нет городов</span>
+            <div class="recruiter-card__cities" aria-label="Ответственные города">
+              {% if city_count %}
+                <div class="recruiter-card__chips">
+                  {% for city in item.cities[:6] %}
+                    <span class="city-chip" title="{{ city.tz }}">{{ city.name }}</span>
+                  {% endfor %}
+                  {% if city_count > 6 %}
+                    <span class="city-chip city-chip--more" aria-label="Ещё {{ city_count - 6 }} города">
+                      +{{ city_count - 6 }}
+                    </span>
                   {% endif %}
                 </div>
-              </summary>
-              <div class="recruiter-card__fold-body">
-                {% call badge_row(empty='не назначены') %}
-                  {% if item.cities %}
-                    {% for cname, ctz in item.cities %}
-                      <span class="badge" title="{{ ctz }}">{{ cname }}</span>
-                    {% endfor %}
-                  {% endif %}
-                {% endcall %}
-              </div>
-            </details>
-
-            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
-              <summary>
-                <div class="recruiter-card__fold-head">
-                  <h3 class="section-title">Ближайший свободный слот</h3>
-                  <span class="recruiter-card__fold-hint">{{ next_slot_label if next_slot_label else 'Нет слотов' }}</span>
-                </div>
-              </summary>
-              <div class="recruiter-card__fold-body">
-                {% if next_slot_label %}
-                  <span class="badge">{{ next_slot_label }}</span>
-                {% else %}
-                  <span class="muted">Нет свободных слотов</span>
-                {% endif %}
-              </div>
-            </details>
+              {% else %}
+                <p class="text-sm text-fg-muted">Города не назначены</p>
+              {% endif %}
+            </div>
+            <div class="recruiter-card__timeline" aria-label="Ближайший свободный слот">
+              {% if item.next_free_local %}
+                <span class="timeline-pill {{ 'timeline-pill--past' if not item.next_is_future else '' }}">
+                  {{ item.next_free_local }}
+                </span>
+              {% else %}
+                <span class="text-sm text-fg-muted">Нет свободных слотов</span>
+              {% endif %}
+            </div>
           </div>
 
           <footer class="recruiter-card__footer">
-            <a class="btn btn-soft btn--grow" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
-            <form class="inline-form" method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');">
-              <button class="btn btn-danger btn--grow" type="submit">Удалить</button>
-            </form>
+            <div class="recruiter-card__quick" aria-label="Быстрые действия">
+              <a class="quick-action" href="/recruiters/{{ r.id }}/edit" title="Открыть карточку" aria-label="Открыть карточку">
+                <svg viewBox="0 0 24 24" aria-hidden="true" class="h-5 w-5">
+                  <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M5.5 5.5h8m0 0v8m-8-8L18.5 19" />
+                </svg>
+              </a>
+              <button
+                class="quick-action"
+                type="button"
+                data-action="toggle"
+                aria-pressed="{{ 'true' if active else 'false' }}"
+                title="{{ 'Выключить' if active else 'Включить' }} рекрутёра"
+                aria-label="{{ 'Выключить' if active else 'Включить' }} рекрутёра"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" class="h-5 w-5">
+                  <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M7 12a5 5 0 0 1 10 0v4.5a2.5 2.5 0 1 1-5 0V6.5" />
+                </svg>
+              </button>
+              <button
+                class="quick-action"
+                type="button"
+                data-action="copy-link"
+                data-link="{{ telemost or '' }}"
+                title="Скопировать ссылку на телемост"
+                aria-label="Скопировать ссылку на телемост"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" class="h-5 w-5">
+                  <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M9.5 13.5 7 16a4 4 0 0 0 5.7 5.6l2.8-2.8M14.5 10.5 17 8a4 4 0 1 0-5.7-5.6L8.5 5.2" />
+                </svg>
+              </button>
+            </div>
+            <div class="recruiter-card__hint" aria-hidden="true">
+              Enter / Space — открыть
+            </div>
           </footer>
+
+          <form method="post" action="/recruiters/{{ r.id }}/update" data-toggle-form class="hidden">
+            <input type="hidden" name="name" value="{{ r.name }}">
+            <input type="hidden" name="tz" value="{{ r.tz or 'Europe/Moscow' }}">
+            <input type="hidden" name="telemost" value="{{ telemost or '' }}">
+            <input type="hidden" name="tg_chat_id" value="{{ r.tg_chat_id or '' }}">
+            <input type="hidden" name="active" value="{{ '1' if active else '' }}" data-active-field>
+            {% for city in item.cities %}
+              <input type="hidden" name="cities" value="{{ city.id }}">
+            {% endfor %}
+          </form>
         </article>
       {% endfor %}
     </div>
@@ -126,33 +166,97 @@
 </section>
 
 {% if recruiter_rows %}
-<script>
-(function () {
-  const BREAKPOINT = 600;
-  const folds = Array.from(document.querySelectorAll('.recruiter-card [data-collapsible]'));
-  if (!folds.length) return;
+<script type="module">
+const cards = Array.from(document.querySelectorAll('[data-rec-card]'));
+const liveRegion = document.createElement('div');
+liveRegion.setAttribute('aria-live', 'polite');
+liveRegion.className = 'sr-only';
+document.body.appendChild(liveRegion);
 
-  let isWide = window.innerWidth >= BREAKPOINT;
+function openCard(card){
+  const url = card?.dataset.recUrl;
+  if (!url) return;
+  window.location.assign(url);
+}
 
-  function applyState(forceOpen) {
-    folds.forEach((fold) => {
-      if (forceOpen) {
-        fold.setAttribute('open', '');
-      } else {
-        fold.removeAttribute('open');
-      }
-    });
-  }
-
-  applyState(isWide);
-
-  window.addEventListener('resize', () => {
-    const next = window.innerWidth >= BREAKPOINT;
-    if (next === isWide) return;
-    isWide = next;
-    applyState(isWide);
+function flashMessage(message){
+  liveRegion.textContent = '';
+  window.requestAnimationFrame(() => {
+    liveRegion.textContent = message;
   });
-})();
+}
+
+cards.forEach((card) => {
+  card.addEventListener('click', (event) => {
+    const rawTarget = event.target;
+    const target = rawTarget instanceof Element ? rawTarget.closest('.quick-action') : null;
+    if (target) return;
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    openCard(card);
+  });
+
+  card.addEventListener('keydown', (event) => {
+    if (event.code === 'Enter' || event.code === 'Space') {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.classList.contains('quick-action')) {
+        return;
+      }
+      event.preventDefault();
+      openCard(card);
+    }
+  });
+
+  const toggleBtn = card.querySelector('[data-action="toggle"]');
+  const copyBtn = card.querySelector('[data-action="copy-link"]');
+  const toggleForm = card.querySelector('[data-toggle-form]');
+  const activeField = toggleForm?.querySelector('[data-active-field]');
+
+  toggleBtn?.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    if (!toggleForm || !activeField) return;
+    const nextIsActive = toggleBtn.getAttribute('aria-pressed') !== 'true';
+    activeField.value = nextIsActive ? '1' : '';
+    const formData = new FormData(toggleForm);
+    try {
+      const response = await fetch(toggleForm.action, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!response.ok) throw new Error('failed');
+      toggleBtn.setAttribute('aria-pressed', nextIsActive ? 'true' : 'false');
+      card.dataset.recActive = nextIsActive ? 'true' : 'false';
+      const status = card.querySelector('.recruiter-status');
+      if (status) {
+        status.dataset.state = nextIsActive ? 'active' : 'inactive';
+        status.textContent = nextIsActive ? 'Активен' : 'Неактивен';
+      }
+      flashMessage(nextIsActive ? 'Рекрутёр включён' : 'Рекрутёр выключен');
+    } catch (err) {
+      flashMessage('Не удалось обновить статус');
+    }
+  });
+
+  copyBtn?.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    const link = copyBtn.dataset.link || '';
+    if (!link) {
+      flashMessage('Ссылка на телемост не указана');
+      copyBtn.classList.add('is-empty');
+      window.setTimeout(() => copyBtn.classList.remove('is-empty'), 1600);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      copyBtn.classList.add('is-success');
+      flashMessage('Ссылка скопирована');
+    } catch (err) {
+      flashMessage('Скопируйте вручную: ' + link);
+    } finally {
+      window.setTimeout(() => copyBtn.classList.remove('is-success'), 1600);
+    }
+  });
+});
 </script>
 {% endif %}
 {% endblock %}

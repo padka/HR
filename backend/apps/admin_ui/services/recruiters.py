@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Sequence, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Sequence
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import and_, case, func, select, update
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError
 
@@ -23,6 +23,9 @@ __all__ = [
 
 
 async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]:
+    now = datetime.now(timezone.utc)
+    week_end = now + timedelta(days=7)
+
     async with async_session() as session:
         query = select(Recruiter)
         if order_by_name:
@@ -30,7 +33,7 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
         recs = list((await session.scalars(query)).all())
 
         stats_map: Dict[int, Dict[str, object]] = {}
-        city_map: Dict[int, List[Tuple[str, str]]] = {}
+        city_map: Dict[int, List[Dict[str, object]]] = {}
 
         if recs:
             rec_ids = [r.id for r in recs]
@@ -56,6 +59,19 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
                         func.min(case((status_lower == SlotStatus.FREE, Slot.start_utc), else_=None)).label(
                             "next_free"
                         ),
+                        func.sum(
+                            case(
+                                (
+                                    and_(
+                                        Slot.start_utc.isnot(None),
+                                        Slot.start_utc >= now,
+                                        Slot.start_utc <= week_end,
+                                    ),
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        ).label("week_total"),
                     )
                     .where(Slot.recruiter_id.in_(rec_ids))
                     .group_by(Slot.recruiter_id)
@@ -69,6 +85,7 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
                     "pending": int(row.pending or 0),
                     "booked": int(row.booked or 0),
                     "next_free": row.next_free,
+                    "week_total": int(row.week_total or 0),
                 }
                 for row in stats_rows
             }
@@ -82,14 +99,21 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
             ).all()
 
             for row in city_rows:
-                city_map.setdefault(row.responsible_recruiter_id, []).append((row.name, row.tz))
-
-    now = datetime.now(timezone.utc)
+                city_map.setdefault(row.responsible_recruiter_id, []).append(
+                    {"id": row.id, "name": row.name, "tz": row.tz}
+                )
     out = []
     for rec in recs:
         stats = stats_map.get(
             rec.id,
-            {"total": 0, "free": 0, "pending": 0, "booked": 0, "next_free": None},
+            {
+                "total": 0,
+                "free": 0,
+                "pending": 0,
+                "booked": 0,
+                "next_free": None,
+                "week_total": 0,
+            },
         )
         next_dt = stats.get("next_free")
         if isinstance(next_dt, datetime) and next_dt.tzinfo is None:
@@ -109,7 +133,9 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
                 "next_free_local": next_local,
                 "next_is_future": next_future,
                 "cities": city_map.get(rec.id, []),
-                "cities_text": " ".join(name.lower() for name, _ in city_map.get(rec.id, [])),
+                "cities_text": " ".join(
+                    city["name"].lower() for city in city_map.get(rec.id, [])
+                ),
             }
         )
 

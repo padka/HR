@@ -7,10 +7,19 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
-from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.apps.admin_ui.config import STATIC_DIR, register_template_globals
+try:  # pragma: no cover - import guarded to support missing optional deps
+    from starlette.middleware.sessions import SessionMiddleware
+
+    _SESSION_DEP_MISSING: str | None = None
+except ModuleNotFoundError as exc:  # pragma: no cover - defensive fallback
+    if exc.name == "itsdangerous":
+        SessionMiddleware = None  # type: ignore[assignment]
+        _SESSION_DEP_MISSING = "itsdangerous"
+    else:
+        raise
 
 from backend.apps.admin_ui.routers import (
     api,
@@ -71,7 +80,13 @@ def create_app() -> FastAPI:
     if force_ssl:
         app.add_middleware(HTTPSRedirectMiddleware)
 
-    if settings.session_secret_provided:
+    if SessionMiddleware is None:
+        logging.warning(
+            "Session middleware disabled: missing dependency %s. "
+            "Install it with `pip install itsdangerous==2.2.0`.",
+            _SESSION_DEP_MISSING or "itsdangerous",
+        )
+    elif settings.session_secret_provided:
         app.add_middleware(
             SessionMiddleware,
             secret_key=settings.session_secret,
