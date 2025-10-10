@@ -6,9 +6,7 @@ from backend.apps.admin_ui.services.bot_service import (
     BOT_RUNTIME_AVAILABLE,
     IntegrationSwitch,
 )
-from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
-from backend.apps.admin_ui.services.recruiters import list_recruiters
 from backend.core.settings import get_settings
 
 router = APIRouter()
@@ -17,9 +15,6 @@ router = APIRouter()
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     counts = await dashboard_counts()
-    recruiter_rows = await list_recruiters()
-    recruiters = [row["rec"] for row in recruiter_rows]
-    cities = await list_cities()
     switch: IntegrationSwitch | None = getattr(
         request.app.state, "bot_integration_switch", None
     )
@@ -48,8 +43,6 @@ async def index(request: Request):
         {
             "request": request,
             "counts": counts,
-            "recruiters": recruiters,
-            "cities": cities,
             "bot_status": bot_status,
         },
     )

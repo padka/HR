@@ -7,12 +7,11 @@ import logging
 from typing import Tuple
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.client.telegram import TelegramAPIServer
 
 from backend.core.db import init_models
 from backend.core.settings import get_settings
 
+from .api_client import create_api_session
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
 from .services import StateManager, configure as configure_services
@@ -32,21 +31,19 @@ def create_bot(token: str | None = None) -> Bot:
         raise RuntimeError(
             "BOT_TOKEN не найден или некорректен. Задай BOT_TOKEN=... (или используй .env)"
         )
-    session = None
     settings = get_settings()
     try:
-        if settings.bot_api_base:
-            api = TelegramAPIServer.from_base(settings.bot_api_base)
-            session = AiohttpSession(api=api)
+        session = create_api_session(getattr(settings, "bot_api_base", None))
         return Bot(token=actual_token, default=DEFAULT_BOT_PROPERTIES, session=session)
     except Exception:
-        if session is not None:
+        session_to_close = locals().get("session")
+        if session_to_close is not None:
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop is not None and not loop.is_closed():
-                loop.create_task(session.close())
+                loop.create_task(session_to_close.close())
         raise
 
 

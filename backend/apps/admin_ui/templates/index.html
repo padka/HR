@@ -22,6 +22,7 @@
 </section>
 
 <section class="dashboard-metrics">
+<<<<<<< Updated upstream
   <article class="metric-card glass-card">
     <span class="metric-card__label">Активных кандидатов</span>
     <span class="metric-card__value">{{ metrics.active_candidates }}</span>
@@ -41,104 +42,93 @@
     <span class="metric-card__label">Сообщения бота</span>
     <span class="metric-card__value">{{ metrics.messages_sent }}</span>
     <span class="metric-card__meta">Автоматических: {{ metrics.messages_auto }} • Ручных: {{ metrics.messages_manual }}</span>
+=======
+  <article class="metric-card">
+    <span class="metric-card__label">Рекрутёры</span>
+    <span class="metric-card__value">{{ counts.recruiters }}</span>
+    <span class="metric-card__meta">Активных городов: {{ counts.cities }}</span>
+  </article>
+  <article class="metric-card">
+    <span class="metric-card__label">Слоты</span>
+    <span class="metric-card__value">{{ counts.slots_total }}</span>
+    <span class="metric-card__meta">Свободно: {{ counts.slots_free }} • В ожидании: {{ counts.slots_pending }} • Забронировано: {{ counts.slots_booked }}</span>
+  </article>
+  <article class="metric-card">
+    <span class="metric-card__label">Тест 1</span>
+    <span class="metric-card__value">{{ counts.test1_total_seen }}</span>
+    <span class="metric-card__meta">Отказы: {{ counts.test1_rejections_total }} ({{ counts.test1_rejections_percent }}%)</span>
+  </article>
+  <article class="metric-card">
+    <span class="metric-card__label">Интеграция бота</span>
+    <span class="metric-card__value">{{ bot_status.mode|upper }}</span>
+    <span class="metric-card__meta">Готов к работе: {{ 'да' if bot_status.ready else 'нет' }}</span>
+>>>>>>> Stashed changes
   </article>
 </section>
 
-{% if recent_slots %}
-  <section class="surface">
-    <header class="section-header">
-      <h2 class="section-title">Ближайшие интервью</h2>
-      <p class="section-hint">Следующие подтверждённые слоты по часовым поясам кандидатов.</p>
-    </header>
-    <div class="list-table-wrapper">
-      <table class="list-table">
-        <thead>
-          <tr>
-            <th scope="col">Кандидат</th>
-            <th scope="col">Рекрутёр</th>
-            <th scope="col">Город</th>
-            <th scope="col">Дата/время</th>
-            <th scope="col">Статус</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for slot in recent_slots %}
-          <tr>
-            <td>
-              <div class="entity">
-                <span class="entity__title">{{ slot.candidate.fio }}</span>
-                <span class="muted">{{ slot.candidate.telegram_id }}</span>
-              </div>
-            </td>
-            <td>{{ slot.recruiter.name }}</td>
-            <td>{{ slot.city or '—' }}</td>
-            <td>{{ fmt_local(slot.start_utc, slot.candidate_tz or 'Europe/Moscow') }}</td>
-            <td>{{ slot.status }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-{% else %}
-  <section class="surface">
-    <header class="section-header">
-      <h2 class="section-title">Ближайшие интервью</h2>
-      <p class="section-hint">Следующие подтверждённые слоты по часовым поясам кандидатов.</p>
-    </header>
-    <p class="muted">Пока нет запланированных интервью. Добавьте новые слоты или отправьте приглашения кандидатам.</p>
-  </section>
-{% endif %}
+<section class="surface">
+  <header class="section-header">
+    <h2 class="section-title">Состояние интеграции бота</h2>
+    <p class="section-hint">Текущее состояние подключения к рантайму и конфигурации.</p>
+  </header>
+  <div class="list-table-wrapper">
+    <table class="list-table">
+      <tbody>
+        <tr>
+          <th scope="row">Конфигурация включена</th>
+          <td>{{ 'Да' if bot_status.config_enabled else 'Нет' }}</td>
+        </tr>
+        <tr>
+          <th scope="row">Рантайм активен</th>
+          <td>{{ 'Да' if bot_status.runtime_enabled else 'Нет' }}</td>
+        </tr>
+        <tr>
+          <th scope="row">Готовность сервиса</th>
+          <td>{{ 'Да' if bot_status.ready else 'Нет' }}</td>
+        </tr>
+        <tr>
+          <th scope="row">Состояние здоровья</th>
+          <td>{{ bot_status.health or 'неизвестно' }}</td>
+        </tr>
+        <tr>
+          <th scope="row">Режим</th>
+          <td>{{ bot_status.mode }}</td>
+        </tr>
+        <tr>
+          <th scope="row">Последнее обновление</th>
+          <td>{{ bot_status.updated_at or '—' }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
 
-{% if recent_candidates %}
-  <section class="surface">
-    <header class="section-header">
-      <h2 class="section-title">Недавние кандидаты</h2>
-      <p class="section-hint">Последние подключившиеся кандидаты и их статус.</p>
-    </header>
+<section class="surface">
+  <header class="section-header">
+    <h2 class="section-title">Статистика теста 1</h2>
+    <p class="section-hint">Распределение отказов и общее количество прохождений.</p>
+  </header>
+  {% if counts.test1_rejections_breakdown %}
     <div class="list-table-wrapper">
       <table class="list-table">
         <thead>
           <tr>
-            <th scope="col">Кандидат</th>
-            <th scope="col">Город</th>
-            <th scope="col">Статус</th>
-            <th scope="col">Последняя активность</th>
-            <th scope="col">Карточка</th>
+            <th scope="col">Причина отказа</th>
+            <th scope="col">Количество</th>
           </tr>
         </thead>
         <tbody>
-        {% for item in recent_candidates %}
-          <tr>
-            <td>
-              <div class="entity">
-                <span class="entity__title">{{ item.user.fio }}</span>
-                <span class="muted">TG {{ item.user.telegram_id }}</span>
-              </div>
-            </td>
-            <td>{{ item.user.city or '—' }}</td>
-            <td>
-              {% if item.user.is_active %}
-                <span class="badge badge--success">Активен</span>
-              {% else %}
-                <span class="badge badge--muted">Отключен</span>
-              {% endif %}
-            </td>
-            <td>{{ item.user.last_activity.strftime('%d.%m.%Y %H:%M') if item.user.last_activity else '—' }}</td>
-            <td><a class="btn btn-ghost btn-sm" href="/candidates/{{ item.user.id }}">Открыть</a></td>
-          </tr>
-        {% endfor %}
+          {% for reason, total in counts.test1_rejections_breakdown.items() %}
+            <tr>
+              <td>{{ reason }}</td>
+              <td>{{ total }}</td>
+            </tr>
+          {% endfor %}
         </tbody>
       </table>
     </div>
-  </section>
-{% else %}
-  <section class="surface">
-    <header class="section-header">
-      <h2 class="section-title">Недавние кандидаты</h2>
-      <p class="section-hint">Последние подключившиеся кандидаты и их статус.</p>
-    </header>
-    <p class="muted">Пока нет новых кандидатов. Добавьте пользователя вручную или пригласите через бота.</p>
-  </section>
-{% endif %}
+  {% else %}
+    <p class="muted">Пока нет зарегистрированных отказов по тесту.</p>
+  {% endif %}
+</section>
 {% endblock %}

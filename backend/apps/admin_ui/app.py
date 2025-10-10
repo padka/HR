@@ -39,6 +39,8 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    if hasattr(get_settings, "cache_clear"):
+        get_settings.cache_clear()
     settings = get_settings()
     docs_url = "/docs" if settings.admin_docs_enabled else None
     redoc_url = "/redoc" if settings.admin_docs_enabled else None

@@ -1013,6 +1013,8 @@ class NotificationService:
         self,
         item: OutboxItem,
         attempt: int,
+        log_type: str,
+        notification_type: str,
         rendered: "RenderedTemplate",
         candidate_tg_id: Optional[int],
     ) -> None:
@@ -1024,7 +1026,7 @@ class NotificationService:
             last_error=None,
         )
         await add_notification_log(
-            "candidate_interview_confirmed",
+            log_type,
             item.booking_id or 0,
             candidate_tg_id=candidate_tg_id,
             payload=rendered.text,
@@ -1036,14 +1038,18 @@ class NotificationService:
             template_key=rendered.key,
             template_version=rendered.version,
         )
-        await record_notification_sent("interview_confirmed_candidate")
+        await record_notification_sent(notification_type)
 
     async def _mark_failed(
         self,
         item: OutboxItem,
         attempt: int,
+        log_type: str,
+        notification_type: str,
         error: str,
         rendered: Optional["RenderedTemplate"],
+        *,
+        candidate_tg_id: Optional[int] = None,
     ) -> None:
         await update_outbox_entry(
             item.id,
@@ -1053,9 +1059,9 @@ class NotificationService:
             last_error=error,
         )
         await add_notification_log(
-            "candidate_interview_confirmed",
+            log_type,
             item.booking_id or 0,
-            candidate_tg_id=item.candidate_tg_id,
+            candidate_tg_id=candidate_tg_id if candidate_tg_id is not None else item.candidate_tg_id,
             payload=rendered.text if rendered else None,
             delivery_status="failed",
             attempts=max(attempt, item.attempts),
@@ -1065,20 +1071,31 @@ class NotificationService:
             template_key=rendered.key if rendered else None,
             template_version=rendered.version if rendered else None,
         )
-        await record_notification_failed("interview_confirmed_candidate")
+        await record_notification_failed(notification_type)
 
     async def _schedule_retry(
         self,
         item: OutboxItem,
         *,
         attempt: int,
+        log_type: str,
+        notification_type: str,
         error: str,
         rendered: Optional["RenderedTemplate"],
         retry_after: Optional[float] = None,
+        candidate_tg_id: Optional[int] = None,
         count_failure: bool = True,
     ) -> None:
         if attempt >= self._max_attempts:
-            await self._mark_failed(item, attempt, error, rendered)
+            await self._mark_failed(
+                item,
+                attempt,
+                log_type,
+                notification_type,
+                error,
+                rendered,
+                candidate_tg_id=candidate_tg_id,
+            )
             return
 
         delay = self._compute_retry_delay(attempt)
@@ -1095,9 +1112,9 @@ class NotificationService:
             last_error=error,
         )
         await add_notification_log(
-            "candidate_interview_confirmed",
+            log_type,
             item.booking_id or 0,
-            candidate_tg_id=item.candidate_tg_id,
+            candidate_tg_id=candidate_tg_id if candidate_tg_id is not None else item.candidate_tg_id,
             payload=rendered.text if rendered else None,
             delivery_status="failed",
             attempts=max(attempt, item.attempts),
@@ -1108,7 +1125,7 @@ class NotificationService:
             template_version=rendered.version if rendered else None,
         )
         if count_failure:
-            await record_notification_failed("interview_confirmed_candidate")
+            await record_notification_failed(notification_type)
         await record_send_retry()
 
     def _compute_retry_delay(self, attempt: int) -> float:
@@ -2584,7 +2601,7 @@ async def send_manual_scheduling_prompt(user_id: int) -> bool:
             f"{message}\n\nНажмите кнопку ниже, чтобы написать {safe_label}."
         )
 
-    await bot.send_message(user_id, message, reply_markup=reply_markup)
+    await bot.send_message(chat_id=user_id, text=message, reply_markup=reply_markup)
 
     def _mark_prompt_sent(st: State) -> Tuple[State, None]:
         st["manual_contact_prompt_sent"] = True
@@ -2822,24 +2839,51 @@ async def _resolve_candidate_state_for_slot(slot: Slot) -> Dict[str, Any]:
         return {}
 
 
-async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str]:
+async def _render_candidate_notification(slot: Slot) -> Tuple[RenderedTemplate, str, str]:
     tz = slot.candidate_tz or DEFAULT_TZ
     labels = slot_local_labels(slot.start_utc, tz)
-    template_key = (
-        "stage3_intro_invite"
-        if getattr(slot, "purpose", "interview") == "intro_day"
-        else "approved_msg"
-    )
     state = await _resolve_candidate_state_for_slot(slot)
-    text = await templates.tpl(
-        getattr(slot, "candidate_city_id", None),
-        template_key,
-        candidate_fio=slot.candidate_fio or "",
-        city_name=state.get("city_name") or "",
-        dt=fmt_dt_local(slot.start_utc, tz),
+    recruiter_name = ""
+    join_link = ""
+    if slot.recruiter_id is not None:
+        recruiter = await get_recruiter(slot.recruiter_id)
+        if recruiter:
+            recruiter_name = recruiter.name or ""
+            join_link = recruiter.telemost_url or ""
+
+    context = {
+        "candidate_name": slot.candidate_fio or "",
+        "recruiter_name": recruiter_name,
+        "city_name": state.get("city_name") or "",
+        "tz_name": tz,
+        "dt_local": TemplateProvider.format_local_dt(slot.start_utc, tz),
+        "join_link": join_link or "",
         **labels,
-    )
-    return text, tz, state.get("city_name") or ""
+    }
+
+    provider = get_template_provider()
+    rendered = await provider.render("interview_confirmed_candidate", context)
+    if rendered is None:
+        template_key = (
+            "stage3_intro_invite"
+            if getattr(slot, "purpose", "interview") == "intro_day"
+            else "approved_msg"
+        )
+        fallback_text = await templates.tpl(
+            getattr(slot, "candidate_city_id", None),
+            template_key,
+            candidate_fio=slot.candidate_fio or "",
+            city_name=context["city_name"],
+            dt=fmt_dt_local(slot.start_utc, tz),
+            join_link=join_link or "",
+            **labels,
+        )
+        rendered = RenderedTemplate(
+            key="interview_confirmed_candidate",
+            version=0,
+            text=fallback_text,
+        )
+    return rendered, tz, context["city_name"]
 
 
 async def handle_approve_slot(callback: CallbackQuery) -> None:
@@ -2878,14 +2922,14 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         candidate_tg_id=slot.candidate_tg_id,
     )
 
-    message_text, candidate_tz, candidate_city = await _render_candidate_notification(slot)
+    rendered_message, candidate_tz, candidate_city = await _render_candidate_notification(slot)
     bot = get_bot()
 
     if not already_sent:
         try:
             await _send_with_retry(
                 bot,
-                SendMessage(chat_id=slot.candidate_tg_id, text=message_text),
+                SendMessage(chat_id=slot.candidate_tg_id, text=rendered_message.text),
                 correlation_id=f"approve:{slot.id}:{uuid.uuid4().hex}",
             )
         except Exception:
@@ -2905,7 +2949,7 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
                 [
                     "",
                     "<b>Текст сообщения:</b>",
-                    f"<blockquote>{message_text}</blockquote>",
+                    f"<blockquote>{rendered_message.text}</blockquote>",
                     "Свяжитесь с кандидатом вручную.",
                 ]
             )
@@ -2920,7 +2964,9 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
             "candidate_interview_confirmed",
             slot.id,
             candidate_tg_id=slot.candidate_tg_id,
-            payload=message_text,
+            payload=rendered_message.text,
+            template_key=rendered_message.key,
+            template_version=rendered_message.version,
         )
         if not logged:
             logger.warning("Notification log already exists for slot %s", slot.id)
@@ -2948,7 +2994,7 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
             [
                 "",
                 "<b>Текст сообщения:</b>",
-                f"<blockquote>{message_text}</blockquote>",
+                f"<blockquote>{rendered_message.text}</blockquote>",
             ]
         )
         summary_text = "\n".join(summary_parts)
@@ -2982,10 +3028,10 @@ async def handle_send_slot_message(callback: CallbackQuery) -> None:
         await safe_remove_reply_markup(callback.message)
         return
 
-    message_text, candidate_tz, candidate_city = await _render_candidate_notification(slot)
+    rendered_message, candidate_tz, candidate_city = await _render_candidate_notification(slot)
     bot = get_bot()
     try:
-        await bot.send_message(slot.candidate_tg_id, message_text)
+        await bot.send_message(slot.candidate_tg_id, rendered_message.text)
     except Exception:
         logger.exception("Failed to send approval message to candidate")
         await callback.answer("Не удалось отправить сообщение кандидату.", show_alert=True)
@@ -3013,7 +3059,7 @@ async def handle_send_slot_message(callback: CallbackQuery) -> None:
         [
             "",
             "<b>Текст сообщения:</b>",
-            f"<blockquote>{message_text}</blockquote>",
+            f"<blockquote>{rendered_message.text}</blockquote>",
         ]
     )
     summary_text = "\n".join(summary_parts)

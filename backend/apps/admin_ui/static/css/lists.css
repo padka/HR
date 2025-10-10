@@ -84,7 +84,7 @@
   padding: 8px 14px;
   border-radius: 999px;
   border: 1px solid var(--tahoe-border);
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--surface-overlay-pill);
   font-size: 0.85rem;
 }
 
@@ -110,7 +110,7 @@
 .filter-divider {
   width: 1px;
   height: 32px;
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--surface-divider-strong);
 }
 
 .chip-group {
@@ -126,7 +126,7 @@
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid var(--tahoe-border);
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--surface-chip-muted);
   font-size: 0.85rem;
 }
 
@@ -187,7 +187,7 @@
   padding: clamp(20px, 4vw, 32px);
   border-radius: var(--radius-md);
   border: 1px dashed var(--tahoe-border);
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--surface-empty);
   text-align: left;
 }
 

@@ -120,8 +120,8 @@
         if (!toggle) return;
         const isDark = theme === 'dark';
         toggle.setAttribute('aria-pressed', isDark);
-        toggle.querySelector('.theme-toggle__icon').textContent = isDark ? '🌙' : '🌞';
-        toggle.querySelector('.theme-toggle__label').textContent = isDark ? 'Тёмная тема' : 'Светлая тема';
+        toggle.querySelector('.theme-toggle__icon').textContent = isDark ? '🌞' : '🌙';
+        toggle.querySelector('.theme-toggle__label').textContent = isDark ? 'Светлая тема' : 'Тёмная тема';
         toggle.title = isDark ? 'Переключить на светлую тему' : 'Переключить на тёмную тему';
       }
 

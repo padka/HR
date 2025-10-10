@@ -1,6 +1,8 @@
+import logging
 from datetime import datetime, timezone, date
 from typing import Optional, List
 from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfoNotFoundError
 
 from sqlalchemy import (
     String,
@@ -14,10 +16,34 @@ from sqlalchemy import (
     Index,
     UniqueConstraint,
     JSON,
+    event,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from sqlalchemy.types import TypeDecorator
 
 from .base import Base
+
+
+logger = logging.getLogger(__name__)
+
+
+class UTCDateTime(TypeDecorator):
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: Optional[datetime], _dialect) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(self, value: Optional[datetime], _dialect) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class Recruiter(Base):
@@ -25,7 +51,7 @@ class Recruiter(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    tg_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True, nullable=True)
+    tg_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, index=True, nullable=True)
     tz: Mapped[str] = mapped_column(String(64), default="Europe/Moscow", nullable=False)
     telemost_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -68,9 +94,12 @@ class City(Base):
             raise ValueError("Timezone must be provided")
         try:
             ZoneInfo(candidate)
+            return candidate
+        except ZoneInfoNotFoundError:
+            logger.warning("Unknown timezone '%s', falling back to Europe/Moscow", candidate)
         except Exception as exc:  # pragma: no cover - defensive
-            raise ValueError(f"Invalid timezone: {candidate}") from exc
-        return candidate
+            logger.warning("Failed to validate timezone '%s': %s", candidate, exc)
+        return "Europe/Moscow"
 
 
 class Template(Base):
@@ -109,7 +138,7 @@ class Slot(Base):
     )
     purpose: Mapped[str] = mapped_column(String(32), default="interview", nullable=False)
 
-    start_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    start_utc: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     duration_min: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
 
     status: Mapped[str] = mapped_column(String(32), default=SlotStatus.FREE, nullable=False)
@@ -145,6 +174,29 @@ class Slot(Base):
             return value
         raw_value = value.value if hasattr(value, "value") else value
         return str(raw_value).strip().lower()
+
+    @validates("start_utc")
+    def _normalize_start_utc(self, _key, value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+
+@event.listens_for(Slot, "load")
+def _slot_load_handler(slot: Slot, _context) -> None:
+    if slot.start_utc is not None and slot.start_utc.tzinfo is None:
+        slot.start_utc = slot.start_utc.replace(tzinfo=timezone.utc)
+
+
+@event.listens_for(Slot.start_utc, "set", retval=True)
+def _slot_start_set(_target, value, _oldvalue, _initiator):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class SlotReservationLock(Base):
@@ -186,8 +238,6 @@ class SlotReminderJob(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
-
-
 class TestQuestion(Base):
     __tablename__ = "test_questions"
     __table_args__ = (
@@ -312,3 +362,21 @@ class OutboxNotification(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<OutboxNotification {self.type} booking={self.booking_id} status={self.status}>"
+logger = logging.getLogger(__name__)
+class UTCDateTime(TypeDecorator):
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: Optional[datetime], _dialect) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(self, value: Optional[datetime], _dialect) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)

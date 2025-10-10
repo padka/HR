@@ -120,6 +120,14 @@ async def create_recruiter(
     payload: Dict[str, object], *, cities: Optional[List[str]] = None
 ) -> Dict[str, object]:
     async with async_session() as session:
+        chat_field = _pick_field(
+            sa_inspect(Recruiter).attrs.keys(),
+            ["tg_chat_id", "telegram_chat_id", "chat_id"],
+        )
+        requested_chat = payload.get(chat_field) if chat_field else None
+        if requested_chat is not None:
+            if await _chat_id_exists(session, requested_chat):
+                return {"ok": False, "error": _duplicate_chat_error()}
         try:
             recruiter = Recruiter(**payload)
             session.add(recruiter)
@@ -172,6 +180,19 @@ async def update_recruiter(
                 "ok": False,
                 "error": {"type": "not_found", "message": "Рекрутёр не найден."},
             }
+
+        chat_field = _pick_field(
+            sa_inspect(Recruiter).attrs.keys(),
+            ["tg_chat_id", "telegram_chat_id", "chat_id"],
+        )
+        requested_chat = payload.get(chat_field) if chat_field else None
+        if requested_chat is not None:
+            if await _chat_id_exists(session, requested_chat, exclude_id=recruiter.id):
+                await session.rollback()
+                return {
+                    "ok": False,
+                    "error": _duplicate_chat_error(),
+                }
 
         try:
             for key, value in payload.items():
@@ -273,6 +294,29 @@ def _integrity_error_payload(exc: IntegrityError) -> Dict[str, object]:
     if field:
         payload["field"] = field
     return payload
+
+
+async def _chat_id_exists(
+    session,
+    chat_id: Optional[int],
+    *,
+    exclude_id: Optional[int] = None,
+) -> bool:
+    if chat_id is None:
+        return False
+    query = select(Recruiter.id).where(Recruiter.tg_chat_id == chat_id)
+    if exclude_id is not None:
+        query = query.where(Recruiter.id != exclude_id)
+    existing = await session.scalar(query)
+    return existing is not None
+
+
+def _duplicate_chat_error() -> Dict[str, object]:
+    return {
+        "type": "integrity_error",
+        "message": "Рекрутёр с таким Telegram chat ID уже существует.",
+        "field": "tg_chat_id",
+    }
 
 
 async def api_recruiters_payload() -> List[Dict[str, object]]:
