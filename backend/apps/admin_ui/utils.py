@@ -137,3 +137,20 @@ def recruiter_time_to_utc(date: str, time: str, recruiter_tz: Optional[str]) -> 
         return None
     dt_local = dt_local.replace(tzinfo=safe_zone(recruiter_tz))
     return dt_local.astimezone(timezone.utc)
+
+
+def initials(name: Optional[str]) -> str:
+    """Return uppercased initials for recruiter card avatars."""
+    if not name:
+        return "?"
+    cleaned = name.replace("-", " ")
+    parts = [segment for segment in cleaned.split() if segment]
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        letters = [char for char in parts[0] if char.isalpha()]
+        if not letters:
+            return parts[0][:2].upper()
+        return "".join(letters[:2]).upper()
+    letters = [part[0] for part in parts if part and part[0].isalpha()]
+    return "".join(letters[:2]).upper() or "?"

@@ -11,6 +11,9 @@ from backend.apps.admin_ui.services.bot_service import (
     IntegrationSwitch,
 )
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
+from backend.apps.admin_ui.services.dashboard_calendar import (
+    dashboard_calendar_snapshot,
+)
 from backend.apps.admin_ui.services.kpis import get_weekly_kpis
 from backend.core.settings import get_settings
 
@@ -36,6 +39,29 @@ def _empty_weekly_kpis(timezone: str) -> dict[str, object]:
             "computed_at": None,
         },
         "is_placeholder": True,
+    }
+
+
+def _empty_calendar(timezone: str) -> dict[str, object]:
+    return {
+        "ok": False,
+        "selected_date": None,
+        "selected_label": "нет данных",
+        "selected_human": "",
+        "timezone": timezone,
+        "days": [],
+        "events": [],
+        "events_total": 0,
+        "status_summary": {
+            "CONFIRMED_BY_CANDIDATE": 0,
+            "BOOKED": 0,
+            "PENDING": 0,
+            "CANCELED": 0,
+        },
+        "meta": "Нет назначенных интервью",
+        "updated_label": "",
+        "generated_at": None,
+        "window_days": 0,
     }
 
 
@@ -66,11 +92,16 @@ async def index(request: Request):
         "mode": mode,
     }
     weekly = _empty_weekly_kpis(settings.timezone)
+    calendar = _empty_calendar(settings.timezone)
     try:
         weekly = await get_weekly_kpis()
         weekly.pop("is_placeholder", None)
     except Exception:
         logger.exception("Failed to load weekly KPIs for admin dashboard.")
+    try:
+        calendar = await dashboard_calendar_snapshot(tz_name=settings.timezone)
+    except Exception:
+        logger.exception("Failed to load dashboard calendar snapshot.")
     return templates.TemplateResponse(
         "index.html",
         {
@@ -78,6 +109,6 @@ async def index(request: Request):
             "counts": counts,
             "bot_status": bot_status,
             "weekly_kpis": weekly,
+            "calendar": calendar,
         },
     )
-
