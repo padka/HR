@@ -725,6 +725,27 @@ def recruiters_new_context() -> Dict[str, Any]:
     return {"tz_options": list(TZ_OPTIONS_DATA), "cities": build(CITY_CITIES_DATA), "form_data": {}}
 
 
+def recruiters_edit_context() -> Dict[str, Any]:
+    recruiter = build(RECRUITER_ROWS_DATA[0]["rec"])
+    editor_cities = build(
+        CITY_CITIES_DATA
+        + [
+            {"id": 3, "name": "Самара", "tz": "Europe/Samara"},
+            {"id": 4, "name": "Екатеринбург", "tz": "Asia/Yekaterinburg"},
+            {"id": 5, "name": "Новосибирск", "tz": "Asia/Novosibirsk"},
+            {"id": 6, "name": "Владивосток", "tz": "Asia/Vladivostok"},
+        ]
+    )
+    return {
+        "recruiter": recruiter,
+        "cities": editor_cities,
+        "selected_ids": {1, 4},
+        "tz_options": list(TZ_OPTIONS_DATA),
+        "form_data": {},
+        "form_error": None,
+    }
+
+
 def slots_list_context() -> Dict[str, Any]:
     return {
         "slots": build(SLOT_ROWS_DATA),
@@ -770,6 +791,7 @@ register_route("/candidates/1", "candidates_detail.html", "candidate-detail", ca
 register_route("/candidates/new", "candidates_new.html", "candidate-new", candidates_new_context)
 register_route("/recruiters", "recruiters_list.html", "recruiters", recruiters_list_context)
 register_route("/recruiters/new", "recruiters_new.html", "recruiter-new", recruiters_new_context)
+register_route("/recruiters/10/edit", "recruiters_edit.html", "recruiter-edit", recruiters_edit_context)
 register_route("/slots", "slots_list.html", "slots", slots_list_context)
 register_route("/slots/new", "slots_new.html", "slot-new", slots_new_context)
 register_route("/templates", "templates_list.html", "templates", templates_list_context)

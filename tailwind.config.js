@@ -4,7 +4,9 @@ export default {
   darkMode: ['class', '[data-theme="dark"]'],
   content: [
     './backend/apps/admin_ui/templates/**/*.html',
-    './backend/apps/admin_ui/static/js/**/*.js'
+    './backend/apps/admin_ui/static/js/**/*.js',
+    './backend/apps/admin_ui/static/js/modules/**/*.js',
+    './backend/apps/admin_ui/static/js/**/*.mjs'
   ],
   theme: {
     extend: {
