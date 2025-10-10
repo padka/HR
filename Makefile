@@ -33,4 +33,7 @@ previews:
 	python tools/render_previews.py
 
 screens:
-	pytest tests/test_ui_screenshots.py
+        pytest tests/test_ui_screenshots.py
+
+kpi-weekly:
+	python tools/recompute_weekly_kpis.py --weeks 8

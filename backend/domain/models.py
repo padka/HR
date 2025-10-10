@@ -302,6 +302,23 @@ class NotificationLog(Base):
     )
 
 
+class KPIWeekly(Base):
+    __tablename__ = "kpi_weekly"
+
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    tested: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_test: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    booked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    confirmed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    interview_passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    intro_day: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 class TelegramCallbackLog(Base):
     __tablename__ = "telegram_callback_logs"
 

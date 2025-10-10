@@ -8,6 +8,7 @@ from backend.apps.admin_ui.services.cities import (
     api_city_owners_payload,
 )
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
+from backend.apps.admin_ui.services.kpis import get_weekly_kpis, list_weekly_history
 from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
 from backend.apps.admin_ui.services.slots import api_slots_payload
 from backend.apps.admin_ui.services.templates import api_templates_payload
@@ -52,6 +53,19 @@ async def api_templates(city_id: Optional[int] = None, key: Optional[str] = None
     if isinstance(payload, dict) and payload.get("found") is False:
         status_code = 404
     return JSONResponse(payload, status_code=status_code)
+
+
+@router.get("/kpis/current")
+async def api_weekly_kpis(company_tz: Optional[str] = Query(default=None)):
+    return JSONResponse(await get_weekly_kpis(company_tz))
+
+
+@router.get("/kpis/history")
+async def api_weekly_history(
+    limit: int = Query(default=12, ge=1, le=104),
+    offset: int = Query(default=0, ge=0),
+):
+    return JSONResponse(await list_weekly_history(limit=limit, offset=offset))
 
 
 @router.get("/template_keys")

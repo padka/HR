@@ -21,6 +21,40 @@
   </div>
 </section>
 
+<section class="weekly-kpi" aria-labelledby="weekly_kpi_title">
+  <header class="weekly-kpi__header">
+    <div class="weekly-kpi__heading">
+      <p class="weekly-kpi__eyebrow">Week-to-date • {{ weekly_kpis.timezone }}</p>
+      <h2 id="weekly_kpi_title" class="weekly-kpi__title">Ключевые показатели</h2>
+      <p class="weekly-kpi__meta">Неделя {{ weekly_kpis.current.label }} · обновление каждые 60 секунд</p>
+    </div>
+    <a class="weekly-kpi__history" href="/api/kpis/history" target="_blank" rel="noopener">История &rarr;</a>
+  </header>
+  <div class="weekly-kpi-grid">
+    {% for card in weekly_kpis.current.metrics %}
+      {% set trend = card.trend %}
+      <button
+        type="button"
+        class="kpi-card glass-card tone-{{ card.tone }}"
+        data-metric="{{ card.key }}"
+        aria-haspopup="dialog"
+        aria-controls="kpi_drawer"
+        aria-label="{{ card.label }}: {{ card.value }} за неделю. {{ trend.label }}"
+      >
+        <span class="kpi-card__body">
+          <span class="kpi-card__label">{{ card.label }}</span>
+          <span class="kpi-card__value">{{ card.value }}</span>
+          <span class="kpi-card__hint">за эту неделю</span>
+        </span>
+        <span class="kpi-card__aside">
+          <span class="kpi-card__trend trend--{{ trend.direction }}" aria-label="{{ trend.label }}">{{ trend.display }}</span>
+          <span class="kpi-card__icon" aria-hidden="true">{{ card.icon }}</span>
+        </span>
+      </button>
+    {% endfor %}
+  </div>
+</section>
+
 <section class="dashboard-metrics">
   <article class="metric-card glass-card">
     <span class="metric-card__label">Рекрутёры</span>
@@ -109,4 +143,198 @@
     <p class="muted">Пока нет зарегистрированных отказов по тесту.</p>
   {% endif %}
 </section>
+
+<aside id="kpi_drawer" class="kpi-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="kpi_drawer_title">
+  <div class="kpi-drawer__scrim" data-close="true"></div>
+  <div class="kpi-drawer__panel" role="document">
+    <header class="kpi-drawer__header">
+      <div>
+        <p class="kpi-drawer__eyebrow">Неделя {{ weekly_kpis.current.label }}</p>
+        <h3 id="kpi_drawer_title" class="kpi-drawer__title">Показатель</h3>
+        <p class="kpi-drawer__subtitle">{{ weekly_kpis.timezone }}</p>
+      </div>
+      <div class="kpi-drawer__actions">
+        <button type="button" class="btn btn-ghost" data-export="true">Export CSV</button>
+        <button type="button" class="btn btn-icon" data-close="true" aria-label="Закрыть слайдовер">✕</button>
+      </div>
+    </header>
+    <div class="kpi-drawer__content">
+      <p class="kpi-drawer__trend" data-role="trend"></p>
+      <div class="list-table-wrapper" data-role="table-wrapper">
+        <table class="list-table kpi-table">
+          <thead>
+            <tr>
+              <th scope="col">Кандидат</th>
+              <th scope="col">Рекрутёр</th>
+              <th scope="col">Дата события</th>
+              <th scope="col">Город / часовой пояс</th>
+            </tr>
+          </thead>
+          <tbody data-role="table-body"></tbody>
+        </table>
+      </div>
+      <p class="kpi-drawer__empty" data-role="empty" hidden>Для этой метрики пока нет событий на текущей неделе.</p>
+    </div>
+  </div>
+</aside>
+
+<script type="application/json" id="weekly_kpi_data">{{ weekly_kpis|tojson }}</script>
+
+{% endblock %}
+
+{% block extra_js %}
+  {{ super() }}
+  <script>
+    (function () {
+      const dataEl = document.getElementById('weekly_kpi_data');
+      if (!dataEl) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(dataEl.textContent || '{}');
+      } catch (err) {
+        console.error('weekly-kpi.parse-error', err);
+        parsed = {};
+      }
+      const drawer = document.getElementById('kpi_drawer');
+      if (!drawer) return;
+      const panel = drawer.querySelector('.kpi-drawer__panel');
+      const closeButtons = drawer.querySelectorAll('[data-close]');
+      const exportButton = drawer.querySelector('[data-export]');
+      const tableBody = drawer.querySelector('[data-role="table-body"]');
+      const tableWrapper = drawer.querySelector('[data-role="table-wrapper"]');
+      const emptyState = drawer.querySelector('[data-role="empty"]');
+      const trendLabel = drawer.querySelector('[data-role="trend"]');
+      const titleEl = drawer.querySelector('#kpi_drawer_title');
+      const focusableSelector = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+      let lastActive = null;
+
+      function findMetric(key) {
+        const metrics = (parsed.current && parsed.current.metrics) || [];
+        return metrics.find((item) => item.key === key);
+      }
+
+      function formatRow(detail) {
+        const row = document.createElement('tr');
+        const cells = [
+          detail.candidate || '—',
+          detail.recruiter || '—',
+          detail.event_label || detail.event_at || '—',
+          detail.city ? `${detail.city} • ${detail.timezone || ''}`.trim() : (detail.timezone || '—')
+        ];
+        cells.forEach((value, index) => {
+          const cell = document.createElement('td');
+          cell.textContent = value;
+          if (index === 2) {
+            cell.dataset.sortValue = detail.event_at || '';
+          }
+          row.appendChild(cell);
+        });
+        return row;
+      }
+
+      function exportCsv(metric) {
+        if (!metric) return;
+        const rows = metric.details || [];
+        const header = ['candidate', 'recruiter', 'event_at', 'event_label', 'city', 'timezone'];
+        const lines = [header.join(',')];
+        rows.forEach((detail) => {
+          const values = header.map((key) => {
+            const raw = detail[key];
+            const safe = (raw == null ? '' : String(raw)).replace(/"/g, '""');
+            return `"${safe}"`;
+          });
+          lines.push(values.join(','));
+        });
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const slug = metric.key.replace(/[^a-z0-9_-]+/gi, '_');
+        link.href = url;
+        link.download = `weekly_${slug}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+
+      function closeDrawer() {
+        drawer.hidden = true;
+        drawer.removeAttribute('data-open');
+        drawer.removeEventListener('keydown', handleKeyDown);
+        if (lastActive && typeof lastActive.focus === 'function') {
+          lastActive.focus();
+        }
+        lastActive = null;
+      }
+
+      function handleKeyDown(event) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeDrawer();
+          return;
+        }
+        if (event.key === 'Tab') {
+          const focusables = panel.querySelectorAll(focusableSelector);
+          if (!focusables.length) return;
+          const first = focusables[0];
+          const last = focusables[focusables.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
+      }
+
+      function renderMetric(metric) {
+        if (!metric || !tableBody || !titleEl) return;
+        tableBody.innerHTML = '';
+        titleEl.textContent = metric.label || 'Показатель';
+        if (trendLabel) {
+          trendLabel.textContent = metric.trend ? metric.trend.label : '';
+        }
+        const entries = metric.details || [];
+        if (!entries.length) {
+          if (tableWrapper) tableWrapper.setAttribute('hidden', 'true');
+          if (emptyState) emptyState.hidden = false;
+        } else {
+          entries.forEach((detail) => tableBody.appendChild(formatRow(detail)));
+          if (tableWrapper) tableWrapper.removeAttribute('hidden');
+          if (emptyState) emptyState.hidden = true;
+        }
+        if (exportButton) {
+          exportButton.disabled = entries.length === 0;
+          exportButton.onclick = () => exportCsv(metric);
+        }
+      }
+
+      function openDrawer(metricKey, trigger) {
+        const metric = findMetric(metricKey);
+        renderMetric(metric);
+        drawer.hidden = false;
+        drawer.setAttribute('data-open', 'true');
+        lastActive = trigger || document.activeElement;
+        drawer.addEventListener('keydown', handleKeyDown);
+        const firstFocus = panel.querySelector(focusableSelector);
+        if (firstFocus && typeof firstFocus.focus === 'function') {
+          firstFocus.focus();
+        }
+      }
+
+      closeButtons.forEach((btn) => {
+        btn.addEventListener('click', () => closeDrawer());
+      });
+
+      document.querySelectorAll('.kpi-card').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const key = btn.getAttribute('data-metric');
+          if (key) {
+            openDrawer(key, btn);
+          }
+        });
+      });
+    })();
+  </script>
 {% endblock %}
