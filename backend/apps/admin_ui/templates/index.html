@@ -5,6 +5,47 @@
   <div class="hero__copy">
     <p class="hero__eyebrow">TG Bot · HR Operations</p>
     <h1 class="hero__title">Центр управления рекрутингом</h1>
+    {% set health_state = bot_status.health or 'missing' %}
+    {% set health_value = 'Здоров' if health_state == 'ok' else ('Замедлен' if health_state in ['degraded', 'warning'] else 'Нет связи') %}
+    {% set health_tone = 'ok' if health_state == 'ok' else ('warn' if health_state in ['degraded', 'warning'] else 'danger') %}
+    <div class="hero__statuses" role="status" aria-live="polite">
+      <p class="hero__status-label">Статус бота</p>
+      <ul class="hero__status-list">
+        <li>
+          <span class="badge badge-{{ 'ok' if bot_status.config_enabled else 'danger' }}">
+            <span class="badge__dot" aria-hidden="true"></span>
+            Интеграция · {{ 'Включена' if bot_status.config_enabled else 'Отключена' }}
+          </span>
+        </li>
+        <li>
+          <span class="badge badge-{{ 'ok' if bot_status.runtime_enabled else 'warn' }}">
+            <span class="badge__dot" aria-hidden="true"></span>
+            Runtime · {{ 'Активен' if bot_status.runtime_enabled else 'Пауза' }}
+          </span>
+        </li>
+        <li>
+          <span class="badge badge-{{ health_tone }}">
+            <span class="badge__dot" aria-hidden="true"></span>
+            Здоровье · {{ health_value }}
+          </span>
+        </li>
+        <li>
+          <span class="badge badge-{{ 'ok' if bot_status.ready else 'warn' }}">
+            <span class="badge__dot" aria-hidden="true"></span>
+            Готовность · {{ 'Готов' if bot_status.ready else 'Ожидает' }}
+          </span>
+        </li>
+        <li>
+          <span class="badge badge-{{ 'ok' if bot_status.mode == 'real' else 'info' }}">
+            <span class="badge__dot" aria-hidden="true"></span>
+            Режим · {{ 'Продакшен' if bot_status.mode == 'real' else 'Тестовый' }}
+          </span>
+        </li>
+      </ul>
+      {% if bot_status.updated_at %}
+        <p class="hero__status-meta muted">Последнее переключение: {{ bot_status.updated_at | replace('T', ' ') }}</p>
+      {% endif %}
+    </div>
     <p class="hero__description">Следите за воронкой кандидатов, слотами и продуктивностью команды в режиме реального времени.</p>
     <div class="hero__cta-group">
       <a class="btn btn-primary" href="/candidates">К кандидатам</a>
@@ -14,9 +55,9 @@
   <div class="hero__actions">
     <p class="hero__actions-title">Быстрые действия</p>
     <div class="hero__cta-secondary">
-      <a class="btn btn-ghost" href="/slots/new">Создать слот</a>
-      <a class="btn btn-ghost" href="/templates/new">Добавить шаблон</a>
-      <a class="btn btn-ghost" href="/questions/new">Новый вопрос</a>
+      <a class="btn btn-ghost btn-sm" href="/slots/new">Создать слот</a>
+      <a class="btn btn-ghost btn-sm" href="/templates/new">Добавить шаблон</a>
+      <a class="btn btn-ghost btn-sm" href="/questions/new">Новый вопрос</a>
     </div>
   </div>
 </section>
