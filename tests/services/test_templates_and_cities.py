@@ -1,4 +1,9 @@
+import importlib.util
+
 import pytest
+
+if importlib.util.find_spec("sqlalchemy") is None:  # pragma: no cover - env guard
+    pytest.skip("sqlalchemy is not installed in this environment", allow_module_level=True)
 
 from backend.apps.admin_ui.services.cities import (
     api_city_owners_payload,
@@ -79,7 +84,39 @@ async def test_update_city_settings_rolls_back_on_template_error():
         refreshed_city = await session.get(models.City, city.id)
         assert refreshed_city.responsible_recruiter_id is None
         await session.refresh(refreshed_city, attribute_names=["templates"])
-        assert refreshed_city.templates == []
+    assert refreshed_city.templates == []
+
+
+@pytest.mark.asyncio
+async def test_update_city_settings_updates_core_fields():
+    async with async_session() as session:
+        city = models.City(name="Уфа", tz="Europe/Moscow", active=False)
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+        city_id = city.id
+
+    error = await update_city_settings(
+        city_id=city_id,
+        name="Екатеринбург",
+        tz="Asia/Yekaterinburg",
+        active=True,
+        responsible_id=None,
+        templates={},
+        criteria="",
+        experts="",
+        plan_week=None,
+        plan_month=None,
+    )
+
+    assert error is None
+
+    async with async_session() as session:
+        updated = await session.get(models.City, city_id)
+        assert updated is not None
+        assert updated.name == "Екатеринбург"
+        assert updated.tz == "Asia/Yekaterinburg"
+        assert updated.active is True
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from zoneinfo import ZoneInfo
 
+from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 STATIC_DIR = Path(__file__).parent / "backend" / "apps" / "admin_ui" / "static"
 TEMPLATES_DIR = Path(__file__).parent / "backend" / "apps" / "admin_ui" / "templates"
 
@@ -412,55 +413,91 @@ QUESTIONS_DATA = [
     },
 ]
 
-CITIES_DATA = [
+CITY_SEED_DATA = [
     {
-        "id": 1,
         "name": "Москва",
         "tz": "Europe/Moscow",
         "criteria": "Опыт работы в рознице от 1 года",
         "experts": "2 наставника, 1 тимлид",
         "plan_week": 12,
         "plan_month": 48,
+        "active": True,
     },
     {
-        "id": 2,
         "name": "Казань",
         "tz": "Europe/Moscow",
         "criteria": "Отличное знание города",
         "experts": "1 наставник",
         "plan_week": 6,
         "plan_month": 24,
+        "active": True,
     },
 ]
 
+CITIES_DATA: List[Dict[str, Any]] = []
+for index, seed in enumerate(CITY_SEED_DATA, start=1):
+    entry = dict(seed)
+    entry["id"] = index
+    CITIES_DATA.append(entry)
+
+EXTRA_CITIES = 210
+TZ_ROTATION = ["Europe/Moscow", "Europe/Samara", "Asia/Yekaterinburg"]
+for offset in range(EXTRA_CITIES):
+    city_id = len(CITIES_DATA) + 1
+    tz_choice = TZ_ROTATION[offset % len(TZ_ROTATION)]
+    CITIES_DATA.append(
+        {
+            "id": city_id,
+            "name": f"Город {city_id:03d}",
+            "tz": tz_choice,
+            "criteria": "Коротко: опыт продаж от 6 месяцев" if offset % 5 == 0 else "",
+            "experts": "Два наставника по графику" if offset % 7 == 0 else "",
+            "plan_week": 10 + (offset % 5) if offset % 2 == 0 else None,
+            "plan_month": 40 + (offset % 6) * 4 if offset % 3 == 0 else None,
+            "active": offset % 4 != 0,
+        }
+    )
+
+
+def _build_stage_entries(custom_map: Dict[str, str]) -> List[Dict[str, Any]]:
+    payload: List[Dict[str, Any]] = []
+    for stage in CITY_TEMPLATE_STAGES:
+        value = custom_map.get(stage.key, "")
+        payload.append(
+            {
+                "key": stage.key,
+                "title": stage.title,
+                "description": stage.description,
+                "default": STAGE_DEFAULTS.get(stage.key, ""),
+                "value": value,
+                "is_custom": bool(value.strip()),
+            }
+        )
+    return payload
+
+
+CITY_STAGE_CUSTOM_VALUES: Dict[int, Dict[str, str]] = {
+    1: {
+        "stage1_invite": "Москва ждёт вас {{slot_date_local}} в офисе на Новослободской.",
+    }
+}
+
+
 CITY_STAGES_DATA = {
-    1: [
-        {
-            "key": "invite",
-            "title": "Приглашение",
-            "default": "Добрый день! Выберите время интервью по ссылке...",
-            "value": "Москва ждёт вас {{slot_date_local}} в офисе на Новослободской.",
-        },
-        {
-            "key": "reminder",
-            "title": "Напоминание",
-            "default": "Напоминаем про интервью сегодня в {{slot_time_local}}.",
-            "value": None,
-        },
-    ]
+    city_id: _build_stage_entries(custom_map)
+    for city_id, custom_map in CITY_STAGE_CUSTOM_VALUES.items()
 }
 
 OWNERS_DATA = {1: 10}
 REC_MAP_DATA = {item["rec"]["id"]: item["rec"] for item in RECRUITER_ROWS_DATA}
 CITY_CITIES_DATA = [
-    {"id": 1, "name": "Москва", "tz": "Europe/Moscow"},
-    {"id": 2, "name": "Казань", "tz": "Europe/Moscow"},
+    {"id": city["id"], "name": city["name"], "tz": city["tz"]}
+    for city in CITIES_DATA[:12]
 ]
 
 TZ_OPTIONS_DATA = [
-    {"value": "Europe/Moscow", "label": tz_display("Europe/Moscow")},
-    {"value": "Europe/Samara", "label": tz_display("Europe/Samara")},
-    {"value": "Asia/Yekaterinburg", "label": tz_display("Asia/Yekaterinburg")},
+    {"value": tz_name, "label": tz_display(tz_name)}
+    for tz_name in ["Europe/Moscow", "Europe/Samara", "Asia/Yekaterinburg"]
 ]
 
 CITY_NAMES_DATA = [city["name"] for city in CITY_CITIES_DATA]
@@ -562,6 +599,20 @@ def cities_list_context() -> Dict[str, Any]:
     }
 
 
+def city_edit_context() -> Dict[str, Any]:
+    city = build(CITIES_DATA[0])
+    stage_payload = CITY_STAGES_DATA.get(city.id, _build_stage_entries({}))
+    return {
+        "city": city,
+        "responsible_id": OWNERS_DATA.get(city.id),
+        "recruiters": build([item["rec"] for item in RECRUITER_ROWS_DATA]),
+        "stage_meta": CITY_TEMPLATE_STAGES,
+        "stages": build(stage_payload),
+        "stage_defaults": {stage.key: stage.default_text for stage in CITY_TEMPLATE_STAGES},
+        "timezone_options": [option["value"] for option in TZ_OPTIONS_DATA],
+    }
+
+
 # Register routes in deterministic order for previews/screenshots.
 register_route("/", "index.html", "index", dashboard_context)
 register_route("/candidates", "candidates_list.html", "candidates", candidates_list_context)
@@ -574,6 +625,7 @@ register_route("/slots/new", "slots_new.html", "slot-new", slots_new_context)
 register_route("/templates", "templates_list.html", "templates", templates_list_context)
 register_route("/questions", "questions_list.html", "questions", questions_list_context)
 register_route("/cities", "cities_list.html", "cities", cities_list_context)
+register_route("/cities/1/edit", "city_edit.html", "city-edit", city_edit_context)
 
 
 __all__ = ["app", "templates", "DEMO_ROUTES", "dashboard_context"]
