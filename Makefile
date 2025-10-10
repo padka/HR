@@ -1,4 +1,4 @@
-.PHONY: setup bootstrap doctor dev-db test ui demo previews screens kpi-weekly run lint
+.PHONY: setup bootstrap doctor dev-db test ui demo previews screens kpi-weekly run lint pw-install pw-deps pw-setup
 
 VENV ?= .venv
 PYTHON ?= python3
@@ -7,8 +7,22 @@ setup: $(VENV)/bin/python
 	. $(VENV)/bin/activate && python -m pip install --upgrade pip
 	. $(VENV)/bin/activate && python -m pip install -e ".[dev]"
 	npm install
-	. $(VENV)/bin/activate && playwright install
 	$(MAKE) doctor
+
+pw-install: $(VENV)/bin/python
+	. $(VENV)/bin/activate && playwright install chromium
+
+pw-deps: $(VENV)/bin/python
+	if [ "$(shell uname -s)" = "Linux" ]; then \
+	        if ! (. $(VENV)/bin/activate && playwright install-deps chromium); then \
+	                echo "Playwright Linux dependencies require administrator privileges. Re-run with sudo: playwright install-deps chromium"; \
+	                exit 1; \
+	        fi; \
+	else \
+	        echo "Skipping Playwright system dependency install (non-Linux host)"; \
+	fi
+
+pw-setup: pw-deps pw-install
 
 bootstrap: setup
 
@@ -40,6 +54,9 @@ previews: $(VENV)/bin/python
 	. $(VENV)/bin/activate && python tools/render_previews.py
 
 screens: $(VENV)/bin/python
+	if ! (. $(VENV)/bin/activate && playwright install --check chromium >/dev/null 2>&1); then \
+	        $(MAKE) pw-setup; \
+	fi
 	rm -rf ui_screenshots
 	. $(VENV)/bin/activate && pytest tests/test_ui_screenshots.py
 

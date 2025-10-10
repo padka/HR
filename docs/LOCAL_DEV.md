@@ -23,7 +23,8 @@ an environment on macOS or Linux.
    ```bash
    make setup
    ```
-   This installs `.[dev]`, Node devDependencies, Playwright browsers, and runs `make doctor`.
+   This installs `.[dev]`, Node devDependencies, and runs `make doctor`.
+   Install Playwright browsers separately with `make pw-setup` (see "Screenshots").
 3. Provide a session secret (once per machine):
    ```bash
    export SESSION_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')
@@ -38,6 +39,20 @@ an environment on macOS or Linux.
    make previews
    make screens
    ```
+
+## Screenshots
+
+The screenshot suite relies on Playwright Chromium binaries. Run the helper targets once per machine:
+
+```bash
+make pw-setup   # installs system deps (Linux) and the Chromium browser bundle
+make screens    # rebuilds screenshots after ensuring the browser exists
+```
+
+- **macOS** — `make pw-setup` is usually sufficient. If codesign prompts appear, allow the "Microsoft Edge WebView2" helper.
+- **Linux** — the `pw-deps` step runs `playwright install-deps chromium`. If you see missing libraries, rerun the command with `sudo`.
+- **Common failure** — `Playwright Chromium dependencies are missing. Install them via: playwright install --with-deps chromium`. Execute the command verbatim, then rerun `make screens`.
+- **Headless mode** — screenshots always run headless; to debug locally, export `PWDEBUG=1` before invoking `make screens`.
 
 ## Verification commands
 

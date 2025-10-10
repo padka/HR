@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -25,6 +26,10 @@ def clean_database():
 TEST_SERVER_HOST = "127.0.0.1"
 TEST_SERVER_PORT = 8055
 BASE_URL = f"http://{TEST_SERVER_HOST}:{TEST_SERVER_PORT}"
+DEFAULT_TIMEOUT_MS = 45_000
+
+os.environ.setdefault("HEADLESS", "1")
+os.environ.setdefault("PLAYWRIGHT_HEADLESS", "1")
 
 VIEWPORTS = {
     "desktop": {"width": 1440, "height": 900},
@@ -77,13 +82,17 @@ def demo_server() -> str:
 def _launch_browser():
     playwright = sync_playwright().start()
     try:
-        browser = playwright.chromium.launch()
+        browser = playwright.chromium.launch(headless=True)
     except Error as exc:
         playwright.stop()
-        if "missing dependencies" in str(exc):
-            pytest.skip(
-                "Playwright browser dependencies are not available in the CI image"
+        message = str(exc)
+        lowered = message.lower()
+        if "dependencies" in lowered or "executable doesn't exist" in lowered:
+            hint = (
+                "Playwright Chromium dependencies are missing. "
+                "Install them via: playwright install --with-deps chromium"
             )
+            pytest.fail(hint, pytrace=False)
         raise
     return playwright, browser
 
@@ -107,8 +116,8 @@ def test_ui_screenshots(route: str, demo_server: str) -> None:
             page = browser.new_page(viewport=viewport)
             try:
                 url = f"{demo_server}{route}"
-                page.goto(url)
-                page.wait_for_load_state("networkidle")
+                page.goto(url, wait_until="networkidle", timeout=DEFAULT_TIMEOUT_MS)
+                page.wait_for_load_state("networkidle", timeout=DEFAULT_TIMEOUT_MS)
                 target_dir = SCREEN_ROOT / ROUTE_SLUGS[route]
                 target_dir.mkdir(exist_ok=True, parents=True)
                 screenshot_path = target_dir / f"{viewport_name}.png"
@@ -123,13 +132,21 @@ def test_recruiter_card_keyboard_accessibility(demo_server: str) -> None:
     playwright, browser = _launch_browser()
     page = browser.new_page(viewport={"width": 1280, "height": 768})
     try:
-        page.goto(f"{demo_server}/recruiters")
-        page.wait_for_load_state("networkidle")
+        page.goto(
+            f"{demo_server}/recruiters",
+            wait_until="networkidle",
+            timeout=DEFAULT_TIMEOUT_MS,
+        )
+        page.wait_for_load_state("networkidle", timeout=DEFAULT_TIMEOUT_MS)
 
         card = page.locator("[data-rec-card]").first
         card.focus()
         page.keyboard.press("Enter")
-        page.wait_for_url("**/recruiters/10/edit", wait_until="networkidle")
+        page.wait_for_url(
+            "**/recruiters/10/edit",
+            wait_until="networkidle",
+            timeout=DEFAULT_TIMEOUT_MS,
+        )
         assert "/recruiters/10/edit" in page.url
 
         page.go_back()
@@ -137,7 +154,11 @@ def test_recruiter_card_keyboard_accessibility(demo_server: str) -> None:
         card = page.locator("[data-rec-card]").first
         card.focus()
         page.keyboard.press("Space")
-        page.wait_for_url("**/recruiters/10/edit", wait_until="networkidle")
+        page.wait_for_url(
+            "**/recruiters/10/edit",
+            wait_until="networkidle",
+            timeout=DEFAULT_TIMEOUT_MS,
+        )
         assert "/recruiters/10/edit" in page.url
     finally:
         _close_browser(playwright, browser)
