@@ -5,9 +5,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Tuple
 
-from aiogram import Bot
+try:  # pragma: no cover - optional dependency handling
+    from aiogram import Bot as _RuntimeBot
+except Exception:  # pragma: no cover - fallback path when aiogram is missing
+    _RuntimeBot = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:  # pragma: no cover - typing helpers
+    from aiogram import Bot as AiogramBot
+else:
+    AiogramBot = Any  # type: ignore[assignment]
 from fastapi import FastAPI
 
 from backend.apps.admin_ui.services.bot_service import (
@@ -36,7 +44,7 @@ class BotIntegration:
     """Holds runtime bot integration objects for cleanup."""
 
     state_manager: StateManager
-    bot: Optional[Bot]
+    bot: Optional[AiogramBot]
     bot_service: BotService
     integration_switch: IntegrationSwitch
     reminder_service: ReminderService
@@ -61,12 +69,18 @@ class BotIntegration:
             logger.exception("Failed to shutdown reminder service cleanly")
 
 
-def _build_bot(settings) -> Tuple[Optional[Bot], bool]:
+def _build_bot(settings) -> Tuple[Optional[AiogramBot], bool]:
     """Create bot runtime instance if configuration is valid."""
 
     if not settings.bot_enabled:
         logger.info(
             "Test 2 bot integration disabled via BOT_ENABLED flag; using NullBot."
+        )
+        return None, False
+
+    if _RuntimeBot is None:
+        logger.info(
+            "Aiogram is not installed; running admin without live bot integration.",
         )
         return None, False
 
@@ -92,7 +106,7 @@ def _build_bot(settings) -> Tuple[Optional[Bot], bool]:
 
     try:
         session = create_api_session(getattr(settings, "bot_api_base", None))
-        bot = Bot(token=token, default=DEFAULT_BOT_PROPERTIES, session=session)
+        bot = _RuntimeBot(token=token, default=DEFAULT_BOT_PROPERTIES, session=session)
     except Exception:
         session_to_close = locals().get("session")
         if session_to_close is not None:

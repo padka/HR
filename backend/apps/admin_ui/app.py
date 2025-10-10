@@ -21,13 +21,13 @@ from backend.apps.admin_ui.routers import (
 )
 from backend.apps.admin_ui.security import require_admin
 from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
-from backend.core.db import init_models
+from backend.core.bootstrap import ensure_database_ready
 from backend.core.settings import get_settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_models()
+    await ensure_database_ready()
     register_template_globals()
     integration: BotIntegration = await setup_bot_state(app)
     routes = [r.path for r in app.routes if hasattr(r, "path")]

@@ -9,10 +9,10 @@ from backend.apps.bot.state_store import InMemoryStateStore
 
 @pytest.mark.asyncio
 async def test_create_application_smoke(monkeypatch):
-    async def dummy_init_models() -> None:
+    async def dummy_bootstrap() -> None:
         return None
 
-    monkeypatch.setattr(bot_app, "init_models", dummy_init_models)
+    monkeypatch.setattr(bot_app, "ensure_database_ready", dummy_bootstrap)
 
     bot, dispatcher, state_manager, reminder_service = await bot_app.create_application(
         "123456:ABCDEF"

@@ -104,9 +104,10 @@ installs console scripts).
 ## Database migrations and seed data
 
 The database schema is managed through Python migration scripts located under
-`backend/migrations`. Both the web applications and the bot call
-`backend.core.db.init_models()` during startup, which upgrades the database to
-the latest revision and applies the default seed data.
+`backend/migrations`. Both the web applications and the bot invoke
+`backend.core.bootstrap.ensure_database_ready()` during startup, which applies
+pending migrations, creates any missing tables from the ORM metadata and
+populates the default seed data.
 
 For brand new environments or CI setups you can run the same logic manually:
 
