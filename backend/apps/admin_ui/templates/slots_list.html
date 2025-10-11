@@ -3,110 +3,112 @@
 {% block title %}Слоты{% endblock %}
 {% block content %}
 {% set has_slots = slots|length > 0 %}
+{% set status_labels = {'FREE': 'Свободные', 'PENDING': 'Ожидают', 'BOOKED': 'Забронированы', 'CONFIRMED_BY_CANDIDATE': 'Подтверждены'} %}
 <section class="page page--slots" data-page="slots" aria-labelledby="slots-title">
-  <header class="page-header">
-    <div>
-      <h1 id="slots-title" class="page-title">Слоты</h1>
-      <p class="page-description">
-        Следите за расписанием интервью: фильтруйте таблицу по рекрутёрам и статусу, переключайтесь между будущими и прошедшими слотами, просматривайте подробности в правой панели.
-      </p>
+  <header class="slot-page-header panel">
+    <div class="slot-page-header__text">
+      <h1 id="slots-title" class="slot-page-title">Слоты</h1>
+      <p class="slot-page-subtitle muted">Управляйте расписанием интервью и бронями в одном месте.</p>
     </div>
-    <div class="page-actions">
-      <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
-      <button type="button" class="btn btn-danger" id="delete_all_slots">Удалить все</button>
+    <div class="slot-page-actions">
+      <a class="btn btn-primary btn-sm" href="/slots/new">+ Новый слот</a>
+      <button type="button" class="btn btn-danger btn-sm" id="delete_all_slots">Удалить все</button>
     </div>
   </header>
 
   {% if flash %}
     {% set tone = {'success': 'success', 'error': 'danger', 'info': 'info'}.get(flash.status, 'info') %}
-    <div class="surface glass grain alert" data-tone="{{ tone }}" role="alert">
-      <p class="page-description">{{ flash.message }}</p>
+    <div class="slot-alert panel panel--flush" data-tone="{{ tone }}" role="alert">
+      <p class="slot-alert__text">{{ flash.message }}</p>
     </div>
   {% endif %}
 
-  <section class="slot-summary" aria-label="Быстрая статистика по слотам">
-    <article class="slot-summary__item" data-tone="success">
-      <span class="slot-summary__label">Свободные</span>
+  <section class="slot-summary" aria-label="Статистика по слотам">
+    <article class="slot-summary__card surface" data-tone="success">
+      <span class="slot-summary__label">Свободно</span>
       <span class="slot-summary__value" id="cnt-free">{{ status_counts.FREE }}</span>
-      <p class="slot-summary__hint">Готовы к бронированию</p>
+      <span class="slot-summary__hint">Готовы к бронированию</span>
     </article>
-    <article class="slot-summary__item" data-tone="warning">
+    <article class="slot-summary__card surface" data-tone="warn">
       <span class="slot-summary__label">Ожидают</span>
       <span class="slot-summary__value" id="cnt-pending">{{ status_counts.PENDING }}</span>
-      <p class="slot-summary__hint">Заявки требуют подтверждения</p>
+      <span class="slot-summary__hint">Заявки требуют подтверждения</span>
     </article>
-    <article class="slot-summary__item" data-tone="info">
+    <article class="slot-summary__card surface" data-tone="info">
       <span class="slot-summary__label">Забронированы</span>
       <span class="slot-summary__value" id="cnt-booked">{{ status_counts.BOOKED }}</span>
-      <p class="slot-summary__hint">Интервью назначены кандидатам</p>
+      <span class="slot-summary__hint">Интервью назначены кандидатам</span>
     </article>
-    <article class="slot-summary__item" data-tone="primary">
+    <article class="slot-summary__card surface" data-tone="success">
       <span class="slot-summary__label">Подтверждены</span>
       <span class="slot-summary__value" id="cnt-confirmed">{{ status_counts.CONFIRMED_BY_CANDIDATE }}</span>
-      <p class="slot-summary__hint">Кандидаты подтвердили участие</p>
+      <span class="slot-summary__hint">Кандидаты подтвердили участие</span>
     </article>
-    <article class="slot-summary__item" data-tone="neutral">
+    <article class="slot-summary__card surface" data-tone="muted">
       <span class="slot-summary__label">Всего</span>
       <span class="slot-summary__value" id="cnt-total">{{ status_counts.total }}</span>
-      <p class="slot-summary__hint">С учётом действующих фильтров</p>
+      <span class="slot-summary__hint">С учётом выбранных фильтров</span>
     </article>
   </section>
 
-  {% call list_toolbar(
-    form_id="slot_filters",
-    form_action="/slots",
-    method="get",
-    sticky=True,
-    mass_actions=[{'label': 'Показать', 'type': 'button', 'variant': 'primary', 'button_type': 'submit'}]
-  ) %}
-    <div class="form-field">
-      <label for="recruiter_id">Рекрутёр</label>
-      <select id="recruiter_id" name="recruiter_id">
-        <option value="">— Все —</option>
-        {% for r in recruiter_options %}
-          <option value="{{ r.id }}" {% if filter_recruiter_id and filter_recruiter_id == r.id %}selected{% endif %}>
-            {{ r.name }} ({{ tz_display(r.tz) }})
-          </option>
-        {% endfor %}
-      </select>
+  <section class="slot-filter-bar panel" aria-label="Фильтры списка">
+    <div class="slot-filter-bar__groups">
+      <div class="slot-filter" data-filter-group="recruiter">
+        <span class="slot-filter__label">Рекрутёр</span>
+        <div class="slot-filter__options" role="group" aria-label="Фильтр по рекрутёру">
+          <button type="button" class="pill slot-filter__option{% if not filter_recruiter_id %} is-active{% endif %}" data-filter-type="recruiter" data-value="" aria-pressed="{{ 'true' if not filter_recruiter_id else 'false' }}">Все</button>
+          {% for r in recruiter_options %}
+            <button type="button" class="pill slot-filter__option{% if filter_recruiter_id == r.id %} is-active{% endif %}" data-filter-type="recruiter" data-value="{{ r.id }}" aria-pressed="{{ 'true' if filter_recruiter_id == r.id else 'false' }}">{{ r.name }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="slot-filter" data-filter-group="status">
+        <span class="slot-filter__label">Статус</span>
+        <div class="slot-filter__options" role="group" aria-label="Фильтр по статусу">
+          <button type="button" class="pill slot-filter__option{% if not filter_status %} is-active{% endif %}" data-filter-type="status" data-value="" aria-pressed="{{ 'true' if not filter_status else 'false' }}">Все</button>
+          {% for code, label in status_labels.items() %}
+            <button type="button" class="pill slot-filter__option{% if filter_status == code %} is-active{% endif %}" data-filter-type="status" data-value="{{ code }}" aria-pressed="{{ 'true' if filter_status == code else 'false' }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="slot-filter" data-filter-group="city">
+        <span class="slot-filter__label">Город</span>
+        <div class="slot-filter__options" role="group" aria-label="Фильтр по городу">
+          <button type="button" class="pill slot-filter__option{% if not filter_city_id %} is-active{% endif %}" data-filter-type="city" data-value="" aria-pressed="{{ 'true' if not filter_city_id else 'false' }}">Все</button>
+          {% for city in city_options %}
+            <button type="button" class="pill slot-filter__option{% if filter_city_id == city.id %} is-active{% endif %}" data-filter-type="city" data-value="{{ city.id }}" aria-pressed="{{ 'true' if filter_city_id == city.id else 'false' }}">{{ city.name }}</button>
+          {% endfor %}
+        </div>
+      </div>
     </div>
-
-    <div class="form-field form-field--narrow">
-      <label for="status">Статус</label>
-      <select id="status" name="status">
-        <option value="">— Все —</option>
-        <option value="FREE" {% if filter_status == 'FREE' %}selected{% endif %}>FREE</option>
-        <option value="PENDING" {% if filter_status == 'PENDING' %}selected{% endif %}>PENDING</option>
-        <option value="BOOKED" {% if filter_status == 'BOOKED' %}selected{% endif %}>BOOKED</option>
-        <option value="CONFIRMED_BY_CANDIDATE" {% if filter_status == 'CONFIRMED_BY_CANDIDATE' %}selected{% endif %}>CONFIRMED_BY_CANDIDATE</option>
-      </select>
+    <div class="slot-filter-bar__aside">
+      <div class="slot-switch-group">
+        <label class="slot-switch">
+          <input id="only_future" type="checkbox" autocomplete="off">
+          <span class="slot-switch__control" aria-hidden="true"></span>
+          <span class="slot-switch__label">Только будущие</span>
+        </label>
+        <label class="slot-switch">
+          <input id="toggle_cand_tz" type="checkbox" autocomplete="off">
+          <span class="slot-switch__control" aria-hidden="true"></span>
+          <span class="slot-switch__label">Время кандидата</span>
+        </label>
+      </div>
+      <form class="slot-per-page" method="get">
+        <label class="slot-per-page__label" for="per_page">На странице</label>
+        <div class="slot-per-page__field">
+          <select id="per_page" name="per_page">
+            {% for n in [10, 20, 50, 100] %}
+              <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% if filter_recruiter_id %}<input type="hidden" name="recruiter_id" value="{{ filter_recruiter_id }}">{% endif %}
+        {% if filter_status %}<input type="hidden" name="status" value="{{ filter_status }}">{% endif %}
+        {% if filter_city_id %}<input type="hidden" name="city_id" value="{{ filter_city_id }}">{% endif %}
+      </form>
     </div>
-
-    <div class="form-field form-field--narrow">
-      <label for="per_page">На странице</label>
-      <select id="per_page" name="per_page">
-        {% for n in [10, 20, 50, 100] %}
-          <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <p class="slot-toolbar-note">Параметры фильтра перегружают страницу. Дополнительные режимы ниже срабатывают моментально.</p>
-  {% endcall %}
-
-  <div class="slot-toggle-bar" role="group" aria-label="Дополнительные режимы отображения">
-    <label class="slot-toggle">
-      <input id="only_future" type="checkbox" autocomplete="off">
-      <span class="slot-toggle__indicator" aria-hidden="true"></span>
-      <span class="slot-toggle__label">Только будущие слоты</span>
-    </label>
-    <label class="slot-toggle">
-      <input id="toggle_cand_tz" type="checkbox" autocomplete="off">
-      <span class="slot-toggle__indicator" aria-hidden="true"></span>
-      <span class="slot-toggle__label">Показать время кандидата</span>
-    </label>
-  </div>
-
+  </section>
   {% if has_slots %}
     <div class="list-table-wrapper">
       <table class="list-table list-table--responsive slot-table" id="slots_table">
@@ -118,11 +120,12 @@
             <th scope="col" class="sortable">
               <button class="sort" type="button" data-key="recruiter" aria-sort="none">Рекрутёр <span class="arrow" aria-hidden="true"></span></button>
             </th>
+            <th scope="col">Город</th>
             <th scope="col" class="sortable">
               <button class="sort" type="button" data-key="utc" aria-sort="none">UTC <span class="arrow" aria-hidden="true"></span></button>
             </th>
-            <th scope="col">Локальное (TZ рекрутёра)</th>
-            <th scope="col" class="col-cand-tz is-optional">Локальное (TZ кандидата)</th>
+            <th scope="col">Локальное (рекрутёр)</th>
+            <th scope="col" class="col-cand-tz is-optional">Локальное (кандидат)</th>
             <th scope="col" class="sortable">
               <button class="sort" type="button" data-key="status" aria-sort="none">Статус <span class="arrow" aria-hidden="true"></span></button>
             </th>
@@ -142,6 +145,7 @@
               tabindex="0"
               data-id="{{ s.id }}"
               data-status="{{ st or '' }}"
+              data-status-label="{{ status_labels.get(st, st or '') }}"
               data-status-order="{{ status_order }}"
               data-start-iso="{{ s.start_utc.isoformat() }}"
               data-start-utc="{{ fmt_utc(s.start_utc) }}"
@@ -150,6 +154,9 @@
               data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
               data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
               data-recruiter-tz="{{ tz_rec }}"
+              data-city-id="{{ s.city.id if s.city else '' }}"
+              data-city-name="{{ s.city.name if s.city else '' }}"
+              data-city-tz="{{ tz_display(s.city.tz) if s.city else '' }}"
               data-duration="{{ s.duration_min }}"
               data-candidate="{{ s.candidate_fio or '' }}"
               data-candidate-id="{{ s.candidate_tg_id or '' }}"
@@ -160,6 +167,16 @@
             <td data-label="Рекрутёр">
               <div class="slot-cell-primary">{{ s.recruiter.name if s.recruiter else "—" }}</div>
               <span class="badge badge--soft">{{ tz_display(tz_rec) }}</span>
+            </td>
+            <td data-label="Город">
+              {% if s.city %}
+                <div class="slot-chip-group">
+                  <span class="slot-chip">{{ s.city.name }}</span>
+                  <span class="badge badge--soft">{{ tz_display(s.city.tz) }}</span>
+                </div>
+              {% else %}
+                <span class="slot-chip slot-chip--empty">—</span>
+              {% endif %}
             </td>
             <td data-label="UTC">
               <div class="slot-time">
@@ -179,14 +196,19 @@
               {% endif %}
             </td>
             <td data-label="Статус">
+              {% set status_label = status_labels.get(st, st or "—") %}
               {% if st == "FREE" %}
-                <span class="status-badge" data-tone="success">FREE</span>
+                <span class="status-badge" data-tone="success">{{ status_label }}</span>
               {% elif st == "PENDING" %}
-                <span class="status-badge" data-tone="warning">PENDING</span>
+                <span class="status-badge" data-tone="warning">{{ status_label }}</span>
               {% elif st == "BOOKED" %}
-                <span class="status-badge" data-tone="info">BOOKED</span>
+                <span class="status-badge" data-tone="info">{{ status_label }}</span>
+              {% elif st == "CONFIRMED_BY_CANDIDATE" %}
+                <span class="status-badge" data-tone="success">{{ status_label }}</span>
+              {% elif st %}
+                <span class="status-badge" data-tone="info">{{ status_label }}</span>
               {% else %}
-                <span class="badge badge--soft">{{ st or "—" }}</span>
+                <span class="badge badge--soft">—</span>
               {% endif %}
             </td>
             <td data-label="Кандидат" class="is-optional">
@@ -198,17 +220,22 @@
               {% endif %}
             </td>
             <td class="col-actions" data-label="Действия">
-              <button type="button" class="btn btn-soft btn--small" data-action="open-slot">Подробнее</button>
-              <button type="button"
-                      class="btn btn-danger btn--small"
-                      data-action="delete-slot">
-                Удалить
-              </button>
+              <button type="button" class="btn btn-ghost btn-sm" data-action="open-slot">Подробнее</button>
+              <button type="button" class="btn btn-danger btn-sm" data-action="delete-slot">Удалить</button>
             </td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
+    </div>
+
+    <div id="slot_empty_state" class="slot-empty-state panel" role="status" hidden aria-hidden="true">
+      <h3 class="slot-empty-state__title">Нет слотов по текущим фильтрам</h3>
+      <p class="slot-empty-state__hint muted">Сбросьте фильтры или создайте новый слот, чтобы продолжить работу.</p>
+      <div class="slot-empty-state__actions">
+        <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+        <button type="button" class="btn btn-ghost" data-action="reset-filters">Сбросить фильтры</button>
+      </div>
     </div>
 
     <div class="pagination">
@@ -235,9 +262,9 @@
       {% endif %}
     </div>
   {% else %}
-    <div class="card glass grain slot-empty-state" role="status">
-      <h3 class="section-title">Пока пусто</h3>
-      <p class="page-description">Создайте первый слот или измените фильтры, чтобы увидеть расписание.</p>
+    <div id="slot_empty_state" class="slot-empty-state panel" role="status">
+      <h3 class="slot-empty-state__title">Пока пусто</h3>
+      <p class="slot-empty-state__hint muted">Создайте первый слот или измените фильтры, чтобы увидеть расписание.</p>
       <div class="slot-empty-state__actions">
         <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
       </div>
@@ -261,6 +288,13 @@
           <span class="status-badge" id="slot_sheet_status" data-tone="info">Статус: —</span>
         </div>
         <div class="slot-overview__meta">
+          <div id="slot_sheet_city_wrap" hidden>
+            <span class="slot-overview__hint">Локация</span>
+            <p class="slot-overview__value slot-overview__value--inline">
+              <span id="slot_sheet_city">—</span>
+              <span class="badge badge--soft" id="slot_sheet_city_tz" hidden>—</span>
+            </p>
+          </div>
           <div>
             <span class="slot-overview__hint">UTC</span>
             <p class="slot-overview__value" id="slot_sheet_utc">—</p>
@@ -364,11 +398,22 @@
   const candToggle = $('#toggle_cand_tz');
   const emptyCard = $('#slot_empty_state');
   const deleteAllBtn = $('#delete_all_slots');
+  const resetFiltersBtn = $('[data-action="reset-filters"]');
+
+  const perPageForm = $('.slot-per-page');
+  const perPageSelect = perPageForm ? perPageForm.querySelector('#per_page') : null;
+  let hiddenInputs = {
+    recruiter: perPageForm ? perPageForm.querySelector('input[name="recruiter_id"]') : null,
+    status: perPageForm ? perPageForm.querySelector('input[name="status"]') : null,
+    city: perPageForm ? perPageForm.querySelector('input[name="city_id"]') : null,
+  };
+  const filterButtons = $$('.slot-filter__option');
 
   const chipTotal = $('#cnt-total');
   const chipFree = $('#cnt-free');
   const chipPending = $('#cnt-pending');
   const chipBookedEl = $('#cnt-booked');
+  const chipConfirmedEl = $('#cnt-confirmed');
 
   const slotSheet = $('#slot_sheet');
   const slotBackdrop = $('#slot_backdrop');
@@ -380,6 +425,9 @@
   const slotStatus = $('#slot_sheet_status');
   const slotUtc = $('#slot_sheet_utc');
   const slotLocal = $('#slot_sheet_local');
+  const slotCityWrap = $('#slot_sheet_city_wrap');
+  const slotCity = $('#slot_sheet_city');
+  const slotCityTz = $('#slot_sheet_city_tz');
   const slotLocalCandidateWrap = $('#slot_sheet_local_candidate_wrap');
   const slotLocalCandidate = $('#slot_sheet_local_candidate');
   const slotRel = $('#slot_sheet_rel');
@@ -406,6 +454,37 @@
     future: 'slots.onlyFuture',
     candidate: 'slots.showCandidateTz'
   };
+
+  function readInitialFilter(type){
+    const active = document.querySelector(`[data-filter-group="${type}"] .slot-filter__option.is-active`);
+    return active ? (active.dataset.value || '') : '';
+  }
+
+  const filterState = {
+    recruiter: readInitialFilter('recruiter'),
+    status: readInitialFilter('status'),
+    city: readInitialFilter('city'),
+    onlyFuture: !!(onlyFuture && onlyFuture.checked),
+  };
+
+  function ensureHiddenInput(name, current, value){
+    if (!perPageForm) return null;
+    if (value){
+      if (!current){
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name;
+        perPageForm.appendChild(input);
+        current = input;
+      }
+      current.value = value;
+      return current;
+    }
+    if (current){
+      current.remove();
+    }
+    return null;
+  }
 
   function toast(text, kind='info'){
     if (!toastStack) return;
@@ -447,10 +526,11 @@
     if (chipFree) chipFree.textContent = result.free;
     if (chipPending) chipPending.textContent = result.pending;
     if (chipBookedEl) chipBookedEl.textContent = result.booked;
+    if (chipConfirmedEl) chipConfirmedEl.textContent = result.confirmed;
   }
 
   function computeVisibleStats(){
-    let total = 0, free = 0, pending = 0, booked = 0;
+    let total = 0, free = 0, pending = 0, booked = 0, confirmed = 0;
     rows.forEach(row => {
       if (row.style.display === 'none') return;
       total += 1;
@@ -458,15 +538,70 @@
       if (st === 'FREE') free += 1;
       else if (st === 'PENDING') pending += 1;
       else if (st === 'BOOKED') booked += 1;
+      else if (st === 'CONFIRMED_BY_CANDIDATE' || st === 'CONFIRMED') confirmed += 1;
     });
-    return { total, free, pending, booked };
+    return { total, free, pending, booked, confirmed };
   }
 
-  function applyFutureFilter(){
-    const onlyFutureEnabled = onlyFuture && onlyFuture.checked;
+  function updateFilterInputs(){
+    hiddenInputs.recruiter = ensureHiddenInput('recruiter_id', hiddenInputs.recruiter, filterState.recruiter);
+    hiddenInputs.status = ensureHiddenInput('status', hiddenInputs.status, filterState.status);
+    hiddenInputs.city = ensureHiddenInput('city_id', hiddenInputs.city, filterState.city);
+  }
+
+  function updateFilterButtons(type, value){
+    const group = document.querySelector(`[data-filter-group="${type}"]`);
+    if (!group) return;
+    $$('.slot-filter__option', group).forEach(btn => {
+      const isActive = (btn.dataset.value || '') === value;
+      btn.classList.toggle('is-active', isActive);
+      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  }
+
+  function updateQueryParams(options = {}){
+    if (!window.history || !window.history.replaceState) return;
+    const { resetPage = false } = options;
+    const params = new URLSearchParams(window.location.search);
+    [
+      ['recruiter_id', filterState.recruiter],
+      ['status', filterState.status],
+      ['city_id', filterState.city],
+    ].forEach(([key, value]) => {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    });
+    if (perPageSelect && perPageSelect.value){
+      params.set('per_page', perPageSelect.value);
+    }
+    if (resetPage) params.delete('page');
+    const queryString = params.toString();
+    const newUrl = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
+    window.history.replaceState(null, '', newUrl);
+  }
+
+  function setFilter(type, value, options = {}){
+    if (!(type in filterState)) return;
+    const { apply = true, resetPage = true } = options;
+    const nextValue = value ?? '';
+    filterState[type] = nextValue;
+    updateFilterButtons(type, nextValue);
+    updateFilterInputs();
+    if (apply){
+      applyFilters();
+      updateQueryParams({ resetPage });
+    }
+  }
+
+  function applyFilters(){
     let visible = 0;
+    const requireFuture = !!filterState.onlyFuture;
     rows.forEach(row => {
-      const show = !onlyFutureEnabled || isFutureRow(row);
+      let show = true;
+      if (filterState.recruiter && row.dataset.recruiterId !== filterState.recruiter) show = false;
+      if (show && filterState.status && row.dataset.status !== filterState.status) show = false;
+      if (show && filterState.city && row.dataset.cityId !== filterState.city) show = false;
+      if (show && requireFuture) show = isFutureRow(row);
       row.style.display = show ? '' : 'none';
       row.classList.toggle('is-hidden', !show);
       if (show) visible += 1;
@@ -477,11 +612,9 @@
 
   function toggleEmptyState(visibleCount){
     if (!emptyCard) return;
-    if (!rows.length){
-      emptyCard.hidden = false;
-      return;
-    }
-    emptyCard.hidden = visibleCount > 0;
+    const show = !rows.length || visibleCount === 0;
+    emptyCard.hidden = !show;
+    emptyCard.setAttribute('aria-hidden', show ? 'false' : 'true');
   }
 
   function setCandidateColumnVisibility(show){
@@ -591,6 +724,12 @@
     }
     if (slotUtc) slotUtc.textContent = '—';
     if (slotLocal) slotLocal.textContent = '—';
+    if (slotCity) slotCity.textContent = '—';
+    if (slotCityTz){
+      slotCityTz.textContent = '—';
+      slotCityTz.hidden = true;
+    }
+    if (slotCityWrap) slotCityWrap.hidden = true;
     if (slotLocalCandidateWrap){
       slotLocalCandidateWrap.hidden = true;
     }
@@ -628,7 +767,8 @@
     if (status === 'FREE') return 'success';
     if (status === 'PENDING') return 'warning';
     if (status === 'BOOKED') return 'info';
-    return 'neutral';
+    if (status === 'CONFIRMED_BY_CANDIDATE' || status === 'CONFIRMED') return 'success';
+    return 'info';
   }
 
   function normalizeOutcome(raw){
@@ -663,8 +803,11 @@
   function hydrateSheet(row){
     const id = row.dataset.id || '—';
     const status = row.dataset.status || '—';
+    const statusLabel = row.dataset.statusLabel || status;
     const recruiterName = row.dataset.recruiter || '—';
     const recruiterTz = row.dataset.recruiterTz || 'Europe/Moscow';
+    const cityName = row.dataset.cityName || '';
+    const cityTz = row.dataset.cityTz || '';
     const candidateName = row.dataset.candidate || '';
     const candidateTz = row.dataset.candidateTz || '';
     const candidateId = row.dataset.candidateId || '';
@@ -675,11 +818,33 @@
     if (slotSub) slotSub.textContent = `ID: ${id}`;
     if (slotId) slotId.textContent = `ID ${id}`;
     if (slotStatus){
-      slotStatus.textContent = `Статус: ${status}`;
+      slotStatus.textContent = `Статус: ${statusLabel}`;
       slotStatus.dataset.tone = toneForStatus(status);
     }
     if (slotUtc) slotUtc.textContent = row.dataset.startUtc || '—';
     if (slotLocal) slotLocal.textContent = row.dataset.startRec || '—';
+    if (slotCityWrap){
+      if (cityName){
+        slotCityWrap.hidden = false;
+        if (slotCity) slotCity.textContent = cityName;
+        if (slotCityTz){
+          if (cityTz){
+            slotCityTz.hidden = false;
+            slotCityTz.textContent = cityTz;
+          } else {
+            slotCityTz.textContent = '—';
+            slotCityTz.hidden = true;
+          }
+        }
+      } else {
+        slotCityWrap.hidden = true;
+        if (slotCity) slotCity.textContent = '—';
+        if (slotCityTz){
+          slotCityTz.textContent = '—';
+          slotCityTz.hidden = true;
+        }
+      }
+    }
     if (slotLocalCandidateWrap){
       if (candidateTz && row.dataset.startCand){
         slotLocalCandidateWrap.hidden = false;
@@ -874,7 +1039,7 @@
         closeSheet();
       }
       removeRow(row);
-      applyFutureFilter();
+      applyFilters();
       updateRelativeLabels();
     } catch (err){
       console.error(err);
@@ -927,7 +1092,7 @@
       toast(payload.message || 'Слот освобождён.', 'success');
       markRowAsFree(row);
       hydrateSheet(row);
-      updateCounters();
+      applyFilters();
     } catch (err){
       console.error(err);
       toast('Не удалось перенести бронь.', 'error');
@@ -959,7 +1124,7 @@
       toast(payload.message || 'Кандидату отправлен отказ.', 'success');
       markRowAsFree(row);
       hydrateSheet(row);
-      updateCounters();
+      applyFilters();
     } catch (err){
       console.error(err);
       toast('Не удалось отправить отказ.', 'error');
@@ -1031,6 +1196,7 @@
       const saved = storage.getItem(storageKeys.candidate);
       if (saved !== null) candToggle.checked = saved === '1';
     }
+    filterState.onlyFuture = !!(onlyFuture && onlyFuture.checked);
   }
 
   function persistPreference(key, value){
@@ -1038,18 +1204,56 @@
     storage.setItem(key, value ? '1' : '0');
   }
 
-  if (!table || !tbody) return;
+  ['recruiter', 'status', 'city'].forEach(type => updateFilterButtons(type, filterState[type]));
+  updateFilterInputs();
 
   resetSheet();
   restorePreferences();
   setCandidateColumnVisibility(candToggle ? candToggle.checked : false);
   applySort();
   applySortIndicator();
-  applyFutureFilter();
+  applyFilters();
   updateRelativeLabels();
 
   if (relTimer) clearInterval(relTimer);
   relTimer = window.setInterval(updateRelativeLabels, 60000);
+
+  filterButtons.forEach(btn => {
+    on(btn, 'click', e => {
+      e.preventDefault();
+      const type = btn.dataset.filterType;
+      if (!type) return;
+      const value = btn.dataset.value || '';
+      setFilter(type, value, { resetPage: true });
+    });
+  });
+
+  on(resetFiltersBtn, 'click', e => {
+    e.preventDefault();
+    setFilter('recruiter', '', { apply: false });
+    setFilter('status', '', { apply: false });
+    setFilter('city', '', { apply: false });
+    if (onlyFuture){
+      onlyFuture.checked = false;
+      filterState.onlyFuture = false;
+      persistPreference(storageKeys.future, false);
+    } else {
+      filterState.onlyFuture = false;
+    }
+    applyFilters();
+    updateQueryParams({ resetPage: true });
+  });
+
+  if (perPageSelect && perPageForm){
+    on(perPageSelect, 'change', () => {
+      updateFilterInputs();
+      if (typeof perPageForm.requestSubmit === 'function'){
+        perPageForm.requestSubmit();
+      } else {
+        perPageForm.submit();
+      }
+    });
+  }
 
   on(tbody, 'click', e => {
     const deleteBtn = e.target.closest('[data-action="delete-slot"]');
@@ -1096,12 +1300,13 @@
     }
     applySort();
     applySortIndicator();
-    applyFutureFilter();
+    applyFilters();
   });
 
   on(onlyFuture, 'change', () => {
+    filterState.onlyFuture = !!onlyFuture.checked;
     persistPreference(storageKeys.future, !!onlyFuture.checked);
-    applyFutureFilter();
+    applyFilters();
   });
 
   on(candToggle, 'change', () => {
@@ -1141,8 +1346,9 @@
     }
     if (e.key === 'f' && onlyFuture){
       onlyFuture.checked = !onlyFuture.checked;
+      filterState.onlyFuture = !!onlyFuture.checked;
       persistPreference(storageKeys.future, onlyFuture.checked);
-      applyFutureFilter();
+      applyFilters();
     }
     if (e.key === 't' && candToggle){
       candToggle.checked = !candToggle.checked;

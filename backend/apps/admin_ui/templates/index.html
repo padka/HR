@@ -4,7 +4,7 @@
 <section class="dashboard-hero">
   <div class="hero__copy">
     <p class="hero__eyebrow">TG Bot · HR Operations</p>
-    <h1 class="hero__title">Центр управления рекрутингом</h1>
+    <h1 class="hero__title">Контур управления рекрутингом</h1>
     {% set health_state = bot_status.health or 'missing' %}
     {% set health_value = 'Здоров' if health_state == 'ok' else ('Замедлен' if health_state in ['degraded', 'warning'] else 'Нет связи') %}
     {% set health_tone = 'ok' if health_state == 'ok' else ('warn' if health_state in ['degraded', 'warning'] else 'danger') %}
@@ -14,62 +14,63 @@
         <li>
           <span class="badge badge-{{ 'ok' if bot_status.config_enabled else 'danger' }}">
             <span class="badge__dot" aria-hidden="true"></span>
-            Интеграция · {{ 'Включена' if bot_status.config_enabled else 'Отключена' }}
+            Интеграция: {{ 'Включена' if bot_status.config_enabled else 'Отключена' }}
           </span>
         </li>
         <li>
           <span class="badge badge-{{ 'ok' if bot_status.runtime_enabled else 'warn' }}">
             <span class="badge__dot" aria-hidden="true"></span>
-            Runtime · {{ 'Активен' if bot_status.runtime_enabled else 'Пауза' }}
+            Процесс: {{ 'Активен' if bot_status.runtime_enabled else 'Пауза' }}
           </span>
         </li>
         <li>
           <span class="badge badge-{{ health_tone }}">
             <span class="badge__dot" aria-hidden="true"></span>
-            Здоровье · {{ health_value }}
+            Здоровье: {{ health_value }}
           </span>
         </li>
         <li>
           <span class="badge badge-{{ 'ok' if bot_status.ready else 'warn' }}">
             <span class="badge__dot" aria-hidden="true"></span>
-            Готовность · {{ 'Готов' if bot_status.ready else 'Ожидает' }}
+            Готовность: {{ 'Готов' if bot_status.ready else 'Ожидает' }}
           </span>
         </li>
         <li>
           <span class="badge badge-{{ 'ok' if bot_status.mode == 'real' else 'info' }}">
             <span class="badge__dot" aria-hidden="true"></span>
-            Режим · {{ 'Продакшен' if bot_status.mode == 'real' else 'Тестовый' }}
+            Режим: {{ 'Продакшен' if bot_status.mode == 'real' else 'Тестовый' }}
           </span>
         </li>
       </ul>
       {% if bot_status.updated_at %}
-        <p class="hero__status-meta muted">Последнее переключение: {{ bot_status.updated_at | replace('T', ' ') }}</p>
+        <p class="hero__status-meta muted">Обновлено: {{ bot_status.updated_at | replace('T', ' ') }}</p>
       {% endif %}
     </div>
-    <p class="hero__description">Следите за воронкой кандидатов, слотами и продуктивностью команды в режиме реального времени.</p>
+    <p class="hero__description muted">Сводка статуса бота, KPI и календаря собеседований на одном экране.</p>
     <div class="hero__cta-group">
-      <a class="btn btn-primary" href="/candidates">К кандидатам</a>
-      <a class="btn btn-secondary" href="/recruiters">Управление рекрутёрами</a>
+      <a class="btn btn-primary btn-sm" href="/candidates">К кандидатам</a>
+      <a class="btn btn-secondary btn-sm" href="/recruiters">Управление рекрутёрами</a>
     </div>
   </div>
-  <div class="hero__actions">
-    <p class="hero__actions-title">Быстрые действия</p>
-    <div class="hero__cta-secondary">
-      <a class="btn btn-ghost btn-sm" href="/slots/new">Создать слот</a>
-      <a class="btn btn-ghost btn-sm" href="/templates/new">Добавить шаблон</a>
-      <a class="btn btn-ghost btn-sm" href="/questions/new">Новый вопрос</a>
-    </div>
-  </div>
+  <aside class="hero__actions panel" aria-label="Быстрые действия">
+    <h2 class="hero__actions-title">Быстрые действия</h2>
+    <p class="hero__actions-hint muted">Создайте ключевые сущности без смены страницы.</p>
+    <ul class="hero__action-list">
+      <li><a class="btn btn-ghost btn-sm" href="/slots/new">Создать слот</a></li>
+      <li><a class="btn btn-ghost btn-sm" href="/templates/new">Добавить шаблон</a></li>
+      <li><a class="btn btn-ghost btn-sm" href="/questions/new">Новый вопрос</a></li>
+    </ul>
+  </aside>
 </section>
 
 <section class="weekly-kpi" aria-labelledby="weekly_kpi_title">
   <header class="weekly-kpi__header">
     <div class="weekly-kpi__heading">
-      <p class="weekly-kpi__eyebrow">Week-to-date • {{ weekly_kpis.timezone }}</p>
+      <p class="weekly-kpi__eyebrow">Week-to-date · {{ weekly_kpis.timezone }}</p>
       <h2 id="weekly_kpi_title" class="weekly-kpi__title">Ключевые показатели</h2>
-      <p class="weekly-kpi__meta">Неделя {{ weekly_kpis.current.label }} · обновление каждые 60 секунд</p>
+      <p class="weekly-kpi__meta muted">Неделя {{ weekly_kpis.current.label }} · автообновление раз в минуту</p>
     </div>
-    <a class="weekly-kpi__history" href="/api/kpis/history" target="_blank" rel="noopener">История &rarr;</a>
+    <a class="weekly-kpi__history btn btn-ghost btn-sm" href="/api/kpis/history" target="_blank" rel="noopener">История KPI</a>
   </header>
   <div class="weekly-kpi-grid">
     {% if weekly_kpis.get('is_placeholder') %}
@@ -79,7 +80,7 @@
         {% set trend = card.trend %}
         <button
           type="button"
-          class="kpi-card glass-card tone-{{ card.tone }}"
+          class="kpi-card surface focus-ring tone-{{ card.tone }}"
           data-metric="{{ card.key }}"
           aria-haspopup="dialog"
           aria-controls="kpi_drawer"
@@ -103,23 +104,23 @@
 </section>
 
 <section class="dashboard-metrics">
-  <article class="metric-card glass-card">
+  <article class="metric-card surface">
     <span class="metric-card__label">Рекрутёры</span>
     <span class="metric-card__value">{{ counts.recruiters }}</span>
     <span class="metric-card__meta">Активных городов: {{ counts.cities }}</span>
   </article>
-  <article class="metric-card glass-card">
+  <article class="metric-card surface">
     <span class="metric-card__label">Слоты</span>
     <span class="metric-card__value">{{ counts.slots_total }}</span>
     <span class="metric-card__meta">Свободно: {{ counts.slots_free }} • В ожидании: {{ counts.slots_pending }} • Забронировано: {{ counts.slots_booked }}</span>
   </article>
-  <article class="metric-card glass-card calendar-summary">
+  <article class="metric-card surface calendar-summary">
     <span class="metric-card__label">Интервью · <span data-calendar-label>{{ calendar.selected_label }}</span></span>
     <span class="metric-card__value" data-calendar-total>{{ calendar.events_total }}</span>
     <span class="metric-card__meta" data-calendar-meta>{{ calendar.meta }}</span>
     <span class="metric-card__meta muted" data-calendar-updated>{{ calendar.updated_label }}</span>
   </article>
-  <article class="metric-card glass-card calendar-status-card">
+  <article class="metric-card surface calendar-status-card">
     <span class="metric-card__label">Статусы интервью</span>
     <ul class="calendar-status-list" data-calendar-status>
       <li class="calendar-status-list__item">
@@ -143,16 +144,23 @@
   </article>
 </section>
 
-<section class="surface calendar-surface" data-calendar-root data-calendar-endpoint="/api/dashboard/calendar" data-calendar-initial='{{ calendar | tojson }}'>
-  <header class="section-header calendar-header">
-    <div>
-      <h2 class="section-title">Календарь собеседований</h2>
-      <p class="section-hint">Выбирайте дату, чтобы видеть интервью в реальном времени и переходить к карточке кандидата.</p>
+<section
+  class="calendar-panel panel"
+  data-calendar-root
+  data-calendar-endpoint="/api/dashboard/calendar"
+  data-calendar-initial='{{ calendar | tojson }}'
+>
+  <header class="calendar-header">
+    <div class="calendar-header__text">
+      <h2 class="calendar-header__title">Календарь собеседований</h2>
+      <p class="calendar-header__hint muted">Живое расписание по выбранной дате и моментальный переход к карточкам.</p>
     </div>
     <div class="calendar-controls">
       <label class="calendar-date-picker">
         <span class="calendar-date-picker__label">Дата</span>
-        <input type="date" value="{{ calendar.selected_date }}" data-calendar-input>
+        <span class="calendar-date-picker__field pill">
+          <input class="calendar-date-picker__input" type="date" value="{{ calendar.selected_date }}" data-calendar-input>
+        </span>
       </label>
       <button type="button" class="btn btn-ghost btn-sm" data-calendar-refresh>Обновить</button>
     </div>
@@ -160,7 +168,11 @@
   <div class="calendar-board">
     <div class="calendar-days" data-calendar-days>
       {% for day in calendar.days %}
-        <button type="button" class="calendar-day{% if day.is_selected %} is-active{% endif %}{% if day.is_today %} is-today{% endif %}" data-calendar-day="{{ day.date }}">
+        <button
+          type="button"
+          class="calendar-day pill focus-ring{% if day.is_selected %} is-active{% endif %}{% if day.is_today %} is-today{% endif %}"
+          data-calendar-day="{{ day.date }}"
+        >
           <span class="calendar-day__weekday">{{ day.weekday }}</span>
           <span class="calendar-day__date">{{ day.label }}</span>
           <span class="calendar-day__count">{{ day.count }}</span>
@@ -170,7 +182,7 @@
     <div class="calendar-events" data-calendar-events>
       {% if calendar.events %}
         {% for event in calendar.events %}
-          <article class="calendar-event glass-card" data-calendar-event-id="{{ event.id }}">
+          <article class="calendar-event surface" data-calendar-event-id="{{ event.id }}">
             <div class="calendar-event__clock">
               <span class="calendar-event__start">{{ event.start_time }}</span>
               <span class="calendar-event__end">до {{ event.end_time }}</span>
@@ -194,7 +206,7 @@
           </article>
         {% endfor %}
       {% else %}
-        <p class="calendar-empty">На выбранную дату интервью не запланировано.</p>
+        <p class="calendar-empty muted">На выбранную дату интервью не запланировано.</p>
       {% endif %}
     </div>
   </div>

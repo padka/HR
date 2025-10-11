@@ -76,6 +76,8 @@ async def list_slots(
     status: Optional[str],
     page: int,
     per_page: int,
+    *,
+    city_id: Optional[int] = None,
 ) -> Dict[str, object]:
     async with async_session() as session:
         filtered = select(Slot)
@@ -83,6 +85,8 @@ async def list_slots(
             filtered = filtered.where(Slot.recruiter_id == recruiter_id)
         if status:
             filtered = filtered.where(Slot.status == status_to_db(status))
+        if city_id is not None:
+            filtered = filtered.where(Slot.city_id == city_id)
 
         subquery = filtered.subquery()
         total = await session.scalar(select(func.count()).select_from(subquery)) or 0
@@ -103,7 +107,7 @@ async def list_slots(
         pages_total, page, offset = paginate(total, page, per_page)
 
         query = (
-            filtered.options(selectinload(Slot.recruiter))
+            filtered.options(selectinload(Slot.recruiter), selectinload(Slot.city))
             .order_by(Slot.start_utc.desc())
             .offset(offset)
             .limit(per_page)
