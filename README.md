@@ -36,14 +36,15 @@ frontend tooling. To bootstrap a workstation, initialise the database and run
 the full test suite execute the following commands:
 
 ```bash
-make bootstrap   # install Python (pip/Poetry) and Node dependencies
+make bootstrap   # install Python dependencies in a virtualenv and Node dependencies
 make dev-db      # apply migrations and seed the default data locally
 make test        # execute the Python test suite
 ```
 
-The bootstrap target prefers Poetry when it is available on the system and
-falls back to `pip install -e ".[dev]"` otherwise. It also provisions Playwright
-browsers so that UI screenshot tests can run without manual intervention.
+The bootstrap target provisions a virtual environment in `.venv`, installs the
+project dependencies via `pip install -e ".[dev]"` and then ensures the Node
+tooling is available. It also provisions Playwright browsers so that UI
+screenshot tests can run without manual intervention.
 
 The default configuration runs the admin UI with a "NullBot" when `BOT_TOKEN`
 is not provided, which allows the smoke checks in CI to execute without access
