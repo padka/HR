@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 
-from backend.apps.admin_ui.services.slots.core import bulk_create_slots
+from backend.apps.admin_ui.services.slots import bulk_create_slots
 from backend.apps.admin_ui.utils import local_naive_to_utc
 from backend.core.db import async_session
 from backend.domain import models

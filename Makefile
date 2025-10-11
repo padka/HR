@@ -1,47 +1,45 @@
-.PHONY: install test ui codex setup bootstrap doctor dev-db demo previews screens kpi-weekly run
+.PHONY: setup bootstrap doctor dev-db test ui demo previews screens kpi-weekly run
 
+VENV ?= .venv
 PYTHON ?= python3
 
-install:
-	$(PYTHON) -m pip install --upgrade pip
-	$(PYTHON) -m pip install -r requirements.txt -r requirements-dev.txt
-	npm ci
-
-test:
-	$(PYTHON) -m pytest
-
-ui:
-	npm run build
-
-codex:
-	bash scripts/codex.sh
-
-# Legacy developer workflow targets kept for compatibility
-setup: install
-	$(PYTHON) -m pip install -e ".[dev]"
-	$(PYTHON) -m playwright install
+setup: $(VENV)/bin/python
+	. $(VENV)/bin/activate && python -m pip install --upgrade pip
+	. $(VENV)/bin/activate && python -m pip install -e ".[dev]"
+	npm install
+	. $(VENV)/bin/activate && playwright install
 	$(MAKE) doctor
 
 bootstrap: setup
 
-doctor:
-	$(PYTHON) scripts/dev_doctor.py
+$(VENV)/bin/python:
+	$(PYTHON) -m venv $(VENV)
 
-run:
+doctor: $(VENV)/bin/python
+	. $(VENV)/bin/activate && python scripts/dev_doctor.py
+
+run: $(VENV)/bin/python
+	. $(VENV)/bin/activate && \
 	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
-	$(PYTHON) -m uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000
+	uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000
 
-dev-db:
-	$(PYTHON) -c "import asyncio; from backend.core.bootstrap import ensure_database_ready; asyncio.run(ensure_database_ready())"
+dev-db: $(VENV)/bin/python
+	. $(VENV)/bin/activate && python -c "import asyncio; from backend.core.bootstrap import ensure_database_ready; asyncio.run(ensure_database_ready())"
 
-demo:
-	$(PYTHON) -m uvicorn app_demo:app --reload
+test: dev-db
+	. $(VENV)/bin/activate && pytest
 
-previews:
-	$(PYTHON) tools/render_previews.py
+ui:
+	npm run build:css
 
-screens:
-	$(PYTHON) -m pytest tests/test_ui_screenshots.py
+demo: $(VENV)/bin/python
+	. $(VENV)/bin/activate && uvicorn app_demo:app --reload
 
-kpi-weekly:
-	$(PYTHON) tools/recompute_weekly_kpis.py --weeks 8
+previews: $(VENV)/bin/python
+	. $(VENV)/bin/activate && python tools/render_previews.py
+
+screens: $(VENV)/bin/python
+	. $(VENV)/bin/activate && pytest tests/test_ui_screenshots.py
+
+kpi-weekly: $(VENV)/bin/python
+	. $(VENV)/bin/activate && python tools/recompute_weekly_kpis.py --weeks 8

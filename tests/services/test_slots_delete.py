@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select
 
-from backend.apps.admin_ui.services.slots.core import delete_slot, delete_all_slots, create_slot
+from backend.apps.admin_ui.services.slots import delete_slot, delete_all_slots, create_slot
 from backend.core.db import async_session
 from backend.domain import models
 

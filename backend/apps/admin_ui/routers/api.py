@@ -13,7 +13,7 @@ from backend.apps.admin_ui.services.dashboard_calendar import (
     dashboard_calendar_snapshot,
 )
 from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
-from backend.apps.admin_ui.services.slots.core import api_slots_payload
+from backend.apps.admin_ui.services.slots import api_slots_payload
 from backend.apps.admin_ui.services.templates import api_templates_payload
 from backend.apps.admin_ui.utils import parse_optional_int, status_filter
 from backend.core.settings import get_settings
