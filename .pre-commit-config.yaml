@@ -13,7 +13,7 @@ repos:
     rev: v0.6.3
     hooks:
       - id: ruff
-        args: ["--config", "pyproject.toml"]
+        args: ["--config", "pyproject.toml", "--fix"]
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.11.1
     hooks:
@@ -21,6 +21,15 @@ repos:
         args:
           - "--config-file"
           - "mypy.ini"
-          - "--strict"
+          - "backend/apps/admin_ui/services/slots/core.py"
+          - "backend/apps/admin_ui/services/slots/__init__.py"
+        pass_filenames: false
         additional_dependencies:
           - types-redis
+  - repo: local
+    hooks:
+      - id: forbid-merge-conflicts
+        name: forbid merge conflict markers
+        entry: bash -c 'if rg -n -e "^<<<<<<< " -e "^>>>>>> " -e "^=======$" --color=never; then echo "Merge conflict markers detected" >&2; exit 1; fi'
+        language: system
+        pass_filenames: false

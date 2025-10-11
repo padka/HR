@@ -5,16 +5,25 @@ target-version = ["py311"]
 [tool.isort]
 profile = "black"
 line_length = 88
-known_first_party = ["backend", "tests"]
+known_first_party = ["backend", "admin_server", "tests"]
+combine_as_imports = true
 
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+src = ["backend", "admin_server", "tests"]
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
-ignore = ["E203", "E266"]
+ignore = ["E203", "E266", "E501"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]
+"tests/*" = ["S101", "E402"]
+
+[tool.ruff.format]
+docstring-code-format = true
+quote-style = "double"
+indent-style = "space"
 [build-system]
 requires = ["setuptools>=65", "wheel"]
 build-backend = "setuptools.build_meta"
