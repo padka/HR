@@ -1,262 +1,172 @@
-
+{% extends "base.html" %}
+{% from "page_primitives.html" import page_header, filter_bar %}
 {% block title %}Рекрутёры{% endblock %}
 {% block content %}
-<section class="space-y-8 pb-12">
-  <header class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-    <div class="max-w-2xl space-y-2">
-      <h1 class="text-3xl font-semibold tracking-tight text-fg-primary sm:text-4xl">Рекрутёры</h1>
-      <p class="text-sm leading-relaxed text-fg-secondary">
-        Карточка открывает профиль, статус и закреплённые города видно сразу.
-      </p>
-    </div>
-    <div class="flex flex-wrap gap-3">
-      <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
-    </div>
-  </header>
-
-  {% if not recruiter_rows %}
-    <div class="glass-empty">
-      <div class="glass-empty__icon" aria-hidden="true">☁️</div>
-      <div class="space-y-2">
-        <h2 class="text-xl font-semibold text-fg-primary">Рекрутёров нет</h2>
-        <p class="text-sm text-fg-secondary">
-          Создайте первого рекрутёра, чтобы закреплять города и выдавать слоты.
-        </p>
-      </div>
-      <a class="btn btn-primary" href="/recruiters/new">Создать</a>
-    </div>
-  {% else %}
-    <div class="recruiter-grid" data-recruiter-grid>
-      {% for item in recruiter_rows %}
-        {% set r = item.rec %}
-        {% set active = r.active if r.active is not none else False %}
-        {% set city_count = item.cities|length %}
-        {% set week_total = item.stats.get('week_total', 0) %}
-        {% set has_chat = r.tg_chat_id is not none %}
-        {% set telemost = r.telemost_url %}
-        {% set tz_label = tz_display(r.tz) %}
-        {% set card_id = 'rec-card-' ~ r.id %}
-        <article
-          class="recruiter-card group"
-          tabindex="0"
-          role="link"
-          aria-labelledby="{{ card_id }}"
-          data-rec-card
-          data-rec-id="{{ r.id }}"
-          data-rec-url="/recruiters/{{ r.id }}/edit"
-          data-rec-active="{{ 'true' if active else 'false' }}"
-        >
-          <div class="recruiter-card__head">
-            <div class="recruiter-card__identity">
-              <div class="recruiter-card__avatar" aria-hidden="true">{{ initials(r.name) }}</div>
-              <div class="min-w-0 space-y-1">
-                <div class="flex flex-wrap items-center gap-2">
-                  <h2 id="{{ card_id }}" class="truncate text-lg font-semibold text-fg-primary">{{ r.name }}</h2>
-                  <span class="recruiter-status" data-state="{{ 'active' if active else 'inactive' }}">
-                    {{ 'Активен' if active else 'Неактивен' }}
-                  </span>
-                </div>
-                <p class="flex flex-wrap items-center gap-3 text-[0.7rem] font-medium uppercase tracking-[0.24em] text-fg-secondary">
-                  <span>#{{ r.id }}</span>
-                  <span class="inline-flex items-center gap-1 text-fg-muted">
-                    <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4">
-                      <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" d="M12 6v6l3 1.8" />
-                      <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6" />
-                    </svg>
-                    {{ tz_label }}
-                  </span>
-                </p>
-              </div>
-            </div>
-            <dl class="recruiter-card__stats" aria-label="Быстрые показатели">
-              <div>
-                <dt>Города</dt>
-                <dd>{{ city_count }}</dd>
-              </div>
-              <div>
-                <dt>Слоты (7д)</dt>
-                <dd>{{ week_total }}</dd>
-              </div>
-              <div>
-                <dt>Чат</dt>
-                <dd class="{{ 'text-success' if has_chat else 'text-fg-muted' }}">{{ 'Связан' if has_chat else 'Нет' }}</dd>
-              </div>
-            </dl>
-          </div>
-
-          <div class="recruiter-card__body">
-            <div class="recruiter-card__cities" aria-label="Ответственные города">
-              {% if city_count %}
-                <div class="recruiter-card__chips">
-                  {% for city in item.cities[:6] %}
-                    <span class="city-chip" title="{{ city.tz }}">{{ city.name }}</span>
-                  {% endfor %}
-                  {% if city_count > 6 %}
-                    <span class="city-chip city-chip--more" aria-label="Ещё {{ city_count - 6 }} города">
-                      +{{ city_count - 6 }}
-                    </span>
-                  {% endif %}
-                </div>
-              {% else %}
-                <p class="text-sm text-fg-muted">Города не назначены</p>
-              {% endif %}
-            </div>
-            <div class="recruiter-card__timeline" aria-label="Ближайший свободный слот">
-              {% if item.next_free_local %}
-                <span class="timeline-pill {{ 'timeline-pill--past' if not item.next_is_future else '' }}">
-                  {{ item.next_free_local }}
-                </span>
-              {% else %}
-                <span class="text-sm text-fg-muted">Нет свободных слотов</span>
-              {% endif %}
-            </div>
-          </div>
-
-          <footer class="recruiter-card__footer">
-            <div class="recruiter-card__quick" aria-label="Быстрые действия">
-              <a class="quick-action" href="/recruiters/{{ r.id }}/edit" title="Открыть карточку" aria-label="Открыть карточку">
-                <svg viewBox="0 0 24 24" aria-hidden="true" class="h-5 w-5">
-                  <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M5.5 5.5h8m0 0v8m-8-8L18.5 19" />
-                </svg>
-              </a>
-              <button
-                class="quick-action"
-                type="button"
-                data-action="toggle"
-                aria-pressed="{{ 'true' if active else 'false' }}"
-                title="{{ 'Выключить' if active else 'Включить' }} рекрутёра"
-                aria-label="{{ 'Выключить' if active else 'Включить' }} рекрутёра"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" class="h-5 w-5">
-                  <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M7 12a5 5 0 0 1 10 0v4.5a2.5 2.5 0 1 1-5 0V6.5" />
-                </svg>
-              </button>
-              <button
-                class="quick-action"
-                type="button"
-                data-action="copy-link"
-                data-link="{{ telemost or '' }}"
-                title="Скопировать ссылку на телемост"
-                aria-label="Скопировать ссылку на телемост"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" class="h-5 w-5">
-                  <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M9.5 13.5 7 16a4 4 0 0 0 5.7 5.6l2.8-2.8M14.5 10.5 17 8a4 4 0 1 0-5.7-5.6L8.5 5.2" />
-                </svg>
-              </button>
-            </div>
-            <div class="recruiter-card__hint" aria-hidden="true">
-              Enter / Space — открыть
-            </div>
-          </footer>
-
-          <form method="post" action="/recruiters/{{ r.id }}/update" data-toggle-form class="hidden">
-            <input type="hidden" name="name" value="{{ r.name }}">
-            <input type="hidden" name="tz" value="{{ r.tz or 'Europe/Moscow' }}">
-            <input type="hidden" name="telemost" value="{{ telemost or '' }}">
-            <input type="hidden" name="tg_chat_id" value="{{ r.tg_chat_id or '' }}">
-            <input type="hidden" name="active" value="{{ '1' if active else '' }}" data-active-field>
-            {% for city in item.cities %}
-              <input type="hidden" name="cities" value="{{ city.id }}">
-            {% endfor %}
-          </form>
-        </article>
-      {% endfor %}
-    </div>
-  {% endif %}
-</section>
+{% call page_header(
+  title='Рекрутёры',
+  description='Карточка открывает профиль, статус и закреплённые города.',
+  eyebrow='Команда рекрутинга'
+) %}
+  <div class="header-actions">
+    <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
+  </div>
+{% endcall %}
 
 {% if recruiter_rows %}
-<script type="module">
-const cards = Array.from(document.querySelectorAll('[data-rec-card]'));
-const liveRegion = document.createElement('div');
-liveRegion.setAttribute('aria-live', 'polite');
-liveRegion.className = 'sr-only';
-document.body.appendChild(liveRegion);
+  {% call filter_bar(title='Управление рекрутёрами', hint='Фильтры и быстрые действия применяются моментально.') %}
+    <form class="filter-form" method="get" data-recruiter-filters>
+      <div class="filter-group">
+        <label class="filter-field" for="filter-q">
+          <span class="filter-label">Поиск по имени</span>
+          <input id="filter-q" name="q" type="search" placeholder="Например, Анна" value="{{ request.query_params.get('q', '') }}">
+        </label>
+        <label class="filter-toggle" for="filter-active">
+          <input id="filter-active" type="checkbox" name="active" value="1"{% if request.query_params.get('active') %} checked{% endif %}>
+          <span>Только активные</span>
+        </label>
+      </div>
+      <div class="filter-actions">
+        <button class="btn btn-soft" type="submit">Применить</button>
+        <a class="btn btn-ghost" href="/recruiters">Сбросить</a>
+      </div>
+    </form>
+  {% endcall %}
 
-function openCard(card){
-  const url = card?.dataset.recUrl;
-  if (!url) return;
-  window.location.assign(url);
-}
-
-function flashMessage(message){
-  liveRegion.textContent = '';
-  window.requestAnimationFrame(() => {
-    liveRegion.textContent = message;
-  });
-}
-
-cards.forEach((card) => {
-  card.addEventListener('click', (event) => {
-    const rawTarget = event.target;
-    const target = rawTarget instanceof Element ? rawTarget.closest('.quick-action') : null;
-    if (target) return;
-    if (event.defaultPrevented) return;
-    event.preventDefault();
-    openCard(card);
-  });
-
-  card.addEventListener('keydown', (event) => {
-    if (event.code === 'Enter' || event.code === 'Space') {
-      const target = event.target;
-      if (target instanceof HTMLElement && target.classList.contains('quick-action')) {
-        return;
-      }
-      event.preventDefault();
-      openCard(card);
-    }
-  });
-
-  const toggleBtn = card.querySelector('[data-action="toggle"]');
-  const copyBtn = card.querySelector('[data-action="copy-link"]');
-  const toggleForm = card.querySelector('[data-toggle-form]');
-  const activeField = toggleForm?.querySelector('[data-active-field]');
-
-  toggleBtn?.addEventListener('click', async (event) => {
-    event.stopPropagation();
-    if (!toggleForm || !activeField) return;
-    const nextIsActive = toggleBtn.getAttribute('aria-pressed') !== 'true';
-    activeField.value = nextIsActive ? '1' : '';
-    const formData = new FormData(toggleForm);
-    try {
-      const response = await fetch(toggleForm.action, {
-        method: 'POST',
-        body: formData,
-      });
-      if (!response.ok) throw new Error('failed');
-      toggleBtn.setAttribute('aria-pressed', nextIsActive ? 'true' : 'false');
-      card.dataset.recActive = nextIsActive ? 'true' : 'false';
-      const status = card.querySelector('.recruiter-status');
-      if (status) {
-        status.dataset.state = nextIsActive ? 'active' : 'inactive';
-        status.textContent = nextIsActive ? 'Активен' : 'Неактивен';
-      }
-      flashMessage(nextIsActive ? 'Рекрутёр включён' : 'Рекрутёр выключен');
-    } catch (err) {
-      flashMessage('Не удалось обновить статус');
-    }
-  });
-
-  copyBtn?.addEventListener('click', async (event) => {
-    event.stopPropagation();
-    const link = copyBtn.dataset.link || '';
-    if (!link) {
-      flashMessage('Ссылка на телемост не указана');
-      copyBtn.classList.add('is-empty');
-      window.setTimeout(() => copyBtn.classList.remove('is-empty'), 1600);
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(link);
-      copyBtn.classList.add('is-success');
-      flashMessage('Ссылка скопирована');
-    } catch (err) {
-      flashMessage('Скопируйте вручную: ' + link);
-    } finally {
-      window.setTimeout(() => copyBtn.classList.remove('is-success'), 1600);
-    }
-  });
-});
-</script>
+  <section class="recruiter-grid" data-recruiter-grid aria-live="polite">
+    {% for item in recruiter_rows %}
+      {% set r = item.rec %}
+      {% set active = r.active if r.active is not none else False %}
+      {% set city_count = item.cities|length %}
+      {% set week_total = item.stats.get('week_total', 0) %}
+      {% set has_chat = r.tg_chat_id is not none %}
+      {% set telemost = r.telemost_url %}
+      {% set tz_label = tz_display(r.tz) %}
+      {% set card_id = 'rec-card-' ~ r.id %}
+      <article
+        class="recruiter-card panel focus-ring"
+        tabindex="0"
+        role="link"
+        aria-labelledby="{{ card_id }}"
+        data-rec-card
+        data-rec-id="{{ r.id }}"
+        data-rec-url="/recruiters/{{ r.id }}/edit"
+        data-rec-active="{{ 'true' if active else 'false' }}"
+      >
+        <header class="recruiter-card__head">
+          <div class="recruiter-card__identity">
+            <div class="recruiter-card__avatar" aria-hidden="true">{{ initials(r.name) }}</div>
+            <div class="recruiter-card__identity-text">
+              <div class="recruiter-card__titlebar">
+                <h2 id="{{ card_id }}" class="recruiter-card__name">{{ r.name }}</h2>
+                <span class="badge badge-{{ 'ok' if active else 'muted' }} recruiter-status" data-state="{{ 'active' if active else 'inactive' }}">
+                  {{ 'Активен' if active else 'Неактивен' }}
+                </span>
+              </div>
+              <p class="recruiter-card__meta">
+                <span>#{{ r.id }}</span>
+                <span class="meta-item">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-clock">
+                    <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" d="M12 6v6l3 1.8" />
+                    <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  </svg>
+                  {{ tz_label }}
+                </span>
+                <span class="meta-item{{ ' text-success' if has_chat else '' }}">{{ 'Чат связан' if has_chat else 'Без чата' }}</span>
+              </p>
+            </div>
+          </div>
+          <dl class="recruiter-card__stats" aria-label="Быстрые показатели">
+            <div>
+              <dt>Города</dt>
+              <dd>{{ city_count }}</dd>
+            </div>
+            <div>
+              <dt>Слоты (7д)</dt>
+              <dd>{{ week_total }}</dd>
+            </div>
+            <div>
+              <dt>Статус</dt>
+              <dd>{{ 'Готов' if active else 'Ожидает' }}</dd>
+            </div>
+          </dl>
+        </header>
+        <div class="recruiter-card__body">
+          <div class="recruiter-card__cities" aria-label="Ответственные города">
+            {% if city_count %}
+              <ul class="chip-row" role="list">
+                {% for city in item.cities[:6] %}
+                  <li><span class="chip" title="{{ city.tz }}">{{ city.name }}</span></li>
+                {% endfor %}
+                {% if city_count > 6 %}
+                  <li><span class="chip chip--more" aria-label="Ещё {{ city_count - 6 }} города">+{{ city_count - 6 }}</span></li>
+                {% endif %}
+              </ul>
+            {% else %}
+              <p class="muted">Города не назначены</p>
+            {% endif %}
+          </div>
+          <div class="recruiter-card__timeline" aria-label="Ближайший свободный слот">
+            {% if item.next_free_local %}
+              <span class="pill pill--neutral{% if not item.next_is_future %} pill--muted{% endif %}">{{ item.next_free_local }}</span>
+            {% else %}
+              <span class="muted">Нет свободных слотов</span>
+            {% endif %}
+          </div>
+        </div>
+        <footer class="recruiter-card__footer">
+          <div class="quick-actions" aria-label="Быстрые действия">
+            <a class="btn btn-ghost btn-icon" href="/recruiters/{{ r.id }}/edit" title="Открыть карточку" aria-label="Открыть карточку">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M5.5 5.5h8m0 0v8m-8-8L18.5 19" /></svg>
+            </a>
+            <button
+              class="btn btn-ghost btn-icon"
+              type="button"
+              data-action="toggle"
+              aria-pressed="{{ 'true' if active else 'false' }}"
+              title="{{ 'Выключить' if active else 'Включить' }} рекрутёра"
+              aria-label="{{ 'Выключить' if active else 'Включить' }} рекрутёра"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M7 12a5 5 0 0 1 10 0v4.5a2.5 2.5 0 1 1-5 0V6.5" /></svg>
+            </button>
+            <button
+              class="btn btn-ghost btn-icon"
+              type="button"
+              data-action="copy-link"
+              data-link="{{ telemost or '' }}"
+              title="Скопировать ссылку на телемост"
+              aria-label="Скопировать ссылку на телемост"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M9.5 13.5 7 16a4 4 0 0 0 5.7 5.6l2.8-2.8M14.5 10.5 17 8a4 4 0 1 0-5.7-5.6L8.5 5.2" /></svg>
+            </button>
+          </div>
+          <p class="muted" aria-hidden="true">Enter / Space — открыть карточку</p>
+        </footer>
+        <form method="post" action="/recruiters/{{ r.id }}/update" data-toggle-form class="sr-only">
+          <input type="hidden" name="name" value="{{ r.name }}">
+          <input type="hidden" name="tz" value="{{ r.tz or 'Europe/Moscow' }}">
+          <input type="hidden" name="telemost" value="{{ telemost or '' }}">
+          <input type="hidden" name="tg_chat_id" value="{{ r.tg_chat_id or '' }}">
+          <input type="hidden" name="active" value="{{ '1' if active else '' }}" data-active-field>
+          {% for city in item.cities %}
+            <input type="hidden" name="cities" value="{{ city.id }}">
+          {% endfor %}
+        </form>
+      </article>
+    {% endfor %}
+  </section>
+{% else %}
+  <section class="empty-state panel" role="status" aria-live="polite">
+    <div class="empty-state__icon" aria-hidden="true">☁️</div>
+    <h2 class="empty-state__title">Рекрутёров пока нет</h2>
+    <p class="empty-state__description muted">Создайте первого рекрутёра, чтобы закреплять города и выдавать слоты.</p>
+    <a class="btn btn-primary" href="/recruiters/new">Создать</a>
+  </section>
 {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+  {{ super() }}
+  {% if recruiter_rows %}
+    <script type="module" src="/static/js/modules/recruiter-grid.js"></script>
+  {% endif %}
 {% endblock %}
