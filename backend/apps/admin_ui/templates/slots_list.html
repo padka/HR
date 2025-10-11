@@ -1,20 +1,34 @@
 {% extends "base.html" %}
-{% from "partials/list_toolbar.html" import list_toolbar %}
+{% from "partials/layout.html" import page_header, kpi_section, filter_bar, data_table %}
 {% block title %}Слоты{% endblock %}
 {% block content %}
 {% set has_slots = slots|length > 0 %}
 {% set status_labels = {'FREE': 'Свободные', 'PENDING': 'Ожидают', 'BOOKED': 'Забронированы', 'CONFIRMED_BY_CANDIDATE': 'Подтверждены'} %}
+{% set filter_badges = [] %}
+{% if filter_recruiter_id %}
+  {% set recruiter_label = (recruiter_options | selectattr('id', 'equalto', filter_recruiter_id) | map(attribute='name') | list | first) %}
+  {% set filter_badges = filter_badges + [{'tone': 'progress', 'label': 'Рекрутёр: ' ~ (recruiter_label or filter_recruiter_id)}] %}
+{% endif %}
+{% if filter_status %}
+  {% set filter_badges = filter_badges + [{'tone': 'warning', 'label': 'Статус: ' ~ status_labels.get(filter_status, filter_status)}] %}
+{% endif %}
+{% if filter_city_id %}
+  {% set city_label = (city_options | selectattr('id', 'equalto', filter_city_id) | map(attribute='name') | list | first) %}
+  {% set filter_badges = filter_badges + [{'tone': 'info', 'label': 'Город: ' ~ (city_label or filter_city_id)}] %}
+{% endif %}
 <section class="page page--slots" data-page="slots" aria-labelledby="slots-title">
-  <header class="slot-page-header panel">
-    <div class="slot-page-header__text">
-      <h1 id="slots-title" class="slot-page-title">Слоты</h1>
-      <p class="slot-page-subtitle muted">Управляйте расписанием интервью и бронями в одном месте.</p>
-    </div>
-    <div class="slot-page-actions">
+  {% call page_header(
+    title='Слоты',
+    eyebrow='Расписание интервью',
+    description='Управляйте расписанием интервью и бронями в одном месте.',
+    meta='Всего слотов: ' ~ status_counts.total,
+    badges=filter_badges if filter_badges else None
+  ) %}
+    <div class="page-header__actions">
       <a class="btn btn-primary btn-sm" href="/slots/new">+ Новый слот</a>
       <button type="button" class="btn btn-danger btn-sm" id="delete_all_slots">Удалить все</button>
     </div>
-  </header>
+  {% endcall %}
 
   {% if flash %}
     {% set tone = {'success': 'success', 'error': 'danger', 'info': 'info'}.get(flash.status, 'info') %}
@@ -23,35 +37,25 @@
     </div>
   {% endif %}
 
-  <section class="slot-summary" aria-label="Статистика по слотам">
-    <article class="slot-summary__card surface" data-tone="success">
-      <span class="slot-summary__label">Свободно</span>
-      <span class="slot-summary__value" id="cnt-free">{{ status_counts.FREE }}</span>
-      <span class="slot-summary__hint">Готовы к бронированию</span>
-    </article>
-    <article class="slot-summary__card surface" data-tone="warn">
-      <span class="slot-summary__label">Ожидают</span>
-      <span class="slot-summary__value" id="cnt-pending">{{ status_counts.PENDING }}</span>
-      <span class="slot-summary__hint">Заявки требуют подтверждения</span>
-    </article>
-    <article class="slot-summary__card surface" data-tone="info">
-      <span class="slot-summary__label">Забронированы</span>
-      <span class="slot-summary__value" id="cnt-booked">{{ status_counts.BOOKED }}</span>
-      <span class="slot-summary__hint">Интервью назначены кандидатам</span>
-    </article>
-    <article class="slot-summary__card surface" data-tone="success">
-      <span class="slot-summary__label">Подтверждены</span>
-      <span class="slot-summary__value" id="cnt-confirmed">{{ status_counts.CONFIRMED_BY_CANDIDATE }}</span>
-      <span class="slot-summary__hint">Кандидаты подтвердили участие</span>
-    </article>
-    <article class="slot-summary__card surface" data-tone="muted">
-      <span class="slot-summary__label">Всего</span>
-      <span class="slot-summary__value" id="cnt-total">{{ status_counts.total }}</span>
-      <span class="slot-summary__hint">С учётом выбранных фильтров</span>
-    </article>
-  </section>
+  {% set slot_cards = [
+    {'key': 'free', 'label': 'Свободно', 'value': status_counts.FREE, 'tone': 'success', 'hint': 'готовы к брони', 'value_id': 'cnt-free'},
+    {'key': 'pending', 'label': 'Ожидают', 'value': status_counts.PENDING, 'tone': 'warning', 'hint': 'ждут ответа', 'value_id': 'cnt-pending'},
+    {'key': 'booked', 'label': 'Забронированы', 'value': status_counts.BOOKED, 'tone': 'progress', 'hint': 'назначено', 'value_id': 'cnt-booked'},
+    {'key': 'confirmed', 'label': 'Подтверждены', 'value': status_counts.CONFIRMED_BY_CANDIDATE, 'tone': 'success', 'hint': 'подтверждено', 'value_id': 'cnt-confirmed'},
+    {'key': 'total', 'label': 'Всего', 'value': status_counts.total, 'tone': 'muted', 'hint': 'по фильтрам', 'value_id': 'cnt-total'}
+  ] %}
 
-  <section class="slot-filter-bar panel" aria-label="Фильтры списка">
+  {{
+    kpi_section(
+      'slot_summary_title',
+      eyebrow='Живой статус брони',
+      title='Сводка по слотам',
+      meta='Данные по текущим фильтрам',
+      cards=slot_cards
+    )
+  }}
+
+  {% call filter_bar('Фильтры списка', 'Выбирайте капсулы — данные обновляются мгновенно', class_name='slot-filter-bar') %}
     <div class="slot-filter-bar__groups">
       <div class="slot-filter" data-filter-group="recruiter">
         <span class="slot-filter__label">Рекрутёр</span>
@@ -76,7 +80,7 @@
         <div class="slot-filter__options" role="group" aria-label="Фильтр по городу">
           <button type="button" class="pill slot-filter__option{% if not filter_city_id %} is-active{% endif %}" data-filter-type="city" data-value="" aria-pressed="{{ 'true' if not filter_city_id else 'false' }}">Все</button>
           {% for city in city_options %}
-            <button type="button" class="pill slot-filter__option{% if filter_city_id == city.id %} is-active{% endif %}" data-filter-type="city" data-value="{{ city.id }}" aria-pressed="{{ 'true' if filter_city_id == city.id else 'false' }}">{{ city.name }}</button>
+            <button type="button" class="pill slot-filter__option{% if filter_city_id == city.id %} is-active{% endif %}" data-filter-type="city" data-value="{{ city.id }}" aria-pressed="{{ 'true' if filter_city_id == city.id else 'false' }}">{{ city.name}}</button>
           {% endfor %}
         </div>
       </div>
@@ -108,34 +112,47 @@
         {% if filter_city_id %}<input type="hidden" name="city_id" value="{{ filter_city_id }}">{% endif %}
       </form>
     </div>
-  </section>
+  {% endcall %}
   {% if has_slots %}
-    <div class="list-table-wrapper">
-      <table class="list-table list-table--responsive slot-table" id="slots_table">
-        <thead>
-          <tr>
-            <th scope="col" class="sortable">
-              <button class="sort" type="button" data-key="id" aria-sort="ascending">ID <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col" class="sortable">
-              <button class="sort" type="button" data-key="recruiter" aria-sort="none">Рекрутёр <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col">Город</th>
-            <th scope="col" class="sortable">
-              <button class="sort" type="button" data-key="utc" aria-sort="none">UTC <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col">Локальное (рекрутёр)</th>
-            <th scope="col" class="col-cand-tz is-optional">Локальное (кандидат)</th>
-            <th scope="col" class="sortable">
-              <button class="sort" type="button" data-key="status" aria-sort="none">Статус <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col" class="sortable is-optional">
-              <button class="sort" type="button" data-key="candidate" aria-sort="none">Кандидат <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col" class="col-actions">Действия</th>
-          </tr>
-        </thead>
-        <tbody id="slots_tbody">
+    {% set slot_columns = [
+      {
+        'class': 'sortable col-id',
+        'html': '<button class="sort" type="button" data-key="id" aria-sort="ascending">ID <span class="arrow" aria-hidden="true"></span></button>'
+      },
+      {
+        'class': 'sortable',
+        'html': '<button class="sort" type="button" data-key="recruiter" aria-sort="none">Рекрутёр <span class="arrow" aria-hidden="true"></span></button>'
+      },
+      {
+        'label': 'Город',
+        'class': 'col-city'
+      },
+      {
+        'class': 'sortable',
+        'html': '<button class="sort" type="button" data-key="utc" aria-sort="none">UTC <span class="arrow" aria-hidden="true"></span></button>'
+      },
+      {
+        'label': 'Локальное (рекрутёр)',
+        'class': 'col-local'
+      },
+      {
+        'label': 'Локальное (кандидат)',
+        'class': 'col-cand-tz is-optional'
+      },
+      {
+        'class': 'sortable',
+        'html': '<button class="sort" type="button" data-key="status" aria-sort="none">Статус <span class="arrow" aria-hidden="true"></span></button>'
+      },
+      {
+        'class': 'sortable is-optional',
+        'html': '<button class="sort" type="button" data-key="candidate" aria-sort="none">Кандидат <span class="arrow" aria-hidden="true"></span></button>'
+      },
+      {
+        'label': 'Действия',
+        'class': 'col-actions'
+      }
+    ] %}
+    {% call data_table(columns=slot_columns, caption='Таблица слотов', table_id='slots_table', body_id='slots_tbody', table_class='slot-table') %}
         {% for s in slots %}
           {% set st = norm_status(s.status) %}
           {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
@@ -225,9 +242,7 @@
             </td>
           </tr>
         {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {% endcall %}
 
     <div id="slot_empty_state" class="slot-empty-state panel" role="status" hidden aria-hidden="true">
       <h3 class="slot-empty-state__title">Нет слотов по текущим фильтрам</h3>

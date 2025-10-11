@@ -1,56 +1,47 @@
 {% extends "base.html" %}
+{% from "partials/layout.html" import page_header, kpi_section, stat_cards %}
 {% block title %}Дашборд{% endblock %}
 {% block content %}
+{% set health_state = bot_status.health or 'missing' %}
+{% set health_value = 'Здоров' if health_state == 'ok' else ('Замедлен' if health_state in ['degraded', 'warning'] else 'Нет связи') %}
+{% set health_tone = 'ok' if health_state == 'ok' else ('warn' if health_state in ['degraded', 'warning'] else 'danger') %}
+{% set hero_badges = [
+  {
+    'tone': 'ok' if bot_status.config_enabled else 'danger',
+    'label': 'Интеграция: ' ~ ('Включена' if bot_status.config_enabled else 'Отключена')
+  },
+  {
+    'tone': 'ok' if bot_status.runtime_enabled else 'warn',
+    'label': 'Процесс: ' ~ ('Активен' if bot_status.runtime_enabled else 'Пауза')
+  },
+  {
+    'tone': health_tone,
+    'label': 'Здоровье: ' ~ health_value
+  },
+  {
+    'tone': 'ok' if bot_status.ready else 'warn',
+    'label': 'Готовность: ' ~ ('Готов' if bot_status.ready else 'Ожидает')
+  },
+  {
+    'tone': 'ok' if bot_status.mode == 'real' else 'info',
+    'label': 'Режим: ' ~ ('Продакшен' if bot_status.mode == 'real' else 'Тестовый')
+  }
+] %}
+{% set hero_meta = bot_status.updated_at and 'Обновлено: ' ~ (bot_status.updated_at | replace('T', ' ')) %}
 <section class="dashboard-hero">
-  <div class="hero__copy">
-    <p class="hero__eyebrow">TG Bot · HR Operations</p>
-    <h1 class="hero__title">Контур управления рекрутингом</h1>
-    {% set health_state = bot_status.health or 'missing' %}
-    {% set health_value = 'Здоров' if health_state == 'ok' else ('Замедлен' if health_state in ['degraded', 'warning'] else 'Нет связи') %}
-    {% set health_tone = 'ok' if health_state == 'ok' else ('warn' if health_state in ['degraded', 'warning'] else 'danger') %}
-    <div class="hero__statuses" role="status" aria-live="polite">
-      <p class="hero__status-label">Статус бота</p>
-      <ul class="hero__status-list">
-        <li>
-          <span class="badge badge-{{ 'ok' if bot_status.config_enabled else 'danger' }}">
-            <span class="badge__dot" aria-hidden="true"></span>
-            Интеграция: {{ 'Включена' if bot_status.config_enabled else 'Отключена' }}
-          </span>
-        </li>
-        <li>
-          <span class="badge badge-{{ 'ok' if bot_status.runtime_enabled else 'warn' }}">
-            <span class="badge__dot" aria-hidden="true"></span>
-            Процесс: {{ 'Активен' if bot_status.runtime_enabled else 'Пауза' }}
-          </span>
-        </li>
-        <li>
-          <span class="badge badge-{{ health_tone }}">
-            <span class="badge__dot" aria-hidden="true"></span>
-            Здоровье: {{ health_value }}
-          </span>
-        </li>
-        <li>
-          <span class="badge badge-{{ 'ok' if bot_status.ready else 'warn' }}">
-            <span class="badge__dot" aria-hidden="true"></span>
-            Готовность: {{ 'Готов' if bot_status.ready else 'Ожидает' }}
-          </span>
-        </li>
-        <li>
-          <span class="badge badge-{{ 'ok' if bot_status.mode == 'real' else 'info' }}">
-            <span class="badge__dot" aria-hidden="true"></span>
-            Режим: {{ 'Продакшен' if bot_status.mode == 'real' else 'Тестовый' }}
-          </span>
-        </li>
-      </ul>
-      {% if bot_status.updated_at %}
-        <p class="hero__status-meta muted">Обновлено: {{ bot_status.updated_at | replace('T', ' ') }}</p>
-      {% endif %}
-    </div>
-    <p class="hero__description muted">Сводка статуса бота, KPI и календаря собеседований на одном экране.</p>
-    <div class="hero__cta-group">
-      <a class="btn btn-primary btn-sm" href="/candidates">К кандидатам</a>
-      <a class="btn btn-secondary btn-sm" href="/recruiters">Управление рекрутёрами</a>
-    </div>
+  <div class="hero__copy" role="status" aria-live="polite">
+    {% call page_header(
+      title='Контур управления рекрутингом',
+      eyebrow='TG Bot · HR Operations',
+      description='Сводка статуса бота, KPI и календаря собеседований на одном экране.',
+      meta=hero_meta,
+      badges=hero_badges
+    ) %}
+      <div class="page-header__actions hero__cta-group">
+        <a class="btn btn-primary btn-sm" href="/candidates">К кандидатам</a>
+        <a class="btn btn-ghost btn-sm" href="/recruiters">Управление рекрутёрами</a>
+      </div>
+    {% endcall %}
   </div>
   <aside class="hero__actions panel" aria-label="Быстрые действия">
     <h2 class="hero__actions-title">Быстрые действия</h2>
@@ -63,65 +54,42 @@
   </aside>
 </section>
 
-<section class="weekly-kpi" aria-labelledby="weekly_kpi_title">
-  <header class="weekly-kpi__header">
-    <div class="weekly-kpi__heading">
-      <p class="weekly-kpi__eyebrow">Week-to-date · {{ weekly_kpis.timezone }}</p>
-      <h2 id="weekly_kpi_title" class="weekly-kpi__title">Ключевые показатели</h2>
-      <p class="weekly-kpi__meta muted">Неделя {{ weekly_kpis.current.label }} · автообновление раз в минуту</p>
-    </div>
-    <a class="weekly-kpi__history btn btn-ghost btn-sm" href="/api/kpis/history" target="_blank" rel="noopener">История KPI</a>
-  </header>
-  <div class="weekly-kpi-grid">
-    {% if weekly_kpis.get('is_placeholder') %}
-      <p class="weekly-kpi__empty muted">Показатели пока недоступны. Проверьте подключение базы данных или выполните миграции.</p>
-    {% elif weekly_kpis.current.metrics %}
-      {% for card in weekly_kpis.current.metrics %}
-        {% set trend = card.trend %}
-        <button
-          type="button"
-          class="kpi-card surface focus-ring tone-{{ card.tone }}"
-          data-metric="{{ card.key }}"
-          aria-haspopup="dialog"
-          aria-controls="kpi_drawer"
-          aria-label="{{ card.label }}: {{ card.value }} за неделю. {{ trend.label }}"
-        >
-          <span class="kpi-card__body">
-            <span class="kpi-card__label">{{ card.label }}</span>
-            <span class="kpi-card__value">{{ card.value }}</span>
-            <span class="kpi-card__hint">за эту неделю</span>
-          </span>
-          <span class="kpi-card__aside">
-            <span class="kpi-card__trend trend--{{ trend.direction }}" aria-label="{{ trend.label }}">{{ trend.display }}</span>
-            <span class="kpi-card__icon" aria-hidden="true">{{ card.icon }}</span>
-          </span>
-        </button>
-      {% endfor %}
-    {% else %}
-      <p class="weekly-kpi__empty muted">Пока нет данных за текущую неделю.</p>
-    {% endif %}
-  </div>
-</section>
+{% set weekly_cards = weekly_kpis.current.metrics if weekly_kpis.current and weekly_kpis.current.metrics else [] %}
+{% set weekly_label = weekly_kpis.current.label if weekly_kpis.current else '—' %}
+{% set weekly_meta = 'Неделя ' ~ weekly_label ~ ' · автообновление раз в минуту' %}
+{% call kpi_section(
+  'weekly_kpi_title',
+  eyebrow='Week-to-date · ' ~ weekly_kpis.timezone,
+  title='Ключевые показатели',
+  meta=weekly_meta,
+  cards=weekly_cards,
+  empty_text='Пока нет данных за текущую неделю.',
+  placeholder_text='Показатели пока недоступны. Проверьте подключение базы данных или выполните миграции.',
+  is_placeholder=weekly_kpis.get('is_placeholder'),
+  default_hint='за эту неделю'
+) %}
+  <a class="btn btn-ghost btn-sm" href="/api/kpis/history" target="_blank" rel="noopener">История KPI</a>
+{% endcall %}
 
-<section class="dashboard-metrics">
-  <article class="metric-card surface">
-    <span class="metric-card__label">Рекрутёры</span>
-    <span class="metric-card__value">{{ counts.recruiters }}</span>
-    <span class="metric-card__meta">Активных городов: {{ counts.cities }}</span>
+{% call stat_cards(class_name='dashboard-metrics') %}
+  <article class="stat-card metric-card surface">
+    <span class="stat-card__label metric-card__label">Рекрутёры</span>
+    <span class="stat-card__value metric-card__value">{{ counts.recruiters }}</span>
+    <span class="stat-card__meta metric-card__meta">Активных городов: {{ counts.cities }}</span>
   </article>
-  <article class="metric-card surface">
-    <span class="metric-card__label">Слоты</span>
-    <span class="metric-card__value">{{ counts.slots_total }}</span>
-    <span class="metric-card__meta">Свободно: {{ counts.slots_free }} • В ожидании: {{ counts.slots_pending }} • Забронировано: {{ counts.slots_booked }}</span>
+  <article class="stat-card metric-card surface">
+    <span class="stat-card__label metric-card__label">Слоты</span>
+    <span class="stat-card__value metric-card__value">{{ counts.slots_total }}</span>
+    <span class="stat-card__meta metric-card__meta">Свободно: {{ counts.slots_free }} • В ожидании: {{ counts.slots_pending }} • Забронировано: {{ counts.slots_booked }}</span>
   </article>
-  <article class="metric-card surface calendar-summary">
-    <span class="metric-card__label">Интервью · <span data-calendar-label>{{ calendar.selected_label }}</span></span>
-    <span class="metric-card__value" data-calendar-total>{{ calendar.events_total }}</span>
-    <span class="metric-card__meta" data-calendar-meta>{{ calendar.meta }}</span>
-    <span class="metric-card__meta muted" data-calendar-updated>{{ calendar.updated_label }}</span>
+  <article class="stat-card metric-card surface calendar-summary">
+    <span class="stat-card__label metric-card__label">Интервью · <span data-calendar-label>{{ calendar.selected_label }}</span></span>
+    <span class="stat-card__value metric-card__value" data-calendar-total>{{ calendar.events_total }}</span>
+    <span class="stat-card__meta metric-card__meta" data-calendar-meta>{{ calendar.meta }}</span>
+    <span class="stat-card__meta metric-card__meta muted" data-calendar-updated>{{ calendar.updated_label }}</span>
   </article>
-  <article class="metric-card surface calendar-status-card">
-    <span class="metric-card__label">Статусы интервью</span>
+  <article class="stat-card metric-card surface calendar-status-card">
+    <span class="stat-card__label metric-card__label">Статусы интервью</span>
     <ul class="calendar-status-list" data-calendar-status>
       <li class="calendar-status-list__item">
         <span class="calendar-status-list__label">Подтверждено</span>
@@ -140,9 +108,9 @@
         <span class="calendar-status-list__value" data-calendar-status-canceled>{{ calendar.status_summary['CANCELED'] }}</span>
       </li>
     </ul>
-    <span class="metric-card__meta muted">Часовой пояс: {{ calendar.timezone }}</span>
+    <span class="stat-card__meta metric-card__meta muted">Часовой пояс: {{ calendar.timezone }}</span>
   </article>
-</section>
+{% endcall %}
 
 <section
   class="calendar-panel panel"
