@@ -128,19 +128,20 @@
 
 {% macro filter_bar(opts_or_title=None, hint=None, class_name=None, title=None) -%}
   {% set ns = namespace(options={}) %}
+  {% set has_merge = environment is defined and ('merge' in environment.filters) %}
   {% if opts_or_title is mapping %}
     {% set ns.options = opts_or_title %}
   {% elif opts_or_title is not none %}
     {% set ns.options = {'title': opts_or_title} %}
   {% endif %}
   {% if title is not none %}
-    {% set ns.options = ns.options | merge({'title': title}) %}
+    {% set ns.options = has_merge and (ns.options | merge({'title': title})) or dict(ns.options, **{'title': title}) %}
   {% endif %}
   {% if hint is not none %}
-    {% set ns.options = ns.options | merge({'hint': hint}) %}
+    {% set ns.options = has_merge and (ns.options | merge({'hint': hint})) or dict(ns.options, **{'hint': hint}) %}
   {% endif %}
   {% if class_name is not none %}
-    {% set ns.options = ns.options | merge({'class_name': class_name}) %}
+    {% set ns.options = has_merge and (ns.options | merge({'class_name': class_name})) or dict(ns.options, **{'class_name': class_name}) %}
   {% endif %}
   {% set options = ns.options %}
   <section class="filter-bar panel{% if options.class_name %} {{ options.class_name }}{% endif %}">

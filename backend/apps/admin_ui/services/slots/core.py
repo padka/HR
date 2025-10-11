@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
-from datetime import datetime
 from datetime import time as time_type
-from datetime import timedelta, timezone
-from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
-from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService
+from backend.apps.admin_ui.services.bot_service import (
+    BotSendResult,
+    BotService,
+)
 from backend.apps.admin_ui.services.bot_service import (
     get_bot_service as resolve_bot_service,
 )
@@ -23,6 +24,8 @@ from backend.apps.bot.services import (
     cancel_slot_reminders,
     capture_slot_snapshot,
     get_notification_service,
+)
+from backend.apps.bot.services import (
     get_state_manager as _get_state_manager,
 )
 
@@ -72,13 +75,13 @@ def get_state_manager():
 
 
 async def list_slots(
-    recruiter_id: Optional[int],
-    status: Optional[str],
+    recruiter_id: int | None,
+    status: str | None,
     page: int,
     per_page: int,
     *,
-    city_id: Optional[int] = None,
-) -> Dict[str, object]:
+    city_id: int | None = None,
+) -> dict[str, object]:
     async with async_session() as session:
         filtered = select(Slot)
         if recruiter_id is not None:
@@ -99,7 +102,7 @@ async def list_slots(
             )
         ).all()
 
-        aggregated: Dict[str, int] = {}
+        aggregated: dict[str, int] = {}
         for raw_status, count in status_rows:
             aggregated[norm_status(raw_status)] = int(count or 0)
         aggregated.setdefault("CONFIRMED_BY_CANDIDATE", 0)
@@ -123,12 +126,12 @@ async def list_slots(
     }
 
 
-async def recruiters_for_slot_form() -> List[Dict[str, object]]:
+async def recruiters_for_slot_form() -> list[dict[str, object]]:
     inspector = sa_inspect(Recruiter)
     has_active = "active" in getattr(inspector, "columns", {})
     query = select(Recruiter).order_by(Recruiter.name.asc())
     if has_active:
-        query = query.where(getattr(Recruiter, "active") == True)  # noqa: E712
+        query = query.where(Recruiter.active == True)  # noqa: E712
     async with async_session() as session:
         recs = (await session.scalars(query)).all()
         if not recs:
@@ -143,7 +146,7 @@ async def recruiters_for_slot_form() -> List[Dict[str, object]]:
             )
         ).all()
 
-        city_map: Dict[int, List[City]] = {}
+        city_map: dict[int, list[City]] = {}
         for city in city_rows:
             if city.responsible_recruiter_id is None:
                 continue
@@ -158,7 +161,7 @@ async def create_slot(
     time: str,
     *,
     city_id: int,
-) -> Tuple[bool, Optional[Slot]]:
+) -> tuple[bool, Slot | None]:
     try:
         local_dt = datetime.fromisoformat(f"{date}T{time}")
     except ValueError:
@@ -193,9 +196,7 @@ async def create_slot(
         return True, slot
 
 
-async def delete_slot(
-    slot_id: int, *, force: bool = False
-) -> Tuple[bool, Optional[str]]:
+async def delete_slot(slot_id: int, *, force: bool = False) -> tuple[bool, str | None]:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if not slot:
@@ -217,13 +218,13 @@ async def delete_slot(
     return True, None
 
 
-async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
+async def delete_all_slots(*, force: bool = False) -> tuple[int, int]:
     async with async_session() as session:
         total_before = await session.scalar(select(func.count()).select_from(Slot)) or 0
         if total_before == 0:
             return 0, 0
 
-        slot_ids: List[int] = []
+        slot_ids: list[int] = []
 
         if force:
             result = await session.execute(select(Slot.id))
@@ -264,28 +265,28 @@ class BotDispatchPlan:
     kind: str
     slot_id: int
     candidate_id: int
-    candidate_tz: Optional[str] = None
-    candidate_city_id: Optional[int] = None
+    candidate_tz: str | None = None
+    candidate_city_id: int | None = None
     candidate_name: str = ""
-    recruiter_name: Optional[str] = None
-    template_key: Optional[str] = None
-    template_context: Dict[str, object] = field(default_factory=dict)
-    scheduled_at: Optional[datetime] = None
-    required: Optional[bool] = None
+    recruiter_name: str | None = None
+    template_key: str | None = None
+    template_context: dict[str, object] = field(default_factory=dict)
+    scheduled_at: datetime | None = None
+    required: bool | None = None
 
 
 @dataclass
 class BotDispatch:
     status: str
-    plan: Optional[BotDispatchPlan] = None
+    plan: BotDispatchPlan | None = None
 
 
 async def set_slot_outcome(
     slot_id: int,
     outcome: str,
     *,
-    bot_service: Optional[BotService] = None,
-) -> Tuple[bool, Optional[str], Optional[str], Optional[BotDispatch]]:
+    bot_service: BotService | None = None,
+) -> tuple[bool, str | None, str | None, BotDispatch | None]:
     normalized = (outcome or "").strip().lower()
     aliases = {"passed": "success", "failed": "reject"}
     normalized = aliases.get(normalized, normalized)
@@ -322,7 +323,7 @@ async def set_slot_outcome(
 
         slot.interview_outcome = normalized
 
-        dispatch: Optional[BotDispatch]
+        dispatch: BotDispatch | None
         if normalized == "success":
             dispatch = _plan_test2_dispatch(slot, service)
         else:
@@ -345,7 +346,7 @@ async def set_slot_outcome(
     return True, message, normalized, dispatch
 
 
-def _plan_test2_dispatch(slot: Slot, service: Optional[BotService]) -> BotDispatch:
+def _plan_test2_dispatch(slot: Slot, service: BotService | None) -> BotDispatch:
     if slot.test2_sent_at is not None:
         return BotDispatch(status="skipped:already_sent")
 
@@ -358,7 +359,7 @@ def _plan_test2_dispatch(slot: Slot, service: Optional[BotService]) -> BotDispat
     if not service.is_ready():
         return BotDispatch(status="skipped:not_configured")
 
-    scheduled_at = datetime.now(timezone.utc)
+    scheduled_at = datetime.now(UTC)
     slot.test2_sent_at = scheduled_at
 
     candidate_id = int(slot.candidate_tg_id)
@@ -375,7 +376,7 @@ def _plan_test2_dispatch(slot: Slot, service: Optional[BotService]) -> BotDispat
     return BotDispatch(status="sent_test2", plan=plan)
 
 
-def _plan_rejection_dispatch(slot: Slot, service: Optional[BotService]) -> BotDispatch:
+def _plan_rejection_dispatch(slot: Slot, service: BotService | None) -> BotDispatch:
     if slot.rejection_sent_at is not None:
         return BotDispatch(status="skipped:already_sent")
 
@@ -388,7 +389,7 @@ def _plan_rejection_dispatch(slot: Slot, service: Optional[BotService]) -> BotDi
     if not service.is_ready():
         return BotDispatch(status="skipped:not_configured")
 
-    scheduled_at = datetime.now(timezone.utc)
+    scheduled_at = datetime.now(UTC)
     slot.rejection_sent_at = scheduled_at
 
     candidate_id = int(slot.candidate_tg_id)
@@ -411,7 +412,7 @@ def _plan_rejection_dispatch(slot: Slot, service: Optional[BotService]) -> BotDi
     return BotDispatch(status="sent_rejection", plan=plan)
 
 
-def _format_outcome_message(outcome: str, status: Optional[str]) -> str:
+def _format_outcome_message(outcome: str, status: str | None) -> str:
     if outcome == "success":
         base = "Исход «Прошёл» сохранён."
         if status == "sent_test2":
@@ -501,7 +502,7 @@ async def _mark_dispatch_state(slot_id: int, kind: str, success: bool) -> None:
         if not slot:
             return
         if success:
-            setattr(slot, field, datetime.now(timezone.utc))
+            setattr(slot, field, datetime.now(UTC))
         else:
             setattr(slot, field, None)
         await session.commit()
@@ -509,11 +510,11 @@ async def _mark_dispatch_state(slot_id: int, kind: str, success: bool) -> None:
 
 async def _trigger_test2(
     candidate_id: int,
-    candidate_tz: Optional[str],
-    candidate_city: Optional[int],
+    candidate_tz: str | None,
+    candidate_city: int | None,
     candidate_name: str,
     *,
-    bot_service: Optional[BotService],
+    bot_service: BotService | None,
     required: bool,
 ) -> BotSendResult:
     service = bot_service
@@ -543,7 +544,7 @@ async def _trigger_test2(
     )
 
 
-async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
+async def reschedule_slot_booking(slot_id: int) -> tuple[bool, str, bool]:
     async with async_session() as session:
         slot = await session.scalar(
             select(Slot)
@@ -571,7 +572,11 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     )
 
     if result.status == "sent":
-        return True, "Слот освобождён. Кандидату отправлено уведомление о переносе.", True
+        return (
+            True,
+            "Слот освобождён. Кандидату отправлено уведомление о переносе.",
+            True,
+        )
     if result.status == "failed":
         return (
             True,
@@ -585,7 +590,7 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     )
 
 
-async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
+async def reject_slot_booking(slot_id: int) -> tuple[bool, str, bool]:
     async with async_session() as session:
         slot = await session.scalar(
             select(Slot)
@@ -627,14 +632,13 @@ async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     )
 
 
-
 async def _trigger_rejection(
     candidate_id: int,
     template_key: str,
-    context: Dict[str, object],
+    context: dict[str, object],
     *,
-    city_id: Optional[int],
-    bot_service: Optional[BotService],
+    city_id: int | None,
+    bot_service: BotService | None,
 ) -> BotSendResult:
     service = bot_service
     if service is None:
@@ -663,14 +667,14 @@ def _normalize_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         # Assume already UTC naive
         return dt.replace(tzinfo=None)
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.astimezone(UTC).replace(tzinfo=None)
 
 
 def _as_utc(dt: datetime) -> datetime:
     """Ensure datetime is timezone-aware UTC for database comparisons."""
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 async def bulk_create_slots(
@@ -686,7 +690,7 @@ async def bulk_create_slots(
     use_break: bool,
     *,
     city_id: int,
-) -> Tuple[int, Optional[str]]:
+) -> tuple[int, str | None]:
     async with async_session() as session:
         recruiter = await session.get(Recruiter, recruiter_id)
         if not recruiter:
@@ -732,7 +736,7 @@ async def bulk_create_slots(
         except ValueError:
             return 0, "Некорректный часовой пояс региона"
 
-        planned_pairs: List[Tuple[datetime, datetime]] = []  # (original, normalized)
+        planned_pairs: list[tuple[datetime, datetime]] = []  # (original, normalized)
         planned_norms = set()
         current_date = start
         while current_date <= end:
@@ -805,10 +809,10 @@ async def bulk_create_slots(
 
 
 async def api_slots_payload(
-    recruiter_id: Optional[int],
-    status: Optional[str],
+    recruiter_id: int | None,
+    status: str | None,
     limit: int,
-) -> List[Dict[str, object]]:
+) -> list[dict[str, object]]:
     async with async_session() as session:
         query = (
             select(Slot)
