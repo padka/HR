@@ -32,10 +32,10 @@
   <script src="/static/js/theme-toggle.js" defer></script>
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/build/main.css">
-  <link rel="stylesheet" href="/static/css/liquid-dashboard.css">
   {% block extra_css %}{% endblock %}
 </head>
-<body class="liquid-ui">
+<body>
+  <a class="skip-link focus-ring" href="#main-content">Перейти к основному контенту</a>
   <div class="app-shell">
     <header class="topbar glass" data-topbar>
       <div class="topbar__content">
@@ -186,7 +186,7 @@
       </div>
     </header>
     <div class="topbar__scrim" data-topbar-scrim></div>
-    <main class="app-main">
+    <main id="main-content" class="app-main" tabindex="-1">
       <div class="app-main__stage">
         <div class="app-main__surface glass">
           <div class="container">

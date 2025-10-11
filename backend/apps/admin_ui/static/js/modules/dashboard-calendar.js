@@ -61,7 +61,7 @@ if (root) {
     (days || []).forEach((day) => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'calendar-day';
+      button.className = 'calendar-day pill focus-ring';
       if (day.is_selected) {
         button.classList.add('is-active');
       }
@@ -97,7 +97,7 @@ if (root) {
 
   function renderEvent(event) {
     const wrapper = document.createElement('article');
-    wrapper.className = 'calendar-event glass-card';
+    wrapper.className = 'calendar-event surface';
     wrapper.dataset.calendarEventId = String(event.id);
 
     const clock = document.createElement('div');

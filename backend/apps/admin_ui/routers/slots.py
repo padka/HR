@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
+from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import list_recruiters
 from backend.apps.admin_ui.services.slots import (
     bulk_create_slots,
@@ -144,12 +145,14 @@ async def slots_list(
     request: Request,
     recruiter_id: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
+    city_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
 ):
     recruiter = parse_optional_int(recruiter_id)
     status_norm = status_filter(status)
-    result = await list_slots(recruiter, status_norm, page, per_page)
+    city_filter = parse_optional_int(city_id)
+    result = await list_slots(recruiter, status_norm, page, per_page, city_id=city_filter)
     recruiter_rows = await list_recruiters()
     recruiter_options = [row["rec"] for row in recruiter_rows]
     slots = result["items"]
@@ -164,15 +167,19 @@ async def slots_list(
         ),
     }
     flash = _pop_flash(request)
+    city_options = await list_cities(order_by_name=True)
+
     context = {
         "request": request,
         "slots": slots,
         "filter_recruiter_id": recruiter,
         "filter_status": status_norm,
+        "filter_city_id": city_filter,
         "page": result["page"],
         "pages_total": result["pages_total"],
         "per_page": per_page,
         "recruiter_options": recruiter_options,
+        "city_options": city_options,
         "status_counts": status_counts,
         "flash": flash,
     }
