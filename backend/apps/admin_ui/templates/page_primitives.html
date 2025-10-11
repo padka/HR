@@ -134,13 +134,13 @@
     {% set ns.options = {'title': opts_or_title} %}
   {% endif %}
   {% if title is not none %}
-    {% set ns.options = ns.options | combine({'title': title}) %}
+    {% set ns.options = ns.options | merge({'title': title}) %}
   {% endif %}
   {% if hint is not none %}
-    {% set ns.options = ns.options | combine({'hint': hint}) %}
+    {% set ns.options = ns.options | merge({'hint': hint}) %}
   {% endif %}
   {% if class_name is not none %}
-    {% set ns.options = ns.options | combine({'class_name': class_name}) %}
+    {% set ns.options = ns.options | merge({'class_name': class_name}) %}
   {% endif %}
   {% set options = ns.options %}
   <section class="filter-bar panel{% if options.class_name %} {{ options.class_name }}{% endif %}">
