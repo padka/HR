@@ -21,11 +21,26 @@ from backend.apps.admin_ui.services.slots import (
     recruiters_for_slot_form,
     delete_slot,
     delete_all_slots,
-    set_slot_outcome,
-    execute_bot_dispatch,
-    reschedule_slot_booking,
-    reject_slot_booking,
 )
+
+try:  # pragma: no cover - optional bot integration
+    from backend.apps.admin_ui.services.slots import (
+        set_slot_outcome,
+        execute_bot_dispatch,
+        reschedule_slot_booking,
+        reject_slot_booking,
+    )
+except RuntimeError:  # pragma: no cover - degrade gracefully when bot deps missing
+    def _bot_unavailable(*_args, **_kwargs):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Bot integration is unavailable in this environment.",
+        )
+
+    set_slot_outcome = _bot_unavailable  # type: ignore[assignment]
+    execute_bot_dispatch = _bot_unavailable  # type: ignore[assignment]
+    reschedule_slot_booking = _bot_unavailable  # type: ignore[assignment]
+    reject_slot_booking = _bot_unavailable  # type: ignore[assignment]
 from backend.apps.admin_ui.utils import (
     ensure_utc,
     local_naive_to_utc,

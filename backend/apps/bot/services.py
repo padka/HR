@@ -16,7 +16,13 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Literal
 from zoneinfo import ZoneInfo
 
-from aiohttp import ClientError
+try:  # pragma: no cover - optional dependency handling
+    from aiohttp import ClientError
+except ModuleNotFoundError:  # pragma: no cover - graceful degradation when aiohttp is absent
+    class ClientError(Exception):  # type: ignore[override]
+        """Fallback base exception when aiohttp isn't installed."""
+
+        pass
 from aiogram import Bot
 from aiogram.exceptions import (
     TelegramBadRequest,

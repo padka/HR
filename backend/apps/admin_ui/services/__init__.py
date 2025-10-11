@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
 from .dashboard import dashboard_counts
 from .kpis import (
     get_weekly_kpis,
@@ -45,18 +50,42 @@ from .templates import (
     update_template,
     update_templates_for_city,
 )
-from .slots import (
-    api_slots_payload,
-    create_slot,
-    list_slots,
-    recruiters_for_slot_form,
-    set_slot_outcome,
-)
 from .questions import (
     get_test_question_detail,
     list_test_questions,
     update_test_question,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - assist static analysis only
+    from .slots import (
+        api_slots_payload,
+        bulk_create_slots,
+        create_slot,
+        delete_all_slots,
+        delete_slot,
+        execute_bot_dispatch,
+        get_state_manager,
+        list_slots,
+        recruiters_for_slot_form,
+        reject_slot_booking,
+        reschedule_slot_booking,
+        set_slot_outcome,
+    )
+
+_SLOT_EXPORTS = {
+    "api_slots_payload",
+    "bulk_create_slots",
+    "create_slot",
+    "delete_all_slots",
+    "delete_slot",
+    "execute_bot_dispatch",
+    "get_state_manager",
+    "list_slots",
+    "recruiters_for_slot_form",
+    "reject_slot_booking",
+    "reschedule_slot_booking",
+    "set_slot_outcome",
+}
 
 __all__ = [
     "dashboard_counts",
@@ -101,7 +130,24 @@ __all__ = [
     "recruiters_for_slot_form",
     "create_slot",
     "set_slot_outcome",
+    "bulk_create_slots",
+    "delete_slot",
+    "delete_all_slots",
+    "execute_bot_dispatch",
+    "get_state_manager",
+    "reject_slot_booking",
+    "reschedule_slot_booking",
     "list_test_questions",
     "get_test_question_detail",
     "update_test_question",
 ]
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover - module attribute proxy
+    if name not in _SLOT_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name}")
+
+    module = import_module("backend.apps.admin_ui.services.slots")
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
