@@ -1,60 +1,59 @@
-# Local Admin UI Development
+# Local Development Guide
 
-This guide captures everything needed to spin up and validate the admin UI locally on Python&nbsp;3.13.
+## Prerequisites
+- **Python**: 3.12.x recommended (3.11 works with warnings until DX epic completes). Use `pyenv` or `asdf` to manage versions.【F:pyproject.toml†L21-L39】【F:audit/DEPS.md†L1-L12】
+- **Node.js**: 20.x (LTS). Install via `nvm`/`asdf`.
+- **Package managers**: `uv` (or `pipx + pip-tools`), `npm` (or `pnpm`).
+- **SQLite**: Bundled with Python; no external DB required for local smoke.
 
-## Quick start
+## Environment setup
+```bash
+# Clone repository
+$ git clone git@github.com:example/hr-admin.git
+$ cd hr-admin
 
-1. Create a fresh virtualenv (Python&nbsp;3.13 recommended):
-   ```bash
-   python3.13 -m venv .venv
-   ```
-2. Install project dependencies and run the preflight checks:
-   ```bash
-   make setup
-   ```
-3. Provide a session secret so the admin login works:
-   ```bash
-   export SESSION_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')
-   ```
-   Add the line to `.env` if you want it persisted.
-4. Start the API:
-   ```bash
-   make run
-   ```
+# Create virtual environment
+$ uv venv --python=3.12
+$ source .venv/bin/activate
 
-The `make setup` target installs Python dependencies (via `pip install -e ".[dev]"`), Node tooling, downloads Playwright browsers, and finally runs `make doctor` to verify your environment.
+# Install core app + extras (temporary until extras split)
+$ pip install -e .[dev]
 
-## Environment variables
+# Install pre-commit hooks (after epic 1 lands)
+$ pre-commit install
 
-| Variable | Purpose | Notes |
-| --- | --- | --- |
-| `SESSION_SECRET_KEY` | Enables session cookies for the admin UI | Mandatory for local auth. `SESSION_SECRET` or `SECRET_KEY` are accepted aliases. |
-| `ADMIN_TRUSTED_HOSTS` | Comma-separated list of allowed hosts | Defaults to `localhost,127.0.0.1,testserver`. |
-| `FORCE_SSL` | Redirect all HTTP traffic to HTTPS | Optional. Leave unset for local development. |
+# Install Node deps
+$ npm install
+```
 
-## Working with themes
+### Environment variables
+Create `.env` (loaded by `backend/core/env.py`) with safe defaults:
+```
+ADMIN_USER=demo
+ADMIN_PASSWORD=demo
+SESSION_SECRET_KEY=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ
+BOT_ENABLED=0
+ADMIN_DOCS_ENABLED=1
+```
+Additional toggles (see `docs/RUNBOOK.md`) cover Redis, Telegram bot, rate limits, and secure headers.
 
-- The header contains a tri-state theme button (`auto → light → dark`). Press it or use <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> to cycle when focused.
-- The current preference lives in `localStorage['tg-admin-theme']`. Remove the key (or set it to `auto`) to return to system defaults.
-- The runtime helper is exposed as `window.TGTheme.apply('light' | 'dark' | 'auto')` for quick experimentation in DevTools.
-- To emulate system changes, open Chrome DevTools → **Rendering** panel and toggle `Emulate CSS prefers-color-scheme` between `light` and `dark`. The UI should follow automatically when the mode is `auto`.
-
-## Screenshots & automated UI checks
-
-- `make screens` runs Playwright in headless mode and captures screenshots for every demo route across three viewports (desktop/tablet/mobile) and both themes. Artifacts land in `ui_screenshots/` and are uploaded by CI.
-- `pytest tests/test_ui_screenshots.py` is the underlying test suite. It also verifies that the theme toggle persists choices via `localStorage` and that recruiter cards respond to keyboard input.
-- If Playwright complains about missing browsers, rerun `npx playwright install --with-deps`.
-
-## Recruiter UI demo
-
-- `make demo` launches the FastAPI showcase on http://127.0.0.1:8000.
-- `/recruiters` renders the liquid glass grid with actions (open, disable, copy link) and keyboard-friendly focus states.
-- `/recruiters/10/edit` demonstrates the city multi-select and unsaved-changes guard; `Select all` respects the current search filter.
+## Day-to-day commands
+| Command | Description |
+| --- | --- |
+| `make setup` | Validate Python/Node toolchain, install deps (to be updated with `uv` + extras). |
+| `make ui` | Run Tailwind build (`npm run build:css`). |
+| `make run` | Start FastAPI admin UI (`uvicorn backend.apps.admin_ui.app:app`). Requires DB access; on first run seeds defaults. |
+| `BOT_ENABLED=0 make run` | Launch admin UI without bot runtime (fails today because of eager imports; fix in Runtime Stability epic). |
+| `make screens` | Execute Playwright screenshot suite (requires `playwright install`). |
+| `make lint` | Run ruff/black/isort/mypy (after DX epic wires pre-commit). |
+| `pytest` | Run Python test suite (unit/integration). |
 
 ## Troubleshooting
+- **`ModuleNotFoundError: aiohttp`**: Install optional bot deps or set `BOT_ENABLED=0` after lazy-import refactor.【82a108†L1-L18】
+- **Session-related 500s**: Ensure `SESSION_SECRET_KEY` provided and `pip install itsdangerous==2.2.0` until DX fixes optional dependency check.【F:backend/apps/admin_ui/app.py†L44-L78】
+- **Database locked**: SQLite file located under `data/bot.db`; delete for clean slate (reseed will occur on next run).【F:backend/core/bootstrap.py†L15-L63】
 
-- **`make doctor` fails with missing package** – rerun `make setup`; it pins all Python dependencies for Python&nbsp;3.13.
-- **Session middleware disabled warning** – export `SESSION_SECRET_KEY` before `make run`. Without it, admin logins will not persist.
-- **Using a different Python version** – the tooling expects Python&nbsp;3.13. Use `pyenv` or `asdf` to install the required interpreter, or override `PYTHON=python3.13` when running `make setup`.
-- **TLS redirects during local testing** – ensure `FORCE_SSL` is unset. HTTPS redirects are only activated when `FORCE_SSL=1`.
-- **Theme toggle appears stuck** – clear `localStorage['tg-admin-theme']` and reload; the app will fall back to the system preference.
+## Future improvements (tracked in roadmap)
+- Replace editable install with extras (`core`, `dev`, `bot`) and reproducible lockfiles.
+- Add `make doctor` to assert Python/Node versions, env vars, and optional services.
+- Provide Docker-based local stack after optional Release Container epic.

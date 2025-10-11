@@ -1,30 +1,47 @@
-# Liquid Glass v2 Frontend Strategy
+# Technical Strategy
 
-## Token governance
-- All design tokens live in [`backend/apps/admin_ui/static/css/tokens.css`](../backend/apps/admin_ui/static/css/tokens.css).
-- Keep the neutral and role palettes in sync with Liquid v2 (`--bg`, `--surface-*`, `--text`, `--muted-text`, `--border`). Accent roles live under `--accent-{success,info,warn,danger}` with matching `*-rgb` triplets.
-- Add new tokens as CSS custom properties; avoid redefining primitives inside page CSS.
-- When changing token names or semantics, update Tailwind config (`tailwind.config.js`) and documentation in the same commit.
+## Vision
+Deliver a modular, production-ready admin platform for HR operations with:
+- Stable runtime independent of optional bot services.
+- Unified Liquid Glass UI system with light/dark parity and WCAG AA compliance.
+- Guarded supply chain (audits, pre-commit) and observable infrastructure (request-id, metrics, health splits).
 
-## Theme system
-- Themes are expressed through CSS custom properties on `:root[data-theme="light|dark"]`; omitting the attribute enables auto mode that follows `prefers-color-scheme`.
-- `window.TGTheme.apply('light'|'dark'|'auto')` is the single entry point for runtime changes. It updates the DOM attribute, syncs `localStorage['tg-admin-theme']`, and notifies listeners.
-- Liquid glass relies on shared tokens: `--glass-alpha{,-strong,-soft}`, `--glass-blur-{xs,sm,lg}`, and `--glass-highlight`. Always derive new gradients from those primitives so both themes stay in sync.
-- Borders and shadows must respect the role tokens. Use `color-mix` with `var(--border)`/`var(--surface-*)` instead of hard-coded RGBA values when tweaking utilities.
+## Guiding Principles
+1. **Separation of concerns** – Admin UI must boot without Telegram bot/Redis; bot features behind explicit flags/null services.【F:audit/RISKS.md†L4-L7】
+2. **Design system first** – Single Tailwind pipeline, shared tokens, and component library reused across screens.【F:audit/REPO_MAP.md†L12-L20】
+3. **Performance budgets** – `/api/*` p95 ≤200 ms, Dashboard TTI ≤2 s, CSS ≤90 KB raw / ≤70 KB gzip.【F:audit/PERF_BASELINE.md†L4-L24】
+4. **Security by default** – Mandatory session secret, secure headers, audit pipelines; treat missing deps as fatal in prod.【F:audit/SECURITY_GAPS.md†L1-L7】
+5. **Observability everywhere** – Structured logs, request-id propagation, health readiness separation, metrics for scheduler/bot state.【F:audit/RISKS.md†L28-L31】
+6. **Documentation as code** – Keep roadmap/runbook/prod readiness docs updated per PR; CI enforces doc touchpoints.【F:docs/ROADMAP.md†L1-L200】
 
-## Utility surface
-- Core utilities live in [`main.css`](../backend/apps/admin_ui/static/css/main.css) under `@layer components`.
-- Reuse `.glass`, `.panel`, `.card`, `.pill`, `.badge-*`, `.btn` variants, and shared grid helpers before inventing new bespoke selectors.
-- If a new pattern repeats 3+ times, promote it into a utility class instead of copy/pasting declarations.
-- Keep motion subtle: respect `prefers-reduced-motion` and wire new transitions into the existing variables (`--transition-fast`, `--transition-base`).
+## Architecture Targets
+- **Backend**: FastAPI with modular routers, SQLAlchemy 2.0 async, SQLite/Postgres support. Introduce service interfaces (`BotClient`, `ReminderScheduler`) with null implementations.
+- **Frontend**: Tailwind JIT build, PostCSS autoprefixing, tokens in `tokens.css`, components in `templates/components/`. Build pipeline checks CSS size + theme diffs.
+- **Data layer**: Add indices and pagination helpers, deduplicate `UTCDateTime`, ensure migrations additive and tracked.
+- **DevEx**: `uv`-driven dependency management, extras for `core`, `dev`, `bot`, pre-commit enforcing style, `make doctor` verifying env.
+- **CI/CD**: GitHub Actions matrix (3.12, 3.13), caching for poetry/uv, Playwright screenshot artifacts, bundle reports, commit linting.
+- **Observability**: Implement middleware stack (request-id, timing), integrate OpenTelemetry or Prometheus client, optional Sentry instrumentation.
 
-## Contrast & focus
-- Every interactive element must surface `:focus-visible` using the shared ring (utility `.focus-ring` or dedicated selectors).
-- Check contrast for pills, badges, and chips against AA (>4.5:1). If contrast is low, increase opacity or mix toward darker tones rather than darkening text arbitrarily.
-- Prefer semantic colors (`--success-rgb`, `--info-rgb`, etc.) with alpha adjustments over hard-coded hex values in component CSS.
+## Milestones (linked to `docs/ROADMAP.md`)
+1. **DX Foundations** – Extras split, audits, doc refresh. Unblocks consistent onboarding.
+2. **Runtime Isolation** – Feature flags, null services, safe session fallback. Enables admin-only deployment.
+3. **UI Core** – Liquid Glass tokens, duplicate asset removal, theme parity.
+4. **Perf/Security** – Pagination, budgets, secure headers, metrics.
+5. **QA/CI** – Playwright matrix, coverage, artifact pipelines, commit linting.
 
-## Build discipline & budgets
-- `make ui` rebuilds CSS; run it when token or utility changes land.
-- Bundle budget: **≤ 90 KB raw** and **≤ 70 KB gzip** per shipped CSS artifact. Track compliance in [`audit/CSS_SIZE.md`](../audit/CSS_SIZE.md).
-- Remove unused selectors when refactoring; rely on the shared utilities instead of adding page-specific overrides.
+## Technical Bets
+- Adopt `uv` for reproducible Python installs (fast resolver, lock export).
+- Use `deptry` to detect unused/missing deps; integrate `pip-audit` & `npm audit` for supply-chain checks.
+- Consider `fastapi-limiter` or Starlette middleware for rate limiting once security epic begins.
+- Evaluate OpenTelemetry vs. custom logging; choose minimal vendor lock-in.
 
+## Out of Scope (for now)
+- Feature development altering business logic or API contracts (requires explicit flag & plan).
+- Non-additive migrations or destructive schema changes.
+- Embedding production secrets in repo; rely on external secret management.
+
+## Success Metrics
+- All readiness checklist items checked in `docs/PROD_READINESS.md`.
+- CI pipeline consistently green with ≤20 min duration.
+- 0 internal 500s on empty DB + `BOT_ENABLED=0` smoke tests.
+- Playwright diffs ≤2 px and CSS budgets maintained for each release.

@@ -1,0 +1,9 @@
+# Security Gaps
+
+1. **Session middleware optional & silent disablement** – FastAPI app logs a warning and proceeds without sessions when `itsdangerous` or `SESSION_SECRET_*` missing, yet auth guard still requires `request.session`, producing 500s instead of Basic auth flow.【F:backend/apps/admin_ui/app.py†L44-L82】【F:backend/apps/admin_ui/security.py†L97-L158】
+2. **Missing security headers** – No global middleware for HSTS, CSP, COOP/COEP, X-Frame-Options, or Referrer-Policy. HTTPS redirect is optional (`FORCE_SSL` env) and not tied to secure cookie settings.【F:backend/apps/admin_ui/app.py†L34-L82】
+3. **Cookie configuration gaps** – Session cookie defaults to `samesite=strict` but becomes ineffective when sessions disabled; no CSRF tokens for POST forms (relies purely on HTTP Basic).【F:backend/core/settings.py†L139-L188】【F:backend/apps/admin_ui/routers/slots.py†L29-L88】
+4. **Bot health endpoint disclosure** – `/health/bot` performs live Telegram probe and returns detailed integration state even when bot disabled; leaks runtime metadata and may block when network unavailable.【F:backend/apps/admin_ui/routers/system.py†L67-L145】
+5. **Admin API authentication** – SQLAdmin interface is mounted without additional auth beyond default SQLAdmin (relies on basic auth?). Need to confirm but currently open to same HTTP Basic realm without CSP/HSTS protections.【F:backend/apps/admin_api/main.py†L16-L25】【F:backend/apps/admin_ui/security.py†L97-L158】
+6. **Dependency auditing absent** – No automated `pip-audit`/`npm audit`/secret scanning, increasing supply-chain exposure.【F:.github/workflows/ci.yml†L1-L94】【F:audit/generate_inventory.py†L188-L260】
+7. **Bootstrap secrets** – `validate_settings` auto-generates session secret when env missing, but still allows placeholder admin credentials, only raising at runtime; needs fail-fast during CI/deploy.【F:backend/core/settings.py†L65-L132】
