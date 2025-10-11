@@ -14,7 +14,7 @@ from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import list_recruiters
-from backend.apps.admin_ui.services.slots import (
+from backend.apps.admin_ui.services.slots.core import (
     bulk_create_slots,
     create_slot,
     list_slots,
