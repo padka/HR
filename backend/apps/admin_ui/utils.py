@@ -6,6 +6,14 @@ from zoneinfo import ZoneInfo
 
 import math
 
+from backend.core.timezone import (
+    DEFAULT_TIMEZONE,
+    ensure_timezone as _ensure_timezone,
+    local_naive_to_utc as _local_naive_to_utc,
+    safe_zone as _safe_zone,
+    utc_to_local_naive as _utc_to_local_naive,
+    validate_timezone_name,
+)
 from backend.domain.models import SlotStatus
 
 try:  # pragma: no cover - FastAPI may not be installed in some test environments
@@ -14,46 +22,23 @@ except Exception:  # pragma: no cover - fall back when FastAPI is unavailable
     _FastAPIParam = None  # type: ignore[assignment]
 
 
-DEFAULT_TZ = "Europe/Moscow"
+DEFAULT_TZ = DEFAULT_TIMEZONE
 
 
 def safe_zone(tz_str: Optional[str]) -> ZoneInfo:
-    """Return ZoneInfo, falling back to Europe/Moscow."""
-    try:
-        return ZoneInfo(tz_str or DEFAULT_TZ)
-    except Exception:
-        return ZoneInfo(DEFAULT_TZ)
-
-
-def validate_timezone_name(tz_str: Optional[str]) -> str:
-    candidate = (tz_str or "").strip()
-    if not candidate:
-        raise ValueError("Timezone must be provided")
-    try:
-        ZoneInfo(candidate)
-    except Exception as exc:
-        raise ValueError(f"Invalid timezone: {candidate}") from exc
-    return candidate
+    return _safe_zone(tz_str)
 
 
 def ensure_timezone(tz_str: Optional[str]) -> ZoneInfo:
-    return ZoneInfo(validate_timezone_name(tz_str))
+    return _ensure_timezone(tz_str)
 
 
 def local_naive_to_utc(local_dt: datetime, tz_str: str) -> datetime:
-    zone = ensure_timezone(tz_str)
-    if local_dt.tzinfo is None:
-        localized = local_dt.replace(tzinfo=zone)
-    else:
-        localized = local_dt.astimezone(zone)
-    return localized.astimezone(timezone.utc)
+    return _local_naive_to_utc(local_dt, tz_str)
 
 
 def utc_to_local_naive(utc_dt: datetime, tz_str: str) -> datetime:
-    zone = ensure_timezone(tz_str)
-    aware = utc_dt if utc_dt.tzinfo is not None else utc_dt.replace(tzinfo=timezone.utc)
-    local = aware.astimezone(zone)
-    return local.replace(tzinfo=None)
+    return _utc_to_local_naive(utc_dt, tz_str)
 
 
 def ensure_utc(dt: datetime) -> datetime:
@@ -112,6 +97,8 @@ def status_filter(value: Optional[str]) -> Optional[str]:
 
 def status_to_db(value: str):
     enum_candidate = getattr(SlotStatus, value, None)
+    if isinstance(enum_candidate, SlotStatus):
+        return enum_candidate.value
     return enum_candidate if enum_candidate is not None else value
 
 

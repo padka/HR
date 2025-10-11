@@ -309,15 +309,11 @@ async def slots_api_create(payload: SlotCreatePayload):
                 detail="starts_at_local is required",
             )
 
-        status_free = getattr(SlotStatus, "FREE", "FREE")
-        if hasattr(status_free, "value"):
-            status_free = status_free.value
-
         slot = Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
             start_utc=start_utc,
-            status=status_free,
+            status=SlotStatus.FREE,
         )
         if payload.duration_min is not None:
             slot.duration_min = max(int(payload.duration_min), 1)
