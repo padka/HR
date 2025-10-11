@@ -1,3 +1,4 @@
+{% from "partials/theme_toggle.html" import theme_toggle %}
 <!doctype html>
 <html lang="ru">
 <head>
@@ -8,18 +9,27 @@
   <script>
     (function () {
       const storageKey = 'tg-admin-theme';
+      const docEl = document.documentElement;
       try {
         const stored = window.localStorage.getItem(storageKey);
+        const mode = stored === 'light' || stored === 'dark' || stored === 'auto' ? stored : 'auto';
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const theme = stored || (prefersDark ? 'dark' : 'light');
-        document.documentElement.dataset.theme = theme;
-        document.documentElement.style.colorScheme = theme;
+        if (mode === 'light' || mode === 'dark') {
+          docEl.dataset.theme = mode;
+          docEl.style.colorScheme = mode;
+        } else {
+          docEl.removeAttribute('data-theme');
+          docEl.style.colorScheme = prefersDark ? 'dark' : 'light';
+        }
+        docEl.dataset.themeMode = mode;
       } catch (err) {
-        document.documentElement.dataset.theme = 'light';
-        document.documentElement.style.colorScheme = 'light';
+        docEl.dataset.theme = 'light';
+        docEl.style.colorScheme = 'light';
+        docEl.dataset.themeMode = 'light';
       }
     })();
   </script>
+  <script src="/static/js/theme-toggle.js" defer></script>
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/build/main.css">
   <link rel="stylesheet" href="/static/css/liquid-dashboard.css">
@@ -164,19 +174,13 @@
                 <span class="nav-link__label">Вопросы</span>
               </a>
             </li>
+            <li class="nav-links__item nav-links__item--theme">
+              {{ theme_toggle('nav-theme-toggle') }}
+            </li>
           </ul>
         </nav>
         <div class="topbar__actions">
-          <button
-            id="theme-toggle"
-            class="theme-toggle focus-ring"
-            type="button"
-            aria-pressed="false"
-            aria-label="Переключить тему"
-          >
-            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
-            <span class="theme-toggle__label">Тёмная тема</span>
-          </button>
+          {{ theme_toggle('topbar__theme-toggle') }}
           <span class="topbar__badge">{{ request.url.hostname or 'localhost' }}</span>
         </div>
       </div>
@@ -194,65 +198,9 @@
   </div>
   <script>
     (function () {
-      const storageKey = 'tg-admin-theme';
-      const docEl = document.documentElement;
-      const toggle = document.getElementById('theme-toggle');
       const nav = document.querySelector('[data-topbar-nav]');
       const burger = document.querySelector('[data-topbar-toggle]');
       const scrim = document.querySelector('[data-topbar-scrim]');
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
-
-      function storeTheme(theme) {
-        try {
-          window.localStorage.setItem(storageKey, theme);
-        } catch (err) {
-          /* noop */
-        }
-      }
-
-      function getStoredTheme() {
-        try {
-          return window.localStorage.getItem(storageKey);
-        } catch (err) {
-          return null;
-        }
-      }
-
-      function applyTheme(theme, persist = true) {
-        const value = theme === 'dark' ? 'dark' : 'light';
-        docEl.dataset.theme = value;
-        docEl.style.colorScheme = value;
-        if (persist) {
-          storeTheme(value);
-        }
-        reflectTheme(value);
-      }
-
-      function reflectTheme(theme) {
-        if (!toggle) return;
-        const isDark = theme === 'dark';
-        toggle.setAttribute('aria-pressed', isDark);
-        toggle.querySelector('.theme-toggle__icon').textContent = isDark ? '🌞' : '🌙';
-        toggle.querySelector('.theme-toggle__label').textContent = isDark ? 'Светлая тема' : 'Тёмная тема';
-        toggle.title = isDark ? 'Переключить на светлую тему' : 'Переключить на тёмную тему';
-      }
-
-      applyTheme(getStoredTheme() || docEl.dataset.theme || (prefersDark.matches ? 'dark' : 'light'), false);
-
-      if (toggle) {
-        toggle.addEventListener('click', () => {
-          const next = docEl.dataset.theme === 'dark' ? 'light' : 'dark';
-          applyTheme(next);
-        });
-      }
-
-      if (prefersDark && typeof prefersDark.addEventListener === 'function') {
-        prefersDark.addEventListener('change', (event) => {
-          if (!getStoredTheme()) {
-            applyTheme(event.matches ? 'dark' : 'light', false);
-          }
-        });
-      }
 
       function setNavOpen(open) {
         if (!nav || !burger) return;

@@ -2,9 +2,15 @@
 
 ## Token governance
 - All design tokens live in [`backend/apps/admin_ui/static/css/tokens.css`](../backend/apps/admin_ui/static/css/tokens.css).
-- Keep the neutral and role palettes in sync with Liquid v2 (`--bg`, `--surface-*`, `--text`, `--muted-text`, `--success`/`--info`/`--warn`/`--danger`).
+- Keep the neutral and role palettes in sync with Liquid v2 (`--bg`, `--surface-*`, `--text`, `--muted-text`, `--border`). Accent roles live under `--accent-{success,info,warn,danger}` with matching `*-rgb` triplets.
 - Add new tokens as CSS custom properties; avoid redefining primitives inside page CSS.
 - When changing token names or semantics, update Tailwind config (`tailwind.config.js`) and documentation in the same commit.
+
+## Theme system
+- Themes are expressed through CSS custom properties on `:root[data-theme="light|dark"]`; omitting the attribute enables auto mode that follows `prefers-color-scheme`.
+- `window.TGTheme.apply('light'|'dark'|'auto')` is the single entry point for runtime changes. It updates the DOM attribute, syncs `localStorage['tg-admin-theme']`, and notifies listeners.
+- Liquid glass relies on shared tokens: `--glass-alpha{,-strong,-soft}`, `--glass-blur-{xs,sm,lg}`, and `--glass-highlight`. Always derive new gradients from those primitives so both themes stay in sync.
+- Borders and shadows must respect the role tokens. Use `color-mix` with `var(--border)`/`var(--surface-*)` instead of hard-coded RGBA values when tweaking utilities.
 
 ## Utility surface
 - Core utilities live in [`main.css`](../backend/apps/admin_ui/static/css/main.css) under `@layer components`.

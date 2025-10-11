@@ -1,0 +1,38 @@
+{% macro theme_toggle(classes='') %}
+<button
+  class="theme-toggle focus-ring {{ classes }}"
+  type="button"
+  data-theme-toggle
+  aria-pressed="mixed"
+  aria-label="Переключить тему"
+>
+  <span class="theme-toggle__glyphs" aria-hidden="true">
+    <span class="theme-toggle__glyph" data-theme-icon="auto">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5.2 6.8 19h2.2l1.2-3.4h3.6L15 19h2.2L12 5.2Zm1 7.3h-2l1-2.9 1 2.9Z"></path>
+      </svg>
+    </span>
+    <span class="theme-toggle__glyph" data-theme-icon="light">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4"></circle>
+        <path d="M12 2.5v2.5"></path>
+        <path d="M12 19v2.5"></path>
+        <path d="M4.7 4.7 6.5 6.5"></path>
+        <path d="M17.5 17.5 19.3 19.3"></path>
+        <path d="M2.5 12h2.5"></path>
+        <path d="M19 12h2.5"></path>
+        <path d="M4.7 19.3 6.5 17.5"></path>
+        <path d="M17.5 6.5 19.3 4.7"></path>
+      </svg>
+    </span>
+    <span class="theme-toggle__glyph" data-theme-icon="dark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18.2 14.7a6.7 6.7 0 1 1-8.9-9.6 7.4 7.4 0 0 0 8.9 9.6Z"></path>
+      </svg>
+    </span>
+  </span>
+  <span class="theme-toggle__text">
+    <span class="theme-toggle__label" data-theme-label>Автоматическая тема</span>
+  </span>
+</button>
+{% endmacro %}
