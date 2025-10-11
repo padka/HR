@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/layout.html" import page_header, kpi_section, stat_cards %}
+{% from "page_primitives.html" import page_header, kpi_section, stat_cards %}
 {% block title %}Дашборд{% endblock %}
 {% block content %}
 {% set health_state = bot_status.health or 'missing' %}

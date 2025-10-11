@@ -1,20 +1,31 @@
 {% extends "base.html" %}
+{% from "page_primitives.html" import page_header, data_table %}
+{% import "partials/list_toolbar.html" as toolbars %}
 {% block title %}Кандидаты{% endblock %}
 {% block content %}
-<section class="page">
-  <header class="page-header">
-    <div>
-      <h1 class="page-title">Кандидаты</h1>
-      <p class="page-description">Единая база кандидатов с аналитикой и быстрыми действиями.</p>
-    </div>
-    <div class="page-actions">
-      <form method="get" action="/candidates" class="search-inline">
-        <input type="search" name="search" value="{{ filters.search }}" placeholder="Поиск по ФИО или TG ID">
-        <button class="btn btn-ghost" type="submit">Найти</button>
-      </form>
-      <a class="btn btn-primary" href="/candidates/new">+ Добавить кандидата</a>
-    </div>
-  </header>
+  {% call page_header(
+    title="Кандидаты",
+    description="Единая база кандидатов с аналитикой и быстрыми действиями."
+  ) %}
+    <a class="btn btn-primary" href="/candidates/new">Добавить кандидата</a>
+  {% endcall %}
+
+  {% call toolbars.list_toolbar(
+    form_id="candidates-toolbar",
+    form_action="/candidates",
+    method="get"
+  ) %}
+    <label class="input-pill">
+      <span class="input-pill__label">Поиск</span>
+      <input
+        class="input-pill__control"
+        type="search"
+        name="search"
+        value="{{ filters.search }}"
+        placeholder="Поиск по ФИО или TG ID"
+      >
+    </label>
+  {% endcall %}
 
   {% if analytics %}
     <section class="analytics-grid">
@@ -61,89 +72,83 @@
   {% endif %}
 
   {% if items %}
-    <div class="list-table-wrapper">
-      <table class="list-table">
-        <thead>
-          <tr>
-            <th scope="col">Кандидат</th>
-            <th scope="col">Telegram ID</th>
-            <th scope="col">Город</th>
-            <th scope="col">Последняя активность</th>
-            <th scope="col">Этап</th>
-            <th scope="col">Следующий шаг</th>
-            <th scope="col">Тесты</th>
-            <th scope="col">Последний результат</th>
-            <th scope="col">Сообщения</th>
-            <th scope="col" class="col-actions">Карточка</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for row in items %}
-          {% set user = row.user %}
-          {% set result = row.latest_result %}
-          {% set message = row.latest_message %}
-          <tr>
-            <td>
-              <div class="entity">
-                <span class="entity__title">{{ user.fio }}</span>
-                <span class="entity__meta">
-                  {% if user.is_active %}
-                    <span class="badge badge--success">Активен</span>
-                  {% else %}
-                    <span class="badge badge--muted">Отключен</span>
-                  {% endif %}
-                </span>
-              </div>
-            </td>
-            <td>{{ user.telegram_id }}</td>
-            <td>{{ user.city or '—' }}</td>
-            <td>{{ user.last_activity.strftime('%d.%m.%Y %H:%M') if user.last_activity else '—' }}</td>
-            <td>
-              <div class="stack">
-                <span class="badge badge--soft">{{ row.stage }}</span>
-                {% if row.latest_slot %}
-                  <span class="muted">{{ row.latest_slot.status|upper }} · {{ fmt_local(row.latest_slot.start_utc, row.latest_slot.candidate_tz or 'Europe/Moscow') }}</span>
+    {% set columns = [
+      {"label": "Кандидат"},
+      {"label": "Telegram ID"},
+      {"label": "Город"},
+      {"label": "Последняя активность"},
+      {"label": "Этап"},
+      {"label": "Следующий шаг"},
+      {"label": "Тесты"},
+      {"label": "Последний результат"},
+      {"label": "Сообщения"},
+      {"label": "Карточка", "class": "col-actions"}
+    ] %}
+    {% call data_table(columns=columns, caption="Список кандидатов") %}
+      {% for row in items %}
+        {% set user = row.user %}
+        {% set result = row.latest_result %}
+        {% set message = row.latest_message %}
+        <tr>
+          <td>
+            <div class="entity">
+              <span class="entity__title">{{ user.fio }}</span>
+              <span class="entity__meta">
+                {% if user.is_active %}
+                  <span class="badge badge--success">Активен</span>
                 {% else %}
-                  <span class="muted">Нет слотов</span>
+                  <span class="badge badge--muted">Отключен</span>
                 {% endif %}
-              </div>
-            </td>
-            <td>
-              {% if row.next_action %}
-                {{ row.next_action }}
+              </span>
+            </div>
+          </td>
+          <td>{{ user.telegram_id }}</td>
+          <td>{{ user.city or '—' }}</td>
+          <td>{{ user.last_activity.strftime('%d.%m.%Y %H:%M') if user.last_activity else '—' }}</td>
+          <td>
+            <div class="stack">
+              <span class="badge badge--soft">{{ row.stage }}</span>
+              {% if row.latest_slot %}
+                <span class="muted">{{ row.latest_slot.status|upper }} · {{ fmt_local(row.latest_slot.start_utc, row.latest_slot.candidate_tz or 'Europe/Moscow') }}</span>
               {% else %}
-                <span class="muted">—</span>
+                <span class="muted">Нет слотов</span>
               {% endif %}
-            </td>
-            <td>
-              {% if row.tests_count %}
-                {{ row.tests_count }}
-              {% else %}
-                <span class="muted">—</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if result %}
-                {{ result.final_score }} / {{ result.raw_score }}
-              {% else %}
-                <span class="muted">—</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if message %}
-                {{ message.message_text[:42] }}{% if message.message_text|length > 42 %}…{% endif %}
-              {% else %}
-                <span class="muted">—</span>
-              {% endif %}
-            </td>
-            <td>
-              <a class="btn btn-ghost btn-sm" href="/candidates/{{ user.id }}">Открыть</a>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+            </div>
+          </td>
+          <td>
+            {% if row.next_action %}
+              {{ row.next_action }}
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.tests_count %}
+              {{ row.tests_count }}
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if result %}
+              {{ result.final_score }} / {{ result.raw_score }}
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if message %}
+              {{ message.message_text[:42] }}{% if message.message_text|length > 42 %}…{% endif %}
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <a class="btn btn-ghost btn-sm" href="/candidates/{{ user.id }}">Открыть</a>
+          </td>
+        </tr>
+      {% endfor %}
+    {% endcall %}
   {% else %}
     <div class="surface">
       <h2 class="section-title">Кандидатов пока нет</h2>
@@ -153,5 +158,4 @@
       </div>
     </div>
   {% endif %}
-</section>
 {% endblock %}
