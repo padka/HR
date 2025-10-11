@@ -28,6 +28,13 @@ BASE_URL = f"http://{TEST_SERVER_HOST}:{TEST_SERVER_PORT}"
 SCREEN_DIR = Path("ui_screenshots")
 SCREEN_DIR.mkdir(exist_ok=True)
 
+THEMES = ("light", "dark")
+VIEWPORTS = (
+    ("desktop", {"width": 1440, "height": 900}),
+    ("tablet", {"width": 1024, "height": 768}),
+    ("mobile", {"width": 390, "height": 844}),
+)
+
 
 @pytest.fixture(scope="session")
 def demo_server() -> str:
@@ -77,16 +84,70 @@ def _close_browser(playwright, browser) -> None:
 
 def test_ui_screenshots(demo_server: str) -> None:
     playwright, browser = _launch_browser()
-    page = browser.new_page(viewport={"width": 1440, "height": 900})
     try:
-        for route in DEMO_ROUTES:
-            url = f"{demo_server}{route.path}"
-            page.goto(url)
-            page.wait_for_load_state("networkidle")
-            slug = _slug(route.path, route.slug)
-            screenshot_path = SCREEN_DIR / f"{slug}.png"
-            page.screenshot(path=str(screenshot_path), full_page=True)
+        for theme in THEMES:
+            for viewport_slug, viewport in VIEWPORTS:
+                page = browser.new_page(viewport=viewport)
+                page.add_init_script(
+                    f"try {{ localStorage.setItem('tg-admin-theme', '{theme}'); }} catch (e) {{}}"
+                )
+                page.emulate_media(color_scheme=theme)
+                for route in DEMO_ROUTES:
+                    url = f"{demo_server}{route.path}"
+                    page.goto(url)
+                    page.wait_for_load_state("networkidle")
+                    slug = _slug(route.path, route.slug)
+                    screenshot_path = SCREEN_DIR / f"{slug}__{viewport_slug}__{theme}.png"
+                    page.screenshot(path=str(screenshot_path), full_page=True)
+                page.close()
     finally:
+        _close_browser(playwright, browser)
+
+
+def test_theme_preference_persists(demo_server: str) -> None:
+    playwright, browser = _launch_browser()
+    context = browser.new_context()
+    page = context.new_page()
+    page.emulate_media(color_scheme="light")
+    try:
+        page.goto(f"{demo_server}/")
+        page.wait_for_load_state("networkidle")
+        page.evaluate("window.localStorage.clear()")
+
+        toggle = page.locator("[data-theme-toggle]").first
+        toggle.click()
+        page.wait_for_function("document.documentElement.dataset.themeMode === 'light'")
+        assert page.evaluate("window.localStorage.getItem('tg-admin-theme')") == "light"
+
+        page.goto(f"{demo_server}/recruiters")
+        page.wait_for_load_state("networkidle")
+        page.wait_for_function("document.documentElement.dataset.themeMode === 'light'")
+
+        toggle.click()
+        page.wait_for_function("document.documentElement.dataset.themeMode === 'dark'")
+        assert page.evaluate("window.localStorage.getItem('tg-admin-theme')") == "dark"
+
+        second_page = context.new_page()
+        second_page.emulate_media(color_scheme="light")
+        second_page.goto(f"{demo_server}/cities")
+        second_page.wait_for_load_state("networkidle")
+        second_page.wait_for_function("document.documentElement.dataset.themeMode === 'dark'")
+        assert second_page.evaluate("window.localStorage.getItem('tg-admin-theme')") == "dark"
+        second_page.close()
+
+        toggle.click()
+        page.wait_for_function("document.documentElement.dataset.themeMode === 'auto'")
+        assert page.evaluate("window.localStorage.getItem('tg-admin-theme')") == "auto"
+        assert page.evaluate("document.documentElement.hasAttribute('data-theme')") is False
+
+        page.emulate_media(color_scheme="dark")
+        page.reload()
+        page.wait_for_load_state("networkidle")
+        page.wait_for_function("document.documentElement.dataset.themeMode === 'auto'")
+        assert page.evaluate("document.documentElement.hasAttribute('data-theme')") is False
+        assert page.evaluate("document.documentElement.style.colorScheme") == "dark"
+    finally:
+        context.close()
         _close_browser(playwright, browser)
 
 
