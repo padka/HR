@@ -121,23 +121,24 @@ async def _send_with_retry(bot: Bot, method: SendMessage, correlation_id: str) -
         try:
             session = bot.session
             client = await session.create_session()
-            url = session.api.api_url(token=bot.token, method=method.__api_method__)
-            form = session.build_form_data(bot=bot, method=method)
-            async with client.post(
-                url,
-                data=form,
-                headers={"X-Telegram-Bot-API-Request-ID": correlation_id},
-                timeout=session.timeout,
-            ) as resp:
-                raw_result = await resp.text()
-                status_code = resp.status
-            response = session.check_response(
-                bot=bot,
-                method=method,
-                status_code=status_code,
-                content=raw_result,
-            )
-            return response.result
+            async with client:
+                url = session.api.api_url(token=bot.token, method=method.__api_method__)
+                form = session.build_form_data(bot=bot, method=method)
+                async with client.post(
+                    url,
+                    data=form,
+                    headers={"X-Telegram-Bot-API-Request-ID": correlation_id},
+                    timeout=session.timeout,
+                ) as resp:
+                    raw_result = await resp.text()
+                    status_code = resp.status
+                response = session.check_response(
+                    bot=bot,
+                    method=method,
+                    status_code=status_code,
+                    content=raw_result,
+                )
+                return response.result
         except TelegramRetryAfter as exc:
             if attempt >= 5:
                 raise
