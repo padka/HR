@@ -1,8 +1,13 @@
 import logging
 from datetime import datetime, timezone, date
 from typing import Optional, List
-from zoneinfo import ZoneInfo
-from zoneinfo import ZoneInfoNotFoundError
+from enum import Enum
+
+from backend.core.timezone import (
+    DEFAULT_TIMEZONE,
+    InvalidTimezoneError,
+    validate_timezone_name,
+)
 
 from sqlalchemy import (
     String,
@@ -93,13 +98,16 @@ class City(Base):
         if not candidate:
             raise ValueError("Timezone must be provided")
         try:
-            ZoneInfo(candidate)
-            return candidate
-        except ZoneInfoNotFoundError:
-            logger.warning("Unknown timezone '%s', falling back to Europe/Moscow", candidate)
+            return validate_timezone_name(candidate)
+        except InvalidTimezoneError:
+            logger.warning(
+                "Unknown timezone '%s', falling back to %s",
+                candidate,
+                DEFAULT_TIMEZONE,
+            )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to validate timezone '%s': %s", candidate, exc)
-        return "Europe/Moscow"
+        return DEFAULT_TIMEZONE
 
 
 class Template(Base):
@@ -119,7 +127,7 @@ class Template(Base):
         return f"<Template {self.key} city={self.city_id}>"
 
 
-class SlotStatus:
+class SlotStatus(str, Enum):
     FREE = "free"
     PENDING = "pending"
     BOOKED = "booked"

@@ -27,6 +27,8 @@ class Settings:
     test2_required: bool
     bot_failfast: bool
     bot_integration_enabled: bool
+    default_company_name: str
+    rejection_template_key: str
     admin_chat_id: int
     timezone: str
     session_secret: str
@@ -192,6 +194,12 @@ def get_settings() -> Settings:
     bot_webhook_url = os.getenv("BOT_WEBHOOK_URL", "").strip()
     test2_required = _get_bool("TEST2_REQUIRED", default=False)
     bot_failfast = _get_bool("BOT_FAILFAST", default=False)
+    default_company_name = (
+        os.getenv("DEFAULT_COMPANY_NAME", "SMART SERVICE").strip() or "SMART SERVICE"
+    )
+    rejection_template_key = (
+        os.getenv("REJECTION_TEMPLATE_KEY", "result_fail").strip() or "result_fail"
+    )
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
     secret_env_names = ("SESSION_SECRET_KEY", "SESSION_SECRET", "SECRET_KEY")
@@ -250,6 +258,8 @@ def get_settings() -> Settings:
         bot_webhook_url=bot_webhook_url,
         test2_required=test2_required,
         bot_failfast=bot_failfast,
+        default_company_name=default_company_name,
+        rejection_template_key=rejection_template_key,
         admin_chat_id=admin_chat_id,
         timezone=timezone,
         session_secret=session_secret,

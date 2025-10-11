@@ -7,25 +7,42 @@ import logging
 import secrets
 import time
 from collections import deque
-from typing import Deque, Dict, MutableMapping, Tuple
+from typing import Any, Deque, Dict, MutableMapping, Optional, Tuple
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from backend.core.settings import get_settings
+from backend.core.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
 _basic = HTTPBasic(auto_error=False)
 _SESSION_FAILURE_KEY = "admin_auth_failures"
 
+try:  # pragma: no cover - optional dependency
+    import redis.asyncio as redis_async
+except Exception:  # pragma: no cover - redis is optional
+    redis_async = None  # type: ignore[assignment]
 
-class _RateLimiter:
-    """Simple in-memory rate limiter keyed by a requester identifier."""
 
-    def __init__(self, max_attempts: int, window_seconds: int) -> None:
-        self._max_attempts = max_attempts
-        self._window_seconds = window_seconds
+class _RateLimitStore:
+    async def configure(self, max_attempts: int, window_seconds: int) -> None:
+        raise NotImplementedError
+
+    async def is_limited(self, key: str) -> Tuple[bool, Optional[int]]:
+        raise NotImplementedError
+
+    async def record_failure(self, key: str) -> None:
+        raise NotImplementedError
+
+    async def reset(self, key: str) -> None:
+        raise NotImplementedError
+
+
+class _InMemoryRateLimitStore(_RateLimitStore):
+    def __init__(self) -> None:
+        self._max_attempts = 1
+        self._window_seconds = 60
         self._buckets: Dict[str, Deque[float]] = {}
         self._lock = asyncio.Lock()
 
@@ -39,7 +56,7 @@ class _RateLimiter:
                 self._window_seconds = window_seconds
                 self._buckets.clear()
 
-    async def is_limited(self, key: str) -> Tuple[bool, int | None]:
+    async def is_limited(self, key: str) -> Tuple[bool, Optional[int]]:
         now = time.monotonic()
         async with self._lock:
             bucket = self._buckets.get(key)
@@ -68,18 +85,145 @@ class _RateLimiter:
             bucket.popleft()
 
 
+class _RedisRateLimitStore(_RateLimitStore):
+    def __init__(self, url: str) -> None:
+        if redis_async is None:  # pragma: no cover - optional dependency
+            raise RuntimeError("redis.asyncio is not available")
+        self._redis = redis_async.from_url(url)
+        self._max_attempts = 1
+        self._window_seconds = 60
+        self._key_prefix = "admin-rate-limit:"
+
+    async def configure(self, max_attempts: int, window_seconds: int) -> None:
+        self._max_attempts = max_attempts
+        self._window_seconds = window_seconds
+
+    def _key(self, key: str) -> str:
+        return f"{self._key_prefix}{key}"
+
+    async def is_limited(self, key: str) -> Tuple[bool, Optional[int]]:
+        redis_key = self._key(key)
+        try:
+            pipe = self._redis.pipeline()
+            pipe.get(redis_key)
+            pipe.ttl(redis_key)
+            count_raw, ttl = await pipe.execute()
+        except Exception as exc:  # pragma: no cover - redis failures
+            logger.warning("Redis rate limit check failed: %s", exc)
+            return False, None
+
+        if count_raw is None:
+            return False, None
+
+        if isinstance(count_raw, bytes):
+            try:
+                count = int(count_raw.decode("utf-8"))
+            except ValueError:
+                count = 0
+        else:
+            try:
+                count = int(count_raw)
+            except (TypeError, ValueError):
+                count = 0
+
+        if count < self._max_attempts:
+            return False, None
+
+        if isinstance(ttl, int) and ttl > 0:
+            retry_after = ttl
+        else:
+            retry_after = self._window_seconds
+        return True, retry_after
+
+    async def record_failure(self, key: str) -> None:
+        redis_key = self._key(key)
+        try:
+            count = await self._redis.incr(redis_key)
+            ttl = await self._redis.ttl(redis_key)
+            if count == 1 or (isinstance(ttl, int) and ttl < 0):
+                await self._redis.expire(redis_key, self._window_seconds)
+        except Exception as exc:  # pragma: no cover - redis failures
+            logger.warning("Redis rate limit update failed: %s", exc)
+
+    async def reset(self, key: str) -> None:
+        redis_key = self._key(key)
+        try:
+            await self._redis.delete(redis_key)
+        except Exception as exc:  # pragma: no cover - redis failures
+            logger.warning("Redis rate limit reset failed: %s", exc)
+
+
+class _RateLimiter:
+    """Rate limiter backed by a pluggable store."""
+
+    def __init__(
+        self,
+        max_attempts: int,
+        window_seconds: int,
+        *,
+        store: Optional[_RateLimitStore] = None,
+    ) -> None:
+        self._max_attempts = max_attempts
+        self._window_seconds = window_seconds
+        self._store = store or _InMemoryRateLimitStore()
+        self._lock = asyncio.Lock()
+        self._configured = False
+
+    async def configure(self, max_attempts: int, window_seconds: int) -> None:
+        async with self._lock:
+            if (
+                self._max_attempts != max_attempts
+                or self._window_seconds != window_seconds
+            ):
+                self._max_attempts = max_attempts
+                self._window_seconds = window_seconds
+                self._configured = False
+            await self._store.configure(self._max_attempts, self._window_seconds)
+            self._configured = True
+
+    async def _ensure_configured(self) -> None:
+        if not self._configured:
+            await self.configure(self._max_attempts, self._window_seconds)
+
+    async def is_limited(self, key: str) -> Tuple[bool, Optional[int]]:
+        await self._ensure_configured()
+        return await self._store.is_limited(key)
+
+    async def record_failure(self, key: str) -> None:
+        await self._ensure_configured()
+        await self._store.record_failure(key)
+
+    async def reset(self, key: str) -> None:
+        await self._ensure_configured()
+        await self._store.reset(key)
+
+
 _limiter: _RateLimiter | None = None
-_limiter_config: Tuple[int, int] | None = None
+_limiter_config: Tuple[int, int, Optional[str]] | None = None
 
 
-def _get_limiter(max_attempts: int, window_seconds: int) -> _RateLimiter:
+def _get_limiter(settings: Settings) -> _RateLimiter:
     global _limiter, _limiter_config
-    config = (max_attempts, window_seconds)
+    config = (
+        settings.admin_rate_limit_attempts,
+        settings.admin_rate_limit_window_seconds,
+        settings.redis_url or None,
+    )
     if _limiter is None or _limiter_config != config:
-        _limiter = _RateLimiter(max_attempts, window_seconds)
+        store: Optional[_RateLimitStore] = None
+        if settings.redis_url:
+            try:
+                store = _RedisRateLimitStore(settings.redis_url)
+                logger.info("Using Redis-backed rate limit store")
+            except Exception as exc:  # pragma: no cover - optional dependency
+                logger.warning("Falling back to in-memory rate limiter: %s", exc)
+                store = None
+        _limiter = _RateLimiter(
+            settings.admin_rate_limit_attempts,
+            settings.admin_rate_limit_window_seconds,
+            store=store,
+        )
         _limiter_config = config
-        return _limiter
-
     return _limiter
 
 
@@ -132,7 +276,8 @@ async def require_admin(
     """Ensure the incoming request is authenticated via HTTP Basic."""
 
     settings = get_settings()
-    limiter = _get_limiter(
+    limiter = _get_limiter(settings)
+    await limiter.configure(
         settings.admin_rate_limit_attempts, settings.admin_rate_limit_window_seconds
     )
     client_id = _client_identifier(request)
