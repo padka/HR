@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "page_primitives.html" import page_header, data_table %}
 {% import "partials/form_shell.html" as forms %}
 {% block title %}Кандидат {{ user.fio }}{% endblock %}
 {% block content %}
@@ -13,27 +14,30 @@
     Не удалось обновить данные кандидата.
   </div>
 {% endif %}
-<section class="page-header">
-  <div>
-    <a class="muted" href="/candidates">← К списку кандидатов</a>
-    <h1 class="page-title">{{ user.fio }}</h1>
-    <p class="page-description">Telegram ID {{ user.telegram_id }} · {{ user.city or 'Город не указан' }}</p>
-  </div>
-  <div class="page-actions">
-    <form method="post" action="/candidates/{{ user.id }}/toggle">
-      {% if user.is_active %}
-        <input type="hidden" name="active" value="false">
-        <button class="btn btn-ghost" type="submit">Отключить</button>
-      {% else %}
-        <input type="hidden" name="active" value="true">
-        <button class="btn btn-primary" type="submit">Активировать</button>
-      {% endif %}
-    </form>
-    <form method="post" action="/candidates/{{ user.id }}/delete" onsubmit="return confirm('Удалить кандидата {{ user.fio }}?');">
-      <button class="btn btn-soft" type="submit">Удалить</button>
-    </form>
-  </div>
-</section>
+{% call page_header(
+  eyebrow="Кандидат",
+  title=user.fio,
+  description="Telegram ID " ~ user.telegram_id ~ " · " ~ (user.city or 'Город не указан'),
+  meta='<a class="muted" href="/candidates">← К списку кандидатов</a>'|safe
+) %}
+  <form method="post" action="/candidates/{{ user.id }}/toggle" class="inline-form">
+    {% if user.is_active %}
+      <input type="hidden" name="active" value="false">
+      <button class="btn btn-ghost" type="submit">Отключить</button>
+    {% else %}
+      <input type="hidden" name="active" value="true">
+      <button class="btn btn-primary" type="submit">Активировать</button>
+    {% endif %}
+  </form>
+  <form
+    method="post"
+    action="/candidates/{{ user.id }}/delete"
+    class="inline-form"
+    onsubmit="return confirm('Удалить кандидата {{ user.fio }}?');"
+  >
+    <button class="btn btn-soft" type="submit">Удалить</button>
+  </form>
+{% endcall %}
 
 <div class="cards-grid">
   <article class="surface">
@@ -102,40 +106,34 @@
     <p class="section-hint">Полная история прохождений с ключевыми показателями.</p>
   </header>
   {% if tests %}
-    <div class="list-table-wrapper">
-      <table class="list-table">
-        <thead>
-          <tr>
-            <th scope="col">Дата</th>
-            <th scope="col">Балл</th>
-            <th scope="col">Рейтинг</th>
-            <th scope="col">Время (сек)</th>
-            <th scope="col">Ответы</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for result in tests %}
-          {% set answers = answers_map.get(result.id, {}) %}
-          <tr>
-            <td>{{ result.created_at.strftime('%d.%m.%Y %H:%M') if result.created_at else '—' }}</td>
-            <td><strong>{{ result.final_score }}</strong> из {{ result.raw_score }}</td>
-            <td>{{ result.rating }}</td>
-            <td>{{ result.total_time }}</td>
-            <td>
-              {% if answers %}
-                {{ answers.questions_correct }}/{{ answers.questions_total }} верно
-                {% if answers.questions_overtime %}
-                  · <span class="muted">{{ answers.questions_overtime }} проср.</span>
-                {% endif %}
-              {% else %}
-                <span class="muted">—</span>
+    {% set test_columns = [
+      {"label": "Дата"},
+      {"label": "Балл"},
+      {"label": "Рейтинг"},
+      {"label": "Время (сек)"},
+      {"label": "Ответы"}
+    ] %}
+    {% call data_table(columns=test_columns, caption="Результаты тестов кандидата", table_class="list-table") %}
+      {% for result in tests %}
+        {% set answers = answers_map.get(result.id, {}) %}
+        <tr>
+          <td>{{ result.created_at.strftime('%d.%m.%Y %H:%M') if result.created_at else '—' }}</td>
+          <td><strong>{{ result.final_score }}</strong> из {{ result.raw_score }}</td>
+          <td>{{ result.rating }}</td>
+          <td>{{ result.total_time }}</td>
+          <td>
+            {% if answers %}
+              {{ answers.questions_correct }}/{{ answers.questions_total }} верно
+              {% if answers.questions_overtime %}
+                · <span class="muted">{{ answers.questions_overtime }} проср.</span>
               {% endif %}
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    {% endcall %}
   {% else %}
     <p class="muted">Тесты пока не пройдены.</p>
   {% endif %}
@@ -147,34 +145,28 @@
     <p class="section-hint">Отображаются авто-сообщения, назначенные на Telegram ID кандидата.</p>
   </header>
   {% if messages %}
-    <div class="list-table-wrapper">
-      <table class="list-table">
-        <thead>
-          <tr>
-            <th scope="col">Создано</th>
-            <th scope="col">Отправка</th>
-            <th scope="col">Текст</th>
-            <th scope="col">Статус</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for msg in messages %}
-          <tr>
-            <td>{{ msg.created_at.strftime('%d.%m.%Y %H:%M') if msg.created_at else '—' }}</td>
-            <td>{{ msg.send_time }}</td>
-            <td class="text-prewrap">{{ msg.message_text }}</td>
-            <td>
-              {% if msg.is_active %}
-                <span class="badge badge--success">Активно</span>
-              {% else %}
-                <span class="badge badge--muted">Отключено</span>
-              {% endif %}
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {% set message_columns = [
+      {"label": "Создано"},
+      {"label": "Отправка"},
+      {"label": "Текст"},
+      {"label": "Статус"}
+    ] %}
+    {% call data_table(columns=message_columns, caption="Сообщения кандидату", table_class="list-table") %}
+      {% for msg in messages %}
+        <tr>
+          <td>{{ msg.created_at.strftime('%d.%m.%Y %H:%M') if msg.created_at else '—' }}</td>
+          <td>{{ msg.send_time }}</td>
+          <td class="text-prewrap">{{ msg.message_text }}</td>
+          <td>
+            {% if msg.is_active %}
+              <span class="badge badge--success">Активно</span>
+            {% else %}
+              <span class="badge badge--muted">Отключено</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    {% endcall %}
   {% else %}
     <p class="muted">Сообщения не найдены.</p>
   {% endif %}
