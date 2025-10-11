@@ -1,9 +1,9 @@
-{% macro page_header(opts_or_title, eyebrow=None, description=None, meta=None, badges=None) -%}
+{% macro page_header(opts_or_title=None, title=None, eyebrow=None, description=None, meta=None, badges=None) -%}
   {% if opts_or_title is mapping %}
     {% set options = opts_or_title %}
   {% else %}
     {% set options = {
-      'title': opts_or_title,
+      'title': title if title is not none else opts_or_title,
       'eyebrow': eyebrow,
       'description': description,
       'meta': meta,
