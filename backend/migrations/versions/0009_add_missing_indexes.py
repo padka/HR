@@ -28,7 +28,7 @@ def _get_operations(conn: Connection) -> Tuple[Operations, MigrationContext, Con
     # migration runner already holds a transaction on the provided connection
     # (as happens in tests), opening an additional connection to run the
     # autocommit blocks ends up racing with that lock and raises
-    # ``sqlite3.OperationalError: database is locked``.  Re-use the incoming
+    # ``sqlite3.OperationalError: database is locked``.  Reuse the incoming
     # connection in that case so that the schema change executes within the
     # existing transaction.  Other engines (PostgreSQL in production) are fine
     # with the standalone connection and benefit from the concurrent index

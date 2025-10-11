@@ -159,6 +159,7 @@ class BotService:
             not_configured_message=self.not_configured_message,
             transient_message=self.transient_message,
             failure_message=self.failure_message,
+            rejection_failure_message=self.rejection_failure_message,
         )
 
     async def send_test2(

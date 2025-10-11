@@ -15,6 +15,6 @@
 - `audit/run_smoke_checks.py` показал, что без прогрева БД даже health-check не стартует; добавьте `make dev-db` с миграциями и seed.
 
 ## A11y и UX
-- В `base.html` отсутствует skip-link, навигация недоступна с клавиатуры на мобильной версии (бургер не переключает фокус). 【F:backend/apps/admin_ui/templates/base.html†L1-L120】
+- В `base.html` уже присутствует skip-link («Перейти к основному контенту»), так что пункт о его отсутствии устарел. 【F:backend/apps/admin_ui/templates/base.html†L33-L36】
 - Формы (`recruiters_new.html`, `candidates_new.html`) не имеют явных описаний ошибок и aria-live областей, fallback статический. 【F:backend/apps/admin_ui/templates/recruiters_new.html†L1-L160】
 - Токены стеклянных поверхностей подключены (`tokens.css`), но не все компоненты используют blur/тени — требуется визуальный аудит и, возможно, внедрение Apple-like glass preset.
