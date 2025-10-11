@@ -390,13 +390,12 @@
 
 - `backend/apps/admin_ui/static`
   - `backend/apps/admin_ui/static/build/main.css`
-  - `backend/apps/admin_ui/static/css/cards.css`
-  - `backend/apps/admin_ui/static/css/forms.css`
-  - `backend/apps/admin_ui/static/css/lists.css`
   - `backend/apps/admin_ui/static/css/main.css`
-  - `backend/apps/admin_ui/static/css/tahoe.css`
   - `backend/apps/admin_ui/static/css/tokens.css`
   - `backend/apps/admin_ui/static/favicon.ico`
+  - `backend/apps/admin_ui/static/js/modules/city-selector.js`
+  - `backend/apps/admin_ui/static/js/modules/dashboard-calendar.js`
+  - `backend/apps/admin_ui/static/js/modules/form-dirty-guard.js`
   - `backend/apps/admin_ui/static/js/modules/form-hotkeys.js`
   - `backend/apps/admin_ui/static/js/modules/template-editor.js`
   - `backend/apps/admin_ui/static/js/modules/template-presets.js`
