@@ -32,27 +32,29 @@
   <script src="/static/js/theme-toggle.js" defer></script>
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/build/main.css">
-  <link rel="stylesheet" href="/static/css/liquid-dashboard.css">
   {% block extra_css %}{% endblock %}
 </head>
-<body class="liquid-ui">
+<body>
+  <a class="skip-link focus-ring" href="#app-main">Перейти к содержимому</a>
   <div class="app-shell">
     <header class="topbar glass" data-topbar>
       <div class="topbar__content">
-        <button
-          class="topbar__burger focus-ring"
-          type="button"
-          aria-label="Открыть меню"
-          aria-expanded="false"
-          aria-controls="app-primary-nav"
-          data-topbar-toggle
-        >
-          <span aria-hidden="true">☰</span>
-        </button>
-        <a class="topbar__brand focus-ring" href="/">
-          <span class="topbar__brand-accent" aria-hidden="true"></span>
-          <span class="topbar__brand-text">TG Bot Admin</span>
-        </a>
+        <div class="topbar__identity">
+          <button
+            class="topbar__burger focus-ring"
+            type="button"
+            aria-label="Открыть меню"
+            aria-expanded="false"
+            aria-controls="app-primary-nav"
+            data-topbar-toggle
+          >
+            <span aria-hidden="true">☰</span>
+          </button>
+          <a class="topbar__brand focus-ring" href="/">
+            <span class="topbar__brand-accent" aria-hidden="true"></span>
+            <span class="topbar__brand-text">TG Bot Admin</span>
+          </a>
+        </div>
         <nav
           id="app-primary-nav"
           class="topbar__nav"
@@ -181,14 +183,14 @@
         </nav>
         <div class="topbar__actions">
           {{ theme_toggle('topbar__theme-toggle') }}
-          <span class="topbar__badge">{{ request.url.hostname or 'localhost' }}</span>
+          <span class="topbar__badge" role="status">{{ request.url.hostname or 'localhost' }}</span>
         </div>
       </div>
     </header>
     <div class="topbar__scrim" data-topbar-scrim></div>
-    <main class="app-main">
+    <main id="app-main" class="app-main" role="main">
       <div class="app-main__stage">
-        <div class="app-main__surface glass">
+        <div class="app-main__surface glass surface">
           <div class="container">
             {% block content %}{% endblock %}
           </div>
@@ -216,6 +218,11 @@
           const next = nav && nav.dataset.open !== 'true';
           setNavOpen(next);
         });
+        burger.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            setNavOpen(false);
+          }
+        });
       }
 
       if (scrim) {
@@ -227,6 +234,15 @@
           const target = event.target;
           if (window.innerWidth <= 768 && target instanceof HTMLElement && target.closest('a')) {
             setNavOpen(false);
+          }
+        });
+
+        nav.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            setNavOpen(false);
+            if (burger) {
+              burger.focus();
+            }
           }
         });
       }
