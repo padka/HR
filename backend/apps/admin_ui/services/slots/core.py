@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import sys
+from typing import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
@@ -446,7 +448,8 @@ async def execute_bot_dispatch(
 
     try:
         if plan.kind == "test2":
-            result = await _trigger_test2(
+            trigger_test2 = _resolve_trigger("_trigger_test2", _trigger_test2)
+            result = await trigger_test2(
                 plan.candidate_id,
                 plan.candidate_tz,
                 plan.candidate_city_id,
@@ -457,7 +460,10 @@ async def execute_bot_dispatch(
             action_result = _map_test2_status(result.status)
             success = result.ok and action_result == "sent_test2"
         elif plan.kind == "rejection":
-            result = await _trigger_rejection(
+            trigger_rejection = _resolve_trigger(
+                "_trigger_rejection", _trigger_rejection
+            )
+            result = await trigger_rejection(
                 plan.candidate_id,
                 plan.template_key or REJECTION_TEMPLATE_KEY,
                 plan.template_context,
@@ -493,6 +499,18 @@ def _map_test2_status(status: str) -> str:
     if status == "sent":
         return "sent_test2"
     return status
+
+
+def _resolve_trigger(
+    name: str,
+    fallback: Callable[..., Awaitable[BotSendResult]],
+) -> Callable[..., Awaitable[BotSendResult]]:
+    module = sys.modules.get("backend.apps.admin_ui.services.slots")
+    if module is not None:
+        candidate = getattr(module, name, None)
+        if callable(candidate):
+            return candidate
+    return fallback
 
 
 async def _mark_dispatch_state(slot_id: int, kind: str, success: bool) -> None:
