@@ -7,9 +7,10 @@
     title="Кандидаты",
     description="Единая база кандидатов с аналитикой и быстрыми действиями."
   ) %}
-    <a class="btn btn-primary" href="/candidates/new">Добавить кандидата</a>
+    <a class="btn btn-primary btn--primary" href="/candidates/new">Добавить кандидата</a>
   {% endcall %}
 
+  <div class="toolbar">
   {% call toolbars.list_toolbar(
     form_id="candidates-toolbar",
     form_action="/candidates",
@@ -18,7 +19,7 @@
     <label class="input-pill">
       <span class="input-pill__label">Поиск</span>
       <input
-        class="input-pill__control"
+        class="input-pill__control input"
         type="search"
         name="search"
         value="{{ filters.search }}"
@@ -26,42 +27,43 @@
       >
     </label>
   {% endcall %}
+  </div>
 
   {% if analytics %}
     <section class="analytics-grid">
-      <a class="metric-card" href="/candidates">
+      <a class="metric-card card card--interactive" href="/candidates">
         <span class="metric-card__label">Всего кандидатов</span>
         <span class="metric-card__value">{{ analytics.total }}</span>
         <span class="metric-card__meta">Активны: {{ analytics.active }} • Отключены: {{ analytics.inactive }}</span>
       </a>
-      <a class="metric-card" href="/candidates?stage=interviews">
+      <a class="metric-card card card--interactive" href="/candidates?stage=interviews">
         <span class="metric-card__label">Интервью</span>
         <span class="metric-card__value">{{ analytics.upcoming_interviews }}</span>
         <span class="metric-card__meta">В ожидании подтверждения: {{ analytics.awaiting_confirmation }} • Завершено: {{ analytics.completed_interviews }}</span>
       </a>
-      <article class="metric-card">
+      <article class="metric-card card">
         <span class="metric-card__label">Активность за 7 дней</span>
         <span class="metric-card__value">{{ analytics.tests_week }}</span>
         <span class="metric-card__meta">Тестов • Сообщений: {{ analytics.messages_week }}</span>
       </article>
-      <a class="metric-card" href="/candidates?stage=alerts">
+      <a class="metric-card card card--interactive" href="/candidates?stage=alerts">
         <span class="metric-card__label">Нужно внимание</span>
         <span class="metric-card__value">{{ analytics.need_followup }}</span>
         <span class="metric-card__meta">Без сообщений: {{ analytics.need_followup }} • Без тестов: {{ analytics.no_tests }}</span>
       </a>
     </section>
 
-    <section class="pipeline-board">
+    <section class="pipeline-board card">
       <h2 class="section-title">Воронка интервью</h2>
       <div class="pipeline-grid">
         {% for stage in analytics.pipeline %}
           {% if stage.slug %}
-            <a class="pipeline-item" href="/candidates?stage={{ stage.slug }}">
+            <a class="pipeline-item chip chip--active" href="/candidates?stage={{ stage.slug }}">
               <span>{{ stage.label }}</span>
               <strong>{{ stage.count }}</strong>
             </a>
           {% else %}
-            <div class="pipeline-item">
+            <div class="pipeline-item chip">
               <span>{{ stage.label }}</span>
               <strong>{{ stage.count }}</strong>
             </div>
@@ -84,7 +86,7 @@
       {"label": "Сообщения"},
       {"label": "Карточка", "class": "col-actions"}
     ] %}
-    {% call data_table({'columns': columns, 'caption': "Список кандидатов"}) %}
+    {% call data_table({'columns': columns, 'caption': "Список кандидатов", 'table_class': 'table table--candidates'}) %}
       {% for row in items %}
         {% set user = row.user %}
         {% set result = row.latest_result %}
@@ -144,17 +146,17 @@
             {% endif %}
           </td>
           <td>
-            <a class="btn btn-ghost btn-sm" href="/candidates/{{ user.id }}">Открыть</a>
+            <a class="btn btn-ghost btn--ghost btn-sm" href="/candidates/{{ user.id }}">Открыть</a>
           </td>
         </tr>
       {% endfor %}
     {% endcall %}
   {% else %}
-    <div class="surface">
+    <div class="surface card">
       <h2 class="section-title">Кандидатов пока нет</h2>
       <p class="section-hint">Добавьте кандидата вручную или пригласите через бота, чтобы начать работу.</p>
       <div class="page-actions">
-        <a class="btn btn-primary" href="/candidates/new">Добавить кандидата</a>
+        <a class="btn btn-primary btn--primary" href="/candidates/new">Добавить кандидата</a>
       </div>
     </div>
   {% endif %}
