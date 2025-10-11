@@ -7,7 +7,7 @@ import logging
 import secrets
 import time
 from collections import deque
-from typing import Any, Deque, Dict, MutableMapping, Optional, Tuple
+from typing import Any, Deque, Dict, MutableMapping, Optional, Tuple, cast
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -23,6 +23,24 @@ try:  # pragma: no cover - optional dependency
     import redis.asyncio as redis_async
 except Exception:  # pragma: no cover - redis is optional
     redis_async = None  # type: ignore[assignment]
+
+
+def _get_request_session(request: Request) -> MutableMapping[str, object]:
+    """Return a mutable session mapping, falling back to an in-memory store."""
+
+    if "session" in request.scope:
+        session_obj = request.session
+        if isinstance(session_obj, MutableMapping):
+            return session_obj
+        return cast(MutableMapping[str, object], session_obj)
+
+    fallback: MutableMapping[str, object] | None = getattr(
+        request.state, "_fallback_session", None
+    )
+    if fallback is None or not isinstance(fallback, MutableMapping):
+        fallback = {}
+        request.state._fallback_session = fallback  # type: ignore[attr-defined]
+    return fallback
 
 
 class _RateLimitStore:
@@ -291,8 +309,9 @@ async def require_admin(
             headers={"Retry-After": str(retry_after or 0)},
         )
 
+    session = _get_request_session(request)
     failures, session_retry_after = _session_failures(
-        request.session, window_seconds=settings.admin_rate_limit_window_seconds
+        session, window_seconds=settings.admin_rate_limit_window_seconds
     )
     if failures >= settings.admin_rate_limit_attempts:
         retry_after_seconds = int(session_retry_after or 0)
@@ -322,7 +341,7 @@ async def require_admin(
         now = time.time()
         await limiter.record_failure(client_id)
         _record_session_failure(
-            request.session,
+            session,
             timestamp=now,
             window_seconds=settings.admin_rate_limit_window_seconds,
         )
@@ -338,7 +357,7 @@ async def require_admin(
         now = time.time()
         await limiter.record_failure(client_id)
         _record_session_failure(
-            request.session,
+            session,
             timestamp=now,
             window_seconds=settings.admin_rate_limit_window_seconds,
         )
@@ -354,7 +373,7 @@ async def require_admin(
         )
 
     await limiter.reset(client_id)
-    _reset_session_failures(request.session)
+    _reset_session_failures(session)
     logger.info("Admin user '%s' successfully authenticated from %s", username, client_id)
 
 

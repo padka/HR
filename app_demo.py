@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date as date_type, time as time_type
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
@@ -323,6 +323,70 @@ WEEKLY_KPIS_DATA = {
         "computed_at": "2024-03-24T00:05:00+03:00",
     },
 }
+
+CALENDAR_TZ = "Europe/Moscow"
+CALENDAR_WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def _calendar_stub() -> Dict[str, object]:
+    zone = ZoneInfo(CALENDAR_TZ)
+    today = NOW_UTC.astimezone(zone).date()
+    tomorrow = today + timedelta(days=1)
+
+    def _day(date: date_type, *, count: int, selected: bool) -> Dict[str, object]:
+        return {
+            "date": date.isoformat(),
+            "label": date.strftime("%d.%m"),
+            "weekday": CALENDAR_WEEKDAYS[date.weekday() % 7],
+            "count": count,
+            "is_today": date == today,
+            "is_selected": selected,
+        }
+
+    start_local = datetime.combine(today, time_type(hour=10), tzinfo=zone)
+    end_local = start_local + timedelta(minutes=60)
+
+    return {
+        "ok": True,
+        "selected_date": today.isoformat(),
+        "selected_label": "сегодня",
+        "selected_human": today.strftime("%d.%m.%Y"),
+        "timezone": CALENDAR_TZ,
+        "days": [_day(today, count=1, selected=True), _day(tomorrow, count=0, selected=False)],
+        "events": [
+            {
+                "id": 101,
+                "status": "CONFIRMED_BY_CANDIDATE",
+                "status_label": "Подтверждено кандидатом",
+                "status_variant": "success",
+                "start_time": start_local.strftime("%H:%M"),
+                "end_time": end_local.strftime("%H:%M"),
+                "start_iso": start_local.astimezone(timezone.utc).isoformat(),
+                "duration": 60,
+                "recruiter": {"id": 7, "name": "Ирина Никифорова", "tz": CALENDAR_TZ},
+                "city": {"id": 1, "name": "Москва"},
+                "candidate": {
+                    "name": "Алексей Смирнов",
+                    "profile_url": "/candidates/42",
+                    "telegram_id": 123456789,
+                },
+            }
+        ],
+        "events_total": 1,
+        "status_summary": {
+            "CONFIRMED_BY_CANDIDATE": 1,
+            "BOOKED": 0,
+            "PENDING": 0,
+            "CANCELED": 0,
+        },
+        "meta": "Подтверждено: 1",
+        "updated_label": NOW_UTC.astimezone(zone).strftime("Обновлено %H:%M"),
+        "generated_at": NOW_UTC.isoformat(),
+        "window_days": 7,
+    }
+
+
+DASHBOARD_CALENDAR_DATA = _calendar_stub()
 
 ANALYTICS_DATA = {
     "total": 248,
@@ -691,6 +755,7 @@ def dashboard_context() -> Dict[str, Any]:
         "counts": build(COUNTS_DATA),
         "bot_status": build(BOT_STATUS_DATA),
         "weekly_kpis": build(WEEKLY_KPIS_DATA),
+        "calendar": build(DASHBOARD_CALENDAR_DATA),
     }
 
 
