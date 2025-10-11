@@ -129,18 +129,18 @@
 {% macro filter_bar(opts_or_title=None, hint=None, class_name=None, title=None) -%}
   {% set ns = namespace(options={}) %}
   {% if opts_or_title is mapping %}
-    {% set ns.options = opts_or_title %}
+    {% set ns.options = dict(opts_or_title) %}
   {% elif opts_or_title is not none %}
     {% set ns.options = {'title': opts_or_title} %}
   {% endif %}
   {% if title is not none %}
-    {% set ns.options = ns.options | combine({'title': title}) %}
+    {% set _ = ns.options.update({'title': title}) %}
   {% endif %}
   {% if hint is not none %}
-    {% set ns.options = ns.options | combine({'hint': hint}) %}
+    {% set _ = ns.options.update({'hint': hint}) %}
   {% endif %}
   {% if class_name is not none %}
-    {% set ns.options = ns.options | combine({'class_name': class_name}) %}
+    {% set _ = ns.options.update({'class_name': class_name}) %}
   {% endif %}
   {% set options = ns.options %}
   <section class="filter-bar panel{% if options.class_name %} {{ options.class_name }}{% endif %}">
