@@ -109,9 +109,11 @@
       'class_name': class_name
     } %}
   {% endif %}
-  <section class="stat-grid{% if options.class_name %} {{ options.class_name }}{% endif %}">
-    {% if options.items is not none %}
-      {% for card in options.items %}
+  {% set items = options.get('items') %}
+  {% set grid_class = options.get('class_name') %}
+  <section class="stat-grid{% if grid_class %} {{ grid_class }}{% endif %}">
+    {% if items is not none %}
+      {% for card in items %}
         <article class="stat-card surface">
           <span class="stat-card__label">{{ card.label }}</span>
           <span class="stat-card__value">{{ card.value }}</span>
