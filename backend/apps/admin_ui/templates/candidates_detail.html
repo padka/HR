@@ -113,7 +113,7 @@
       {"label": "Время (сек)"},
       {"label": "Ответы"}
     ] %}
-    {% call data_table(columns=test_columns, caption="Результаты тестов кандидата", table_class="list-table") %}
+    {% call data_table({'columns': test_columns, 'caption': "Результаты тестов кандидата", 'table_class': "list-table"}) %}
       {% for result in tests %}
         {% set answers = answers_map.get(result.id, {}) %}
         <tr>
@@ -151,7 +151,7 @@
       {"label": "Текст"},
       {"label": "Статус"}
     ] %}
-    {% call data_table(columns=message_columns, caption="Сообщения кандидату", table_class="list-table") %}
+    {% call data_table({'columns': message_columns, 'caption': "Сообщения кандидату", 'table_class': "list-table"}) %}
       {% for msg in messages %}
         <tr>
           <td>{{ msg.created_at.strftime('%d.%m.%Y %H:%M') if msg.created_at else '—' }}</td>

@@ -8,6 +8,11 @@ import math
 
 from backend.domain.models import SlotStatus
 
+try:  # pragma: no cover - FastAPI may not be installed in some test environments
+    from fastapi.params import Param as _FastAPIParam
+except Exception:  # pragma: no cover - fall back when FastAPI is unavailable
+    _FastAPIParam = None  # type: ignore[assignment]
+
 
 DEFAULT_TZ = "Europe/Moscow"
 
@@ -111,8 +116,12 @@ def status_to_db(value: str):
 
 
 def parse_optional_int(value: Optional[str]) -> Optional[int]:
+    if _FastAPIParam is not None and isinstance(value, _FastAPIParam):
+        value = value.default  # type: ignore[assignment]
     if value is None:
         return None
+    if not isinstance(value, str):
+        value = str(value)
     text = value.strip()
     if not text:
         return None
