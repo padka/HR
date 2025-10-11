@@ -1,4 +1,4 @@
-.PHONY: setup bootstrap doctor dev-db test ui demo previews screens kpi-weekly run
+.PHONY: setup bootstrap doctor dev-db test ui demo previews screens kpi-weekly run codex
 
 VENV ?= .venv
 PYTHON ?= python3
@@ -42,4 +42,9 @@ screens: $(VENV)/bin/python
 	. $(VENV)/bin/activate && pytest tests/test_ui_screenshots.py
 
 kpi-weekly: $(VENV)/bin/python
-	. $(VENV)/bin/activate && python tools/recompute_weekly_kpis.py --weeks 8
+        . $(VENV)/bin/activate && python tools/recompute_weekly_kpis.py --weeks 8
+
+.PHONY: codex
+codex:
+	@chmod +x scripts/codex.sh
+	@scripts/codex.sh
