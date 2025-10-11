@@ -1,7 +1,6 @@
-<<<<<<< HEAD
 # Local Admin UI Development
 
-This guide captures everything needed to spin up the admin UI locally on Python&nbsp;3.13.
+This guide captures everything needed to spin up and validate the admin UI locally on Python&nbsp;3.13.
 
 ## Quick start
 
@@ -33,30 +32,29 @@ The `make setup` target installs Python dependencies (via `pip install -e ".[dev
 | `ADMIN_TRUSTED_HOSTS` | Comma-separated list of allowed hosts | Defaults to `localhost,127.0.0.1,testserver`. |
 | `FORCE_SSL` | Redirect all HTTP traffic to HTTPS | Optional. Leave unset for local development. |
 
+## Working with themes
+
+- The header contains a tri-state theme button (`auto → light → dark`). Press it or use <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> to cycle when focused.
+- The current preference lives in `localStorage['tg-admin-theme']`. Remove the key (or set it to `auto`) to return to system defaults.
+- The runtime helper is exposed as `window.TGTheme.apply('light' | 'dark' | 'auto')` for quick experimentation in DevTools.
+- To emulate system changes, open Chrome DevTools → **Rendering** panel and toggle `Emulate CSS prefers-color-scheme` between `light` and `dark`. The UI should follow automatically when the mode is `auto`.
+
+## Screenshots & automated UI checks
+
+- `make screens` runs Playwright in headless mode and captures screenshots for every demo route across three viewports (desktop/tablet/mobile) and both themes. Artifacts land in `ui_screenshots/` and are uploaded by CI.
+- `pytest tests/test_ui_screenshots.py` is the underlying test suite. It also verifies that the theme toggle persists choices via `localStorage` and that recruiter cards respond to keyboard input.
+- If Playwright complains about missing browsers, rerun `npx playwright install --with-deps`.
+
+## Recruiter UI demo
+
+- `make demo` launches the FastAPI showcase on http://127.0.0.1:8000.
+- `/recruiters` renders the liquid glass grid with actions (open, disable, copy link) and keyboard-friendly focus states.
+- `/recruiters/10/edit` demonstrates the city multi-select and unsaved-changes guard; `Select all` respects the current search filter.
+
 ## Troubleshooting
 
 - **`make doctor` fails with missing package** – rerun `make setup`; it pins all Python dependencies for Python&nbsp;3.13.
 - **Session middleware disabled warning** – export `SESSION_SECRET_KEY` before `make run`. Without it, admin logins will not persist.
 - **Using a different Python version** – the tooling expects Python&nbsp;3.13. Use `pyenv` or `asdf` to install the required interpreter, or override `PYTHON=python3.13` when running `make setup`.
 - **TLS redirects during local testing** – ensure `FORCE_SSL` is unset. HTTPS redirects are only activated when `FORCE_SSL=1`.
-
-Run `make doctor` anytime you change environments to confirm everything is ready.
-
-=======
-# Local development for recruiters UI
-
-## Previewing the glass cards
-- `make demo` поднимает FastAPI демо на http://127.0.0.1:8000.
-- Страница `/recruiters` показывает стеклянную сетку карточек с быстрыми действиями (открыть, выключить, скопировать ссылку).
-- Карточки фокусируются через `Tab`; `Enter` или `Space` открывают профиль. Видимый focus-ring встроен в Tailwind (`ring-accent`).
-
-## Редактор рекрутёра
-- Страница `/recruiters/10/edit` использует новый мультиселектор городов (`data-city-selector`).
-- До 16 городов отображаются плитками; после — список с поиском и чекбоксами. `Select all` уважает текущий фильтр.
-- Форма помнит изменения: уход со страницы без сохранения покажет `beforeunload` предупреждение.
-
-## Тесты и скриншоты
-- `pytest tests/test_ui_screenshots.py` делает полный прогон: снимает скриншоты и проверяет клавиатурную навигацию карточек.
-- Скриншоты лежат в `ui_screenshots/`; их обновление требуется, если меняется UI демо.
-- При необходимости запускайте браузерные зависимости Playwright: `npx playwright install --with-deps`.
->>>>>>> b3672573975ada7003f245221393aee8f94a23f1
+- **Theme toggle appears stuck** – clear `localStorage['tg-admin-theme']` and reload; the app will fall back to the system preference.
