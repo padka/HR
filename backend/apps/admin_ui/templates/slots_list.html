@@ -152,7 +152,7 @@
         'class': 'col-actions'
       }
     ] %}
-    {% call data_table(columns=slot_columns, caption='Таблица слотов', table_id='slots_table', body_id='slots_tbody', table_class='slot-table') %}
+      {% call data_table({'columns': slot_columns, 'caption': 'Таблица слотов', 'table_id': 'slots_table', 'body_id': 'slots_tbody', 'table_class': 'slot-table'}) %}
         {% for s in slots %}
           {% set st = norm_status(s.status) %}
           {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}

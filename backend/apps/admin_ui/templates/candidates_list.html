@@ -84,7 +84,7 @@
       {"label": "Сообщения"},
       {"label": "Карточка", "class": "col-actions"}
     ] %}
-    {% call data_table(columns=columns, caption="Список кандидатов") %}
+    {% call data_table({'columns': columns, 'caption': "Список кандидатов"}) %}
       {% for row in items %}
         {% set user = row.user %}
         {% set result = row.latest_result %}
