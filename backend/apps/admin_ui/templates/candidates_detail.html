@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "page_primitives.html" import page_header, metric_grid, table_shell, toast, form_section, empty_state %}
 {% block title %}{{ user.fio }}{% endblock %}
 {% block content %}
   {% set query_status = request.query_params.get('status') %}
@@ -6,89 +7,50 @@
   {% if query_status %}
     {% set tone = {'success': 'success', 'error': 'danger', 'info': 'info'}.get(query_status, 'info') %}
     {% set default_notice = 'Тест 2 отправлен' if query_status == 'success' else ('Операция выполнена' if query_status == 'info' else 'Не удалось выполнить действие') %}
-    <div class="surface glass grain alert" data-tone="{{ tone }}" role="alert">
-      <p>{{ query_notice or default_notice }}</p>
-    </div>
+    {{ toast(query_notice or default_notice, tone=tone, dismissible=True) }}
   {% endif %}
 
-  <section class="page-header">
-    <div>
-      <a class="muted" href="/candidates">← К списку кандидатов</a>
-      <h1 class="page-title">{{ user.fio }}</h1>
-      <p class="page-description">Telegram ID {{ user.telegram_id }}{% if user.city %} · {{ user.city }}{% endif %}</p>
+  {% set breadcrumbs = [
+    {'label': 'Кандидаты', 'url': '/candidates'},
+    {'label': user.fio}
+  ] %}
+  {% set summary_badges = [
+    {'tone': 'success' if user.is_active else 'muted', 'label': 'Статус: ' ~ ('Активен' if user.is_active else 'Отключен')},
+    {'tone': 'info', 'label': 'Этап: ' ~ stage},
+    {'tone': 'soft', 'label': 'Тестов: ' ~ stats.tests_total}
+  ] %}
+  {% set header_meta = 'Последняя активность: ' ~ (fmt_local(user.last_activity, 'Europe/Moscow') if user.last_activity else '—') %}
+
+  {% call page_header(
+    title=user.fio,
+    eyebrow='Кандидат',
+    description='Telegram ID ' ~ user.telegram_id ~ ((' · ' ~ user.city) if user.city else ''),
+    meta=header_meta,
+    badges=summary_badges,
+    trail=breadcrumbs
+  ) %}
+    <div class="header-actions">
+      <a class="btn btn-ghost btn-sm" href="/candidates">Назад к списку</a>
     </div>
-  </section>
+  {% endcall %}
 
-  <div class="page-grid" data-page="candidate" aria-labelledby="candidate-summary">
-    <div class="page-main">
-      <section class="surface" aria-labelledby="candidate-summary">
-        <header class="flex flex-col gap-2">
-          <h2 id="candidate-summary" class="section-title">Сводка</h2>
-        </header>
-        <div class="grid gap-4 md:grid-cols-3">
-          <div>
-            <h3 class="muted text-sm">Статус</h3>
-            <p>
-              {% if user.is_active %}
-                <span class="badge badge--success">Активен</span>
-              {% else %}
-                <span class="badge badge--muted">Отключен</span>
-              {% endif %}
-            </p>
-          </div>
-          <div>
-            <h3 class="muted text-sm">Город</h3>
-            <p>{{ user.city or 'Город не указан' }}</p>
-          </div>
-          <div>
-            <h3 class="muted text-sm">Последняя активность</h3>
-            <p>
-              {% if user.last_activity %}
-                {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
-              {% else %}
-                —
-              {% endif %}
-            </p>
-          </div>
-          <div>
-            <h3 class="muted text-sm">Всего тестов</h3>
-            <p>{{ stats.tests_total }}</p>
-          </div>
-          <div>
-            <h3 class="muted text-sm">Средний балл</h3>
-            <p>{{ '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' }}</p>
-          </div>
-          <div>
-            <h3 class="muted text-sm">Текущий этап</h3>
-            <p>{{ stage }}</p>
-          </div>
-        </div>
-        {% if test_stage_summary %}
-          <div class="mt-4">
-            <h3 class="muted text-sm">Этапы тестов</h3>
-            <ul class="stage-flow" role="list">
-              {% for item in test_stage_summary %}
-                <li>
-                  <strong>{{ item.label }}</strong>
-                  — {{ item.score }}{% if item.rating %} ({{ item.rating }}){% endif %}
-                  {% if item.dt %}
-                    — {{ fmt_local(item.dt, 'Europe/Moscow') }}
-                  {% endif %}
-                </li>
-              {% endfor %}
-            </ul>
-          </div>
-        {% endif %}
-      </section>
+  {% set summary_cards = [
+    {'label': 'Всего тестов', 'value': stats.tests_total, 'meta': 'Средний балл: ' ~ ('%.1f'|format(stats.average_score) if stats.average_score is not none else '—')},
+    {'label': 'Последнее интервью', 'value': fmt_local(latest_interview.start_utc, latest_interview.candidate_tz or 'Europe/Moscow') if latest_interview and latest_interview.start_utc else 'Не назначено', 'meta': latest_interview.recruiter.name if latest_interview and latest_interview.recruiter else ''},
+    {'label': 'Сообщений за всё время', 'value': timeline|length, 'meta': 'История событий'}
+  ] %}
+  {{ metric_grid(items=summary_cards, class_name='metrics-overview') }}
 
-      <section class="surface" aria-labelledby="interview-title">
-        <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+  <div class="page-columns" id="candidate-summary" aria-live="polite">
+    <div class="page-columns__main">
+      <section class="surface panel" aria-labelledby="interview-title">
+        <header class="panel__header">
           <div>
             <h2 id="interview-title" class="section-title">Интервью</h2>
             {% if latest_interview and latest_interview.start_utc %}
-              <p class="muted text-sm">{{ fmt_local(latest_interview.start_utc, latest_interview.candidate_tz or 'Europe/Moscow') }}</p>
+              <p class="muted">{{ fmt_local(latest_interview.start_utc, latest_interview.candidate_tz or 'Europe/Moscow') }}</p>
             {% else %}
-              <p class="muted text-sm">Интервью пока не запланировано.</p>
+              <p class="muted">Интервью пока не запланировано.</p>
             {% endif %}
           </div>
           {% if latest_interview and latest_interview.recruiter and latest_interview.recruiter.telemost_url %}
@@ -97,50 +59,70 @@
         </header>
 
         {% if latest_interview %}
-          <div class="flex flex-wrap gap-3 mt-4">
-            <form method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
+          <div class="panel__actions">
+            <form class="inline-form" method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
               <input type="hidden" name="outcome" value="success">
-              <button class="btn btn-primary btn-sm" type="submit">Прошёл</button>
+              <button class="btn btn-primary btn-sm" type="submit" data-outcome-button data-outcome="success">Прошёл</button>
             </form>
-            <form method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
+            <form class="inline-form" method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
               <input type="hidden" name="outcome" value="reject">
-              <button class="btn btn--danger btn-sm" type="submit">Не прошёл</button>
+              <button class="btn btn-danger btn-sm" type="submit" data-outcome-button data-outcome="reject">Не прошёл</button>
             </form>
           </div>
 
-          <form class="mt-6 flex flex-col gap-4" method="post" action="/candidates/{{ user.id }}/interview-feedback">
+          {% set raw_checklist = interview_feedback.checklist %}
+          {% if raw_checklist is mapping %}
+            {% set checklist_map = raw_checklist %}
+            {% set checklist_list = [] %}
+          {% elif raw_checklist %}
+            {% set checklist_map = {} %}
+            {% set checklist_list = raw_checklist %}
+          {% else %}
+            {% set checklist_map = {} %}
+            {% set checklist_list = [] %}
+          {% endif %}
+          {% set checklist_ids = namespace(ids=[]) %}
+          {% if checklist_map %}
+            {% for key, value in checklist_map.items() %}
+              {% if value %}
+                {% set checklist_ids.ids = checklist_ids.ids + [key|string] %}
+              {% endif %}
+            {% endfor %}
+          {% elif checklist_list %}
+            {% for value in checklist_list %}
+              {% set checklist_ids.ids = checklist_ids.ids + [value|string] %}
+            {% endfor %}
+          {% endif %}
+          {% set total_steps = interview_script|length %}
+          {% set checked_count = checklist_ids.ids|length %}
+
+          <form class="interview-script" method="post" action="/candidates/{{ user.id }}/interview-feedback" data-interview-form>
             <input type="hidden" name="slot_id" value="{{ latest_interview.id }}">
-            <fieldset class="flex flex-col gap-3">
-              <legend class="section-title text-base">Сценарий интервью</legend>
+            <div class="interview-script__header">
+              <h3 class="section-title">Сценарий интервью</h3>
+              <span class="pill pill--soft">Прогресс: <strong data-interview-progress>{{ checked_count }}/{{ total_steps }}</strong></span>
+            </div>
+            <div class="interview-script__list">
               {% for step in interview_script %}
-                {% set is_checked = False %}
-                {% if interview_feedback.checklist %}
-                  {% set stored = interview_feedback.checklist.get(step.id) %}
-                  {% if stored is not none %}
-                    {% set is_checked = stored %}
-                  {% else %}
-                    {% set as_string = interview_feedback.checklist.get(step.id|string) %}
-                    {% if as_string is not none %}{% set is_checked = as_string %}{% endif %}
-                  {% endif %}
-                {% endif %}
-                <label class="panel panel--flush">
-                  <div class="flex items-start gap-3">
+                {% set is_checked = step.id|string in checklist_ids.ids %}
+                <label class="interview-step surface{% if is_checked %} is-complete{% endif %}">
+                  <span class="interview-step__checkbox">
                     <input id="interview-step-{{ step.id }}" name="checklist[]" value="{{ step.id }}" type="checkbox" {% if is_checked %}checked{% endif %}>
-                    <div>
-                      <span class="font-semibold">{{ step.title }}</span>
-                      <p class="muted text-sm">{{ step.description }}</p>
-                    </div>
+                  </span>
+                  <div class="interview-step__body">
+                    <span class="interview-step__title">{{ step.title }}</span>
+                    <p class="muted">{{ step.description }}</p>
                   </div>
                 </label>
               {% endfor %}
-            </fieldset>
-            <label class="flex flex-col gap-2">
-              <span class="section-title text-base">Заметки</span>
-              <textarea class="textarea" name="notes" placeholder="Что важно запомнить для следующего этапа?">{{ interview_feedback.notes or '' }}</textarea>
+            </div>
+            <label class="form-field">
+              <span class="form-field__label">Заметки</span>
+              <textarea class="textarea" name="notes" placeholder="Что важно отметить?" rows="4">{{ interview_feedback.notes or '' }}</textarea>
             </label>
-            <div class="flex items-center justify-between text-sm muted">
+            <div class="form-footer">
               {% if interview_feedback.updated_at %}
-                <span>Обновлено {{ interview_feedback.updated_at }}</span>
+                <span class="muted">Обновлено {{ interview_feedback.updated_at }}</span>
               {% endif %}
               <button class="btn btn-soft btn-sm" type="submit">Сохранить</button>
             </div>
@@ -148,131 +130,83 @@
         {% endif %}
       </section>
 
-      <section class="surface" aria-labelledby="tests-title">
-        <header class="flex items-center justify-between">
+      <section class="surface panel" aria-labelledby="tests-title">
+        <header class="panel__header">
           <h2 id="tests-title" class="section-title">Результаты тестов</h2>
-          <span class="muted text-sm">{{ stats.tests_total }} попыток</span>
+          <span class="muted">{{ stats.tests_total }} попыток</span>
         </header>
         {% if tests %}
-          <div class="table__wrap mt-4">
-            <table class="table list-table">
-              <thead>
-                <tr>
-                  <th scope="col">Дата</th>
-                  <th scope="col">Баллы</th>
-                  <th scope="col">Рейтинг</th>
-                  <th scope="col">Время (сек)</th>
-                  <th scope="col">Ответы</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for result in tests %}
-                  {% set answers = answers_map.get(result.id) %}
-                  <tr>
-                    <td data-label="Дата">{{ fmt_local(result.created_at, 'Europe/Moscow') }}</td>
-                    <td data-label="Баллы">{{ result.final_score }} / {{ result.raw_score }}</td>
-                    <td data-label="Рейтинг">{{ result.rating or '—' }}</td>
-                    <td data-label="Время">{{ result.total_time }}</td>
-                    <td data-label="Ответы">
-                      {% if answers %}
-                        <button
-                          type="button"
-                          class="btn btn-soft btn-sm"
-                          data-answer-modal-target="answers-{{ result.id }}"
-                          aria-haspopup="dialog"
-                          aria-controls="answers-{{ result.id }}"
-                        >
-                          Посмотреть ответы
-                        </button>
-                      {% else %}
-                        <span class="muted">—</span>
-                      {% endif %}
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-
-          {% for result in tests %}
-            {% set answers = answers_map.get(result.id) %}
-            {% if answers %}
-              <div class="modal" id="answers-{{ result.id }}" data-answer-modal hidden>
-                <div
-                  class="modal__dialog"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="answers-title-{{ result.id }}"
-                  aria-describedby="answers-description-{{ result.id }}"
-                  tabindex="-1"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 id="answers-title-{{ result.id }}" class="section-title">Ответы теста от {{ fmt_local(result.created_at, 'Europe/Moscow') }}</h3>
-                      <p id="answers-description-{{ result.id }}" class="muted text-sm">
-                        Правильных: {{ answers.questions_correct }} из {{ answers.questions_total }}{% if answers.questions_overtime %}, просрочено: {{ answers.questions_overtime }}{% endif %}
-                      </p>
-                    </div>
-                    <button type="button" class="btn btn-ghost btn-sm" data-answer-modal-close aria-label="Закрыть">Закрыть</button>
-                  </div>
-                  <div class="modal__body" tabindex="0">
-                    <ol class="flex flex-col gap-4" role="list">
-                      {% for answer in answers.questions %}
-                        <li class="flex flex-col gap-2">
-                          <div class="flex flex-wrap items-center gap-2">
-                            <span class="font-semibold">Вопрос {{ loop.index }}: {{ answer.question_text }}</span>
-                            {% if answer.is_correct %}
-                              <span class="badge badge--success">Верно</span>
-                            {% else %}
-                              <span class="badge badge--muted">Неверно</span>
-                            {% endif %}
-                            {% if answer.overtime %}
-                              <span class="badge badge--soft">Просрочено</span>
-                            {% endif %}
-                          </div>
-                          <p>Ответ кандидата: <strong>{{ answer.user_answer or '—' }}</strong></p>
-                          {% if not answer.is_correct and answer.correct_answer %}
-                            <p>Правильный ответ: <strong>{{ answer.correct_answer }}</strong></p>
-                          {% endif %}
-                          <p class="muted text-sm">Время: {{ answer.time_spent }} сек · Попытки: {{ answer.attempts_count }}</p>
-                        </li>
-                      {% endfor %}
-                    </ol>
-                  </div>
-                  <div class="flex justify-end">
-                    <button type="button" class="btn btn-soft btn-sm" data-answer-modal-close>Закрыть</button>
-                  </div>
-                </div>
-              </div>
-            {% endif %}
-          {% endfor %}
+          {% set columns = [
+            {'label': 'Дата'},
+            {'label': 'Баллы'},
+            {'label': 'Рейтинг'},
+            {'label': 'Время (сек)'},
+            {'label': 'Ответы', 'class': 'col-actions'}
+          ] %}
+          {% call table_shell(columns=columns, caption='Результаты тестов кандидата', table_id='candidate-tests') %}
+            {% for result in tests %}
+              {% set answers = answers_map.get(result.id) %}
+              <tr>
+                <td data-label="Дата">{{ fmt_local(result.created_at, 'Europe/Moscow') }}</td>
+                <td data-label="Баллы">{{ result.final_score }} / {{ result.raw_score }}</td>
+                <td data-label="Рейтинг">{{ result.rating or '—' }}</td>
+                <td data-label="Время">{{ result.total_time }}</td>
+                <td data-label="Ответы" class="table-actions">
+                  {% if answers %}
+                    {% set payload = {
+                      'title': 'Ответы теста от ' ~ fmt_local(result.created_at, 'Europe/Moscow'),
+                      'stats': {
+                        'total': answers.questions_total,
+                        'correct': answers.questions_correct,
+                        'overtime': answers.questions_overtime
+                      },
+                      'questions': answers.questions
+                    } %}
+                    <button
+                      type="button"
+                      class="btn btn-soft btn-sm"
+                      data-answer-modal-trigger
+                      data-answer-modal-payload='{{ payload | tojson }}'
+                      aria-haspopup="dialog"
+                    >
+                      Посмотреть ответы
+                    </button>
+                  {% else %}
+                    <span class="muted">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          {% endcall %}
         {% else %}
-          <p class="muted mt-4">Кандидат ещё не проходил тесты.</p>
+          <p class="muted">Кандидат ещё не проходил тесты.</p>
         {% endif %}
       </section>
 
       {% if latest_interview and latest_interview.interview_outcome == 'success' and test2_completed %}
-        <section class="surface" aria-labelledby="intro-day-title">
-          <header>
-            <h2 id="intro-day-title" class="section-title">Ознакомительный день</h2>
-            <p class="muted text-sm">Отправьте кандидату приглашение с датой и временем.</p>
+        <section class="surface panel" aria-labelledby="intro-day-title">
+          <header class="panel__header">
+            <div>
+              <h2 id="intro-day-title" class="section-title">Ознакомительный день</h2>
+              <p class="muted">Пригласите кандидата на ознакомительный день.</p>
+            </div>
           </header>
-          <form class="mt-4 flex flex-col gap-4" method="post" action="/candidates/{{ user.id }}/intro-day">
-            <div class="grid gap-4 md:grid-cols-2">
-              <label class="flex flex-col gap-2">
-                <span class="muted text-sm">Дата</span>
+          <form class="form-grid" method="post" action="/candidates/{{ user.id }}/intro-day">
+            <div class="grid-cols">
+              <label class="form-field">
+                <span class="form-field__label">Дата</span>
                 <input class="input" type="date" name="date_value" required>
               </label>
-              <label class="flex flex-col gap-2">
-                <span class="muted text-sm">Время</span>
+              <label class="form-field">
+                <span class="form-field__label">Время</span>
                 <input class="input" type="time" name="time_value" required>
               </label>
             </div>
-            <label class="flex flex-col gap-2">
-              <span class="muted text-sm">Сообщение кандидату</span>
-              <textarea class="textarea" name="message_text" placeholder="{{ intro_message_template|format(fio=user.fio, date='дд.мм.гггг', time='чч:мм') }}"></textarea>
+            <label class="form-field">
+              <span class="form-field__label">Сообщение кандидату</span>
+              <textarea class="textarea" name="message_text" placeholder="{{ intro_message_template|format(fio=user.fio, date='дд.мм.гггг', time='чч:мм') }}" rows="3"></textarea>
             </label>
-            <div class="flex justify-end">
+            <div class="form-footer">
               <button class="btn btn-primary btn-sm" type="submit">Отправить приглашение</button>
             </div>
           </form>
@@ -280,17 +214,17 @@
       {% endif %}
     </div>
 
-    <aside class="page-aside" id="history">
-      <section class="surface" aria-labelledby="history-title">
-        <header>
+    <aside class="page-columns__aside" id="history">
+      <section class="surface panel" aria-labelledby="history-title">
+        <header class="panel__header">
           <h2 id="history-title" class="section-title">История событий</h2>
         </header>
         {% if timeline %}
-          <ol class="flex flex-col gap-3 text-sm" role="list">
+          <ol class="timeline" role="list">
             {% for event in timeline %}
-              <li class="panel panel--flush">
-                <div class="flex items-center justify-between muted text-xs uppercase tracking-wide">
-                  <span>
+              <li class="timeline__item">
+                <div class="timeline__meta">
+                  <span class="timeline__kind">
                     {% if event.kind == 'slot' %}
                       Интервью
                     {% elif event.kind == 'test' %}
@@ -303,13 +237,13 @@
                   </span>
                   <time datetime="{{ event.dt.isoformat() if event.dt }}">{{ fmt_local(event.dt, event.tz or 'Europe/Moscow') if event.dt else '—' }}</time>
                 </div>
-                <div class="mt-2 space-y-1">
+                <div class="timeline__body">
                   {% if event.kind == 'slot' %}
                     <p>Статус: {{ (event.status or '')|upper }}</p>
                     {% if event.recruiter %}<p>Рекрутёр: {{ event.recruiter }}</p>{% endif %}
                     {% if event.city %}<p>Город: {{ event.city }}</p>{% endif %}
                   {% elif event.kind == 'test' %}
-                    <p>Баллы: {{ event.score }} ({{ event.rating or '—' }})</p>
+                    <p>Баллы: {{ event.score }}{% if event.rating %} ({{ event.rating }}){% endif %}</p>
                   {% elif event.kind == 'message' %}
                     <p class="whitespace-pre-line">{{ event.text }}</p>
                     {% if event.send_time %}<p class="muted text-xs">Запланировано: {{ event.send_time }}</p>{% endif %}
@@ -319,93 +253,31 @@
             {% endfor %}
           </ol>
         {% else %}
-          <p class="muted text-sm mt-4">История пока пуста.</p>
+          <p class="muted">История пока пуста.</p>
         {% endif %}
       </section>
     </aside>
   </div>
+
+  <div class="modal" data-answer-modal hidden>
+    <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="answers-modal-title" aria-describedby="answers-modal-description" tabindex="-1">
+      <div class="modal__header">
+        <div>
+          <h3 id="answers-modal-title" class="section-title" data-answer-modal-title>Ответы теста</h3>
+          <p id="answers-modal-description" class="muted" data-answer-modal-meta></p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" data-answer-modal-close aria-label="Закрыть">Закрыть</button>
+      </div>
+      <div class="modal__body" data-answer-modal-body></div>
+      <div class="modal__footer">
+        <button type="button" class="btn btn-soft btn-sm" data-answer-modal-close>Закрыть</button>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 
 {% block extra_js %}
-  <script>
-    (function () {
-      const triggers = document.querySelectorAll('[data-answer-modal-target]');
-      const modals = new Map();
-      let activeModal = null;
-      let lastTrigger = null;
-
-      document.querySelectorAll('[data-answer-modal]').forEach((modal) => {
-        const id = modal.id;
-        if (!id) {
-          return;
-        }
-        modals.set(id, modal);
-        const dialog = modal.querySelector('[role="dialog"]');
-        modal.addEventListener('click', (event) => {
-          if (event.target === modal) {
-            closeModal(modal);
-          }
-        });
-        modal.querySelectorAll('[data-answer-modal-close]').forEach((btn) => {
-          btn.addEventListener('click', () => closeModal(modal));
-        });
-        modal.addEventListener('keydown', (event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            closeModal(modal);
-          }
-        });
-        if (dialog) {
-          dialog.addEventListener('click', (event) => {
-            event.stopPropagation();
-          });
-        }
-      });
-
-      function openModal(modal, trigger) {
-        activeModal = modal;
-        lastTrigger = trigger;
-        modal.removeAttribute('hidden');
-        const dialog = modal.querySelector('[role="dialog"]');
-        if (dialog) {
-          dialog.focus();
-        }
-        document.body.style.overflow = 'hidden';
-      }
-
-      function closeModal(modal) {
-        modal.setAttribute('hidden', '');
-        if (activeModal === modal) {
-          activeModal = null;
-        }
-        if (lastTrigger) {
-          lastTrigger.focus();
-        }
-        if (!document.querySelector('[data-answer-modal]:not([hidden])')) {
-          document.body.style.overflow = '';
-        }
-      }
-
-      triggers.forEach((trigger) => {
-        trigger.addEventListener('click', () => {
-          const targetId = trigger.getAttribute('data-answer-modal-target');
-          if (!targetId) {
-            return;
-          }
-          const modal = modals.get(targetId);
-          if (!modal) {
-            return;
-          }
-          openModal(modal, trigger);
-        });
-      });
-
-      document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && activeModal) {
-          event.preventDefault();
-          closeModal(activeModal);
-        }
-      });
-    })();
-  </script>
+  {{ super() }}
+  <script type="module" src="/static/js/modules/answers-modal.js"></script>
+  <script type="module" src="/static/js/modules/candidate-profile.js"></script>
 {% endblock %}

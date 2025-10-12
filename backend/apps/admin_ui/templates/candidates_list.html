@@ -1,118 +1,188 @@
 {% extends "base.html" %}
+{% from "page_primitives.html" import page_header, filter_bar, table_shell, empty_state %}
 {% block title %}Кандидаты{% endblock %}
 {% block content %}
-  <section class="surface" aria-labelledby="candidates-title">
-    <header class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-      <div>
-        <h1 id="candidates-title" class="section-title">Кандидаты</h1>
-      </div>
-      <form class="flex w-full flex-col gap-3 md:w-auto md:flex-row md:items-center" method="get" action="/candidates">
-        <label class="w-full md:w-64">
-          <span class="sr-only">Поиск по ФИО или TG ID</span>
-          <input
-            class="input"
-            type="search"
-            name="search"
-            value="{{ filters.search }}"
-            placeholder="Поиск по ФИО или TG ID"
-          >
-        </label>
-        <button class="btn btn-primary btn-sm" type="submit">Найти</button>
-      </form>
-    </header>
+{%- set search_value = request.query_params.get('search', '') -%}
+{%- set sort_key = (request.query_params.get('sort') or sort or 'last_activity') -%}
+{%- set order_dir = (request.query_params.get('order') or order or 'desc') -%}
+{%- set order_dir = order_dir.lower() -%}
+{%- set per_page_value = per_page -%}
+{%- macro sort_header(field, label, default_order) -%}
+  {%- set current_sort = sort_key or 'last_activity' -%}
+  {%- set current_order = order_dir or 'desc' -%}
+  {%- set is_active = (current_sort == field) -%}
+  {%- if is_active -%}
+    {%- set next_order = 'asc' if current_order == 'desc' else 'desc' -%}
+    {%- set icon = '↑' if current_order == 'asc' else '↓' -%}
+    {%- set aria = 'ascending' if current_order == 'asc' else 'descending' -%}
+  {%- else -%}
+    {%- set next_order = default_order -%}
+    {%- set icon = '↕' -%}
+    {%- set aria = 'none' -%}
+  {%- endif -%}
+  {%- set params = {
+    'search': search_value,
+    'per_page': per_page_value,
+    'sort': field,
+    'order': next_order,
+    'page': 1
+  } -%}
+  {%- set href = '/candidates?' ~ params|urlencode -%}
+  <a class="table-sort{% if is_active %} is-active{% endif %}" href="{{ href }}" aria-sort="{{ aria }}">
+    <span>{{ label }}</span>
+    <span class="table-sort__icon" aria-hidden="true">{{ icon }}</span>
+  </a>
+{%- endmacro %}
 
-    {% if items %}
-      <div class="table__wrap mt-6">
-        <table class="table list-table" aria-describedby="candidates-title">
-          <thead>
-            <tr>
-              <th scope="col">ФИО</th>
-              <th scope="col">TG ID</th>
-              <th scope="col">Город</th>
-              <th scope="col">Последняя активность</th>
-              <th scope="col">Этап</th>
-              <th scope="col">Следующий шаг</th>
-              <th scope="col">Тесты</th>
-              <th scope="col">Последний результат</th>
-              <th scope="col">Сообщения</th>
-              <th scope="col">История</th>
-              <th scope="col">Карточка</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in items %}
-              {% set user = row.user %}
-              {% set result = row.latest_result %}
-              {% set message = row.latest_message %}
-              <tr>
-                <td data-label="ФИО">
-                  <div class="flex flex-col gap-1">
-                    <span class="font-semibold">{{ user.fio }}</span>
-                    <span class="text-sm muted">
-                      {% if user.is_active %}
-                        Активен
-                      {% else %}
-                        Отключен
-                      {% endif %}
-                    </span>
-                  </div>
-                </td>
-                <td data-label="TG ID">{{ user.telegram_id }}</td>
-                <td data-label="Город">{{ user.city or '—' }}</td>
-                <td data-label="Последняя активность">
-                  {% if user.last_activity %}
-                    {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
-                  {% else %}
-                    —
-                  {% endif %}
-                </td>
-                <td data-label="Этап">
-                  <div class="flex flex-col gap-1">
-                    <span class="badge badge--soft">{{ row.stage }}</span>
-                    {% if row.latest_slot %}
-                      <span class="text-sm muted">
-                        {{ (row.latest_slot.status or '')|upper }} · {{ fmt_local(row.latest_slot.start_utc, row.latest_slot.candidate_tz or 'Europe/Moscow') if row.latest_slot.start_utc else '—' }}
-                      </span>
-                    {% else %}
-                      <span class="text-sm muted">Нет интервью</span>
-                    {% endif %}
-                  </div>
-                </td>
-                <td data-label="Следующий шаг">
-                  {% if row.upcoming_slot and row.upcoming_slot.start_utc %}
-                    Интервью {{ fmt_local(row.upcoming_slot.start_utc, row.upcoming_slot.candidate_tz or 'Europe/Moscow') }}
-                  {% else %}
-                    <span class="muted">—</span>
-                  {% endif %}
-                </td>
-                <td data-label="Тесты">{{ row.tests_total or '—' }}</td>
-                <td data-label="Последний результат">
-                  {% if result %}
-                    {{ result.final_score }} / {{ result.raw_score }}
-                  {% else %}
-                    <span class="muted">—</span>
-                  {% endif %}
-                </td>
-                <td data-label="Сообщения">
-                  {% if message %}
-                    {{ message.message_text[:42] }}{% if message.message_text|length > 42 %}…{% endif %}
-                  {% else %}
-                    <span class="muted">—</span>
-                  {% endif %}
-                </td>
-                <td data-label="История">
-                  <a class="btn btn-soft btn-sm" href="/candidates/{{ user.id }}#history">История</a>
-                </td>
-                <td data-label="Карточка">
-                  <a class="btn btn-primary btn-sm" href="/candidates/{{ user.id }}">Перейти</a>
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <p class="muted mt-6">Кандидатов пока нет — новые пользователи появятся после регистрации в боте.</p>
-    {% endif %}
-  </section>
+{% call page_header(
+  title='Кандидаты',
+  description='Список кандидатов с последней активностью, этапами и результатами тестов.'
+) %}
+  <div class="header-actions">
+    <a class="btn btn-primary btn-sm" href="/candidates/new">Добавить кандидата</a>
+  </div>
+{% endcall %}
+
+{% call filter_bar(title='Поиск кандидатов', hint='Введите имя или TG ID — результаты обновятся автоматически.') %}
+  <form class="filter-form" method="get" action="/candidates" data-search-form>
+    <label class="input-pill" for="candidate-search">
+      <span class="input-pill__label">Поиск</span>
+      <input
+        id="candidate-search"
+        class="input-pill__control"
+        type="search"
+        name="search"
+        value="{{ search_value }}"
+        placeholder="Например, Анна или @username"
+        autocomplete="off"
+        data-search-input
+      >
+    </label>
+    <input type="hidden" name="sort" value="{{ sort_key }}">
+    <input type="hidden" name="order" value="{{ order_dir }}">
+    <input type="hidden" name="page" value="{{ page }}">
+    <input type="hidden" name="per_page" value="{{ per_page_value }}">
+    <button class="btn btn-soft btn-sm" type="submit">Найти</button>
+  </form>
+{% endcall %}
+
+{% if items %}
+  {%- set columns = [
+    {'html': sort_header('fio', 'ФИО', 'asc')},
+    {'label': 'TG ID'},
+    {'label': 'Город'},
+    {'html': sort_header('last_activity', 'Последняя активность', 'desc')},
+    {'label': 'Этап'},
+    {'label': 'Следующий шаг'},
+    {'label': 'Тесты'},
+    {'label': 'Последний результат'},
+    {'label': 'Сообщения'},
+    {'label': 'История', 'class': 'col-actions'},
+    {'label': 'Карточка', 'class': 'col-actions'}
+  ] -%}
+  {% call table_shell(columns=columns, caption='Список кандидатов', table_id='candidates-table') %}
+    {% for row in items %}
+      {% set user = row.user %}
+      {% set result = row.latest_result %}
+      {% set message = row.latest_message %}
+      <tr>
+        <td data-label="ФИО">
+          <div class="entity">
+            <span class="entity__title">{{ user.fio }}</span>
+            <span class="entity__meta">
+              {% if user.is_active %}
+                <span class="badge badge--success">Активен</span>
+              {% else %}
+                <span class="badge badge--muted">Отключен</span>
+              {% endif %}
+            </span>
+          </div>
+        </td>
+        <td data-label="TG ID">{{ user.telegram_id }}</td>
+        <td data-label="Город">{{ user.city or '—' }}</td>
+        <td data-label="Последняя активность">
+          {% if user.last_activity %}
+            {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td data-label="Этап">
+          <div class="stack">
+            <span class="badge badge--soft">{{ row.stage }}</span>
+            {% if row.latest_slot %}
+              <span class="muted">{{ (row.latest_slot.status or '')|upper }} · {{ fmt_local(row.latest_slot.start_utc, row.latest_slot.candidate_tz or 'Europe/Moscow') if row.latest_slot.start_utc else '—' }}</span>
+            {% else %}
+              <span class="muted">Нет интервью</span>
+            {% endif %}
+          </div>
+        </td>
+        <td data-label="Следующий шаг">
+          {% if row.upcoming_slot and row.upcoming_slot.start_utc %}
+            Интервью {{ fmt_local(row.upcoming_slot.start_utc, row.upcoming_slot.candidate_tz or 'Europe/Moscow') }}
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td data-label="Тесты">{{ row.tests_total or '—' }}</td>
+        <td data-label="Последний результат">
+          {% if result %}
+            {{ result.final_score }} / {{ result.raw_score }}
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td data-label="Сообщения">
+          {% if message %}
+            {{ message.message_text[:42] }}{% if message.message_text|length > 42 %}…{% endif %}
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td data-label="История" class="table-actions">
+          <a class="btn btn-soft btn-sm" href="/candidates/{{ user.id }}#history">История</a>
+        </td>
+        <td data-label="Карточка" class="table-actions">
+          <a class="btn btn-primary btn-sm" href="/candidates/{{ user.id }}">Открыть</a>
+        </td>
+      </tr>
+    {% endfor %}
+  {% endcall %}
+
+  <div class="table-footer">
+    <div class="pager">
+      {% set prev_page = page - 1 %}
+      {% set next_page = page + 1 %}
+      {% set base_params = {
+        'search': search_value,
+        'sort': sort_key,
+        'order': order_dir,
+        'per_page': per_page_value
+      } %}
+      {% macro page_href(page_number, params) %}
+        {%- set query = params.copy() -%}
+        {%- set _ = query.update({'page': page_number}) -%}
+        {{ '/candidates?' ~ query|urlencode }}
+      {% endmacro %}
+      <a class="pager__button" href="{{ page_href(prev_page, base_params) }}" aria-disabled="{{ 'true' if page <= 1 else 'false' }}"{% if page <= 1 %} tabindex="-1"{% endif %}>Назад</a>
+      <span class="pager__status">Страница {{ page }} из {{ pages_total }}</span>
+      <a class="pager__button" href="{{ page_href(next_page, base_params) }}" aria-disabled="{{ 'true' if page >= pages_total else 'false' }}"{% if page >= pages_total %} tabindex="-1"{% endif %}>Вперёд</a>
+    </div>
+    <label class="pager__per-page">
+      <span>На странице</span>
+      <select data-per-page>
+        {% for option in [20, 50, 100] %}
+          <option value="{{ option }}"{% if per_page_value == option %} selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+{% else %}
+  {{ empty_state(icon='☁️', title='Кандидатов пока нет', description='Новые кандидаты появятся после регистрации в боте.', actions=[{'href': '/candidates/new', 'label': 'Создать'}]) }}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+  {{ super() }}
+  <script type="module" src="/static/js/modules/candidates-list.js"></script>
 {% endblock %}
