@@ -1,26 +1,136 @@
 (function () {
   const doc = document.documentElement;
-  const KEY = 'tg-admin-density';
+  const DENSITY_KEY = 'tg-admin-density';
+  const THEME_KEY = 'tg-admin-theme';
   const media = window.matchMedia('(prefers-color-scheme: dark)');
-  const read = () => { try { const value = window.localStorage.getItem(KEY); return value === 'compact' ? 'compact' : 'comfy'; } catch (err) { return 'comfy'; } };
-  const write = (value) => { try { window.localStorage.setItem(KEY, value); } catch (err) {} };
-  const reflect = (value) => {
-    document.querySelectorAll('[data-density-toggle]').forEach((btn) => { btn.dataset.density = value; btn.setAttribute('aria-pressed', value === 'compact' ? 'true' : 'false'); });
-    document.querySelectorAll('[data-density-option]').forEach((opt) => { opt.setAttribute('aria-checked', opt.dataset.densityOption === value ? 'true' : 'false'); });
+
+  const safeRead = (key) => {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (err) {
+      return null;
+    }
   };
-  const apply = (value, options) => { const mode = value === 'compact' ? 'compact' : 'comfy'; doc.dataset.density = mode; reflect(mode); if (!options || options.persist !== false) write(mode); return mode; };
-  const cycle = () => (doc.dataset.density === 'compact' ? 'comfy' : 'compact');
-  const currentScheme = () => { const theme = doc.dataset.theme; const stored = doc.dataset.themeMode; if (theme === 'light' || theme === 'dark') return theme; if (stored === 'light' || stored === 'dark') return stored; return media.matches ? 'dark' : 'light'; };
-  const updateScheme = () => { doc.style.colorScheme = currentScheme(); };
-  media.addEventListener('change', () => { if (!doc.dataset.theme || doc.dataset.theme === 'auto') updateScheme(); });
+
+  const safeWrite = (key, value) => {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch (err) {
+      /* noop */
+    }
+  };
+
+  const normaliseTheme = (value) => (value === 'light' || value === 'dark' || value === 'auto' ? value : 'auto');
+  const systemTheme = () => (media.matches ? 'dark' : 'light');
+
+  const currentTheme = () => normaliseTheme(doc.dataset.themeMode || safeRead(THEME_KEY) || 'auto');
+
+  const setDocumentTheme = (mode, options = {}) => {
+    const target = normaliseTheme(mode);
+    if (target === 'light' || target === 'dark') {
+      doc.dataset.theme = target;
+      doc.style.colorScheme = target;
+    } else {
+      delete doc.dataset.theme;
+      doc.style.colorScheme = systemTheme();
+    }
+    doc.dataset.themeMode = target;
+    if (options.persist !== false) {
+      safeWrite(THEME_KEY, target);
+    }
+    return target;
+  };
+
+  const syncThemeWithSystem = () => {
+    if (currentTheme() === 'auto') {
+      setDocumentTheme('auto', { persist: false });
+    }
+  };
+
+  const patchThemeBridge = () => {
+    if (!window.TGTheme || window.TGTheme.__uiBridge === true) {
+      return;
+    }
+    const original = window.TGTheme.apply;
+    window.TGTheme.apply = function patched(mode, options) {
+      const result = original.call(this, mode, options);
+      setDocumentTheme(window.TGTheme.getMode ? window.TGTheme.getMode() : mode, { persist: options && options.persist });
+      return result;
+    };
+    window.TGTheme.__uiBridge = true;
+    setDocumentTheme(window.TGTheme.getMode ? window.TGTheme.getMode() : currentTheme(), { persist: false });
+  };
+
+  const normaliseDensity = (value) => (value === 'compact' ? 'compact' : 'comfy');
+  const readDensity = () => normaliseDensity(safeRead(DENSITY_KEY));
+
+  const reflectDensityControls = (mode) => {
+    document.querySelectorAll('[data-density-toggle]').forEach((btn) => {
+      btn.dataset.density = mode;
+      btn.setAttribute('aria-pressed', mode === 'compact' ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-density-option]').forEach((option) => {
+      const isActive = option.dataset.densityOption === mode;
+      option.setAttribute('aria-checked', isActive ? 'true' : 'false');
+    });
+  };
+
+  const setDensity = (mode, options = {}) => {
+    const target = normaliseDensity(mode);
+    doc.dataset.density = target;
+    reflectDensityControls(target);
+    if (options.persist !== false) {
+      safeWrite(DENSITY_KEY, target);
+    }
+    return target;
+  };
+
+  const cycleDensity = () => (doc.dataset.density === 'compact' ? 'comfy' : 'compact');
+
+  const bindDensityControls = () => {
+    document.querySelectorAll('[data-density-toggle]').forEach((btn) => {
+      if (btn.dataset.boundDensity === 'true') {
+        return;
+      }
+      btn.dataset.boundDensity = 'true';
+      btn.addEventListener('click', () => {
+        setDensity(cycleDensity());
+      });
+    });
+
+    document.querySelectorAll('[data-density-option]').forEach((option) => {
+      if (option.dataset.boundDensity === 'true') {
+        return;
+      }
+      option.dataset.boundDensity = 'true';
+      option.addEventListener('click', () => {
+        setDensity(option.dataset.densityOption);
+      });
+    });
+  };
+
+  setDocumentTheme(currentTheme(), { persist: false });
+  setDensity(readDensity(), { persist: false });
+
+  if (typeof media.addEventListener === 'function') {
+    media.addEventListener('change', syncThemeWithSystem);
+  } else if (typeof media.addListener === 'function') {
+    media.addListener(syncThemeWithSystem);
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('[data-density-toggle]').forEach((btn) => { if (btn.dataset.boundDensity === 'true') return; btn.dataset.boundDensity = 'true'; btn.addEventListener('click', () => { apply(cycle()); }); });
-    document.querySelectorAll('[data-density-option]').forEach((opt) => { if (opt.dataset.boundDensity === 'true') return; opt.dataset.boundDensity = 'true'; opt.addEventListener('click', () => { apply(opt.dataset.densityOption); }); });
-    updateScheme();
-    reflect(doc.dataset.density || 'comfy');
+    bindDensityControls();
+    reflectDensityControls(doc.dataset.density || 'comfy');
+    patchThemeBridge();
   });
-  apply(read(), { persist: false });
-  updateScheme();
-  if (window.TGTheme && typeof window.TGTheme.apply === 'function') { const original = window.TGTheme.apply; window.TGTheme.apply = (mode, options) => { original(mode, options); updateScheme(); }; updateScheme(); }
-  window.UITheme = { applyDensity: apply, cycleDensity: cycle, getDensity: () => doc.dataset.density || 'comfy' };
+
+  window.addEventListener('load', patchThemeBridge);
+
+  window.UITheme = {
+    applyTheme: (mode, options) => setDocumentTheme(mode, options),
+    getTheme: currentTheme,
+    applyDensity: (mode, options) => setDensity(mode, options),
+    cycleDensity,
+    getDensity: () => doc.dataset.density || 'comfy',
+  };
 })();

@@ -29,11 +29,11 @@
       }
     })();
   </script>
-  <script src="/static/js/theme.js" defer></script>
-  <script src="/static/js/theme-toggle.js" defer></script>
-  <link rel="stylesheet" href="/static/css/tokens.css">
-  <link rel="stylesheet" href="/static/build/main.css">
-  <link rel="stylesheet" href="/static/css/ui.css">
+  <script src="{{ url_for('static', path='js/theme.js') }}" defer></script>
+  <script src="{{ url_for('static', path='js/theme-toggle.js') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', path='css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='build/main.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/ui.css') }}">
   {% block extra_css %}{% endblock %}
 </head>
 <body>
