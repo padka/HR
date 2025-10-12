@@ -3,91 +3,108 @@
 {% block title %}Вопросы{% endblock %}
 
 {% block content %}
-<section class="page page--questions">
-  <header class="page-header">
-    <div>
-      <h1 class="page-title">База вопросов</h1>
-      <p class="page-description">
-        Просматривайте и редактируйте вопросы для всех тестов. Выберите раздел ниже или пролистайте карточки.
-      </p>
+<section class="page-grid" data-page="questions" aria-labelledby="questions-title">
+  <aside class="page-aside">
+    <div class="panel">
+      <div>
+        <h1 id="questions-title" class="page-title">База вопросов</h1>
+        <p class="page-description">
+          Просматривайте и редактируйте вопросы для всех тестов. Выберите раздел ниже или пролистайте карточки.
+        </p>
+      </div>
     </div>
-  </header>
 
-  {% if tests %}
-    <nav class="questions-nav" aria-label="Навигация по тестам">
-      {% for test in tests %}
-        <a class="questions-nav__chip" href="#test-{{ test.test_id }}">
-          <strong>{{ test.title }}</strong>
-          <span>{{ test.questions|length }} шт.</span>
-        </a>
-      {% endfor %}
-    </nav>
-
-    {% for test in tests %}
-      <section class="test-section" id="test-{{ test.test_id }}" data-tilt>
-        <header class="test-section__header">
-          <div>
-            <h2 class="card-title">{{ test.title }}</h2>
-            <p class="test-section__hint">Идентификатор теста: <code>{{ test.test_id }}</code></p>
-          </div>
-          <span class="badge">{{ test.questions|length }} вопрос(ов)</span>
-        </header>
-
-        <div class="question-list">
-          {% for item in test.questions %}
-            <article class="question-card" data-status="{{ 'active' if item.is_active else 'hidden' }}">
-              <header class="question-card__header">
-                <div class="question-card__identity">
-                  <span class="badge badge--index">№ {{ item.index }}</span>
-                  <h3 class="question-title">{{ item.title }}</h3>
-                </div>
-                <div class="question-card__tags">
-                  {% if item.kind == 'choice' %}
-                    <span class="badge">С вариантами</span>
-                  {% else %}
-                    <span class="badge">Свободный ответ</span>
-                  {% endif %}
-                  {% if item.is_active %}
-                    <span class="question-pill" data-tone="success">Активен</span>
-                  {% else %}
-                    <span class="question-pill" data-tone="danger">Скрыт</span>
-                  {% endif %}
-                </div>
-              </header>
-
-              <div class="question-card__body">
-                {% if item.prompt %}
-                  <p class="question-meta">{{ item.prompt }}</p>
-                {% endif %}
-
-                <dl class="question-facts">
-                  <div>
-                    <dt>Последнее изменение</dt>
-                    <dd>{% if item.updated_at %}{{ fmt_utc(item.updated_at) }} UTC{% else %}—{% endif %}</dd>
-                  </div>
-                  {% if item.options_count %}
-                    <div>
-                      <dt>Вариантов</dt>
-                      <dd>{{ item.options_count }}{% if item.correct_label %} · верный: <strong>{{ item.correct_label }}</strong>{% endif %}</dd>
-                    </div>
-                  {% endif %}
-                </dl>
-              </div>
-
-              <footer class="question-card__footer">
-                <a class="btn btn-soft btn--grow" href="/questions/{{ item.id }}/edit">Редактировать</a>
-              </footer>
-            </article>
-          {% else %}
-            <div class="muted question-empty">В этом тесте пока нет вопросов.</div>
+    {% if tests %}
+      <div class="panel questions-nav-panel">
+        <h2 class="section-title">Разделы тестов</h2>
+        <p class="section-subtitle">Быстрые ссылки на группы вопросов и количество задач внутри.</p>
+        <nav class="questions-nav" aria-label="Навигация по тестам">
+          {% for test in tests %}
+            <a class="questions-nav__chip" href="#test-{{ test.test_id }}">
+              <strong>{{ test.title }}</strong>
+              <span>{{ test.questions|length }} шт.</span>
+            </a>
           {% endfor %}
-        </div>
-      </section>
-    {% endfor %}
-  {% else %}
-    <section class="test-section">
-      <p class="page-description">Вопросы ещё не добавлены.</p>
-    </section>
-  {% endif %}
+        </nav>
+      </div>
+    {% endif %}
+  </aside>
+
+  <div class="page-main">
+    {% if tests %}
+      {% for test in tests %}
+        <section class="panel question-group" id="test-{{ test.test_id }}">
+          <header class="question-group__header">
+            <div>
+              <h2 class="question-group__title">{{ test.title }}</h2>
+              <p class="section-subtitle">Идентификатор теста: <code class="text-mono">{{ test.test_id }}</code></p>
+            </div>
+            <div class="question-group__meta">
+              <span class="badge">{{ test.questions|length }} вопрос(ов)</span>
+            </div>
+          </header>
+
+          <div class="question-list">
+            {% for item in test.questions %}
+              <article class="question-card" data-status="{{ 'active' if item.is_active else 'hidden' }}">
+                <header class="question-card__header">
+                  <div class="question-card__identity">
+                    <span class="badge badge--index">№ {{ item.index }}</span>
+                    <h3 class="question-title">{{ item.title }}</h3>
+                  </div>
+                  <div class="question-card__tags">
+                    {% if item.kind == 'choice' %}
+                      <span class="badge badge--soft">С вариантами</span>
+                    {% else %}
+                      <span class="badge badge--soft">Свободный ответ</span>
+                    {% endif %}
+                    {% if item.is_active %}
+                      <span class="question-pill" data-tone="success">Активен</span>
+                    {% else %}
+                      <span class="question-pill" data-tone="danger">Скрыт</span>
+                    {% endif %}
+                  </div>
+                </header>
+
+                <div class="question-card__body">
+                  {% if item.prompt %}
+                    <p class="question-meta">{{ item.prompt }}</p>
+                  {% endif %}
+
+                  <dl class="question-facts">
+                    <div>
+                      <dt>Последнее изменение</dt>
+                      <dd>{% if item.updated_at %}{{ fmt_utc(item.updated_at) }} UTC{% else %}—{% endif %}</dd>
+                    </div>
+                    {% if item.options_count %}
+                      <div>
+                        <dt>Вариантов</dt>
+                        <dd>
+                          {{ item.options_count }}
+                          {% if item.correct_label %}
+                            · верный: <strong>{{ item.correct_label }}</strong>
+                          {% endif %}
+                        </dd>
+                      </div>
+                    {% endif %}
+                  </dl>
+                </div>
+
+                <footer class="question-card__footer">
+                  <a class="btn btn-soft btn--grow" href="/questions/{{ item.id }}/edit">Редактировать</a>
+                </footer>
+              </article>
+            {% else %}
+              <div class="question-empty">В этом тесте пока нет вопросов.</div>
+            {% endfor %}
+          </div>
+        </section>
+      {% endfor %}
+    {% else %}
+      <div class="panel">
+        <p class="muted">Вопросы ещё не добавлены.</p>
+      </div>
+    {% endif %}
+  </div>
 </section>
 {% endblock %}
