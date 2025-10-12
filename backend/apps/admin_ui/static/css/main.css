@@ -1684,7 +1684,6 @@
     border: none;
     background: transparent;
     color: inherit;
-    font: inherit;
     min-width: 8.5rem;
     padding: 0;
   }
@@ -3374,6 +3373,7 @@
   .slot-empty-state__actions {
     @apply flex flex-wrap justify-center gap-3;
   }
+
   .interview-actions {
     @apply flex flex-col gap-4 md:flex-row md:items-start md:justify-between;
   }
@@ -3424,6 +3424,22 @@
     font-size: var(--fs-xs);
     color: rgb(var(--fg-secondary));
     line-height: 1.4;
+  }
+
+  /* Resolved block from main: answer-details */
+  .answer-details {
+    display: block;
+  }
+
+  .answer-details summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  .answer-details__content {
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(var(--border-rgb) / 0.25);
   }
 
   .answer-list {
