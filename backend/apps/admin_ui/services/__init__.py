@@ -12,9 +12,13 @@ from .candidates import (
     get_candidate_detail,
     list_candidates,
     delete_candidate,
+    save_interview_feedback,
+    schedule_intro_day_message,
     toggle_candidate_activity,
     upsert_candidate,
     update_candidate,
+    INTERVIEW_SCRIPT_STEPS,
+    INTRO_DAY_MESSAGE_TEMPLATE,
 )
 from .recruiters import (
     api_recruiters_payload,
@@ -45,13 +49,16 @@ from .templates import (
     update_template,
     update_templates_for_city,
 )
-from .slots import (
-    api_slots_payload,
-    create_slot,
-    list_slots,
-    recruiters_for_slot_form,
-    set_slot_outcome,
-)
+try:  # pragma: no cover - optional dependencies during demo/testing
+    from .slots import (
+        api_slots_payload,
+        create_slot,
+        list_slots,
+        recruiters_for_slot_form,
+        set_slot_outcome,
+    )
+except ModuleNotFoundError:  # pragma: no cover - allow partial imports without bot deps
+    api_slots_payload = create_slot = list_slots = recruiters_for_slot_form = set_slot_outcome = None
 from .questions import (
     get_test_question_detail,
     list_test_questions,
@@ -69,10 +76,14 @@ __all__ = [
     "candidate_filter_options",
     "list_candidates",
     "get_candidate_detail",
+    "save_interview_feedback",
+    "schedule_intro_day_message",
     "upsert_candidate",
     "toggle_candidate_activity",
     "update_candidate",
     "delete_candidate",
+    "INTERVIEW_SCRIPT_STEPS",
+    "INTRO_DAY_MESSAGE_TEMPLATE",
     "list_recruiters",
     "create_recruiter",
     "get_recruiter_detail",

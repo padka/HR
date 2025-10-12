@@ -2608,6 +2608,8 @@
     padding: 2.5rem;
     backdrop-filter: blur(var(--blur));
     -webkit-backdrop-filter: blur(var(--blur));
+    max-height: min(80vh, 720px);
+    overflow-y: auto;
   }
 
   .modal__header {
@@ -3371,6 +3373,110 @@
 
   .slot-empty-state__actions {
     @apply flex flex-wrap justify-center gap-3;
+  }
+  .interview-actions {
+    @apply flex flex-col gap-4 md:flex-row md:items-start md:justify-between;
+  }
+
+  .interview-actions__primary,
+  .interview-actions__secondary {
+    @apply flex flex-col gap-3;
+  }
+
+  .interview-outcome-buttons {
+    @apply flex flex-wrap gap-3;
+  }
+
+  .interview-checklist {
+    @apply grid gap-3;
+  }
+
+  .checklist-item {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    padding: 0.75rem 1rem;
+    border-radius: 1rem;
+    border: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+    background: color-mix(in srgb, var(--surface-1) 90%, transparent);
+    transition: border-color var(--transition-fast), background-color var(--transition-fast);
+  }
+
+  .checklist-item:hover {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border) 45%);
+    background: color-mix(in srgb, var(--surface-1) 86%, transparent);
+  }
+
+  .checklist-item input {
+    margin-top: 0.35rem;
+  }
+
+  .checklist-item__title {
+    display: block;
+    font-weight: 600;
+    font-size: var(--fs-sm);
+    color: var(--text);
+  }
+
+  .checklist-item__desc {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: var(--fs-xs);
+    color: rgb(var(--fg-secondary));
+    line-height: 1.4;
+  }
+
+  .answer-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .answer-question {
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 0.35rem;
+  }
+
+  .answer-meta {
+    @apply flex flex-wrap items-center gap-2 text-xs text-fg-secondary;
+  }
+
+  .timeline-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 1rem;
+  }
+
+  .timeline-item {
+    border-radius: 1.25rem;
+    border: 1px dashed color-mix(in srgb, var(--border) 68%, transparent);
+    background: color-mix(in srgb, var(--surface-1) 92%, transparent);
+    padding: 1rem 1.25rem;
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .timeline-item__time {
+    font-weight: 600;
+    font-size: var(--fs-sm);
+    color: rgb(var(--fg-secondary));
+  }
+
+  .timeline-item__body {
+    @apply text-sm text-fg-primary;
+    line-height: 1.45;
+  }
+
+  .timeline-item__text {
+    margin-top: 0.35rem;
+    font-size: var(--fs-sm);
+    color: rgb(var(--fg-secondary));
+    white-space: pre-wrap;
   }
 }
 

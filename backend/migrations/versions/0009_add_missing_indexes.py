@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import Tuple
 
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
+try:  # pragma: no cover - optional dependency when running without Alembic
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+except ModuleNotFoundError:  # pragma: no cover - allow migrations to no-op in lightweight environments
+    Operations = MigrationContext = None  # type: ignore[assignment]
 from sqlalchemy.engine import Connection
 
 
@@ -41,6 +44,8 @@ def _get_operations(conn: Connection) -> Tuple[Operations, MigrationContext, Con
 
 
 def upgrade(conn: Connection) -> None:
+    if Operations is None or MigrationContext is None:  # pragma: no cover - optional dependency guard
+        return
     op, context, standalone_conn = _get_operations(conn)
 
     try:
@@ -90,6 +95,8 @@ def upgrade(conn: Connection) -> None:
 
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover - symmetry only
+    if Operations is None or MigrationContext is None:  # pragma: no cover - optional dependency guard
+        return
     op, context, standalone_conn = _get_operations(conn)
 
     try:
