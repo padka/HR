@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import UTC, date, datetime, time, timedelta
 
 from sqlalchemy import String, cast, exists, func, or_, select
 from sqlalchemy.orm import selectinload
-from sqlalchemy.sql import case, Select
+from sqlalchemy.sql import Select
 
 from backend.apps.admin_ui.services.bot_service import (
     BotSendResult,
@@ -16,7 +15,12 @@ from backend.apps.admin_ui.services.bot_service import (
 )
 from backend.apps.admin_ui.utils import paginate
 from backend.core.db import async_session
-from backend.domain.candidates.models import AutoMessage, QuestionAnswer, TestResult, User
+from backend.domain.candidates.models import (
+    AutoMessage,
+    QuestionAnswer,
+    TestResult,
+    User,
+)
 from backend.domain.models import Slot, SlotStatus
 
 
@@ -24,16 +28,16 @@ from backend.domain.models import Slot, SlotStatus
 class CandidateRow:
     user: User
     tests_total: int
-    average_score: Optional[float]
-    latest_result: Optional[TestResult]
+    average_score: float | None
+    latest_result: TestResult | None
     messages_total: int
-    latest_message: Optional[AutoMessage]
+    latest_message: AutoMessage | None
     stage: str
-    latest_slot: Optional[Slot]
-    upcoming_slot: Optional[Slot]
+    latest_slot: Slot | None
+    upcoming_slot: Slot | None
 
 
-INTERVIEW_SCRIPT_STEPS: List[Dict[str, str]] = [
+INTERVIEW_SCRIPT_STEPS: list[dict[str, str]] = [
     {
         "id": "greeting",
         "title": "Приветствие и ice-breaker",
@@ -69,15 +73,15 @@ INTRO_DAY_MESSAGE_TEMPLATE = (
 )
 
 
-def _ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
+def _ensure_aware(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
-def _stage_label(latest_slot: Optional[Slot], now: datetime) -> str:
+def _stage_label(latest_slot: Slot | None, now: datetime) -> str:
     if not latest_slot:
         return "Без интервью"
     status = (latest_slot.status or "").lower()
@@ -93,16 +97,16 @@ def _stage_label(latest_slot: Optional[Slot], now: datetime) -> str:
     return status.upper() or "Без интервью"
 
 
-def _build_test_stage_summary(results: List[TestResult]) -> List[Dict[str, object]]:
+def _build_test_stage_summary(results: list[TestResult]) -> list[dict[str, object]]:
     if not results:
         return []
     chronological = sorted(
         results,
         key=lambda item: (
-            _ensure_aware(item.created_at) or datetime.min.replace(tzinfo=timezone.utc)
+            _ensure_aware(item.created_at) or datetime.min.replace(tzinfo=UTC)
         ),
     )
-    summary: List[Dict[str, object]] = []
+    summary: list[dict[str, object]] = []
     for index, result in enumerate(chronological[:2]):
         summary.append(
             {
@@ -117,16 +121,18 @@ def _build_test_stage_summary(results: List[TestResult]) -> List[Dict[str, objec
     return summary
 
 
-async def _distinct_ratings(session) -> List[str]:
+async def _distinct_ratings(session) -> list[str]:
     rows = await session.execute(
         select(func.distinct(TestResult.rating)).where(TestResult.rating.isnot(None))
     )
     return [value for value in rows.scalars() if value]
 
 
-async def _distinct_cities(session) -> List[str]:
+async def _distinct_cities(session) -> list[str]:
     rows = await session.execute(
-        select(func.distinct(User.city)).where(User.city.isnot(None)).order_by(User.city.asc())
+        select(func.distinct(User.city))
+        .where(User.city.isnot(None))
+        .order_by(User.city.asc())
     )
     return [value for value in rows.scalars() if value]
 
@@ -135,17 +141,19 @@ async def list_candidates(
     *,
     page: int,
     per_page: int,
-    search: Optional[str],
-    city: Optional[str],
-    is_active: Optional[bool],
-    rating: Optional[str],
-    has_tests: Optional[bool],
-    has_messages: Optional[bool],
-    stage: Optional[str] = None,
-) -> Dict[str, object]:
+    search: str | None,
+    city: str | None,
+    is_active: bool | None,
+    rating: str | None,
+    has_tests: bool | None,
+    has_messages: bool | None,
+    stage: str | None = None,
+    sort: str = "last_activity",
+    order: str = "desc",
+) -> dict[str, object]:
     async with async_session() as session:
         conditions = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if search:
             like_value = f"%{search.strip()}%"
@@ -182,19 +190,11 @@ async def list_candidates(
 
         if has_tests is True:
             conditions.append(
-                exists(
-                    select(1)
-                    .where(TestResult.user_id == User.id)
-                    .correlate(User)
-                )
+                exists(select(1).where(TestResult.user_id == User.id).correlate(User))
             )
         elif has_tests is False:
             conditions.append(
-                ~exists(
-                    select(1)
-                    .where(TestResult.user_id == User.id)
-                    .correlate(User)
-                )
+                ~exists(select(1).where(TestResult.user_id == User.id).correlate(User))
             )
 
         if has_messages is True:
@@ -237,9 +237,7 @@ async def list_candidates(
             conditions.append(
                 or_(
                     ~exists(
-                        select(1)
-                        .where(TestResult.user_id == User.id)
-                        .correlate(User)
+                        select(1).where(TestResult.user_id == User.id).correlate(User)
                     ),
                     ~exists(
                         select(1)
@@ -249,6 +247,13 @@ async def list_candidates(
                 )
             )
 
+        sort_key = (sort or "last_activity").strip().lower()
+        if sort_key not in {"fio", "last_activity"}:
+            sort_key = "last_activity"
+        order_dir = (order or "desc").strip().lower()
+        if order_dir not in {"asc", "desc"}:
+            order_dir = "desc"
+
         count_query = select(func.count()).select_from(User)
         if conditions:
             count_query = count_query.where(*conditions)
@@ -256,9 +261,20 @@ async def list_candidates(
 
         pages_total, page, offset = paginate(total, page, per_page)
 
+        if sort_key == "fio":
+            primary_order = User.fio.asc() if order_dir == "asc" else User.fio.desc()
+            secondary_order = User.id.asc() if order_dir == "asc" else User.id.desc()
+        else:
+            primary_order = (
+                User.last_activity.asc()
+                if order_dir == "asc"
+                else User.last_activity.desc()
+            )
+            secondary_order = User.id.asc() if order_dir == "asc" else User.id.desc()
+
         list_query: Select = (
             select(User)
-            .order_by(User.last_activity.desc(), User.id.desc())
+            .order_by(primary_order, secondary_order)
             .offset(offset)
             .limit(per_page)
         )
@@ -270,12 +286,12 @@ async def list_candidates(
         user_ids = [user.id for user in users]
         telegram_ids = [user.telegram_id for user in users if user.telegram_id]
 
-        stats_map: Dict[int, Tuple[int, Optional[float]]] = {}
-        latest_result_map: Dict[int, TestResult] = {}
-        messages_map: Dict[int, List[AutoMessage]] = {}
-        latest_slot_map: Dict[int, Slot] = {}
-        upcoming_slot_map: Dict[int, Slot] = {}
-        stage_map: Dict[int, str] = {}
+        stats_map: dict[int, tuple[int, float | None]] = {}
+        latest_result_map: dict[int, TestResult] = {}
+        messages_map: dict[int, list[AutoMessage]] = {}
+        latest_slot_map: dict[int, Slot] = {}
+        upcoming_slot_map: dict[int, Slot] = {}
+        stage_map: dict[int, str] = {}
 
         if user_ids:
             stats_rows = await session.execute(
@@ -305,8 +321,7 @@ async def list_candidates(
                         ),
                     )
                     .label("rnk"),
-                )
-                .where(TestResult.user_id.in_(user_ids))
+                ).where(TestResult.user_id.in_(user_ids))
             )
             for result, rank in ranked_results:
                 if rank == 1:
@@ -328,7 +343,7 @@ async def list_candidates(
                 .options(selectinload(Slot.recruiter), selectinload(Slot.city))
                 .where(Slot.candidate_tg_id.in_(telegram_ids))
             )
-            slots_by_candidate: Dict[int, List[Slot]] = defaultdict(list)
+            slots_by_candidate: dict[int, list[Slot]] = defaultdict(list)
             for slot in slot_rows.scalars():
                 if slot.candidate_tg_id is None:
                     continue
@@ -338,13 +353,15 @@ async def list_candidates(
             for tg_id, slot_list in slots_by_candidate.items():
                 slot_list.sort(key=lambda s: s.start_utc or now)
                 latest_slot = slot_list[-1]
-                upcoming_slot = next((s for s in slot_list if (s.start_utc or now) >= now), None)
+                upcoming_slot = next(
+                    (s for s in slot_list if (s.start_utc or now) >= now), None
+                )
                 latest_slot_map[tg_id] = latest_slot
                 if upcoming_slot:
                     upcoming_slot_map[tg_id] = upcoming_slot
                 stage_map[tg_id] = _stage_label(latest_slot, now)
 
-        items: List[CandidateRow] = []
+        items: list[CandidateRow] = []
         for user in users:
             tests_total, avg_score = stats_map.get(user.id, (0, None))
             candidate_messages = messages_map.get(user.telegram_id, [])
@@ -358,7 +375,9 @@ async def list_candidates(
                     average_score=avg_score,
                     latest_result=latest_result_map.get(user.id),
                     messages_total=len(candidate_messages),
-                    latest_message=candidate_messages[0] if candidate_messages else None,
+                    latest_message=(
+                        candidate_messages[0] if candidate_messages else None
+                    ),
                     stage=stage,
                     latest_slot=latest_slot,
                     upcoming_slot=upcoming_slot,
@@ -373,6 +392,8 @@ async def list_candidates(
         "page": page,
         "pages_total": pages_total,
         "per_page": per_page,
+        "sort": sort_key,
+        "order": order_dir,
         "ratings": ratings,
         "cities": cities,
         "filters": {
@@ -387,9 +408,11 @@ async def list_candidates(
     }
 
 
-async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, object]:
+async def _collect_candidate_analytics(session, now: datetime) -> dict[str, object]:
     total = await session.scalar(select(func.count()).select_from(User)) or 0
-    active = await session.scalar(select(func.count()).where(User.is_active.is_(True))) or 0
+    active = (
+        await session.scalar(select(func.count()).where(User.is_active.is_(True))) or 0
+    )
     inactive = max(total - active, 0)
 
     seven_days_ago = now - timedelta(days=7)
@@ -406,8 +429,7 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
 
     need_followup = (
         await session.scalar(
-            select(func.count())
-            .where(
+            select(func.count()).where(
                 User.is_active.is_(True),
                 ~exists(
                     select(1)
@@ -420,13 +442,8 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
 
     no_tests = (
         await session.scalar(
-            select(func.count())
-            .where(
-                ~exists(
-                    select(1)
-                    .where(TestResult.user_id == User.id)
-                    .correlate(User)
-                )
+            select(func.count()).where(
+                ~exists(select(1).where(TestResult.user_id == User.id).correlate(User))
             )
         )
     ) or 0
@@ -442,8 +459,7 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
                 order_by=(Slot.start_utc.desc(), Slot.id.desc()),
             )
             .label("rnk"),
-        )
-        .where(Slot.candidate_tg_id.isnot(None))
+        ).where(Slot.candidate_tg_id.isnot(None))
     ).subquery()
 
     latest_rows = await session.execute(
@@ -452,18 +468,20 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
             slot_sub.c.start_utc,
             slot_sub.c.status,
         )
-        .select_from(slot_sub.join(User, User.telegram_id == slot_sub.c.candidate_tg_id))
+        .select_from(
+            slot_sub.join(User, User.telegram_id == slot_sub.c.candidate_tg_id)
+        )
         .where(slot_sub.c.rnk == 1)
     )
 
-    stage_counts: Dict[str, int] = defaultdict(int)
+    stage_counts: dict[str, int] = defaultdict(int)
     upcoming_count = 0
     awaiting_confirmation = 0
     booked_active = 0
     completed_interviews = 0
     canceled_count = 0
 
-    for tg_id, start_utc, status in latest_rows:
+    for _tg_id, start_utc, status in latest_rows:
         start = _ensure_aware(start_utc) or now
         status_norm = (status or "").lower()
         stage_counts[status_norm] += 1
@@ -498,14 +516,22 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
         SlotStatus.FREE: None,
     }
 
-    pipeline: List[Dict[str, object]] = []
+    pipeline: list[dict[str, object]] = []
     for key, label in pipeline_labels.items():
-        pipeline.append({
-            "label": label,
-            "count": int(stage_counts.get(key, 0)),
-            "slug": stage_slug_map.get(key),
-        })
-    pipeline.append({"label": "Без интервью", "count": without_slot, "slug": "alerts" if without_slot else None})
+        pipeline.append(
+            {
+                "label": label,
+                "count": int(stage_counts.get(key, 0)),
+                "slug": stage_slug_map.get(key),
+            }
+        )
+    pipeline.append(
+        {
+            "label": "Без интервью",
+            "count": without_slot,
+            "slug": "alerts" if without_slot else None,
+        }
+    )
 
     return {
         "total": total,
@@ -525,36 +551,43 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
     }
 
 
-async def candidate_filter_options() -> Dict[str, List[str]]:
+async def candidate_filter_options() -> dict[str, list[str]]:
     async with async_session() as session:
         cities = await _distinct_cities(session)
         ratings = await _distinct_ratings(session)
     return {"cities": cities, "ratings": ratings}
 
 
-async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
+async def get_candidate_detail(user_id: int) -> dict[str, object] | None:
     async with async_session() as session:
         user = await session.get(User, user_id)
         if not user:
             return None
 
         test_results = (
-            await session.execute(
-                select(TestResult)
-                .where(TestResult.user_id == user_id)
-                .order_by(TestResult.created_at.desc(), TestResult.id.desc())
+            (
+                await session.execute(
+                    select(TestResult)
+                    .where(TestResult.user_id == user_id)
+                    .order_by(TestResult.created_at.desc(), TestResult.id.desc())
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         test_ids = [result.id for result in test_results]
-        answers_map: Dict[int, Dict[str, object]] = {}
+        answers_map: dict[int, dict[str, object]] = {}
         if test_ids:
             answer_rows = await session.execute(
                 select(QuestionAnswer)
                 .where(QuestionAnswer.test_result_id.in_(test_ids))
-                .order_by(QuestionAnswer.test_result_id.asc(), QuestionAnswer.question_index.asc())
+                .order_by(
+                    QuestionAnswer.test_result_id.asc(),
+                    QuestionAnswer.question_index.asc(),
+                )
             )
-            raw_map: Dict[int, Dict[str, object]] = defaultdict(
+            raw_map: dict[int, dict[str, object]] = defaultdict(
                 lambda: {
                     "questions_total": 0,
                     "questions_correct": 0,
@@ -581,25 +614,40 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
             }
 
         messages = (
-            await session.execute(
-                select(AutoMessage)
-                .where(AutoMessage.target_chat_id == user.telegram_id)
-                .order_by(AutoMessage.created_at.desc(), AutoMessage.id.desc())
+            (
+                await session.execute(
+                    select(AutoMessage)
+                    .where(AutoMessage.target_chat_id == user.telegram_id)
+                    .order_by(AutoMessage.created_at.desc(), AutoMessage.id.desc())
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         slots = (
-            await session.execute(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-                .where(Slot.candidate_tg_id == user.telegram_id)
-                .order_by(Slot.start_utc.desc(), Slot.id.desc())
+            (
+                await session.execute(
+                    select(Slot)
+                    .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                    .where(Slot.candidate_tg_id == user.telegram_id)
+                    .order_by(Slot.start_utc.desc(), Slot.id.desc())
+                )
             )
-        ).scalars().all()
-        now = datetime.now(timezone.utc)
+            .scalars()
+            .all()
+        )
+        now = datetime.now(UTC)
         for slot in slots:
             slot.start_utc = _ensure_aware(slot.start_utc)
-        upcoming_slot = next((slot for slot in reversed(slots) if slot.start_utc and slot.start_utc >= now), None)
+        upcoming_slot = next(
+            (
+                slot
+                for slot in reversed(slots)
+                if slot.start_utc and slot.start_utc >= now
+            ),
+            None,
+        )
         stage = _stage_label(slots[0] if slots else None, now)
 
         timeline = []
@@ -646,7 +694,9 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
             interview_feedback = {
                 "checklist": checklist if isinstance(checklist, dict) else {},
                 "notes": stored.get("notes") if isinstance(stored, dict) else None,
-                "updated_at": stored.get("updated_at") if isinstance(stored, dict) else None,
+                "updated_at": (
+                    stored.get("updated_at") if isinstance(stored, dict) else None
+                ),
             }
 
         stats = await session.execute(
@@ -685,7 +735,7 @@ async def set_interview_outcome(
     candidate_id: int,
     slot_id: int,
     outcome: str,
-) -> Tuple[bool, Optional[str], Optional[Dict[str, object]], Optional[Dict[str, object]]]:
+) -> tuple[bool, str | None, dict[str, object] | None, dict[str, object] | None]:
     normalized = (outcome or "").strip().lower()
     aliases = {"passed": "success", "failed": "reject"}
     normalized = aliases.get(normalized, normalized)
@@ -714,14 +764,14 @@ async def set_interview_outcome(
             slot.test2_sent_at = None
         await session.commit()
 
-        slot_info: Dict[str, object] = {
+        slot_info: dict[str, object] = {
             "id": slot.id,
             "candidate_tg_id": slot.candidate_tg_id,
             "candidate_tz": getattr(slot, "candidate_tz", None),
             "candidate_city_id": getattr(slot, "candidate_city_id", None),
             "candidate_fio": getattr(slot, "candidate_fio", None),
         }
-        user_info: Dict[str, object] = {
+        user_info: dict[str, object] = {
             "id": user.id,
             "telegram_id": user.telegram_id,
             "fio": user.fio,
@@ -733,8 +783,8 @@ async def set_interview_outcome(
 async def send_test2(
     user_id: int,
     *,
-    bot_service: Optional[BotService] = None,
-    slot_data: Optional[Dict[str, object]] = None,
+    bot_service: BotService | None = None,
+    slot_data: dict[str, object] | None = None,
 ) -> BotSendResult:
     service = bot_service
     if service is None:
@@ -758,9 +808,9 @@ async def send_test2(
 
         telegram_id = int(user.telegram_id)
         candidate_name = user.fio
-        candidate_tz: Optional[str] = None
-        candidate_city: Optional[int] = None
-        slot_id: Optional[int] = None
+        candidate_tz: str | None = None
+        candidate_city: int | None = None
+        slot_id: int | None = None
 
         if slot_data:
             slot_id_value = slot_data.get("id")
@@ -806,7 +856,7 @@ async def send_test2(
         async with async_session() as session:
             slot = await session.get(Slot, slot_id)
             if slot:
-                slot.test2_sent_at = datetime.now(timezone.utc)
+                slot.test2_sent_at = datetime.now(UTC)
                 await session.commit()
 
     return result
@@ -817,9 +867,9 @@ async def send_intro_message(
     *,
     date_value: str,
     time_value: str,
-    message_text: Optional[str],
-    bot_service: Optional[BotService] = None,
-) -> Tuple[bool, str]:
+    message_text: str | None,
+    bot_service: BotService | None = None,
+) -> tuple[bool, str]:
     date_clean = (date_value or "").strip()
     time_clean = (time_value or "").strip()
     if not date_clean or not time_clean:
@@ -877,13 +927,13 @@ async def send_intro_message(
 
 async def save_interview_feedback(
     slot_id: int,
-    checklist_ids: List[str],
+    checklist_ids: list[str],
     notes: str,
     *,
-    candidate_id: Optional[int] = None,
-) -> Tuple[bool, str]:
+    candidate_id: int | None = None,
+) -> tuple[bool, str]:
     step_ids = {step["id"] for step in INTERVIEW_SCRIPT_STEPS}
-    normalized: Dict[str, bool] = {step_id: False for step_id in step_ids}
+    normalized: dict[str, bool] = {step_id: False for step_id in step_ids}
     for checked in checklist_ids:
         if checked in normalized:
             normalized[checked] = True
@@ -903,7 +953,7 @@ async def save_interview_feedback(
         slot.interview_feedback = {
             "checklist": normalized,
             "notes": notes.strip() or None,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
         await session.commit()
 
@@ -915,8 +965,8 @@ async def schedule_intro_day_message(
     *,
     date_value: str,
     time_value: str,
-    message_text: Optional[str],
-) -> Tuple[bool, str]:
+    message_text: str | None,
+) -> tuple[bool, str]:
     return await send_intro_message(
         candidate_id,
         date_value=date_value,
@@ -929,9 +979,9 @@ async def upsert_candidate(
     *,
     telegram_id: int,
     fio: str,
-    city: Optional[str],
+    city: str | None,
     is_active: bool,
-    last_activity: Optional[datetime] = None,
+    last_activity: datetime | None = None,
 ) -> User:
     clean_fio = fio.strip()
     clean_city = city.strip() if city else None
@@ -943,7 +993,7 @@ async def upsert_candidate(
             select(User).where(User.telegram_id == telegram_id)
         )
         user = result.scalar_one_or_none()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         last_activity_value = last_activity or now
 
         if user:
@@ -981,7 +1031,7 @@ async def update_candidate(
     *,
     telegram_id: int,
     fio: str,
-    city: Optional[str],
+    city: str | None,
     is_active: bool,
 ) -> bool:
     clean_fio = fio.strip()

@@ -1,4 +1,3 @@
-from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Query, Request
@@ -6,6 +5,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
 
 from backend.apps.admin_ui.config import templates
+from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.candidates import (
     candidate_filter_options,
     delete_candidate,
@@ -19,11 +19,11 @@ from backend.apps.admin_ui.services.candidates import (
     update_candidate,
     upsert_candidate,
 )
-from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
+
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 
 
-def _parse_bool(value: Optional[str]) -> Optional[bool]:
+def _parse_bool(value: str | None) -> bool | None:
     if value is None or value == "":
         return None
     value = value.lower()
@@ -39,13 +39,15 @@ async def candidates_list(
     request: Request,
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=5, le=100),
-    q: Optional[str] = Query(None, alias="search"),
-    city: Optional[str] = Query(None),
-    active: Optional[str] = Query(None),
-    rating: Optional[str] = Query(None),
-    has_tests: Optional[str] = Query(None),
-    has_messages: Optional[str] = Query(None),
-    stage: Optional[str] = Query(None),
+    q: str | None = Query(None, alias="search"),
+    city: str | None = Query(None),
+    active: str | None = Query(None),
+    rating: str | None = Query(None),
+    has_tests: str | None = Query(None),
+    has_messages: str | None = Query(None),
+    stage: str | None = Query(None),
+    sort: str = Query("last_activity"),
+    order: str = Query("desc"),
 ) -> HTMLResponse:
     is_active = _parse_bool(active)
     tests_flag = _parse_bool(has_tests)
@@ -61,6 +63,8 @@ async def candidates_list(
         has_tests=tests_flag,
         has_messages=messages_flag,
         stage=stage,
+        sort=sort,
+        order=order,
     )
 
     context = {
@@ -85,7 +89,7 @@ async def candidates_create(
     telegram_id: int = Form(...),
     fio: str = Form(...),
     city: str = Form(""),
-    is_active: Optional[str] = Form("on"),
+    is_active: str | None = Form("on"),
 ):
     active_flag = _parse_bool(is_active)
     try:
@@ -121,7 +125,7 @@ async def candidates_update(
     telegram_id: int = Form(...),
     fio: str = Form(...),
     city: str = Form(""),
-    is_active: Optional[str] = Form(None),
+    is_active: str | None = Form(None),
 ):
     active_flag = _parse_bool(is_active)
     try:
@@ -138,16 +142,18 @@ async def candidates_update(
         success = False
 
     if not success:
-        return RedirectResponse(url=f"/candidates/{candidate_id}?error=update", status_code=303)
+        return RedirectResponse(
+            url=f"/candidates/{candidate_id}?error=update", status_code=303
+        )
     return RedirectResponse(url=f"/candidates/{candidate_id}?saved=1", status_code=303)
 
 
 @router.post("/{candidate_id}/interview-feedback")
 async def candidates_interview_feedback(
     candidate_id: int,
-    slot_id: int = Form(...),
-    checklist: Optional[List[str]] = Form(None),
-    notes: str = Form(""),
+    slot_id: int = Form(...),  # noqa: B008
+    checklist: list[str] | None = Form(None),  # noqa: B008
+    notes: str = Form(""),  # noqa: B008
 ):
     selected = checklist or []
     ok, message = await save_interview_feedback(
@@ -166,10 +172,10 @@ async def candidates_interview_feedback(
 @router.post("/{candidate_id}/intro-day")
 async def candidates_intro_day(
     candidate_id: int,
-    date_value: str = Form(...),
-    time_value: str = Form(...),
-    message_text: str = Form(""),
-    bot_service: BotService = Depends(provide_bot_service),
+    date_value: str = Form(...),  # noqa: B008
+    time_value: str = Form(...),  # noqa: B008
+    message_text: str = Form(""),  # noqa: B008
+    bot_service: BotService = Depends(provide_bot_service),  # noqa: B008
 ):
     ok, message = await send_intro_message(
         candidate_id,
@@ -189,8 +195,8 @@ async def candidates_intro_day(
 async def candidates_slot_outcome(
     candidate_id: int,
     slot_id: int,
-    outcome: str = Form(...),
-    bot_service: BotService = Depends(provide_bot_service),
+    outcome: str = Form(...),  # noqa: B008
+    bot_service: BotService = Depends(provide_bot_service),  # noqa: B008
 ):
     ok, stored, slot_data, _ = await set_interview_outcome(
         candidate_id,
@@ -215,7 +221,9 @@ async def candidates_slot_outcome(
                 message = result.message or "Тест 2 отправлен кандидату."
             else:
                 status = "error"
-                message = result.error or result.message or "Не удалось отправить Тест 2."
+                message = (
+                    result.error or result.message or "Не удалось отправить Тест 2."
+                )
 
     query = f"status={status}"
     if message:
