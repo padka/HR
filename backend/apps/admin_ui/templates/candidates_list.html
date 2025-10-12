@@ -1,118 +1,123 @@
 {% extends "base.html" %}
-{% from "page_primitives.html" import page_header, data_table %}
-{% import "partials/list_toolbar.html" as toolbars %}
 {% block title %}Кандидаты{% endblock %}
 {% block content %}
-  {% call page_header(
-    title="Кандидаты",
-    description="Единая база кандидатов с аналитикой и быстрыми действиями."
-  ) %}{% endcall %}
+  <section class="space-y-8">
+    <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div class="space-y-1">
+        <h1 class="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">Кандидаты</h1>
+        <p class="text-sm text-slate-600 dark:text-slate-400">Поиск по базе и быстрый доступ к профилю кандидата.</p>
+      </div>
+      <form class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3" method="get" action="/candidates">
+        <label class="flex w-full items-center gap-3">
+          <span class="sr-only">Поиск по ФИО или TG ID</span>
+          <input
+            class="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-sky-500 dark:focus:ring-sky-500/40"
+            type="search"
+            name="search"
+            value="{{ filters.search }}"
+            placeholder="Поиск по ФИО или TG ID"
+          >
+        </label>
+        <button class="inline-flex items-center justify-center rounded-full bg-sky-600 px-5 py-2 text-sm font-semibold text-white shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:bg-sky-500" type="submit">
+          Найти
+        </button>
+      </form>
+    </header>
 
-  <div class="toolbar">
-  {% call toolbars.list_toolbar(
-    form_id="candidates-toolbar",
-    form_action="/candidates",
-    method="get"
-  ) %}
-    <label class="input-pill">
-      <span class="input-pill__label">Поиск</span>
-      <input
-        class="input-pill__control input"
-        type="search"
-        name="search"
-        value="{{ filters.search }}"
-        placeholder="Поиск по ФИО или TG ID"
-      >
-    </label>
-  {% endcall %}
-  </div>
-
-  {% if items %}
-    {% set columns = [
-      {"label": "Кандидат"},
-      {"label": "Telegram ID"},
-      {"label": "Город"},
-      {"label": "Последняя активность"},
-      {"label": "Этап"},
-      {"label": "Следующий шаг"},
-      {"label": "Тесты"},
-      {"label": "Последний результат"},
-      {"label": "Сообщения"},
-      {"label": "История"},
-      {"label": "Карточка", "class": "col-actions"}
-    ] %}
-    {% call data_table({'columns': columns, 'caption': "Список кандидатов", 'table_class': 'table table--candidates'}) %}
-      {% for row in items %}
-        {% set user = row.user %}
-        {% set result = row.latest_result %}
-        {% set message = row.latest_message %}
-        <tr>
-          <td>
-            <div class="entity">
-              <span class="entity__title">{{ user.fio }}</span>
-              <span class="entity__meta">
-                {% if user.is_active %}
-                  <span class="badge badge--success">Активен</span>
-                {% else %}
-                  <span class="badge badge--muted">Отключен</span>
-                {% endif %}
-              </span>
-            </div>
-          </td>
-          <td>{{ user.telegram_id }}</td>
-          <td>{{ user.city or '—' }}</td>
-          <td>{{ user.last_activity.strftime('%d.%m.%Y %H:%M') if user.last_activity else '—' }}</td>
-          <td>
-            <div class="stack">
-              <span class="badge badge--soft">{{ row.stage }}</span>
-              {% if row.latest_slot %}
-                <span class="muted">{{ row.latest_slot.status|upper }} · {{ fmt_local(row.latest_slot.start_utc, row.latest_slot.candidate_tz or 'Europe/Moscow') }}</span>
-              {% else %}
-                <span class="muted">Нет слотов</span>
-              {% endif %}
-            </div>
-          </td>
-          <td>
-            {% if row.next_action %}
-              {{ row.next_action }}
-            {% else %}
-              <span class="muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if row.tests_count %}
-              {{ row.tests_count }}
-            {% else %}
-              <span class="muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if result %}
-              {{ result.final_score }} / {{ result.raw_score }}
-            {% else %}
-              <span class="muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if message %}
-              {{ message.message_text[:42] }}{% if message.message_text|length > 42 %}…{% endif %}
-            {% else %}
-              <span class="muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            <a class="btn btn-ghost btn--ghost btn-sm" href="/candidates/{{ user.id }}#history">История</a>
-          </td>
-          <td>
-            <a class="btn btn-ghost btn--ghost btn-sm" href="/candidates/{{ user.id }}">Перейти</a>
-          </td>
-        </tr>
-      {% endfor %}
-    {% endcall %}
-  {% else %}
-    <div class="surface card">
-      <h2 class="section-title">Кандидатов пока нет</h2>
-      <p class="section-hинт">Новые кандидаты появляются автоматически после регистрации в боте.</p>
-    </div>
-  {% endif %}
+    {% if items %}
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200 text-sm leading-6 dark:divide-slate-700">
+          <thead class="bg-slate-50/70 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800/70 dark:text-slate-300">
+            <tr>
+              <th scope="col" class="px-4 py-3.5">ФИО</th>
+              <th scope="col" class="px-4 py-3.5">TG ID</th>
+              <th scope="col" class="px-4 py-3.5">Город</th>
+              <th scope="col" class="px-4 py-3.5">Последняя активность</th>
+              <th scope="col" class="px-4 py-3.5">Этап</th>
+              <th scope="col" class="px-4 py-3.5">Следующий шаг</th>
+              <th scope="col" class="px-4 py-3.5">Тесты</th>
+              <th scope="col" class="px-4 py-3.5">Последний результат</th>
+              <th scope="col" class="px-4 py-3.5">Сообщения</th>
+              <th scope="col" class="px-4 py-3.5">История</th>
+              <th scope="col" class="px-4 py-3.5">Карточка</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white/70 text-slate-700 dark:divide-slate-800 dark:bg-slate-900/60 dark:text-slate-200">
+            {% for row in items %}
+              {% set user = row.user %}
+              {% set result = row.latest_result %}
+              {% set message = row.latest_message %}
+              <tr class="transition hover:bg-sky-50/50 dark:hover:bg-slate-800/60">
+                <td class="px-4 py-3.5">
+                  <div class="flex flex-col gap-1">
+                    <span class="font-medium text-slate-900 dark:text-slate-50">{{ user.fio }}</span>
+                    <span class="text-xs font-medium text-slate-500 dark:text-slate-400">
+                      {% if user.is_active %}
+                        Активен
+                      {% else %}
+                        Отключен
+                      {% endif %}
+                    </span>
+                  </div>
+                </td>
+                <td class="px-4 py-3.5 text-slate-600 dark:text-slate-300">{{ user.telegram_id }}</td>
+                <td class="px-4 py-3.5">{{ user.city or '—' }}</td>
+                <td class="px-4 py-3.5">
+                  {% if user.last_activity %}
+                    {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td class="px-4 py-3.5">
+                  <div class="flex flex-col gap-1">
+                    <span class="inline-flex w-fit rounded-full border border-slate-200 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:border-slate-600 dark:text-slate-300">{{ row.stage }}</span>
+                    {% if row.latest_slot %}
+                      <span class="text-xs text-slate-500 dark:text-slate-400">
+                        {{ (row.latest_slot.status or '')|upper }} · {{ fmt_local(row.latest_slot.start_utc, row.latest_slot.candidate_tz or 'Europe/Moscow') if row.latest_slot.start_utc else '—' }}
+                      </span>
+                    {% else %}
+                      <span class="text-xs text-slate-500 dark:text-slate-400">Нет интервью</span>
+                    {% endif %}
+                  </div>
+                </td>
+                <td class="px-4 py-3.5">
+                  {% if row.upcoming_slot and row.upcoming_slot.start_utc %}
+                    Интервью {{ fmt_local(row.upcoming_slot.start_utc, row.upcoming_slot.candidate_tz or 'Europe/Moscow') }}
+                  {% else %}
+                    <span class="text-slate-400 dark:text-slate-500">—</span>
+                  {% endif %}
+                </td>
+                <td class="px-4 py-3.5">{{ row.tests_total or '—' }}</td>
+                <td class="px-4 py-3.5">
+                  {% if result %}
+                    {{ result.final_score }} / {{ result.raw_score }}
+                  {% else %}
+                    <span class="text-slate-400 dark:text-slate-500">—</span>
+                  {% endif %}
+                </td>
+                <td class="px-4 py-3.5">
+                  {% if message %}
+                    {{ message.message_text[:42] }}{% if message.message_text|length > 42 %}…{% endif %}
+                  {% else %}
+                    <span class="text-slate-400 dark:text-slate-500">—</span>
+                  {% endif %}
+                </td>
+                <td class="px-4 py-3.5">
+                  <a class="inline-flex items-center justify-center rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-sky-400 hover:text-sky-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-600 dark:text-slate-200 dark:hover:border-sky-500 dark:hover:text-sky-400" href="/candidates/{{ user.id }}#history">История</a>
+                </td>
+                <td class="px-4 py-3.5">
+                  <a class="inline-flex items-center justify-center rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300" href="/candidates/{{ user.id }}">Перейти</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="rounded-2xl border border-dashed border-slate-200 bg-white/70 p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-400">
+        Кандидатов пока нет — новые пользователи появятся после регистрации в боте.
+      </div>
+    {% endif %}
+  </section>
 {% endblock %}

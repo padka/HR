@@ -9,6 +9,11 @@ from sqlalchemy import String, cast, exists, func, or_, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import case, Select
 
+from backend.apps.admin_ui.services.bot_service import (
+    BotSendResult,
+    BotService,
+    get_bot_service,
+)
 from backend.apps.admin_ui.utils import paginate
 from backend.core.db import async_session
 from backend.domain.candidates.models import AutoMessage, QuestionAnswer, TestResult, User
@@ -362,8 +367,6 @@ async def list_candidates(
 
         ratings = await _distinct_ratings(session)
         cities = await _distinct_cities(session)
-        analytics = await _collect_candidate_analytics(session, now)
-
     return {
         "items": items,
         "total": total,
@@ -372,7 +375,6 @@ async def list_candidates(
         "per_page": per_page,
         "ratings": ratings,
         "cities": cities,
-        "analytics": analytics,
         "filters": {
             "search": search or "",
             "city": city or "",
@@ -675,7 +677,202 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
             "tests_total": int(tests_total or 0),
             "average_score": float(avg_score) if avg_score is not None else None,
         },
+        "test2_completed": int(tests_total or 0) >= 2,
     }
+
+
+async def set_interview_outcome(
+    candidate_id: int,
+    slot_id: int,
+    outcome: str,
+) -> Tuple[bool, Optional[str], Optional[Dict[str, object]], Optional[Dict[str, object]]]:
+    normalized = (outcome or "").strip().lower()
+    aliases = {"passed": "success", "failed": "reject"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in {"success", "reject"}:
+        return False, "Некорректный исход интервью.", None, None
+
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            return False, "Кандидат не найден.", None, None
+
+        slot = await session.get(Slot, slot_id)
+        if not slot:
+            return False, "Интервью не найдено.", None, None
+
+        if slot.candidate_tg_id and slot.candidate_tg_id != user.telegram_id:
+            return (
+                False,
+                "Интервью относится к другому кандидату.",
+                None,
+                None,
+            )
+
+        slot.interview_outcome = normalized
+        if normalized != "success":
+            slot.test2_sent_at = None
+        await session.commit()
+
+        slot_info: Dict[str, object] = {
+            "id": slot.id,
+            "candidate_tg_id": slot.candidate_tg_id,
+            "candidate_tz": getattr(slot, "candidate_tz", None),
+            "candidate_city_id": getattr(slot, "candidate_city_id", None),
+            "candidate_fio": getattr(slot, "candidate_fio", None),
+        }
+        user_info: Dict[str, object] = {
+            "id": user.id,
+            "telegram_id": user.telegram_id,
+            "fio": user.fio,
+        }
+
+    return True, normalized, slot_info, user_info
+
+
+async def send_test2(
+    user_id: int,
+    *,
+    bot_service: Optional[BotService] = None,
+    slot_data: Optional[Dict[str, object]] = None,
+) -> BotSendResult:
+    service = bot_service
+    if service is None:
+        try:
+            service = get_bot_service()
+        except RuntimeError:
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error="Бот недоступен. Проверьте конфигурацию интеграции.",
+            )
+
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user or not user.telegram_id:
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_found",
+                error="Кандидат не найден или не привязан к Telegram.",
+            )
+
+        telegram_id = int(user.telegram_id)
+        candidate_name = user.fio
+        candidate_tz: Optional[str] = None
+        candidate_city: Optional[int] = None
+        slot_id: Optional[int] = None
+
+        if slot_data:
+            slot_id_value = slot_data.get("id")
+            if isinstance(slot_id_value, int):
+                slot_id = slot_id_value
+            elif isinstance(slot_id_value, str) and slot_id_value.isdigit():
+                slot_id = int(slot_id_value)
+
+            tz_value = slot_data.get("candidate_tz")
+            if isinstance(tz_value, str) and tz_value.strip():
+                candidate_tz = tz_value
+
+            city_value = slot_data.get("candidate_city_id")
+            if isinstance(city_value, int):
+                candidate_city = city_value
+            elif isinstance(city_value, str) and city_value.isdigit():
+                candidate_city = int(city_value)
+
+            slot_name = slot_data.get("candidate_fio")
+            if isinstance(slot_name, str) and slot_name.strip():
+                candidate_name = slot_name
+
+        if slot_id is None:
+            slot = await session.scalar(
+                select(Slot)
+                .where(Slot.candidate_tg_id == telegram_id)
+                .order_by(Slot.start_utc.desc(), Slot.id.desc())
+            )
+            if slot:
+                slot_id = slot.id
+                candidate_tz = getattr(slot, "candidate_tz", None)
+                candidate_city = getattr(slot, "candidate_city_id", None)
+                candidate_name = getattr(slot, "candidate_fio", None) or candidate_name
+
+    result = await service.send_test2(
+        telegram_id,
+        candidate_tz,
+        candidate_city,
+        candidate_name,
+    )
+
+    if result.ok and slot_id:
+        async with async_session() as session:
+            slot = await session.get(Slot, slot_id)
+            if slot:
+                slot.test2_sent_at = datetime.now(timezone.utc)
+                await session.commit()
+
+    return result
+
+
+async def send_intro_message(
+    candidate_id: int,
+    *,
+    date_value: str,
+    time_value: str,
+    message_text: Optional[str],
+    bot_service: Optional[BotService] = None,
+) -> Tuple[bool, str]:
+    date_clean = (date_value or "").strip()
+    time_clean = (time_value or "").strip()
+    if not date_clean or not time_clean:
+        return False, "Укажите дату и время ознакомительного дня."
+
+    try:
+        visit_date = date.fromisoformat(date_clean)
+    except ValueError:
+        return False, "Некорректная дата ознакомительного дня."
+
+    try:
+        visit_time = time.fromisoformat(time_clean)
+    except ValueError:
+        return False, "Некорректное время ознакомительного дня."
+
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user or not user.telegram_id:
+            return False, "Кандидат не найден или не привязан к Telegram."
+        telegram_id = int(user.telegram_id)
+        fio = user.fio
+
+    clean_message = (message_text or "").strip()
+    if not clean_message:
+        clean_message = INTRO_DAY_MESSAGE_TEMPLATE.format(
+            fio=fio,
+            date=visit_date.strftime("%d.%m.%Y"),
+            time=visit_time.strftime("%H:%M"),
+        )
+
+    service = bot_service
+    if service is None:
+        try:
+            service = get_bot_service()
+        except RuntimeError:
+            return False, "Бот недоступен. Проверьте конфигурацию."
+
+    result = await service.send_intro_message(telegram_id, clean_message)
+    if not result.ok:
+        reason = result.error or result.message or "Не удалось отправить сообщение."
+        return False, reason
+
+    send_time = datetime.combine(visit_date, visit_time).strftime("%Y-%m-%d %H:%M")
+    async with async_session() as session:
+        record = AutoMessage(
+            message_text=clean_message,
+            send_time=send_time,
+            target_chat_id=telegram_id,
+        )
+        session.add(record)
+        await session.commit()
+
+    return True, "Сообщение отправлено кандидату."
 
 
 async def save_interview_feedback(
@@ -720,46 +917,12 @@ async def schedule_intro_day_message(
     time_value: str,
     message_text: Optional[str],
 ) -> Tuple[bool, str]:
-    date_clean = (date_value or "").strip()
-    time_clean = (time_value or "").strip()
-    if not date_clean or not time_clean:
-        return False, "Укажите дату и время ознакомительного дня."
-
-    try:
-        visit_date = date.fromisoformat(date_clean)
-    except ValueError:
-        return False, "Некорректная дата ознакомительного дня."
-
-    try:
-        visit_time = time.fromisoformat(time_clean)
-    except ValueError:
-        return False, "Некорректное время ознакомительного дня."
-
-    scheduled_dt = datetime.combine(visit_date, visit_time)
-    send_time = scheduled_dt.strftime("%Y-%m-%d %H:%M")
-
-    async with async_session() as session:
-        user = await session.get(User, candidate_id)
-        if not user:
-            return False, "Кандидат не найден."
-
-        text_template = (message_text or "").strip()
-        if not text_template:
-            text_template = INTRO_DAY_MESSAGE_TEMPLATE.format(
-                fio=user.fio,
-                date=visit_date.strftime("%d.%m.%Y"),
-                time=visit_time.strftime("%H:%M"),
-            )
-
-        message = AutoMessage(
-            message_text=text_template,
-            send_time=send_time,
-            target_chat_id=user.telegram_id,
-        )
-        session.add(message)
-        await session.commit()
-
-    return True, "Сообщение про ознакомительный день запланировано."
+    return await send_intro_message(
+        candidate_id,
+        date_value=date_value,
+        time_value=time_value,
+        message_text=message_text,
+    )
 
 
 async def upsert_candidate(
@@ -867,6 +1030,11 @@ __all__ = [
     "list_candidates",
     "candidate_filter_options",
     "get_candidate_detail",
+    "set_interview_outcome",
+    "send_test2",
+    "send_intro_message",
+    "schedule_intro_day_message",
+    "save_interview_feedback",
     "upsert_candidate",
     "toggle_candidate_activity",
     "update_candidate",

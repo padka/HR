@@ -1,7 +1,7 @@
 from typing import List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
 
@@ -12,17 +12,14 @@ from backend.apps.admin_ui.services.candidates import (
     get_candidate_detail,
     list_candidates,
     save_interview_feedback,
-    schedule_intro_day_message,
+    send_intro_message,
+    send_test2,
+    set_interview_outcome,
     toggle_candidate_activity,
     update_candidate,
     upsert_candidate,
 )
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
-from backend.apps.admin_ui.services.slots.core import (
-    execute_bot_dispatch,
-    set_slot_outcome,
-)
-
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 
 
@@ -172,12 +169,14 @@ async def candidates_intro_day(
     date_value: str = Form(...),
     time_value: str = Form(...),
     message_text: str = Form(""),
+    bot_service: BotService = Depends(provide_bot_service),
 ):
-    ok, message = await schedule_intro_day_message(
+    ok, message = await send_intro_message(
         candidate_id,
         date_value=date_value,
         time_value=time_value,
         message_text=message_text,
+        bot_service=bot_service,
     )
     status = "success" if ok else "error"
     query = f"status={status}"
@@ -191,19 +190,33 @@ async def candidates_slot_outcome(
     candidate_id: int,
     slot_id: int,
     outcome: str = Form(...),
-    background_tasks: BackgroundTasks,
     bot_service: BotService = Depends(provide_bot_service),
 ):
-    ok, message, stored, dispatch = await set_slot_outcome(
+    ok, stored, slot_data, _ = await set_interview_outcome(
+        candidate_id,
         slot_id,
         outcome,
-        bot_service=bot_service,
     )
-    if ok and dispatch and dispatch.plan is not None:
-        background_tasks.add_task(
-            execute_bot_dispatch, dispatch.plan, stored or "", bot_service
-        )
+
     status = "success" if ok else "error"
+    message = None
+
+    if not ok:
+        message = stored or "Не удалось обновить исход интервью."
+    else:
+        message = "Исход интервью сохранён."
+        if stored == "success":
+            result = await send_test2(
+                candidate_id,
+                bot_service=bot_service,
+                slot_data=slot_data or {},
+            )
+            if result.ok:
+                message = result.message or "Тест 2 отправлен кандидату."
+            else:
+                status = "error"
+                message = result.error or result.message or "Не удалось отправить Тест 2."
+
     query = f"status={status}"
     if message:
         query += f"&notice={quote(message)}"
