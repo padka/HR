@@ -15,12 +15,13 @@
     <div>
       <a class="muted" href="/candidates">← К списку кандидатов</a>
       <h1 class="page-title">{{ user.fio }}</h1>
-      <p class="page-description">Telegram ID {{ user.telegram_id }}</p>
+      <p class="page-description">Telegram ID {{ user.telegram_id }}{% if user.city %} · {{ user.city }}{% endif %}</p>
     </div>
   </section>
 
   <div class="page-grid" data-page="candidate" aria-labelledby="candidate-summary">
     <div class="page-main">
+      <!-- Сводка -->
       <section class="surface" aria-labelledby="candidate-summary">
         <header class="flex flex-col gap-2">
           <h2 id="candidate-summary" class="section-title">Сводка</h2>
@@ -64,6 +65,7 @@
             <dd>{{ stage }}</dd>
           </div>
         </dl>
+
         {% if test_stage_summary %}
           <div class="mt-4">
             <h3 class="muted text-sm">Этапы тестов</h3>
@@ -72,9 +74,7 @@
                 <li>
                   <strong>{{ item.label }}</strong>
                   — {{ item.score }}{% if item.rating %} ({{ item.rating }}){% endif %}
-                  {% if item.dt %}
-                    — {{ fmt_local(item.dt, 'Europe/Moscow') }}
-                  {% endif %}
+                  {% if item.dt %} — {{ fmt_local(item.dt, 'Europe/Moscow') }}{% endif %}
                 </li>
               {% endfor %}
             </ul>
@@ -82,6 +82,7 @@
         {% endif %}
       </section>
 
+      <!-- Интервью -->
       <section class="surface" aria-labelledby="interview-title">
         <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -98,16 +99,18 @@
         </header>
 
         {% if latest_interview %}
+          <!-- Итог интервью -->
           <form class="flex flex-wrap gap-3 mt-4" method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
             <button class="btn btn-primary btn-sm" type="submit" name="outcome" value="success">Прошёл</button>
-            <button class="btn btn-soft btn-sm" type="submit" name="outcome" value="reject">Не прошёл</button>
+            <button class="btn btn-danger btn-sm" type="submit" name="outcome" value="reject">Не прошёл</button>
           </form>
 
+          <!-- Прогресс чеклиста -->
           {% set progress = namespace(total=interview_script|length, completed=0) %}
           {% set steps_state = namespace(items=[]) %}
           {% for step in interview_script %}
             {% set is_checked = False %}
-            {% if interview_feedback.checklist %}
+            {% if interview_feedback and interview_feedback.checklist %}
               {% set stored = interview_feedback.checklist.get(step.id) %}
               {% if stored is not none %}
                 {% set is_checked = stored %}
@@ -120,6 +123,7 @@
             {% set _ = steps_state.items.append({'data': step, 'checked': is_checked}) %}
           {% endfor %}
 
+          <!-- Скрипт интервью -->
           <form class="mt-6 flex flex-col gap-4" method="post" action="/candidates/{{ user.id }}/interview-feedback">
             <input type="hidden" name="slot_id" value="{{ latest_interview.id }}">
             <fieldset class="flex flex-col gap-3">
@@ -129,6 +133,7 @@
                   <span class="badge badge--soft text-xs">Выполнено {{ progress.completed }}/{{ progress.total }}</span>
                 {% endif %}
               </legend>
+
               {% for step_state in steps_state.items %}
                 {% set step = step_state.data %}
                 {% set is_checked = step_state.checked %}
@@ -143,12 +148,14 @@
                 </label>
               {% endfor %}
             </fieldset>
+
             <label class="flex flex-col gap-2">
               <span class="section-title text-base">Заметки</span>
-              <textarea class="textarea" name="notes" placeholder="Что важно запомнить для следующего этапа?">{{ interview_feedback.notes or '' }}</textarea>
+              <textarea class="textarea" name="notes" placeholder="Впечатления, риски, договорённости">{{ interview_feedback.notes or '' }}</textarea>
             </label>
+
             <div class="flex items-center justify-between text-sm muted">
-              {% if interview_feedback.updated_at %}
+              {% if interview_feedback and interview_feedback.updated_at %}
                 <span>Обновлено {{ fmt_local(interview_feedback.updated_at, latest_interview.candidate_tz or 'Europe/Moscow') }}</span>
               {% endif %}
               <div class="flex items-center gap-3">
@@ -162,11 +169,13 @@
         {% endif %}
       </section>
 
+      <!-- Результаты тестов -->
       <section class="surface" aria-labelledby="tests-title">
         <header class="flex items-center justify-between">
           <h2 id="tests-title" class="section-title">Результаты тестов</h2>
           <span class="muted text-sm">{{ stats.tests_total }} попыток</span>
         </header>
+
         {% if tests %}
           <div class="table__wrap mt-4">
             <table class="table list-table">
@@ -184,7 +193,7 @@
                   {% set answers = answers_map.get(result.id) %}
                   <tr>
                     <td data-label="Дата">{{ fmt_local(result.created_at, 'Europe/Moscow') }}</td>
-                    <td data-label="Баллы">{{ result.final_score }} / {{ result.raw_score }}</td>
+                    <td data-label="Баллы"><strong>{{ result.final_score }}</strong> / {{ result.raw_score }}</td>
                     <td data-label="Рейтинг">{{ result.rating or '—' }}</td>
                     <td data-label="Время">{{ result.total_time }}</td>
                     <td data-label="Ответы">
@@ -204,7 +213,7 @@
                               'total': answers.questions_total,
                               'overtime': answers.questions_overtime,
                             },
-                            'questions': answers.questions,
+                            'questions': answers.questions or []
                           } | tojson }}"
                           aria-haspopup="dialog"
                           aria-controls="answers-modal"
@@ -225,6 +234,7 @@
         {% endif %}
       </section>
 
+      <!-- Модалка детальных ответов (общая) -->
       <div class="modal" id="answers-modal" data-answer-modal hidden>
         <div
           class="modal__dialog"
@@ -244,9 +254,13 @@
           <div class="modal__body" data-answer-modal-body tabindex="0">
             <ol class="flex flex-col gap-4" data-answer-modal-list role="list"></ol>
           </div>
+          <div class="flex justify-end mt-3">
+            <button type="button" class="btn btn-soft btn-sm" data-answer-modal-close>Закрыть</button>
+          </div>
         </div>
       </div>
 
+      <!-- Ознакомительный день (после успешного интервью и завершённого Тест 2) -->
       {% if latest_interview and latest_interview.interview_outcome == 'success' and test2_completed %}
         <section class="surface" aria-labelledby="intro-day-title">
           <header>
@@ -276,6 +290,7 @@
       {% endif %}
     </div>
 
+    <!-- История -->
     <aside class="page-aside" id="history">
       <section class="surface" aria-labelledby="history-title">
         <header>
@@ -327,9 +342,7 @@
     (function () {
       const triggers = document.querySelectorAll('[data-answer-modal-target]');
       const modal = document.querySelector('[data-answer-modal]');
-      if (!modal) {
-        return;
-      }
+      if (!modal) return;
 
       const dialog = modal.querySelector('[role="dialog"]');
       const closeButtons = modal.querySelectorAll('[data-answer-modal-close]');
@@ -340,100 +353,73 @@
       let lastTrigger = null;
 
       const displayValue = (value) => {
-        if (value === 0 || value === '0') {
-          return '0';
-        }
-        if (value === undefined || value === null) {
-          return '—';
-        }
-        const stringified = `${value}`.trim();
-        return stringified === '' ? '—' : stringified;
+        if (value === 0 || value === '0') return '0';
+        if (value === undefined || value === null) return '—';
+        const s = String(value).trim();
+        return s === '' ? '—' : s;
       };
 
       const formatSummary = (summary, payload) => {
-        if (!summary) {
-          return '';
-        }
+        if (!summary) return '';
         const parts = [];
         parts.push(`Правильных: ${displayValue(summary.correct)} из ${displayValue(summary.total)}`);
-        if (summary.overtime) {
-          parts.push(`просрочено: ${summary.overtime}`);
-        }
-        if (payload.score !== undefined && payload.raw_score !== undefined) {
-          parts.push(`баллы: ${displayValue(payload.score)} / ${displayValue(payload.raw_score)}`);
-        }
-        if (payload.rating !== undefined && payload.rating !== null && `${payload.rating}`.trim() !== '') {
-          parts.push(`рейтинг: ${payload.rating}`);
-        }
-        if (payload.total_time !== undefined && payload.total_time !== null && `${payload.total_time}`.trim() !== '') {
-          parts.push(`время: ${payload.total_time} сек`);
-        }
+        if (summary.overtime) parts.push(`просрочено: ${summary.overtime}`);
+        if (payload.score != null && payload.raw_score != null) parts.push(`баллы: ${payload.score} / ${payload.raw_score}`);
+        if (payload.rating != null && String(payload.rating).trim() !== '') parts.push(`рейтинг: ${payload.rating}`);
+        if (payload.total_time != null && String(payload.total_time).trim() !== '') parts.push(`время: ${payload.total_time} сек`);
         return parts.join(' · ');
       };
 
       const renderAnswers = (payload) => {
-        if (!list) {
-          return;
-        }
         list.innerHTML = '';
-        if (!payload || !Array.isArray(payload.questions) || payload.questions.length === 0) {
-          const emptyState = document.createElement('li');
-          emptyState.className = 'muted';
-          emptyState.textContent = 'Ответы недоступны.';
-          list.appendChild(emptyState);
+        const qs = (payload && Array.isArray(payload.questions)) ? payload.questions : [];
+        if (!qs.length) {
+          const li = document.createElement('li');
+          li.className = 'muted';
+          li.textContent = 'Ответы недоступны.';
+          list.appendChild(li);
           return;
         }
 
-        payload.questions.forEach((question, index) => {
+        qs.forEach((q, i) => {
           const item = document.createElement('li');
           item.className = 'flex flex-col gap-2';
 
-          const header = document.createElement('div');
-          header.className = 'flex flex-wrap items-center gap-2';
+          const head = document.createElement('div');
+          head.className = 'flex flex-wrap items-center gap-2';
+
           const title = document.createElement('span');
           title.className = 'font-semibold';
-          title.textContent = `Вопрос ${index + 1}: ${question.question_text || ''}`;
-          header.appendChild(title);
+          title.textContent = `Вопрос ${i + 1}: ${q.question_text || ''}`;
+          head.appendChild(title);
 
-          const statusBadge = document.createElement('span');
-          statusBadge.className = question.is_correct ? 'badge badge--success' : 'badge badge--muted';
-          statusBadge.textContent = question.is_correct ? 'Верно' : 'Неверно';
-          header.appendChild(statusBadge);
+          const status = document.createElement('span');
+          status.className = q.is_correct ? 'badge badge--success' : 'badge badge--muted';
+          status.textContent = q.is_correct ? 'Верно' : 'Неверно';
+          head.appendChild(status);
 
-          if (question.overtime) {
-            const overtimeBadge = document.createElement('span');
-            overtimeBadge.className = 'badge badge--soft';
-            overtimeBadge.textContent = 'Просрочено';
-            header.appendChild(overtimeBadge);
+          if (q.overtime) {
+            const ot = document.createElement('span');
+            ot.className = 'badge badge--soft';
+            ot.textContent = 'Просрочено';
+            head.appendChild(ot);
           }
 
-          item.appendChild(header);
+          item.appendChild(head);
 
-          const userAnswer = document.createElement('p');
-          const userAnswerLabel = document.createElement('span');
-          userAnswerLabel.textContent = 'Ответ кандидата: ';
-          const userAnswerValue = document.createElement('strong');
-          userAnswerValue.textContent = question.user_answer || '—';
-          userAnswer.appendChild(userAnswerLabel);
-          userAnswer.appendChild(userAnswerValue);
-          item.appendChild(userAnswer);
+          const ua = document.createElement('p');
+          ua.innerHTML = `Ответ кандидата: <strong>${displayValue(q.user_answer)}</strong>`;
+          item.appendChild(ua);
 
-          if (!question.is_correct && question.correct_answer) {
-            const correctAnswer = document.createElement('p');
-            const correctAnswerLabel = document.createElement('span');
-            correctAnswerLabel.textContent = 'Правильный ответ: ';
-            const correctAnswerValue = document.createElement('strong');
-            correctAnswerValue.textContent = question.correct_answer;
-            correctAnswer.appendChild(correctAnswerLabel);
-            correctAnswer.appendChild(correctAnswerValue);
-            item.appendChild(correctAnswer);
+          if (!q.is_correct && q.correct_answer) {
+            const ca = document.createElement('p');
+            ca.innerHTML = `Правильный ответ: <strong>${q.correct_answer}</strong>`;
+            item.appendChild(ca);
           }
 
           const meta = document.createElement('p');
           meta.className = 'muted text-sm';
-          const attempts = question.attempts_count !== undefined && question.attempts_count !== null ? question.attempts_count : '—';
-          const timeSpent = question.time_spent !== undefined && question.time_spent !== null ? question.time_spent : '—';
-          meta.textContent = `Время: ${timeSpent} сек · Попытки: ${attempts}`;
+          meta.textContent = `Время: ${displayValue(q.time_spent)} сек · Попытки: ${displayValue(q.attempts_count)}`;
           item.appendChild(meta);
 
           list.appendChild(item);
@@ -441,76 +427,44 @@
       };
 
       const openModal = (payload, trigger) => {
-        if (!dialog) {
-          return;
-        }
         lastTrigger = trigger;
-        const title = payload && payload.title ? `Ответы теста от ${payload.title}` : 'Ответы теста';
-        if (titleEl) {
-          titleEl.textContent = title;
-        }
+        if (titleEl) titleEl.textContent = payload && payload.title ? `Ответы теста от ${payload.title}` : 'Ответы теста';
         if (descriptionEl) {
-          const summaryText = formatSummary(payload && payload.summary, payload || {});
-          descriptionEl.textContent = summaryText || 'Детализация ответов кандидата.';
+          const s = formatSummary(payload && payload.summary, payload || {});
+          descriptionEl.textContent = s || 'Детализация ответов кандидата.';
         }
         renderAnswers(payload);
         modal.removeAttribute('hidden');
-        dialog.focus();
-        if (modalBody) {
-          modalBody.scrollTop = 0;
-        }
+        if (dialog) dialog.focus();
+        if (modalBody) modalBody.scrollTop = 0;
         document.body.style.overflow = 'hidden';
       };
 
       const closeModal = () => {
         modal.setAttribute('hidden', '');
         document.body.style.overflow = '';
-        if (lastTrigger) {
-          lastTrigger.focus();
-          lastTrigger = null;
-        }
+        if (lastTrigger) { try { lastTrigger.focus(); } catch (_) {} lastTrigger = null; }
       };
 
-      closeButtons.forEach((button) => {
-        button.addEventListener('click', closeModal);
-      });
-
-      modal.addEventListener('click', (event) => {
-        if (event.target === modal) {
-          closeModal();
-        }
-      });
-
-      if (dialog) {
-        dialog.addEventListener('click', (event) => {
-          event.stopPropagation();
-        });
-        dialog.addEventListener('keydown', (event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            closeModal();
-          }
-        });
-      }
-
-      document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && !modal.hasAttribute('hidden')) {
-          event.preventDefault();
+      closeButtons.forEach((btn) => btn.addEventListener('click', closeModal));
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      if (dialog) dialog.addEventListener('click', (e) => e.stopPropagation());
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.hasAttribute('hidden')) {
+          e.preventDefault();
           closeModal();
         }
       });
 
       triggers.forEach((trigger) => {
         trigger.addEventListener('click', () => {
-          const payloadRaw = trigger.getAttribute('data-answer-modal-payload');
-          if (!payloadRaw) {
-            return;
-          }
+          const raw = trigger.getAttribute('data-answer-modal-payload');
+          if (!raw) return;
           try {
-            const payload = JSON.parse(payloadRaw);
+            const payload = JSON.parse(raw);
             openModal(payload, trigger);
-          } catch (error) {
-            console.error('Не удалось открыть модалку ответов', error);
+          } catch (err) {
+            console.error('Не удалось распарсить ответы теста', err);
           }
         });
       });
