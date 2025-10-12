@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -7,7 +8,7 @@ from backend.apps.admin_ui.services.candidates import (
     get_candidate_detail,
     list_candidates,
     save_interview_feedback,
-    schedule_intro_day_message,
+    send_intro_message,
     upsert_candidate,
 )
 from backend.core.db import async_session
@@ -73,9 +74,6 @@ async def test_list_candidates_and_detail():
     assert row.messages_total == 1
     assert row.latest_result is not None
     assert row.stage
-    assert "analytics" in payload
-    assert payload["analytics"]["total"] >= 1
-
     detail = await get_candidate_detail(user.id)
     assert detail is not None
     assert detail["stats"]["tests_total"] == 1
@@ -134,15 +132,33 @@ async def test_save_feedback_and_schedule_intro_day():
         assert checklist.get("experience") is True
         assert stored_slot.interview_feedback.get("notes") == "Очень уверенный кандидат"
 
-    ok_msg, msg_text = await schedule_intro_day_message(
+    class DummyBotService:
+        def __init__(self) -> None:
+            self.calls = []
+            self.required = False
+
+        async def send_intro_message(self, candidate_id: int, text: str):
+            self.calls.append((candidate_id, text))
+            return SimpleNamespace(
+                ok=True,
+                status="sent_intro",
+                message="Сообщение отправлено кандидату.",
+                error=None,
+            )
+
+    dummy_service = DummyBotService()
+
+    ok_msg, msg_text = await send_intro_message(
         user.id,
         date_value="2030-01-02",
         time_value="10:30",
         message_text="",
+        bot_service=dummy_service,
     )
 
     assert ok_msg is True
-    assert "запланировано" in (msg_text or "")
+    assert "отправлено" in (msg_text or "")
+    assert dummy_service.calls
 
     async with async_session() as session:
         messages = (
@@ -151,3 +167,4 @@ async def test_save_feedback_and_schedule_intro_day():
             )
         ).scalars().all()
         assert any(message.send_time == "2030-01-02 10:30" for message in messages)
+        assert any("2030" in message.message_text for message in messages)

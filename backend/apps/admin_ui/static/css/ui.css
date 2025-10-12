@@ -78,6 +78,15 @@ a:hover { text-decoration-color: currentColor; }
 .table thead th button.sort { all: unset; display: inline-flex; align-items: center; gap: 0.4rem; font: inherit; color: inherit; cursor: pointer; }
 .table thead th button.sort .arrow { display: inline-block; width: 0.65rem; height: 0.65rem; }
 .table tbody td { padding: 10px 12px; border-bottom: 1px solid color-mix(in srgb, var(--color-border, var(--ui-border, rgba(17,40,68,0.16))) 85%, transparent); white-space: nowrap; vertical-align: middle; }
+
+.list-table-wrapper,
+.table-shell,
+.surface.card {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
 .table tbody tr:last-child td { border-bottom: none; }
 .table tbody tr:hover { background: rgba(var(--ui-color-primary-rgb, var(--accent-info-rgb, 91 107 255)) / 0.12); }
 .col-id { min-width: 72px; }
