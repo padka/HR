@@ -1,14 +1,17 @@
-# UI foundation quickstart
+# UI layout quickstart
 
-- `css/tokens.css` объявляет базовые переменные и ui-* токены для цветовой палитры (SF Pro, Apple primary #0A84FF, dark background #0B1220).
-- `css/ui.css` подключается после сборки и даёт базовые компоненты (`.btn`, `.input`, `.chip`, `.card`, `.table`, `.toolbar`, `.modal`).
-- Размеры контролов регулируются через `data-density="compact|comfy"`, переключение хранится в `localStorage`.
-- `js/theme.js` синхронизирует prefers-color-scheme, dataset `data-theme`, плотность и интегрируется с существующим `window.TGTheme`.
-- Используйте токены `--ui-color-*`, `--ui-space-*`, `--ui-border` и класс `.card` для адаптации существующих шаблонов.
-- Для таблиц прокидывайте `table_class='table ...'` в макросы, для фильтров оборачивайте в `<div class="toolbar">`.
-- Новые состояния кнопок: добавляйте модификаторы `.btn--primary`, `.btn--ghost`, `.btn--danger`, размеры `.btn--sm|lg`.
-- Формы и селекты: добавьте класс `.input` / `.select` или используйте `input-pill__control input`.
+- `css/tokens.css` объявляет цветовые, типографические и теневые токены для светлой/тёмной темы. Переменные `--color-*` и `--shadow-*` используются поверх существующих `--ui-*` алиасов.
+- `css/ui.css` содержит базовые примитивы интерфейса: кнопки, инпуты, панели, `.page-grid` и таблицы с прокруткой.
+- `js/theme.js` синхронизирует `prefers-color-scheme`, обновляет `data-theme`/`data-density` и дружит с `window.TGTheme`.
+
+## Layout helpers
+
+- Страница состоит из `.page-grid` — два столбца (aside 300px + контент). На ширине <1024px aside переезжает наверх.
+- Используйте `.page-aside.panel` для описаний и CTA, а `.page-main` — для основного контента.
+- Таблицы: оборачивайте в `.panel.panel--compact` → `.table__wrap` → `<table class="table">`. Минимальные ширины колонок заданы через классы `.col-id`, `.col-name`, `.col-actions`.
+- Фильтры и действия размещайте в `.toolbar` с зонами `.toolbar__primary` и `.toolbar__aside`; чипы сворачиваются в адаптивный ряд.
 
 ## Тестирование
-1. Перезапустите сервер (`make ui` или `npm run dev` при необходимости).
-2. Проверьте переключение темы и плотности на странице `/candidates`.
+
+1. Проверьте переключение темы/плотности (`[data-theme-toggle]`, `[data-density-toggle]`).
+2. На узком экране таблицы должны прокручиваться внутри `.table__wrap`, а aside перемещается вверх.

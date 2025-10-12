@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "page_primitives.html" import page_header, kpi_section, filter_bar, data_table %}
+{% from "page_primitives.html" import kpi_section %}
 {% block title %}Слоты{% endblock %}
 {% block content %}
 {% set has_slots = slots|length > 0 %}
@@ -16,275 +16,284 @@
   {% set city_label = (city_options | selectattr('id', 'equalto', filter_city_id) | map(attribute='name') | list | first) %}
   {% set filter_badges = filter_badges + [{'tone': 'info', 'label': 'Город: ' ~ (city_label or filter_city_id)}] %}
 {% endif %}
-<section class="page page--slots" data-page="slots" aria-labelledby="slots-title">
-  {% call page_header(
-    title='Слоты',
-    eyebrow='Расписание интервью',
-    description='Управляйте расписанием интервью и бронями в одном месте.',
-    meta='Всего слотов: ' ~ status_counts.total,
-    badges=filter_badges if filter_badges else None
-  ) %}
-    <div class="page-header__actions">
+<section class="page-grid" data-page="slots" aria-labelledby="slots-title">
+  <aside class="page-aside panel">
+    <p class="page-header__eyebrow muted">Расписание интервью</p>
+    <h1 id="slots-title" class="page-header__title">Слоты</h1>
+    <p class="page-header__description muted">Управляйте расписанием интервью и бронями в одном месте.</p>
+    <p class="page-header__meta muted">Всего слотов: {{ status_counts.total }}</p>
+    {% if filter_badges %}
+      <ul class="page-header__badges" role="list">
+        {% for badge in filter_badges %}
+          <li>
+            <span class="badge badge-{{ badge.tone | default('muted') }}">
+              <span class="badge__dot" aria-hidden="true"></span>
+              {{ badge.label }}
+            </span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    <div class="page-actions">
       <a class="btn btn-primary btn-sm" href="/slots/new">+ Новый слот</a>
       <button type="button" class="btn btn-danger btn-sm" id="delete_all_slots">Удалить все</button>
     </div>
-  {% endcall %}
-
-  {% if flash %}
-    {% set tone = {'success': 'success', 'error': 'danger', 'info': 'info'}.get(flash.status, 'info') %}
-    <div class="slot-alert panel panel--flush" data-tone="{{ tone }}" role="alert">
-      <p class="slot-alert__text">{{ flash.message }}</p>
-    </div>
-  {% endif %}
-
-  {% set slot_cards = [
-    {'key': 'free', 'label': 'Свободно', 'value': status_counts.FREE, 'tone': 'success', 'hint': 'готовы к брони', 'value_id': 'cnt-free'},
-    {'key': 'pending', 'label': 'Ожидают', 'value': status_counts.PENDING, 'tone': 'warning', 'hint': 'ждут ответа', 'value_id': 'cnt-pending'},
-    {'key': 'booked', 'label': 'Забронированы', 'value': status_counts.BOOKED, 'tone': 'progress', 'hint': 'назначено', 'value_id': 'cnt-booked'},
-    {'key': 'confirmed', 'label': 'Подтверждены', 'value': status_counts.CONFIRMED_BY_CANDIDATE, 'tone': 'success', 'hint': 'подтверждено', 'value_id': 'cnt-confirmed'},
-    {'key': 'total', 'label': 'Всего', 'value': status_counts.total, 'tone': 'muted', 'hint': 'по фильтрам', 'value_id': 'cnt-total'}
-  ] %}
-
-  {{
-    kpi_section(
-      'slot_summary_title',
-      eyebrow='Живой статус брони',
-      title='Сводка по слотам',
-      meta='Данные по текущим фильтрам',
-      cards=slot_cards
-    )
-  }}
-
-  {% call filter_bar('Фильтры списка', 'Выбирайте капсулы — данные обновляются мгновенно', class_name='slot-filter-bar') %}
-    <div class="slot-filter-bar__groups">
-      <div class="slot-filter" data-filter-group="recruiter">
-        <span class="slot-filter__label">Рекрутёр</span>
-        <div class="slot-filter__options" role="group" aria-label="Фильтр по рекрутёру">
-          <button type="button" class="pill slot-filter__option{% if not filter_recruiter_id %} is-active{% endif %}" data-filter-type="recruiter" data-value="" aria-pressed="{{ 'true' if not filter_recruiter_id else 'false' }}">Все</button>
-          {% for r in recruiter_options %}
-            <button type="button" class="pill slot-filter__option{% if filter_recruiter_id == r.id %} is-active{% endif %}" data-filter-type="recruiter" data-value="{{ r.id }}" aria-pressed="{{ 'true' if filter_recruiter_id == r.id else 'false' }}">{{ r.name }}</button>
-          {% endfor %}
-        </div>
+  </aside>
+  <div class="page-main">
+    {% if flash %}
+      {% set tone = {'success': 'success', 'error': 'danger', 'info': 'info'}.get(flash.status, 'info') %}
+      <div class="slot-alert panel panel--flush" data-tone="{{ tone }}" role="alert">
+        <p class="slot-alert__text">{{ flash.message }}</p>
       </div>
-      <div class="slot-filter" data-filter-group="status">
-        <span class="slot-filter__label">Статус</span>
-        <div class="slot-filter__options" role="group" aria-label="Фильтр по статусу">
-          <button type="button" class="pill slot-filter__option{% if not filter_status %} is-active{% endif %}" data-filter-type="status" data-value="" aria-pressed="{{ 'true' if not filter_status else 'false' }}">Все</button>
-          {% for code, label in status_labels.items() %}
-            <button type="button" class="pill slot-filter__option{% if filter_status == code %} is-active{% endif %}" data-filter-type="status" data-value="{{ code }}" aria-pressed="{{ 'true' if filter_status == code else 'false' }}">{{ label }}</button>
-          {% endfor %}
-        </div>
-      </div>
-      <div class="slot-filter" data-filter-group="city">
-        <span class="slot-filter__label">Город</span>
-        <div class="slot-filter__options" role="group" aria-label="Фильтр по городу">
-          <button type="button" class="pill slot-filter__option{% if not filter_city_id %} is-active{% endif %}" data-filter-type="city" data-value="" aria-pressed="{{ 'true' if not filter_city_id else 'false' }}">Все</button>
-          {% for city in city_options %}
-            <button type="button" class="pill slot-filter__option{% if filter_city_id == city.id %} is-active{% endif %}" data-filter-type="city" data-value="{{ city.id }}" aria-pressed="{{ 'true' if filter_city_id == city.id else 'false' }}">{{ city.name}}</button>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-    <div class="slot-filter-bar__aside">
-      <div class="slot-switch-group">
-        <label class="slot-switch">
-          <input id="only_future" type="checkbox" autocomplete="off">
-          <span class="slot-switch__control" aria-hidden="true"></span>
-          <span class="slot-switch__label">Только будущие</span>
-        </label>
-        <label class="slot-switch">
-          <input id="toggle_cand_tz" type="checkbox" autocomplete="off">
-          <span class="slot-switch__control" aria-hidden="true"></span>
-          <span class="slot-switch__label">Время кандидата</span>
-        </label>
-      </div>
-      <form class="slot-per-page" method="get">
-        <label class="slot-per-page__label" for="per_page">На странице</label>
-        <div class="slot-per-page__field">
-          <select id="per_page" name="per_page">
-            {% for n in [10, 20, 50, 100] %}
-              <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        {% if filter_recruiter_id %}<input type="hidden" name="recruiter_id" value="{{ filter_recruiter_id }}">{% endif %}
-        {% if filter_status %}<input type="hidden" name="status" value="{{ filter_status }}">{% endif %}
-        {% if filter_city_id %}<input type="hidden" name="city_id" value="{{ filter_city_id }}">{% endif %}
-      </form>
-    </div>
-  {% endcall %}
-  {% if has_slots %}
-    {% set slot_columns = [
-      {
-        'class': 'sortable col-id',
-        'html': '<button class="sort" type="button" data-key="id" aria-sort="ascending">ID <span class="arrow" aria-hidden="true"></span></button>'
-      },
-      {
-        'class': 'sortable',
-        'html': '<button class="sort" type="button" data-key="recruiter" aria-sort="none">Рекрутёр <span class="arrow" aria-hidden="true"></span></button>'
-      },
-      {
-        'label': 'Город',
-        'class': 'col-city'
-      },
-      {
-        'class': 'sortable',
-        'html': '<button class="sort" type="button" data-key="utc" aria-sort="none">UTC <span class="arrow" aria-hidden="true"></span></button>'
-      },
-      {
-        'label': 'Локальное (рекрутёр)',
-        'class': 'col-local'
-      },
-      {
-        'label': 'Локальное (кандидат)',
-        'class': 'col-cand-tz is-optional'
-      },
-      {
-        'class': 'sortable',
-        'html': '<button class="sort" type="button" data-key="status" aria-sort="none">Статус <span class="arrow" aria-hidden="true"></span></button>'
-      },
-      {
-        'class': 'sortable is-optional',
-        'html': '<button class="sort" type="button" data-key="candidate" aria-sort="none">Кандидат <span class="arrow" aria-hidden="true"></span></button>'
-      },
-      {
-        'label': 'Действия',
-        'class': 'col-actions'
-      }
+    {% endif %}
+
+    {% set slot_cards = [
+      {'key': 'free', 'label': 'Свободно', 'value': status_counts.FREE, 'tone': 'success', 'hint': 'готовы к брони', 'value_id': 'cnt-free'},
+      {'key': 'pending', 'label': 'Ожидают', 'value': status_counts.PENDING, 'tone': 'warning', 'hint': 'ждут ответа', 'value_id': 'cnt-pending'},
+      {'key': 'booked', 'label': 'Забронированы', 'value': status_counts.BOOKED, 'tone': 'progress', 'hint': 'назначено', 'value_id': 'cnt-booked'},
+      {'key': 'confirmed', 'label': 'Подтверждены', 'value': status_counts.CONFIRMED_BY_CANDIDATE, 'tone': 'success', 'hint': 'подтверждено', 'value_id': 'cnt-confirmed'},
+      {'key': 'total', 'label': 'Всего', 'value': status_counts.total, 'tone': 'muted', 'hint': 'по фильтрам', 'value_id': 'cnt-total'}
     ] %}
-      {% call data_table({'columns': slot_columns, 'caption': 'Таблица слотов', 'table_id': 'slots_table', 'body_id': 'slots_tbody', 'table_class': 'slot-table'}) %}
-        {% for s in slots %}
-          {% set st = norm_status(s.status) %}
-          {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
-          {% set cand_tz = s.candidate_tz %}
-          {% set status_order = 0 if st == 'FREE' else (1 if st == 'PENDING' else (2 if st == 'BOOKED' else 9)) %}
-          <tr class="slot-row"
-              tabindex="0"
-              data-id="{{ s.id }}"
-              data-status="{{ st or '' }}"
-              data-status-label="{{ status_labels.get(st, st or '') }}"
-              data-status-order="{{ status_order }}"
-              data-start-iso="{{ s.start_utc.isoformat() }}"
-              data-start-utc="{{ fmt_utc(s.start_utc) }}"
-              data-start-rec="{{ fmt_local(s.start_utc, tz_rec) }}"
-              data-start-cand="{{ fmt_local(s.start_utc, cand_tz) if cand_tz else '' }}"
-              data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
-              data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
-              data-recruiter-tz="{{ tz_rec }}"
-              data-city-id="{{ s.city.id if s.city else '' }}"
-              data-city-name="{{ s.city.name if s.city else '' }}"
-              data-city-tz="{{ tz_display(s.city.tz) if s.city else '' }}"
-              data-duration="{{ s.duration_min }}"
-              data-candidate="{{ s.candidate_fio or '' }}"
-              data-candidate-id="{{ s.candidate_tg_id or '' }}"
-              data-candidate-tz="{{ cand_tz or '' }}"
-              data-outcome="{{ s.interview_outcome or '' }}"
-              data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
-            <td data-label="ID">ID {{ s.id }}</td>
-            <td data-label="Рекрутёр">
-              <div class="slot-cell-primary">{{ s.recruiter.name if s.recruiter else "—" }}</div>
-              <span class="badge badge--soft">{{ tz_display(tz_rec) }}</span>
-            </td>
-            <td data-label="Город">
-              {% if s.city %}
-                <div class="slot-chip-group">
-                  <span class="slot-chip">{{ s.city.name }}</span>
-                  <span class="badge badge--soft">{{ tz_display(s.city.tz) }}</span>
-                </div>
-              {% else %}
-                <span class="slot-chip slot-chip--empty">—</span>
-              {% endif %}
-            </td>
-            <td data-label="UTC">
-              <div class="slot-time">
-                <span class="slot-time__value">{{ fmt_utc(s.start_utc) }}</span>
-                <span class="slot-time__relative" data-role="relative">—</span>
+
+    {{
+      kpi_section(
+        'slot_summary_title',
+        eyebrow='Живой статус брони',
+        title='Сводка по слотам',
+        meta='Данные по текущим фильтрам',
+        cards=slot_cards
+      )
+    }}
+
+    <div class="panel">
+      <div class="toolbar slot-filter-bar">
+        <div class="toolbar__primary">
+          <div class="slot-filter-bar__groups">
+            <div class="slot-filter" data-filter-group="recruiter">
+              <span class="slot-filter__label">Рекрутёр</span>
+              <div class="slot-filter__options" role="group" aria-label="Фильтр по рекрутёру">
+                <button type="button" class="pill slot-filter__option{% if not filter_recruiter_id %} is-active{% endif %}" data-filter-type="recruiter" data-value="" aria-pressed="{{ 'true' if not filter_recruiter_id else 'false' }}">Все</button>
+                {% for r in recruiter_options %}
+                  <button type="button" class="pill slot-filter__option{% if filter_recruiter_id == r.id %} is-active{% endif %}" data-filter-type="recruiter" data-value="{{ r.id }}" aria-pressed="{{ 'true' if filter_recruiter_id == r.id else 'false' }}">{{ r.name }}</button>
+                {% endfor %}
               </div>
-            </td>
-            <td data-label="Время (рекрутёр)">
-              <span class="slot-time__value">{{ fmt_local(s.start_utc, tz_rec) }}</span>
-            </td>
-            <td data-label="Время (кандидат)" class="col-cand-tz is-optional">
-              {% if cand_tz %}
-                <div class="badge badge--soft">{{ tz_display(cand_tz) }}</div>
-                <span class="slot-time__value">{{ fmt_local(s.start_utc, cand_tz) }}</span>
-              {% else %}
-                <span class="badge badge--soft">—</span>
-              {% endif %}
-            </td>
-            <td data-label="Статус">
-              {% set status_label = status_labels.get(st, st or "—") %}
-              {% if st == "FREE" %}
-                <span class="status-badge" data-tone="success">{{ status_label }}</span>
-              {% elif st == "PENDING" %}
-                <span class="status-badge" data-tone="warning">{{ status_label }}</span>
-              {% elif st == "BOOKED" %}
-                <span class="status-badge" data-tone="info">{{ status_label }}</span>
-              {% elif st == "CONFIRMED_BY_CANDIDATE" %}
-                <span class="status-badge" data-tone="success">{{ status_label }}</span>
-              {% elif st %}
-                <span class="status-badge" data-tone="info">{{ status_label }}</span>
-              {% else %}
-                <span class="badge badge--soft">—</span>
-              {% endif %}
-            </td>
-            <td data-label="Кандидат" class="is-optional">
-              {% if s.candidate_fio %}
-                <div class="slot-cell-primary">{{ s.candidate_fio }}</div>
-                <span class="badge badge--soft">tg_id: {{ s.candidate_tg_id or "—" }}</span>
-              {% else %}
-                <span class="badge badge--soft">—</span>
-              {% endif %}
-            </td>
-            <td class="col-actions" data-label="Действия">
-              <button type="button" class="btn btn-ghost btn-sm" data-action="open-slot">Подробнее</button>
-              <button type="button" class="btn btn-danger btn-sm" data-action="delete-slot">Удалить</button>
-            </td>
-          </tr>
-        {% endfor %}
-    {% endcall %}
-
-    <div id="slot_empty_state" class="slot-empty-state panel" role="status" hidden aria-hidden="true">
-      <h3 class="slot-empty-state__title">Нет слотов по текущим фильтрам</h3>
-      <p class="slot-empty-state__hint muted">Сбросьте фильтры или создайте новый слот, чтобы продолжить работу.</p>
-      <div class="slot-empty-state__actions">
-        <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
-        <button type="button" class="btn btn-ghost" data-action="reset-filters">Сбросить фильтры</button>
+            </div>
+            <div class="slot-filter" data-filter-group="status">
+              <span class="slot-filter__label">Статус</span>
+              <div class="slot-filter__options" role="group" aria-label="Фильтр по статусу">
+                <button type="button" class="pill slot-filter__option{% if not filter_status %} is-active{% endif %}" data-filter-type="status" data-value="" aria-pressed="{{ 'true' if filter_status else 'false' }}">Все</button>
+                {% for code, label in status_labels.items() %}
+                  <button type="button" class="pill slot-filter__option{% if filter_status == code %} is-active{% endif %}" data-filter-type="status" data-value="{{ code }}" aria-pressed="{{ 'true' if filter_status == code else 'false' }}">{{ label }}</button>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="slot-filter" data-filter-group="city">
+              <span class="slot-filter__label">Город</span>
+              <div class="slot-filter__options" role="group" aria-label="Фильтр по городу">
+                <button type="button" class="pill slot-filter__option{% if not filter_city_id %} is-active{% endif %}" data-filter-type="city" data-value="" aria-pressed="{{ 'true' if filter_city_id else 'false' }}">Все</button>
+                {% for city in city_options %}
+                  <button type="button" class="pill slot-filter__option{% if filter_city_id == city.id %} is-active{% endif %}" data-filter-type="city" data-value="{{ city.id }}" aria-pressed="{{ 'true' if filter_city_id == city.id else 'false' }}">{{ city.name }}</button>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="toolbar__aside slot-filter-bar__aside">
+          <div class="slot-switch-group">
+            <label class="slot-switch">
+              <input id="only_future" type="checkbox" autocomplete="off">
+              <span class="slot-switch__control" aria-hidden="true"></span>
+              <span class="slot-switch__label">Только будущие</span>
+            </label>
+            <label class="slot-switch">
+              <input id="toggle_cand_tz" type="checkbox" autocomplete="off">
+              <span class="slot-switch__control" aria-hidden="true"></span>
+              <span class="slot-switch__label">Время кандидата</span>
+            </label>
+          </div>
+          <form class="slot-per-page" method="get">
+            <label class="slot-per-page__label" for="per_page">На странице</label>
+            <div class="slot-per-page__field">
+              <select id="per_page" name="per_page">
+                {% for n in [10, 20, 50, 100] %}
+                  <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            {% if filter_recruiter_id %}<input type="hidden" name="recruiter_id" value="{{ filter_recruiter_id }}">{% endif %}
+            {% if filter_status %}<input type="hidden" name="status" value="{{ filter_status }}">{% endif %}
+            {% if filter_city_id %}<input type="hidden" name="city_id" value="{{ filter_city_id }}">{% endif %}
+          </form>
+        </div>
       </div>
-    </div>
 
-    <div class="pagination">
-      {% set qrecr = '&recruiter_id=' ~ filter_recruiter_id if filter_recruiter_id else '' %}
-      {% set qstat = '&status=' ~ filter_status if filter_status else '' %}
-      {% set qpp = '&per_page=' ~ per_page if per_page else '' %}
+      {% if has_slots %}
+        <div class="panel panel--compact">
+          <div class="table__wrap">
+            <table class="table slot-table" id="slots_table">
+              <caption class="visually-hidden">Таблица слотов</caption>
+              <thead>
+                <tr>
+                  <th scope="col" class="sortable col-id">
+                    <button class="sort" type="button" data-key="id" aria-sort="ascending">ID <span class="arrow" aria-hidden="true"></span></button>
+                  </th>
+                  <th scope="col" class="sortable">
+                    <button class="sort" type="button" data-key="recruiter" aria-sort="none">Рекрутёр <span class="arrow" aria-hidden="true"></span></button>
+                  </th>
+                  <th scope="col" class="col-city">Город</th>
+                  <th scope="col" class="sortable">
+                    <button class="sort" type="button" data-key="utc" aria-sort="none">UTC <span class="arrow" aria-hidden="true"></span></button>
+                  </th>
+                  <th scope="col" class="col-local">Локальное (рекрутёр)</th>
+                  <th scope="col" class="col-cand-tz is-optional">Локальное (кандидат)</th>
+                  <th scope="col" class="sortable">
+                    <button class="sort" type="button" data-key="status" aria-sort="none">Статус <span class="arrow" aria-hidden="true"></span></button>
+                  </th>
+                  <th scope="col" class="sortable is-optional">
+                    <button class="sort" type="button" data-key="candidate" aria-sort="none">Кандидат <span class="arrow" aria-hidden="true"></span></button>
+                  </th>
+                  <th scope="col" class="col-actions">Действия</th>
+                </tr>
+              </thead>
+              <tbody id="slots_tbody">
+                {% for s in slots %}
+                  {% set st = norm_status(s.status) %}
+                  {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
+                  {% set cand_tz = s.candidate_tz %}
+                  {% set status_order = 0 if st == 'FREE' else (1 if st == 'PENDING' else (2 if st == 'BOOKED' else 9)) %}
+                  <tr class="slot-row"
+                      tabindex="0"
+                      data-id="{{ s.id }}"
+                      data-status="{{ st or '' }}"
+                      data-status-label="{{ status_labels.get(st, st or '') }}"
+                      data-status-order="{{ status_order }}"
+                      data-start-iso="{{ s.start_utc.isoformat() }}"
+                      data-start-utc="{{ fmt_utc(s.start_utc) }}"
+                      data-start-rec="{{ fmt_local(s.start_utc, tz_rec) }}"
+                      data-start-cand="{{ fmt_local(s.start_utc, cand_tz) if cand_tz else '' }}"
+                      data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
+                      data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
+                      data-recruiter-tz="{{ tz_rec }}"
+                      data-city-id="{{ s.city.id if s.city else '' }}"
+                      data-city-name="{{ s.city.name if s.city else '' }}"
+                      data-city-tz="{{ tz_display(s.city.tz) if s.city else '' }}"
+                      data-duration="{{ s.duration_min }}"
+                      data-candidate="{{ s.candidate_fio or '' }}"
+                      data-candidate-id="{{ s.candidate_tg_id or '' }}"
+                      data-candidate-tz="{{ cand_tz or '' }}"
+                      data-outcome="{{ s.interview_outcome or '' }}"
+                      data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
+                    <td data-label="ID">ID {{ s.id }}</td>
+                    <td data-label="Рекрутёр">
+                      <div class="slot-cell-primary">{{ s.recruiter.name if s.recruiter else "—" }}</div>
+                      <span class="badge badge--soft">{{ tz_display(tz_rec) }}</span>
+                    </td>
+                    <td data-label="Город">
+                      {% if s.city %}
+                        <div class="slot-chip-group">
+                          <span class="slot-chip">{{ s.city.name }}</span>
+                          <span class="badge badge--soft">{{ tz_display(s.city.tz) }}</span>
+                        </div>
+                      {% else %}
+                        <span class="slot-chip slot-chip--empty">—</span>
+                      {% endif %}
+                    </td>
+                    <td data-label="UTC">
+                      <div class="slot-time">
+                        <span class="slot-time__value">{{ fmt_utc(s.start_utc) }}</span>
+                        <span class="slot-time__relative" data-role="relative">—</span>
+                      </div>
+                    </td>
+                    <td data-label="Время (рекрутёр)">
+                      <span class="slot-time__value">{{ fmt_local(s.start_utc, tz_rec) }}</span>
+                    </td>
+                    <td data-label="Время (кандидат)" class="col-cand-tz is-optional">
+                      {% if cand_tz %}
+                        <div class="badge badge--soft">{{ tz_display(cand_tz) }}</div>
+                        <span class="slot-time__value">{{ fmt_local(s.start_utc, cand_tz) }}</span>
+                      {% else %}
+                        <span class="badge badge--soft">—</span>
+                      {% endif %}
+                    </td>
+                    <td data-label="Статус">
+                      {% set status_label = status_labels.get(st, st or "—") %}
+                      {% if st == "FREE" %}
+                        <span class="status-badge" data-tone="success">{{ status_label }}</span>
+                      {% elif st == "PENDING" %}
+                        <span class="status-badge" data-tone="warning">{{ status_label }}</span>
+                      {% elif st == "BOOKED" %}
+                        <span class="status-badge" data-tone="info">{{ status_label }}</span>
+                      {% elif st == "CONFIRMED_BY_CANDIDATE" %}
+                        <span class="status-badge" data-tone="success">{{ status_label }}</span>
+                      {% elif st %}
+                        <span class="status-badge" data-tone="info">{{ status_label }}</span>
+                      {% else %}
+                        <span class="badge badge--soft">—</span>
+                      {% endif %}
+                    </td>
+                    <td data-label="Кандидат" class="is-optional">
+                      {% if s.candidate_fio %}
+                        <div class="slot-cell-primary">{{ s.candidate_fio }}</div>
+                        <span class="badge badge--soft">tg_id: {{ s.candidate_tg_id or "—" }}</span>
+                      {% else %}
+                        <span class="badge badge--soft">—</span>
+                      {% endif %}
+                    </td>
+                    <td class="col-actions" data-label="Действия">
+                      <button type="button" class="btn btn-ghost btn-sm" data-action="open-slot">Подробнее</button>
+                      <button type="button" class="btn btn-danger btn-sm" data-action="delete-slot">Удалить</button>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
-      <span class="badge badge--soft">Страница {{ page }} из {{ pages_total }}</span>
+        <div id="slot_empty_state" class="slot-empty-state panel" role="status" hidden aria-hidden="true">
+          <h3 class="slot-empty-state__title">Нет слотов по текущим фильтрам</h3>
+          <p class="slot-empty-state__hint muted">Сбросьте фильтры или создайте новый слот, чтобы продолжить работу.</p>
+          <div class="slot-empty-state__actions">
+            <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+            <button type="button" class="btn btn-ghost" data-action="reset-filters">Сбросить фильтры</button>
+          </div>
+        </div>
 
-      {% if page > 1 %}
-        <a class="btn btn-ghost" href="/slots?page=1{{ qrecr }}{{ qstat }}{{ qpp }}">« Первая</a>
-        <a class="btn btn-ghost" href="/slots?page={{ page-1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">‹ Назад</a>
+        <div class="pagination">
+          {% set qrecr = '&recruiter_id=' ~ filter_recruiter_id if filter_recruiter_id else '' %}
+          {% set qstat = '&status=' ~ filter_status if filter_status else '' %}
+          {% set qpp = '&per_page=' ~ per_page if per_page else '' %}
+
+          <span class="badge badge--soft">Страница {{ page }} из {{ pages_total }}</span>
+
+          {% if page > 1 %}
+            <a class="btn btn-ghost" href="/slots?page=1{{ qrecr }}{{ qstat }}{{ qpp }}">« Первая</a>
+            <a class="btn btn-ghost" href="/slots?page={{ page-1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">‹ Назад</a>
+          {% else %}
+            <span class="btn btn-ghost" aria-disabled="true">« Первая</span>
+            <span class="btn btn-ghost" aria-disabled="true">‹ Назад</span>
+          {% endif %}
+
+          {% if page < pages_total %}
+            <a class="btn btn-ghost" href="/slots?page={{ page+1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">Вперёд ›</a>
+            <a class="btn btn-ghost" href="/slots?page={{ pages_total }}{{ qrecr }}{{ qstat }}{{ qpp }}">Последняя »</a>
+          {% else %}
+            <span class="btn btn-ghost" aria-disabled="true">Вперёд ›</span>
+            <span class="btn btn-ghost" aria-disabled="true">Последняя »</span>
+          {% endif %}
+        </div>
       {% else %}
-        <span class="btn btn-ghost" aria-disabled="true">« Первая</span>
-        <span class="btn btn-ghost" aria-disabled="true">‹ Назад</span>
-      {% endif %}
-
-      {% if page < pages_total %}
-        <a class="btn btn-ghost" href="/slots?page={{ page+1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">Вперёд ›</a>
-        <a class="btn btn-ghost" href="/slots?page={{ pages_total }}{{ qrecr }}{{ qstat }}{{ qpp }}">Последняя »</a>
-      {% else %}
-        <span class="btn btn-ghost" aria-disabled="true">Вперёд ›</span>
-        <span class="btn btn-ghost" aria-disabled="true">Последняя »</span>
+        <div id="slot_empty_state" class="slot-empty-state panel" role="status">
+          <h3 class="slot-empty-state__title">Пока пусто</h3>
+          <p class="slot-empty-state__hint muted">Создайте первый слот или измените фильтры, чтобы увидеть расписание.</p>
+          <div class="slot-empty-state__actions">
+            <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+          </div>
+        </div>
       {% endif %}
     </div>
-  {% else %}
-    <div id="slot_empty_state" class="slot-empty-state panel" role="status">
-      <h3 class="slot-empty-state__title">Пока пусто</h3>
-      <p class="slot-empty-state__hint muted">Создайте первый слот или измените фильтры, чтобы увидеть расписание.</p>
-      <div class="slot-empty-state__actions">
-        <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
-      </div>
-    </div>
-  {% endif %}
+  </div>
+</section>
 
   <div id="slot_backdrop" class="sheet-backdrop" hidden></div>
   <aside id="slot_sheet" class="sheet slot-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="slot_sheet_title">

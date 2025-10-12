@@ -1,81 +1,82 @@
 {% extends "base.html" %}
-{% from "partials/list_toolbar.html" import list_toolbar %}
 {% block title %}Города{% endblock %}
 {% block content %}
 {% set city_count = cities|length %}
-<section class="page page--cities" data-page="cities" aria-labelledby="cities-title">
-  <header class="page-header">
+<section class="page-grid" data-page="cities" aria-labelledby="cities-title">
+  <aside class="page-aside panel">
     <div>
       <h1 id="cities-title" class="page-title">Города</h1>
-      <p class="page-description">
+      <p class="muted">
         Табличный список городов. Редактирование и тексты для этапов — во всплывающей панели «Настроить».
       </p>
     </div>
     <div class="page-actions">
       <a class="btn btn-primary" href="/cities/new" aria-label="Добавить новый город">+ Новый город</a>
     </div>
-  </header>
-
-  {% call list_toolbar(
-    form_id="city_filters",
-    method="get",
-    form_attrs='novalidate',
-    chips=[
-      {'label': 'Всего городов', 'value': city_count, 'tone': 'info', 'value_id': 'total_count'}
-    ]
-  ) %}
-    <p class="form-note form-note--inline">
-      Наведите курсор или щёлкните по строке таблицы, чтобы увидеть детали и открыть панель настроек справа.
-    </p>
-  {% endcall %}
-
-  {% if not cities %}
-    <div class="card glass grain">
-      <h3 class="section-title">Пока пусто</h3>
-      <p class="page-description">Добавьте первый город, чтобы настроить планы и сообщения.</p>
-      <div class="page-actions">
-        <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
+  </aside>
+  <div class="page-main">
+    <div class="panel">
+      <div class="toolbar">
+        <div class="toolbar__primary">
+          <p class="toolbar__hint">
+            Наведите курсор или щёлкните по строке таблицы, чтобы увидеть детали и открыть панель настроек справа.
+          </p>
+        </div>
+        <div class="toolbar__aside toolbar__chips" role="status" aria-live="polite">
+          <span class="chip chip--info">
+            <span class="chip__label">Всего городов</span>
+            <span class="chip__value" id="total_count">{{ city_count }}</span>
+          </span>
+        </div>
       </div>
-    </div>
-  {% else %}
-    <article class="card glass grain city-table-card">
-      <div class="list-table-wrapper">
-        <table class="list-table list-table--responsive city-table" id="city_table">
-          <thead>
-            <tr>
-              <th scope="col" class="col-toggle">
-                <span class="visually-hidden">Подробнее</span>
-              </th>
-              <th scope="col" class="sortable">
-                <button class="sort" type="button" data-key="name" aria-sort="ascending">
-                  Город <span class="arrow" aria-hidden="true"></span>
-                </button>
-              </th>
-              <th scope="col" class="sortable">
-                <button class="sort" type="button" data-key="tz" aria-sort="none">
-                  Часовой пояс <span class="arrow" aria-hidden="true"></span>
-                </button>
-              </th>
-              <th scope="col" class="sortable">
-                <button class="sort" type="button" data-key="owner" aria-sort="none">
-                  Ответственный <span class="arrow" aria-hidden="true"></span>
-                </button>
-              </th>
-              <th scope="col" class="sortable col-align-end is-optional">
-                <button class="sort" type="button" data-key="week" aria-sort="none">
-                  План · нед <span class="arrow" aria-hidden="true"></span>
-                </button>
-              </th>
-              <th scope="col" class="sortable col-align-end is-optional">
-                <button class="sort" type="button" data-key="month" aria-sort="none">
-                  План · мес <span class="arrow" aria-hidden="true"></span>
-                </button>
-              </th>
-              <th scope="col" class="col-actions">Действия</th>
-            </tr>
-          </thead>
-          <tbody id="cities_tbody">
-            {% for c in cities %}
+
+      {% if not cities %}
+        <div class="panel panel--flush">
+          <h3 class="section-title">Пока пусто</h3>
+          <p class="muted">Добавьте первый город, чтобы настроить планы и сообщения.</p>
+          <div class="page-actions">
+            <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
+          </div>
+        </div>
+      {% else %}
+        <div class="panel panel--compact">
+          <div class="table__wrap">
+            <table class="table list-table city-table" id="city_table">
+              <thead>
+                <tr>
+                  <th scope="col" class="col-toggle">
+                    <span class="visually-hidden">Подробнее</span>
+                  </th>
+                  <th scope="col" class="sortable col-name">
+                    <button class="sort" type="button" data-key="name" aria-sort="ascending">
+                      Город <span class="arrow" aria-hidden="true"></span>
+                    </button>
+                  </th>
+                  <th scope="col" class="sortable">
+                    <button class="sort" type="button" data-key="tz" aria-sort="none">
+                      Часовой пояс <span class="arrow" aria-hidden="true"></span>
+                    </button>
+                  </th>
+                  <th scope="col" class="sortable">
+                    <button class="sort" type="button" data-key="owner" aria-sort="none">
+                      Ответственный <span class="arrow" aria-hidden="true"></span>
+                    </button>
+                  </th>
+                  <th scope="col" class="sortable col-align-end is-optional">
+                    <button class="sort" type="button" data-key="week" aria-sort="none">
+                      План · нед <span class="arrow" aria-hidden="true"></span>
+                    </button>
+                  </th>
+                  <th scope="col" class="sortable col-align-end is-optional">
+                    <button class="sort" type="button" data-key="month" aria-sort="none">
+                      План · мес <span class="arrow" aria-hidden="true"></span>
+                    </button>
+                  </th>
+                  <th scope="col" class="col-actions">Действия</th>
+                </tr>
+              </thead>
+              <tbody id="cities_tbody">
+                {% for c in cities %}
               {% set tz = c.tz or "Europe/Moscow" %}
               {% set criteria = c.criteria|default('') %}
               {% set experts = c.experts|default('') %}
@@ -230,11 +231,14 @@
                 </div>
               </template>
             {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </article>
-  {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</section>
 
   <div id="sheet_backdrop" class="sheet-backdrop" hidden></div>
   <aside id="sheet" class="sheet city-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="sheet-title">
