@@ -1,333 +1,516 @@
 {% extends "base.html" %}
 {% block title %}{{ user.fio }}{% endblock %}
 {% block content %}
-  <div class="space-y-10">
-    <nav>
-      <a class="inline-flex items-center gap-2 text-sm font-semibold text-sky-600 transition hover:text-sky-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:text-sky-400 dark:hover:text-sky-300" href="/candidates">
-        <span aria-hidden="true">←</span>
-        К списку кандидатов
-      </a>
-    </nav>
+  {% set query_status = request.query_params.get('status') %}
+  {% set query_notice = request.query_params.get('notice') %}
+  {% if query_status %}
+    {% set tone = {'success': 'success', 'error': 'danger', 'info': 'info'}.get(query_status, 'info') %}
+    {% set default_notice = 'Тест 2 отправлен' if query_status == 'success' else ('Операция выполнена' if query_status == 'info' else 'Не удалось выполнить действие') %}
+    <div class="surface glass grain alert" data-tone="{{ tone }}" role="alert">
+      <p>{{ query_notice or default_notice }}</p>
+    </div>
+  {% endif %}
 
-    <header class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-      <div class="space-y-2">
-        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Кандидат</p>
-        <h1 class="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">{{ user.fio }}</h1>
-        <div class="flex flex-wrap gap-3 text-sm text-slate-600 dark:text-slate-400">
-          <span class="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:border-slate-600 dark:text-slate-300">
-            {% if user.is_active %}Активен{% else %}Отключен{% endif %}
-          </span>
-          <span class="inline-flex items-center gap-2 text-sm">
-            <svg class="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1.67 1.67 7.5v10.83h6.66v-4.16h3.34v4.16h6.66V7.5z"/></svg>
-            {{ user.city or 'Город не указан' }}
-          </span>
-          <span class="inline-flex items-center gap-2 text-sm">
-            <svg class="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m7.5 3.75 1.312-1.969a1 1 0 0 1 1.375-.281l1.2.8a1 1 0 0 1 .438.832V3.75M4.375 6h11.25A1.375 1.375 0 0 1 17 7.375v8.25A1.375 1.375 0 0 1 15.625 17h-11.25A1.375 1.375 0 0 1 3 15.625v-8.25A1.375 1.375 0 0 1 4.375 6Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6.5 3.75h7"/></svg>
-            Последняя активность: {% if user.last_activity %}{{ fmt_local(user.last_activity, 'Europe/Moscow') }}{% else %}—{% endif %}
-          </span>
-        </div>
-      </div>
-      <dl class="grid grid-cols-1 gap-4 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2 lg:grid-cols-3">
-        <div class="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
-          <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Всего тестов</dt>
-          <dd class="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-50">{{ stats.tests_total }}</dd>
-        </div>
-        <div class="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
-          <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Средний балл</dt>
-          <dd class="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-50">{{ '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' }}</dd>
-        </div>
-        <div class="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
-          <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Текущий этап</dt>
-          <dd class="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-50">{{ stage }}</dd>
-        </div>
-      </dl>
-      {% if test_stage_summary %}
-        <div class="mt-4 flex flex-wrap gap-3 text-xs font-medium text-slate-600 dark:text-slate-300">
-          {% for item in test_stage_summary %}
-            <span class="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 dark:border-slate-600">
-              <span class="uppercase tracking-wide">{{ item.label }}</span>
-              <span>{{ item.score }} ({{ item.rating }})</span>
-              {% if item.dt %}
-                <span class="text-slate-400 dark:text-slate-500">{{ fmt_local(item.dt, 'Europe/Moscow') }}</span>
-              {% endif %}
-            </span>
-          {% endfor %}
-        </div>
-      {% endif %}
-    </header>
+  <section class="page-header">
+    <div>
+      <a class="muted" href="/candidates">← К списку кандидатов</a>
+      <h1 class="page-title">{{ user.fio }}</h1>
+      <p class="page-description">Telegram ID {{ user.telegram_id }}</p>
+    </div>
+  </section>
 
-    <section class="grid gap-8 lg:grid-cols-3">
-      <div class="space-y-6 lg:col-span-2">
-        <article class="rounded-3xl border border-slate-200 bg-white/70 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
-          <header class="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
-            <div>
-              <h2 class="text-xl font-semibold text-slate-900 dark:text-slate-50">Интервью</h2>
-              {% if latest_interview %}
-                <p class="text-sm text-slate-600 dark:text-slate-400">{{ fmt_local(latest_interview.start_utc, latest_interview.candidate_tz or 'Europe/Moscow') if latest_interview.start_utc else 'Дата не указана' }}</p>
+  <div class="page-grid" data-page="candidate" aria-labelledby="candidate-summary">
+    <div class="page-main">
+      <section class="surface" aria-labelledby="candidate-summary">
+        <header class="flex flex-col gap-2">
+          <h2 id="candidate-summary" class="section-title">Сводка</h2>
+          <p class="muted text-sm">Собрали ключевые параметры по кандидату на одном экране.</p>
+        </header>
+        <dl class="grid gap-4 md:grid-cols-3">
+          <div>
+            <dt class="muted text-sm">Статус</dt>
+            <dd>
+              {% if user.is_active %}
+                <span class="badge badge--success">Активен</span>
               {% else %}
-                <p class="text-sm text-slate-600 dark:text-slate-400">Интервью пока не запланировано.</p>
+                <span class="badge badge--muted">Отключен</span>
               {% endif %}
-            </div>
-            {% if latest_interview and latest_interview.recruiter and latest_interview.recruiter.telemost_url %}
-              <a class="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400" href="{{ latest_interview.recruiter.telemost_url }}" target="_blank" rel="noopener">
-                Перейти в конференцию
-              </a>
-            {% endif %}
-          </header>
-          {% if latest_interview %}
-            <div class="mt-6 space-y-6">
-              <div class="flex flex-wrap gap-3">
-                <form method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
-                  <input type="hidden" name="outcome" value="success">
-                  <button class="inline-flex items-center justify-center rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-300" type="submit">Прошёл</button>
-                </form>
-                <form method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
-                  <input type="hidden" name="outcome" value="reject">
-                  <button class="inline-flex items-center justify-center rounded-full bg-rose-500 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-rose-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300" type="submit">Не прошёл</button>
-                </form>
-              </div>
-
-              <form class="space-y-5" method="post" action="/candidates/{{ user.id }}/interview-feedback">
-                <input type="hidden" name="slot_id" value="{{ latest_interview.id }}">
-                <fieldset class="space-y-3">
-                  <legend class="text-sm font-semibold text-slate-900 dark:text-slate-100">Сценарий интервью</legend>
-                  {% for step in interview_script %}
-                    {% set is_checked = interview_feedback.checklist.get(step.id) if interview_feedback.checklist else False %}
-                    <label class="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white/60 p-3 transition hover:border-sky-300 focus-within:border-sky-300 dark:border-slate-700 dark:bg-slate-800/70">
-                      <input id="interview-step-{{ step.id }}" name="checklist" value="{{ step.id }}" type="checkbox" class="mt-1 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-slate-600 dark:bg-slate-900" {% if is_checked %}checked{% endif %}>
-                      <span>
-                        <span class="block text-sm font-semibold text-slate-900 dark:text-slate-100">{{ step.title }}</span>
-                        <span class="block text-xs text-slate-600 dark:text-slate-400">{{ step.description }}</span>
-                      </span>
-                    </label>
-                  {% endfor %}
-                </fieldset>
-                <label class="flex flex-col gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
-                  Заметки
-                  <textarea class="h-28 w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100 dark:focus:border-sky-500 dark:focus:ring-sky-500/40" name="notes" placeholder="Что важно запомнить для следующего этапа?">{{ interview_feedback.notes or '' }}</textarea>
-                </label>
-                <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                  {% if interview_feedback.updated_at %}
-                    <span>Обновлено {{ interview_feedback.updated_at }}</span>
+            </dd>
+          </div>
+          <div>
+            <dt class="muted text-sm">Город</dt>
+            <dd>{{ user.city or 'Город не указан' }}</dd>
+          </div>
+          <div>
+            <dt class="muted text-sm">Последняя активность</dt>
+            <dd>
+              {% if user.last_activity %}
+                {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
+              {% else %}
+                —
+              {% endif %}
+            </dd>
+          </div>
+          <div>
+            <dt class="muted text-sm">Всего тестов</dt>
+            <dd>{{ stats.tests_total }}</dd>
+          </div>
+          <div>
+            <dt class="muted text-sm">Средний балл</dt>
+            <dd>{{ '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' }}</dd>
+          </div>
+          <div>
+            <dt class="muted text-sm">Текущий этап</dt>
+            <dd>{{ stage }}</dd>
+          </div>
+        </dl>
+        {% if test_stage_summary %}
+          <div class="mt-4">
+            <h3 class="muted text-sm">Этапы тестов</h3>
+            <ul class="stage-flow" role="list">
+              {% for item in test_stage_summary %}
+                <li>
+                  <strong>{{ item.label }}</strong>
+                  — {{ item.score }}{% if item.rating %} ({{ item.rating }}){% endif %}
+                  {% if item.dt %}
+                    — {{ fmt_local(item.dt, 'Europe/Moscow') }}
                   {% endif %}
-                  <button class="inline-flex items-center justify-center rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200" type="submit">Сохранить</button>
-                </div>
-              </form>
-            </div>
-          {% endif %}
-        </article>
-
-        <article class="rounded-3xl border border-slate-200 bg-white/70 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
-          <header class="flex items-center justify-between">
-            <h2 class="text-xl font-semibold text-slate-900 dark:text-slate-50">Результаты тестов</h2>
-            <span class="text-sm text-slate-500 dark:text-slate-400">{{ stats.tests_total }} попыток</span>
-          </header>
-          {% if tests %}
-            <div class="mt-4 overflow-x-auto">
-              <table class="min-w-full divide-y divide-slate-200 text-sm leading-6 dark:divide-slate-700">
-                <thead class="bg-slate-50/70 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800/70 dark:text-slate-300">
-                  <tr>
-                    <th scope="col" class="px-4 py-3">Дата</th>
-                    <th scope="col" class="px-4 py-3">Сумма баллов</th>
-                    <th scope="col" class="px-4 py-3">Оценка</th>
-                    <th scope="col" class="px-4 py-3">Время, сек</th>
-                    <th scope="col" class="px-4 py-3">Ответы</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100 bg-white/70 text-slate-700 dark:divide-slate-800 dark:bg-slate-900/60 dark:text-slate-200">
-                  {% for result in tests %}
-                    {% set answers = answers_map.get(result.id) %}
-                    <tr>
-                      <td class="px-4 py-3">{{ fmt_local(result.created_at, 'Europe/Moscow') }}</td>
-                      <td class="px-4 py-3">{{ result.final_score }} / {{ result.raw_score }}</td>
-                      <td class="px-4 py-3">{{ result.rating }}</td>
-                      <td class="px-4 py-3">{{ result.total_time }}</td>
-                      <td class="px-4 py-3">
-                        {% if answers %}
-                          <button
-                            type="button"
-                            class="inline-flex items-center justify-center rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-sky-400 hover:text-sky-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-600 dark:text-slate-200 dark:hover:border-sky-500 dark:hover:text-sky-400"
-                            data-open-modal="answers-{{ result.id }}"
-                            aria-haspopup="dialog"
-                            aria-controls="answers-{{ result.id }}"
-                          >
-                            Посмотреть ответы
-                          </button>
-                        {% else %}
-                          <span class="text-slate-400 dark:text-slate-500">—</span>
-                        {% endif %}
-                      </td>
-                    </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-            {% for result in tests %}
-              {% set answers = answers_map.get(result.id) %}
-              {% if answers %}
-                <div id="answers-{{ result.id }}" data-modal class="fixed inset-0 z-40 hidden">
-                  <div data-modal-backdrop class="absolute inset-0 bg-slate-900/60 opacity-0 transition-opacity"></div>
-                  <div role="dialog" aria-modal="true" aria-labelledby="answers-title-{{ result.id }}" tabindex="-1" class="relative mx-auto mt-24 w-full max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-xl outline-none transition focus:outline-none dark:border-slate-700 dark:bg-slate-900">
-                    <div class="flex items-start justify-between gap-4">
-                      <div>
-                        <h3 id="answers-title-{{ result.id }}" class="text-lg font-semibold text-slate-900 dark:text-slate-50">Ответы теста от {{ fmt_local(result.created_at, 'Europe/Moscow') }}</h3>
-                        <p class="text-sm text-slate-600 dark:text-slate-400">Правильных: {{ answers.questions_correct }} из {{ answers.questions_total }}{% if answers.questions_overtime %}, просрочено: {{ answers.questions_overtime }}{% endif %}</p>
-                      </div>
-                      <button type="button" class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 dark:border-slate-600 dark:text-slate-300 dark:hover:border-slate-500" data-modal-close aria-label="Закрыть">
-                        ×
-                      </button>
-                    </div>
-                    <div class="mt-4 max-h-96 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/60 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-200">
-                      <ol class="space-y-4">
-                        {% for answer in answers.questions %}
-                          <li class="space-y-1">
-                            <p class="font-semibold text-slate-900 dark:text-slate-100">Вопрос {{ loop.index }}: {{ answer.question_text }}</p>
-                            <p>Ответ кандидата: <span class="font-medium">{{ answer.user_answer or '—' }}</span></p>
-                            <p>Правильный ответ: <span class="font-medium text-emerald-600 dark:text-emerald-400">{{ answer.correct_answer or '—' }}</span></p>
-                            <p class="text-xs text-slate-500 dark:text-slate-400">Время: {{ answer.time_spent }} сек • Попыток: {{ answer.attempts_count }}{% if answer.overtime %} • <span class="text-rose-500">Превышено время</span>{% endif %}</p>
-                          </li>
-                        {% endfor %}
-                      </ol>
-                    </div>
-                  </div>
-                </div>
-              {% endif %}
-            {% endfor %}
-          {% else %}
-            <p class="mt-4 text-sm text-slate-500 dark:text-slate-400">Кандидат ещё не проходил тесты.</p>
-          {% endif %}
-        </article>
-
-        {% if test2_completed %}
-          <article class="rounded-3xl border border-slate-200 bg-white/70 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
-            <h2 class="text-xl font-semibold text-slate-900 dark:text-slate-50">Ознакомительный день</h2>
-            <p class="mt-1 text-sm text-slate-600 dark:text-slate-400">Отправьте кандидату приглашение с датой и временем.</p>
-            <form class="mt-4 space-y-4" method="post" action="/candidates/{{ user.id }}/intro-day">
-              <div class="grid gap-4 sm:grid-cols-2">
-                <label class="flex flex-col gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
-                  Дата
-                  <input class="rounded-2xl border border-slate-200 bg-white/70 px-4 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100 dark:focus:border-sky-500 dark:focus:ring-sky-500/40" type="date" name="date_value" required>
-                </label>
-                <label class="flex flex-col gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
-                  Время
-                  <input class="rounded-2xl border border-slate-200 bg-white/70 px-4 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100 dark:focus:border-sky-500 dark:focus:ring-sky-500/40" type="time" name="time_value" required>
-                </label>
-              </div>
-              <label class="flex flex-col gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
-                Сообщение кандидату
-                <textarea class="h-24 rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100 dark:focus:border-sky-500 dark:focus:ring-sky-500/40" name="message_text" placeholder="{{ intro_message_template|format(fio=user.fio, date='дд.мм.гггг', time='чч:мм') }}"></textarea>
-              </label>
-              <div class="flex justify-end">
-                <button class="inline-flex items-center justify-center rounded-full bg-sky-600 px-5 py-2 text-sm font-semibold text-white shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:bg-sky-500" type="submit">Отправить приглашение</button>
-              </div>
-            </form>
-          </article>
-        {% endif %}
-      </div>
-
-      <aside class="space-y-6">
-        <section class="rounded-3xl border border-slate-200 bg-white/70 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900/60" id="history">
-          <h2 class="text-xl font-semibold text-slate-900 dark:text-slate-50">История событий</h2>
-          {% if timeline %}
-            <ol class="mt-4 space-y-4 text-sm text-slate-600 dark:text-slate-300">
-              {% for event in timeline %}
-                <li class="rounded-2xl border border-slate-200 bg-white/60 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60">
-                  <div class="flex items-center justify-between text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    <span>
-                      {% if event.kind == 'slot' %}
-                        Интервью
-                      {% elif event.kind == 'test' %}
-                        Тест
-                      {% elif event.kind == 'message' %}
-                        Сообщение
-                      {% else %}
-                        Событие
-                      {% endif %}
-                    </span>
-                    <time datetime="{{ event.dt.isoformat() if event.dt }}">{{ fmt_local(event.dt, event.tz or 'Europe/Moscow') if event.dt else '—' }}</time>
-                  </div>
-                  <div class="mt-2 space-y-1 text-sm">
-                    {% if event.kind == 'slot' %}
-                      <p>Статус: {{ (event.status or '')|upper }}</p>
-                      {% if event.recruiter %}<p>Рекрутёр: {{ event.recruiter }}</p>{% endif %}
-                      {% if event.city %}<p>Город: {{ event.city }}</p>{% endif %}
-                    {% elif event.kind == 'test' %}
-                      <p>Баллы: {{ event.score }} ({{ event.rating or '—' }})</p>
-                    {% elif event.kind == 'message' %}
-                      <p class="whitespace-pre-line">{{ event.text }}</p>
-                      {% if event.send_time %}<p class="text-xs text-slate-500 dark:text-slate-400">Запланировано: {{ event.send_time }}</p>{% endif %}
-                    {% endif %}
-                  </div>
                 </li>
               {% endfor %}
-            </ol>
-          {% else %}
-            <p class="mt-4 text-sm text-slate-500 dark:text-slate-400">История пока пуста.</p>
+            </ul>
+          </div>
+        {% endif %}
+      </section>
+
+      <section class="surface" aria-labelledby="interview-title">
+        <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 id="interview-title" class="section-title">Интервью</h2>
+            {% if latest_interview and latest_interview.start_utc %}
+              <p class="muted text-sm">{{ fmt_local(latest_interview.start_utc, latest_interview.candidate_tz or 'Europe/Moscow') }}</p>
+            {% else %}
+              <p class="muted text-sm">Интервью пока не запланировано.</p>
+            {% endif %}
+          </div>
+          {% if latest_interview and latest_interview.recruiter and latest_interview.recruiter.telemost_url %}
+            <a class="btn btn-primary btn-sm" href="{{ latest_interview.recruiter.telemost_url }}" target="_blank" rel="noopener">Перейти в конференцию</a>
           {% endif %}
+        </header>
+
+        {% if latest_interview %}
+          <form class="flex flex-wrap gap-3 mt-4" method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
+            <button class="btn btn-primary btn-sm" type="submit" name="outcome" value="success">Прошёл</button>
+            <button class="btn btn-soft btn-sm" type="submit" name="outcome" value="reject">Не прошёл</button>
+          </form>
+
+          {% set progress = namespace(total=interview_script|length, completed=0) %}
+          {% set steps_state = namespace(items=[]) %}
+          {% for step in interview_script %}
+            {% set is_checked = False %}
+            {% if interview_feedback.checklist %}
+              {% set stored = interview_feedback.checklist.get(step.id) %}
+              {% if stored is not none %}
+                {% set is_checked = stored %}
+              {% else %}
+                {% set as_string = interview_feedback.checklist.get(step.id|string) %}
+                {% if as_string is not none %}{% set is_checked = as_string %}{% endif %}
+              {% endif %}
+            {% endif %}
+            {% if is_checked %}{% set progress.completed = progress.completed + 1 %}{% endif %}
+            {% set _ = steps_state.items.append({'data': step, 'checked': is_checked}) %}
+          {% endfor %}
+
+          <form class="mt-6 flex flex-col gap-4" method="post" action="/candidates/{{ user.id }}/interview-feedback">
+            <input type="hidden" name="slot_id" value="{{ latest_interview.id }}">
+            <fieldset class="flex flex-col gap-3">
+              <legend class="section-title text-base flex items-center justify-between gap-2">
+                <span>Сценарий интервью</span>
+                {% if progress.total %}
+                  <span class="badge badge--soft text-xs">Выполнено {{ progress.completed }}/{{ progress.total }}</span>
+                {% endif %}
+              </legend>
+              {% for step_state in steps_state.items %}
+                {% set step = step_state.data %}
+                {% set is_checked = step_state.checked %}
+                <label class="panel panel--flush">
+                  <div class="flex items-start gap-3">
+                    <input id="interview-step-{{ step.id }}" name="checklist[]" value="{{ step.id }}" type="checkbox" {% if is_checked %}checked{% endif %}>
+                    <div>
+                      <span class="font-semibold">{{ step.title }}</span>
+                      <p class="muted text-sm">{{ step.description }}</p>
+                    </div>
+                  </div>
+                </label>
+              {% endfor %}
+            </fieldset>
+            <label class="flex flex-col gap-2">
+              <span class="section-title text-base">Заметки</span>
+              <textarea class="textarea" name="notes" placeholder="Что важно запомнить для следующего этапа?">{{ interview_feedback.notes or '' }}</textarea>
+            </label>
+            <div class="flex items-center justify-between text-sm muted">
+              {% if interview_feedback.updated_at %}
+                <span>Обновлено {{ fmt_local(interview_feedback.updated_at, latest_interview.candidate_tz or 'Europe/Moscow') }}</span>
+              {% endif %}
+              <div class="flex items-center gap-3">
+                {% if progress.total %}
+                  <span>{{ progress.completed }}/{{ progress.total }} шагов</span>
+                {% endif %}
+                <button class="btn btn-soft btn-sm" type="submit">Сохранить</button>
+              </div>
+            </div>
+          </form>
+        {% endif %}
+      </section>
+
+      <section class="surface" aria-labelledby="tests-title">
+        <header class="flex items-center justify-between">
+          <h2 id="tests-title" class="section-title">Результаты тестов</h2>
+          <span class="muted text-sm">{{ stats.tests_total }} попыток</span>
+        </header>
+        {% if tests %}
+          <div class="table__wrap mt-4">
+            <table class="table list-table">
+              <thead>
+                <tr>
+                  <th scope="col">Дата</th>
+                  <th scope="col">Баллы</th>
+                  <th scope="col">Рейтинг</th>
+                  <th scope="col">Время (сек)</th>
+                  <th scope="col">Ответы</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for result in tests %}
+                  {% set answers = answers_map.get(result.id) %}
+                  <tr>
+                    <td data-label="Дата">{{ fmt_local(result.created_at, 'Europe/Moscow') }}</td>
+                    <td data-label="Баллы">{{ result.final_score }} / {{ result.raw_score }}</td>
+                    <td data-label="Рейтинг">{{ result.rating or '—' }}</td>
+                    <td data-label="Время">{{ result.total_time }}</td>
+                    <td data-label="Ответы">
+                      {% if answers %}
+                        <button
+                          type="button"
+                          class="btn btn-soft btn-sm"
+                          data-answer-modal-target="answers-modal"
+                          data-answer-modal-payload="{{ {
+                            'title': fmt_local(result.created_at, 'Europe/Moscow'),
+                            'score': result.final_score,
+                            'raw_score': result.raw_score,
+                            'rating': result.rating,
+                            'total_time': result.total_time,
+                            'summary': {
+                              'correct': answers.questions_correct,
+                              'total': answers.questions_total,
+                              'overtime': answers.questions_overtime,
+                            },
+                            'questions': answers.questions,
+                          } | tojson }}"
+                          aria-haspopup="dialog"
+                          aria-controls="answers-modal"
+                        >
+                          Посмотреть ответы
+                        </button>
+                      {% else %}
+                        <span class="muted">—</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="muted mt-4">Кандидат ещё не проходил тесты.</p>
+        {% endif %}
+      </section>
+
+      <div class="modal" id="answers-modal" data-answer-modal hidden>
+        <div
+          class="modal__dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="answers-modal-title"
+          aria-describedby="answers-modal-description"
+          tabindex="-1"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 id="answers-modal-title" class="section-title">Ответы теста</h3>
+              <p id="answers-modal-description" class="muted text-sm">Детализация ответов кандидата.</p>
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" data-answer-modal-close aria-label="Закрыть модальное окно">Закрыть</button>
+          </div>
+          <div class="modal__body" data-answer-modal-body tabindex="0">
+            <ol class="flex flex-col gap-4" data-answer-modal-list role="list"></ol>
+          </div>
+        </div>
+      </div>
+
+      {% if latest_interview and latest_interview.interview_outcome == 'success' and test2_completed %}
+        <section class="surface" aria-labelledby="intro-day-title">
+          <header>
+            <h2 id="intro-day-title" class="section-title">Ознакомительный день</h2>
+            <p class="muted text-sm">Отправьте кандидату приглашение с датой и временем.</p>
+          </header>
+          <form class="mt-4 flex flex-col gap-4" method="post" action="/candidates/{{ user.id }}/intro-day">
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="flex flex-col gap-2">
+                <span class="muted text-sm">Дата</span>
+                <input class="input" type="date" name="date_value" required>
+              </label>
+              <label class="flex flex-col gap-2">
+                <span class="muted text-sm">Время</span>
+                <input class="input" type="time" name="time_value" required>
+              </label>
+            </div>
+            <label class="flex flex-col gap-2">
+              <span class="muted text-sm">Сообщение кандидату</span>
+              <textarea class="textarea" name="message_text" placeholder="{{ intro_message_template|format(fio=user.fio, date='дд.мм.гггг', time='чч:мм') }}"></textarea>
+            </label>
+            <div class="flex justify-end">
+              <button class="btn btn-primary btn-sm" type="submit">Отправить приглашение</button>
+            </div>
+          </form>
         </section>
-      </aside>
-    </section>
+      {% endif %}
+    </div>
+
+    <aside class="page-aside" id="history">
+      <section class="surface" aria-labelledby="history-title">
+        <header>
+          <h2 id="history-title" class="section-title">История событий</h2>
+        </header>
+        {% if timeline %}
+          <ol class="flex flex-col gap-3 text-sm" role="list">
+            {% for event in timeline %}
+              <li class="panel panel--flush">
+                <div class="flex items-center justify-between muted text-xs uppercase tracking-wide">
+                  <span>
+                    {% if event.kind == 'slot' %}
+                      Интервью
+                    {% elif event.kind == 'test' %}
+                      Тест
+                    {% elif event.kind == 'message' %}
+                      Сообщение
+                    {% else %}
+                      Событие
+                    {% endif %}
+                  </span>
+                  <time datetime="{{ event.dt.isoformat() if event.dt }}">{{ fmt_local(event.dt, event.tz or 'Europe/Moscow') if event.dt else '—' }}</time>
+                </div>
+                <div class="mt-2 space-y-1">
+                  {% if event.kind == 'slot' %}
+                    <p>Статус: {{ (event.status or '')|upper }}</p>
+                    {% if event.recruiter %}<p>Рекрутёр: {{ event.recruiter }}</p>{% endif %}
+                    {% if event.city %}<p>Город: {{ event.city }}</p>{% endif %}
+                  {% elif event.kind == 'test' %}
+                    <p>Баллы: {{ event.score }} ({{ event.rating or '—' }})</p>
+                  {% elif event.kind == 'message' %}
+                    <p class="whitespace-pre-line">{{ event.text }}</p>
+                    {% if event.send_time %}<p class="muted text-xs">Запланировано: {{ event.send_time }}</p>{% endif %}
+                  {% endif %}
+                </div>
+              </li>
+            {% endfor %}
+          </ol>
+        {% else %}
+          <p class="muted text-sm mt-4">История пока пуста.</p>
+        {% endif %}
+      </section>
+    </aside>
   </div>
 {% endblock %}
 
 {% block extra_js %}
   <script>
     (function () {
-      const modalButtons = document.querySelectorAll('[data-open-modal]');
-      const modals = new Map();
-      let previousFocus = null;
-
-      function closeModal(modal) {
-        modal.classList.add('hidden');
-        const backdrop = modal.querySelector('[data-modal-backdrop]');
-        if (backdrop) {
-          backdrop.classList.add('opacity-0');
-          setTimeout(() => backdrop.classList.add('hidden'), 150);
-        }
-        if (previousFocus) {
-          previousFocus.focus();
-        }
+      const triggers = document.querySelectorAll('[data-answer-modal-target]');
+      const modal = document.querySelector('[data-answer-modal]');
+      if (!modal) {
+        return;
       }
 
-      document.querySelectorAll('[data-modal]').forEach((modal) => {
-        const id = modal.id;
-        modals.set(id, modal);
-        const closeButtons = modal.querySelectorAll('[data-modal-close]');
-        const backdrop = modal.querySelector('[data-modal-backdrop]');
-        closeButtons.forEach((btn) => {
-          btn.addEventListener('click', () => closeModal(modal));
-        });
-        modal.addEventListener('keydown', (event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            closeModal(modal);
+      const dialog = modal.querySelector('[role="dialog"]');
+      const closeButtons = modal.querySelectorAll('[data-answer-modal-close]');
+      const list = modal.querySelector('[data-answer-modal-list]');
+      const modalBody = modal.querySelector('[data-answer-modal-body]');
+      const titleEl = modal.querySelector('#answers-modal-title');
+      const descriptionEl = modal.querySelector('#answers-modal-description');
+      let lastTrigger = null;
+
+      const displayValue = (value) => {
+        if (value === 0 || value === '0') {
+          return '0';
+        }
+        if (value === undefined || value === null) {
+          return '—';
+        }
+        const stringified = `${value}`.trim();
+        return stringified === '' ? '—' : stringified;
+      };
+
+      const formatSummary = (summary, payload) => {
+        if (!summary) {
+          return '';
+        }
+        const parts = [];
+        parts.push(`Правильных: ${displayValue(summary.correct)} из ${displayValue(summary.total)}`);
+        if (summary.overtime) {
+          parts.push(`просрочено: ${summary.overtime}`);
+        }
+        if (payload.score !== undefined && payload.raw_score !== undefined) {
+          parts.push(`баллы: ${displayValue(payload.score)} / ${displayValue(payload.raw_score)}`);
+        }
+        if (payload.rating !== undefined && payload.rating !== null && `${payload.rating}`.trim() !== '') {
+          parts.push(`рейтинг: ${payload.rating}`);
+        }
+        if (payload.total_time !== undefined && payload.total_time !== null && `${payload.total_time}`.trim() !== '') {
+          parts.push(`время: ${payload.total_time} сек`);
+        }
+        return parts.join(' · ');
+      };
+
+      const renderAnswers = (payload) => {
+        if (!list) {
+          return;
+        }
+        list.innerHTML = '';
+        if (!payload || !Array.isArray(payload.questions) || payload.questions.length === 0) {
+          const emptyState = document.createElement('li');
+          emptyState.className = 'muted';
+          emptyState.textContent = 'Ответы недоступны.';
+          list.appendChild(emptyState);
+          return;
+        }
+
+        payload.questions.forEach((question, index) => {
+          const item = document.createElement('li');
+          item.className = 'flex flex-col gap-2';
+
+          const header = document.createElement('div');
+          header.className = 'flex flex-wrap items-center gap-2';
+          const title = document.createElement('span');
+          title.className = 'font-semibold';
+          title.textContent = `Вопрос ${index + 1}: ${question.question_text || ''}`;
+          header.appendChild(title);
+
+          const statusBadge = document.createElement('span');
+          statusBadge.className = question.is_correct ? 'badge badge--success' : 'badge badge--muted';
+          statusBadge.textContent = question.is_correct ? 'Верно' : 'Неверно';
+          header.appendChild(statusBadge);
+
+          if (question.overtime) {
+            const overtimeBadge = document.createElement('span');
+            overtimeBadge.className = 'badge badge--soft';
+            overtimeBadge.textContent = 'Просрочено';
+            header.appendChild(overtimeBadge);
           }
+
+          item.appendChild(header);
+
+          const userAnswer = document.createElement('p');
+          const userAnswerLabel = document.createElement('span');
+          userAnswerLabel.textContent = 'Ответ кандидата: ';
+          const userAnswerValue = document.createElement('strong');
+          userAnswerValue.textContent = question.user_answer || '—';
+          userAnswer.appendChild(userAnswerLabel);
+          userAnswer.appendChild(userAnswerValue);
+          item.appendChild(userAnswer);
+
+          if (!question.is_correct && question.correct_answer) {
+            const correctAnswer = document.createElement('p');
+            const correctAnswerLabel = document.createElement('span');
+            correctAnswerLabel.textContent = 'Правильный ответ: ';
+            const correctAnswerValue = document.createElement('strong');
+            correctAnswerValue.textContent = question.correct_answer;
+            correctAnswer.appendChild(correctAnswerLabel);
+            correctAnswer.appendChild(correctAnswerValue);
+            item.appendChild(correctAnswer);
+          }
+
+          const meta = document.createElement('p');
+          meta.className = 'muted text-sm';
+          const attempts = question.attempts_count !== undefined && question.attempts_count !== null ? question.attempts_count : '—';
+          const timeSpent = question.time_spent !== undefined && question.time_spent !== null ? question.time_spent : '—';
+          meta.textContent = `Время: ${timeSpent} сек · Попытки: ${attempts}`;
+          item.appendChild(meta);
+
+          list.appendChild(item);
         });
-        if (backdrop) {
-          backdrop.addEventListener('click', () => closeModal(modal));
+      };
+
+      const openModal = (payload, trigger) => {
+        if (!dialog) {
+          return;
+        }
+        lastTrigger = trigger;
+        const title = payload && payload.title ? `Ответы теста от ${payload.title}` : 'Ответы теста';
+        if (titleEl) {
+          titleEl.textContent = title;
+        }
+        if (descriptionEl) {
+          const summaryText = formatSummary(payload && payload.summary, payload || {});
+          descriptionEl.textContent = summaryText || 'Детализация ответов кандидата.';
+        }
+        renderAnswers(payload);
+        modal.removeAttribute('hidden');
+        dialog.focus();
+        if (modalBody) {
+          modalBody.scrollTop = 0;
+        }
+        document.body.style.overflow = 'hidden';
+      };
+
+      const closeModal = () => {
+        modal.setAttribute('hidden', '');
+        document.body.style.overflow = '';
+        if (lastTrigger) {
+          lastTrigger.focus();
+          lastTrigger = null;
+        }
+      };
+
+      closeButtons.forEach((button) => {
+        button.addEventListener('click', closeModal);
+      });
+
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) {
+          closeModal();
         }
       });
 
-      modalButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-          const targetId = button.getAttribute('data-open-modal');
-          if (!targetId) {
+      if (dialog) {
+        dialog.addEventListener('click', (event) => {
+          event.stopPropagation();
+        });
+        dialog.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            closeModal();
+          }
+        });
+      }
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !modal.hasAttribute('hidden')) {
+          event.preventDefault();
+          closeModal();
+        }
+      });
+
+      triggers.forEach((trigger) => {
+        trigger.addEventListener('click', () => {
+          const payloadRaw = trigger.getAttribute('data-answer-modal-payload');
+          if (!payloadRaw) {
             return;
           }
-          const modal = modals.get(targetId);
-          if (!modal) {
-            return;
-          }
-          previousFocus = button;
-          const backdrop = modal.querySelector('[data-modal-backdrop]');
-          modal.classList.remove('hidden');
-          if (backdrop) {
-            backdrop.classList.remove('hidden');
-            requestAnimationFrame(() => backdrop.classList.remove('opacity-0'));
-          }
-          const dialog = modal.querySelector('[role="dialog"]');
-          if (dialog) {
-            dialog.focus();
+          try {
+            const payload = JSON.parse(payloadRaw);
+            openModal(payload, trigger);
+          } catch (error) {
+            console.error('Не удалось открыть модалку ответов', error);
           }
         });
       });
