@@ -1,49 +1,33 @@
 {% extends "base.html" %}
 {% from "page_primitives.html" import page_header, data_table %}
-{% import "partials/form_shell.html" as forms %}
 {% block title %}Кандидат {{ user.fio }}{% endblock %}
 {% block content %}
-{% set saved = request.query_params.get('saved') %}
-{% set error = request.query_params.get('error') %}
-{% if saved %}
-  <div class="alert" data-tone="success" role="status">
-    Данные кандидата обновлены.
-  </div>
-{% elif error %}
-  <div class="alert" data-tone="danger" role="alert">
-    Не удалось обновить данные кандидата.
-  </div>
-{% endif %}
-{% call page_header(
-  eyebrow="Кандидат",
-  title=user.fio,
-  description="Telegram ID " ~ user.telegram_id ~ " · " ~ (user.city or 'Город не указан'),
-  meta='<a class="muted" href="/candidates">← К списку кандидатов</a>'|safe
-) %}
-  <form method="post" action="/candidates/{{ user.id }}/toggle" class="inline-form">
-    {% if user.is_active %}
-      <input type="hidden" name="active" value="false">
-      <button class="btn btn-ghost" type="submit">Отключить</button>
-    {% else %}
-      <input type="hidden" name="active" value="true">
-      <button class="btn btn-primary" type="submit">Активировать</button>
-    {% endif %}
-  </form>
-  <form
-    method="post"
-    action="/candidates/{{ user.id }}/delete"
-    class="inline-form"
-    onsubmit="return confirm('Удалить кандидата {{ user.fio }}?');"
-  >
-    <button class="btn btn-soft" type="submit">Удалить</button>
-  </form>
-{% endcall %}
+  {% set flash_status = request.query_params.get('status') %}
+  {% set flash_notice = request.query_params.get('notice') %}
+  {% if flash_status == 'success' %}
+    <div class="alert" data-tone="success" role="status">
+      {{ flash_notice or 'Действие выполнено успешно.' }}
+    </div>
+  {% elif flash_status == 'error' %}
+    <div class="alert" data-tone="danger" role="alert">
+      {{ flash_notice or 'Не удалось выполнить действие.' }}
+    </div>
+  {% endif %}
 
-<div class="cards-grid">
-  <article class="surface">
-    <h2 class="section-title">Сводка</h2>
-    <dl class="data-list">
-      <div class="data-list__item">
+  {% call page_header(
+    eyebrow="Кандидат",
+    title=user.fio,
+    description="Telegram ID " ~ user.telegram_id ~ " · " ~ (user.city or 'Город не указан'),
+    meta='<a class="muted" href="/candidates">← К списку кандидатов</a>'|safe
+  ) %}{% endcall %}
+
+  <section class="surface">
+    <header class="section-header">
+      <h2 class="section-title">Сводка</h2>
+      <p class="section-hint">Ключевые данные по активности кандидата и этапам отбора.</p>
+    </header>
+    <dl class="summary-grid">
+      <div class="summary-grid__item">
         <dt>Статус</dt>
         <dd>
           {% if user.is_active %}
@@ -53,122 +37,430 @@
           {% endif %}
         </dd>
       </div>
-      <div class="data-list__item">
+      <div class="summary-grid__item">
         <dt>Город</dt>
         <dd>{{ user.city or '—' }}</dd>
       </div>
-      <div class="data-list__item">
+      <div class="summary-grid__item">
         <dt>Последняя активность</dt>
         <dd>{{ user.last_activity.strftime('%d.%m.%Y %H:%M') if user.last_activity else '—' }}</dd>
       </div>
-      <div class="data-list__item">
+      <div class="summary-grid__item">
+        <dt>Этап</dt>
+        <dd>{{ stage }}</dd>
+      </div>
+      <div class="summary-grid__item">
         <dt>Тестов пройдено</dt>
         <dd>{{ stats.tests_total }}</dd>
       </div>
-      <div class="data-list__item">
+      <div class="summary-grid__item">
         <dt>Средний балл</dt>
         <dd>{{ '%.2f'|format(stats.average_score) if stats.average_score is not none else '—' }}</dd>
       </div>
+      <div class="summary-grid__item">
+        <dt>Следующий шаг</dt>
+        <dd>
+          {% if upcoming_slot %}
+            Интервью {{ fmt_local(upcoming_slot.start_utc, upcoming_slot.candidate_tz or 'Europe/Moscow') }}
+          {% else %}
+            <span class="muted">Определите дату следующего шага</span>
+          {% endif %}
+        </dd>
+      </div>
     </dl>
-  </article>
-
-  {% call forms.shell(
-    title="Редактирование",
-    description="Обновите данные кандидата.",
-    form_id="candidate-update",
-    action='/candidates/' ~ user.id ~ '/update',
-    actions=[{"type": "submit", "text": "Сохранить", "variant": "primary"}]
-  ) %}
-    {% call forms.section("Основные поля") %}
-      <div class="form-grid form-grid--two">
-        {% call forms.field("ФИО") %}
-          <input type="text" name="fio" value="{{ user.fio }}" required>
-        {% endcall %}
-        {% call forms.field("Telegram ID") %}
-          <input type="number" name="telegram_id" value="{{ user.telegram_id }}" min="1" step="1" required>
-        {% endcall %}
-      </div>
-      <div class="form-grid form-grid--two">
-        {% call forms.field("Город") %}
-          <input type="text" name="city" value="{{ user.city or '' }}" placeholder="Москва">
-        {% endcall %}
-        {% call forms.field("Статус") %}
-          {{ forms.switch(name='is_active', value='true', checked=user.is_active, label='Активен') }}
-        {% endcall %}
-      </div>
-    {% endcall %}
-  {% endcall %}
-</div>
-
-<section class="surface">
-  <header class="section-header">
-    <h2 class="section-title">Результаты тестов</h2>
-    <p class="section-hint">Полная история прохождений с ключевыми показателями.</p>
-  </header>
-  {% if tests %}
-    {% set test_columns = [
-      {"label": "Дата"},
-      {"label": "Балл"},
-      {"label": "Рейтинг"},
-      {"label": "Время (сек)"},
-      {"label": "Ответы"}
-    ] %}
-    {% call data_table({'columns': test_columns, 'caption': "Результаты тестов кандидата", 'table_class': "list-table"}) %}
-      {% for result in tests %}
-        {% set answers = answers_map.get(result.id, {}) %}
-        <tr>
-          <td>{{ result.created_at.strftime('%d.%m.%Y %H:%M') if result.created_at else '—' }}</td>
-          <td><strong>{{ result.final_score }}</strong> из {{ result.raw_score }}</td>
-          <td>{{ result.rating }}</td>
-          <td>{{ result.total_time }}</td>
-          <td>
-            {% if answers %}
-              {{ answers.questions_correct }}/{{ answers.questions_total }} верно
-              {% if answers.questions_overtime %}
-                · <span class="muted">{{ answers.questions_overtime }} проср.</span>
+    {% if test_stage_summary %}
+      <div class="summary-tests">
+        <h3 class="summary-tests__title">Краткая сводка по тестам</h3>
+        <ul class="summary-tests__list">
+          {% for stage_item in test_stage_summary %}
+            <li class="summary-tests__item">
+              <strong>{{ stage_item.label }}</strong>
+              — {{ stage_item.score|round(1) }} из {{ stage_item.raw_score }}
+              · рейтинг {{ stage_item.rating }}
+              {% if stage_item.dt %}
+                <span class="muted">({{ stage_item.dt.strftime('%d.%m.%Y %H:%M') }})</span>
               {% endif %}
-            {% else %}
-              <span class="muted">—</span>
-            {% endif %}
-          </td>
-        </tr>
-      {% endfor %}
-    {% endcall %}
-  {% else %}
-    <p class="muted">Тесты пока не пройдены.</p>
-  {% endif %}
-</section>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </section>
 
-<section class="surface">
-  <header class="section-header">
-    <h2 class="section-title">Сообщения кандидату</h2>
-    <p class="section-hint">Отображаются авто-сообщения, назначенные на Telegram ID кандидата.</p>
-  </header>
-  {% if messages %}
-    {% set message_columns = [
-      {"label": "Создано"},
-      {"label": "Отправка"},
-      {"label": "Текст"},
-      {"label": "Статус"}
-    ] %}
-    {% call data_table({'columns': message_columns, 'caption': "Сообщения кандидату", 'table_class': "list-table"}) %}
-      {% for msg in messages %}
-        <tr>
-          <td>{{ msg.created_at.strftime('%d.%m.%Y %H:%M') if msg.created_at else '—' }}</td>
-          <td>{{ msg.send_time }}</td>
-          <td class="text-prewrap">{{ msg.message_text }}</td>
-          <td>
-            {% if msg.is_active %}
-              <span class="badge badge--success">Активно</span>
-            {% else %}
-              <span class="badge badge--muted">Отключено</span>
-            {% endif %}
-          </td>
-        </tr>
-      {% endfor %}
-    {% endcall %}
-  {% else %}
-    <p class="muted">Сообщения не найдены.</p>
+  <section class="surface" id="interview">
+    <header class="section-header">
+      <h2 class="section-title">Интервью</h2>
+      <p class="section-hint">Перейдите в конференцию и зафиксируйте результат встречи.</p>
+    </header>
+    {% if latest_interview %}
+      <div class="interview-panel">
+        <div class="interview-panel__column">
+          <div class="muted">Назначено: {{ latest_interview.start_utc.strftime('%d.%m.%Y %H:%M') if latest_interview.start_utc else '—' }}</div>
+          {% if latest_interview.recruiter and latest_interview.recruiter.telemost_url %}
+            <a class="btn btn-primary btn--primary" href="{{ latest_interview.recruiter.telemost_url }}" target="_blank" rel="noopener">Перейти в конференцию</a>
+          {% else %}
+            <span class="muted">Ссылка на конференцию не указана.</span>
+          {% endif %}
+        </div>
+        <div class="interview-panel__column">
+          <div class="muted">Исход: {% if latest_interview.interview_outcome == 'success' %}Прошёл{% elif latest_interview.interview_outcome == 'reject' %}Не прошёл{% else %}Не выбран{% endif %}</div>
+          <div class="interview-panel__actions" role="group" aria-label="Выбор исхода интервью">
+            <form method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome" class="inline-form">
+              <input type="hidden" name="outcome" value="success">
+              <button class="btn btn-primary btn--primary" type="submit">Прошёл</button>
+            </form>
+            <form method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome" class="inline-form">
+              <input type="hidden" name="outcome" value="reject">
+              <button class="btn btn-soft" type="submit">Не прошёл</button>
+            </form>
+          </div>
+          {% if latest_interview.test2_sent_at %}
+            <div class="muted">Тест 2 отправлен {{ latest_interview.test2_sent_at.strftime('%d.%m.%Y %H:%M') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    {% else %}
+      <p class="muted">У кандидата пока нет назначенных интервью.</p>
+    {% endif %}
+  </section>
+
+  {% if latest_interview %}
+    <section class="surface" aria-labelledby="interview-script-title">
+      <header class="section-header">
+        <h2 id="interview-script-title" class="section-title">Скрипт интервью</h2>
+        <p class="section-hint">Отмечайте шаги и фиксируйте заметки — отметки сохраняются автоматически.</p>
+      </header>
+      <form method="post" action="/candidates/{{ user.id }}/interview-feedback" class="stack" aria-describedby="interview-script-hint">
+        <input type="hidden" name="slot_id" value="{{ latest_interview.id }}">
+        <p id="interview-script-hint" class="visually-hidden">Отметьте выполненные шаги интервью и добавьте заметки.</p>
+        {% set stored_checklist = interview_feedback.get('checklist', {}) %}
+        <div class="interview-checklist" role="group" aria-label="Чек-лист интервью">
+          {% for step in interview_script %}
+            {% set checkbox_id = 'script-step-' ~ loop.index %}
+            {% set is_checked = stored_checklist.get(step.id) %}
+            <div class="checklist-item">
+              <input
+                type="checkbox"
+                id="{{ checkbox_id }}"
+                name="checklist"
+                value="{{ step.id }}"
+                {% if is_checked %}checked{% endif %}
+              >
+              <label for="{{ checkbox_id }}">
+                <span class="checklist-item__title">{{ step.title }}</span>
+                <span class="checklist-item__desc muted">{{ step.description }}</span>
+              </label>
+            </div>
+          {% endfor %}
+        </div>
+        <label class="form-field">
+          <span class="form-field__label">Заметки о собеседовании</span>
+          <textarea name="notes" rows="4" placeholder="Впечатления, договорённости, риски">{{ interview_feedback.notes or '' }}</textarea>
+        </label>
+        <div class="form-actions">
+          <button class="btn btn-primary btn--primary" type="submit">Сохранить отметки</button>
+        </div>
+        {% if interview_feedback.updated_at %}
+          <p class="muted">Последнее обновление: {{ interview_feedback.updated_at.strftime('%d.%m.%Y %H:%M') if interview_feedback.updated_at else interview_feedback.updated_at }}</p>
+        {% endif %}
+      </form>
+    </section>
   {% endif %}
-</section>
+
+  <section class="surface">
+    <header class="section-header">
+      <h2 class="section-title">Результаты тестов</h2>
+      <p class="section-hint">Полная история прохождений с возможностью просмотреть ответы.</p>
+    </header>
+    {% if tests %}
+      {% set test_columns = [
+        {"label": "Дата"},
+        {"label": "Балл"},
+        {"label": "Рейтинг"},
+        {"label": "Время (сек)"},
+        {"label": "Ответы"}
+      ] %}
+      {% call data_table({'columns': test_columns, 'caption': "Результаты тестов кандидата", 'table_class': "list-table"}) %}
+        {% for result in tests %}
+          {% set answers = answers_map.get(result.id, {}) %}
+          <tr>
+            <td>{{ result.created_at.strftime('%d.%m.%Y %H:%M') if result.created_at else '—' }}</td>
+            <td><strong>{{ result.final_score }}</strong> из {{ result.raw_score }}</td>
+            <td>{{ result.rating }}</td>
+            <td>{{ result.total_time }}</td>
+            <td>
+              {% if answers %}
+                {% set answer_list = answers.questions if answers.questions is defined else [] %}
+                <div class="stack">
+                  <div>
+                    <strong>{{ answers.questions_correct }}/{{ answers.questions_total }}</strong> верно
+                    {% if answers.questions_overtime %}
+                      · <span class="muted">{{ answers.questions_overtime }} проср.</span>
+                    {% endif %}
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn--ghost btn-sm answer-modal__trigger"
+                    data-answer-modal-target="answer-modal-data-{{ result.id }}"
+                  >
+                    Посмотреть ответы
+                  </button>
+                </div>
+                <div id="answer-modal-data-{{ result.id }}" class="answer-modal__content" hidden>
+                  <h3 data-modal-title>Ответы теста от {{ result.created_at.strftime('%d.%m.%Y %H:%M') if result.created_at else 'неизвестной даты' }}</h3>
+                  <p data-modal-subtitle>
+                    {{ result.final_score }} из {{ result.raw_score }} · рейтинг {{ result.rating }}
+                  </p>
+                  <div data-modal-body>
+                    {% if answer_list %}
+                      <ol class="answer-list">
+                        {% for answer in answer_list %}
+                          <li class="answer-list__item">
+                            <div class="answer-question">{{ answer.question_text }}</div>
+                            <div class="answer-meta">
+                              <span class="badge {% if answer.is_correct %}badge--success{% else %}badge--soft{% endif %}">
+                                {% if answer.is_correct %}Верно{% else %}Неверно{% endif %}
+                              </span>
+                              {% if answer.overtime %}
+                                <span class="badge badge--soft">Просрочено</span>
+                              {% endif %}
+                              <span class="muted">Ответ: {{ answer.user_answer or '—' }}</span>
+                              {% if answer.correct_answer and not answer.is_correct %}
+                                <span class="muted">Правильно: {{ answer.correct_answer }}</span>
+                              {% endif %}
+                              <span class="muted">Время: {{ answer.time_spent }} сек · Попыток: {{ answer.attempts_count }}</span>
+                            </div>
+                          </li>
+                        {% endfor %}
+                      </ol>
+                    {% else %}
+                      <p class="muted">Ответы недоступны.</p>
+                    {% endif %}
+                  </div>
+                </div>
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      {% endcall %}
+    {% else %}
+      <p class="muted">Тесты пока не пройдены.</p>
+    {% endif %}
+  </section>
+
+  {% if can_schedule_intro_day %}
+    <section class="surface">
+      <header class="section-header">
+        <h2 class="section-title">Ознакомительный день</h2>
+        <p class="section-hint">Назначьте дату и отправьте кандидату приглашение после успешного прохождения Test 2.</p>
+      </header>
+      <form method="post" action="/candidates/{{ user.id }}/intro-day" class="stack" aria-describedby="intro-day-hint">
+        <p id="intro-day-hint" class="visually-hidden">Укажите дату, время и при необходимости текст приглашения.</p>
+        <div class="form-grid form-grid--two">
+          <label class="form-field">
+            <span class="form-field__label">Дата</span>
+            <input type="date" name="date_value" required>
+          </label>
+          <label class="form-field">
+            <span class="form-field__label">Время</span>
+            <input type="time" name="time_value" required>
+          </label>
+        </div>
+        <label class="form-field">
+          <span class="form-field__label">Сообщение (необязательно)</span>
+          <textarea
+            name="message_text"
+            rows="4"
+            placeholder="{{ intro_message_template|replace('{fio}', user.fio)|replace('{date}', '12.09.2024')|replace('{time}', '10:00') }}"
+          ></textarea>
+          <span class="form-field__hint">Если оставить поле пустым, будет отправлен стандартный текст приглашения.</span>
+        </label>
+        <div class="form-actions">
+          <button class="btn btn-primary btn--primary" type="submit">Отправить сообщение</button>
+        </div>
+      </form>
+    </section>
+  {% endif %}
+
+  <section id="history" class="surface">
+    <header class="section-header">
+      <h2 class="section-title">История активности</h2>
+      <p class="section-hint">Тесты, сообщения и интервью кандидата в хронологическом порядке.</p>
+    </header>
+    {% if timeline %}
+      <ol class="timeline-list">
+        {% for item in timeline %}
+          <li class="timeline-item" data-kind="{{ item.kind }}">
+            <div class="timeline-item__time">{{ item.dt.strftime('%d.%m.%Y %H:%M') if item.dt else '—' }}</div>
+            <div class="timeline-item__body">
+              {% if item.kind == 'test' %}
+                <strong>Тест</strong> • {{ item.score }} балл(ов) • рейтинг {{ item.rating }}
+              {% elif item.kind == 'slot' %}
+                <strong>Интервью</strong> • {{ (item.status or '—')|replace('_', ' ')|title }}
+                {% if item.recruiter %}
+                  <span class="muted">• {{ item.recruiter }}</span>
+                {% endif %}
+                {% if item.city %}
+                  <span class="muted">• {{ item.city }}</span>
+                {% endif %}
+              {% elif item.kind == 'message' %}
+                <strong>Сообщение</strong> • отправка {{ item.send_time or '—' }}
+                {% if item.is_active is not none %}
+                  <span class="muted">• {% if item.is_active %}активно{% else %}отключено{% endif %}</span>
+                {% endif %}
+                <div class="timeline-item__text">{{ item.text }}</div>
+              {% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="muted">История пока пуста.</p>
+    {% endif %}
+  </section>
+{% endblock %}
+
+{% block extra_js %}
+  <script>
+    (function () {
+      function initAnswerModals() {
+        var triggers = document.querySelectorAll('[data-answer-modal-target]');
+        if (!triggers.length) {
+          return;
+        }
+
+        var activeBackdrop = null;
+        var activeModal = null;
+        var lastFocused = null;
+
+        function closeModal() {
+          if (activeBackdrop) {
+            activeBackdrop.remove();
+            activeBackdrop = null;
+          }
+          if (activeModal) {
+            activeModal.remove();
+            activeModal = null;
+          }
+          document.body.style.removeProperty('overflow');
+          document.removeEventListener('keydown', handleKeydown, true);
+          if (lastFocused) {
+            try {
+              lastFocused.focus();
+            } catch (err) {
+              /* noop */
+            }
+            lastFocused = null;
+          }
+        }
+
+        function handleKeydown(event) {
+          if (event.key === 'Escape' || event.key === 'Esc') {
+            event.preventDefault();
+            closeModal();
+          }
+        }
+
+        function openModal(trigger) {
+          var targetId = trigger.getAttribute('data-answer-modal-target');
+          if (!targetId) {
+            return;
+          }
+          var source = document.getElementById(targetId);
+          if (!source) {
+            return;
+          }
+
+          if (activeModal) {
+            closeModal();
+          }
+
+          lastFocused = trigger;
+
+          var backdrop = document.createElement('div');
+          backdrop.className = 'modal-backdrop';
+          backdrop.addEventListener('click', closeModal);
+
+          var modal = document.createElement('div');
+          modal.className = 'modal';
+          modal.setAttribute('role', 'dialog');
+          modal.setAttribute('aria-modal', 'true');
+          modal.tabIndex = -1;
+
+          var titleSource = source.querySelector('[data-modal-title]');
+          var subtitleSource = source.querySelector('[data-modal-subtitle]');
+          var bodySource = source.querySelector('[data-modal-body]');
+
+          var titleId = targetId + '-title';
+          modal.setAttribute('aria-labelledby', titleId);
+
+          var header = document.createElement('div');
+          header.className = 'modal__header';
+
+          var title = document.createElement('h2');
+          title.className = 'modal__title';
+          title.id = titleId;
+          title.textContent = titleSource ? titleSource.textContent : 'Детали';
+          header.appendChild(title);
+
+          if (subtitleSource && subtitleSource.textContent.trim()) {
+            var subtitle = document.createElement('p');
+            subtitle.className = 'modal__subtitle';
+            subtitle.textContent = subtitleSource.textContent;
+            header.appendChild(subtitle);
+          }
+
+          var modalBody = document.createElement('div');
+          modalBody.className = 'modal__body';
+          var bodyId = targetId + '-body';
+          modalBody.id = bodyId;
+          modal.setAttribute('aria-describedby', bodyId);
+          if (bodySource) {
+            modalBody.innerHTML = bodySource.innerHTML;
+          }
+
+          var footer = document.createElement('div');
+          footer.className = 'modal__footer';
+
+          var closeButton = document.createElement('button');
+          closeButton.type = 'button';
+          closeButton.className = 'btn btn-ghost btn--ghost';
+          closeButton.textContent = 'Закрыть';
+          closeButton.addEventListener('click', closeModal);
+          footer.appendChild(closeButton);
+
+          modal.appendChild(header);
+          modal.appendChild(modalBody);
+          modal.appendChild(footer);
+
+          document.body.appendChild(backdrop);
+          document.body.appendChild(modal);
+
+          activeBackdrop = backdrop;
+          activeModal = modal;
+
+          document.body.style.overflow = 'hidden';
+          document.addEventListener('keydown', handleKeydown, true);
+
+          window.requestAnimationFrame(function () {
+            modal.focus();
+          });
+        }
+
+        triggers.forEach(function (trigger) {
+          trigger.addEventListener('click', function () {
+            openModal(trigger);
+          });
+        });
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initAnswerModals);
+      } else {
+        initAnswerModals();
+      }
+    })();
+  </script>
 {% endblock %}

@@ -121,6 +121,8 @@ class BotService:
     transient_message: str = "Бот временно недоступен. Попробуйте позже."
     failure_message: str = "Не удалось отправить Тест 2 кандидату."
     rejection_failure_message: str = "Не удалось отправить отказ кандидату."
+    intro_skip_message: str = "Сообщение не отправлено: бот отключён.",
+    intro_failure_message: str = "Не удалось отправить сообщение кандидату."
 
     def is_ready(self) -> bool:
         """Return whether the bot can be used for Test 2 dispatches."""
@@ -160,6 +162,8 @@ class BotService:
             transient_message=self.transient_message,
             failure_message=self.failure_message,
             rejection_failure_message=self.rejection_failure_message,
+            intro_skip_message=self.intro_skip_message,
+            intro_failure_message=self.intro_failure_message,
         )
 
     async def send_test2(
@@ -273,6 +277,77 @@ class BotService:
             )
 
         return BotSendResult(ok=True, status="sent")
+
+    async def send_intro_message(
+        self,
+        candidate_id: int,
+        text: str,
+    ) -> BotSendResult:
+        if not text or not text.strip():
+            return BotSendResult(
+                ok=False,
+                status="skipped:error",
+                error=self.intro_failure_message,
+            )
+
+        if not self.integration_switch.is_enabled() or not self.enabled:
+            logger.info(
+                "Intro message skipped: bot integration disabled",
+                extra={"candidate_id": candidate_id},
+            )
+            return BotSendResult(
+                ok=False,
+                status="skipped:disabled",
+                error=self.intro_skip_message,
+            )
+
+        if not BOT_RUNTIME_AVAILABLE or not self.configured:
+            logger.warning(
+                "Bot integration unavailable for intro message dispatch",
+            )
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error=self.intro_failure_message,
+            )
+
+        try:
+            bot = get_bot()
+        except Exception:  # pragma: no cover - runtime safety net
+            logger.exception(
+                "Bot runtime is unavailable; cannot send intro message.",
+            )
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error=self.intro_failure_message,
+            )
+
+        try:
+            await bot.send_message(candidate_id, text)
+        except Exception as exc:  # pragma: no cover - network/environment errors
+            if _is_transient_error(exc):
+                logger.exception("Transient error while sending intro message")
+                return BotSendResult(
+                    ok=False,
+                    status="queued_retry",
+                    error=self.transient_message,
+                )
+
+            logger.exception(
+                "Failed to send intro message to candidate %s", candidate_id
+            )
+            return BotSendResult(
+                ok=False,
+                status="skipped:error",
+                error=self.intro_failure_message,
+            )
+
+        return BotSendResult(
+            ok=True,
+            status="sent_message",
+            message="Сообщение отправлено кандидату.",
+        )
 
     async def send_rejection(
         self,

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, time, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import String, cast, exists, func, or_, select
@@ -11,8 +12,12 @@ from sqlalchemy.sql import case, Select
 
 from backend.apps.admin_ui.utils import paginate
 from backend.core.db import async_session
+from backend.apps.admin_ui.services.bot_service import BotService, get_bot_service
 from backend.domain.candidates.models import AutoMessage, QuestionAnswer, TestResult, User
-from backend.domain.models import Slot, SlotStatus
+from backend.domain.models import InterviewFeedback, Slot, SlotStatus
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,6 +31,42 @@ class CandidateRow:
     stage: str
     latest_slot: Optional[Slot]
     upcoming_slot: Optional[Slot]
+
+
+INTERVIEW_SCRIPT_STEPS: List[Dict[str, str]] = [
+    {
+        "id": "greeting",
+        "title": "Приветствие и ice-breaker",
+        "description": "Познакомьтесь, уточните удобен ли формат интервью и настройте кандидата на диалог.",
+    },
+    {
+        "id": "company_intro",
+        "title": "Краткий рассказ о компании",
+        "description": "Расскажите о миссии SMART, роли команды и основных задачах на позиции.",
+    },
+    {
+        "id": "experience",
+        "title": "Обсуждение опыта и мотивации",
+        "description": "Уточните прошлые проекты, компетенции кандидата и его интерес к вакансии.",
+    },
+    {
+        "id": "tests_review",
+        "title": "Разбор результатов тестов",
+        "description": "Обсудите сильные стороны и зоны роста по итогам тестов, задайте уточняющие вопросы.",
+    },
+    {
+        "id": "next_steps",
+        "title": "Дальнейшие шаги",
+        "description": "Согласуйте ожидания по тесту 2 и ознакомительному дню, расскажите про дальнейший процесс.",
+    },
+]
+
+
+INTRO_DAY_MESSAGE_TEMPLATE = (
+    "{fio}, поздравляем с успешным интервью! "
+    "Мы ждём вас на ознакомительный день {date} в {time}. "
+    "Если понадобится перенести встречу — напишите, пожалуйста, заранее."
+)
 
 
 def _ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
@@ -50,6 +91,30 @@ def _stage_label(latest_slot: Optional[Slot], now: datetime) -> str:
     if status == SlotStatus.FREE:
         return "Свободный слот"
     return status.upper() or "Без интервью"
+
+
+def _build_test_stage_summary(results: List[TestResult]) -> List[Dict[str, object]]:
+    if not results:
+        return []
+    chronological = sorted(
+        results,
+        key=lambda item: (
+            _ensure_aware(item.created_at) or datetime.min.replace(tzinfo=timezone.utc)
+        ),
+    )
+    summary: List[Dict[str, object]] = []
+    for index, result in enumerate(chronological[:2]):
+        summary.append(
+            {
+                "label": f"Тест {index + 1}",
+                "result": result,
+                "score": result.final_score,
+                "raw_score": result.raw_score,
+                "rating": result.rating,
+                "dt": _ensure_aware(result.created_at),
+            }
+        )
+    return summary
 
 
 async def _distinct_ratings(session) -> List[str]:
@@ -485,24 +550,38 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
         ).scalars().all()
 
         test_ids = [result.id for result in test_results]
-        answers_map: Dict[int, Dict[str, int]] = {}
+        answers_map: Dict[int, Dict[str, object]] = {}
         if test_ids:
             answer_rows = await session.execute(
-                select(
-                    QuestionAnswer.test_result_id,
-                    func.count(QuestionAnswer.id),
-                    func.sum(case((QuestionAnswer.is_correct.is_(True), 1), else_=0)),
-                    func.sum(case((QuestionAnswer.overtime.is_(True), 1), else_=0)),
-                )
+                select(QuestionAnswer)
                 .where(QuestionAnswer.test_result_id.in_(test_ids))
-                .group_by(QuestionAnswer.test_result_id)
+                .order_by(QuestionAnswer.test_result_id.asc(), QuestionAnswer.question_index.asc())
             )
-            for test_id, total_q, correct_q, overtime_q in answer_rows:
-                answers_map[test_id] = {
-                    "questions_total": int(total_q or 0),
-                    "questions_correct": int(correct_q or 0),
-                    "questions_overtime": int(overtime_q or 0),
+            raw_map: Dict[int, Dict[str, object]] = defaultdict(
+                lambda: {
+                    "questions_total": 0,
+                    "questions_correct": 0,
+                    "questions_overtime": 0,
+                    "questions": [],
                 }
+            )
+            for answer in answer_rows.scalars():
+                entry = raw_map[answer.test_result_id]
+                entry["questions"].append(answer)
+                entry["questions_total"] = int(entry["questions_total"]) + 1
+                if answer.is_correct:
+                    entry["questions_correct"] = int(entry["questions_correct"]) + 1
+                if answer.overtime:
+                    entry["questions_overtime"] = int(entry["questions_overtime"]) + 1
+            answers_map = {
+                test_id: {
+                    "questions_total": int(values["questions_total"]),
+                    "questions_correct": int(values["questions_correct"]),
+                    "questions_overtime": int(values["questions_overtime"]),
+                    "questions": list(values["questions"]),
+                }
+                for test_id, values in raw_map.items()
+            }
 
         messages = (
             await session.execute(
@@ -561,6 +640,30 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
             )
         timeline.sort(key=lambda item: item["dt"] or now, reverse=True)
 
+        latest_interview = slots[0] if slots else None
+        interview_feedback = {}
+        if latest_interview:
+            feedback_entry = await session.scalar(
+                select(InterviewFeedback).where(
+                    InterviewFeedback.slot_id == latest_interview.id
+                )
+            )
+            if feedback_entry:
+                raw_checklist = (
+                    feedback_entry.checklist
+                    if isinstance(feedback_entry.checklist, dict)
+                    else {}
+                )
+                checklist = {
+                    str(key): bool(value)
+                    for key, value in raw_checklist.items()
+                }
+                interview_feedback = {
+                    "checklist": checklist,
+                    "notes": feedback_entry.notes,
+                    "updated_at": feedback_entry.updated_at,
+                }
+
         stats = await session.execute(
             select(
                 func.count(TestResult.id),
@@ -568,6 +671,16 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
             ).where(TestResult.user_id == user_id)
         )
         tests_total, avg_score = stats.one()
+
+        test_stage_summary = _build_test_stage_summary(test_results)
+
+        has_test2 = int(tests_total or 0) >= 2
+        can_schedule_intro_day = (
+            has_test2
+            and latest_interview is not None
+            and (getattr(latest_interview, "interview_outcome", "") or "").lower()
+            == "success"
+        )
 
     return {
         "user": user,
@@ -578,11 +691,258 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
         "upcoming_slot": upcoming_slot,
         "stage": stage,
         "timeline": timeline,
+        "test_stage_summary": test_stage_summary,
+        "latest_interview": latest_interview,
+        "interview_feedback": interview_feedback,
+        "interview_script": INTERVIEW_SCRIPT_STEPS,
+        "intro_message_template": INTRO_DAY_MESSAGE_TEMPLATE,
         "stats": {
             "tests_total": int(tests_total or 0),
             "average_score": float(avg_score) if avg_score is not None else None,
         },
+        "can_schedule_intro_day": can_schedule_intro_day,
+        "has_test2": has_test2,
     }
+
+
+async def save_interview_feedback(
+    slot_id: int,
+    checklist_ids: List[str],
+    notes: str,
+    *,
+    candidate_id: Optional[int] = None,
+) -> Tuple[bool, str]:
+    step_ids = {step["id"] for step in INTERVIEW_SCRIPT_STEPS}
+    normalized: Dict[str, bool] = {step_id: False for step_id in step_ids}
+    for checked in checklist_ids:
+        if checked in normalized:
+            normalized[checked] = True
+
+    notes_clean = notes.strip() if isinstance(notes, str) else ""
+
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if not slot:
+            return False, "Интервью не найдено."
+
+        user: Optional[User]
+        if candidate_id is not None:
+            user = await session.get(User, candidate_id)
+            if not user:
+                return False, "Кандидат не найден."
+            if slot.candidate_tg_id and slot.candidate_tg_id != user.telegram_id:
+                return False, "Интервью не относится к выбранному кандидату."
+        else:
+            user = None
+
+        if user is None:
+            if not slot.candidate_tg_id:
+                return False, "Интервью не связано с кандидатом."
+            user = await session.scalar(
+                select(User).where(User.telegram_id == slot.candidate_tg_id)
+            )
+            if not user:
+                return False, "Кандидат не найден."
+
+        entry = await session.scalar(
+            select(InterviewFeedback).where(InterviewFeedback.slot_id == slot_id)
+        )
+        timestamp = datetime.now(timezone.utc)
+        if entry is None:
+            entry = InterviewFeedback(
+                user_id=user.id,
+                slot_id=slot_id,
+                checklist=normalized,
+                notes=notes_clean or None,
+                updated_at=timestamp,
+            )
+            session.add(entry)
+        else:
+            entry.user_id = user.id
+            entry.checklist = normalized
+            entry.notes = notes_clean or None
+            entry.updated_at = timestamp
+        await session.commit()
+
+    return True, "Отметки по собеседованию сохранены."
+
+
+async def schedule_intro_day_message(
+    candidate_id: int,
+    *,
+    date_value: str,
+    time_value: str,
+    message_text: Optional[str],
+    bot_service: Optional[BotService] = None,
+) -> Tuple[bool, str]:
+    date_clean = (date_value or "").strip()
+    time_clean = (time_value or "").strip()
+    if not date_clean or not time_clean:
+        return False, "Укажите дату и время ознакомительного дня."
+
+    try:
+        visit_date = date.fromisoformat(date_clean)
+    except ValueError:
+        return False, "Некорректная дата ознакомительного дня."
+
+    try:
+        visit_time = time.fromisoformat(time_clean)
+    except ValueError:
+        return False, "Некорректное время ознакомительного дня."
+
+    scheduled_dt = datetime.combine(visit_date, visit_time)
+    send_time = scheduled_dt.strftime("%Y-%m-%d %H:%M")
+
+    text_template = (message_text or "").strip()
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            return False, "Кандидат не найден."
+
+        if not text_template:
+            text_template = INTRO_DAY_MESSAGE_TEMPLATE.format(
+                fio=user.fio,
+                date=visit_date.strftime("%d.%m.%Y"),
+                time=visit_time.strftime("%H:%M"),
+            )
+
+    ok, dispatch_message = await send_intro_message(
+        candidate_id,
+        scheduled_dt,
+        text_template,
+        bot_service=bot_service,
+    )
+    if not ok:
+        return False, dispatch_message
+
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            return False, "Кандидат не найден."
+
+        message = AutoMessage(
+            message_text=text_template,
+            send_time=send_time,
+            target_chat_id=user.telegram_id,
+        )
+        session.add(message)
+        await session.commit()
+
+    return True, dispatch_message or "Сообщение отправлено кандидату."
+
+
+async def send_intro_message(
+    candidate_id: int,
+    visit_dt: datetime,
+    text: str,
+    *,
+    bot_service: Optional[BotService] = None,
+) -> Tuple[bool, str]:
+    clean_text = (text or "").strip()
+    if not clean_text:
+        return False, "Текст сообщения пустой."
+
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user or not user.telegram_id:
+            return False, "Кандидат не найден."
+        telegram_id = int(user.telegram_id)
+
+    service = bot_service
+    if service is None:
+        try:
+            service = get_bot_service()
+        except RuntimeError:
+            service = None
+
+    if service is None:
+        return False, "Бот недоступен, сообщение не отправлено."
+
+    logger.info(
+        "intro_day.message.dispatch",
+        extra={
+            "candidate_id": candidate_id,
+            "visit_dt": visit_dt.isoformat(),
+        },
+    )
+
+    result = await service.send_intro_message(telegram_id, clean_text)
+    if not result.ok:
+        return (
+            False,
+            result.error or result.message or "Не удалось отправить сообщение кандидату.",
+        )
+
+    return True, result.message or "Сообщение отправлено кандидату."
+
+
+async def send_test2(
+    candidate_id: int,
+    *,
+    slot_id: Optional[int] = None,
+    bot_service: Optional[BotService] = None,
+) -> Tuple[bool, str]:
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user or not user.telegram_id:
+            return False, "Кандидат не найден."
+
+        slot: Optional[Slot] = None
+        if slot_id is not None:
+            slot = await session.get(Slot, slot_id)
+            if not slot:
+                return False, "Интервью не найдено."
+            if slot.candidate_tg_id and slot.candidate_tg_id != user.telegram_id:
+                return False, "Интервью не относится к выбранному кандидату."
+
+        if slot is None:
+            slot = await session.scalar(
+                select(Slot)
+                .where(Slot.candidate_tg_id == user.telegram_id)
+                .order_by(Slot.start_utc.desc(), Slot.id.desc())
+            )
+
+        already_sent = bool(getattr(slot, "test2_sent_at", None))
+        candidate_tz = getattr(slot, "candidate_tz", None) if slot else None
+        candidate_city_id = getattr(slot, "candidate_city_id", None) if slot else None
+        slot_identifier = getattr(slot, "id", None)
+        candidate_name = user.fio
+        telegram_id = int(user.telegram_id)
+
+    if already_sent:
+        return True, "Тест 2 уже был отправлен кандидату."
+
+    service = bot_service
+    if service is None:
+        try:
+            service = get_bot_service()
+        except RuntimeError:
+            service = None
+
+    if service is None:
+        return False, "Бот недоступен, Тест 2 не отправлен."
+
+    result = await service.send_test2(
+        telegram_id,
+        candidate_tz,
+        candidate_city_id,
+        candidate_name,
+    )
+
+    if not result.ok:
+        return (
+            False,
+            result.error or result.message or "Не удалось отправить Тест 2 кандидату.",
+        )
+
+    if slot_identifier is not None and not str(result.status).startswith("skipped"):
+        async with async_session() as session:
+            stored_slot = await session.get(Slot, slot_identifier)
+            if stored_slot:
+                stored_slot.test2_sent_at = datetime.now(timezone.utc)
+                await session.commit()
+
+    return True, result.message or "Тест 2 отправлен кандидату."
 
 
 async def upsert_candidate(

@@ -13,6 +13,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from zoneinfo import ZoneInfo
 
+from backend.apps.admin_ui.services.candidates import (
+    INTERVIEW_SCRIPT_STEPS,
+    INTRO_DAY_MESSAGE_TEMPLATE,
+)
+
 STATIC_DIR = Path(__file__).parent / "backend" / "apps" / "admin_ui" / "static"
 TEMPLATES_DIR = Path(__file__).parent / "backend" / "apps" / "admin_ui" / "templates"
 
@@ -446,6 +451,40 @@ CANDIDATE_ROWS_DATA: List[Dict[str, Any]] = [
     },
 ]
 
+primary_slot = {
+    "id": 401,
+    "start_utc": NOW_UTC + timedelta(hours=3),
+    "status": "booked",
+    "duration_min": 45,
+    "candidate_tg_id": CANDIDATE_ROWS_DATA[0]["user"]["telegram_id"],
+    "candidate_fio": CANDIDATE_ROWS_DATA[0]["user"]["fio"],
+    "candidate_tz": "Europe/Moscow",
+    "recruiter": {"name": "Алексей Захаров", "telemost_url": "https://telemost.yandex.ru/j/SMART_ONBOARDING"},
+    "city": {"name": "Москва"},
+    "interview_outcome": "success",
+    "test2_sent_at": NOW_UTC - timedelta(hours=1),
+    "interview_feedback": {
+        "checklist": {step["id"]: (step["id"] != "company_intro") for step in INTERVIEW_SCRIPT_STEPS},
+        "notes": "Кандидат уверенно отвечает на вопросы и заинтересован в развитии.",
+        "updated_at": (NOW_UTC - timedelta(hours=1)).isoformat(),
+    },
+}
+
+secondary_slot = {
+    "id": 402,
+    "start_utc": NOW_UTC - timedelta(days=5),
+    "status": "completed",
+    "duration_min": 30,
+    "candidate_tg_id": CANDIDATE_ROWS_DATA[0]["user"]["telegram_id"],
+    "candidate_fio": CANDIDATE_ROWS_DATA[0]["user"]["fio"],
+    "candidate_tz": "Europe/Moscow",
+    "recruiter": {"name": "Мария Орлова", "telemost_url": None},
+    "city": {"name": "Санкт-Петербург"},
+    "interview_outcome": "reject",
+    "test2_sent_at": None,
+    "interview_feedback": None,
+}
+
 CANDIDATE_DETAIL_DATA = {
     "user": build(CANDIDATE_ROWS_DATA[0]["user"]),
     "stats": {"tests_total": 4, "average_score": 87.2},
@@ -468,8 +507,47 @@ CANDIDATE_DETAIL_DATA = {
         },
     ],
     "answers_map": {
-        101: {"questions_correct": 18, "questions_total": 20, "questions_overtime": 1},
-        102: {"questions_correct": 15, "questions_total": 20, "questions_overtime": 0},
+        101: {
+            "questions_correct": 18,
+            "questions_total": 20,
+            "questions_overtime": 1,
+            "questions": [
+                {
+                    "question_text": "Как вы объясните клиенту ценность услуги SMART?",
+                    "user_answer": "Рассказываю о результатах и поддержке команды",
+                    "correct_answer": "Подчеркнуть выгоду для клиента и сопровождение",
+                    "attempts_count": 1,
+                    "time_spent": 42,
+                    "is_correct": True,
+                    "overtime": False,
+                },
+                {
+                    "question_text": "Что сделать, если клиент сомневается?",
+                    "user_answer": "Предложить попробовать и поддержать",
+                    "correct_answer": "Предложить демо и рассказать про сопровождение",
+                    "attempts_count": 2,
+                    "time_spent": 65,
+                    "is_correct": False,
+                    "overtime": True,
+                },
+            ],
+        },
+        102: {
+            "questions_correct": 15,
+            "questions_total": 20,
+            "questions_overtime": 0,
+            "questions": [
+                {
+                    "question_text": "Основная цель ознакомительного дня?",
+                    "user_answer": "Познакомить с командой",
+                    "correct_answer": "Погружение в процессы и знакомство с командой",
+                    "attempts_count": 1,
+                    "time_spent": 30,
+                    "is_correct": True,
+                    "overtime": False,
+                }
+            ],
+        },
     },
     "messages": [
         {
@@ -485,6 +563,52 @@ CANDIDATE_DETAIL_DATA = {
             "is_active": False,
         },
     ],
+    "slots": [primary_slot, secondary_slot],
+    "latest_interview": primary_slot,
+    "upcoming_slot": primary_slot,
+    "stage": "Интервью назначено",
+    "timeline": [
+        {
+            "kind": "slot",
+            "dt": primary_slot["start_utc"],
+            "status": primary_slot["status"],
+            "recruiter": primary_slot["recruiter"]["name"],
+            "city": primary_slot["city"]["name"],
+            "tz": primary_slot["candidate_tz"],
+        },
+        {
+            "kind": "test",
+            "dt": NOW_UTC - timedelta(days=3, hours=1),
+            "score": 88,
+            "rating": "A",
+        },
+        {
+            "kind": "message",
+            "dt": NOW_UTC - timedelta(days=1, hours=2),
+            "send_time": "Сегодня 12:15",
+            "text": "Напоминаем про интервью с Алексеем завтра в 15:00.",
+            "is_active": True,
+        },
+    ],
+    "test_stage_summary": [
+        {
+            "label": "Тест 1",
+            "score": 82,
+            "raw_score": 100,
+            "rating": "B",
+            "dt": NOW_UTC - timedelta(days=12),
+        },
+        {
+            "label": "Тест 2",
+            "score": 88,
+            "raw_score": 100,
+            "rating": "A",
+            "dt": NOW_UTC - timedelta(days=3, hours=1),
+        },
+    ],
+    "interview_feedback": primary_slot["interview_feedback"],
+    "interview_script": INTERVIEW_SCRIPT_STEPS,
+    "intro_message_template": INTRO_DAY_MESSAGE_TEMPLATE,
 }
 
 RECRUITER_ROWS_DATA: List[Dict[str, Any]] = [
@@ -769,13 +893,11 @@ def candidates_list_context() -> Dict[str, Any]:
 
 def candidate_detail_context() -> Dict[str, Any]:
     detail = build(CANDIDATE_DETAIL_DATA)
-    return {
-        "user": detail.user,
-        "stats": detail.stats,
-        "tests": detail.tests,
-        "answers_map": detail.answers_map,
-        "messages": detail.messages,
-    }
+    # The candidate profile template expects the full enriched payload that the
+    # production service returns. Re-expose every key from the demo fixture so
+    # that previewing "/candidates/1" renders the same sections (interview
+    # timeline, script checklist, intro-day scheduler, etc.) as the real page.
+    return dict(detail)
 
 
 def candidates_new_context() -> Dict[str, Any]:

@@ -1,6 +1,7 @@
-from typing import Optional
+from typing import List, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
 
@@ -10,9 +11,17 @@ from backend.apps.admin_ui.services.candidates import (
     delete_candidate,
     get_candidate_detail,
     list_candidates,
+    save_interview_feedback,
+    schedule_intro_day_message,
+    send_test2,
     toggle_candidate_activity,
     update_candidate,
     upsert_candidate,
+)
+from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
+from backend.apps.admin_ui.services.slots.core import (
+    execute_bot_dispatch,
+    set_slot_outcome,
 )
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -135,6 +144,84 @@ async def candidates_update(
     if not success:
         return RedirectResponse(url=f"/candidates/{candidate_id}?error=update", status_code=303)
     return RedirectResponse(url=f"/candidates/{candidate_id}?saved=1", status_code=303)
+
+
+@router.post("/{candidate_id}/interview-feedback")
+async def candidates_interview_feedback(
+    candidate_id: int,
+    slot_id: int = Form(...),
+    checklist: Optional[List[str]] = Form(None),
+    notes: str = Form(""),
+):
+    selected = checklist or []
+    ok, message = await save_interview_feedback(
+        slot_id,
+        selected,
+        notes,
+        candidate_id=candidate_id,
+    )
+    status = "success" if ok else "error"
+    query = f"status={status}"
+    if message:
+        query += f"&notice={quote(message)}"
+    return RedirectResponse(url=f"/candidates/{candidate_id}?{query}", status_code=303)
+
+
+@router.post("/{candidate_id}/intro-day")
+async def candidates_intro_day(
+    candidate_id: int,
+    date_value: str = Form(...),
+    time_value: str = Form(...),
+    message_text: str = Form(""),
+    bot_service: BotService = Depends(provide_bot_service),
+):
+    ok, message = await schedule_intro_day_message(
+        candidate_id,
+        date_value=date_value,
+        time_value=time_value,
+        message_text=message_text,
+        bot_service=bot_service,
+    )
+    status = "success" if ok else "error"
+    query = f"status={status}"
+    if message:
+        query += f"&notice={quote(message)}"
+    return RedirectResponse(url=f"/candidates/{candidate_id}?{query}", status_code=303)
+
+
+@router.post("/{candidate_id}/slots/{slot_id}/outcome")
+async def candidates_slot_outcome(
+    candidate_id: int,
+    slot_id: int,
+    outcome: str = Form(...),
+    background_tasks: BackgroundTasks,
+    bot_service: BotService = Depends(provide_bot_service),
+):
+    ok, message, stored, dispatch = await set_slot_outcome(
+        slot_id,
+        outcome,
+        bot_service=bot_service,
+    )
+    if ok and stored == "success" and (not dispatch or dispatch.plan is None):
+        fallback_ok, fallback_message = await send_test2(
+            candidate_id,
+            slot_id=slot_id,
+            bot_service=bot_service,
+        )
+        if not fallback_ok:
+            ok = False
+            message = fallback_message
+        elif fallback_message:
+            message = f"{message} {fallback_message}" if message else fallback_message
+    if ok and dispatch and dispatch.plan is not None:
+        background_tasks.add_task(
+            execute_bot_dispatch, dispatch.plan, stored or "", bot_service
+        )
+    status = "success" if ok else "error"
+    query = f"status={status}"
+    if message:
+        query += f"&notice={quote(message)}"
+    return RedirectResponse(url=f"/candidates/{candidate_id}?{query}", status_code=303)
 
 
 @router.post("/{candidate_id}/toggle")

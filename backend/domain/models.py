@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone, date
-from typing import Optional, List
+from typing import Dict, Optional, List
 from enum import Enum
 
 from backend.core.timezone import (
@@ -155,6 +155,7 @@ class Slot(Base):
     candidate_fio: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     candidate_tz: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     interview_outcome: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    interview_feedback: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     test2_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -196,6 +197,30 @@ class Slot(Base):
 def _slot_load_handler(slot: Slot, _context) -> None:
     if slot.start_utc is not None and slot.start_utc.tzinfo is None:
         slot.start_utc = slot.start_utc.replace(tzinfo=timezone.utc)
+
+
+class InterviewFeedback(Base):
+    __tablename__ = "interview_feedback"
+    __table_args__ = (UniqueConstraint("slot_id", name="uq_interview_feedback_slot"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    slot_id: Mapped[int] = mapped_column(
+        ForeignKey("slots.id", ondelete="CASCADE"), nullable=False
+    )
+    checklist: Mapped[Dict[str, bool]] = mapped_column(JSON, default=dict, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<InterviewFeedback slot={self.slot_id} user={self.user_id}>"
 
 
 @event.listens_for(Slot.start_utc, "set", retval=True)

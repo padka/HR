@@ -1,14 +1,28 @@
-import pytest
+from datetime import datetime, timedelta, timezone
 
+import pytest
+from sqlalchemy import select
+
+from backend.apps.admin_ui.services.bot_service import BotSendResult
 from backend.apps.admin_ui.services.candidates import (
     get_candidate_detail,
     list_candidates,
+    save_interview_feedback,
+    schedule_intro_day_message,
     upsert_candidate,
 )
+from backend.core.db import async_session
 from backend.domain.candidates import services as candidate_services
+from backend.domain.candidates.models import AutoMessage
+from backend.domain.models import InterviewFeedback, Recruiter, Slot
 
 
-@pytest.mark.asyncio
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.mark.anyio
 async def test_list_candidates_and_detail():
     user = await upsert_candidate(
         telegram_id=4321,
@@ -70,3 +84,89 @@ async def test_list_candidates_and_detail():
     assert detail["tests"]
     assert "slots" in detail
     assert "timeline" in detail
+    assert detail["interview_script"]
+    assert "intro_message_template" in detail
+    assert detail["has_test2"] is False
+    assert detail["can_schedule_intro_day"] is False
+    first_test = detail["tests"][0]
+    assert detail["answers_map"][first_test.id]["questions_total"] == 1
+
+
+@pytest.mark.anyio
+async def test_save_feedback_and_schedule_intro_day():
+    user = await upsert_candidate(
+        telegram_id=9991,
+        fio="Марина Петрова",
+        city="Казань",
+        is_active=True,
+    )
+
+    async with async_session() as session:
+        recruiter = Recruiter(name="Тестовый рекрутёр", tg_chat_id=None, tz="Europe/Moscow", telemost_url=None, active=True)
+        session.add(recruiter)
+        await session.flush()
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=2),
+            duration_min=30,
+            candidate_tg_id=user.telegram_id,
+            candidate_fio=user.fio,
+            candidate_tz="Europe/Moscow",
+            status="booked",
+        )
+        session.add(slot)
+        await session.commit()
+        slot_id = slot.id
+
+    ok, message = await save_interview_feedback(
+        slot_id,
+        ["greeting", "experience"],
+        "Очень уверенный кандидат",
+        candidate_id=user.id,
+    )
+
+    assert ok is True
+    assert "сохранены" in (message or "")
+
+    async with async_session() as session:
+        stored_feedback = await session.scalar(
+            select(InterviewFeedback).where(InterviewFeedback.slot_id == slot_id)
+        )
+        assert stored_feedback is not None
+        assert stored_feedback.checklist.get("greeting") is True
+        assert stored_feedback.checklist.get("experience") is True
+        assert stored_feedback.notes == "Очень уверенный кандидат"
+
+    class DummyBotService:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def send_intro_message(self, candidate_id: int, text: str) -> BotSendResult:
+            self.calls.append((candidate_id, text))
+            return BotSendResult(
+                ok=True,
+                status="sent_message",
+                message="Сообщение отправлено кандидату.",
+            )
+
+    bot_service = DummyBotService()
+
+    ok_msg, msg_text = await schedule_intro_day_message(
+        user.id,
+        date_value="2030-01-02",
+        time_value="10:30",
+        message_text="",
+        bot_service=bot_service,
+    )
+
+    assert ok_msg is True
+    assert "отправлено" in (msg_text or "")
+    assert bot_service.calls
+
+    async with async_session() as session:
+        messages = (
+            await session.execute(
+                select(AutoMessage).where(AutoMessage.target_chat_id == user.telegram_id)
+            )
+        ).scalars().all()
+        assert any(message.send_time == "2030-01-02 10:30" for message in messages)
