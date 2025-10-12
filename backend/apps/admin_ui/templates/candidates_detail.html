@@ -21,48 +21,51 @@
 
   <div class="page-grid" data-page="candidate" aria-labelledby="candidate-summary">
     <div class="page-main">
+      <!-- Сводка -->
       <section class="surface" aria-labelledby="candidate-summary">
         <header class="flex flex-col gap-2">
           <h2 id="candidate-summary" class="section-title">Сводка</h2>
+          <p class="muted text-sm">Собрали ключевые параметры по кандидату на одном экране.</p>
         </header>
-        <div class="grid gap-4 md:grid-cols-3">
+        <dl class="grid gap-4 md:grid-cols-3">
           <div>
-            <h3 class="muted text-sm">Статус</h3>
-            <p>
+            <dt class="muted text-sm">Статус</dt>
+            <dd>
               {% if user.is_active %}
                 <span class="badge badge--success">Активен</span>
               {% else %}
                 <span class="badge badge--muted">Отключен</span>
               {% endif %}
-            </p>
+            </dd>
           </div>
           <div>
-            <h3 class="muted text-sm">Город</h3>
-            <p>{{ user.city or 'Город не указан' }}</p>
+            <dt class="muted text-sm">Город</dt>
+            <dd>{{ user.city or 'Город не указан' }}</dd>
           </div>
           <div>
-            <h3 class="muted text-sm">Последняя активность</h3>
-            <p>
+            <dt class="muted text-sm">Последняя активность</dt>
+            <dd>
               {% if user.last_activity %}
                 {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
               {% else %}
                 —
               {% endif %}
-            </p>
+            </dd>
           </div>
           <div>
-            <h3 class="muted text-sm">Всего тестов</h3>
-            <p>{{ stats.tests_total }}</p>
+            <dt class="muted text-sm">Всего тестов</dt>
+            <dd>{{ stats.tests_total }}</dd>
           </div>
           <div>
-            <h3 class="muted text-sm">Средний балл</h3>
-            <p>{{ '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' }}</p>
+            <dt class="muted text-sm">Средний балл</dt>
+            <dd>{{ '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' }}</dd>
           </div>
           <div>
-            <h3 class="muted text-sm">Текущий этап</h3>
-            <p>{{ stage }}</p>
+            <dt class="muted text-sm">Текущий этап</dt>
+            <dd>{{ stage }}</dd>
           </div>
-        </div>
+        </dl>
+
         {% if test_stage_summary %}
           <div class="mt-4">
             <h3 class="muted text-sm">Этапы тестов</h3>
@@ -71,9 +74,7 @@
                 <li>
                   <strong>{{ item.label }}</strong>
                   — {{ item.score }}{% if item.rating %} ({{ item.rating }}){% endif %}
-                  {% if item.dt %}
-                    — {{ fmt_local(item.dt, 'Europe/Moscow') }}
-                  {% endif %}
+                  {% if item.dt %} — {{ fmt_local(item.dt, 'Europe/Moscow') }}{% endif %}
                 </li>
               {% endfor %}
             </ul>
@@ -81,6 +82,7 @@
         {% endif %}
       </section>
 
+      <!-- Интервью -->
       <section class="surface" aria-labelledby="interview-title">
         <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -97,32 +99,44 @@
         </header>
 
         {% if latest_interview %}
-          <div class="flex flex-wrap gap-3 mt-4">
-            <form method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
-              <input type="hidden" name="outcome" value="success">
-              <button class="btn btn-primary btn-sm" type="submit">Прошёл</button>
-            </form>
-            <form method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
-              <input type="hidden" name="outcome" value="reject">
-              <button class="btn btn--danger btn-sm" type="submit">Не прошёл</button>
-            </form>
-          </div>
+          <!-- Итог интервью -->
+          <form class="flex flex-wrap gap-3 mt-4" method="post" action="/candidates/{{ user.id }}/slots/{{ latest_interview.id }}/outcome">
+            <button class="btn btn-primary btn-sm" type="submit" name="outcome" value="success">Прошёл</button>
+            <button class="btn btn-danger btn-sm" type="submit" name="outcome" value="reject">Не прошёл</button>
+          </form>
 
+          <!-- Прогресс чеклиста -->
+          {% set progress = namespace(total=interview_script|length, completed=0) %}
+          {% set steps_state = namespace(items=[]) %}
+          {% for step in interview_script %}
+            {% set is_checked = False %}
+            {% if interview_feedback and interview_feedback.checklist %}
+              {% set stored = interview_feedback.checklist.get(step.id) %}
+              {% if stored is not none %}
+                {% set is_checked = stored %}
+              {% else %}
+                {% set as_string = interview_feedback.checklist.get(step.id|string) %}
+                {% if as_string is not none %}{% set is_checked = as_string %}{% endif %}
+              {% endif %}
+            {% endif %}
+            {% if is_checked %}{% set progress.completed = progress.completed + 1 %}{% endif %}
+            {% set _ = steps_state.items.append({'data': step, 'checked': is_checked}) %}
+          {% endfor %}
+
+          <!-- Скрипт интервью -->
           <form class="mt-6 flex flex-col gap-4" method="post" action="/candidates/{{ user.id }}/interview-feedback">
             <input type="hidden" name="slot_id" value="{{ latest_interview.id }}">
             <fieldset class="flex flex-col gap-3">
-              <legend class="section-title text-base">Сценарий интервью</legend>
-              {% for step in interview_script %}
-                {% set is_checked = False %}
-                {% if interview_feedback.checklist %}
-                  {% set stored = interview_feedback.checklist.get(step.id) %}
-                  {% if stored is not none %}
-                    {% set is_checked = stored %}
-                  {% else %}
-                    {% set as_string = interview_feedback.checklist.get(step.id|string) %}
-                    {% if as_string is not none %}{% set is_checked = as_string %}{% endif %}
-                  {% endif %}
+              <legend class="section-title text-base flex items-center justify-between gap-2">
+                <span>Сценарий интервью</span>
+                {% if progress.total %}
+                  <span class="badge badge--soft text-xs">Выполнено {{ progress.completed }}/{{ progress.total }}</span>
                 {% endif %}
+              </legend>
+
+              {% for step_state in steps_state.items %}
+                {% set step = step_state.data %}
+                {% set is_checked = step_state.checked %}
                 <label class="panel panel--flush">
                   <div class="flex items-start gap-3">
                     <input id="interview-step-{{ step.id }}" name="checklist[]" value="{{ step.id }}" type="checkbox" {% if is_checked %}checked{% endif %}>
@@ -134,25 +148,34 @@
                 </label>
               {% endfor %}
             </fieldset>
+
             <label class="flex flex-col gap-2">
               <span class="section-title text-base">Заметки</span>
-              <textarea class="textarea" name="notes" placeholder="Что важно запомнить для следующего этапа?">{{ interview_feedback.notes or '' }}</textarea>
+              <textarea class="textarea" name="notes" placeholder="Впечатления, риски, договорённости">{{ interview_feedback.notes or '' }}</textarea>
             </label>
+
             <div class="flex items-center justify-between text-sm muted">
-              {% if interview_feedback.updated_at %}
-                <span>Обновлено {{ interview_feedback.updated_at }}</span>
+              {% if interview_feedback and interview_feedback.updated_at %}
+                <span>Обновлено {{ fmt_local(interview_feedback.updated_at, latest_interview.candidate_tz or 'Europe/Moscow') }}</span>
               {% endif %}
-              <button class="btn btn-soft btn-sm" type="submit">Сохранить</button>
+              <div class="flex items-center gap-3">
+                {% if progress.total %}
+                  <span>{{ progress.completed }}/{{ progress.total }} шагов</span>
+                {% endif %}
+                <button class="btn btn-soft btn-sm" type="submit">Сохранить</button>
+              </div>
             </div>
           </form>
         {% endif %}
       </section>
 
+      <!-- Результаты тестов -->
       <section class="surface" aria-labelledby="tests-title">
         <header class="flex items-center justify-between">
           <h2 id="tests-title" class="section-title">Результаты тестов</h2>
           <span class="muted text-sm">{{ stats.tests_total }} попыток</span>
         </header>
+
         {% if tests %}
           <div class="table__wrap mt-4">
             <table class="table list-table">
@@ -170,7 +193,7 @@
                   {% set answers = answers_map.get(result.id) %}
                   <tr>
                     <td data-label="Дата">{{ fmt_local(result.created_at, 'Europe/Moscow') }}</td>
-                    <td data-label="Баллы">{{ result.final_score }} / {{ result.raw_score }}</td>
+                    <td data-label="Баллы"><strong>{{ result.final_score }}</strong> / {{ result.raw_score }}</td>
                     <td data-label="Рейтинг">{{ result.rating or '—' }}</td>
                     <td data-label="Время">{{ result.total_time }}</td>
                     <td data-label="Ответы">
@@ -178,9 +201,22 @@
                         <button
                           type="button"
                           class="btn btn-soft btn-sm"
-                          data-answer-modal-target="answers-{{ result.id }}"
+                          data-answer-modal-target="answers-modal"
+                          data-answer-modal-payload="{{ {
+                            'title': fmt_local(result.created_at, 'Europe/Moscow'),
+                            'score': result.final_score,
+                            'raw_score': result.raw_score,
+                            'rating': result.rating,
+                            'total_time': result.total_time,
+                            'summary': {
+                              'correct': answers.questions_correct,
+                              'total': answers.questions_total,
+                              'overtime': answers.questions_overtime,
+                            },
+                            'questions': answers.questions or []
+                          } | tojson }}"
                           aria-haspopup="dialog"
-                          aria-controls="answers-{{ result.id }}"
+                          aria-controls="answers-modal"
                         >
                           Посмотреть ответы
                         </button>
@@ -193,64 +229,38 @@
               </tbody>
             </table>
           </div>
-
-          {% for result in tests %}
-            {% set answers = answers_map.get(result.id) %}
-            {% if answers %}
-              <div class="modal" id="answers-{{ result.id }}" data-answer-modal hidden>
-                <div
-                  class="modal__dialog"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="answers-title-{{ result.id }}"
-                  aria-describedby="answers-description-{{ result.id }}"
-                  tabindex="-1"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 id="answers-title-{{ result.id }}" class="section-title">Ответы теста от {{ fmt_local(result.created_at, 'Europe/Moscow') }}</h3>
-                      <p id="answers-description-{{ result.id }}" class="muted text-sm">
-                        Правильных: {{ answers.questions_correct }} из {{ answers.questions_total }}{% if answers.questions_overtime %}, просрочено: {{ answers.questions_overtime }}{% endif %}
-                      </p>
-                    </div>
-                    <button type="button" class="btn btn-ghost btn-sm" data-answer-modal-close aria-label="Закрыть">Закрыть</button>
-                  </div>
-                  <div class="modal__body" tabindex="0">
-                    <ol class="flex flex-col gap-4" role="list">
-                      {% for answer in answers.questions %}
-                        <li class="flex flex-col gap-2">
-                          <div class="flex flex-wrap items-center gap-2">
-                            <span class="font-semibold">Вопрос {{ loop.index }}: {{ answer.question_text }}</span>
-                            {% if answer.is_correct %}
-                              <span class="badge badge--success">Верно</span>
-                            {% else %}
-                              <span class="badge badge--muted">Неверно</span>
-                            {% endif %}
-                            {% if answer.overtime %}
-                              <span class="badge badge--soft">Просрочено</span>
-                            {% endif %}
-                          </div>
-                          <p>Ответ кандидата: <strong>{{ answer.user_answer or '—' }}</strong></p>
-                          {% if not answer.is_correct and answer.correct_answer %}
-                            <p>Правильный ответ: <strong>{{ answer.correct_answer }}</strong></p>
-                          {% endif %}
-                          <p class="muted text-sm">Время: {{ answer.time_spent }} сек · Попытки: {{ answer.attempts_count }}</p>
-                        </li>
-                      {% endfor %}
-                    </ol>
-                  </div>
-                  <div class="flex justify-end">
-                    <button type="button" class="btn btn-soft btn-sm" data-answer-modal-close>Закрыть</button>
-                  </div>
-                </div>
-              </div>
-            {% endif %}
-          {% endfor %}
         {% else %}
           <p class="muted mt-4">Кандидат ещё не проходил тесты.</p>
         {% endif %}
       </section>
 
+      <!-- Модалка детальных ответов (общая) -->
+      <div class="modal" id="answers-modal" data-answer-modal hidden>
+        <div
+          class="modal__dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="answers-modal-title"
+          aria-describedby="answers-modal-description"
+          tabindex="-1"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 id="answers-modal-title" class="section-title">Ответы теста</h3>
+              <p id="answers-modal-description" class="muted text-sm">Детализация ответов кандидата.</p>
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" data-answer-modal-close aria-label="Закрыть модальное окно">Закрыть</button>
+          </div>
+          <div class="modal__body" data-answer-modal-body tabindex="0">
+            <ol class="flex flex-col gap-4" data-answer-modal-list role="list"></ol>
+          </div>
+          <div class="flex justify-end mt-3">
+            <button type="button" class="btn btn-soft btn-sm" data-answer-modal-close>Закрыть</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ознакомительный день (после успешного интервью и завершённого Тест 2) -->
       {% if latest_interview and latest_interview.interview_outcome == 'success' and test2_completed %}
         <section class="surface" aria-labelledby="intro-day-title">
           <header>
@@ -280,6 +290,7 @@
       {% endif %}
     </div>
 
+    <!-- История -->
     <aside class="page-aside" id="history">
       <section class="surface" aria-labelledby="history-title">
         <header>
@@ -330,81 +341,132 @@
   <script>
     (function () {
       const triggers = document.querySelectorAll('[data-answer-modal-target]');
-      const modals = new Map();
-      let activeModal = null;
+      const modal = document.querySelector('[data-answer-modal]');
+      if (!modal) return;
+
+      const dialog = modal.querySelector('[role="dialog"]');
+      const closeButtons = modal.querySelectorAll('[data-answer-modal-close]');
+      const list = modal.querySelector('[data-answer-modal-list]');
+      const modalBody = modal.querySelector('[data-answer-modal-body]');
+      const titleEl = modal.querySelector('#answers-modal-title');
+      const descriptionEl = modal.querySelector('#answers-modal-description');
       let lastTrigger = null;
 
-      document.querySelectorAll('[data-answer-modal]').forEach((modal) => {
-        const id = modal.id;
-        if (!id) {
+      const displayValue = (value) => {
+        if (value === 0 || value === '0') return '0';
+        if (value === undefined || value === null) return '—';
+        const s = String(value).trim();
+        return s === '' ? '—' : s;
+      };
+
+      const formatSummary = (summary, payload) => {
+        if (!summary) return '';
+        const parts = [];
+        parts.push(`Правильных: ${displayValue(summary.correct)} из ${displayValue(summary.total)}`);
+        if (summary.overtime) parts.push(`просрочено: ${summary.overtime}`);
+        if (payload.score != null && payload.raw_score != null) parts.push(`баллы: ${payload.score} / ${payload.raw_score}`);
+        if (payload.rating != null && String(payload.rating).trim() !== '') parts.push(`рейтинг: ${payload.rating}`);
+        if (payload.total_time != null && String(payload.total_time).trim() !== '') parts.push(`время: ${payload.total_time} сек`);
+        return parts.join(' · ');
+      };
+
+      const renderAnswers = (payload) => {
+        list.innerHTML = '';
+        const qs = (payload && Array.isArray(payload.questions)) ? payload.questions : [];
+        if (!qs.length) {
+          const li = document.createElement('li');
+          li.className = 'muted';
+          li.textContent = 'Ответы недоступны.';
+          list.appendChild(li);
           return;
         }
-        modals.set(id, modal);
-        const dialog = modal.querySelector('[role="dialog"]');
-        modal.addEventListener('click', (event) => {
-          if (event.target === modal) {
-            closeModal(modal);
+
+        qs.forEach((q, i) => {
+          const item = document.createElement('li');
+          item.className = 'flex flex-col gap-2';
+
+          const head = document.createElement('div');
+          head.className = 'flex flex-wrap items-center gap-2';
+
+          const title = document.createElement('span');
+          title.className = 'font-semibold';
+          title.textContent = `Вопрос ${i + 1}: ${q.question_text || ''}`;
+          head.appendChild(title);
+
+          const status = document.createElement('span');
+          status.className = q.is_correct ? 'badge badge--success' : 'badge badge--muted';
+          status.textContent = q.is_correct ? 'Верно' : 'Неверно';
+          head.appendChild(status);
+
+          if (q.overtime) {
+            const ot = document.createElement('span');
+            ot.className = 'badge badge--soft';
+            ot.textContent = 'Просрочено';
+            head.appendChild(ot);
           }
-        });
-        modal.querySelectorAll('[data-answer-modal-close]').forEach((btn) => {
-          btn.addEventListener('click', () => closeModal(modal));
-        });
-        modal.addEventListener('keydown', (event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            closeModal(modal);
+
+          item.appendChild(head);
+
+          const ua = document.createElement('p');
+          ua.innerHTML = `Ответ кандидата: <strong>${displayValue(q.user_answer)}</strong>`;
+          item.appendChild(ua);
+
+          if (!q.is_correct && q.correct_answer) {
+            const ca = document.createElement('p');
+            ca.innerHTML = `Правильный ответ: <strong>${q.correct_answer}</strong>`;
+            item.appendChild(ca);
           }
+
+          const meta = document.createElement('p');
+          meta.className = 'muted text-sm';
+          meta.textContent = `Время: ${displayValue(q.time_spent)} сек · Попытки: ${displayValue(q.attempts_count)}`;
+          item.appendChild(meta);
+
+          list.appendChild(item);
         });
-        if (dialog) {
-          dialog.addEventListener('click', (event) => {
-            event.stopPropagation();
-          });
+      };
+
+      const openModal = (payload, trigger) => {
+        lastTrigger = trigger;
+        if (titleEl) titleEl.textContent = payload && payload.title ? `Ответы теста от ${payload.title}` : 'Ответы теста';
+        if (descriptionEl) {
+          const s = formatSummary(payload && payload.summary, payload || {});
+          descriptionEl.textContent = s || 'Детализация ответов кандидата.';
+        }
+        renderAnswers(payload);
+        modal.removeAttribute('hidden');
+        if (dialog) dialog.focus();
+        if (modalBody) modalBody.scrollTop = 0;
+        document.body.style.overflow = 'hidden';
+      };
+
+      const closeModal = () => {
+        modal.setAttribute('hidden', '');
+        document.body.style.overflow = '';
+        if (lastTrigger) { try { lastTrigger.focus(); } catch (_) {} lastTrigger = null; }
+      };
+
+      closeButtons.forEach((btn) => btn.addEventListener('click', closeModal));
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      if (dialog) dialog.addEventListener('click', (e) => e.stopPropagation());
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.hasAttribute('hidden')) {
+          e.preventDefault();
+          closeModal();
         }
       });
-
-      function openModal(modal, trigger) {
-        activeModal = modal;
-        lastTrigger = trigger;
-        modal.removeAttribute('hidden');
-        const dialog = modal.querySelector('[role="dialog"]');
-        if (dialog) {
-          dialog.focus();
-        }
-        document.body.style.overflow = 'hidden';
-      }
-
-      function closeModal(modal) {
-        modal.setAttribute('hidden', '');
-        if (activeModal === modal) {
-          activeModal = null;
-        }
-        if (lastTrigger) {
-          lastTrigger.focus();
-        }
-        if (!document.querySelector('[data-answer-modal]:not([hidden])')) {
-          document.body.style.overflow = '';
-        }
-      }
 
       triggers.forEach((trigger) => {
         trigger.addEventListener('click', () => {
-          const targetId = trigger.getAttribute('data-answer-modal-target');
-          if (!targetId) {
-            return;
+          const raw = trigger.getAttribute('data-answer-modal-payload');
+          if (!raw) return;
+          try {
+            const payload = JSON.parse(raw);
+            openModal(payload, trigger);
+          } catch (err) {
+            console.error('Не удалось распарсить ответы теста', err);
           }
-          const modal = modals.get(targetId);
-          if (!modal) {
-            return;
-          }
-          openModal(modal, trigger);
         });
-      });
-
-      document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && activeModal) {
-          event.preventDefault();
-          closeModal(activeModal);
-        }
       });
     })();
   </script>
