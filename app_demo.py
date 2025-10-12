@@ -893,13 +893,11 @@ def candidates_list_context() -> Dict[str, Any]:
 
 def candidate_detail_context() -> Dict[str, Any]:
     detail = build(CANDIDATE_DETAIL_DATA)
-    return {
-        "user": detail.user,
-        "stats": detail.stats,
-        "tests": detail.tests,
-        "answers_map": detail.answers_map,
-        "messages": detail.messages,
-    }
+    # The candidate profile template expects the full enriched payload that the
+    # production service returns. Re-expose every key from the demo fixture so
+    # that previewing "/candidates/1" renders the same sections (interview
+    # timeline, script checklist, intro-day scheduler, etc.) as the real page.
+    return dict(detail)
 
 
 def candidates_new_context() -> Dict[str, Any]:

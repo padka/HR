@@ -1684,7 +1684,6 @@
     border: none;
     background: transparent;
     color: inherit;
-    font: inherit;
     min-width: 8.5rem;
     padding: 0;
   }
@@ -2608,6 +2607,8 @@
     padding: 2.5rem;
     backdrop-filter: blur(var(--blur));
     -webkit-backdrop-filter: blur(var(--blur));
+    max-height: min(80vh, 720px);
+    overflow-y: auto;
   }
 
   .modal__header {
@@ -3372,6 +3373,7 @@
   .slot-empty-state__actions {
     @apply flex flex-wrap justify-center gap-3;
   }
+
   .interview-actions {
     @apply flex flex-col gap-4 md:flex-row md:items-start md:justify-between;
   }
@@ -3424,6 +3426,7 @@
     line-height: 1.4;
   }
 
+  /* Resolved block from main: answer-details */
   .answer-details {
     display: block;
   }

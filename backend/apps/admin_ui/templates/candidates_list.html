@@ -6,9 +6,7 @@
   {% call page_header(
     title="Кандидаты",
     description="Единая база кандидатов с аналитикой и быстрыми действиями."
-  ) %}
-    <a class="btn btn-primary btn--primary" href="/candidates/new">Добавить кандидата</a>
-  {% endcall %}
+  ) %}{% endcall %}
 
   <div class="toolbar">
   {% call toolbars.list_toolbar(
@@ -106,7 +104,7 @@
             <a class="btn btn-ghost btn--ghost btn-sm" href="/candidates/{{ user.id }}#history">История</a>
           </td>
           <td>
-            <a class="btn btn-ghost btn--ghost btn-sm" href="/candidates/{{ user.id }}">Открыть</a>
+            <a class="btn btn-ghost btn--ghost btn-sm" href="/candidates/{{ user.id }}">Перейти</a>
           </td>
         </tr>
       {% endfor %}
@@ -114,10 +112,7 @@
   {% else %}
     <div class="surface card">
       <h2 class="section-title">Кандидатов пока нет</h2>
-      <p class="section-hint">Добавьте кандидата вручную или пригласите через бота, чтобы начать работу.</p>
-      <div class="page-actions">
-        <a class="btn btn-primary btn--primary" href="/candidates/new">Добавить кандидата</a>
-      </div>
+      <p class="section-hинт">Новые кандидаты появляются автоматически после регистрации в боте.</p>
     </div>
   {% endif %}
 {% endblock %}
