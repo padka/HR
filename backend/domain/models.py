@@ -388,21 +388,3 @@ class OutboxNotification(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<OutboxNotification {self.type} booking={self.booking_id} status={self.status}>"
-logger = logging.getLogger(__name__)
-class UTCDateTime(TypeDecorator):
-    impl = DateTime(timezone=True)
-    cache_ok = True
-
-    def process_bind_param(self, value: Optional[datetime], _dialect) -> Optional[datetime]:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
-
-    def process_result_value(self, value: Optional[datetime], _dialect) -> Optional[datetime]:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
