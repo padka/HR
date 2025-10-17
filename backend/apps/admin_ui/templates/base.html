@@ -213,13 +213,117 @@
       const nav = document.querySelector('[data-topbar-nav]');
       const burger = document.querySelector('[data-topbar-toggle]');
       const scrim = document.querySelector('[data-topbar-scrim]');
+      const focusableSelector = [
+        'a[href]:not([tabindex="-1"])',
+        'button:not([disabled]):not([tabindex="-1"])',
+        '[tabindex]:not([tabindex="-1"])'
+      ].join(',');
+      let lastFocusedElement = null;
+      let documentKeydownHandler = null;
+
+      const isOverlayMode = () => window.innerWidth <= 768;
+
+      const getFocusableNavItems = () => {
+        if (!nav) {
+          return [];
+        }
+        return Array.from(nav.querySelectorAll(focusableSelector)).filter(
+          (element) => element instanceof HTMLElement && element.offsetParent !== null
+        );
+      };
+
+      const applyNavAccessibility = (open) => {
+        if (!nav) return;
+        if (isOverlayMode()) {
+          if (open) {
+            nav.removeAttribute('aria-hidden');
+            nav.removeAttribute('inert');
+            if ('inert' in nav) {
+              nav.inert = false;
+            }
+          } else {
+            nav.setAttribute('aria-hidden', 'true');
+            if ('inert' in nav) {
+              nav.inert = true;
+            } else {
+              nav.setAttribute('inert', '');
+            }
+          }
+        } else {
+          nav.removeAttribute('aria-hidden');
+          nav.removeAttribute('inert');
+          if ('inert' in nav) {
+            nav.inert = false;
+          }
+        }
+      };
+
+      const removeDocumentKeydownHandler = () => {
+        if (documentKeydownHandler) {
+          document.removeEventListener('keydown', documentKeydownHandler);
+          documentKeydownHandler = null;
+        }
+      };
+
+      const createDocumentKeydownHandler = () => {
+        if (documentKeydownHandler || !nav) return;
+        documentKeydownHandler = (event) => {
+          if (nav.dataset.open !== 'true' || !isOverlayMode()) return;
+
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            setNavOpen(false);
+            return;
+          }
+
+          if (event.key === 'Tab') {
+            const focusable = getFocusableNavItems();
+            if (!focusable.length) {
+              return;
+            }
+
+            const currentIndex = focusable.indexOf(document.activeElement);
+            let nextIndex = currentIndex;
+
+            if (event.shiftKey) {
+              nextIndex = currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1;
+            } else {
+              nextIndex = currentIndex === focusable.length - 1 ? 0 : currentIndex + 1;
+            }
+
+            event.preventDefault();
+            focusable[nextIndex]?.focus();
+          }
+        };
+        document.addEventListener('keydown', documentKeydownHandler);
+      };
 
       function setNavOpen(open) {
         if (!nav || !burger) return;
+        const wasOpen = nav.dataset.open === 'true';
         nav.dataset.open = open ? 'true' : 'false';
         burger.setAttribute('aria-expanded', open ? 'true' : 'false');
         if (scrim) {
           scrim.dataset.open = open ? 'true' : 'false';
+        }
+        applyNavAccessibility(open);
+
+        if (open && !wasOpen && isOverlayMode()) {
+          lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          const focusable = getFocusableNavItems();
+          const first = focusable[0];
+          if (first) {
+            window.requestAnimationFrame(() => first.focus());
+          }
+          createDocumentKeydownHandler();
+        } else if (!open && wasOpen) {
+          removeDocumentKeydownHandler();
+          if (burger) {
+            burger.focus();
+          } else if (lastFocusedElement) {
+            lastFocusedElement.focus();
+          }
+          lastFocusedElement = null;
         }
       }
 
@@ -227,6 +331,19 @@
         burger.addEventListener('click', () => {
           const next = nav && nav.dataset.open !== 'true';
           setNavOpen(next);
+        });
+
+        burger.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && nav && nav.dataset.open === 'true') {
+            event.preventDefault();
+            setNavOpen(false);
+            return;
+          }
+
+          if (event.key === ' ' || event.key === 'Spacebar') {
+            event.preventDefault();
+            burger.click();
+          }
         });
       }
 
@@ -247,7 +364,10 @@
         if (window.innerWidth > 768) {
           setNavOpen(false);
         }
+        applyNavAccessibility(nav && nav.dataset.open === 'true');
       });
+
+      applyNavAccessibility(nav && nav.dataset.open === 'true');
     })();
   </script>
   {% block extra_js %}{% endblock %}
