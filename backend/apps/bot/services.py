@@ -166,7 +166,7 @@ for _path in (REPORTS_DIR, TEST1_DIR, UPLOADS_DIR):
 
 _bot: Optional[Bot] = None
 _state_manager: Optional[StateManager] = None
-_notification_service: Optional["NotificationService"] = None
+_notification_service: Optional[NotificationService] = None
 _template_provider: Optional[TemplateProvider] = None
 
 
@@ -178,9 +178,9 @@ def get_template_provider() -> TemplateProvider:
 
 
 def reset_template_provider() -> None:
-    global _template_provider
+    global _template_provider, _notification_service
     _template_provider = None
-_notification_service: Optional["NotificationService"] = None
+    _notification_service = None
 
 
 @dataclass
