@@ -13,6 +13,7 @@ from backend.apps.bot.services import (
     configure,
     configure_notification_service,
     get_notification_service,
+    reset_template_provider,
 )
 from backend.apps.bot.state_store import InMemoryStateStore, StateManager
 from backend.core.db import async_session
@@ -146,9 +147,7 @@ async def test_retry_with_backoff_and_jitter(monkeypatch):
         await service.shutdown()
         await manager.clear()
         await manager.close()
-        import backend.apps.bot.services as bot_services
-
-        bot_services._notification_service = None
+        reset_template_provider()
 
     async with async_session() as session:
         await session.execute(
@@ -159,3 +158,29 @@ async def test_retry_with_backoff_and_jitter(monkeypatch):
             .values(body_md=original_body, updated_at=datetime.now(timezone.utc))
         )
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_notification_service_recreated_after_reset():
+    service_one = NotificationService(poll_interval=0.05)
+    configure_notification_service(service_one)
+
+    try:
+        assert get_notification_service() is service_one
+    finally:
+        await service_one.shutdown()
+
+    reset_template_provider()
+
+    with pytest.raises(RuntimeError):
+        get_notification_service()
+
+    service_two = NotificationService(poll_interval=0.05)
+    configure_notification_service(service_two)
+
+    try:
+        assert get_notification_service() is service_two
+        assert service_two is not service_one
+    finally:
+        await service_two.shutdown()
+        reset_template_provider()
