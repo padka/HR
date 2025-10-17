@@ -32,7 +32,7 @@
     <div class="header-actions">
       <a class="btn btn-ghost btn-sm" href="/candidates">Назад к списку</a>
     </div>
-  </section>
+  {% endcall %}
 
   <div class="page-grid" data-page="candidate" aria-labelledby="candidate-summary">
     <div class="page-main">
@@ -167,7 +167,7 @@
                 <label class="panel panel--flush">
                   <div class="flex items-start gap-3">
                     <input id="interview-step-{{ step.id }}" name="checklist[]" value="{{ step.id }}" type="checkbox" {% if is_checked %}checked{% endif %}>
-                  </span>
+                  </div>
                   <div class="interview-step__body">
                     <span class="interview-step__title">{{ step.title }}</span>
                     <p class="muted">{{ step.description }}</p>
@@ -469,4 +469,3 @@
     })();
   </script>
 {% endblock %}
->>>>>>> 0577ef36064e13a8c9bb54a4ac5472a8685ccce7
