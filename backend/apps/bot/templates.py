@@ -117,7 +117,7 @@ async def _fetch_template(city_id: Optional[int], key: str) -> Optional[str]:
         template = None
     if template is None:
         result = None
-    if isinstance(template, str):
+    elif isinstance(template, str):
         result = template
     else:
         result = getattr(template, "text", None) or getattr(template, "content", None)
