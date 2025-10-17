@@ -96,6 +96,32 @@
       btn.addEventListener('click', () => {
         setDensity(cycleDensity());
       });
+
+      const root = btn.closest('.density-switcher');
+      if (root && root.dataset.boundDensityMenu !== 'true') {
+        root.dataset.boundDensityMenu = 'true';
+        const setExpanded = (value) => {
+          btn.setAttribute('aria-expanded', value ? 'true' : 'false');
+        };
+        const evaluateExpanded = () => {
+          const isExpanded = root.matches(':focus-within') || root.matches(':hover');
+          setExpanded(isExpanded);
+        };
+        root.addEventListener('focusin', () => {
+          setExpanded(true);
+        });
+        root.addEventListener('mouseenter', () => {
+          setExpanded(true);
+        });
+        const scheduleCollapse = () => {
+          requestAnimationFrame(() => {
+            evaluateExpanded();
+          });
+        };
+        root.addEventListener('focusout', scheduleCollapse);
+        root.addEventListener('mouseleave', scheduleCollapse);
+        evaluateExpanded();
+      }
     });
 
     document.querySelectorAll('[data-density-option]').forEach((option) => {

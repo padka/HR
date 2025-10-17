@@ -184,6 +184,59 @@
           </nav>
           <div class="topbar__actions">
             {{ theme_toggle('topbar__theme-toggle') }}
+            <div class="density-switcher">
+              <button
+                class="density-switcher__trigger focus-ring"
+                type="button"
+                data-density-toggle
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="density-switcher-menu"
+                title="Переключить плотность интерфейса"
+              >
+                <span class="density-switcher__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M7 6.5h10"></path>
+                    <path d="M5 12h14"></path>
+                    <path d="M9 17.5h6"></path>
+                  </svg>
+                </span>
+                <span class="density-switcher__label">
+                  <span class="density-switcher__label-text" data-density-label="comfy">Плотность: стандартная</span>
+                  <span class="density-switcher__label-text" data-density-label="compact">Плотность: компактная</span>
+                </span>
+              </button>
+              <div
+                id="density-switcher-menu"
+                class="density-switcher__menu"
+                role="menu"
+                aria-label="Выбор плотности отображения"
+                aria-orientation="vertical"
+              >
+                <button
+                  type="button"
+                  class="density-switcher__option"
+                  role="menuitemradio"
+                  data-density-option="comfy"
+                  aria-checked="false"
+                  title="Больше отступов и стандартные размеры элементов"
+                >
+                  <span class="density-switcher__option-title">Стандартная</span>
+                  <span class="density-switcher__option-note">Больше пространства</span>
+                </button>
+                <button
+                  type="button"
+                  class="density-switcher__option"
+                  role="menuitemradio"
+                  data-density-option="compact"
+                  aria-checked="false"
+                  title="Уменьшенные отступы для плотного отображения информации"
+                >
+                  <span class="density-switcher__option-title">Компактная</span>
+                  <span class="density-switcher__option-note">Больше данных на экране</span>
+                </button>
+              </div>
+            </div>
             <span class="topbar__badge">{{ request.url.hostname or 'localhost' }}</span>
           </div>
         </div>
