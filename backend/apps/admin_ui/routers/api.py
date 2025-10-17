@@ -14,7 +14,10 @@ from backend.apps.admin_ui.services.dashboard_calendar import (
 )
 from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
 from backend.apps.admin_ui.services.slots.core import api_slots_payload
-from backend.apps.admin_ui.services.templates import api_templates_payload
+from backend.apps.admin_ui.services.templates import (
+    api_templates_payload,
+    list_known_template_keys,
+)
 from backend.apps.admin_ui.utils import parse_optional_int, status_filter
 from backend.core.settings import get_settings
 
@@ -90,19 +93,7 @@ async def api_weekly_history(
 
 @router.get("/template_keys")
 async def api_template_keys():
-    return JSONResponse(
-        [
-            "invite_interview",
-            "confirm_interview",
-            "after_approval",
-            "intro_day_reminder",
-            "confirm_2h",
-            "reminder_1h",
-            "followup_missed",
-            "after_meeting",
-            "slot_rejected",
-        ]
-    )
+    return JSONResponse(list_known_template_keys())
 
 
 @router.get("/city_owners")

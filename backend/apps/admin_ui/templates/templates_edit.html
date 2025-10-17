@@ -47,12 +47,9 @@
     {% call forms.field("Ключ", hint="Ключ используют бот и админка для поиска нужного сообщения") %}
       <input id="key" type="text" name="key" required value="{{ tmpl.key }}" placeholder="например: intro, confirm_2h, reminder_1h" list="key_suggestions">
       <datalist id="key_suggestions">
-        <option value="invite_interview"></option>
-        <option value="confirm_2h"></option>
-        <option value="reminder_1h"></option>
-        <option value="after_meeting"></option>
-        <option value="followup_missed"></option>
-        <option value="slot_rejected"></option>
+        {% for key in template_keys %}
+          <option value="{{ key }}"></option>
+        {% endfor %}
       </datalist>
     {% endcall %}
   {% endcall %}
