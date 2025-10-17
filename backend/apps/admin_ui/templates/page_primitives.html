@@ -239,14 +239,33 @@
 {%- endmacro %}
 
 {# Legacy aliases for backwards compatibility #}
-{% macro kpi_section(*args, **kwargs) -%}
-  {{ kpi_grid(*args, **kwargs) }}
+{%- macro kpi_section(section_id, eyebrow=None, title=None, meta=None, cards=None, empty_text=None, placeholder_text=None, is_placeholder=False, default_hint=None) -%}
+  {%- set has_caller = caller is defined and caller is callable -%}
+  {% if has_caller %}
+    {% call kpi_grid(section_id, eyebrow, title, meta, cards, empty_text, placeholder_text, is_placeholder, default_hint) %}
+      {{ caller() }}
+    {% endcall %}
+  {% else %}
+    {{ kpi_grid(section_id, eyebrow, title, meta, cards, empty_text, placeholder_text, is_placeholder, default_hint) }}
+  {% endif %}
 {%- endmacro %}
 
-{% macro stat_cards(*args, **kwargs) -%}
-  {{ metric_grid(*args, **kwargs) }}
+{%- macro stat_cards(items=None, class_name=None) -%}
+  {% if caller is defined and caller is callable %}
+    {% call metric_grid(items=items, class_name=class_name) %}
+      {{ caller() }}
+    {% endcall %}
+  {% else %}
+    {{ metric_grid(items=items, class_name=class_name) }}
+  {% endif %}
 {%- endmacro %}
 
-{% macro data_table(*args, **kwargs) -%}
-  {{ table_shell(*args, **kwargs) }}
+{%- macro data_table(columns=None, caption=None, sticky_header=True, table_class=None, table_id=None, body_id=None) -%}
+  {% if caller is defined %}
+    {% call table_shell(columns=columns, caption=caption, sticky_header=sticky_header, table_class=table_class, table_id=table_id, body_id=body_id) %}
+      {{ caller() }}
+    {% endcall %}
+  {% else %}
+    {{ table_shell(columns=columns, caption=caption, sticky_header=sticky_header, table_class=table_class, table_id=table_id, body_id=body_id) }}
+  {% endif %}
 {%- endmacro %}
