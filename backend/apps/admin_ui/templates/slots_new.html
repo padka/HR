@@ -36,7 +36,7 @@
     <h2 class="form-shell__section-title">Нет рекрутёров</h2>
     <p class="form-shell__section-hint">Сначала добавьте рекрутёра, затем создайте слот.</p>
     <div class="btn-group mt-sm">
-      <a class="btn btn--primary" href="/recruiters/new">+ Добавить рекрутёра</a>
+      <a class="btn btn-primary" href="/recruiters/new">+ Добавить рекрутёра</a>
     </div>
   </div>
 {% else %}
@@ -94,17 +94,17 @@
         {% call forms.field("Дата (локальная)") %}
           <input id="date" type="date" name="date" required>
           <div class="btn-group">
-            <button class="btn btn--ghost btn--sm" type="button" data-quick="today">Сегодня</button>
-            <button class="btn btn--ghost btn--sm" type="button" data-quick="tomorrow">Завтра</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-quick="today">Сегодня</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-quick="tomorrow">Завтра</button>
           </div>
         {% endcall %}
         {% call forms.field("Время (локальное)") %}
           <input id="time" type="time" name="time" required>
           <div class="btn-group">
-            <button class="btn btn--ghost btn--sm" type="button" data-time="next30">+30 мин</button>
-            <button class="btn btn--ghost btn--sm" type="button" data-time="next60">+1 час</button>
-            <button class="btn btn--ghost btn--sm" type="button" data-time="13:00">13:00</button>
-            <button class="btn btn--ghost btn--sm" type="button" data-time="15:00">15:00</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-time="next30">+30 мин</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-time="next60">+1 час</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-time="13:00">13:00</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-time="15:00">15:00</button>
           </div>
           <p class="form-note" id="time_hint_one">Время указывается по региону: —</p>
         {% endcall %}

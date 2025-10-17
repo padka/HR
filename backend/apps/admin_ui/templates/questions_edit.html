@@ -45,9 +45,9 @@
   {% call forms.section("Данные вопроса") %}
     {% call forms.field("JSON", hint="Структура должна соответствовать формату, который использует бот.") %}
       <div class="payload-toolbar">
-        <button class="btn btn-soft btn--sm" type="button" id="btn-format-json">Форматировать JSON</button>
-        <button class="btn btn-ghost btn--sm" type="button" id="btn-template-choice">Шаблон «Варианты»</button>
-        <button class="btn btn-ghost btn--sm" type="button" id="btn-template-text">Шаблон «Свободный ответ»</button>
+        <button class="btn btn-soft btn-sm" type="button" id="btn-format-json">Форматировать JSON</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="btn-template-choice">Шаблон «Варианты»</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="btn-template-text">Шаблон «Свободный ответ»</button>
       </div>
 
       <div class="payload-designer" id="payload-designer">
@@ -73,7 +73,7 @@
           <div id="builder-choice">
             <div class="designer-subheader">
               <span>Варианты ответов</span>
-              <button type="button" class="btn btn-ghost btn--sm" id="builder-add-option" data-builder-control>+ Добавить вариант</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="builder-add-option" data-builder-control>+ Добавить вариант</button>
             </div>
             <div class="builder-options" id="builder-options"></div>
           </div>
@@ -293,7 +293,7 @@
         </div>
         <div class="builder-option__controls">
           <label class="builder-option__correct"><input type="radio" name="option_correct" value="${idx}" ${builderState.correct === idx ? 'checked' : ''}>Верный</label>
-          <button type="button" class="btn btn-ghost btn--sm" data-role="remove-option">Удалить</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-role="remove-option">Удалить</button>
         </div>`;
       builderOptions.appendChild(row);
     });

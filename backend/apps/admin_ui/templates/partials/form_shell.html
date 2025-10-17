@@ -26,11 +26,11 @@
       <footer class="form-shell__footer">
         <div class="form-shell__actions">
           {% for btn in actions %}
-            {% set variant = 'btn--' + (btn.variant or 'primary') %}
+            {% set variant = 'btn-' + (btn.variant or 'primary') %}
             {% if btn.href %}
-              <a href="{{ btn.href }}" class="btn {{ variant }}{% if btn.block %} btn--block{% endif %}">{{ btn.text }}</a>
+              <a href="{{ btn.href }}" class="btn {{ variant }}{% if btn.block %} btn-block{% endif %}">{{ btn.text }}</a>
             {% else %}
-              <button type="{{ btn.type or 'button' }}" class="btn {{ variant }}{% if btn.block %} btn--block{% endif %}"{% if btn.id %} id="{{ btn.id }}"{% endif %}{% if btn.name %} name="{{ btn.name }}"{% endif %}{% if btn.value is not none %} value="{{ btn.value }}"{% endif %}{% if btn.disabled %} disabled{% endif %}>{{ btn.text }}</button>
+              <button type="{{ btn.type or 'button' }}" class="btn {{ variant }}{% if btn.block %} btn-block{% endif %}"{% if btn.id %} id="{{ btn.id }}"{% endif %}{% if btn.name %} name="{{ btn.name }}"{% endif %}{% if btn.value is not none %} value="{{ btn.value }}"{% endif %}{% if btn.disabled %} disabled{% endif %}>{{ btn.text }}</button>
             {% endif %}
           {% endfor %}
         </div>
@@ -80,8 +80,8 @@
   <span class="form-switch__track" aria-hidden="true">
     <span class="form-switch__thumb"></span>
   </span>
-  {% if caller is defined or label %}
-    <span class="form-switch__label">{{ caller() if caller is defined else label }}</span>
+  {% if caller is not undefined or label %}
+    <span class="form-switch__label">{{ caller() if caller is not undefined else label }}</span>
   {% endif %}
   {% if hint %}<span class="form-switch__hint">{{ hint }}</span>{% endif %}
 </label>

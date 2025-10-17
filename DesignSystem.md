@@ -52,7 +52,7 @@
 
 ### 3.5 Кнопки
 - `btn-primary` — градиент `accent → accent-soft`, тень `0 18px 32px`.
-- `btn-ghost`/`btn-soft` — прозрачный слой с подсветкой при hover, поддержка модификаторов `btn--sm`, `btn--block`, `btn--danger`.
+- `btn-ghost`/`btn-soft` — прозрачный слой с подсветкой при hover, поддержка модификаторов `btn-sm`, `btn-block`, `btn-danger`.
 
 ### 3.6 Модалки и тосты
 - Используют стеклянный градиент, анимацию `glass-in`, тёмный backdrop `backdrop-blur`.

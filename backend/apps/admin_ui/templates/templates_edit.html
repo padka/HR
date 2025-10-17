@@ -64,14 +64,14 @@
       {% call forms.note() %}Вставить плейсхолдер:{% endcall %}
       <div class="btn-group">
         {% raw %}
-        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{candidate_fio}}">{{candidate_fio}}</button>
-        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{city_name}}">{{city_name}}</button>
-        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{slot_date_local}}">{{slot_date_local}}</button>
-        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{slot_time_local}}">{{slot_time_local}}</button>
-        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{recruiter_name}}">{{recruiter_name}}</button>
-        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{recruiter_phone}}">{{recruiter_phone}}</button>
-        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{address}}">{{address}}</button>
-        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{candidate_fio}}">{{candidate_fio}}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{city_name}}">{{city_name}}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{slot_date_local}}">{{slot_date_local}}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{slot_time_local}}">{{slot_time_local}}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{recruiter_name}}">{{recruiter_name}}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{recruiter_phone}}">{{recruiter_phone}}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{address}}">{{address}}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
         {% endraw %}
       </div>
       {% call forms.meta() %}
@@ -117,7 +117,7 @@
   <h2 class="form-shell__section-title">Опасная зона</h2>
   <p class="form-shell__section-hint">Удаление шаблона безвозвратно.</p>
   <form method="post" action="/templates/{{ tmpl.id }}/delete" onsubmit="return confirm('Удалить шаблон безвозвратно?');" class="mt-sm">
-    <button type="submit" class="btn btn--danger">Удалить шаблон</button>
+    <button type="submit" class="btn btn-danger">Удалить шаблон</button>
   </form>
 </div>
 

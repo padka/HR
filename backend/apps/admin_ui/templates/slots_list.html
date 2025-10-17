@@ -302,7 +302,7 @@
         <h3 id="slot_sheet_title" class="sheet-title">Слот не выбран</h3>
         <p id="slot_sheet_sub" class="sheet-sub muted">Выберите запись в таблице.</p>
       </div>
-      <button id="slot_sheet_close" class="btn btn-ghost btn--small" type="button" aria-label="Закрыть">✕</button>
+      <button id="slot_sheet_close" class="btn btn-ghost btn-sm" type="button" aria-label="Закрыть">✕</button>
     </header>
 
     <div class="sheet-body slot-sheet-body">
@@ -360,8 +360,8 @@
           <p class="muted">Пока никто не забронировал слот.</p>
         </div>
         <div class="slot-panel__actions" id="slot_sheet_candidate_actions">
-          <button type="button" class="btn btn-soft btn--small" id="slot_reschedule_btn" disabled>Перенести бронь</button>
-          <button type="button" class="btn btn-danger btn--small" id="slot_reject_btn" disabled>Отказать кандидату</button>
+          <button type="button" class="btn btn-soft btn-sm" id="slot_reschedule_btn" disabled>Перенести бронь</button>
+          <button type="button" class="btn btn-danger btn-sm" id="slot_reject_btn" disabled>Отказать кандидату</button>
         </div>
       </section>
 
@@ -376,8 +376,8 @@
         <div class="slot-panel__body">
           <p class="muted" id="slot_sheet_outcome_hint">Доступно после назначения кандидата.</p>
           <div class="slot-outcome__actions" id="slot_sheet_outcome_actions">
-            <button type="button" class="btn btn-ghost btn--small" data-outcome="success">Прошёл</button>
-            <button type="button" class="btn btn-ghost btn--small" data-outcome="reject">Не прошёл</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-outcome="success">Прошёл</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-outcome="reject">Не прошёл</button>
           </div>
           <p class="slot-outcome__status" id="slot_sheet_outcome_status">Исход не выбран</p>
         </div>
@@ -399,7 +399,7 @@
 
     <footer class="sheet-footer slot-sheet-footer">
       <div class="form-actions">
-        <button id="slot_delete_btn" class="btn btn-danger btn--small" type="button" disabled>Удалить слот</button>
+        <button id="slot_delete_btn" class="btn btn-danger btn-sm" type="button" disabled>Удалить слот</button>
         <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
       </div>
     </footer>

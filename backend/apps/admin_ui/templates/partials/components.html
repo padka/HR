@@ -11,7 +11,7 @@
       {% for item in items %}
         <span>{{ item }}</span>
       {% endfor %}
-    {% elif caller is defined %}
+    {% elif caller is not undefined %}
       {{ caller() }}
     {% endif %}
   </div>
@@ -21,7 +21,7 @@
   {% if items is not none %}
     {% set has_items = items | length > 0 %}
   {% else %}
-    {% set rendered = (caller() if caller is defined else '') %}
+    {% set rendered = (caller() if caller is not undefined else '') %}
     {% set has_items = rendered.strip() != '' %}
   {% endif %}
   <div class="badge-row">

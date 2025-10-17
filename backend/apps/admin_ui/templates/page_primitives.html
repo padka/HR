@@ -37,7 +37,7 @@
         </ul>
       {% endif %}
     </div>
-    {% if caller is defined %}
+    {% if caller is not undefined %}
       <div class="page-header__actions">
         {{ caller() }}
       </div>
@@ -75,7 +75,7 @@
         {% if title %}<h2 id="{{ section_id }}" class="kpi-section__title">{{ title }}</h2>{% endif %}
         {% if meta %}<p class="kpi-section__meta muted">{{ meta }}</p>{% endif %}
       </div>
-      {% if caller is defined %}
+      {% if caller is not undefined %}
         <div class="kpi-section__actions">
           {{ caller() }}
         </div>
@@ -124,7 +124,7 @@
           {% if card.meta %}<span class="metric-tile__meta muted">{{ card.meta }}</span>{% endif %}
         </article>
       {% endfor %}
-    {% elif caller is defined %}
+    {% elif caller is not undefined %}
       {{ caller() }}
     {% endif %}
   </section>
@@ -139,7 +139,7 @@
       </header>
     {% endif %}
     <div class="filter-bar__controls">
-      {% if caller is defined %}
+      {% if caller is not undefined %}
         {{ caller() }}
       {% endif %}
     </div>
@@ -166,7 +166,7 @@
         </thead>
       {% endif %}
       <tbody{% if body_id %} id="{{ body_id }}"{% endif %}>
-        {% if caller is defined %}
+        {% if caller is not undefined %}
           {{ caller() }}
         {% endif %}
       </tbody>
@@ -215,7 +215,7 @@
       {% endif %}
     </header>
     <div class="form-shell__body">
-      {% if caller is defined %}
+      {% if caller is not undefined %}
         {{ caller() }}
       {% endif %}
     </div>
@@ -231,7 +231,7 @@
       </header>
     {% endif %}
     <div class="form-section__content">
-      {% if caller is defined %}
+      {% if caller is not undefined %}
         {{ caller() }}
       {% endif %}
     </div>
@@ -240,9 +240,10 @@
 
 {# Legacy aliases for backwards compatibility #}
 {%- macro kpi_section(section_id, eyebrow=None, title=None, meta=None, cards=None, empty_text=None, placeholder_text=None, is_placeholder=False, default_hint=None) -%}
-  {% if caller is defined %}
+  {% if caller is not undefined %}
+    {% set section_actions = caller %}
     {% call kpi_grid(section_id, eyebrow, title, meta, cards, empty_text, placeholder_text, is_placeholder, default_hint) %}
-      {{ caller() }}
+      {{ section_actions() }}
     {% endcall %}
   {% else %}
     {{ kpi_grid(section_id, eyebrow, title, meta, cards, empty_text, placeholder_text, is_placeholder, default_hint) }}
@@ -250,9 +251,10 @@
 {%- endmacro %}
 
 {%- macro stat_cards(items=None, class_name=None) -%}
-  {% if caller is defined %}
+  {% if caller is not undefined %}
+    {% set stat_content = caller %}
     {% call metric_grid(items=items, class_name=class_name) %}
-      {{ caller() }}
+      {{ stat_content() }}
     {% endcall %}
   {% else %}
     {{ metric_grid(items=items, class_name=class_name) }}
@@ -260,9 +262,10 @@
 {%- endmacro %}
 
 {%- macro data_table(columns=None, caption=None, sticky_header=True, table_class=None, table_id=None, body_id=None) -%}
-  {% if caller is defined %}
+  {% if caller is not undefined %}
+    {% set table_rows = caller %}
     {% call table_shell(columns=columns, caption=caption, sticky_header=sticky_header, table_class=table_class, table_id=table_id, body_id=body_id) %}
-      {{ caller() }}
+      {{ table_rows() }}
     {% endcall %}
   {% else %}
     {{ table_shell(columns=columns, caption=caption, sticky_header=sticky_header, table_class=table_class, table_id=table_id, body_id=body_id) }}
