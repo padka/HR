@@ -1,0 +1,16 @@
+### Health checks
+GET http://localhost:8000/health
+Accept: application/json
+
+### Dashboard
+GET http://localhost:8000/
+Authorization: Basic {{ADMIN_USER}} {{ADMIN_PASSWORD}}
+
+### Slots API snapshot
+GET http://localhost:8000/api/slots?limit=20
+Authorization: Basic {{ADMIN_USER}} {{ADMIN_PASSWORD}}
+Accept: application/json
+
+### Bot health
+GET http://localhost:8000/health/bot
+Accept: application/json

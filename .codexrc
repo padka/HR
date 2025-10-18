@@ -1,0 +1,3 @@
+editor: apply-patches
+confirm_write: true
+max_tokens: 8000

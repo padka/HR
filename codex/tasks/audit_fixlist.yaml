@@ -1,0 +1,61 @@
+name: "Аудит → Fixlist"
+description: >-
+  Карточки для устранения критичных проблем, обнаруженных аудитом. Используется
+  для планирования спринтов 1-3.
+items:
+  - id: A1
+    title: "Убрать двойную загрузку CSS и внедрить manifest-helper"
+    files:
+      - backend/apps/admin_ui/templates/base.html
+      - backend/apps/admin_ui/static/css/{tokens.css,ui.css}
+      - backend/apps/admin_ui/static/build/main.css
+    acceptance:
+      - "В шаблонах используются `{% vite_asset %}` вместо `<link rel>`"
+      - "CSS разделён на tokens/components/pages, нет дублирующих imports"
+      - "В prod-режиме подхватывается manifest.json без 404"
+  - id: A2
+    title: "Удалить inline-скрипты и вынести topbar/sheet в модули"
+    files:
+      - backend/apps/admin_ui/templates/base.html
+      - backend/apps/admin_ui/templates/slots_list.html
+      - backend/apps/admin_ui/static/js/modules/**
+    acceptance:
+      - "Нет `<script>` блоков с логикой в шаблонах"
+      - "Topbar и sheet работают через UI-core с focus-trap"
+      - "Smoke `/slots` успешен"
+  - id: A3
+    title: "Исправить TemplateNotFound: страницы вопросов"
+    files:
+      - backend/apps/admin_ui/routers/questions.py
+      - backend/apps/admin_ui/templates/questions_edit.html
+      - backend/apps/admin_ui/templates/questions_list.html
+    acceptance:
+      - "Маршрут `/questions/{id}/edit` корректно возвращает HTML (не 500)"
+      - "Jinja-названия совпадают с файлами, тест `pytest -k questions` зелёный"
+  - id: A4
+    title: "Единый toast и focus-trap"
+    files:
+      - backend/apps/admin_ui/templates/page_primitives.html
+      - frontend/ui/core/toast.ts
+      - frontend/ui/core/focus-trap.ts
+    acceptance:
+      - "Макросы используют общий UI-core, нет копипаста"
+      - "axe проверка `/candidates` без ошибок по фокусу"
+  - id: A5
+    title: "Покрыть фильтры и сортировки Playwright тестами"
+    files:
+      - frontend/tests/e2e/filters.spec.ts
+      - frontend/tests/e2e/slots.spec.ts
+      - playwright.config.ts
+    acceptance:
+      - "Сценарии запускаются `npm run test:e2e`"
+      - "Записываются скриншоты и trace"
+  - id: A6
+    title: "Планировщик: квоты и TZ"
+    files:
+      - backend/apps/admin_ui/services/dashboard_calendar.py
+      - backend/apps/admin_ui/timezones.py
+      - backend/domain/models.py
+    acceptance:
+      - "Расчёт квот учитывает recruiter_tz и candidate_tz"
+      - "Добавлены тесты на конверсию времени и лимиты по городам"

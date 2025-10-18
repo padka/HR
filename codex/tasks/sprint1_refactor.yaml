@@ -1,0 +1,42 @@
+name: "Sprint 1 — Vite и UI-core"
+description: >-
+  Пошаговая дорожная карта первой итерации миграции фронтенда: подключаем Vite,
+  разделяем стили, выносим manifest-helper и убираем inline-скрипты на базовых страницах.
+checklist:
+  - step: "Подготовка окружения"
+    details:
+      - "npm install"
+      - "Создать каталог frontend/ со структурой: entries/, styles/, ui/core/, tests/" 
+      - "Скопировать tailwind/postcss конфиги или ссылаться на общие файлы"
+  - step: "Инициализация Vite"
+    details:
+      - "npm create vite@latest frontend -- --template vanilla-ts"
+      - "Удалить demo-файлы Vite, сохранить config" 
+      - "Настроить vite.config.ts: root=frontend, build.outDir=../backend/apps/admin_ui/static/build, manifest=true"
+      - "Добавить алиасы: '@ui': path.resolve(__dirname, 'ui')"
+  - step: "Структурирование стилей"
+    details:
+      - "Перенести backend/apps/admin_ui/static/css/tokens.css → frontend/styles/tokens.css"
+      - "Создать frontend/styles/components.css с базовыми компонентами UI-core"
+      - "Разбить бывший main.css на импорт токенов + слой компонентов + страницы (frontend/styles/pages/{dashboard,slots}.css)"
+      - "Обновить tailwind.config.js: content указывает на frontend/**/*.ts и templates/**/*.html"
+  - step: "Manifest-helper"
+    details:
+      - "Добавить модуль backend/apps/admin_ui/vite.py с функцией load_manifest() и фильтром Jinja vite_asset"
+      - "Зарегистрировать фильтр в register_template_globals()"
+  - step: "Обновление шаблонов"
+    details:
+      - "В base.html заменить `<link rel="stylesheet">` на `{% vite_asset 'entries/app.ts' %}`"
+      - "Перенести script настройки темы (строки 9-35 base.html) в frontend/entries/app.ts"
+      - "Перенести topbar JS (строки 244-330 base.html) в frontend/ui/core/topbar.ts и импортировать в app.ts"
+      - "Для slots_list.html подключить `{% vite_asset 'entries/slots.ts' %}` и вынести inline `<script>` в модуль"
+  - step: "UI-core скелет"
+    details:
+      - "Создать компоненты: modal.ts, sheet.ts, toast.ts, focus-trap.ts"
+      - "Обновить page_primitives.html: использовать data-атрибуты, хелперы UI-core"
+  - step: "Smoke-проверка"
+    details:
+      - "Запустить `npm run dev` (Vite) и `uvicorn backend.apps.admin_ui.app:app --reload --port 8000`"
+      - "Пройти `/slots`: открыть фильтры, проверить sheet и модалки"
+      - "Проверить переключение темы, работу topbar, отсутствие ошибок в консоли"
+      - "Выполнить `npm run build` и удостовериться в появлении manifest.json"
