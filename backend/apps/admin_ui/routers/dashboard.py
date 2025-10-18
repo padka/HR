@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from backend.apps.admin_ui.config import templates
+from backend.apps.admin_ui.config import safe_template_response
 from backend.apps.admin_ui.services.bot_service import (
     BOT_RUNTIME_AVAILABLE,
     IntegrationSwitch,
@@ -102,13 +102,14 @@ async def index(request: Request):
         calendar = await dashboard_calendar_snapshot(tz_name=settings.timezone)
     except Exception:
         logger.exception("Failed to load dashboard calendar snapshot.")
-    return templates.TemplateResponse(
+    return safe_template_response(
         "index.html",
+        request,
         {
-            "request": request,
             "counts": counts,
             "bot_status": bot_status,
             "weekly_kpis": weekly,
             "calendar": calendar,
         },
+        encode_json_keys=("weekly_kpis", "calendar"),
     )

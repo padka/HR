@@ -409,20 +409,7 @@
 {% include "partials/slot_sheet.html" %}
 <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
-<script id="slots_context" type="application/json">{{ {
-  'filters': {
-    'recruiter_id': filter_recruiter_id,
-    'status': filter_status,
-    'city_id': filter_city_id
-  },
-  'status_counts': status_counts,
-  'recruiters': recruiter_options,
-  'cities': city_options,
-  'page': page,
-  'pages_total': pages_total,
-  'per_page': per_page,
-  'has_slots': has_slots
-} | tojson }}</script>
+<script id="slots_context" type="application/json">{{ slots_context | tojson }}</script>
 {% endblock %}
 {% block extra_js %}
   <script type="module" src="{{ url_for('static', path='js/modules/slots-list.js') }}"></script>

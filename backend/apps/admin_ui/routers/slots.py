@@ -11,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request, H
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
-from backend.apps.admin_ui.config import templates
+from backend.apps.admin_ui.config import safe_template_response
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import list_recruiters
@@ -158,7 +158,16 @@ async def slots_list(
     city_filter = parse_optional_int(city_id)
     result = await list_slots(recruiter, status_norm, page, per_page, city_id=city_filter)
     recruiter_rows = await list_recruiters()
-    recruiter_options = [row["rec"] for row in recruiter_rows]
+    recruiter_entities = [row["rec"] for row in recruiter_rows]
+    recruiter_options = [
+        {
+            "id": rec.id,
+            "name": rec.name,
+            "tz": getattr(rec, "tz", None),
+            "active": getattr(rec, "active", None),
+        }
+        for rec in recruiter_entities
+    ]
     slots = result["items"]
     aggregated = result.get("status_counts") or {}
     status_counts: Dict[str, int] = {
@@ -171,11 +180,36 @@ async def slots_list(
         ),
     }
     flash = _pop_flash(request)
-    city_options = await list_cities(order_by_name=True)
+    city_rows = await list_cities(order_by_name=True)
+    city_options = [
+        {
+            "id": city.id,
+            "name": city.name,
+            "tz": getattr(city, "tz", None),
+        }
+        for city in city_rows
+    ]
+
+    has_slots = len(slots) > 0
+
+    slots_context_payload = {
+        "filters": {
+            "recruiter_id": recruiter,
+            "status": status_norm,
+            "city_id": city_filter,
+        },
+        "status_counts": status_counts,
+        "recruiters": recruiter_options,
+        "cities": city_options,
+        "page": result["page"],
+        "pages_total": result["pages_total"],
+        "per_page": per_page,
+        "has_slots": has_slots,
+    }
 
     context = {
-        "request": request,
         "slots": slots,
+        "has_slots": has_slots,
         "filter_recruiter_id": recruiter,
         "filter_status": status_norm,
         "filter_city_id": city_filter,
@@ -186,8 +220,14 @@ async def slots_list(
         "city_options": city_options,
         "status_counts": status_counts,
         "flash": flash,
+        "slots_context": slots_context_payload,
     }
-    response = templates.TemplateResponse("slots_list.html", context)
+    response = safe_template_response(
+        "slots_list.html",
+        request,
+        context,
+        encode_json_keys=("slots_context",),
+    )
     if flash:
         response.delete_cookie(
             _FLASH_COOKIE,
@@ -203,9 +243,10 @@ async def slots_list(
 async def slots_new(request: Request):
     recruiters = await recruiters_for_slot_form()
     flash = _pop_flash(request)
-    response = templates.TemplateResponse(
+    response = safe_template_response(
         "slots_new.html",
-        {"request": request, "recruiters": recruiters, "flash": flash},
+        request,
+        {"recruiters": recruiters, "flash": flash},
     )
     if flash:
         response.delete_cookie(

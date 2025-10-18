@@ -5,6 +5,33 @@ import sys
 
 import pytest
 
+try:
+    import uvloop  # type: ignore
+except Exception:  # pragma: no cover - uvloop optional in CI images
+    uvloop = None  # type: ignore
+
+
+def _choose_event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
+    if uvloop is not None:  # type: ignore[truthy-function]
+        try:
+            return uvloop.EventLoopPolicy()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    return asyncio.DefaultEventLoopPolicy()
+
+
+def pytest_configure(config):  # type: ignore[override]
+    config._original_event_loop_policy = asyncio.get_event_loop_policy()  # type: ignore[attr-defined]
+    asyncio.set_event_loop_policy(_choose_event_loop_policy())
+
+
+def pytest_unconfigure(config):  # type: ignore[override]
+    original = getattr(config, "_original_event_loop_policy", None)
+    if isinstance(original, asyncio.AbstractEventLoopPolicy):
+        asyncio.set_event_loop_policy(original)
+    else:  # pragma: no cover - defensive fallback
+        asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+
 
 @pytest.fixture(scope="session")
 def event_loop():
