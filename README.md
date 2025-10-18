@@ -159,6 +159,13 @@ If you prefer to call `pytest` directly, ensure that your shell `PATH` includes
 `~/.local/bin` (or the equivalent directory where your Python environment
 installs console scripts).
 
+### Сериализация для `|tojson`
+
+При рендере шаблонов с фильтром Jinja `|tojson` передавайте только структуры
+данных (`dict`, `list`, Pydantic-модели), а не ORM-объекты. При необходимости
+преобразуйте данные через `fastapi.encoders.jsonable_encoder` в роутере перед
+вызовом `TemplateResponse`.
+
 ## Database migrations and seed data
 
 The database schema is managed through Python migration scripts located under
@@ -177,3 +184,6 @@ The seeding step is idempotent and can be executed multiple times without
 creating duplicate cities, recruiters or test questions.
 
 > **Note:** The latest migrations require PostgreSQL because they rely on concurrent index operations.
+
+## Visual tests (Playwright)
+The first run seeds baseline screenshots via `npm run test:e2e:update`. Regular runs with `npm run test:e2e` will fail when snapshots drift. Baseline images live next to the tests under `__snapshots__`.
