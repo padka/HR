@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from datetime import time as time_type
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import String, and_, cast, delete, func, or_, select
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
@@ -86,6 +86,10 @@ async def list_slots(
     per_page: int,
     *,
     city_id: int | None = None,
+    date_filter: date_type | None = None,
+    purpose: str | None = None,
+    search_tokens: list[str] | None = None,
+    future_only: bool = False,
 ) -> dict[str, object]:
     async with async_session() as session:
         filtered = select(Slot)
@@ -95,6 +99,31 @@ async def list_slots(
             filtered = filtered.where(Slot.status == status_to_db(status))
         if city_id is not None:
             filtered = filtered.where(Slot.city_id == city_id)
+        if purpose:
+            filtered = filtered.where(func.lower(Slot.purpose) == purpose.lower())
+        if date_filter is not None:
+            start_dt = datetime.combine(date_filter, time_type.min, tzinfo=UTC)
+            filtered = filtered.where(Slot.start_utc >= start_dt, Slot.start_utc < start_dt + timedelta(days=1))
+        if future_only:
+            filtered = filtered.where(Slot.start_utc >= datetime.now(UTC))
+        if search_tokens:
+            for token in search_tokens:
+                text = (token or "").strip()
+                if not text:
+                    continue
+                pattern = f"%{text.lower()}%"
+                candidate_name = func.coalesce(func.lower(Slot.candidate_fio), "")
+                recruiter_match = Slot.recruiter.has(func.lower(Recruiter.name).like(pattern))
+                city_match = Slot.city.has(func.lower(City.name).like(pattern))
+                token_expr = or_(
+                    candidate_name.like(pattern),
+                    cast(Slot.candidate_tg_id, String).ilike(pattern),
+                    cast(Slot.id, String).ilike(pattern),
+                    recruiter_match,
+                    city_match,
+                    cast(Slot.interview_feedback, String).ilike(pattern),
+                )
+                filtered = filtered.where(token_expr)
 
         subquery = filtered.subquery()
         total = await session.scalar(select(func.count()).select_from(subquery)) or 0
@@ -107,10 +136,19 @@ async def list_slots(
             )
         ).all()
 
-        aggregated: dict[str, int] = {}
+        aggregated: dict[str, int] = {
+            "FREE": 0,
+            "PENDING": 0,
+            "BOOKED": 0,
+            "CONFIRMED_BY_CANDIDATE": 0,
+            "CANCELED": 0,
+        }
         for raw_status, count in status_rows:
             aggregated[norm_status(raw_status)] = int(count or 0)
-        aggregated.setdefault("CONFIRMED_BY_CANDIDATE", 0)
+
+        latest_updated_at = await session.scalar(
+            select(func.max(subquery.c.updated_at)).select_from(subquery)
+        )
 
         pages_total, page, offset = paginate(total, page, per_page)
 
@@ -122,12 +160,23 @@ async def list_slots(
         )
         items = (await session.scalars(query)).all()
 
+        purpose_rows = (
+            await session.execute(
+                select(func.lower(Slot.purpose))
+                .group_by(func.lower(Slot.purpose))
+                .order_by(func.lower(Slot.purpose))
+            )
+        ).scalars()
+        purposes = [row for row in purpose_rows if row]
+
     return {
         "items": items,
         "total": total,
         "page": page,
         "pages_total": pages_total,
         "status_counts": aggregated,
+        "latest_updated_at": latest_updated_at,
+        "purposes": purposes,
     }
 
 
@@ -906,29 +955,35 @@ async def api_slots_payload(
     recruiter_id: int | None,
     status: str | None,
     limit: int,
+    *,
+    city_id: int | None = None,
+    purpose: str | None = None,
+    date_filter: date_type | None = None,
+    search_tokens: list[str] | None = None,
+    future_only: bool = False,
 ) -> list[dict[str, object]]:
-    async with async_session() as session:
-        query = (
-            select(Slot)
-            .options(selectinload(Slot.recruiter))
-            .order_by(Slot.start_utc.asc())
-        )
-        if recruiter_id is not None:
-            query = query.where(Slot.recruiter_id == recruiter_id)
-        if status:
-            query = query.where(Slot.status == status_to_db(status))
-        if limit:
-            query = query.limit(max(1, min(500, limit)))
-        slots = (await session.scalars(query)).all()
+    per_page = max(1, min(500, limit))
+    result = await list_slots(
+        recruiter_id,
+        status,
+        page=1,
+        per_page=per_page,
+        city_id=city_id,
+        date_filter=date_filter,
+        purpose=purpose,
+        search_tokens=search_tokens or [],
+        future_only=future_only,
+    )
+    items = sorted(result.get("items", []), key=lambda slot: slot.start_utc)
     return [
         {
             "id": sl.id,
             "recruiter_id": sl.recruiter_id,
             "recruiter_name": sl.recruiter.name if sl.recruiter else None,
-            "start_utc": sl.start_utc.isoformat(),
+            "start_utc": sl.start_utc.isoformat() if sl.start_utc else None,
             "status": norm_status(sl.status),
             "candidate_fio": getattr(sl, "candidate_fio", None),
             "candidate_tg_id": getattr(sl, "candidate_tg_id", None),
         }
-        for sl in slots
+        for sl in items
     ]

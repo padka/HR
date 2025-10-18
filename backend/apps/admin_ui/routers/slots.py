@@ -2,10 +2,11 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 from enum import Enum
 from typing import Dict, Optional
 
-from datetime import datetime
+from datetime import date as date_cls, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -152,12 +153,48 @@ async def slots_list(
     status: Optional[str] = Query(default=None),
     city_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=20, ge=1, le=100),
+    per_page: int = Query(default=20, ge=1, le=500),
+    date: Optional[str] = Query(default=None),
+    search: Optional[list[str]] = Query(default=None),
+    purpose: Optional[str] = Query(default=None),
+    future: Optional[str] = Query(default=None),
+    view: Optional[str] = Query(default="table"),
+    role: Optional[str] = Query(default="recruiter"),
 ):
     recruiter = parse_optional_int(recruiter_id)
     status_norm = status_filter(status)
     city_filter = parse_optional_int(city_id)
-    result = await list_slots(recruiter, status_norm, page, per_page, city_id=city_filter)
+    purpose_norm = (purpose or "").strip().lower() or None
+    date_filter = None
+    if date:
+        try:
+            date_filter = date_cls.fromisoformat(date)
+        except ValueError:
+            date_filter = None
+
+    raw_tokens: list[str] = []
+    if search:
+        for chunk in search:
+            if not chunk:
+                continue
+            raw_tokens.extend(re.split(r"[,\s]+", chunk))
+    search_tokens = [token for token in (part.strip() for part in raw_tokens) if token]
+
+    future_only = _parse_checkbox(future)
+    view_mode = "cards" if (view or "").lower() == "cards" else "table"
+    role_mode = "candidate" if (role or "").lower() == "candidate" else "recruiter"
+
+    result = await list_slots(
+        recruiter,
+        status_norm,
+        page,
+        per_page,
+        city_id=city_filter,
+        date_filter=date_filter,
+        purpose=purpose_norm,
+        search_tokens=search_tokens,
+        future_only=future_only,
+    )
     recruiter_rows = await list_recruiters()
     recruiter_options = [
         RecruiterOption.model_validate(row["rec"]).model_dump()
@@ -173,7 +210,11 @@ async def slots_list(
         "CONFIRMED_BY_CANDIDATE": int(
             aggregated.get("CONFIRMED_BY_CANDIDATE", 0)
         ),
+        "CANCELED": int(aggregated.get("CANCELED", 0)),
     }
+    latest_updated = result.get("latest_updated_at")
+    latest_updated_dt = ensure_utc(latest_updated) if latest_updated else None
+    purposes = result.get("purposes") or []
     flash = _pop_flash(request)
     city_options = [
         CityOption.model_validate(city).model_dump()
@@ -186,12 +227,21 @@ async def slots_list(
         "filter_recruiter_id": recruiter,
         "filter_status": status_norm,
         "filter_city_id": city_filter,
+        "filter_purpose": purpose_norm,
+        "filter_date": date_filter.isoformat() if date_filter else None,
+        "search_tokens": search_tokens,
+        "search_query": " ".join(search_tokens),
+        "active_view": view_mode,
+        "time_role": role_mode,
+        "only_future": future_only,
         "page": result["page"],
         "pages_total": result["pages_total"],
         "per_page": per_page,
         "recruiter_options": recruiter_options,
         "city_options": city_options,
+        "purpose_options": purposes,
         "status_counts": status_counts,
+        "last_updated_at": latest_updated_dt,
         "flash": flash,
     }
     response = templates.TemplateResponse("slots_list.html", context)

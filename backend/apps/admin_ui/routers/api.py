@@ -58,11 +58,43 @@ async def api_cities():
 async def api_slots(
     recruiter_id: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
+    city_id: Optional[str] = Query(default=None),
+    purpose: Optional[str] = Query(default=None),
+    date: Optional[str] = Query(default=None),
+    future: Optional[str] = Query(default=None),
+    search: Optional[list[str]] = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ):
     recruiter = parse_optional_int(recruiter_id)
     status_norm = status_filter(status)
-    payload = await api_slots_payload(recruiter, status_norm, limit)
+    city_filter = parse_optional_int(city_id)
+    purpose_norm = (purpose or '').strip().lower() or None
+    date_filter: Optional[date_type] = None
+    if date:
+        try:
+            date_filter = date_type.fromisoformat(date)
+        except ValueError:
+            date_filter = None
+    tokens: list[str] = []
+    if search:
+        for chunk in search:
+            if not chunk:
+                continue
+            for part in chunk.split(','):
+                value = part.strip()
+                if value and value not in tokens:
+                    tokens.append(value)
+    future_only = (future or '').lower() in {'1', 'true', 'yes'}
+    payload = await api_slots_payload(
+        recruiter,
+        status_norm,
+        limit,
+        city_id=city_filter,
+        purpose=purpose_norm,
+        date_filter=date_filter,
+        search_tokens=tokens,
+        future_only=future_only,
+    )
     return JSONResponse(payload)
 
 

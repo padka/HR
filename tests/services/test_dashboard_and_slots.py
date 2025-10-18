@@ -140,4 +140,5 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
         "PENDING": 1,
         "BOOKED": 1,
         "CONFIRMED_BY_CANDIDATE": 1,
+        "CANCELED": 0,
     }
