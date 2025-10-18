@@ -45,6 +45,9 @@ jobs:
       - name: Run Playwright tests
         run: npm run test:e2e
 
+      - name: Run E2E (focus trap)
+        run: npx playwright test -g "focus trap|focus"
+
       - name: Run pytest
         run: pytest -q
 
