@@ -1,0 +1,49 @@
+project:
+  name: Smart Service HR Admin
+  entry_readme: CODEX.md
+  bootstrap: ./codex/bootstrap.md
+  guidelines: ./codex/guidelines.md
+context:
+  include:
+    - backend/apps/**/*
+    - codex/context/*.md
+    - ADR/*.md
+  exclude:
+    - node_modules/**
+    - .venv/**
+    - dist/**
+    - static/build/**
+agents:
+  frontend_refactor:
+    description: "Миграция фронтенда на Vite, реструктуризация стилей и UI-core"
+    instructions: ./codex/agents/frontend_refactor.md
+  scheduler_arch:
+    description: "Архитектура планировщика, квоты и нормализация часовых поясов"
+    instructions: ./codex/agents/scheduler_arch.md
+  qa_playwright:
+    description: "E2E и accessibility тесты через Playwright"
+    instructions: ./codex/agents/qa_playwright.md
+  devops_ci:
+    description: "CI/CD, Docker и GitHub Actions"
+    instructions: ./codex/agents/devops_ci.md
+routing:
+  commands:
+    - match: "refactor|styles|vite|tailwind|sheet|toast|focus"
+      agent: frontend_refactor
+    - match: "schedule|slots|quota|tz|reminder"
+      agent: scheduler_arch
+    - match: "test|playwright|axe|e2e"
+      agent: qa_playwright
+    - match: "ci|github actions|pipeline"
+      agent: devops_ci
+safety:
+  write_paths:
+    - backend/**
+    - codex/**
+    - ADR/**
+  deny_patterns:
+    - backend/**/migrations/**
+env:
+  FASTAPI_PORT: "8000"
+  PLAYWRIGHT_HEADLESS: "1"
+  PLAYWRIGHT_BASE_URL: "http://localhost:8000"
