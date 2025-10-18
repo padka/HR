@@ -15,7 +15,11 @@ from backend.apps.admin_ui.services.dashboard_calendar import (
 from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
 from backend.apps.admin_ui.services.slots.core import api_slots_payload
 from backend.apps.admin_ui.services.templates import api_templates_payload
-from backend.apps.admin_ui.utils import parse_optional_int, status_filter
+from backend.apps.admin_ui.utils import (
+    ensure_sequence,
+    parse_optional_int,
+    status_filters,
+)
 from backend.core.settings import get_settings
 
 router = APIRouter(prefix="/api", tags=["api"])
@@ -57,24 +61,41 @@ async def api_cities():
 @router.get("/slots")
 async def api_slots(
     recruiter_id: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
+    status: Optional[list[str]] = Query(default=None),
     city_id: Optional[str] = Query(default=None),
-    purpose: Optional[str] = Query(default=None),
+    purpose: Optional[list[str]] = Query(default=None),
+    date_from: Optional[str] = Query(default=None, alias="date_from"),
+    date_to: Optional[str] = Query(default=None, alias="date_to"),
     date: Optional[str] = Query(default=None),
     future: Optional[str] = Query(default=None),
+    free_only: Optional[str] = Query(default=None, alias="free_only"),
     search: Optional[list[str]] = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ):
     recruiter = parse_optional_int(recruiter_id)
-    status_norm = status_filter(status)
+    statuses = status_filters(status)
     city_filter = parse_optional_int(city_id)
-    purpose_norm = (purpose or '').strip().lower() or None
-    date_filter: Optional[date_type] = None
-    if date:
+    purpose_values = [item.lower() for item in ensure_sequence(purpose)]
+    date_start: Optional[date_type] = None
+    date_end: Optional[date_type] = None
+    if date_from:
         try:
-            date_filter = date_type.fromisoformat(date)
+            date_start = date_type.fromisoformat(date_from)
         except ValueError:
-            date_filter = None
+            date_start = None
+    if date_to:
+        try:
+            date_end = date_type.fromisoformat(date_to)
+        except ValueError:
+            date_end = None
+    if not date_start and not date_end and date:
+        try:
+            parsed = date_type.fromisoformat(date)
+            date_start = parsed
+            date_end = parsed
+        except ValueError:
+            date_start = None
+            date_end = None
     tokens: list[str] = []
     if search:
         for chunk in search:
@@ -85,14 +106,17 @@ async def api_slots(
                 if value and value not in tokens:
                     tokens.append(value)
     future_only = (future or '').lower() in {'1', 'true', 'yes'}
+    free_only_flag = (free_only or '').lower() in {'1', 'true', 'yes'}
     payload = await api_slots_payload(
         recruiter,
-        status_norm,
+        statuses,
         limit,
         city_id=city_filter,
-        purpose=purpose_norm,
-        date_filter=date_filter,
+        purposes=purpose_values,
+        date_from=date_start,
+        date_to=date_end,
         search_tokens=tokens,
+        free_only=free_only_flag,
         future_only=future_only,
     )
     return JSONResponse(payload)

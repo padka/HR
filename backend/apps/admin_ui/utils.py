@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 import math
@@ -100,6 +100,34 @@ def status_to_db(value: str):
     if isinstance(enum_candidate, SlotStatus):
         return enum_candidate.value
     return enum_candidate if enum_candidate is not None else value
+
+
+def status_filters(values: Optional[Iterable[str]]) -> list[str]:
+    """Normalize a collection of status query values."""
+
+    if not values:
+        return []
+    normalized: list[str] = []
+    for raw in values:
+        if raw is None:
+            continue
+        if isinstance(raw, str):
+            chunks = [segment.strip() for segment in raw.split(",")]
+        else:
+            chunks = [str(raw).strip()]
+        for chunk in chunks:
+            if not chunk:
+                continue
+            upper = chunk.upper()
+            if upper in STATUS_FILTERS and upper not in normalized:
+                normalized.append(upper)
+    return normalized
+
+
+def ensure_sequence(items: Optional[Iterable[str]]) -> Sequence[str]:
+    if not items:
+        return ()
+    return tuple(str(item).strip() for item in items if str(item).strip())
 
 
 def parse_optional_int(value: Optional[str]) -> Optional[int]:

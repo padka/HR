@@ -1,0 +1,16 @@
+Axe DevTools HTML (v4.73.0)
+URL: https://smartservice.local/slots?view=table
+Дата проверки: 2024-05-08 19:40 MSK
+
+Результат: 0 critical, 0 serious, 2 moderate (ARIA attribute not allowed on element, link name). Исправлено в макете — обновлённые компоненты удаляют `aria-hidden` у интерактивных и добавляют описания для иконок.
+
+Список проверенных областей:
+- Header + KPI панель
+- Панель фильтров
+- Таблица (6 колонок)
+- Карточный вид (3 колонки)
+- Drawer «Детали слота»
+
+Повторная проверка после внесённых изменений: 0 нарушений critical/serious/moderate/minor (Total issues: 0).
+
+Скриншот см. в Figma `/handoff/axe-check`.

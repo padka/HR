@@ -714,12 +714,12 @@
   }
 
   .container {
-    width: min(1120px, 100%);
+    width: min(1280px, 100%);
     margin-inline: auto;
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
-    gap: 1.75rem;
-    padding-inline: 1rem;
+    gap: 1.5rem;
+    padding-inline: clamp(1rem, 1vw + 0.75rem, 1.5rem);
   }
 
   .container > * {
@@ -761,8 +761,8 @@
   }
 
   .app-main__stage {
-    width: min(1240px, 100%);
-    padding-inline: clamp(1rem, 2vw + 0.5rem, 2.5rem);
+    width: min(1340px, 100%);
+    padding-inline: clamp(1rem, 1.5vw + 0.75rem, 2.5rem);
   }
 
   .app-main__surface {
@@ -780,7 +780,7 @@
 
   .app-footer {
     margin: clamp(1.5rem, 2vw + 1rem, 2.75rem) auto 0;
-    width: min(1240px, 100%);
+    width: min(1340px, 100%);
     border-radius: calc(var(--r-xl) + 6px);
     border: 1px solid rgba(var(--border-rgb) / 0.22);
     box-shadow: var(--elev-1);
@@ -793,7 +793,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: clamp(0.85rem, 0.75rem + 0.8vw, 1.35rem) clamp(1.25rem, 1rem + 1.2vw, 1.85rem);
+    padding: clamp(0.85rem, 0.75rem + 0.8vw, 1.35rem) clamp(1rem, 0.85rem + 1vw, 1.75rem);
   }
 
   .app-footer__meta {
@@ -905,7 +905,7 @@
   }
 
   .topbar__content {
-    width: min(1240px, 100%);
+    width: min(1340px, 100%);
     margin-inline: auto;
     display: flex;
     align-items: center;
