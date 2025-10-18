@@ -1,0 +1,109 @@
+<div id="slot_backdrop" class="sheet-backdrop" hidden></div>
+<aside id="slot_sheet" class="sheet slot-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="slot_sheet_title">
+  <header class="sheet-header">
+    <div>
+      <h3 id="slot_sheet_title" class="sheet-title">Слот не выбран</h3>
+      <p id="slot_sheet_sub" class="sheet-sub muted">Выберите запись в таблице.</p>
+    </div>
+    <button id="slot_sheet_close" class="btn btn-ghost btn-sm" type="button" aria-label="Закрыть">✕</button>
+  </header>
+
+  <div class="sheet-body slot-sheet-body">
+    <section class="slot-overview" aria-live="polite">
+      <div class="slot-overview__top">
+        <span class="badge badge--soft" id="slot_sheet_id">ID —</span>
+        <span class="status-badge" id="slot_sheet_status" data-tone="info">Статус: —</span>
+      </div>
+      <div class="slot-overview__meta">
+        <div id="slot_sheet_city_wrap" hidden>
+          <span class="slot-overview__hint">Локация</span>
+          <p class="slot-overview__value slot-overview__value--inline">
+            <span id="slot_sheet_city">—</span>
+            <span class="badge badge--soft" id="slot_sheet_city_tz" hidden>—</span>
+          </p>
+        </div>
+        <div>
+          <span class="slot-overview__hint">UTC</span>
+          <p class="slot-overview__value" id="slot_sheet_utc">—</p>
+        </div>
+        <div>
+          <span class="slot-overview__hint">Локальное (рекрутёр)</span>
+          <p class="slot-overview__value" id="slot_sheet_local">—</p>
+        </div>
+        <div id="slot_sheet_local_candidate_wrap">
+          <span class="slot-overview__hint">Локальное (кандидат)</span>
+          <p class="slot-overview__value" id="slot_sheet_local_candidate">—</p>
+        </div>
+      </div>
+      <p class="slot-overview__rel" id="slot_sheet_rel">—</p>
+    </section>
+
+    <section class="slot-panel">
+      <div class="slot-panel__header">
+        <span class="slot-panel__icon" aria-hidden="true">🧑‍💼</span>
+        <div>
+          <h4 class="slot-panel__title">Рекрутёр</h4>
+          <p class="slot-panel__hint">Текущий владелец слота</p>
+        </div>
+      </div>
+      <div class="slot-panel__body" id="slot_sheet_recruiter">
+        <p class="muted">Не назначен</p>
+      </div>
+    </section>
+
+    <section class="slot-panel" id="slot_sheet_candidate_section">
+      <div class="slot-panel__header">
+        <span class="slot-panel__icon" aria-hidden="true">🧑‍🎓</span>
+        <div>
+          <h4 class="slot-panel__title">Кандидат</h4>
+          <p class="slot-panel__hint">Бронь и контакты</p>
+        </div>
+      </div>
+      <div class="slot-panel__body" id="slot_sheet_candidate">
+        <p class="muted">Пока никто не забронировал слот.</p>
+      </div>
+      <div class="slot-panel__actions" id="slot_sheet_candidate_actions">
+        <button type="button" class="btn btn-soft btn-sm" id="slot_reschedule_btn" disabled>Перенести бронь</button>
+        <button type="button" class="btn btn-danger btn-sm" id="slot_reject_btn" disabled>Отказать кандидату</button>
+      </div>
+    </section>
+
+    <section class="slot-panel" id="slot_sheet_outcome_section">
+      <div class="slot-panel__header">
+        <span class="slot-panel__icon" aria-hidden="true">✅</span>
+        <div>
+          <h4 class="slot-panel__title">Исход интервью</h4>
+          <p class="slot-panel__hint">Выберите результат встречи</p>
+        </div>
+      </div>
+      <div class="slot-panel__body">
+        <p class="muted" id="slot_sheet_outcome_hint">Доступно после назначения кандидата.</p>
+        <div class="slot-outcome__actions" id="slot_sheet_outcome_actions">
+          <button type="button" class="btn btn-ghost btn-sm" data-outcome="success">Прошёл</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-outcome="reject">Не прошёл</button>
+        </div>
+        <p class="slot-outcome__status" id="slot_sheet_outcome_status">Исход не выбран</p>
+      </div>
+    </section>
+
+    <section class="slot-panel">
+      <div class="slot-panel__header">
+        <span class="slot-panel__icon" aria-hidden="true">⏱</span>
+        <div>
+          <h4 class="slot-panel__title">Параметры</h4>
+          <p class="slot-panel__hint">Продолжительность и статус</p>
+        </div>
+      </div>
+      <div class="slot-panel__body">
+        <ul class="slot-meta" id="slot_sheet_meta"></ul>
+      </div>
+    </section>
+  </div>
+
+  <footer class="sheet-footer slot-sheet-footer">
+    <div class="form-actions">
+      <button id="slot_delete_btn" class="btn btn-danger btn-sm" type="button" disabled>Удалить слот</button>
+      <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+    </div>
+  </footer>
+</aside>

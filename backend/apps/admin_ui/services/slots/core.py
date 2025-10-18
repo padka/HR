@@ -55,6 +55,9 @@ __all__ = [
     "api_slots_payload",
     "delete_slot",
     "delete_all_slots",
+    "bulk_assign_slots",
+    "bulk_schedule_reminders",
+    "bulk_delete_slots",
     "set_slot_outcome",
     "get_state_manager",
     "execute_bot_dispatch",
@@ -260,6 +263,79 @@ async def delete_all_slots(*, force: bool = False) -> tuple[int, int]:
 
     deleted = total_before - remaining_after
     return deleted, remaining_after
+
+
+async def bulk_assign_slots(slot_ids: list[int], recruiter_id: int) -> tuple[int, list[int]]:
+    if not slot_ids:
+        return 0, []
+
+    async with async_session() as session:
+        recruiter = await session.get(Recruiter, recruiter_id)
+        if recruiter is None:
+            raise ValueError("Рекрутёр не найден")
+
+        slots = (
+            await session.scalars(select(Slot).where(Slot.id.in_(slot_ids)))
+        ).all()
+        found_ids = {slot.id for slot in slots}
+
+        if not slots:
+            return 0, list(slot_ids)
+
+        for slot in slots:
+            slot.recruiter_id = recruiter_id
+
+        await session.commit()
+
+    missing = [sid for sid in slot_ids if sid not in found_ids]
+    return len(slots), missing
+
+
+async def bulk_schedule_reminders(slot_ids: list[int]) -> tuple[int, list[int]]:
+    if not slot_ids:
+        return 0, []
+
+    if not callable(get_reminder_service):
+        raise RuntimeError("Сервис напоминаний недоступен")
+
+    reminder_service = get_reminder_service()
+    scheduled = 0
+    failed: list[int] = []
+
+    async with async_session() as session:
+        existing_ids = set(
+            await session.scalars(select(Slot.id).where(Slot.id.in_(slot_ids)))
+        )
+
+    for slot_id in slot_ids:
+        if slot_id not in existing_ids:
+            failed.append(slot_id)
+            continue
+        try:
+            await reminder_service.schedule_for_slot(slot_id)
+        except Exception:
+            failed.append(slot_id)
+        else:
+            scheduled += 1
+
+    return scheduled, failed
+
+
+async def bulk_delete_slots(slot_ids: list[int], *, force: bool = False) -> tuple[int, list[int]]:
+    if not slot_ids:
+        return 0, []
+
+    deleted = 0
+    failed: list[int] = []
+
+    for slot_id in slot_ids:
+        ok, _ = await delete_slot(slot_id, force=force)
+        if ok:
+            deleted += 1
+        else:
+            failed.append(slot_id)
+
+    return deleted, failed
 
 
 @dataclass

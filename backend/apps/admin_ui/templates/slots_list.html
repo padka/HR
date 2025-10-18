@@ -3,43 +3,46 @@
 {% block title %}Слоты{% endblock %}
 {% block content %}
 {% set has_slots = slots|length > 0 %}
-{% set status_labels = {'FREE': 'Свободные', 'PENDING': 'Ожидают', 'BOOKED': 'Забронированы', 'CONFIRMED_BY_CANDIDATE': 'Подтверждены'} %}
-{% set filter_badges = [] %}
+{% set status_labels = {
+  'FREE': 'Свободные',
+  'PENDING': 'Ожидают',
+  'BOOKED': 'Забронированы',
+  'CONFIRMED_BY_CANDIDATE': 'Подтверждены'
+} %}
+{% set filter_tags = [] %}
 {% if filter_recruiter_id %}
   {% set recruiter_label = (recruiter_options | selectattr('id', 'equalto', filter_recruiter_id) | map(attribute='name') | list | first) %}
-  {% set filter_badges = filter_badges + [{'tone': 'progress', 'label': 'Рекрутёр: ' ~ (recruiter_label or filter_recruiter_id)}] %}
+  {% set filter_tags = filter_tags + [{'key': 'recruiter', 'label': recruiter_label or ('ID ' ~ filter_recruiter_id)}] %}
 {% endif %}
 {% if filter_status %}
-  {% set filter_badges = filter_badges + [{'tone': 'warning', 'label': 'Статус: ' ~ status_labels.get(filter_status, filter_status)}] %}
+  {% set filter_tags = filter_tags + [{'key': 'status', 'label': status_labels.get(filter_status, filter_status)}] %}
 {% endif %}
 {% if filter_city_id %}
   {% set city_label = (city_options | selectattr('id', 'equalto', filter_city_id) | map(attribute='name') | list | first) %}
-  {% set filter_badges = filter_badges + [{'tone': 'info', 'label': 'Город: ' ~ (city_label or filter_city_id)}] %}
+  {% set filter_tags = filter_tags + [{'key': 'city', 'label': city_label or ('ID ' ~ filter_city_id)}] %}
 {% endif %}
-<section class="page-grid" data-page="slots" aria-labelledby="slots-title">
-  <aside class="page-aside panel">
+{% set status_summary = [
+  {'key': 'free', 'label': 'Свободно', 'value': status_counts.FREE, 'tone': 'success', 'hint': 'готовы к брони', 'value_id': 'cnt-free'},
+  {'key': 'pending', 'label': 'Ожидают', 'value': status_counts.PENDING, 'tone': 'warning', 'hint': 'ждут ответа', 'value_id': 'cnt-pending'},
+  {'key': 'booked', 'label': 'Забронированы', 'value': status_counts.BOOKED, 'tone': 'progress', 'hint': 'назначено', 'value_id': 'cnt-booked'},
+  {'key': 'confirmed', 'label': 'Подтверждены', 'value': status_counts.CONFIRMED_BY_CANDIDATE, 'tone': 'success', 'hint': 'подтверждено', 'value_id': 'cnt-confirmed'},
+  {'key': 'total', 'label': 'Всего', 'value': status_counts.total, 'tone': 'muted', 'hint': 'по фильтрам', 'value_id': 'cnt-total'}
+] %}
+<section class="page-grid slots-page" data-page="slots" aria-labelledby="slots-title">
+  <aside class="page-aside panel slots-aside">
     <p class="page-header__eyebrow muted">Расписание интервью</p>
     <h1 id="slots-title" class="page-header__title">Слоты</h1>
-    <p class="page-header__description muted">Управляйте расписанием интервью и бронями в одном месте.</p>
-    <p class="page-header__meta muted">Всего слотов: {{ status_counts.total }}</p>
-    {% if filter_badges %}
-      <ul class="page-header__badges" role="list">
-        {% for badge in filter_badges %}
-          <li>
-            <span class="badge badge-{{ badge.tone | default('muted') }}">
-              <span class="badge__dot" aria-hidden="true"></span>
-              {{ badge.label }}
-            </span>
-          </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+    <p class="page-header__description muted">Управляйте бронями, напоминаниями и результатами интервью в одном окне.</p>
+    <ul class="slots-aside__meta" role="list">
+      <li>Всего слотов: {{ status_counts.total }}</li>
+      <li>Подтверждено кандидатами: {{ status_counts.CONFIRMED_BY_CANDIDATE }}</li>
+    </ul>
     <div class="page-actions">
       <a class="btn btn-primary btn-sm" href="/slots/new">+ Новый слот</a>
       <button type="button" class="btn btn-danger btn-sm" id="delete_all_slots">Удалить все</button>
     </div>
   </aside>
-  <div class="page-main">
+  <div class="page-main" data-slots-root>
     {% if flash %}
       {% set tone = {'success': 'success', 'error': 'danger', 'info': 'info'}.get(flash.status, 'info') %}
       <div class="slot-alert panel panel--flush" data-tone="{{ tone }}" role="alert">
@@ -47,247 +50,291 @@
       </div>
     {% endif %}
 
-    {% set slot_cards = [
-      {'key': 'free', 'label': 'Свободно', 'value': status_counts.FREE, 'tone': 'success', 'hint': 'готовы к брони', 'value_id': 'cnt-free'},
-      {'key': 'pending', 'label': 'Ожидают', 'value': status_counts.PENDING, 'tone': 'warning', 'hint': 'ждут ответа', 'value_id': 'cnt-pending'},
-      {'key': 'booked', 'label': 'Забронированы', 'value': status_counts.BOOKED, 'tone': 'progress', 'hint': 'назначено', 'value_id': 'cnt-booked'},
-      {'key': 'confirmed', 'label': 'Подтверждены', 'value': status_counts.CONFIRMED_BY_CANDIDATE, 'tone': 'success', 'hint': 'подтверждено', 'value_id': 'cnt-confirmed'},
-      {'key': 'total', 'label': 'Всего', 'value': status_counts.total, 'tone': 'muted', 'hint': 'по фильтрам', 'value_id': 'cnt-total'}
-    ] %}
+    <div class="slots-kpi">
+      {{
+        kpi_section(
+          'slot_summary_title',
+          eyebrow='Живой статус брони',
+          title='Сводка по слотам',
+          meta='Данные по текущим фильтрам',
+          cards=status_summary
+        )
+      }}
+    </div>
 
-    {{
-      kpi_section(
-        'slot_summary_title',
-        eyebrow='Живой статус брони',
-        title='Сводка по слотам',
-        meta='Данные по текущим фильтрам',
-        cards=slot_cards
-      )
-    }}
-
-    <div class="panel">
-      <div class="toolbar slot-filter-bar">
-        <div class="toolbar__primary">
-          <div class="slot-filter-bar__groups">
-            <div class="slot-filter" data-filter-group="recruiter">
-              <span class="slot-filter__label">Рекрутёр</span>
-              <div class="slot-filter__options" role="group" aria-label="Фильтр по рекрутёру">
-                <button type="button" class="pill slot-filter__option{% if not filter_recruiter_id %} is-active{% endif %}" data-filter-type="recruiter" data-value="" aria-pressed="{{ 'true' if not filter_recruiter_id else 'false' }}">Все</button>
-                {% for r in recruiter_options %}
-                  <button type="button" class="pill slot-filter__option{% if filter_recruiter_id == r.id %} is-active{% endif %}" data-filter-type="recruiter" data-value="{{ r.id }}" aria-pressed="{{ 'true' if filter_recruiter_id == r.id else 'false' }}">{{ r.name }}</button>
-                {% endfor %}
-              </div>
-            </div>
-            <div class="slot-filter" data-filter-group="status">
-              <span class="slot-filter__label">Статус</span>
-              <div class="slot-filter__options" role="group" aria-label="Фильтр по статусу">
-                <button type="button" class="pill slot-filter__option{% if not filter_status %} is-active{% endif %}" data-filter-type="status" data-value="" aria-pressed="{{ 'true' if filter_status else 'false' }}">Все</button>
-                {% for code, label in status_labels.items() %}
-                  <button type="button" class="pill slot-filter__option{% if filter_status == code %} is-active{% endif %}" data-filter-type="status" data-value="{{ code }}" aria-pressed="{{ 'true' if filter_status == code else 'false' }}">{{ label }}</button>
-                {% endfor %}
-              </div>
-            </div>
-            <div class="slot-filter" data-filter-group="city">
-              <span class="slot-filter__label">Город</span>
-              <div class="slot-filter__options" role="group" aria-label="Фильтр по городу">
-                <button type="button" class="pill slot-filter__option{% if not filter_city_id %} is-active{% endif %}" data-filter-type="city" data-value="" aria-pressed="{{ 'true' if filter_city_id else 'false' }}">Все</button>
-                {% for city in city_options %}
-                  <button type="button" class="pill slot-filter__option{% if filter_city_id == city.id %} is-active{% endif %}" data-filter-type="city" data-value="{{ city.id }}" aria-pressed="{{ 'true' if filter_city_id == city.id else 'false' }}">{{ city.name }}</button>
-                {% endfor %}
-              </div>
-            </div>
-          </div>
+    <div class="panel slots-controls" data-role="toolbar">
+      <div class="slots-controls__row slots-controls__row--primary">
+        <div class="slots-chip-list" id="slots_chip_triggers">
+          <button type="button" class="chip chip--trigger" data-chip="recruiter" aria-haspopup="dialog">
+            <span class="chip__label">Рекрутёры</span>
+            <span class="chip__value" data-chip-value="recruiter">{{ recruiter_label or 'Все' if filter_recruiter_id else 'Все' }}</span>
+          </button>
+          <button type="button" class="chip chip--trigger" data-chip="status" aria-haspopup="dialog">
+            <span class="chip__label">Статусы</span>
+            <span class="chip__value" data-chip-value="status">{{ status_labels.get(filter_status, 'Любой') if filter_status else 'Любой' }}</span>
+          </button>
+          <button type="button" class="chip chip--trigger" data-chip="city" aria-haspopup="dialog">
+            <span class="chip__label">Города</span>
+            <span class="chip__value" data-chip-value="city">{{ city_label or 'Все' if filter_city_id else 'Все' }}</span>
+          </button>
         </div>
-        <div class="toolbar__aside slot-filter-bar__aside">
-          <div class="slot-switch-group">
-            <label class="slot-switch">
-              <input id="only_future" type="checkbox" autocomplete="off">
-              <span class="slot-switch__control" aria-hidden="true"></span>
-              <span class="slot-switch__label">Только будущие</span>
-            </label>
-            <label class="slot-switch">
-              <input id="toggle_cand_tz" type="checkbox" autocomplete="off">
-              <span class="slot-switch__control" aria-hidden="true"></span>
-              <span class="slot-switch__label">Время кандидата</span>
-            </label>
-          </div>
-          <form class="slot-per-page" method="get">
-            <label class="slot-per-page__label" for="per_page">На странице</label>
-            <div class="slot-per-page__field">
-              <select id="per_page" name="per_page">
-                {% for n in [10, 20, 50, 100] %}
-                  <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            {% if filter_recruiter_id %}<input type="hidden" name="recruiter_id" value="{{ filter_recruiter_id }}">{% endif %}
-            {% if filter_status %}<input type="hidden" name="status" value="{{ filter_status }}">{% endif %}
-            {% if filter_city_id %}<input type="hidden" name="city_id" value="{{ filter_city_id }}">{% endif %}
-          </form>
+        <div class="slots-search" data-role="search">
+          <div class="slots-search__tokens" id="slots_search_tokens" aria-live="polite"></div>
+          <input type="text" id="slots_search_input" class="slots-search__input" placeholder="Поиск по кандидату, городу, ID…" autocomplete="off">
         </div>
       </div>
+      <div class="slots-controls__row slots-controls__row--secondary">
+        <div class="slots-role-switch" role="group" aria-label="Роль времени">
+          <button type="button" class="slots-role-switch__btn is-active" data-role-target="recruiter">Рекрутёр</button>
+          <button type="button" class="slots-role-switch__btn" data-role-target="candidate">Кандидат</button>
+        </div>
+        <label class="slots-toggle">
+          <input type="checkbox" id="slots_only_future" autocomplete="off">
+          <span>Только будущие</span>
+        </label>
+        <form class="slots-per-page" id="slots_per_page_form" method="get">
+          <label for="per_page" class="slots-per-page__label">На странице</label>
+          <div class="slots-per-page__field">
+            <select id="per_page" name="per_page">
+              {% for n in [10, 20, 50, 100] %}
+                <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% if filter_recruiter_id %}<input type="hidden" name="recruiter_id" value="{{ filter_recruiter_id }}">{% endif %}
+          {% if filter_status %}<input type="hidden" name="status" value="{{ filter_status }}">{% endif %}
+          {% if filter_city_id %}<input type="hidden" name="city_id" value="{{ filter_city_id }}">{% endif %}
+          <noscript><button type="submit" class="btn btn-ghost btn-sm">Обновить</button></noscript>
+        </form>
+      </div>
+      {% if filter_tags %}
+        <div class="slots-controls__row slots-controls__row--tags" id="slots_active_tags" aria-live="polite">
+          {% for tag in filter_tags %}
+            <button type="button" class="chip chip--active" data-remove-filter="{{ tag.key }}">
+              <span class="chip__label">{{ tag.label }}</span>
+              <span class="chip__remove" aria-hidden="true">×</span>
+              <span class="visually-hidden">Сбросить фильтр {{ tag.label }}</span>
+            </button>
+          {% endfor %}
+          <button type="button" class="chip chip--ghost" data-action="reset-filters">Сбросить всё</button>
+        </div>
+      {% endif %}
+    </div>
 
+    <div id="slots_bulk_bar" class="slots-bulk" hidden aria-hidden="true">
+      <div class="slots-bulk__count">Выбрано слотов: <span id="slots_bulk_count">0</span></div>
+      <div class="slots-bulk__actions">
+        <label class="slots-bulk__assign">
+          <span class="slots-bulk__assign-label">Назначить ОД</span>
+          <select id="slots_bulk_assign">
+            <option value="">— Выберите —</option>
+            {% for rec in recruiter_options %}
+              <option value="{{ rec.id }}">{{ rec.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="button" class="btn btn-primary btn-sm" data-bulk-action="assign">Применить</button>
+        <button type="button" class="btn btn-soft btn-sm" data-bulk-action="remind">Напоминание</button>
+        <button type="button" class="btn btn-danger btn-sm" data-bulk-action="delete">Удалить</button>
+      </div>
+    </div>
+
+    {% set qrecr = '&recruiter_id=' ~ filter_recruiter_id if filter_recruiter_id else '' %}
+    {% set qstat = '&status=' ~ filter_status if filter_status else '' %}
+    {% set qcity = '&city_id=' ~ filter_city_id if filter_city_id else '' %}
+    {% set qpp = '&per_page=' ~ per_page if per_page else '' %}
+
+    <div class="panel panel--compact slots-table-card">
       {% if has_slots %}
-        <div class="panel panel--compact">
-          <div class="table__wrap">
-            <table class="table slot-table" id="slots_table">
-              <caption class="visually-hidden">Таблица слотов</caption>
-              <thead>
-                <tr>
-                  <th scope="col" class="sortable col-id">
-                    <button class="sort" type="button" data-key="id" aria-sort="ascending">ID <span class="arrow" aria-hidden="true"></span></button>
-                  </th>
-                  <th scope="col" class="sortable">
-                    <button class="sort" type="button" data-key="recruiter" aria-sort="none">Рекрутёр <span class="arrow" aria-hidden="true"></span></button>
-                  </th>
-                  <th scope="col" class="col-city">Город</th>
-                  <th scope="col" class="sortable">
-                    <button class="sort" type="button" data-key="utc" aria-sort="none">UTC <span class="arrow" aria-hidden="true"></span></button>
-                  </th>
-                  <th scope="col" class="col-local">Локальное (рекрутёр)</th>
-                  <th scope="col" class="col-cand-tz is-optional">Локальное (кандидат)</th>
-                  <th scope="col" class="sortable">
-                    <button class="sort" type="button" data-key="status" aria-sort="none">Статус <span class="arrow" aria-hidden="true"></span></button>
-                  </th>
-                  <th scope="col" class="sortable is-optional">
-                    <button class="sort" type="button" data-key="candidate" aria-sort="none">Кандидат <span class="arrow" aria-hidden="true"></span></button>
-                  </th>
-                  <th scope="col" class="col-actions">Действия</th>
-                </tr>
-              </thead>
-              <tbody id="slots_tbody">
-                {% for s in slots %}
-                  {% set st = norm_status(s.status) %}
-                  {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
-                  {% set cand_tz = s.candidate_tz %}
-                  {% set status_order = 0 if st == 'FREE' else (1 if st == 'PENDING' else (2 if st == 'BOOKED' else 9)) %}
-                  <tr class="slot-row"
-                      tabindex="0"
-                      data-id="{{ s.id }}"
-                      data-status="{{ st or '' }}"
-                      data-status-label="{{ status_labels.get(st, st or '') }}"
-                      data-status-order="{{ status_order }}"
-                      data-start-iso="{{ s.start_utc.isoformat() }}"
-                      data-start-utc="{{ fmt_utc(s.start_utc) }}"
-                      data-start-rec="{{ fmt_local(s.start_utc, tz_rec) }}"
-                      data-start-cand="{{ fmt_local(s.start_utc, cand_tz) if cand_tz else '' }}"
-                      data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
-                      data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
-                      data-recruiter-tz="{{ tz_rec }}"
-                      data-city-id="{{ s.city.id if s.city else '' }}"
-                      data-city-name="{{ s.city.name if s.city else '' }}"
-                      data-city-tz="{{ tz_display(s.city.tz) if s.city else '' }}"
-                      data-duration="{{ s.duration_min }}"
-                      data-candidate="{{ s.candidate_fio or '' }}"
-                      data-candidate-id="{{ s.candidate_tg_id or '' }}"
-                      data-candidate-tz="{{ cand_tz or '' }}"
-                      data-outcome="{{ s.interview_outcome or '' }}"
-                      data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
-                    <td data-label="ID">ID {{ s.id }}</td>
-                    <td data-label="Рекрутёр">
-                      <div class="slot-cell-primary">{{ s.recruiter.name if s.recruiter else "—" }}</div>
-                      <span class="badge badge--soft">{{ tz_display(tz_rec) }}</span>
-                    </td>
-                    <td data-label="Город">
-                      {% if s.city %}
-                        <div class="slot-chip-group">
-                          <span class="slot-chip">{{ s.city.name }}</span>
-                          <span class="badge badge--soft">{{ tz_display(s.city.tz) }}</span>
-                        </div>
-                      {% else %}
-                        <span class="slot-chip slot-chip--empty">—</span>
-                      {% endif %}
-                    </td>
-                    <td data-label="UTC">
-                      <div class="slot-time">
-                        <span class="slot-time__value">{{ fmt_utc(s.start_utc) }}</span>
-                        <span class="slot-time__relative" data-role="relative">—</span>
-                      </div>
-                    </td>
-                    <td data-label="Время (рекрутёр)">
-                      <span class="slot-time__value">{{ fmt_local(s.start_utc, tz_rec) }}</span>
-                    </td>
-                    <td data-label="Время (кандидат)" class="col-cand-tz is-optional">
-                      {% if cand_tz %}
-                        <div class="badge badge--soft">{{ tz_display(cand_tz) }}</div>
-                        <span class="slot-time__value">{{ fmt_local(s.start_utc, cand_tz) }}</span>
-                      {% else %}
-                        <span class="badge badge--soft">—</span>
-                      {% endif %}
-                    </td>
-                    <td data-label="Статус">
-                      {% set status_label = status_labels.get(st, st or "—") %}
-                      {% if st == "FREE" %}
-                        <span class="status-badge" data-tone="success">{{ status_label }}</span>
-                      {% elif st == "PENDING" %}
-                        <span class="status-badge" data-tone="warning">{{ status_label }}</span>
-                      {% elif st == "BOOKED" %}
-                        <span class="status-badge" data-tone="info">{{ status_label }}</span>
-                      {% elif st == "CONFIRMED_BY_CANDIDATE" %}
-                        <span class="status-badge" data-tone="success">{{ status_label }}</span>
-                      {% elif st %}
-                        <span class="status-badge" data-tone="info">{{ status_label }}</span>
-                      {% else %}
-                        <span class="badge badge--soft">—</span>
-                      {% endif %}
-                    </td>
-                    <td data-label="Кандидат" class="is-optional">
-                      {% if s.candidate_fio %}
-                        <div class="slot-cell-primary">{{ s.candidate_fio }}</div>
-                        <span class="badge badge--soft">tg_id: {{ s.candidate_tg_id or "—" }}</span>
-                      {% else %}
-                        <span class="badge badge--soft">—</span>
-                      {% endif %}
-                    </td>
-                    <td class="col-actions" data-label="Действия">
-                      <button type="button" class="btn btn-ghost btn-sm" data-action="open-slot">Подробнее</button>
-                      <button type="button" class="btn btn-danger btn-sm" data-action="delete-slot">Удалить</button>
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+        <div class="slots-pagination slots-pagination--top">
+          <span class="badge badge--soft">Страница {{ page }} из {{ pages_total }}</span>
+          <div class="slots-pagination__controls">
+            {% if page > 1 %}
+              <a class="btn btn-ghost" href="/slots?page=1{{ qrecr }}{{ qstat }}{{ qcity }}{{ qpp }}">« Первая</a>
+              <a class="btn btn-ghost" href="/slots?page={{ page-1 }}{{ qrecr }}{{ qstat }}{{ qcity }}{{ qpp }}">‹ Назад</a>
+            {% else %}
+              <span class="btn btn-ghost" aria-disabled="true">« Первая</span>
+              <span class="btn btn-ghost" aria-disabled="true">‹ Назад</span>
+            {% endif %}
+            {% if page < pages_total %}
+              <a class="btn btn-ghost" href="/slots?page={{ page+1 }}{{ qrecr }}{{ qstat }}{{ qcity }}{{ qpp }}">Вперёд ›</a>
+              <a class="btn btn-ghost" href="/slots?page={{ pages_total }}{{ qrecr }}{{ qstat }}{{ qcity }}{{ qpp }}">Последняя »</a>
+            {% else %}
+              <span class="btn btn-ghost" aria-disabled="true">Вперёд ›</span>
+              <span class="btn btn-ghost" aria-disabled="true">Последняя »</span>
+            {% endif %}
           </div>
         </div>
 
-        <div id="slot_empty_state" class="slot-empty-state panel" role="status" hidden aria-hidden="true">
-          <h3 class="slot-empty-state__title">Нет слотов по текущим фильтрам</h3>
-          <p class="slot-empty-state__hint muted">Сбросьте фильтры или создайте новый слот, чтобы продолжить работу.</p>
-          <div class="slot-empty-state__actions">
+        <div class="table__wrap slots-table__wrap">
+          <table class="table slots-table table--stackable" id="slots_table">
+            <caption class="visually-hidden">Таблица слотов</caption>
+            <thead>
+              <tr>
+                <th scope="col" class="col-select">
+                  <label class="slot-checkbox" aria-label="Выбрать все">
+                    <input type="checkbox" id="slots_select_all">
+                    <span class="slot-checkbox__box" aria-hidden="true"></span>
+                  </label>
+                </th>
+                <th scope="col" class="sortable col-summary">
+                  <button class="sort" type="button" data-sort="recruiter" aria-sort="none">Слот <span class="arrow" aria-hidden="true"></span></button>
+                </th>
+                <th scope="col" class="sortable col-time">
+                  <button class="sort" type="button" data-sort="time" aria-sort="ascending">Время <span class="arrow" aria-hidden="true"></span></button>
+                </th>
+                <th scope="col" class="sortable col-candidate">
+                  <button class="sort" type="button" data-sort="candidate" aria-sort="none">Кандидат <span class="arrow" aria-hidden="true"></span></button>
+                </th>
+                <th scope="col" class="col-meta">Детали</th>
+                <th scope="col" class="col-actions">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="slots_tbody">
+              {% for s in slots %}
+                {% set st = norm_status(s.status) %}
+                {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
+                {% set cand_tz = s.candidate_tz %}
+                {% set status_order = 0 if st == 'FREE' else (1 if st == 'PENDING' else (2 if st == 'BOOKED' else 9)) %}
+                {% set status_label = status_labels.get(st, st or '—') %}
+                {% if st == 'FREE' %}
+                  {% set tone = 'success' %}
+                {% elif st == 'PENDING' %}
+                  {% set tone = 'warning' %}
+                {% elif st == 'BOOKED' %}
+                  {% set tone = 'progress' %}
+                {% elif st == 'CONFIRMED_BY_CANDIDATE' %}
+                  {% set tone = 'success' %}
+                {% else %}
+                  {% set tone = 'muted' %}
+                {% endif %}
+                <tr class="slot-row"
+                    tabindex="0"
+                    data-id="{{ s.id }}"
+                    data-status="{{ st or '' }}"
+                    data-status-label="{{ status_label }}"
+                    data-status-order="{{ status_order }}"
+                    data-start-iso="{{ s.start_utc.isoformat() }}"
+                    data-start-utc="{{ fmt_utc(s.start_utc) }}"
+                    data-start-rec="{{ fmt_local(s.start_utc, tz_rec) }}"
+                    data-start-cand="{{ fmt_local(s.start_utc, cand_tz) if cand_tz else '' }}"
+                    data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
+                    data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
+                    data-recruiter-tz="{{ tz_rec }}"
+                    data-city-id="{{ s.city.id if s.city else '' }}"
+                    data-city-name="{{ s.city.name if s.city else '' }}"
+                    data-city-tz="{{ tz_display(s.city.tz) if s.city else '' }}"
+                    data-duration="{{ s.duration_min }}"
+                    data-candidate="{{ s.candidate_fio or '' }}"
+                    data-candidate-id="{{ s.candidate_tg_id or '' }}"
+                    data-candidate-tz="{{ cand_tz or '' }}"
+                    data-outcome="{{ s.interview_outcome or '' }}"
+                    data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
+                  <td class="col-select" data-label="Выбрать">
+                    <label class="slot-checkbox">
+                      <input type="checkbox" class="slot-select" value="{{ s.id }}">
+                      <span class="slot-checkbox__box" aria-hidden="true"></span>
+                      <span class="visually-hidden">Выбрать слот {{ s.id }}</span>
+                    </label>
+                  </td>
+                  <td class="col-summary" data-label="Слот">
+                    <div class="slot-summary">
+                      <div class="slot-summary__top">
+                        <span class="slot-summary__id">ID {{ s.id }}</span>
+                        <span class="status-chip" data-tone="{{ tone }}">{{ status_label }}</span>
+                      </div>
+                      <div class="slot-summary__meta">
+                        <span class="slot-summary__person">{{ s.recruiter.name if s.recruiter else 'Не назначен' }}</span>
+                        {% if s.city %}
+                          <span class="slot-summary__city">{{ s.city.name }}</span>
+                        {% else %}
+                          <span class="slot-summary__city slot-summary__city--empty">Город не выбран</span>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </td>
+                  <td class="col-time" data-label="Время">
+                    <div class="slot-time" data-role="time">
+                      <span class="slot-time__primary" data-role="time-primary">{{ fmt_local(s.start_utc, tz_rec) }}</span>
+                      <span class="slot-time__secondary" data-role="time-secondary">UTC {{ fmt_utc(s.start_utc) }}</span>
+                      {% if cand_tz %}
+                        <span class="slot-time__candidate" data-role="time-candidate">{{ fmt_local(s.start_utc, cand_tz) }} · {{ tz_display(cand_tz) }}</span>
+                      {% endif %}
+                      <span class="slot-deadline" data-role="deadline">—</span>
+                    </div>
+                  </td>
+                  <td class="col-candidate" data-label="Кандидат">
+                    {% if s.candidate_fio %}
+                      <div class="slot-candidate">
+                        <span class="slot-candidate__name">{{ s.candidate_fio }}</span>
+                        <div class="slot-candidate__meta">
+                          <span class="slot-candidate__id">tg_id: {{ s.candidate_tg_id or '—' }}</span>
+                          {% if cand_tz %}<span class="slot-candidate__tz">{{ tz_display(cand_tz) }}</span>{% endif %}
+                        </div>
+                        <button type="button" class="btn btn-outline btn-xs" data-action="write-tg" data-tg-id="{{ s.candidate_tg_id or '' }}" {% if not s.candidate_tg_id %}disabled{% endif %}>Написать в TG</button>
+                      </div>
+                    {% else %}
+                      <span class="slot-candidate slot-candidate--empty">Нет брони</span>
+                    {% endif %}
+                  </td>
+                  <td class="col-meta" data-label="Детали">
+                    <dl class="slot-meta">
+                      <div class="slot-meta__item"><dt>Длительность</dt><dd>{{ s.duration_min }} мин</dd></div>
+                      <div class="slot-meta__item"><dt>Часовой пояс</dt><dd>{{ tz_display(tz_rec) }}</dd></div>
+                    </dl>
+                  </td>
+                  <td class="col-actions" data-label="Действия">
+                    <div class="slot-actions" data-role="menu">
+                      <button type="button" class="slot-actions__trigger" aria-haspopup="menu" aria-expanded="false">⋯</button>
+                      <div class="slot-actions__menu" role="menu">
+                        <button type="button" data-action="open-slot" role="menuitem">Подробнее</button>
+                        <button type="button" data-action="duplicate-slot" role="menuitem">Дублировать</button>
+                        <button type="button" data-action="copy-slot" role="menuitem">Скопировать ссылку</button>
+                        <button type="button" data-action="delete-slot" role="menuitem">Удалить</button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="slots-empty" id="slot_empty_state" role="status" hidden aria-hidden="true">
+          <h3 class="slots-empty__title">Нет слотов по выбранным условиям</h3>
+          <p class="slots-empty__hint muted">Попробуйте изменить фильтры или создайте новый слот.</p>
+          <div class="slots-empty__actions">
             <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
             <button type="button" class="btn btn-ghost" data-action="reset-filters">Сбросить фильтры</button>
           </div>
         </div>
 
-        <div class="pagination">
-          {% set qrecr = '&recruiter_id=' ~ filter_recruiter_id if filter_recruiter_id else '' %}
-          {% set qstat = '&status=' ~ filter_status if filter_status else '' %}
-          {% set qpp = '&per_page=' ~ per_page if per_page else '' %}
-
+        <div class="slots-pagination slots-pagination--bottom">
           <span class="badge badge--soft">Страница {{ page }} из {{ pages_total }}</span>
-
-          {% if page > 1 %}
-            <a class="btn btn-ghost" href="/slots?page=1{{ qrecr }}{{ qstat }}{{ qpp }}">« Первая</a>
-            <a class="btn btn-ghost" href="/slots?page={{ page-1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">‹ Назад</a>
-          {% else %}
-            <span class="btn btn-ghost" aria-disabled="true">« Первая</span>
-            <span class="btn btn-ghost" aria-disabled="true">‹ Назад</span>
-          {% endif %}
-
-          {% if page < pages_total %}
-            <a class="btn btn-ghost" href="/slots?page={{ page+1 }}{{ qrecr }}{{ qstat }}{{ qpp }}">Вперёд ›</a>
-            <a class="btn btn-ghost" href="/slots?page={{ pages_total }}{{ qrecr }}{{ qstat }}{{ qpp }}">Последняя »</a>
-          {% else %}
-            <span class="btn btn-ghost" aria-disabled="true">Вперёд ›</span>
-            <span class="btn btn-ghost" aria-disabled="true">Последняя »</span>
-          {% endif %}
+          <div class="slots-pagination__controls">
+            {% if page > 1 %}
+              <a class="btn btn-ghost" href="/slots?page=1{{ qrecr }}{{ qstat }}{{ qcity }}{{ qpp }}">« Первая</a>
+              <a class="btn btn-ghost" href="/slots?page={{ page-1 }}{{ qrecr }}{{ qstat }}{{ qcity }}{{ qpp }}">‹ Назад</a>
+            {% else %}
+              <span class="btn btn-ghost" aria-disabled="true">« Первая</span>
+              <span class="btn btn-ghost" aria-disabled="true">‹ Назад</span>
+            {% endif %}
+            {% if page < pages_total %}
+              <a class="btn btn-ghost" href="/slots?page={{ page+1 }}{{ qrecr }}{{ qstat }}{{ qcity }}{{ qpp }}">Вперёд ›</a>
+              <a class="btn btn-ghost" href="/slots?page={{ pages_total }}{{ qrecr }}{{ qstat }}{{ qcity }}{{ qpp }}">Последняя »</a>
+            {% else %}
+              <span class="btn btn-ghost" aria-disabled="true">Вперёд ›</span>
+              <span class="btn btn-ghost" aria-disabled="true">Последняя »</span>
+            {% endif %}
+          </div>
         </div>
       {% else %}
-        <div id="slot_empty_state" class="slot-empty-state panel" role="status">
-          <h3 class="slot-empty-state__title">Пока пусто</h3>
-          <p class="slot-empty-state__hint muted">Создайте первый слот или измените фильтры, чтобы увидеть расписание.</p>
-          <div class="slot-empty-state__actions">
+        <div class="slots-empty slots-empty--initial" role="status">
+          <h3 class="slots-empty__title">Пока нет слотов</h3>
+          <p class="slots-empty__hint muted">Создайте первый слот или импортируйте серию, чтобы начать планирование интервью.</p>
+          <div class="slots-empty__actions">
             <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+            <a class="btn btn-soft" href="/slots/new#panel-bulk">Импорт серией</a>
           </div>
         </div>
       {% endif %}
@@ -295,1092 +342,88 @@
   </div>
 </section>
 
-  <div id="slot_backdrop" class="sheet-backdrop" hidden></div>
-  <aside id="slot_sheet" class="sheet slot-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="slot_sheet_title">
-    <header class="sheet-header">
-      <div>
-        <h3 id="slot_sheet_title" class="sheet-title">Слот не выбран</h3>
-        <p id="slot_sheet_sub" class="sheet-sub muted">Выберите запись в таблице.</p>
-      </div>
-      <button id="slot_sheet_close" class="btn btn-ghost btn-sm" type="button" aria-label="Закрыть">✕</button>
-    </header>
-
-    <div class="sheet-body slot-sheet-body">
-      <section class="slot-overview" aria-live="polite">
-        <div class="slot-overview__top">
-          <span class="badge badge--soft" id="slot_sheet_id">ID —</span>
-          <span class="status-badge" id="slot_sheet_status" data-tone="info">Статус: —</span>
-        </div>
-        <div class="slot-overview__meta">
-          <div id="slot_sheet_city_wrap" hidden>
-            <span class="slot-overview__hint">Локация</span>
-            <p class="slot-overview__value slot-overview__value--inline">
-              <span id="slot_sheet_city">—</span>
-              <span class="badge badge--soft" id="slot_sheet_city_tz" hidden>—</span>
-            </p>
-          </div>
-          <div>
-            <span class="slot-overview__hint">UTC</span>
-            <p class="slot-overview__value" id="slot_sheet_utc">—</p>
-          </div>
-          <div>
-            <span class="slot-overview__hint">Локальное (рекрутёр)</span>
-            <p class="slot-overview__value" id="slot_sheet_local">—</p>
-          </div>
-          <div id="slot_sheet_local_candidate_wrap">
-            <span class="slot-overview__hint">Локальное (кандидат)</span>
-            <p class="slot-overview__value" id="slot_sheet_local_candidate">—</p>
-          </div>
-        </div>
-        <p class="slot-overview__rel" id="slot_sheet_rel">—</p>
-      </section>
-
-      <section class="slot-panel">
-        <div class="slot-panel__header">
-          <span class="slot-panel__icon" aria-hidden="true">🧑‍💼</span>
-          <div>
-            <h4 class="slot-panel__title">Рекрутёр</h4>
-            <p class="slot-panel__hint">Текущий владелец слота</p>
-          </div>
-        </div>
-        <div class="slot-panel__body" id="slot_sheet_recruiter">
-          <p class="muted">Не назначен</p>
-        </div>
-      </section>
-
-      <section class="slot-panel" id="slot_sheet_candidate_section">
-        <div class="slot-panel__header">
-          <span class="slot-panel__icon" aria-hidden="true">🧑‍🎓</span>
-          <div>
-            <h4 class="slot-panel__title">Кандидат</h4>
-            <p class="slot-panel__hint">Бронь и контакты</p>
-          </div>
-        </div>
-        <div class="slot-panel__body" id="slot_sheet_candidate">
-          <p class="muted">Пока никто не забронировал слот.</p>
-        </div>
-        <div class="slot-panel__actions" id="slot_sheet_candidate_actions">
-          <button type="button" class="btn btn-soft btn-sm" id="slot_reschedule_btn" disabled>Перенести бронь</button>
-          <button type="button" class="btn btn-danger btn-sm" id="slot_reject_btn" disabled>Отказать кандидату</button>
-        </div>
-      </section>
-
-      <section class="slot-panel" id="slot_sheet_outcome_section">
-        <div class="slot-panel__header">
-          <span class="slot-panel__icon" aria-hidden="true">✅</span>
-          <div>
-            <h4 class="slot-panel__title">Исход интервью</h4>
-            <p class="slot-panel__hint">Выберите результат встречи</p>
-          </div>
-        </div>
-        <div class="slot-panel__body">
-          <p class="muted" id="slot_sheet_outcome_hint">Доступно после назначения кандидата.</p>
-          <div class="slot-outcome__actions" id="slot_sheet_outcome_actions">
-            <button type="button" class="btn btn-ghost btn-sm" data-outcome="success">Прошёл</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-outcome="reject">Не прошёл</button>
-          </div>
-          <p class="slot-outcome__status" id="slot_sheet_outcome_status">Исход не выбран</p>
-        </div>
-      </section>
-
-      <section class="slot-panel">
-        <div class="slot-panel__header">
-          <span class="slot-panel__icon" aria-hidden="true">⏱</span>
-          <div>
-            <h4 class="slot-panel__title">Параметры</h4>
-            <p class="slot-panel__hint">Продолжительность и статус</p>
-          </div>
-        </div>
-        <div class="slot-panel__body">
-          <ul class="slot-meta" id="slot_sheet_meta"></ul>
-        </div>
-      </section>
+<div id="slots_filter_backdrop" class="sheet-backdrop" hidden></div>
+<aside id="slots_filter_sheet" class="sheet slots-filter-sheet" hidden aria-modal="true" role="dialog" aria-labelledby="slots_filter_title">
+  <header class="sheet-header">
+    <div>
+      <h3 id="slots_filter_title" class="sheet-title">Фильтры</h3>
+      <p class="sheet-sub muted">Выберите значения и примените, чтобы обновить таблицу.</p>
     </div>
-
-    <footer class="sheet-footer slot-sheet-footer">
-      <div class="form-actions">
-        <button id="slot_delete_btn" class="btn btn-danger btn-sm" type="button" disabled>Удалить слот</button>
-        <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+    <button type="button" class="btn btn-ghost btn-sm" data-filter-close aria-label="Закрыть">✕</button>
+  </header>
+  <div class="sheet-body slots-filter-body">
+    <section class="slots-filter-section" data-filter="recruiter">
+      <header><h4>Рекрутёры</h4></header>
+      <div class="slots-filter-options" role="group" aria-label="Фильтр по рекрутёрам">
+        <label class="slots-filter-option">
+          <input type="radio" name="filter_recruiter" value="" {% if not filter_recruiter_id %}checked{% endif %}>
+          <span>Все</span>
+        </label>
+        {% for rec in recruiter_options %}
+          <label class="slots-filter-option">
+            <input type="radio" name="filter_recruiter" value="{{ rec.id }}" {% if filter_recruiter_id == rec.id %}checked{% endif %}>
+            <span>{{ rec.name }}</span>
+          </label>
+        {% endfor %}
       </div>
-    </footer>
-  </aside>
-
-  <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
-</section>
-
-<script>
-(function(){
-  const $ = (selector, root=document) => root.querySelector(selector);
-  const $$ = (selector, root=document) => Array.from(root.querySelectorAll(selector));
-  const on = (el, event, cb, opts) => el && el.addEventListener(event, cb, opts);
-
-  const table = $('#slots_table');
-  const tbody = $('#slots_tbody');
-  const rows = tbody ? $$('.slot-row', tbody) : [];
-
-  const onlyFuture = $('#only_future');
-  const candToggle = $('#toggle_cand_tz');
-  const emptyCard = $('#slot_empty_state');
-  const deleteAllBtn = $('#delete_all_slots');
-  const resetFiltersBtn = $('[data-action="reset-filters"]');
-
-  const perPageForm = $('.slot-per-page');
-  const perPageSelect = perPageForm ? perPageForm.querySelector('#per_page') : null;
-  let hiddenInputs = {
-    recruiter: perPageForm ? perPageForm.querySelector('input[name="recruiter_id"]') : null,
-    status: perPageForm ? perPageForm.querySelector('input[name="status"]') : null,
-    city: perPageForm ? perPageForm.querySelector('input[name="city_id"]') : null,
-  };
-  const filterButtons = $$('.slot-filter__option');
-
-  const chipTotal = $('#cnt-total');
-  const chipFree = $('#cnt-free');
-  const chipPending = $('#cnt-pending');
-  const chipBookedEl = $('#cnt-booked');
-  const chipConfirmedEl = $('#cnt-confirmed');
-
-  const slotSheet = $('#slot_sheet');
-  const slotBackdrop = $('#slot_backdrop');
-  const slotClose = $('#slot_sheet_close');
-
-  const slotTitle = $('#slot_sheet_title');
-  const slotSub = $('#slot_sheet_sub');
-  const slotId = $('#slot_sheet_id');
-  const slotStatus = $('#slot_sheet_status');
-  const slotUtc = $('#slot_sheet_utc');
-  const slotLocal = $('#slot_sheet_local');
-  const slotCityWrap = $('#slot_sheet_city_wrap');
-  const slotCity = $('#slot_sheet_city');
-  const slotCityTz = $('#slot_sheet_city_tz');
-  const slotLocalCandidateWrap = $('#slot_sheet_local_candidate_wrap');
-  const slotLocalCandidate = $('#slot_sheet_local_candidate');
-  const slotRel = $('#slot_sheet_rel');
-  const slotRecruiter = $('#slot_sheet_recruiter');
-  const slotCandidateSection = $('#slot_sheet_candidate_section');
-  const slotCandidate = $('#slot_sheet_candidate');
-  const slotCandidateActions = $('#slot_sheet_candidate_actions');
-  const slotRescheduleBtn = $('#slot_reschedule_btn');
-  const slotRejectBookingBtn = $('#slot_reject_btn');
-  const slotOutcomeSection = $('#slot_sheet_outcome_section');
-  const slotOutcomeHint = $('#slot_sheet_outcome_hint');
-  const slotOutcomeActions = $('#slot_sheet_outcome_actions');
-  const slotOutcomeStatus = $('#slot_sheet_outcome_status');
-  const slotMeta = $('#slot_sheet_meta');
-  const slotDeleteBtn = $('#slot_delete_btn');
-  const toastStack = $('#toasts');
-
-  let sortState = { key: 'utc', dir: 'asc' };
-  let currentRow = null;
-  let relTimer = null;
-
-  const storage = window.localStorage;
-  const storageKeys = {
-    future: 'slots.onlyFuture',
-    candidate: 'slots.showCandidateTz'
-  };
-
-  function readInitialFilter(type){
-    const active = document.querySelector(`[data-filter-group="${type}"] .slot-filter__option.is-active`);
-    return active ? (active.dataset.value || '') : '';
-  }
-
-  const filterState = {
-    recruiter: readInitialFilter('recruiter'),
-    status: readInitialFilter('status'),
-    city: readInitialFilter('city'),
-    onlyFuture: !!(onlyFuture && onlyFuture.checked),
-  };
-
-  function ensureHiddenInput(name, current, value){
-    if (!perPageForm) return null;
-    if (value){
-      if (!current){
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = name;
-        perPageForm.appendChild(input);
-        current = input;
-      }
-      current.value = value;
-      return current;
-    }
-    if (current){
-      current.remove();
-    }
-    return null;
-  }
-
-  function toast(text, kind='info'){
-    if (!toastStack) return;
-    const el = document.createElement('div');
-    el.className = 'toast';
-    el.dataset.kind = kind;
-    el.textContent = text;
-    toastStack.appendChild(el);
-    requestAnimationFrame(() => el.classList.add('toast--show'));
-    setTimeout(() => el.classList.add('toast--hide'), 1800);
-    setTimeout(() => el.remove(), 2200);
-  }
-
-  function parseTime(row){
-    const iso = row?.dataset.startIso;
-    if (!iso) return NaN;
-    const value = Date.parse(iso);
-    return Number.isNaN(value) ? NaN : value;
-  }
-
-  function isFutureRow(row){
-    const ts = parseTime(row);
-    return Number.isNaN(ts) ? true : ts >= Date.now();
-  }
-
-  function formatRelative(timestamp){
-    if (!Number.isFinite(timestamp)) return '—';
-    const diffMin = Math.round((timestamp - Date.now()) / 60000);
-    const abs = Math.abs(diffMin);
-    if (abs < 1) return diffMin >= 0 ? 'через несколько секунд' : 'только что';
-    if (abs < 60) return `${diffMin >= 0 ? 'через' : ''} ${abs} мин`;
-    const hours = Math.round(abs / 60);
-    return `${diffMin >= 0 ? 'через' : ''} ${hours} ч`;
-  }
-
-  function updateCounters(result){
-    if (!result) result = computeVisibleStats();
-    if (chipTotal) chipTotal.textContent = result.total;
-    if (chipFree) chipFree.textContent = result.free;
-    if (chipPending) chipPending.textContent = result.pending;
-    if (chipBookedEl) chipBookedEl.textContent = result.booked;
-    if (chipConfirmedEl) chipConfirmedEl.textContent = result.confirmed;
-  }
-
-  function computeVisibleStats(){
-    let total = 0, free = 0, pending = 0, booked = 0, confirmed = 0;
-    rows.forEach(row => {
-      if (row.style.display === 'none') return;
-      total += 1;
-      const st = row.dataset.status;
-      if (st === 'FREE') free += 1;
-      else if (st === 'PENDING') pending += 1;
-      else if (st === 'BOOKED') booked += 1;
-      else if (st === 'CONFIRMED_BY_CANDIDATE' || st === 'CONFIRMED') confirmed += 1;
-    });
-    return { total, free, pending, booked, confirmed };
-  }
-
-  function updateFilterInputs(){
-    hiddenInputs.recruiter = ensureHiddenInput('recruiter_id', hiddenInputs.recruiter, filterState.recruiter);
-    hiddenInputs.status = ensureHiddenInput('status', hiddenInputs.status, filterState.status);
-    hiddenInputs.city = ensureHiddenInput('city_id', hiddenInputs.city, filterState.city);
-  }
-
-  function updateFilterButtons(type, value){
-    const group = document.querySelector(`[data-filter-group="${type}"]`);
-    if (!group) return;
-    $$('.slot-filter__option', group).forEach(btn => {
-      const isActive = (btn.dataset.value || '') === value;
-      btn.classList.toggle('is-active', isActive);
-      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    });
-  }
-
-  function updateQueryParams(options = {}){
-    if (!window.history || !window.history.replaceState) return;
-    const { resetPage = false } = options;
-    const params = new URLSearchParams(window.location.search);
-    [
-      ['recruiter_id', filterState.recruiter],
-      ['status', filterState.status],
-      ['city_id', filterState.city],
-    ].forEach(([key, value]) => {
-      if (value) params.set(key, value);
-      else params.delete(key);
-    });
-    if (perPageSelect && perPageSelect.value){
-      params.set('per_page', perPageSelect.value);
-    }
-    if (resetPage) params.delete('page');
-    const queryString = params.toString();
-    const newUrl = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
-    window.history.replaceState(null, '', newUrl);
-  }
-
-  function setFilter(type, value, options = {}){
-    if (!(type in filterState)) return;
-    const { apply = true, resetPage = true } = options;
-    const nextValue = value ?? '';
-    filterState[type] = nextValue;
-    updateFilterButtons(type, nextValue);
-    updateFilterInputs();
-    if (apply){
-      applyFilters();
-      updateQueryParams({ resetPage });
-    }
-  }
-
-  function applyFilters(){
-    let visible = 0;
-    const requireFuture = !!filterState.onlyFuture;
-    rows.forEach(row => {
-      let show = true;
-      if (filterState.recruiter && row.dataset.recruiterId !== filterState.recruiter) show = false;
-      if (show && filterState.status && row.dataset.status !== filterState.status) show = false;
-      if (show && filterState.city && row.dataset.cityId !== filterState.city) show = false;
-      if (show && requireFuture) show = isFutureRow(row);
-      row.style.display = show ? '' : 'none';
-      row.classList.toggle('is-hidden', !show);
-      if (show) visible += 1;
-    });
-    updateCounters();
-    toggleEmptyState(visible);
-  }
-
-  function toggleEmptyState(visibleCount){
-    if (!emptyCard) return;
-    const show = !rows.length || visibleCount === 0;
-    emptyCard.hidden = !show;
-    emptyCard.setAttribute('aria-hidden', show ? 'false' : 'true');
-  }
-
-  function setCandidateColumnVisibility(show){
-    const targets = $$('.col-cand-tz');
-    targets.forEach(el => el.classList.toggle('hidden-col', !show));
-  }
-
-  function getSortValue(row, key){
-    switch(key){
-      case 'id':
-        return parseInt(row.dataset.id || '0', 10);
-      case 'utc':
-        return parseTime(row);
-      case 'recruiter':
-        return (row.dataset.recruiter || '').toLowerCase();
-      case 'candidate':
-        return (row.dataset.candidate || '').toLowerCase();
-      case 'status':
-        return parseInt(row.dataset.statusOrder || '9', 10);
-      default:
-        return 0;
-    }
-  }
-
-  function applySortIndicator(){
-    if (!table) return;
-    $$('.sort', table).forEach(btn => {
-      const key = btn.dataset.key;
-      const active = key === sortState.key;
-      btn.classList.toggle('is-active', active);
-      btn.setAttribute('aria-sort', active ? (sortState.dir === 'asc' ? 'ascending' : 'descending') : 'none');
-    });
-  }
-
-  function applySort(){
-    if (!tbody) return;
-    const sorted = rows.slice().sort((a, b) => {
-      const av = getSortValue(a, sortState.key);
-      const bv = getSortValue(b, sortState.key);
-      if (av < bv) return sortState.dir === 'asc' ? -1 : 1;
-      if (av > bv) return sortState.dir === 'asc' ? 1 : -1;
-      return 0;
-    });
-    sorted.forEach(row => tbody.appendChild(row));
-  }
-
-  function updateRelativeLabels(){
-    rows.forEach(row => {
-      const relEl = $('[data-role="relative"]', row);
-      if (!relEl) return;
-      relEl.textContent = formatRelative(parseTime(row));
-    });
-    if (currentRow && slotRel){
-      slotRel.textContent = formatRelative(parseTime(currentRow));
-    }
-  }
-
-  function fillList(container, items){
-    container.innerHTML = '';
-    items.forEach(text => {
-      const li = document.createElement('li');
-      li.textContent = text;
-      container.appendChild(li);
-    });
-  }
-
-  function removeRow(row){
-    if (!row) return;
-    const idx = rows.indexOf(row);
-    if (idx !== -1){
-      rows.splice(idx, 1);
-    }
-    row.remove();
-  }
-
-  function openSheet(){
-    if (!slotSheet || !slotBackdrop) return;
-    slotSheet.hidden = false;
-    slotBackdrop.hidden = false;
-    requestAnimationFrame(() => {
-      slotSheet.classList.add('open');
-      slotBackdrop.classList.add('open');
-      document.body.classList.add('sheet-open');
-    });
-  }
-
-  function closeSheet(){
-    if (!slotSheet || !slotBackdrop) return;
-    slotSheet.classList.remove('open');
-    slotBackdrop.classList.remove('open');
-    setTimeout(() => {
-      slotSheet.hidden = true;
-      slotBackdrop.hidden = true;
-      document.body.classList.remove('sheet-open');
-      currentRow = null;
-      resetSheet();
-    }, 200);
-  }
-
-  function resetSheet(){
-    if (slotTitle) slotTitle.textContent = 'Слот не выбран';
-    if (slotSub) slotSub.textContent = 'Выберите запись в таблице.';
-    if (slotId) slotId.textContent = 'ID —';
-    if (slotStatus){
-      slotStatus.textContent = 'Статус: —';
-      slotStatus.dataset.tone = 'info';
-    }
-    if (slotUtc) slotUtc.textContent = '—';
-    if (slotLocal) slotLocal.textContent = '—';
-    if (slotCity) slotCity.textContent = '—';
-    if (slotCityTz){
-      slotCityTz.textContent = '—';
-      slotCityTz.hidden = true;
-    }
-    if (slotCityWrap) slotCityWrap.hidden = true;
-    if (slotLocalCandidateWrap){
-      slotLocalCandidateWrap.hidden = true;
-    }
-    if (slotRel) slotRel.textContent = '—';
-    if (slotRecruiter) slotRecruiter.innerHTML = '<p class="muted">Не назначен</p>';
-    if (slotCandidateSection){
-      slotCandidateSection.hidden = true;
-    }
-    if (slotCandidate) slotCandidate.innerHTML = '';
-    if (slotOutcomeSection){
-      slotOutcomeSection.hidden = true;
-    }
-    if (slotOutcomeHint){
-      slotOutcomeHint.textContent = 'Доступно после назначения кандидата.';
-    }
-    if (slotOutcomeStatus){
-      slotOutcomeStatus.textContent = 'Исход не выбран';
-    }
-    if (slotOutcomeActions){
-      $$('button', slotOutcomeActions).forEach(btn => {
-        btn.disabled = true;
-        btn.classList.remove('is-active');
-      });
-    }
-    if (slotMeta) slotMeta.innerHTML = '';
-    if (slotDeleteBtn){
-      slotDeleteBtn.disabled = true;
-      slotDeleteBtn.dataset.slotId = '';
-      slotDeleteBtn.dataset.forceAllowed = '0';
-      slotDeleteBtn.textContent = 'Удалить слот';
-    }
-  }
-
-  function toneForStatus(status){
-    if (status === 'FREE') return 'success';
-    if (status === 'PENDING') return 'warning';
-    if (status === 'BOOKED') return 'info';
-    if (status === 'CONFIRMED_BY_CANDIDATE' || status === 'CONFIRMED') return 'success';
-    return 'info';
-  }
-
-  function normalizeOutcome(raw){
-    const value = (raw || '').toLowerCase();
-    if (value === 'passed' || value === 'success') return 'success';
-    if (value === 'failed' || value === 'reject') return 'reject';
-    return '';
-  }
-
-  function setOutcomeButtonsEnabled(enabled){
-    if (!slotOutcomeActions) return;
-    $$('button', slotOutcomeActions).forEach(btn => {
-      btn.disabled = !enabled;
-    });
-  }
-
-  function updateOutcomeUI(outcome){
-    if (!slotOutcomeStatus || !slotOutcomeActions) return;
-    const normalized = normalizeOutcome(outcome);
-    $$('button', slotOutcomeActions).forEach(btn => {
-      btn.classList.toggle('is-active', btn.dataset.outcome === normalized);
-    });
-    if (!normalized){
-      slotOutcomeStatus.textContent = 'Исход не выбран';
-      return;
-    }
-    slotOutcomeStatus.textContent = normalized === 'success'
-      ? 'Кандидат прошёл интервью'
-      : 'Кандидат не прошёл интервью';
-  }
-
-  function hydrateSheet(row){
-    const id = row.dataset.id || '—';
-    const status = row.dataset.status || '—';
-    const statusLabel = row.dataset.statusLabel || status;
-    const recruiterName = row.dataset.recruiter || '—';
-    const recruiterTz = row.dataset.recruiterTz || 'Europe/Moscow';
-    const cityName = row.dataset.cityName || '';
-    const cityTz = row.dataset.cityTz || '';
-    const candidateName = row.dataset.candidate || '';
-    const candidateTz = row.dataset.candidateTz || '';
-    const candidateId = row.dataset.candidateId || '';
-    const duration = parseInt(row.dataset.duration || '0', 10);
-    const outcome = normalizeOutcome(row.dataset.outcome || '');
-
-    if (slotTitle) slotTitle.textContent = recruiterName ? `Слот у ${recruiterName}` : `Слот #${id}`;
-    if (slotSub) slotSub.textContent = `ID: ${id}`;
-    if (slotId) slotId.textContent = `ID ${id}`;
-    if (slotStatus){
-      slotStatus.textContent = `Статус: ${statusLabel}`;
-      slotStatus.dataset.tone = toneForStatus(status);
-    }
-    if (slotUtc) slotUtc.textContent = row.dataset.startUtc || '—';
-    if (slotLocal) slotLocal.textContent = row.dataset.startRec || '—';
-    if (slotCityWrap){
-      if (cityName){
-        slotCityWrap.hidden = false;
-        if (slotCity) slotCity.textContent = cityName;
-        if (slotCityTz){
-          if (cityTz){
-            slotCityTz.hidden = false;
-            slotCityTz.textContent = cityTz;
-          } else {
-            slotCityTz.textContent = '—';
-            slotCityTz.hidden = true;
-          }
-        }
-      } else {
-        slotCityWrap.hidden = true;
-        if (slotCity) slotCity.textContent = '—';
-        if (slotCityTz){
-          slotCityTz.textContent = '—';
-          slotCityTz.hidden = true;
-        }
-      }
-    }
-    if (slotLocalCandidateWrap){
-      if (candidateTz && row.dataset.startCand){
-        slotLocalCandidateWrap.hidden = false;
-        if (slotLocalCandidate) slotLocalCandidate.textContent = `${row.dataset.startCand} (${candidateTz})`;
-      } else {
-        slotLocalCandidateWrap.hidden = true;
-      }
-    }
-    if (slotRel) slotRel.textContent = formatRelative(parseTime(row));
-
-    if (slotRecruiter){
-      slotRecruiter.innerHTML = `
-        <div class="slot-person">
-          <span class="slot-person__name">${recruiterName || '—'}</span>
-          <span class="badge badge--soft">${recruiterTz}</span>
-        </div>`;
-    }
-
-    if (slotCandidateSection){
-      if (candidateName){
-        slotCandidateSection.hidden = false;
-        if (slotCandidate){
-          slotCandidate.innerHTML = `
-            <div class="slot-person">
-              <span class="slot-person__name">${candidateName}</span>
-              ${candidateTz ? `<span class="badge badge--soft">${candidateTz}</span>` : ''}
-            </div>
-            <p class="muted">tg_id: ${candidateId || '—'}</p>`;
-        }
-        if (slotCandidateActions) slotCandidateActions.hidden = false;
-      } else {
-        slotCandidateSection.hidden = false;
-        if (slotCandidate) slotCandidate.innerHTML = '<p class="muted">Пока никто не забронировал слот.</p>';
-        if (slotCandidateActions) slotCandidateActions.hidden = true;
-      }
-    }
-
-    if (slotRescheduleBtn){
-      slotRescheduleBtn.disabled = !candidateName;
-      slotRescheduleBtn.dataset.slotId = id || '';
-    }
-    if (slotRejectBookingBtn){
-      slotRejectBookingBtn.disabled = !candidateName;
-      slotRejectBookingBtn.dataset.slotId = id || '';
-    }
-
-    if (slotOutcomeSection){
-      slotOutcomeSection.hidden = false;
-      const hasCandidate = !!(candidateName && candidateName.trim().length);
-      if (slotOutcomeHint){
-        slotOutcomeHint.textContent = hasCandidate
-          ? 'Отметьте исход. При выборе «Прошёл» бот отправит Тест 2.'
-          : 'Назначьте кандидата, чтобы отметить исход.';
-      }
-      setOutcomeButtonsEnabled(hasCandidate);
-      if (hasCandidate){
-        updateOutcomeUI(outcome);
-      } else if (slotOutcomeStatus){
-        slotOutcomeStatus.textContent = 'Недоступно — кандидат не назначен';
-        if (slotOutcomeActions){
-          $$('button', slotOutcomeActions).forEach(btn => btn.classList.remove('is-active'));
-        }
-      }
-    }
-
-    row.dataset.outcome = outcome;
-
-    if (slotMeta){
-      const items = [];
-      items.push(`Длительность: ${duration || 60} мин`);
-      items.push(`UTC: ${row.dataset.startUtc || '—'}`);
-      items.push(`TZ рекрутёра: ${recruiterTz}`);
-      if (candidateTz) items.push(`TZ кандидата: ${candidateTz}`);
-      fillList(slotMeta, items);
-    }
-
-    if (slotDeleteBtn){
-      const canDelete = row.dataset.canDelete === '1';
-      slotDeleteBtn.disabled = false;
-      slotDeleteBtn.dataset.slotId = id;
-      slotDeleteBtn.dataset.status = status;
-      slotDeleteBtn.dataset.recruiter = recruiterName || '';
-      slotDeleteBtn.dataset.forceAllowed = canDelete ? '0' : '1';
-      slotDeleteBtn.textContent = canDelete ? 'Удалить слот' : 'Удалить принудительно';
-    }
-
-  }
-
-  async function submitOutcome(outcome){
-    if (!currentRow) return;
-    if (!slotOutcomeActions) return;
-    const slotId = currentRow.dataset.id;
-    if (!slotId) return;
-    const hasCandidate = !!(currentRow.dataset.candidate && currentRow.dataset.candidate.trim().length);
-    if (!hasCandidate){
-      toast('Назначьте кандидата, чтобы отметить исход.', 'warning');
-      return;
-    }
-
-    setOutcomeButtonsEnabled(false);
-    try {
-      const response = await fetch(`/slots/${slotId}/outcome`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outcome })
-      });
-      let data = {};
-      try {
-        data = await response.json();
-      } catch (err) {
-        data = {};
-      }
-      if (!response.ok || !data.ok){
-        toast((data && data.message) || 'Не удалось сохранить исход.', 'error');
-        return;
-      }
-      const stored = normalizeOutcome(data.outcome || outcome);
-      currentRow.dataset.outcome = stored;
-      updateOutcomeUI(stored);
-      toast((data && data.message) || 'Исход сохранён.', 'success');
-    } catch (err){
-      console.error(err);
-      toast('Не удалось сохранить исход.', 'error');
-    } finally {
-      const stillHasCandidate = !!(currentRow && currentRow.dataset.candidate && currentRow.dataset.candidate.trim().length);
-      setOutcomeButtonsEnabled(stillHasCandidate);
-    }
-  }
-
-  function openSlot(row){
-    if (!row) return;
-    currentRow = row;
-    hydrateSheet(row);
-    openSheet();
-  }
-
-  async function performDelete(row, options = {}){
-    if (!row) return;
-    const { force = false, skipConfirm = false } = options;
-    const id = row.dataset.id;
-    if (!id) return;
-
-    const canDelete = row.dataset.canDelete === '1';
-    const status = row.dataset.status || '';
-    const recruiterName = row.dataset.recruiter ? ` (${row.dataset.recruiter})` : '';
-
-    if (!force && !canDelete){
-      const confirmForce = window.confirm(
-        status
-          ? `Слот #${id}${recruiterName} имеет статус ${status}. Удалить принудительно?`
-          : `Удалить слот #${id}${recruiterName} принудительно?`
-      );
-      if (!confirmForce) return;
-      return await performDelete(row, { force: true, skipConfirm: true });
-    }
-
-    const confirmationText = force
-      ? `Удалить слот #${id}${recruiterName}? Это принудительное удаление.`
-      : `Удалить слот #${id}${recruiterName}? Действие нельзя отменить.`;
-
-    if (!skipConfirm && !window.confirm(confirmationText)) return;
-
-    const rowDeleteBtn = row.querySelector('[data-action="delete-slot"]');
-    if (rowDeleteBtn) rowDeleteBtn.disabled = true;
-    if (slotDeleteBtn && currentRow === row) slotDeleteBtn.disabled = true;
-
-    try {
-      const response = await fetch(`/slots/${id}?force=${force ? 1 : 0}`, {
-        method: 'DELETE',
-        headers: { 'Accept': 'application/json' },
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok || !payload || payload.ok !== true){
-        const message = payload && payload.message ? payload.message : 'Не удалось удалить слот.';
-        if (!force && payload && payload.code === 'requires_force'){
-          const askForce = window.confirm(`${message} Выполнить принудительное удаление?`);
-          if (askForce){
-            return await performDelete(row, { force: true, skipConfirm: true });
-          }
-        }
-        toast(message, 'error');
-        if (rowDeleteBtn) rowDeleteBtn.disabled = false;
-        if (slotDeleteBtn && currentRow === row){
-          slotDeleteBtn.disabled = false;
-        }
-        return;
-      }
-
-      toast(payload.message || 'Слот удалён', 'success');
-      if (currentRow === row){
-        closeSheet();
-      }
-      removeRow(row);
-      applyFilters();
-      updateRelativeLabels();
-    } catch (err){
-      console.error(err);
-      toast('Не удалось удалить слот.', 'error');
-      if (rowDeleteBtn) rowDeleteBtn.disabled = false;
-      if (slotDeleteBtn && currentRow === row){
-        slotDeleteBtn.disabled = false;
-      }
-    }
-  }
-
-  function markRowAsFree(row){
-    if (!row) return;
-    row.dataset.status = 'FREE';
-    row.dataset.statusOrder = '0';
-    row.dataset.candidate = '';
-    row.dataset.candidateId = '';
-    row.dataset.candidateTz = '';
-    row.dataset.outcome = '';
-    row.dataset.canDelete = '1';
-    row.dataset.startCand = '';
-
-    const statusCell = row.querySelector('[data-label="Статус"]');
-    if (statusCell) statusCell.innerHTML = '<span class="status-badge" data-tone="success">FREE</span>';
-
-    const candidateCell = row.querySelector('[data-label="Кандидат"]');
-    if (candidateCell) candidateCell.innerHTML = '<span class="badge badge--soft">—</span>';
-
-    const candTimeCell = row.querySelector('[data-label="Время (кандидат)"]');
-    if (candTimeCell) candTimeCell.innerHTML = '<span class="badge badge--soft">—</span>';
-  }
-
-  async function triggerReschedule(row){
-    if (!row) return;
-    const slotId = row.dataset.id;
-    if (!slotId) return;
-    if (slotRescheduleBtn) slotRescheduleBtn.disabled = true;
-    if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = true;
-    try {
-      const response = await fetch(`/slots/${slotId}/reschedule`, {
-        method: 'POST',
-        headers: { 'Accept': 'application/json' },
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload || payload.ok !== true){
-        const message = payload && payload.message ? payload.message : 'Не удалось перенести бронь.';
-        toast(message, 'error');
-        return;
-      }
-      toast(payload.message || 'Слот освобождён.', 'success');
-      markRowAsFree(row);
-      hydrateSheet(row);
-      applyFilters();
-    } catch (err){
-      console.error(err);
-      toast('Не удалось перенести бронь.', 'error');
-    } finally {
-      const candidateValue = (row.dataset.candidate || '').trim();
-      const hasCandidate = candidateValue.length > 0;
-      if (slotRescheduleBtn) slotRescheduleBtn.disabled = !hasCandidate;
-      if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = !hasCandidate;
-    }
-  }
-
-  async function triggerReject(row){
-    if (!row) return;
-    const slotId = row.dataset.id;
-    if (!slotId) return;
-    if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = true;
-    if (slotRescheduleBtn) slotRescheduleBtn.disabled = true;
-    try {
-      const response = await fetch(`/slots/${slotId}/reject_booking`, {
-        method: 'POST',
-        headers: { 'Accept': 'application/json' },
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload || payload.ok !== true){
-        const message = payload && payload.message ? payload.message : 'Не удалось отправить отказ.';
-        toast(message, 'error');
-        return;
-      }
-      toast(payload.message || 'Кандидату отправлен отказ.', 'success');
-      markRowAsFree(row);
-      hydrateSheet(row);
-      applyFilters();
-    } catch (err){
-      console.error(err);
-      toast('Не удалось отправить отказ.', 'error');
-    } finally {
-      const candidateValue = (row.dataset.candidate || '').trim();
-      const hasCandidate = candidateValue.length > 0;
-      if (slotRescheduleBtn) slotRescheduleBtn.disabled = !hasCandidate;
-      if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = !hasCandidate;
-    }
-  }
-
-  async function deleteAllSlots(force = false){
-    const confirmationText = force
-      ? 'Удалить все слоты принудительно? Это удалит даже забронированные интервальные окна.'
-      : 'Удалить все свободные и ожидающие слоты? Действие нельзя отменить.';
-
-    if (!window.confirm(confirmationText)) return;
-
-    if (deleteAllBtn) deleteAllBtn.disabled = true;
-
-    try {
-      const response = await fetch('/slots/delete_all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ force })
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok || !payload || payload.ok !== true){
-        const message = payload && payload.error ? payload.error : 'Не удалось удалить слоты.';
-        if (!force && payload && typeof payload.remaining === 'number' && payload.remaining > 0){
-          const askForce = window.confirm(`${message} Удалить оставшиеся слоты принудительно?`);
-          if (askForce){
-            return await deleteAllSlots(true);
-          }
-        }
-        toast(message, 'error');
-        return;
-      }
-
-      const deletedCount = Number(payload.deleted || 0);
-      const remaining = Number(payload.remaining || 0);
-
-      if (!force && remaining > 0){
-        toast(`Удалено ${deletedCount} слот(ов). Осталось ${remaining}.`, 'info');
-        const askForce = window.confirm('Некоторые слоты остались. Удалить их принудительно?');
-        if (askForce){
-          return await deleteAllSlots(true);
-        }
-        return;
-      }
-
-      toast(`Удалено ${deletedCount} слот(ов).`, 'success');
-      window.location.reload();
-    } catch (err){
-      console.error(err);
-      toast('Не удалось удалить слоты.', 'error');
-    } finally {
-      if (deleteAllBtn) deleteAllBtn.disabled = false;
-    }
-  }
-
-  function restorePreferences(){
-    if (onlyFuture && storage){
-      const saved = storage.getItem(storageKeys.future);
-      if (saved !== null) onlyFuture.checked = saved === '1';
-    }
-    if (candToggle && storage){
-      const saved = storage.getItem(storageKeys.candidate);
-      if (saved !== null) candToggle.checked = saved === '1';
-    }
-    filterState.onlyFuture = !!(onlyFuture && onlyFuture.checked);
-  }
-
-  function persistPreference(key, value){
-    if (!storage) return;
-    storage.setItem(key, value ? '1' : '0');
-  }
-
-  ['recruiter', 'status', 'city'].forEach(type => updateFilterButtons(type, filterState[type]));
-  updateFilterInputs();
-
-  resetSheet();
-  restorePreferences();
-  setCandidateColumnVisibility(candToggle ? candToggle.checked : false);
-  applySort();
-  applySortIndicator();
-  applyFilters();
-  updateRelativeLabels();
-
-  if (relTimer) clearInterval(relTimer);
-  relTimer = window.setInterval(updateRelativeLabels, 60000);
-
-  filterButtons.forEach(btn => {
-    on(btn, 'click', e => {
-      e.preventDefault();
-      const type = btn.dataset.filterType;
-      if (!type) return;
-      const value = btn.dataset.value || '';
-      setFilter(type, value, { resetPage: true });
-    });
-  });
-
-  on(resetFiltersBtn, 'click', e => {
-    e.preventDefault();
-    setFilter('recruiter', '', { apply: false });
-    setFilter('status', '', { apply: false });
-    setFilter('city', '', { apply: false });
-    if (onlyFuture){
-      onlyFuture.checked = false;
-      filterState.onlyFuture = false;
-      persistPreference(storageKeys.future, false);
-    } else {
-      filterState.onlyFuture = false;
-    }
-    applyFilters();
-    updateQueryParams({ resetPage: true });
-  });
-
-  if (perPageSelect && perPageForm){
-    on(perPageSelect, 'change', () => {
-      updateFilterInputs();
-      if (typeof perPageForm.requestSubmit === 'function'){
-        perPageForm.requestSubmit();
-      } else {
-        perPageForm.submit();
-      }
-    });
-  }
-
-  on(tbody, 'click', e => {
-    const deleteBtn = e.target.closest('[data-action="delete-slot"]');
-    if (deleteBtn){
-      e.preventDefault();
-      e.stopPropagation();
-      const row = deleteBtn.closest('.slot-row');
-      performDelete(row);
-      return;
-    }
-    const actionBtn = e.target.closest('[data-action="open-slot"]');
-    if (actionBtn){
-      const row = actionBtn.closest('.slot-row');
-      openSlot(row);
-      return;
-    }
-    const row = e.target.closest('.slot-row');
-    if (row) openSlot(row);
-  });
-
-  on(tbody, 'dblclick', e => {
-    const row = e.target.closest('.slot-row');
-    if (row) openSlot(row);
-  });
-
-  on(tbody, 'keydown', e => {
-    const row = e.target.closest('.slot-row');
-    if (!row) return;
-    if (e.target.closest('[data-action="delete-slot"]')) return;
-    if (e.key === 'Enter'){ e.preventDefault(); openSlot(row); }
-    if (e.key === ' '){ e.preventDefault(); openSlot(row); }
-  });
-
-  on(table, 'click', e => {
-    const sortButton = e.target.closest('.sort');
-    if (!sortButton) return;
-    const key = sortButton.dataset.key;
-    if (!key) return;
-    if (sortState.key === key){
-      sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
-    } else {
-      sortState.key = key;
-      sortState.dir = 'asc';
-    }
-    applySort();
-    applySortIndicator();
-    applyFilters();
-  });
-
-  on(onlyFuture, 'change', () => {
-    filterState.onlyFuture = !!onlyFuture.checked;
-    persistPreference(storageKeys.future, !!onlyFuture.checked);
-    applyFilters();
-  });
-
-  on(candToggle, 'change', () => {
-    persistPreference(storageKeys.candidate, !!candToggle.checked);
-    setCandidateColumnVisibility(candToggle.checked);
-  });
-
-  on(slotOutcomeActions, 'click', e => {
-    const btn = e.target.closest('button[data-outcome]');
-    if (!btn || btn.disabled) return;
-    e.preventDefault();
-    submitOutcome(btn.dataset.outcome);
-  });
-
-  on(slotRescheduleBtn, 'click', () => {
-    if (currentRow) triggerReschedule(currentRow);
-  });
-
-  on(slotRejectBookingBtn, 'click', () => {
-    if (currentRow) triggerReject(currentRow);
-  });
-
-  on(slotDeleteBtn, 'click', () => {
-    if (currentRow) performDelete(currentRow);
-  });
-
-  on(deleteAllBtn, 'click', () => {
-    deleteAllSlots(false);
-  });
-
-  on(slotBackdrop, 'click', closeSheet);
-  on(slotClose, 'click', closeSheet);
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !slotSheet.hidden){
-      e.preventDefault();
-      closeSheet();
-    }
-    if (e.key === 'f' && onlyFuture){
-      onlyFuture.checked = !onlyFuture.checked;
-      filterState.onlyFuture = !!onlyFuture.checked;
-      persistPreference(storageKeys.future, onlyFuture.checked);
-      applyFilters();
-    }
-    if (e.key === 't' && candToggle){
-      candToggle.checked = !candToggle.checked;
-      persistPreference(storageKeys.candidate, candToggle.checked);
-      setCandidateColumnVisibility(candToggle.checked);
-    }
-  });
-
-})();
-</script>
+    </section>
+    <section class="slots-filter-section" data-filter="status">
+      <header><h4>Статусы</h4></header>
+      <div class="slots-filter-options" role="group" aria-label="Фильтр по статусу">
+        <label class="slots-filter-option">
+          <input type="radio" name="filter_status" value="" {% if not filter_status %}checked{% endif %}>
+          <span>Любой</span>
+        </label>
+        {% for code, label in status_labels.items() %}
+          <label class="slots-filter-option">
+            <input type="radio" name="filter_status" value="{{ code }}" {% if filter_status == code %}checked{% endif %}>
+            <span>{{ label }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </section>
+    <section class="slots-filter-section" data-filter="city">
+      <header><h4>Города</h4></header>
+      <div class="slots-filter-options" role="group" aria-label="Фильтр по городу">
+        <label class="slots-filter-option">
+          <input type="radio" name="filter_city" value="" {% if not filter_city_id %}checked{% endif %}>
+          <span>Все</span>
+        </label>
+        {% for city in city_options %}
+          <label class="slots-filter-option">
+            <input type="radio" name="filter_city" value="{{ city.id }}" {% if filter_city_id == city.id %}checked{% endif %}>
+            <span>{{ city.name }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+  <footer class="sheet-footer slots-filter-footer">
+    <div class="form-actions">
+      <button type="button" class="btn btn-soft" data-filter-reset>Сбросить</button>
+      <button type="button" class="btn btn-primary" data-filter-apply>Применить</button>
+    </div>
+  </footer>
+</aside>
+
+{% include "partials/slot_sheet.html" %}
+<div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+<script id="slots_context" type="application/json">{{ {
+  'filters': {
+    'recruiter_id': filter_recruiter_id,
+    'status': filter_status,
+    'city_id': filter_city_id
+  },
+  'status_counts': status_counts,
+  'recruiters': recruiter_options,
+  'cities': city_options,
+  'page': page,
+  'pages_total': pages_total,
+  'per_page': per_page,
+  'has_slots': has_slots
+} | tojson }}</script>
+{% endblock %}
+{% block extra_js %}
+  <script type="module" src="{{ url_for('static', path='js/modules/slots-list.js') }}"></script>
 {% endblock %}
