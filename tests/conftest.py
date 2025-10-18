@@ -4,26 +4,30 @@ import os
 import sys
 
 import pytest
-import uvloop
+
+try:  # pragma: no cover - exercised implicitly during test collection
+    import uvloop  # type: ignore
+except Exception:  # pragma: no cover - falls back when uvloop is absent
+    uvloop = None  # type: ignore[assignment]
+    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+else:  # pragma: no cover - executed when uvloop is available
+    uvloop.install()
+
+
+@pytest.fixture(scope="session")
+def event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
+    if uvloop is not None:  # type: ignore[name-defined]
+        return uvloop.EventLoopPolicy()
+    return asyncio.DefaultEventLoopPolicy()
 
 
 @pytest.fixture(scope="session", autouse=True)
-def event_loop_policy():
-    class _SafeUVLoopPolicy(uvloop.EventLoopPolicy):
-        def get_event_loop(self):  # type: ignore[override]
-            try:
-                return super().get_event_loop()
-            except RuntimeError:
-                loop = self.new_event_loop()
-                self.set_event_loop(loop)
-                return loop
-
-    policy: asyncio.AbstractEventLoopPolicy = _SafeUVLoopPolicy()
-    asyncio.set_event_loop_policy(policy)
-    loop = policy.new_event_loop()
-    policy.set_event_loop(loop)
+def configure_event_loop_policy(event_loop_policy: asyncio.AbstractEventLoopPolicy):
+    asyncio.set_event_loop_policy(event_loop_policy)
+    loop = event_loop_policy.new_event_loop()
+    event_loop_policy.set_event_loop(loop)
     try:
-        yield policy
+        yield event_loop_policy
     finally:
         if not loop.is_closed():
             loop.close()
