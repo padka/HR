@@ -33,11 +33,12 @@ from backend.apps.admin_ui.services.slots.core import (
     set_slot_outcome,
 )
 from backend.apps.admin_ui.utils import (
+    ensure_sequence,
     ensure_utc,
     local_naive_to_utc,
     norm_status,
     parse_optional_int,
-    status_filter,
+    status_filters,
     utc_to_local_naive,
     validate_timezone_name,
 )
@@ -150,27 +151,44 @@ class SlotUpdatePayload(SlotPayloadBase):
 async def slots_list(
     request: Request,
     recruiter_id: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
+    status: Optional[list[str]] = Query(default=None),
     city_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=500),
+    date_from: Optional[str] = Query(default=None, alias="date_from"),
+    date_to: Optional[str] = Query(default=None, alias="date_to"),
     date: Optional[str] = Query(default=None),
     search: Optional[list[str]] = Query(default=None),
-    purpose: Optional[str] = Query(default=None),
+    purpose: Optional[list[str]] = Query(default=None),
     future: Optional[str] = Query(default=None),
+    free_only: Optional[str] = Query(default=None, alias="free_only"),
     view: Optional[str] = Query(default="table"),
     role: Optional[str] = Query(default="recruiter"),
 ):
     recruiter = parse_optional_int(recruiter_id)
-    status_norm = status_filter(status)
+    status_list = status_filters(status)
     city_filter = parse_optional_int(city_id)
-    purpose_norm = (purpose or "").strip().lower() or None
-    date_filter = None
-    if date:
+    purpose_values = [p.lower() for p in ensure_sequence(purpose)]
+    date_start = None
+    date_end = None
+    if date_from:
         try:
-            date_filter = date_cls.fromisoformat(date)
+            date_start = date_cls.fromisoformat(date_from)
         except ValueError:
-            date_filter = None
+            date_start = None
+    if date_to:
+        try:
+            date_end = date_cls.fromisoformat(date_to)
+        except ValueError:
+            date_end = None
+    if not date_start and not date_end and date:
+        try:
+            parsed = date_cls.fromisoformat(date)
+            date_start = parsed
+            date_end = parsed
+        except ValueError:
+            date_start = None
+            date_end = None
 
     raw_tokens: list[str] = []
     if search:
@@ -181,18 +199,21 @@ async def slots_list(
     search_tokens = [token for token in (part.strip() for part in raw_tokens) if token]
 
     future_only = _parse_checkbox(future)
+    free_only_flag = _parse_checkbox(free_only)
     view_mode = "cards" if (view or "").lower() == "cards" else "table"
     role_mode = "candidate" if (role or "").lower() == "candidate" else "recruiter"
 
     result = await list_slots(
         recruiter,
-        status_norm,
+        status_list,
         page,
         per_page,
         city_id=city_filter,
-        date_filter=date_filter,
-        purpose=purpose_norm,
+        date_from=date_start,
+        date_to=date_end,
+        purpose=purpose_values,
         search_tokens=search_tokens,
+        free_only=free_only_flag,
         future_only=future_only,
     )
     recruiter_rows = await list_recruiters()
@@ -225,15 +246,17 @@ async def slots_list(
         "request": request,
         "slots": slots,
         "filter_recruiter_id": recruiter,
-        "filter_status": status_norm,
+        "filter_statuses": status_list,
         "filter_city_id": city_filter,
-        "filter_purpose": purpose_norm,
-        "filter_date": date_filter.isoformat() if date_filter else None,
+        "filter_purposes": purpose_values,
+        "filter_date_from": date_start.isoformat() if date_start else None,
+        "filter_date_to": date_end.isoformat() if date_end else None,
         "search_tokens": search_tokens,
         "search_query": " ".join(search_tokens),
         "active_view": view_mode,
         "time_role": role_mode,
         "only_future": future_only,
+        "only_free": free_only_flag,
         "page": result["page"],
         "pages_total": result["pages_total"],
         "per_page": per_page,

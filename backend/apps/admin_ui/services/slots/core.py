@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
@@ -81,29 +81,40 @@ def get_state_manager():
 
 async def list_slots(
     recruiter_id: int | None,
-    status: str | None,
+    statuses: Sequence[str] | None,
     page: int,
     per_page: int,
     *,
     city_id: int | None = None,
-    date_filter: date_type | None = None,
-    purpose: str | None = None,
+    date_from: date_type | None = None,
+    date_to: date_type | None = None,
+    purpose: Sequence[str] | None = None,
     search_tokens: list[str] | None = None,
+    free_only: bool = False,
     future_only: bool = False,
 ) -> dict[str, object]:
     async with async_session() as session:
         filtered = select(Slot)
         if recruiter_id is not None:
             filtered = filtered.where(Slot.recruiter_id == recruiter_id)
-        if status:
-            filtered = filtered.where(Slot.status == status_to_db(status))
+        if statuses:
+            normalized = [status_to_db(value) for value in statuses if value]
+            if normalized:
+                filtered = filtered.where(Slot.status.in_(normalized))
         if city_id is not None:
             filtered = filtered.where(Slot.city_id == city_id)
         if purpose:
-            filtered = filtered.where(func.lower(Slot.purpose) == purpose.lower())
-        if date_filter is not None:
-            start_dt = datetime.combine(date_filter, time_type.min, tzinfo=UTC)
-            filtered = filtered.where(Slot.start_utc >= start_dt, Slot.start_utc < start_dt + timedelta(days=1))
+            lowered = [item.lower() for item in purpose if item]
+            if lowered:
+                filtered = filtered.where(func.lower(Slot.purpose).in_(lowered))
+        if date_from is not None:
+            start_dt = datetime.combine(date_from, time_type.min, tzinfo=UTC)
+            filtered = filtered.where(Slot.start_utc >= start_dt)
+        if date_to is not None:
+            end_dt = datetime.combine(date_to, time_type.min, tzinfo=UTC) + timedelta(days=1)
+            filtered = filtered.where(Slot.start_utc < end_dt)
+        if free_only:
+            filtered = filtered.where(Slot.status == status_to_db("FREE"))
         if future_only:
             filtered = filtered.where(Slot.start_utc >= datetime.now(UTC))
         if search_tokens:
@@ -953,25 +964,29 @@ async def bulk_create_slots(
 
 async def api_slots_payload(
     recruiter_id: int | None,
-    status: str | None,
+    statuses: Sequence[str] | None,
     limit: int,
     *,
     city_id: int | None = None,
-    purpose: str | None = None,
-    date_filter: date_type | None = None,
+    purposes: Sequence[str] | None = None,
+    date_from: date_type | None = None,
+    date_to: date_type | None = None,
     search_tokens: list[str] | None = None,
+    free_only: bool = False,
     future_only: bool = False,
 ) -> list[dict[str, object]]:
     per_page = max(1, min(500, limit))
     result = await list_slots(
         recruiter_id,
-        status,
+        statuses,
         page=1,
         per_page=per_page,
         city_id=city_id,
-        date_filter=date_filter,
-        purpose=purpose,
+        date_from=date_from,
+        date_to=date_to,
+        purpose=purposes or (),
         search_tokens=search_tokens or [],
+        free_only=free_only,
         future_only=future_only,
     )
     items = sorted(result.get("items", []), key=lambda slot: slot.start_utc)

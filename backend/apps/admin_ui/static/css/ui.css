@@ -35,7 +35,7 @@ a:hover { text-decoration-color: currentColor; }
 @media (max-width: 640px) {
   .density-switcher__menu { right: auto; left: 0; }
 }
-.container { width: min(100%, 1120px); margin: 0 auto; padding: var(--ui-space-xl, 2rem) var(--ui-space-lg, 1.5rem); }
+.container { width: min(100%, 1280px); margin: 0 auto; padding: var(--ui-space-lg, 1.5rem) 1rem; }
 .page-grid { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
 .page-aside { position: sticky; top: 24px; display: flex; flex-direction: column; gap: var(--ui-space-md, 1rem); }
 .page-main { display: flex; flex-direction: column; gap: 24px; min-width: 0; }

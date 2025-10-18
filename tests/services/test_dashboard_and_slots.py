@@ -49,13 +49,20 @@ async def test_dashboard_and_slot_listing():
 
     listing = await list_slots(
         recruiter_id=None,
-        status=None,
+        statuses=[],
         page=1,
         per_page=10,
     )
     assert listing["total"] == 1
     assert listing["items"][0].recruiter_id == recruiter.id
-    assert listing["status_counts"] == {"FREE": 1, "CONFIRMED_BY_CANDIDATE": 0}
+    assert listing["status_counts"] == {
+        "total": 1,
+        "FREE": 1,
+        "PENDING": 0,
+        "BOOKED": 0,
+        "CONFIRMED_BY_CANDIDATE": 0,
+        "CANCELED": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -115,7 +122,7 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
         )
         await session.commit()
 
-    payload = await api_slots_payload(recruiter_id=None, status=None, limit=10)
+    payload = await api_slots_payload(recruiter_id=None, statuses=[], limit=10)
     assert {item["status"] for item in payload} == {
         "FREE",
         "PENDING",

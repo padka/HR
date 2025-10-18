@@ -38,10 +38,18 @@ const resetButtons = $$('[data-action="reset-filters"]');
 let cardVirtualizer = null;
 
 const filterCitySelect = document.getElementById('filter_city');
-const filterStatusSelect = document.getElementById('filter_status');
 const filterRecruiterSelect = document.getElementById('filter_recruiter');
-const filterPurposeSelect = document.getElementById('filter_purpose');
-const filterDateInput = document.getElementById('filter_date');
+const filterDateFromInput = document.getElementById('filter_date_from');
+const filterDateToInput = document.getElementById('filter_date_to');
+const datePresetButtons = $$('[data-date-preset]');
+const clearDatesButton = document.querySelector('[data-action="clear-dates"]');
+const statusTrigger = document.getElementById('filter_status_trigger');
+const statusPanel = document.getElementById('filter_status_panel');
+const statusSummary = document.getElementById('filter_status_summary');
+const statusCheckboxes = $$('[data-filter-status]');
+const statusResetButton = document.querySelector('[data-action="status-reset"]');
+const purposeChips = $$('[data-filter-purpose]');
+const freeOnlyToggle = document.getElementById('slots_only_free');
 
 const sheetBackdrop = document.getElementById('slot_backdrop');
 const sheet = document.getElementById('slot_sheet');
@@ -82,18 +90,22 @@ const kpiIds = {
   canceled: document.getElementById('cnt-canceled'),
 };
 
+const initialFilters = slotsContext?.filters ?? {};
+
 const state = {
   sort: { key: 'time', dir: 'asc' },
   role: readInitialRole(),
   onlyFuture: readFutureFlag(),
+  onlyFree: readFreeFlag() || Boolean(slotsContext?.only_free || initialFilters?.free_only),
   tokens: readInitialTokens(),
   view: readInitialView(),
   filters: {
-    recruiter: String(slotsContext?.filters?.recruiter_id ?? '') || '',
-    status: String(slotsContext?.filters?.status ?? '') || '',
-    city: String(slotsContext?.filters?.city_id ?? '') || '',
-    purpose: String(slotsContext?.filters?.purpose ?? '') || '',
-    date: String(slotsContext?.filters?.date ?? '') || '',
+    recruiter: String(initialFilters?.recruiter_id ?? '') || '',
+    statuses: normalizeList(initialFilters?.statuses),
+    city: String(initialFilters?.city_id ?? '') || '',
+    purposes: normalizeList(initialFilters?.purposes),
+    dateFrom: String(initialFilters?.date_from ?? '') || '',
+    dateTo: String(initialFilters?.date_to ?? '') || '',
   },
   selection: new Set(),
   deleteConfirmRow: null,
@@ -114,6 +126,7 @@ function init() {
   bindEvents();
   cardVirtualizer = setupCardVirtualization();
   applyFilters();
+  updateStatusSummary();
   scheduleRelativeUpdates();
 }
 
@@ -124,6 +137,26 @@ function safeJson(text) {
     console.warn('slots-context.parse-error', err);
     return {};
   }
+}
+
+function normalizeList(values) {
+  if (!values) return [];
+  const source = Array.isArray(values) ? values : [values];
+  const unique = [];
+  source.forEach((item) => {
+    if (item === null || item === undefined) return;
+    const text = String(item).trim();
+    if (!text) return;
+    if (!unique.includes(text)) unique.push(text);
+  });
+  return unique;
+}
+
+function formatDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function readInitialTokens() {
@@ -161,6 +194,11 @@ function readFutureFlag() {
   return params.get('future') === '1';
 }
 
+function readFreeFlag() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('free_only') === '1';
+}
+
 function bindEvents() {
   if (perPageSelect) {
     perPageSelect.addEventListener('change', () => {
@@ -173,32 +211,56 @@ function bindEvents() {
 
   if (filterCitySelect) {
     filterCitySelect.addEventListener('change', () => {
-      state.filters.city = filterCitySelect.value || '';
-      applyFilterSelection({ ...state.filters });
-    });
-  }
-  if (filterStatusSelect) {
-    filterStatusSelect.addEventListener('change', () => {
-      state.filters.status = filterStatusSelect.value || '';
-      applyFilterSelection({ ...state.filters });
+      applyFilterSelection({ city: filterCitySelect.value || '' });
     });
   }
   if (filterRecruiterSelect) {
     filterRecruiterSelect.addEventListener('change', () => {
-      state.filters.recruiter = filterRecruiterSelect.value || '';
-      applyFilterSelection({ ...state.filters });
+      applyFilterSelection({ recruiter: filterRecruiterSelect.value || '' });
     });
   }
-  if (filterPurposeSelect) {
-    filterPurposeSelect.addEventListener('change', () => {
-      state.filters.purpose = filterPurposeSelect.value || '';
-      applyFilterSelection({ ...state.filters });
+  if (filterDateFromInput) {
+    filterDateFromInput.addEventListener('change', () => {
+      applyFilterSelection({ dateFrom: filterDateFromInput.value || '' });
     });
   }
-  if (filterDateInput) {
-    filterDateInput.addEventListener('change', () => {
-      state.filters.date = filterDateInput.value || '';
-      applyFilterSelection({ ...state.filters });
+  if (filterDateToInput) {
+    filterDateToInput.addEventListener('change', () => {
+      applyFilterSelection({ dateTo: filterDateToInput.value || '' });
+    });
+  }
+  datePresetButtons.forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      const preset = btn.dataset.datePreset;
+      const today = new Date();
+      let start = '';
+      let end = '';
+      if (preset === 'today') {
+        start = formatDate(today);
+        end = formatDate(today);
+      } else if (preset === 'tomorrow') {
+        const next = new Date(today);
+        next.setDate(next.getDate() + 1);
+        start = formatDate(next);
+        end = formatDate(next);
+      } else if (preset === 'week') {
+        const next = new Date(today);
+        next.setDate(next.getDate() + 6);
+        start = formatDate(today);
+        end = formatDate(next);
+      }
+      if (filterDateFromInput) filterDateFromInput.value = start;
+      if (filterDateToInput) filterDateToInput.value = end;
+      applyFilterSelection({ dateFrom: start, dateTo: end });
+    });
+  });
+  if (clearDatesButton) {
+    clearDatesButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (filterDateFromInput) filterDateFromInput.value = '';
+      if (filterDateToInput) filterDateToInput.value = '';
+      applyFilterSelection({ dateFrom: '', dateTo: '' });
     });
   }
 
@@ -210,6 +272,45 @@ function bindEvents() {
       syncQueryState();
     });
   }
+
+  if (freeOnlyToggle) {
+    freeOnlyToggle.checked = state.onlyFree;
+    freeOnlyToggle.addEventListener('change', () => {
+      state.onlyFree = !!freeOnlyToggle.checked;
+      applyFilterSelection({});
+    });
+  }
+
+  if (statusTrigger) {
+    statusTrigger.addEventListener('click', (event) => {
+      event.preventDefault();
+      toggleStatusPanel();
+    });
+  }
+
+  statusCheckboxes.forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      applyFilterSelection({ statuses: getCheckedStatuses() });
+      updateStatusSummary();
+    });
+  });
+
+  if (statusResetButton) {
+    statusResetButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      statusCheckboxes.forEach((checkbox) => {
+        checkbox.checked = false;
+      });
+      applyFilterSelection({ statuses: [] });
+      updateStatusSummary();
+    });
+  }
+
+  purposeChips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      togglePurposeChip(chip);
+    });
+  });
 
   roleSwitchButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -257,13 +358,54 @@ function bindEvents() {
         if (label) removeToken(label);
         return;
       }
-      const next = { ...state.filters };
-      if (key === 'recruiter_id') next.recruiter = '';
-      else if (key === 'status') next.status = '';
-      else if (key === 'city_id') next.city = '';
-      else if (key === 'purpose') next.purpose = '';
-      else if (key === 'date') next.date = '';
-      applyFilterSelection(next);
+      if (key === 'recruiter_id') {
+        if (filterRecruiterSelect) filterRecruiterSelect.value = '';
+        applyFilterSelection({ recruiter: '' });
+      } else if (key === 'status') {
+        const value = tagBtn.dataset.filterValue || '';
+        if (value) {
+          statusCheckboxes.forEach((checkbox) => {
+            if (checkbox.value === value) checkbox.checked = false;
+          });
+          const filtered = state.filters.statuses.filter((code) => code !== value);
+          applyFilterSelection({ statuses: filtered });
+        } else {
+          statusCheckboxes.forEach((checkbox) => {
+            checkbox.checked = false;
+          });
+          applyFilterSelection({ statuses: [] });
+        }
+        updateStatusSummary();
+      } else if (key === 'city_id') {
+        if (filterCitySelect) filterCitySelect.value = '';
+        applyFilterSelection({ city: '' });
+      } else if (key === 'purpose') {
+        const value = tagBtn.dataset.filterValue || '';
+        if (value) {
+          purposeChips.forEach((chip) => {
+            if (chip.dataset.filterPurpose === value) {
+              chip.classList.remove('border-accent', 'bg-accent/10', 'text-fg-primary');
+              chip.setAttribute('aria-pressed', 'false');
+            }
+          });
+          const filtered = state.filters.purposes.filter((code) => code !== value);
+          applyFilterSelection({ purposes: filtered });
+        } else {
+          purposeChips.forEach((chip) => {
+            chip.classList.remove('border-accent', 'bg-accent/10', 'text-fg-primary');
+            chip.setAttribute('aria-pressed', 'false');
+          });
+          applyFilterSelection({ purposes: [] });
+        }
+      } else if (key === 'date') {
+        if (filterDateFromInput) filterDateFromInput.value = '';
+        if (filterDateToInput) filterDateToInput.value = '';
+        applyFilterSelection({ dateFrom: '', dateTo: '' });
+      } else if (key === 'free_only') {
+        state.onlyFree = false;
+        if (freeOnlyToggle) freeOnlyToggle.checked = false;
+        applyFilterSelection({});
+      }
     });
   }
 
@@ -435,9 +577,9 @@ function switchView(next, options = {}) {
   }
   viewToggleButtons.forEach((btn) => {
     const isActive = btn.dataset.viewToggle === target;
-    btn.classList.toggle('bg-bg-elev3', isActive);
+    btn.classList.toggle('border-accent', isActive);
+    btn.classList.toggle('bg-accent/10', isActive);
     btn.classList.toggle('text-fg-primary', isActive);
-    btn.classList.toggle('bg-bg-elev2', !isActive);
     btn.classList.toggle('text-fg-muted', !isActive);
     btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   });
@@ -510,12 +652,105 @@ function disableCardVirtualization() {
 function setRoleButtonState() {
   roleSwitchButtons.forEach((btn) => {
     const isActive = btn.dataset.roleTarget === state.role;
-    btn.classList.toggle('bg-bg-elev3', isActive);
+    btn.classList.toggle('border-accent', isActive);
+    btn.classList.toggle('bg-accent/10', isActive);
     btn.classList.toggle('text-fg-primary', isActive);
-    btn.classList.toggle('bg-bg-elev2', !isActive);
     btn.classList.toggle('text-fg-muted', !isActive);
     btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   });
+}
+
+let statusPanelTeardown = null;
+
+function toggleStatusPanel() {
+  if (!statusPanel) return;
+  if (statusPanel.hidden) {
+    openStatusPanel();
+  } else {
+    closeStatusPanel();
+  }
+}
+
+function openStatusPanel() {
+  if (!statusPanel || !statusTrigger) return;
+  statusPanel.hidden = false;
+  statusTrigger.setAttribute('aria-expanded', 'true');
+  const handlePointer = (event) => {
+    if (!statusPanel.contains(event.target) && !statusTrigger.contains(event.target)) {
+      closeStatusPanel();
+    }
+  };
+  const handleKey = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeStatusPanel();
+      statusTrigger.focus();
+    }
+  };
+  document.addEventListener('mousedown', handlePointer);
+  document.addEventListener('touchstart', handlePointer, { passive: true });
+  document.addEventListener('keydown', handleKey);
+  statusPanelTeardown = () => {
+    document.removeEventListener('mousedown', handlePointer);
+    document.removeEventListener('touchstart', handlePointer);
+    document.removeEventListener('keydown', handleKey);
+    statusPanelTeardown = null;
+  };
+}
+
+function closeStatusPanel() {
+  if (!statusPanel || !statusTrigger) return;
+  statusPanel.hidden = true;
+  statusTrigger.setAttribute('aria-expanded', 'false');
+  if (typeof statusPanelTeardown === 'function') statusPanelTeardown();
+}
+
+function getCheckedStatuses() {
+  return statusCheckboxes
+    .filter((checkbox) => checkbox.checked)
+    .map((checkbox) => checkbox.value)
+    .filter(Boolean);
+}
+
+function getStatusLabel(value) {
+  const checkbox = statusCheckboxes.find((item) => item.value === value);
+  return checkbox?.dataset.statusLabel || value;
+}
+
+function updateStatusSummary() {
+  if (!statusSummary) return;
+  const selected = state.filters.statuses || [];
+  if (!selected.length) {
+    statusSummary.textContent = 'Любой';
+    return;
+  }
+  if (selected.length <= 2) {
+    const labels = selected.map((code) => getStatusLabel(code));
+    statusSummary.textContent = labels.join(', ');
+  } else {
+    statusSummary.textContent = `${selected.length} выбран(о)`;
+  }
+}
+
+function togglePurposeChip(chip) {
+  const value = chip.dataset.filterPurpose || '';
+  if (!value) return;
+  const active = chip.getAttribute('aria-pressed') === 'true';
+  const next = active
+    ? state.filters.purposes.filter((code) => code !== value)
+    : [...state.filters.purposes, value].filter((code, idx, arr) => arr.indexOf(code) === idx);
+  setChipActive(chip, !active);
+  applyFilterSelection({ purposes: next });
+}
+
+function setChipActive(chip, active) {
+  if (active) {
+    chip.classList.add('border-accent', 'bg-accent/10', 'text-fg-primary');
+    chip.setAttribute('aria-pressed', 'true');
+  } else {
+    chip.classList.remove('border-accent', 'bg-accent/10', 'text-fg-primary');
+    chip.setAttribute('aria-pressed', 'false');
+  }
 }
 
 function hydrateTokens() {
@@ -644,13 +879,18 @@ function applyFilters() {
 
   const matchesFilters = (element) => {
     if (state.filters.recruiter && element.dataset.recruiterId !== state.filters.recruiter) return false;
-    if (state.filters.status && element.dataset.status !== state.filters.status) return false;
+    if (state.filters.statuses && state.filters.statuses.length && !state.filters.statuses.includes(element.dataset.status)) return false;
     if (state.filters.city && element.dataset.cityId !== state.filters.city) return false;
-    if (state.filters.purpose && element.dataset.purpose !== state.filters.purpose) return false;
-    if (state.filters.date) {
-      const iso = element.dataset.startIso || '';
-      if (!iso.startsWith(state.filters.date)) return false;
+    if (state.filters.purposes && state.filters.purposes.length) {
+      const purpose = (element.dataset.purpose || '').toLowerCase();
+      if (!state.filters.purposes.some((code) => code.toLowerCase() === purpose)) return false;
     }
+    if (state.filters.dateFrom || state.filters.dateTo) {
+      const iso = (element.dataset.startIso || '').slice(0, 10);
+      if (state.filters.dateFrom && iso < state.filters.dateFrom) return false;
+      if (state.filters.dateTo && iso > state.filters.dateTo) return false;
+    }
+    if (state.onlyFree && element.dataset.status !== 'FREE') return false;
     if (state.onlyFuture) {
       const ts = Date.parse(element.dataset.startIso || '') || 0;
       if (ts < now) return false;
@@ -702,9 +942,14 @@ function applyFilters() {
 }
 
 function areFiltersActive() {
-  if (state.onlyFuture) return true;
+  if (state.onlyFuture || state.onlyFree) return true;
   if (state.tokens.length) return true;
-  return Object.values(state.filters).some((value) => Boolean(value));
+  if (state.filters.recruiter) return true;
+  if (state.filters.city) return true;
+  if (state.filters.statuses && state.filters.statuses.length) return true;
+  if (state.filters.purposes && state.filters.purposes.length) return true;
+  if (state.filters.dateFrom || state.filters.dateTo) return true;
+  return false;
 }
 
 function updateCounts() {
@@ -836,14 +1081,27 @@ function updateTimeCells(row) {
 }
 
 function resetFilters() {
-  state.filters = { recruiter: '', status: '', city: '', purpose: '', date: '' };
+  state.filters = {
+    recruiter: '',
+    statuses: [],
+    city: '',
+    purposes: [],
+    dateFrom: '',
+    dateTo: '',
+  };
   if (filterCitySelect) filterCitySelect.value = '';
-  if (filterStatusSelect) filterStatusSelect.value = '';
   if (filterRecruiterSelect) filterRecruiterSelect.value = '';
-  if (filterPurposeSelect) filterPurposeSelect.value = '';
-  if (filterDateInput) filterDateInput.value = '';
+  if (filterDateFromInput) filterDateFromInput.value = '';
+  if (filterDateToInput) filterDateToInput.value = '';
+  statusCheckboxes.forEach((checkbox) => {
+    checkbox.checked = false;
+  });
+  purposeChips.forEach((chip) => setChipActive(chip, false));
+  updateStatusSummary();
   state.onlyFuture = false;
   if (onlyFutureToggle) onlyFutureToggle.checked = false;
+  state.onlyFree = false;
+  if (freeOnlyToggle) freeOnlyToggle.checked = false;
   state.tokens = [];
   if (searchTokensWrap) searchTokensWrap.innerHTML = '';
   if (searchInput) searchInput.value = '';
@@ -851,23 +1109,43 @@ function resetFilters() {
   applyFilterSelection({ ...state.filters }, { resetTokens: true });
 }
 
-function applyFilterSelection(nextFilters, options = {}) {
-  state.filters = { ...state.filters, ...nextFilters };
+function applyFilterSelection(nextFilters = {}, options = {}) {
+  if (nextFilters && typeof nextFilters === 'object') {
+    Object.entries(nextFilters).forEach(([key, value]) => {
+      if (Array.isArray(state.filters[key])) {
+        state.filters[key] = Array.isArray(value) ? value : [];
+      } else if (key in state.filters) {
+        state.filters[key] = value ?? '';
+      }
+    });
+  }
   const params = new URLSearchParams(window.location.search);
   params.set('page', '1');
   if (state.filters.recruiter) params.set('recruiter_id', state.filters.recruiter);
   else params.delete('recruiter_id');
-  if (state.filters.status) params.set('status', state.filters.status);
-  else params.delete('status');
+  params.delete('status');
+  if (state.filters.statuses && state.filters.statuses.length) {
+    state.filters.statuses.forEach((code) => {
+      if (code) params.append('status', code);
+    });
+  }
   if (state.filters.city) params.set('city_id', state.filters.city);
   else params.delete('city_id');
-  if (state.filters.purpose) params.set('purpose', state.filters.purpose);
-  else params.delete('purpose');
-  if (state.filters.date) params.set('date', state.filters.date);
-  else params.delete('date');
+  params.delete('purpose');
+  if (state.filters.purposes && state.filters.purposes.length) {
+    state.filters.purposes.forEach((purpose) => {
+      if (purpose) params.append('purpose', purpose);
+    });
+  }
+  if (state.filters.dateFrom) params.set('date_from', state.filters.dateFrom);
+  else params.delete('date_from');
+  if (state.filters.dateTo) params.set('date_to', state.filters.dateTo);
+  else params.delete('date_to');
   if (perPageSelect && perPageSelect.value) params.set('per_page', perPageSelect.value);
   if (state.onlyFuture) params.set('future', '1');
   else params.delete('future');
+  if (state.onlyFree) params.set('free_only', '1');
+  else params.delete('free_only');
   if (state.role === 'candidate') params.set('role', 'candidate');
   else params.delete('role');
   if (state.view === 'cards') params.set('view', 'cards');
@@ -884,8 +1162,30 @@ function applyFilterSelection(nextFilters, options = {}) {
 
 function syncQueryState() {
   const params = new URLSearchParams(window.location.search);
+  if (state.filters.recruiter) params.set('recruiter_id', state.filters.recruiter);
+  else params.delete('recruiter_id');
+  params.delete('status');
+  if (state.filters.statuses && state.filters.statuses.length) {
+    state.filters.statuses.forEach((code) => {
+      if (code) params.append('status', code);
+    });
+  }
+  if (state.filters.city) params.set('city_id', state.filters.city);
+  else params.delete('city_id');
+  params.delete('purpose');
+  if (state.filters.purposes && state.filters.purposes.length) {
+    state.filters.purposes.forEach((purpose) => {
+      if (purpose) params.append('purpose', purpose);
+    });
+  }
+  if (state.filters.dateFrom) params.set('date_from', state.filters.dateFrom);
+  else params.delete('date_from');
+  if (state.filters.dateTo) params.set('date_to', state.filters.dateTo);
+  else params.delete('date_to');
   if (state.onlyFuture) params.set('future', '1');
   else params.delete('future');
+  if (state.onlyFree) params.set('free_only', '1');
+  else params.delete('free_only');
   if (state.role === 'candidate') params.set('role', 'candidate');
   else params.delete('role');
   if (state.view === 'cards') params.set('view', 'cards');
@@ -904,11 +1204,17 @@ async function exportSlots(button) {
   try {
     const params = new URLSearchParams();
     if (state.filters.recruiter) params.set('recruiter_id', state.filters.recruiter);
-    if (state.filters.status) params.set('status', state.filters.status);
+    if (state.filters.statuses && state.filters.statuses.length) {
+      state.filters.statuses.forEach((code) => params.append('status', code));
+    }
     if (state.filters.city) params.set('city_id', state.filters.city);
-    if (state.filters.purpose) params.set('purpose', state.filters.purpose);
-    if (state.filters.date) params.set('date', state.filters.date);
+    if (state.filters.purposes && state.filters.purposes.length) {
+      state.filters.purposes.forEach((purpose) => params.append('purpose', purpose));
+    }
+    if (state.filters.dateFrom) params.set('date_from', state.filters.dateFrom);
+    if (state.filters.dateTo) params.set('date_to', state.filters.dateTo);
     if (state.onlyFuture) params.set('future', '1');
+    if (state.onlyFree) params.set('free_only', '1');
     state.tokens.forEach((token) => params.append('search', token));
     params.set('limit', '500');
     const response = await fetch('/api/slots?' + params.toString());
