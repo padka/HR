@@ -1,16 +1,17 @@
-### Health checks
-GET http://localhost:8000/health
-Accept: application/json
+# HR Admin UI FastAPI smoke requests
+# Use with VS Code REST Client or HTTPie-style tools.
+# Replace {{ADMIN_USER}}/{{ADMIN_PASSWORD}} with credentials from your .env.
 
-### Dashboard
+### Dashboard landing
 GET http://localhost:8000/
 Authorization: Basic {{ADMIN_USER}} {{ADMIN_PASSWORD}}
+Accept: text/html
 
-### Slots API snapshot
-GET http://localhost:8000/api/slots?limit=20
+### Slots management page
+GET http://localhost:8000/slots
 Authorization: Basic {{ADMIN_USER}} {{ADMIN_PASSWORD}}
-Accept: application/json
+Accept: text/html
 
-### Bot health
-GET http://localhost:8000/health/bot
+### Service health check
+GET http://localhost:8000/health
 Accept: application/json

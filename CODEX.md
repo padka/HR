@@ -24,6 +24,16 @@ pytest
 ```
 Дополнительно доступны make-таргеты (`make bootstrap`, `make dev-db`, `make test`) из README.md.
 
+## Локальный запуск
+1. **Создайте виртуальное окружение:** `python3 -m venv .venv && source .venv/bin/activate` (Python ≥3.11).
+2. **Установите зависимости:** `pip install -r requirements.txt -r requirements-dev.txt`.
+3. **Поставьте frontend-пакеты:** `npm install` (или `npm ci` для чистой среды).
+4. **Скопируйте конфиг:** `cp .env.example .env` и заполните минимум `ADMIN_USER`, `ADMIN_PASSWORD`, `SESSION_SECRET_KEY` (≥32 символов).
+5. **Соберите Tailwind:** `npm run build` — сформирует `backend/apps/admin_ui/static/build/main.css`.
+6. **Запустите FastAPI:** `ADMIN_USER=... ADMIN_PASSWORD=... SESSION_SECRET_KEY=... uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000`.
+7. **Проверьте здоровье:** `curl http://127.0.0.1:8000/health` (ожидаемый JSON статус `ok`).
+8. **Запустите тесты (опционально):** `pytest -q`. На текущем состоянии часть async-тестов падает из-за политики uvloop, Playwright-сценарии требуют предварительного `npx playwright install --with-deps`.
+
 ## Правила PR и работы с репозиторием
 - Ветки: `main` (стабильная), `develop` (интеграция), `feature/*` (задачи).
 - Коммиты: Conventional Commits (`feat|fix|chore|docs(scope): message`).
