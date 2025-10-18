@@ -6,7 +6,7 @@ import re
 from enum import Enum
 from typing import Dict, Optional
 
-from datetime import date as date_cls, datetime
+from datetime import date as date_cls, datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -30,6 +30,7 @@ from backend.apps.admin_ui.services.slots.core import (
     recruiters_for_slot_form,
     reject_slot_booking,
     reschedule_slot_booking,
+    serialize_slot,
     set_slot_outcome,
 )
 from backend.apps.admin_ui.utils import (
@@ -38,6 +39,7 @@ from backend.apps.admin_ui.utils import (
     local_naive_to_utc,
     norm_status,
     parse_optional_int,
+    status_filter,
     status_filters,
     utc_to_local_naive,
     validate_timezone_name,
@@ -166,7 +168,44 @@ async def slots_list(
     role: Optional[str] = Query(default="recruiter"),
 ):
     recruiter = parse_optional_int(recruiter_id)
-    status_list = status_filters(status)
+    status_inputs = ensure_sequence(status)
+    status_list: list[str] = []
+    ui_status_filters: list[str] = []
+    for raw_status in status_inputs:
+        candidate = (raw_status or "").strip()
+        if not candidate:
+            continue
+        lowered = candidate.lower()
+        if lowered == "free":
+            if "FREE" not in status_list:
+                status_list.append("FREE")
+            if "Free" not in ui_status_filters:
+                ui_status_filters.append("Free")
+            continue
+        if lowered == "booked":
+            for legacy in ("BOOKED", "CONFIRMED_BY_CANDIDATE"):
+                if legacy not in status_list:
+                    status_list.append(legacy)
+            if "Booked" not in ui_status_filters:
+                ui_status_filters.append("Booked")
+            continue
+        if lowered in {"cancelled", "canceled"}:
+            if "CANCELED" not in status_list:
+                status_list.append("CANCELED")
+            if "Cancelled" not in ui_status_filters:
+                ui_status_filters.append("Cancelled")
+            continue
+        if lowered == "expired":
+            if "Expired" not in ui_status_filters:
+                ui_status_filters.append("Expired")
+            continue
+        fallback = status_filter(candidate)
+        if fallback:
+            if fallback not in status_list:
+                status_list.append(fallback)
+            display = fallback.replace("_", " ").title()
+            if display not in ui_status_filters:
+                ui_status_filters.append(display)
     city_filter = parse_optional_int(city_id)
     purpose_values = [p.lower() for p in ensure_sequence(purpose)]
     date_start = None
@@ -222,17 +261,81 @@ async def slots_list(
         for row in recruiter_rows
     ]
     slots = result["items"]
-    aggregated = result.get("status_counts") or {}
-    status_counts: Dict[str, int] = {
-        "total": result.get("total", len(slots)),
-        "FREE": int(aggregated.get("FREE", 0)),
-        "PENDING": int(aggregated.get("PENDING", 0)),
-        "BOOKED": int(aggregated.get("BOOKED", 0)),
-        "CONFIRMED_BY_CANDIDATE": int(
-            aggregated.get("CONFIRMED_BY_CANDIDATE", 0)
-        ),
-        "CANCELED": int(aggregated.get("CANCELED", 0)),
+    now_utc = datetime.now(timezone.utc)
+    serialized_slots = [serialize_slot(slot, now=now_utc) for slot in slots]
+    status_totals = {"Free": 0, "Booked": 0, "Cancelled": 0, "Expired": 0}
+    for payload in serialized_slots:
+        status = payload.get("status")
+        if status in status_totals:
+            status_totals[status] += 1
+    table_slots: list[dict[str, object]] = []
+    for slot, payload in zip(slots, serialized_slots):
+        entry: dict[str, object] = {
+            "id": slot.id,
+            "start_at": ensure_utc(slot.start_utc),
+            "end_at": ensure_utc(slot.start_utc)
+            + timedelta(minutes=int(slot.duration_min or 0)),
+            "city": payload.get("city"),
+            "recruiter": payload.get("recruiter"),
+            "candidate": payload.get("candidate"),
+            "status": payload.get("status"),
+            "booking_confirmed": payload.get("booking_confirmed"),
+            "cancelled_at": slot.cancelled_at,
+            "updated_at": ensure_utc(slot.updated_at)
+            if slot.updated_at is not None
+            else None,
+            "api": payload,
+        }
+        table_slots.append(entry)
+
+    if ui_status_filters:
+        allowed = set(ui_status_filters)
+        table_slots = [item for item in table_slots if item.get("status") in allowed]
+
+    status_summary = {
+        "total": len(serialized_slots),
+        "Free": status_totals["Free"],
+        "Booked": status_totals["Booked"],
+        "Cancelled": status_totals["Cancelled"],
+        "Expired": status_totals["Expired"],
     }
+    status_cards = [
+        {
+            "key": "total",
+            "label": "Всего",
+            "value": status_summary["total"],
+            "tone": "muted",
+            "hint": "все записи",
+        },
+        {
+            "key": "free",
+            "label": "Свободно",
+            "value": status_summary["Free"],
+            "tone": "neutral",
+            "hint": "готово к бронированию",
+        },
+        {
+            "key": "booked",
+            "label": "Забронировано",
+            "value": status_summary["Booked"],
+            "tone": "info",
+            "hint": "подтверждённые встречи",
+        },
+        {
+            "key": "cancelled",
+            "label": "Отменено",
+            "value": status_summary["Cancelled"],
+            "tone": "danger",
+            "hint": "перенос или отмена",
+        },
+        {
+            "key": "expired",
+            "label": "Прошло",
+            "value": status_summary["Expired"],
+            "tone": "muted",
+            "hint": "время слота прошло",
+        },
+    ]
     latest_updated = result.get("latest_updated_at")
     latest_updated_dt = ensure_utc(latest_updated) if latest_updated else None
     purposes = result.get("purposes") or []
@@ -246,7 +349,7 @@ async def slots_list(
         "request": request,
         "slots": slots,
         "filter_recruiter_id": recruiter,
-        "filter_statuses": status_list,
+        "filter_statuses": ui_status_filters,
         "filter_city_id": city_filter,
         "filter_purposes": purpose_values,
         "filter_date_from": date_start.isoformat() if date_start else None,
@@ -263,9 +366,21 @@ async def slots_list(
         "recruiter_options": recruiter_options,
         "city_options": city_options,
         "purpose_options": purposes,
-        "status_counts": status_counts,
+        "status_counts": status_summary,
         "last_updated_at": latest_updated_dt,
         "flash": flash,
+        "table_slots": table_slots,
+        "slots_payload": serialized_slots,
+        "slots_filters": {
+            "recruiter_id": recruiter,
+            "statuses": ui_status_filters,
+            "city_id": city_filter,
+            "date_from": date_start.isoformat() if date_start else None,
+            "date_to": date_end.isoformat() if date_end else None,
+            "search": search_tokens,
+            "purpose": purpose_values,
+        },
+        "status_cards": status_cards,
     }
     response = templates.TemplateResponse("slots_list.html", context)
     if flash:

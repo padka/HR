@@ -153,7 +153,12 @@ class Slot(Base):
 
     candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     candidate_fio: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    candidate_phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    candidate_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    candidate_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     candidate_tz: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    booking_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     interview_outcome: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     interview_feedback: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     test2_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

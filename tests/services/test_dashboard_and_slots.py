@@ -97,38 +97,36 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
                 models.Slot(
                     recruiter_id=recruiter.id,
                     city_id=city.id,
-                    start_utc=now,
+                    start_utc=now - timedelta(hours=1),
                     status=models.SlotStatus.FREE,
                 ),
                 models.Slot(
                     recruiter_id=recruiter.id,
                     city_id=city.id,
                     start_utc=now + timedelta(hours=1),
-                    status=models.SlotStatus.PENDING,
+                    status=models.SlotStatus.FREE,
                 ),
                 models.Slot(
                     recruiter_id=recruiter.id,
                     city_id=city.id,
                     start_utc=now + timedelta(hours=2),
                     status=models.SlotStatus.BOOKED,
+                    booking_confirmed=True,
+                    candidate_fio="Тест Кандидат",
                 ),
                 models.Slot(
                     recruiter_id=recruiter.id,
                     city_id=city.id,
                     start_utc=now + timedelta(hours=3),
-                    status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
+                    status=models.SlotStatus.CANCELED,
+                    cancelled_at=now,
                 ),
             ]
         )
         await session.commit()
 
     payload = await api_slots_payload(recruiter_id=None, statuses=[], limit=10)
-    assert {item["status"] for item in payload} == {
-        "FREE",
-        "PENDING",
-        "BOOKED",
-        "CONFIRMED_BY_CANDIDATE",
-    }
+    assert {item["status"] for item in payload} == {"Free", "Booked", "Cancelled", "Expired"}
 
     register_template_globals()
     scope = {
@@ -143,9 +141,8 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
     status_counts = response.context["status_counts"]
     assert status_counts == {
         "total": 4,
-        "FREE": 1,
-        "PENDING": 1,
-        "BOOKED": 1,
-        "CONFIRMED_BY_CANDIDATE": 1,
-        "CANCELED": 0,
+        "Free": 1,
+        "Booked": 1,
+        "Cancelled": 1,
+        "Expired": 1,
     }

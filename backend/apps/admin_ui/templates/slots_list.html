@@ -1,591 +1,274 @@
 {% extends "base.html" %}
 {% block title %}Слоты{% endblock %}
 {% block content %}
-{% set has_slots = slots|length > 0 %}
-{% set status_labels = {
-  'FREE': 'Свободно',
-  'PENDING': 'Ожидает',
-  'BOOKED': 'Забронировано',
-  'CONFIRMED_BY_CANDIDATE': 'Подтверждено',
-  'CANCELED': 'Отменено'
-} %}
-{% set status_tones = {
-  'FREE': 'success',
-  'PENDING': 'warning',
-  'BOOKED': 'info',
-  'CONFIRMED_BY_CANDIDATE': 'success',
-  'CANCELED': 'danger'
-} %}
-{% set purpose_labels = {
-  'interview': 'Интервью',
-  'intro_day': 'Intro Day',
-  'screening': 'Скрининг',
-  'tech_screen': 'Tech screen',
-  'offboarding': 'Offboarding'
-} %}
-{% set filter_tags = [] %}
-{% if filter_recruiter_id %}
-  {% set recruiter_label = (recruiter_options | selectattr('id', 'equalto', filter_recruiter_id) | map(attribute='name') | list | first) %}
-  {% set filter_tags = filter_tags + [{'key': 'recruiter_id', 'label': recruiter_label or ('ID ' ~ filter_recruiter_id)}] %}
-{% endif %}
-{% if filter_statuses %}
-  {% for status_code in filter_statuses %}
-    {% set filter_tags = filter_tags + [{'key': 'status', 'value': status_code, 'label': status_labels.get(status_code, status_code)}] %}
-  {% endfor %}
-{% endif %}
-{% if filter_city_id %}
-  {% set city_label = (city_options | selectattr('id', 'equalto', filter_city_id) | map(attribute='name') | list | first) %}
-  {% set filter_tags = filter_tags + [{'key': 'city_id', 'label': city_label or ('ID ' ~ filter_city_id)}] %}
-{% endif %}
-{% if filter_purposes %}
-  {% for purpose_code in filter_purposes %}
-    {% set purpose_label = purpose_labels.get(purpose_code, purpose_code) %}
-    {% set filter_tags = filter_tags + [{'key': 'purpose', 'value': purpose_code, 'label': purpose_label}] %}
-  {% endfor %}
-{% endif %}
-{% if filter_date_from or filter_date_to %}
-  {% set date_parts = [] %}
-  {% if filter_date_from %}
-    {% set date_parts = date_parts + [('с ' ~ (filter_date_from | replace('-', '.')))] %}
-  {% endif %}
-  {% if filter_date_to %}
-    {% set date_parts = date_parts + [('по ' ~ (filter_date_to | replace('-', '.')))] %}
-  {% endif %}
-  {% set filter_tags = filter_tags + [{'key': 'date', 'label': date_parts | join(' ')}] %}
-{% endif %}
-{% if only_free %}
-  {% set filter_tags = filter_tags + [{'key': 'free_only', 'label': 'Только свободные'}] %}
-{% endif %}
-{% for token in search_tokens %}
-  {% set filter_tags = filter_tags + [{'key': 'search', 'label': token}] %}
-{% endfor %}
-{% set view_mode = (active_view or 'table') %}
-{% set status_summary = [
-  {'key': 'total', 'label': 'Всего', 'value': status_counts.total, 'tone': 'muted', 'hint': 'все записи'},
-  {'key': 'free', 'label': 'Свободно', 'value': status_counts.FREE, 'tone': 'success', 'hint': 'готово к брони'},
-  {'key': 'booked', 'label': 'Занято', 'value': status_counts.BOOKED, 'tone': 'progress', 'hint': 'уже назначено'}
-] %}
-<section class="flex flex-col gap-6" data-page="slots" aria-labelledby="slots-title">
-  <header class="rounded-2xl border border-border bg-bg-elev1/70 p-6 shadow-glass backdrop-blur glass" data-section="page-header">
-    <div class="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+<section class="slots-page flex flex-col gap-8" data-page="slots" aria-labelledby="slots-title">
+  <header class="slots-header rounded-2xl border border-border bg-bg-elev1/70 p-6 shadow-glass backdrop-blur">
+    <div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
       <div class="flex flex-col gap-4">
-        <div class="flex flex-col gap-2">
-          <p class="text-sm font-medium uppercase tracking-wide text-fg-muted">Расписание интервью</p>
-          <div class="flex flex-wrap items-center gap-3">
-            <h1 id="slots-title" class="text-3xl font-semibold tracking-tight text-fg-primary">Слоты</h1>
-            {% if last_updated_at %}
-              <div class="flex items-center gap-2 text-sm text-fg-muted" aria-live="polite">
-                <span class="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-bg-elev2 text-xs">
-                  ⟳
-                </span>
-                <time datetime="{{ last_updated_at.isoformat() }}">Обновлено {{ fmt_local(last_updated_at, 'Europe/Moscow') }}</time>
-              </div>
-            {% endif %}
-          </div>
-          <p class="max-w-2xl text-sm text-fg-muted">Отслеживайте занятость, свободные окна и быстро управляйте слотами — фильтры синхронизированы с URL и готовы к шарингу.</p>
+        <div class="flex flex-wrap items-center gap-3">
+          <h1 id="slots-title" class="text-3xl font-semibold tracking-tight text-fg-primary">Слоты</h1>
+          {% if last_updated_at %}
+            <span class="text-sm text-fg-muted" aria-live="polite">
+              Обновлено {{ fmt_local(last_updated_at, 'Europe/Moscow') }}
+            </span>
+          {% endif %}
         </div>
-        <dl class="grid gap-3 sm:grid-cols-3 lg:grid-cols-5" role="list">
-          {% for card in status_summary %}
-            <div class="rounded-xl border border-border/80 bg-bg-elev2/60 p-4 shadow-sm" role="listitem">
-              <dt class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-fg-muted">
-                {{ card.label }}
-                <span class="inline-flex items-center rounded-full bg-bg-elev3 px-2 py-0.5 text-[11px] font-medium text-fg-muted">{{ card.hint }}</span>
-              </dt>
-              <dd class="mt-2 text-2xl font-semibold text-fg-primary" id="cnt-{{ card.key }}">{{ card.value }}</dd>
-            </div>
-          {% endfor %}
-        </dl>
+        <p class="max-w-2xl text-sm text-fg-muted">
+          Управляйте расписанием интервью в табличном представлении: фильтры и сортировка доступны из заголовков колонок и верхней панели.
+        </p>
       </div>
-      <div class="flex flex-wrap items-center justify-end gap-2">
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-border bg-bg-elev2 px-3 py-2 text-sm font-medium shadow-sm transition hover:bg-bg-elev3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="refresh-slots">
-          <span class="sr-only">Обновить список</span>
-          ⟳
-          <span aria-hidden="true">Обновить</span>
+      <div class="flex flex-wrap items-center gap-2">
+        <button type="button" class="slots-btn slots-btn--ghost" data-action="refresh-slots">
+          <span aria-hidden="true">⟳</span>
+          <span>Обновить</span>
         </button>
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-border bg-bg-elev2 px-3 py-2 text-sm font-medium shadow-sm transition hover:bg-bg-elev3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="export-slots">
-          <span aria-hidden="true">⇩</span>
-          Экспорт
-        </button>
-        <a class="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" href="/slots/new">
+        <a class="slots-btn slots-btn--primary" href="/slots/new">
           <span aria-hidden="true">＋</span>
           Создать слот
         </a>
       </div>
     </div>
+    <dl class="slots-kpis" role="list">
+      {% for card in status_cards %}
+        <div class="slots-kpis__item" role="listitem">
+          <dt class="slots-kpis__label">{{ card.label }}</dt>
+          <dd class="slots-kpis__value">{{ card.value }}</dd>
+          <p class="slots-kpis__hint">{{ card.hint }}</p>
+        </div>
+      {% endfor %}
+    </dl>
   </header>
 
-  <div class="rounded-2xl border border-border bg-bg-elev1/70 p-6 shadow-glass" data-section="filters">
-    <div class="flex flex-col gap-6">
-      <div class="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start">
-        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3" id="slots_quick_filters">
-          <label class="flex flex-col gap-2 text-sm font-medium text-fg-primary">
-            Город
-            <select id="filter_city" class="h-11 rounded-xl border border-border bg-bg-elev2 px-3 text-sm shadow-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info">
-              <option value="">Все</option>
-              {% for city in city_options %}
-                <option value="{{ city.id }}" {% if filter_city_id == city.id %}selected{% endif %}>{{ city.name }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <div class="flex flex-col gap-2 text-sm font-medium text-fg-primary" data-filter="date-range">
-            <span>Дата</span>
-            <div class="flex h-11 items-center gap-2 rounded-xl border border-border bg-bg-elev2 px-2 text-sm shadow-sm focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-info">
-              <input type="date" id="filter_date_from" value="{{ filter_date_from or '' }}" class="flex-1 rounded-lg border-none bg-transparent px-2 py-1 text-sm text-fg-primary outline-none" aria-label="Дата с">
-              <span class="text-xs text-fg-muted" aria-hidden="true">—</span>
-              <input type="date" id="filter_date_to" value="{{ filter_date_to or '' }}" class="flex-1 rounded-lg border-none bg-transparent px-2 py-1 text-sm text-fg-primary outline-none" aria-label="Дата по">
-            </div>
-            <div class="flex flex-wrap gap-2 text-xs font-medium text-fg-muted">
-              <button type="button" class="inline-flex items-center rounded-full border border-border/60 bg-bg-elev2 px-2.5 py-1 transition hover:border-accent hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-date-preset="today">Сегодня</button>
-              <button type="button" class="inline-flex items-center rounded-full border border-border/60 bg-bg-elev2 px-2.5 py-1 transition hover:border-accent hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-date-preset="tomorrow">Завтра</button>
-              <button type="button" class="inline-flex items-center rounded-full border border-border/60 bg-bg-elev2 px-2.5 py-1 transition hover:border-accent hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-date-preset="week">7 дней</button>
-              <button type="button" class="inline-flex items-center rounded-full border border-dashed border-border/60 px-2.5 py-1 text-fg-muted transition hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="clear-dates">Очистить</button>
-            </div>
-          </div>
-          <label class="flex flex-col gap-2 text-sm font-medium text-fg-primary">
-            Рекрутер
-            <select id="filter_recruiter" class="h-11 rounded-xl border border-border bg-bg-elev2 px-3 text-sm shadow-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info">
-              <option value="">Все</option>
-              {% for rec in recruiter_options %}
-                <option value="{{ rec.id }}" {% if filter_recruiter_id == rec.id %}selected{% endif %}>{{ rec.name }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <div class="flex flex-col gap-2 text-sm font-medium text-fg-primary" data-filter="status">
-            <span>Статус</span>
-            <div class="relative">
-              <button type="button" id="filter_status_trigger" class="flex h-11 w-full items-center justify-between gap-3 rounded-xl border border-border bg-bg-elev2 px-3 text-left text-sm shadow-sm transition hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" aria-haspopup="true" aria-expanded="false">
-                <span id="filter_status_summary" class="truncate text-fg-primary">
-                  {% if filter_statuses %}
-                    {{ filter_statuses | length }} выбран(о)
-                  {% else %}
-                    Любой
-                  {% endif %}
-                </span>
-                <span aria-hidden="true" class="text-xs text-fg-muted">▾</span>
-              </button>
-              <div id="filter_status_panel" class="absolute z-20 mt-2 w-full min-w-[16rem] rounded-2xl border border-border bg-bg-elev1/95 p-2 text-sm shadow-xl backdrop-blur" role="menu" hidden>
-                <div class="flex items-center justify-between px-2 pb-2 text-xs uppercase tracking-wide text-fg-muted">
-                  <span>Выберите статусы</span>
-                  <button type="button" class="text-fg-muted hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="status-reset">Очистить</button>
-                </div>
-                <div class="grid gap-1" role="group" aria-label="Статусы">
-                  {% for code, label in status_labels.items() %}
-                    <label class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition hover:bg-bg-elev2 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-info">
-                      <input type="checkbox" value="{{ code }}" class="h-4 w-4 rounded border-border text-accent focus:ring-2 focus:ring-info" data-filter-status data-status-label="{{ label }}" {% if filter_statuses and code in filter_statuses %}checked{% endif %}>
-                      <span class="inline-flex items-center gap-2">
-                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold" data-badge="{{ status_tones.get(code, 'muted') }}">{{ label }}</span>
-                      </span>
-                    </label>
-                  {% endfor %}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="flex flex-col gap-2 text-sm font-medium text-fg-primary">
-            <span>Тип</span>
-            <div class="flex flex-wrap items-center gap-2" id="filter_purpose_chips" role="group" aria-label="Тип слота">
-              {% for item in purpose_options %}
-                {% set key = item %}
-                {% set active = filter_purposes and key in filter_purposes %}
-                <button type="button" class="inline-flex items-center gap-2 rounded-full border border-border/70 px-3 py-1 text-xs font-semibold transition hover:border-accent hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info {% if active %}border-accent bg-accent/10 text-fg-primary{% endif %}" data-filter-purpose="{{ key }}" aria-pressed="{{ 'true' if active else 'false' }}">{{ purpose_labels.get(key, key | capitalize) }}</button>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-        <div class="flex flex-col gap-3" data-role="search">
-          <label class="flex flex-col gap-2 text-sm font-medium text-fg-primary">
-            Поиск по кандидату или комментариям
-            <div class="flex min-h-[44px] flex-wrap items-center gap-2 rounded-xl border border-border bg-bg-elev2 px-3 py-1 text-sm shadow-sm transition focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-info">
-              <div class="flex flex-wrap items-center gap-1" id="slots_search_tokens" aria-live="polite"></div>
-              <input type="text" id="slots_search_input" value="" class="flex-1 border-none bg-transparent py-1 text-sm outline-none placeholder:text-fg-muted" placeholder="Введите и нажмите Enter" autocomplete="off">
-            </div>
-          </label>
-          <div class="flex flex-wrap items-center gap-2" id="slots_active_tags" aria-live="polite">
-            {% for tag in filter_tags %}
-              <button type="button" class="inline-flex items-center gap-1 rounded-full border border-border bg-bg-elev2 px-3 py-1 text-xs font-medium text-fg-primary shadow-sm transition hover:bg-bg-elev3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-remove-filter="{{ tag.key }}"{% if tag.value %} data-filter-value="{{ tag.value }}"{% endif %} data-token-label="{{ tag.label }}">
-                <span>{{ tag.label }}</span>
-                <span aria-hidden="true">×</span>
-                <span class="sr-only">Сбросить {{ tag.label }}</span>
-              </button>
-            {% endfor %}
-            <button type="button" class="inline-flex items-center gap-2 rounded-full border border-dashed border-border px-3 py-1 text-xs font-medium text-fg-muted transition hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="reset-filters">
-              Сбросить фильтры
-            </button>
-          </div>
-        </div>
-      </div>
-      <div class="flex flex-wrap items-center gap-4 border-t border-border/60 pt-4 text-sm text-fg-muted">
-        <label class="flex items-center gap-2">
-          <input type="checkbox" id="slots_only_future" class="h-4 w-4 rounded border-border text-accent focus:ring-2 focus:ring-info" {% if only_future %}checked{% endif %}>
-          Только будущие
-        </label>
-        <label class="flex items-center gap-2">
-          <input type="checkbox" id="slots_only_free" class="h-4 w-4 rounded border-border text-accent focus:ring-2 focus:ring-info" {% if only_free %}checked{% endif %}>
-          Только свободные
-        </label>
-        <div class="flex items-center gap-2" role="group" aria-label="Роль времени">
-          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info {% if time_role == 'recruiter' %}border-accent bg-accent/10 text-fg-primary{% else %}text-fg-muted{% endif %}" data-role-target="recruiter">Время рекрутера</button>
-          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info {% if time_role == 'candidate' %}border-accent bg-accent/10 text-fg-primary{% else %}text-fg-muted{% endif %}" data-role-target="candidate">Время кандидата</button>
-        </div>
-        <div class="flex items-center gap-2" role="group" aria-label="Вид представления">
-          <button type="button" data-view-toggle="table" class="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info {% if view_mode == 'table' %}border-accent bg-accent/10 text-fg-primary{% else %}text-fg-muted{% endif %}" aria-pressed="{{ 'true' if view_mode == 'table' else 'false' }}">Таблица</button>
-          <button type="button" data-view-toggle="cards" class="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info {% if view_mode == 'cards' %}border-accent bg-accent/10 text-fg-primary{% else %}text-fg-muted{% endif %}" aria-pressed="{{ 'true' if view_mode == 'cards' else 'false' }}">Карточки</button>
-        </div>
-        <div class="ml-auto flex items-center gap-2 text-sm">
-          <label for="per_page" class="text-fg-muted">На странице</label>
-          <select id="per_page" name="per_page" class="h-10 rounded-xl border border-border bg-bg-elev2 px-3 text-sm shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info">
-            {% for n in [20, 50, 100, 200, 500] %}
-              <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+  <section class="slots-filters" aria-label="Фильтры слотов">
+    <form id="slots_filters" class="slots-filters__form" method="get">
+      <div class="slots-filters__grid">
+        <label class="slots-field">
+          <span class="slots-field__label">Город</span>
+          <select id="filter_city" name="city_id" class="slots-select">
+            <option value="">Все</option>
+            {% for city in city_options %}
+              <option value="{{ city.id }}" {% if filter_city_id == city.id %}selected{% endif %}>{{ city.name }}</option>
             {% endfor %}
           </select>
+        </label>
+        <div class="slots-field">
+          <span class="slots-field__label">Дата</span>
+          <div class="slots-field__range">
+            <input id="filter_date_from" name="date_from" type="date" value="{{ filter_date_from or '' }}" class="slots-input" aria-label="Дата с">
+            <span aria-hidden="true">—</span>
+            <input id="filter_date_to" name="date_to" type="date" value="{{ filter_date_to or '' }}" class="slots-input" aria-label="Дата по">
+          </div>
+        </div>
+        <label class="slots-field">
+          <span class="slots-field__label">Рекрутер</span>
+          <select id="filter_recruiter" name="recruiter_id" class="slots-select">
+            <option value="">Все</option>
+            {% for rec in recruiter_options %}
+              <option value="{{ rec.id }}" {% if filter_recruiter_id == rec.id %}selected{% endif %}>{{ rec.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="slots-field">
+          <span class="slots-field__label">Статус</span>
+          <select id="filter_status" name="status" multiple size="4" class="slots-select slots-select--multiple" aria-describedby="filter_status_hint">
+            {% set status_labels = {'Free':'Свободно','Booked':'Забронировано','Cancelled':'Отменено','Expired':'Прошло'} %}
+            {% for key, label in status_labels.items() %}
+              <option value="{{ key }}" {% if key in filter_statuses %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <p id="filter_status_hint" class="slots-field__hint">Удерживайте Ctrl/⌘ для мультивыбора</p>
+        </label>
+        <label class="slots-field">
+          <span class="slots-field__label">Поиск</span>
+          <input id="filter_search" name="search" value="{{ search_query or '' }}" class="slots-input" placeholder="ФИО или телефон">
+        </label>
+      </div>
+      <div class="slots-filters__actions">
+        <div id="slots_filter_chips" class="slots-filter-chips" aria-live="polite">
+          {% set active_filters = [] %}
+          {% if filter_city_id %}
+            {% set active_filters = active_filters + [{'key':'city_id','label': city_options|selectattr('id','equalto',filter_city_id)|map(attribute='name')|list|first or 'Город'}] %}
+          {% endif %}
+          {% for status_label in filter_statuses %}
+            {% set display = status_labels.get(status_label, status_label) %}
+            {% set active_filters = active_filters + [{'key':'status','value':status_label,'label':display}] %}
+          {% endfor %}
+          {% if filter_date_from %}
+            {% set active_filters = active_filters + [{'key':'date_from','label':'с ' ~ (filter_date_from|replace('-', '.'))}] %}
+          {% endif %}
+          {% if filter_date_to %}
+            {% set active_filters = active_filters + [{'key':'date_to','label':'по ' ~ (filter_date_to|replace('-', '.'))}] %}
+          {% endif %}
+          {% if filter_recruiter_id %}
+            {% set rec_label = recruiter_options | selectattr('id','equalto',filter_recruiter_id) | map(attribute='name') | list | first %}
+            {% set active_filters = active_filters + [{'key':'recruiter_id','label': rec_label or ('ID ' ~ filter_recruiter_id)}] %}
+          {% endif %}
+          {% for token in search_tokens %}
+            {% set active_filters = active_filters + [{'key':'search','value':token,'label':token}] %}
+          {% endfor %}
+          {% if active_filters %}
+            {% for chip in active_filters %}
+              <button type="button" class="slots-chip" data-chip-key="{{ chip.key }}" {% if chip.value %}data-chip-value="{{ chip.value }}"{% endif %}>
+                <span>{{ chip.label }}</span>
+                <span aria-hidden="true">✕</span>
+              </button>
+            {% endfor %}
+          {% else %}
+            <p class="text-sm text-fg-muted">Фильтры не выбраны.</p>
+          {% endif %}
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="submit" class="slots-btn slots-btn--primary">Применить</button>
+          <button type="button" class="slots-btn slots-btn--ghost" data-action="reset-filters">Сбросить</button>
         </div>
       </div>
-    </div>
-  </div>
+    </form>
+  </section>
 
-  <div class="rounded-2xl border border-border bg-bg-elev1/70 shadow-glass" data-section="slots-data">
-    <div class="flex items-center justify-between gap-3 border-b border-border/60 px-6 py-4 text-sm text-fg-muted" id="slots_meta_bar">
-      <span>Найдено: <strong>{{ status_counts.total }}</strong></span>
-      <div class="flex items-center gap-2">
-        <span>Страница {{ page }} из {{ pages_total }}</span>
-        {% set query_parts = [] %}
-        {% if filter_recruiter_id %}{% set query_parts = query_parts + ['recruiter_id=' ~ filter_recruiter_id] %}{% endif %}
-        {% if filter_status %}{% set query_parts = query_parts + ['status=' ~ filter_status] %}{% endif %}
-        {% if filter_city_id %}{% set query_parts = query_parts + ['city_id=' ~ filter_city_id] %}{% endif %}
-        {% if filter_purpose %}{% set query_parts = query_parts + ['purpose=' ~ filter_purpose] %}{% endif %}
-        {% if filter_date %}{% set query_parts = query_parts + ['date=' ~ filter_date] %}{% endif %}
-        {% if per_page %}{% set query_parts = query_parts + ['per_page=' ~ per_page] %}{% endif %}
-        {% if only_future %}{% set query_parts = query_parts + ['future=1'] %}{% endif %}
-        {% if view_mode != 'table' %}{% set query_parts = query_parts + ['view=' ~ view_mode] %}{% endif %}
-        {% if time_role != 'recruiter' %}{% set query_parts = query_parts + ['role=' ~ time_role] %}{% endif %}
-        {% for token in search_tokens %}{% set query_parts = query_parts + ['search=' ~ token|urlencode] %}{% endfor %}
-        {% set base_query = query_parts | join('&') %}
-        <nav class="flex items-center gap-1" aria-label="Пагинация">
-          {% if page > 1 %}
-            <a class="inline-flex items-center rounded-md border border-border px-2 py-1 text-xs text-fg-primary transition hover:bg-bg-elev2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" href="?page=1{% if base_query %}&{{ base_query }}{% endif %}">« Первая</a>
-            <a class="inline-flex items-center rounded-md border border-border px-2 py-1 text-xs text-fg-primary transition hover:bg-bg-elev2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" href="?page={{ page - 1 }}{% if base_query %}&{{ base_query }}{% endif %}">‹ Назад</a>
-          {% else %}
-            <span class="inline-flex items-center rounded-md px-2 py-1 text-xs text-fg-muted" aria-disabled="true">« Первая</span>
-            <span class="inline-flex items-center rounded-md px-2 py-1 text-xs text-fg-muted" aria-disabled="true">‹ Назад</span>
-          {% endif %}
-          {% if page < pages_total %}
-            <a class="inline-flex items-center rounded-md border border-border px-2 py-1 text-xs text-fg-primary transition hover:bg-bg-elev2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" href="?page={{ page + 1 }}{% if base_query %}&{{ base_query }}{% endif %}">Вперёд ›</a>
-            <a class="inline-flex items-center rounded-md border border-border px-2 py-1 text-xs text-fg-primary transition hover:bg-bg-elev2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" href="?page={{ pages_total }}{% if base_query %}&{{ base_query }}{% endif %}">Последняя »</a>
-          {% else %}
-            <span class="inline-flex items-center rounded-md px-2 py-1 text-xs text-fg-muted" aria-disabled="true">Вперёд ›</span>
-            <span class="inline-flex items-center rounded-md px-2 py-1 text-xs text-fg-muted" aria-disabled="true">Последняя »</span>
-          {% endif %}
-        </nav>
-      </div>
-    </div>
-
-    <div class="relative" data-view="table" {% if view_mode != 'table' %}hidden{% endif %}>
-      <div class="overflow-x-auto">
-        <table class="min-w-full border-separate text-left text-sm" id="slots_table" style="border-spacing: 0">
-          <caption class="sr-only">Таблица слотов</caption>
-          <thead class="sticky top-0 z-10 bg-bg-elev1/95 backdrop-blur">
-            <tr class="text-xs uppercase tracking-wide text-fg-muted">
-              <th scope="col" class="px-4 py-3">
-                <div class="flex items-center gap-2">
-                  <label class="inline-flex items-center">
-                    <input type="checkbox" id="slots_select_all" class="h-4 w-4 rounded border-border text-accent focus:ring-2 focus:ring-info">
-                    <span class="sr-only">Выбрать все слоты</span>
-                  </label>
+  <div class="slots-table-card rounded-2xl border border-border bg-bg-elev1/70 shadow-glass">
+    {% if table_slots %}
+      <div class="slots-table-scroll" role="region" aria-labelledby="slots-title">
+        <table id="slots_table" class="slots-table" role="grid">
+          <thead class="slots-table__head">
+            <tr>
+              <th scope="col">
+                <div class="slots-column">
                   <span>Дата и время</span>
+                  <button type="button" class="slots-inline-filter" data-inline-filter="filter_date_from" aria-label="Фильтр по дате">
+                    ⌄
+                  </button>
                 </div>
               </th>
-              <th scope="col" class="px-4 py-3">Город</th>
-              <th scope="col" class="px-4 py-3">Рекрутер</th>
-              <th scope="col" class="px-4 py-3">Кандидат</th>
-              <th scope="col" class="px-4 py-3">Статус</th>
-              <th scope="col" class="px-4 py-3 text-right">Действия</th>
+              <th scope="col">
+                <div class="slots-column">
+                  <span>Город</span>
+                  <button type="button" class="slots-inline-filter" data-inline-filter="filter_city" aria-label="Фильтр по городу">⌄</button>
+                </div>
+              </th>
+              <th scope="col">
+                <div class="slots-column">
+                  <span>Рекрутер</span>
+                  <button type="button" class="slots-inline-filter" data-inline-filter="filter_recruiter" aria-label="Фильтр по рекрутеру">⌄</button>
+                </div>
+              </th>
+              <th scope="col">
+                <div class="slots-column">
+                  <span>Кандидат</span>
+                  <button type="button" class="slots-inline-filter" data-inline-filter="filter_search" aria-label="Фильтр по кандидату">⌄</button>
+                </div>
+              </th>
+              <th scope="col">
+                <div class="slots-column">
+                  <span>Статус</span>
+                  <button type="button" class="slots-inline-filter" data-inline-filter="filter_status" aria-label="Фильтр по статусу">⌄</button>
+                </div>
+              </th>
+              <th scope="col" class="text-right">Действия</th>
             </tr>
           </thead>
-          <tbody id="slots_tbody" class="divide-y divide-border/60 bg-bg-elev1">
-            {% for s in slots %}
-              {% set st = norm_status(s.status) %}
-              {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else 'Europe/Moscow' %}
-              {% set cand_tz = s.candidate_tz %}
-              {% set status_label = status_labels.get(st, st or '—') %}
-              {% if st == 'FREE' %}
-                {% set tone = 'success' %}
-              {% elif st == 'PENDING' %}
-                {% set tone = 'warning' %}
-              {% elif st == 'BOOKED' %}
-                {% set tone = 'progress' %}
-              {% elif st == 'CONFIRMED_BY_CANDIDATE' %}
-                {% set tone = 'success' %}
-              {% elif st == 'CANCELED' %}
-                {% set tone = 'danger' %}
-              {% else %}
-                {% set tone = 'muted' %}
-              {% endif %}
-              <tr class="slot-row transition hover:bg-bg-elev2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-4px] focus-visible:outline-info" tabindex="0"
-                  data-id="{{ s.id }}"
-                  data-status="{{ st or '' }}"
-                  data-status-label="{{ status_label }}"
-                  data-start-iso="{{ s.start_utc.isoformat() }}"
-                  data-start-utc="{{ fmt_utc(s.start_utc) }}"
-                  data-start-rec="{{ fmt_local(s.start_utc, tz_rec) }}"
-                  data-start-cand="{{ fmt_local(s.start_utc, cand_tz) if cand_tz else '' }}"
-                  data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
-                  data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
-                  data-recruiter-tz="{{ tz_rec }}"
-                  data-city-id="{{ s.city.id if s.city else '' }}"
-                  data-city-name="{{ s.city.name if s.city else '' }}"
-                  data-city-tz="{{ tz_display(s.city.tz) if s.city else '' }}"
-                  data-duration="{{ s.duration_min }}"
-                  data-candidate="{{ s.candidate_fio or '' }}"
-                  data-candidate-id="{{ s.candidate_tg_id or '' }}"
-                  data-candidate-tz="{{ cand_tz or '' }}"
-                  data-outcome="{{ s.interview_outcome or '' }}"
-                  data-purpose="{{ s.purpose or '' }}"
-                  data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
-                <td class="px-4 py-4 align-top">
-                  <div class="flex items-start gap-3">
-                    <label class="mt-1 inline-flex items-center">
-                      <input type="checkbox" class="slot-select h-4 w-4 rounded border-border text-accent focus:ring-2 focus:ring-info" value="{{ s.id }}">
-                      <span class="sr-only">Выбрать слот {{ s.id }}</span>
-                    </label>
-                    <div class="flex flex-col gap-1 text-sm" data-role="time">
-                      <div class="flex items-center gap-2 text-xs uppercase tracking-wide text-fg-muted">
-                        <span class="rounded-full bg-bg-elev3 px-2 py-0.5 font-semibold">ID {{ s.id }}</span>
-                        <span class="text-[11px]">{{ tz_display(tz_rec) }}</span>
-                      </div>
-                      <span class="font-medium text-fg-primary" data-role="time-primary">{{ fmt_local(s.start_utc, tz_rec) }}</span>
-                      <span class="text-xs text-fg-muted" data-role="time-secondary">UTC {{ fmt_utc(s.start_utc) }}</span>
-                      {% if cand_tz %}
-                        <span class="text-xs text-fg-muted" data-role="time-candidate">{{ fmt_local(s.start_utc, cand_tz) }} · {{ tz_display(cand_tz) }}</span>
-                      {% endif %}
-                      <span class="text-xs text-fg-muted" data-role="deadline">—</span>
-                    </div>
+          <tbody id="slots_tbody">
+            {% for slot in table_slots %}
+              {% set city = slot.city %}
+              {% set recruiter = slot.recruiter %}
+              {% set candidate = slot.candidate %}
+              <tr class="slots-row" data-slot-id="{{ slot.id }}">
+                <td data-label="Дата и время">
+                  <div class="slots-cell-time">
+                    <time datetime="{{ slot.start_at.isoformat() }}">{{ fmt_local(slot.start_at, 'Europe/Moscow') }}</time>
+                    <span class="slots-cell-sub">→ {{ fmt_local(slot.end_at, 'Europe/Moscow') }}</span>
                   </div>
                 </td>
-                <td class="px-4 py-4 align-top text-sm">
-                  {% if s.city %}
-                    <div class="flex flex-col gap-1">
-                      <span class="font-medium text-fg-primary">{{ s.city.name }}</span>
-                      <span class="text-xs text-fg-muted">{{ tz_display(s.city.tz) }}</span>
-                    </div>
-                  {% else %}
-                    <span class="text-sm text-fg-muted">Город не выбран</span>
-                  {% endif %}
+                <td data-label="Город">
+                  <span>{{ city.name if city else '—' }}</span>
                 </td>
-                <td class="px-4 py-4 align-top text-sm">
-                  <div class="flex flex-col gap-1">
-                    <span class="font-medium">{{ s.recruiter.name if s.recruiter else 'Не назначен' }}</span>
-                    <span class="text-xs text-fg-muted">
-                      {% if s.recruiter and s.recruiter.tz %}
-                        {{ tz_display(s.recruiter.tz) }}
-                      {% else %}
-                        Часовой пояс не указан
-                      {% endif %}
-                    </span>
+                <td data-label="Рекрутер">
+                  <span>{{ recruiter.name if recruiter else '—' }}</span>
+                </td>
+                <td data-label="Кандидат">
+                  <div class="slots-cell-candidate">
+                    <span class="slots-cell-main">{{ candidate.full_name or '—' }}</span>
+                    {% set candidate_detail = candidate.phone or candidate.email or candidate.notes %}
+                    <span class="slots-cell-sub" {% if not candidate_detail %}hidden{% endif %}>{{ candidate_detail or '' }}</span>
                   </div>
                 </td>
-                <td class="px-4 py-4 align-top text-sm">
-                  {% if s.candidate_fio %}
-                    <div class="flex flex-col gap-1">
-                      <span class="font-medium text-fg-primary">{{ s.candidate_fio }}</span>
-                      <div class="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
-                        <span>tg_id: {{ s.candidate_tg_id or '—' }}</span>
-                        {% if cand_tz %}<span>{{ tz_display(cand_tz) }}</span>{% endif %}
-                      </div>
-                      <button type="button" class="inline-flex w-fit items-center gap-2 rounded-md border border-border px-2 py-1 text-xs font-medium text-fg-primary transition hover:bg-bg-elev2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="write-tg" data-tg-id="{{ s.candidate_tg_id or '' }}" {% if not s.candidate_tg_id %}disabled{% endif %}>Написать в TG</button>
-                    </div>
-                  {% else %}
-                    <span class="text-sm text-fg-muted">Слот свободен</span>
-                  {% endif %}
+                <td data-label="Статус">
+                  {% set status = slot.status or 'Free' %}
+                  <span class="slots-status slots-status--{{ status|lower }}">{{ status }}</span>
                 </td>
-                <td class="px-4 py-4 align-top">
-                  <div class="flex flex-col gap-2 text-sm">
-                    <span class="inline-flex w-fit items-center rounded-full px-2 py-0.5 text-xs font-semibold" data-badge="{{ tone }}">{{ status_label }}</span>
-                    <div class="text-xs text-fg-muted">{{ purpose_labels.get(s.purpose, s.purpose or '—') }} · {{ s.duration_min }} мин</div>
-                  </div>
-                </td>
-                <td class="px-4 py-4 align-top">
-                  <div class="relative flex justify-end" data-role="menu">
-                    <button type="button" class="slot-actions__trigger inline-flex items-center rounded-md border border-border bg-bg-elev2 px-2 py-1 text-sm font-medium text-fg-primary shadow-sm transition hover:bg-bg-elev3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" aria-haspopup="menu" aria-expanded="false">⋯</button>
-                    <div class="slot-actions__menu absolute right-0 top-8 hidden min-w-[12rem] rounded-lg border border-border bg-bg-elev1 p-2 text-sm shadow-lg" role="menu">
-                      <button type="button" class="slot-menu__item" data-action="open-slot" role="menuitem">Подробнее</button>
-                      <button type="button" class="slot-menu__item" data-action="duplicate-slot" role="menuitem">Дублировать</button>
-                      <button type="button" class="slot-menu__item" data-action="copy-slot" role="menuitem">Скопировать ссылку</button>
-                      <button type="button" class="slot-menu__item text-danger" data-action="delete-slot" role="menuitem">Удалить</button>
-                    </div>
-                  </div>
+                <td data-label="Действия" class="text-right">
+                  <button type="button" class="slots-btn slots-btn--ghost" data-slot-detail="{{ slot.id }}">Подробнее</button>
                 </td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-      <div id="slots_table_empty" class="px-6 py-10 text-center text-sm text-fg-muted" hidden>
-        <h3 class="text-lg font-semibold text-fg-primary">Нет результатов</h3>
-        <p class="mt-2">Попробуйте изменить фильтры или сбросьте условия поиска.</p>
-        <div class="mt-4 flex items-center justify-center gap-2">
-          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-medium text-fg-primary transition hover:bg-bg-elev2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="reset-filters">Сбросить фильтры</button>
-          <a class="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" href="/slots/new">Создать слот</a>
-        </div>
+    {% else %}
+      <div class="slots-empty" role="status">
+        <p class="slots-empty__title">Слоты не найдены</p>
+        <p class="slots-empty__hint">Попробуйте изменить фильтры или создайте новый слот вручную.</p>
+        <a class="slots-btn slots-btn--primary" href="/slots/new">Создать слот</a>
       </div>
-    </div>
-
-    <div class="p-6" data-view="cards" {% if view_mode != 'cards' %}hidden{% endif %}>
-      <div id="slots_card_container" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-card-root>
-        {% for s in slots %}
-          {% set st = norm_status(s.status) %}
-          {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else 'Europe/Moscow' %}
-          {% set cand_tz = s.candidate_tz %}
-          {% set status_label = status_labels.get(st, st or '—') %}
-          {% if st == 'FREE' %}
-            {% set tone = 'success' %}
-          {% elif st == 'PENDING' %}
-            {% set tone = 'warning' %}
-          {% elif st == 'BOOKED' %}
-            {% set tone = 'progress' %}
-          {% elif st == 'CONFIRMED_BY_CANDIDATE' %}
-            {% set tone = 'success' %}
-          {% elif st == 'CANCELED' %}
-            {% set tone = 'danger' %}
-          {% else %}
-            {% set tone = 'muted' %}
-          {% endif %}
-          <article class="slot-card flex flex-col gap-4 rounded-2xl border border-border bg-bg-elev2/80 p-4 shadow-sm transition hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" tabindex="0"
-            data-id="{{ s.id }}"
-            data-status="{{ st or '' }}"
-            data-status-label="{{ status_label }}"
-            data-start-iso="{{ s.start_utc.isoformat() }}"
-            data-start-utc="{{ fmt_utc(s.start_utc) }}"
-            data-start-rec="{{ fmt_local(s.start_utc, tz_rec) }}"
-            data-start-cand="{{ fmt_local(s.start_utc, cand_tz) if cand_tz else '' }}"
-            data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
-            data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
-            data-recruiter-tz="{{ tz_rec }}"
-            data-city-id="{{ s.city.id if s.city else '' }}"
-            data-city-name="{{ s.city.name if s.city else '' }}"
-            data-city-tz="{{ tz_display(s.city.tz) if s.city else '' }}"
-            data-duration="{{ s.duration_min }}"
-            data-candidate="{{ s.candidate_fio or '' }}"
-            data-candidate-id="{{ s.candidate_tg_id or '' }}"
-            data-candidate-tz="{{ cand_tz or '' }}"
-            data-outcome="{{ s.interview_outcome or '' }}"
-            data-purpose="{{ s.purpose or '' }}"
-            data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
-            <header class="flex items-start justify-between gap-3">
-              <div class="flex flex-col gap-1" data-role="time">
-                <span class="text-xs text-fg-muted">{{ s.city.name if s.city else 'Без города' }}</span>
-                <h3 class="text-xl font-semibold text-fg-primary" data-role="time-primary">{{ fmt_local(s.start_utc, tz_rec) }}</h3>
-                <span class="text-xs text-fg-muted" data-role="time-secondary">UTC {{ fmt_utc(s.start_utc) }}</span>
-                {% if cand_tz %}
-                  <span class="text-xs text-fg-muted" data-role="time-candidate">{{ fmt_local(s.start_utc, cand_tz) }} · {{ tz_display(cand_tz) }}</span>
-                {% endif %}
-              </div>
-              <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold" data-badge="{{ tone }}">{{ status_label }}</span>
-            </header>
-            <div class="flex flex-col gap-2 text-sm">
-              <div class="flex items-center gap-2">
-                <span class="rounded-full bg-bg-elev3 px-2 py-0.5 text-xs font-semibold text-fg-muted">ID {{ s.id }}</span>
-                <span class="text-fg-muted">{{ purpose_labels.get(s.purpose, s.purpose or '—') }}</span>
-              </div>
-              <p class="text-fg-primary">{{ s.recruiter.name if s.recruiter else 'Рекрутер не назначен' }}</p>
-              {% if s.candidate_fio %}
-                <div class="rounded-lg border border-border/60 bg-bg-elev1/60 p-3 text-sm">
-                  <p class="font-medium text-fg-primary">{{ s.candidate_fio }}</p>
-                  <p class="text-xs text-fg-muted">tg_id: {{ s.candidate_tg_id or '—' }}{% if cand_tz %} · {{ tz_display(cand_tz) }}{% endif %}</p>
-                </div>
-              {% else %}
-                <p class="text-sm text-fg-muted">Слот свободен</p>
-              {% endif %}
-            </div>
-            <footer class="flex items-center justify-between gap-2">
-              <div class="text-xs text-fg-muted">Длительность {{ s.duration_min }} мин</div>
-              <div class="flex items-center gap-2">
-                <button type="button" class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs font-medium text-fg-primary transition hover:bg-bg-elev3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="open-slot">Подробнее</button>
-                <button type="button" class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs font-medium text-fg-primary transition hover:bg-bg-elev3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="duplicate-slot">Дублировать</button>
-              </div>
-            </footer>
-          </article>
-        {% endfor %}
-      </div>
-      <div id="slots_card_empty" class="mt-10 text-center text-sm text-fg-muted" hidden>
-        <h3 class="text-lg font-semibold text-fg-primary">Нет карточек по выбранным фильтрам</h3>
-        <p class="mt-2">Измените параметры или создайте новый слот.</p>
-        <div class="mt-4 flex items-center justify-center gap-2">
-          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-medium text-fg-primary transition hover:bg-bg-elev2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="reset-filters">Сбросить фильтры</button>
-          <a class="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" href="/slots/new">Создать слот</a>
-        </div>
-      </div>
-    </div>
-
-    <div id="slots_skeleton" class="hidden border-t border-border/60 px-6 py-8" aria-hidden="true">
-      <div class="flex flex-col gap-4">
-        {% for _ in range(3) %}
-          <div class="animate-pulse rounded-xl bg-bg-elev2/80 p-4">
-            <div class="h-4 w-1/2 rounded-full bg-border/70"></div>
-            <div class="mt-3 h-3 w-full rounded-full bg-border/50"></div>
-            <div class="mt-2 h-3 w-3/4 rounded-full bg-border/50"></div>
-          </div>
-        {% endfor %}
-      </div>
-    </div>
-
-    <div id="slots_error" class="hidden border-t border-border/60 px-6 py-10 text-center text-sm text-danger">
-      <h3 class="text-lg font-semibold">Не удалось загрузить слоты</h3>
-      <p class="mt-2">Проверьте подключение или попробуйте ещё раз.</p>
-      <div class="mt-4 flex items-center justify-center">
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-medium text-fg-primary transition hover:bg-bg-elev2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-action="retry-load">Повторить</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="slots_bulk_bar" class="sticky bottom-4 z-20 hidden w-full rounded-full border border-border bg-bg-elev2/95 px-6 py-3 shadow-glass" aria-hidden="true">
-    <div class="flex flex-wrap items-center gap-3">
-      <div class="flex items-center gap-2 text-sm text-fg-primary">Выбрано: <strong id="slots_bulk_count">0</strong></div>
-      <label class="flex items-center gap-2 text-sm text-fg-muted">
-        <span>Назначить</span>
-        <select id="slots_bulk_assign" class="h-9 rounded-lg border border-border bg-bg-elev1 px-3 text-sm shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info">
-          <option value="">— Выберите —</option>
-          {% for rec in recruiter_options %}
-            <option value="{{ rec.id }}">{{ rec.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <div class="flex flex-wrap items-center gap-2">
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-medium text-fg-primary transition hover:bg-bg-elev3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-bulk-action="assign">Применить</button>
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-medium text-fg-primary transition hover:bg-bg-elev3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info" data-bulk-action="remind">Напоминание</button>
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-danger/60 bg-danger/10 px-3 py-2 text-sm font-medium text-danger transition hover:bg-danger/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-danger" data-bulk-action="delete">Удалить</button>
-      </div>
-    </div>
+    {% endif %}
   </div>
 </section>
 
-{% include "partials/slot_sheet.html" %}
-<div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+<div id="slot_modal" class="slots-modal" role="dialog" aria-modal="true" aria-labelledby="slot_modal_title" hidden>
+  <div class="slots-modal__backdrop" data-modal-dismiss></div>
+  <div class="slots-modal__content" role="document">
+    <header class="slots-modal__header">
+      <div>
+        <h2 id="slot_modal_title" class="slots-modal__title">Слот</h2>
+        <p id="slot_modal_subtitle" class="slots-modal__subtitle text-sm text-fg-muted"></p>
+      </div>
+      <button type="button" class="slots-modal__close" data-modal-dismiss aria-label="Закрыть модалку">✕</button>
+    </header>
+    <form id="slot_candidate_form" class="slots-modal__form">
+      <div class="slots-modal__fieldset">
+        <label class="slots-field">
+          <span class="slots-field__label">ФИО кандидата</span>
+          <input type="text" name="full_name" class="slots-input" autocomplete="name">
+        </label>
+        <label class="slots-field">
+          <span class="slots-field__label">Телефон</span>
+          <input type="tel" name="phone" class="slots-input" autocomplete="tel">
+        </label>
+        <label class="slots-field">
+          <span class="slots-field__label">Email</span>
+          <input type="email" name="email" class="slots-input" autocomplete="email">
+        </label>
+        <label class="slots-field">
+          <span class="slots-field__label">Заметки</span>
+          <textarea name="notes" rows="3" class="slots-textarea"></textarea>
+        </label>
+        <label class="slots-checkbox">
+          <input type="checkbox" name="booking_confirmed">
+          <span>Бронь подтверждена</span>
+        </label>
+      </div>
+      <footer class="slots-modal__footer">
+        <div class="flex items-center gap-2">
+          <button type="submit" class="slots-btn slots-btn--primary">Сохранить</button>
+          <button type="button" class="slots-btn slots-btn--ghost" data-action="slot-restore" hidden>Вернуть</button>
+          <button type="button" class="slots-btn slots-btn--danger" data-action="slot-cancel">Отменить слот</button>
+        </div>
+        <button type="button" class="slots-btn slots-btn--ghost" data-modal-dismiss>Закрыть</button>
+      </footer>
+    </form>
+  </div>
+</div>
+<div id="slot_toast" class="slots-toast" role="status" aria-live="polite"></div>
+<div id="slots_loading" class="slots-skeleton" hidden>Загрузка…</div>
 
-<script id="slots_context" type="application/json">{{ {
-  'filters': {
-    'recruiter_id': filter_recruiter_id,
-    'statuses': filter_statuses,
-    'city_id': filter_city_id,
-    'purposes': filter_purposes,
-    'date_from': filter_date_from,
-    'date_to': filter_date_to,
-    'free_only': only_free,
-  },
-  'search_tokens': search_tokens,
-  'status_counts': status_counts,
-  'recruiters': recruiter_options,
-  'cities': city_options,
-  'purposes': purpose_options,
-  'page': page,
-  'pages_total': pages_total,
-  'per_page': per_page,
-  'has_slots': has_slots,
-  'view': view_mode,
-  'role': time_role,
-  'only_future': only_future,
-  'only_free': only_free
+<script type="application/json" id="slots_context">{{ {
+  'slots': slots_payload,
+  'filters': slots_filters,
+  'statusLabels': {
+    'Free': 'Свободно',
+    'Booked': 'Забронировано',
+    'Cancelled': 'Отменено',
+    'Expired': 'Прошло'
+  }
 } | tojson }}</script>
-{% endblock %}
-{% block extra_js %}
-  <script type="module" src="{{ url_for('static', path='js/modules/slots-list.js') }}"></script>
+<script type="module" src="{{ url_for('static', path='js/modules/slots-notion.js') }}"></script>
 {% endblock %}

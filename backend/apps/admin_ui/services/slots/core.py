@@ -36,6 +36,7 @@ try:  # pragma: no cover - optional dependency during tests
 except Exception:  # pragma: no cover - safe fallback when bot package unavailable
     get_reminder_service = None  # type: ignore[assignment]
 from backend.apps.admin_ui.utils import (
+    ensure_utc,
     local_naive_to_utc,
     norm_status,
     paginate,
@@ -63,6 +64,7 @@ __all__ = [
     "execute_bot_dispatch",
     "reschedule_slot_booking",
     "reject_slot_booking",
+    "serialize_slot",
 ]
 
 
@@ -71,6 +73,66 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_COMPANY_NAME = "SMART SERVICE"
 REJECTION_TEMPLATE_KEY = "result_fail"
+
+
+def derive_slot_status(slot: Slot, *, now: datetime | None = None) -> str:
+    """Map persistent slot fields to a UI-friendly status."""
+
+    reference = now or datetime.now(UTC)
+    raw_status = norm_status(slot.status) or ""
+    if slot.cancelled_at is not None:
+        return "Cancelled"
+    if raw_status == "CANCELED":
+        return "Cancelled"
+    if bool(getattr(slot, "booking_confirmed", False)) and (
+        slot.candidate_fio or getattr(slot, "candidate_phone", None)
+    ):
+        return "Booked"
+    start_at = ensure_utc(slot.start_utc)
+    if start_at < reference:
+        return "Expired"
+    return "Free"
+
+
+def serialize_slot(slot: Slot, *, now: datetime | None = None) -> dict[str, object]:
+    """Serialize a slot to the public API representation."""
+
+    reference = now or datetime.now(UTC)
+    start_at = ensure_utc(slot.start_utc)
+    duration = max(int(getattr(slot, "duration_min", 0) or 0), 0)
+    end_at = start_at + timedelta(minutes=duration) if duration else start_at
+    status = derive_slot_status(slot, now=reference)
+    city_payload = None
+    if slot.city is not None:
+        city_payload = {"id": str(slot.city.id), "name": slot.city.name}
+    recruiter_payload = None
+    if slot.recruiter is not None:
+        recruiter_payload = {"id": str(slot.recruiter.id), "name": slot.recruiter.name}
+
+    candidate_payload = {
+        "id": None,
+        "full_name": slot.candidate_fio,
+        "phone": getattr(slot, "candidate_phone", None),
+        "email": getattr(slot, "candidate_email", None),
+        "notes": getattr(slot, "candidate_notes", None),
+    }
+
+    return {
+        "id": str(slot.id),
+        "start_at": start_at.astimezone(UTC).isoformat(),
+        "end_at": end_at.astimezone(UTC).isoformat(),
+        "city": city_payload,
+        "recruiter": recruiter_payload,
+        "candidate": candidate_payload,
+        "status": status,
+        "booking_confirmed": bool(getattr(slot, "booking_confirmed", False)),
+        "cancelled_at": slot.cancelled_at.astimezone(UTC).isoformat()
+        if slot.cancelled_at
+        else None,
+        "updated_at": ensure_utc(slot.updated_at).astimezone(UTC).isoformat()
+        if getattr(slot, "updated_at", None)
+        else None,
+    }
 
 
 def get_state_manager():
@@ -990,15 +1052,5 @@ async def api_slots_payload(
         future_only=future_only,
     )
     items = sorted(result.get("items", []), key=lambda slot: slot.start_utc)
-    return [
-        {
-            "id": sl.id,
-            "recruiter_id": sl.recruiter_id,
-            "recruiter_name": sl.recruiter.name if sl.recruiter else None,
-            "start_utc": sl.start_utc.isoformat() if sl.start_utc else None,
-            "status": norm_status(sl.status),
-            "candidate_fio": getattr(sl, "candidate_fio", None),
-            "candidate_tg_id": getattr(sl, "candidate_tg_id", None),
-        }
-        for sl in items
-    ]
+    now = datetime.now(UTC)
+    return [serialize_slot(sl, now=now) for sl in items]

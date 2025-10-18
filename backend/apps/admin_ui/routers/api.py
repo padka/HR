@@ -1,8 +1,12 @@
 from datetime import date as date_type
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.services.cities import (
     api_cities_payload,
@@ -13,17 +17,65 @@ from backend.apps.admin_ui.services.dashboard_calendar import (
     dashboard_calendar_snapshot,
 )
 from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
-from backend.apps.admin_ui.services.slots.core import api_slots_payload
+from backend.apps.admin_ui.services.slots.core import api_slots_payload, serialize_slot
 from backend.apps.admin_ui.services.templates import api_templates_payload
 from backend.apps.admin_ui.utils import (
     ensure_sequence,
     parse_optional_int,
-    status_filters,
+    status_filter,
 )
+from backend.core.db import async_session
 from backend.core.settings import get_settings
+from backend.domain.models import Slot, SlotStatus
 
 router = APIRouter(prefix="/api", tags=["api"])
 
+
+def _normalize_status_filters(values: Optional[list[str]]) -> list[str]:
+    normalized: list[str] = []
+    for raw in ensure_sequence(values):
+        candidate = (raw or "").strip()
+        if not candidate:
+            continue
+        lowered = candidate.lower()
+        if lowered == "free":
+            if "FREE" not in normalized:
+                normalized.append("FREE")
+            continue
+        if lowered == "booked":
+            for legacy in ("BOOKED", "CONFIRMED_BY_CANDIDATE"):
+                if legacy not in normalized:
+                    normalized.append(legacy)
+            continue
+        if lowered in {"cancelled", "canceled"}:
+            if "CANCELED" not in normalized:
+                normalized.append("CANCELED")
+            continue
+        if lowered == "expired":
+            # Derived status — filtered client-side.
+            continue
+        fallback = status_filter(candidate)
+        if fallback and fallback not in normalized:
+            normalized.append(fallback)
+    return normalized
+
+
+class CandidateUpdatePayload(BaseModel):
+    full_name: Optional[str] = Field(default=None, max_length=160)
+    phone: Optional[str] = Field(default=None, max_length=64)
+    email: Optional[str] = Field(default=None, max_length=255)
+    notes: Optional[str] = Field(default=None, max_length=2000)
+    booking_confirmed: Optional[bool] = None
+
+    @field_validator("full_name", "phone", "email", "notes", mode="before")
+    @classmethod
+    def _strip(cls, value: object) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            return text or None
+        return str(value)
 
 @router.get("/health")
 async def api_health():
@@ -73,7 +125,7 @@ async def api_slots(
     limit: int = Query(default=100, ge=1, le=500),
 ):
     recruiter = parse_optional_int(recruiter_id)
-    statuses = status_filters(status)
+    statuses = _normalize_status_filters(status)
     city_filter = parse_optional_int(city_id)
     purpose_values = [item.lower() for item in ensure_sequence(purpose)]
     date_start: Optional[date_type] = None
@@ -120,6 +172,105 @@ async def api_slots(
         future_only=future_only,
     )
     return JSONResponse(payload)
+
+
+@router.get("/slots/{slot_id}")
+async def api_slot_detail(slot_id: int):
+    async with async_session() as session:
+        slot = await session.get(
+            Slot,
+            slot_id,
+            options=[selectinload(Slot.city), selectinload(Slot.recruiter)],
+        )
+        if slot is None:
+            raise HTTPException(status_code=404, detail="slot_not_found")
+        payload = serialize_slot(slot, now=datetime.now(timezone.utc))
+    return JSONResponse(payload)
+
+
+@router.patch("/slots/{slot_id}/candidate")
+async def api_slot_candidate_update(slot_id: int, payload: CandidateUpdatePayload):
+    async with async_session() as session:
+        slot = await session.get(
+            Slot,
+            slot_id,
+            options=[selectinload(Slot.city), selectinload(Slot.recruiter)],
+        )
+        if slot is None:
+            raise HTTPException(status_code=404, detail="slot_not_found")
+
+        if payload.full_name is not None:
+            slot.candidate_fio = payload.full_name
+        if payload.phone is not None:
+            slot.candidate_phone = payload.phone
+        if payload.email is not None:
+            slot.candidate_email = payload.email
+        if payload.notes is not None:
+            slot.candidate_notes = payload.notes
+        if payload.booking_confirmed is not None:
+            slot.booking_confirmed = bool(payload.booking_confirmed)
+
+        if slot.cancelled_at:
+            slot.status = SlotStatus.CANCELED
+        elif slot.booking_confirmed:
+            slot.status = SlotStatus.BOOKED
+        elif slot.candidate_fio:
+            slot.status = SlotStatus.BOOKED
+        else:
+            slot.status = SlotStatus.FREE
+
+        await session.commit()
+        await session.refresh(slot)
+        serialized = serialize_slot(slot, now=datetime.now(timezone.utc))
+
+    return JSONResponse({"ok": True, "slot": serialized})
+
+
+@router.post("/slots/{slot_id}/cancel")
+async def api_slot_cancel(slot_id: int):
+    async with async_session() as session:
+        slot = await session.get(
+            Slot,
+            slot_id,
+            options=[selectinload(Slot.city), selectinload(Slot.recruiter)],
+        )
+        if slot is None:
+            raise HTTPException(status_code=404, detail="slot_not_found")
+
+        now = datetime.now(timezone.utc)
+        slot.cancelled_at = now
+        slot.status = SlotStatus.CANCELED
+        await session.commit()
+        await session.refresh(slot)
+        serialized = serialize_slot(slot, now=now)
+
+    return JSONResponse({"ok": True, "slot": serialized})
+
+
+@router.post("/slots/{slot_id}/restore")
+async def api_slot_restore(slot_id: int):
+    async with async_session() as session:
+        slot = await session.get(
+            Slot,
+            slot_id,
+            options=[selectinload(Slot.city), selectinload(Slot.recruiter)],
+        )
+        if slot is None:
+            raise HTTPException(status_code=404, detail="slot_not_found")
+
+        slot.cancelled_at = None
+        if slot.booking_confirmed:
+            slot.status = SlotStatus.BOOKED
+        elif slot.candidate_fio:
+            slot.status = SlotStatus.BOOKED
+        else:
+            slot.status = SlotStatus.FREE
+
+        await session.commit()
+        await session.refresh(slot)
+        serialized = serialize_slot(slot, now=datetime.now(timezone.utc))
+
+    return JSONResponse({"ok": True, "slot": serialized})
 
 
 @router.get("/templates")
