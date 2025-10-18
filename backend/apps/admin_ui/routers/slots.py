@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+from enum import Enum
 from typing import Dict, Optional
 
 from datetime import datetime
@@ -15,16 +16,19 @@ from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_s
 from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import list_recruiters
 from backend.apps.admin_ui.services.slots.core import (
+    bulk_assign_slots,
     bulk_create_slots,
+    bulk_delete_slots,
+    bulk_schedule_reminders,
     create_slot,
+    delete_all_slots,
+    delete_slot,
+    execute_bot_dispatch,
     list_slots,
     recruiters_for_slot_form,
-    delete_slot,
-    delete_all_slots,
-    set_slot_outcome,
-    execute_bot_dispatch,
-    reschedule_slot_booking,
     reject_slot_booking,
+    reschedule_slot_booking,
+    set_slot_outcome,
 )
 from backend.apps.admin_ui.utils import (
     ensure_utc,
@@ -431,6 +435,73 @@ class BulkDeletePayload(BaseModel):
 async def slots_delete_all(payload: BulkDeletePayload):
     deleted, remaining = await delete_all_slots(force=bool(payload.force))
     return JSONResponse({"ok": True, "deleted": deleted, "remaining": remaining})
+
+
+class SlotsBulkAction(str, Enum):
+    ASSIGN = "assign"
+    REMIND = "remind"
+    DELETE = "delete"
+
+
+class SlotsBulkPayload(BaseModel):
+    action: SlotsBulkAction
+    slot_ids: list[int]
+    recruiter_id: Optional[int] = None
+    force: Optional[bool] = False
+
+    @field_validator("slot_ids", mode="after")
+    @classmethod
+    def _ensure_ids(cls, value: list[int]) -> list[int]:
+        unique = sorted({int(v) for v in value if int(v) > 0})
+        if not unique:
+            raise ValueError("Не переданы идентификаторы слотов")
+        return unique
+
+
+@router.post("/bulk")
+async def slots_bulk_action(payload: SlotsBulkPayload):
+    try:
+        if payload.action is SlotsBulkAction.ASSIGN:
+            if payload.recruiter_id is None:
+                raise HTTPException(status_code=422, detail="recruiter_id обязателен")
+            updated, missing = await bulk_assign_slots(
+                payload.slot_ids, payload.recruiter_id
+            )
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "updated": updated,
+                    "missing": missing,
+                }
+            )
+
+        if payload.action is SlotsBulkAction.REMIND:
+            scheduled, missing = await bulk_schedule_reminders(payload.slot_ids)
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "scheduled": scheduled,
+                    "missing": missing,
+                }
+            )
+
+        if payload.action is SlotsBulkAction.DELETE:
+            deleted, failed = await bulk_delete_slots(
+                payload.slot_ids, force=bool(payload.force)
+            )
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "deleted": deleted,
+                    "failed": failed,
+                }
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    raise HTTPException(status_code=400, detail="Неизвестное действие")
 
 
 class OutcomePayload(BaseModel):
