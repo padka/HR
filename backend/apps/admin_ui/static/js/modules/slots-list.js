@@ -8,28 +8,40 @@ const table = document.getElementById('slots_table');
 const tbody = document.getElementById('slots_tbody');
 let rows = tbody ? Array.from(tbody.querySelectorAll('.slot-row')) : [];
 
-const perPageForm = document.getElementById('slots_per_page_form');
-const perPageSelect = perPageForm ? perPageForm.querySelector('#per_page') : null;
+const perPageSelect = document.getElementById('per_page');
 
 const onlyFutureToggle = document.getElementById('slots_only_future');
-const roleSwitchButtons = $$('.slots-role-switch__btn');
+const roleSwitchButtons = $$('[data-role-target]');
 const searchInput = document.getElementById('slots_search_input');
 const searchTokensWrap = document.getElementById('slots_search_tokens');
 const bulkBar = document.getElementById('slots_bulk_bar');
 const bulkCount = document.getElementById('slots_bulk_count');
 const bulkAssignSelect = document.getElementById('slots_bulk_assign');
 const bulkButtons = $$('[data-bulk-action]');
-const chipTriggers = $$('.chip--trigger');
 const activeTagsWrap = document.getElementById('slots_active_tags');
-const filterSheet = document.getElementById('slots_filter_sheet');
-const filterBackdrop = document.getElementById('slots_filter_backdrop');
-const filterCloseBtn = filterSheet ? filterSheet.querySelector('[data-filter-close]') : null;
-const filterApplyBtn = filterSheet ? filterSheet.querySelector('[data-filter-apply]') : null;
-const filterResetBtn = filterSheet ? filterSheet.querySelector('[data-filter-reset]') : null;
-const deleteAllBtn = document.getElementById('delete_all_slots');
 const toastStack = document.getElementById('toasts');
-const emptyCard = document.getElementById('slot_empty_state');
+const tableEmpty = document.getElementById('slots_table_empty');
+const cardsContainer = document.querySelector('[data-view="cards"]');
+const cardsRoot = document.getElementById('slots_card_container');
+const cardEmpty = document.getElementById('slots_card_empty');
+let cards = cardsRoot ? Array.from(cardsRoot.querySelectorAll('.slot-card')) : [];
+const tableContainer = document.querySelector('[data-view="table"]');
+const skeleton = document.getElementById('slots_skeleton');
+const errorBox = document.getElementById('slots_error');
 const selectAll = document.getElementById('slots_select_all');
+const viewToggleButtons = $$('[data-view-toggle]');
+const refreshButton = document.querySelector('[data-action="refresh-slots"]');
+const exportButton = document.querySelector('[data-action="export-slots"]');
+const retryButton = document.querySelector('[data-action="retry-load"]');
+const resetButtons = $$('[data-action="reset-filters"]');
+
+let cardVirtualizer = null;
+
+const filterCitySelect = document.getElementById('filter_city');
+const filterStatusSelect = document.getElementById('filter_status');
+const filterRecruiterSelect = document.getElementById('filter_recruiter');
+const filterPurposeSelect = document.getElementById('filter_purpose');
+const filterDateInput = document.getElementById('filter_date');
 
 const sheetBackdrop = document.getElementById('slot_backdrop');
 const sheet = document.getElementById('slot_sheet');
@@ -67,7 +79,7 @@ const kpiIds = {
   free: document.getElementById('cnt-free'),
   pending: document.getElementById('cnt-pending'),
   booked: document.getElementById('cnt-booked'),
-  confirmed: document.getElementById('cnt-confirmed'),
+  canceled: document.getElementById('cnt-canceled'),
 };
 
 const state = {
@@ -75,10 +87,13 @@ const state = {
   role: readInitialRole(),
   onlyFuture: readFutureFlag(),
   tokens: readInitialTokens(),
+  view: readInitialView(),
   filters: {
     recruiter: String(slotsContext?.filters?.recruiter_id ?? '') || '',
     status: String(slotsContext?.filters?.status ?? '') || '',
     city: String(slotsContext?.filters?.city_id ?? '') || '',
+    purpose: String(slotsContext?.filters?.purpose ?? '') || '',
+    date: String(slotsContext?.filters?.date ?? '') || '',
   },
   selection: new Set(),
   deleteConfirmRow: null,
@@ -94,10 +109,11 @@ function init() {
 
   applyInitialRole();
   applyInitialFuture();
+  applyInitialView();
   hydrateTokens();
   bindEvents();
+  cardVirtualizer = setupCardVirtualization();
   applyFilters();
-  applySort('time', 'asc', { silent: true });
   scheduleRelativeUpdates();
 }
 
@@ -112,12 +128,20 @@ function safeJson(text) {
 
 function readInitialTokens() {
   const params = new URLSearchParams(window.location.search);
-  const raw = params.get('search');
-  if (!raw) return [];
-  return raw
-    .split(',')
-    .map((token) => token.trim())
-    .filter(Boolean);
+  const collected = params.getAll('search');
+  if (!collected.length) return [];
+  const tokens = [];
+  collected.forEach((entry) => {
+    if (!entry) return;
+    entry
+      .split(',')
+      .map((token) => token.trim())
+      .filter(Boolean)
+      .forEach((token) => {
+        if (!tokens.includes(token)) tokens.push(token);
+      });
+  });
+  return tokens;
 }
 
 function readInitialRole() {
@@ -126,14 +150,56 @@ function readInitialRole() {
   return value === 'candidate' ? 'candidate' : 'recruiter';
 }
 
+function readInitialView() {
+  const params = new URLSearchParams(window.location.search);
+  const value = params.get('view');
+  return value === 'cards' ? 'cards' : 'table';
+}
+
 function readFutureFlag() {
   const params = new URLSearchParams(window.location.search);
   return params.get('future') === '1';
 }
 
 function bindEvents() {
-  if (perPageSelect && perPageForm) {
-    perPageSelect.addEventListener('change', () => perPageForm.submit());
+  if (perPageSelect) {
+    perPageSelect.addEventListener('change', () => {
+      const params = new URLSearchParams(window.location.search);
+      params.set('per_page', perPageSelect.value || '20');
+      params.set('page', '1');
+      window.location.href = `${window.location.pathname}?${params.toString()}`;
+    });
+  }
+
+  if (filterCitySelect) {
+    filterCitySelect.addEventListener('change', () => {
+      state.filters.city = filterCitySelect.value || '';
+      applyFilterSelection({ ...state.filters });
+    });
+  }
+  if (filterStatusSelect) {
+    filterStatusSelect.addEventListener('change', () => {
+      state.filters.status = filterStatusSelect.value || '';
+      applyFilterSelection({ ...state.filters });
+    });
+  }
+  if (filterRecruiterSelect) {
+    filterRecruiterSelect.addEventListener('change', () => {
+      state.filters.recruiter = filterRecruiterSelect.value || '';
+      applyFilterSelection({ ...state.filters });
+    });
+  }
+  if (filterPurposeSelect) {
+    filterPurposeSelect.addEventListener('change', () => {
+      state.filters.purpose = filterPurposeSelect.value || '';
+      applyFilterSelection({ ...state.filters });
+    });
+  }
+  if (filterDateInput) {
+    filterDateInput.addEventListener('change', () => {
+      state.filters.date = filterDateInput.value || '';
+      applyFilterSelection({ ...state.filters });
+    });
   }
 
   if (onlyFutureToggle) {
@@ -146,12 +212,17 @@ function bindEvents() {
   }
 
   roleSwitchButtons.forEach((btn) => {
-    btn.classList.toggle('is-active', btn.dataset.roleTarget === state.role);
     btn.addEventListener('click', () => {
       if (btn.dataset.roleTarget === state.role) return;
       state.role = btn.dataset.roleTarget === 'candidate' ? 'candidate' : 'recruiter';
       applyRole();
-      syncQueryState();
+    });
+  });
+
+  viewToggleButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.viewToggle === state.view) return;
+      switchView(btn.dataset.viewToggle || 'table');
     });
   });
 
@@ -168,6 +239,40 @@ function bindEvents() {
       removeToken(token);
     });
   }
+
+  if (activeTagsWrap) {
+    activeTagsWrap.addEventListener('click', (event) => {
+      const resetBtn = event.target.closest('[data-action="reset-filters"]');
+      if (resetBtn) {
+        event.preventDefault();
+        resetFilters();
+        return;
+      }
+      const tagBtn = event.target.closest('[data-remove-filter]');
+      if (!tagBtn) return;
+      const key = tagBtn.dataset.removeFilter;
+      if (!key) return;
+      if (key === 'search') {
+        const label = tagBtn.dataset.tokenLabel || tagBtn.textContent?.trim();
+        if (label) removeToken(label);
+        return;
+      }
+      const next = { ...state.filters };
+      if (key === 'recruiter_id') next.recruiter = '';
+      else if (key === 'status') next.status = '';
+      else if (key === 'city_id') next.city = '';
+      else if (key === 'purpose') next.purpose = '';
+      else if (key === 'date') next.date = '';
+      applyFilterSelection(next);
+    });
+  }
+
+  resetButtons.forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      resetFilters();
+    });
+  });
 
   if (selectAll) {
     selectAll.addEventListener('change', () => {
@@ -207,78 +312,52 @@ function bindEvents() {
       openSheetWithRow(row);
     });
 
-    const menuRoot = row.querySelector('.slot-actions');
-    const menuTrigger = row.querySelector('.slot-actions__trigger');
-    if (menuRoot && menuTrigger) {
+    const menuRoot = row.querySelector('[data-role="menu"]');
+    const menuTrigger = menuRoot ? menuRoot.querySelector('.slot-actions__trigger') : null;
+    const menuPanel = menuRoot ? menuRoot.querySelector('.slot-actions__menu') : null;
+    if (menuRoot && menuTrigger && menuPanel) {
+      menuPanel.hidden = true;
       menuTrigger.addEventListener('click', (event) => {
         event.stopPropagation();
         const isOpen = menuRoot.classList.toggle('is-open');
         menuTrigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        menuPanel.hidden = !isOpen;
       });
       document.addEventListener('click', (event) => {
         if (!menuRoot.contains(event.target)) {
           menuRoot.classList.remove('is-open');
           menuTrigger.setAttribute('aria-expanded', 'false');
+          menuPanel.hidden = true;
         }
       });
-
-      menuRoot.addEventListener('click', (event) => {
+      menuPanel.addEventListener('click', (event) => {
         const actionBtn = event.target.closest('button[data-action]');
         if (!actionBtn) return;
         event.preventDefault();
         event.stopPropagation();
         menuRoot.classList.remove('is-open');
+        menuTrigger.setAttribute('aria-expanded', 'false');
+        menuPanel.hidden = true;
         handleRowAction(row, actionBtn.dataset.action, actionBtn);
       });
     }
   });
 
-  $$('[data-sort]', table).forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const key = btn.dataset.sort;
-      const dir = state.sort.key === key && state.sort.dir === 'asc' ? 'desc' : 'asc';
-      applySort(key, dir);
-    });
-  });
-
-  chipTriggers.forEach((chip) => {
-    chip.addEventListener('click', () => openFilterDrawer(chip.dataset.chip));
-  });
-
-  if (filterCloseBtn) filterCloseBtn.addEventListener('click', closeFilterDrawer);
-  if (filterBackdrop) filterBackdrop.addEventListener('click', closeFilterDrawer);
-
-  if (filterApplyBtn) {
-    filterApplyBtn.addEventListener('click', () => {
-      const payload = readFilterForm();
-      applyFilterSelection(payload);
-    });
-  }
-
-  if (filterResetBtn) {
-    filterResetBtn.addEventListener('click', () => {
-      resetFilterForm();
-      applyFilterSelection({ recruiter: '', status: '', city: '' });
-    });
-  }
-
-  if (activeTagsWrap) {
-    activeTagsWrap.addEventListener('click', (event) => {
-      const resetBtn = event.target.closest('[data-action="reset-filters"]');
-      if (resetBtn) {
-        event.preventDefault();
-        applyFilterSelection({ recruiter: '', status: '', city: '' });
+  cards.forEach((card) => {
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('button') || event.target.closest('a')) {
         return;
       }
-      const tagBtn = event.target.closest('[data-remove-filter]');
-      if (!tagBtn) return;
-      const key = tagBtn.dataset.removeFilter;
-      if (!key) return;
-      const next = { ...state.filters };
-      next[key] = '';
-      applyFilterSelection(next);
+      openSheetWithRow(card);
     });
-  }
+    card.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        handleRowAction(card, btn.dataset.action, btn);
+      });
+    });
+  });
 
   if (bulkButtons.length) {
     bulkButtons.forEach((btn) => {
@@ -286,23 +365,14 @@ function bindEvents() {
     });
   }
 
-  if (deleteAllBtn) {
-    deleteAllBtn.addEventListener('click', async () => {
-      if (!confirm('Удалить все доступные слоты? Это действие нельзя отменить.')) return;
-      try {
-        const response = await fetch('/slots/delete_all', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ force: true }),
-        });
-        const data = await response.json();
-        toast(data?.ok ? 'Все слоты удалены' : 'Не удалось удалить слоты', data?.ok ? 'success' : 'danger');
-        if (data?.ok) window.location.reload();
-      } catch (err) {
-        console.error('slots.delete-all', err);
-        toast('Не удалось удалить слоты', 'danger');
-      }
-    });
+  if (refreshButton) {
+    refreshButton.addEventListener('click', () => window.location.reload());
+  }
+  if (retryButton) {
+    retryButton.addEventListener('click', () => window.location.reload());
+  }
+  if (exportButton) {
+    exportButton.addEventListener('click', () => exportSlots(exportButton));
   }
 
   if (sheetRefs.close) sheetRefs.close.addEventListener('click', closeSheet);
@@ -333,14 +403,14 @@ function bindEvents() {
 }
 
 function applyInitialRole() {
-  roleSwitchButtons.forEach((btn) => {
-    btn.classList.toggle('is-active', btn.dataset.roleTarget === state.role);
-  });
+  setRoleButtonState();
   applyRole();
 }
 
 function applyRole() {
+  setRoleButtonState();
   rows.forEach((row) => updateTimeCells(row));
+  cards.forEach((card) => updateTimeCells(card));
   syncQueryState();
 }
 
@@ -348,6 +418,104 @@ function applyInitialFuture() {
   if (onlyFutureToggle) {
     onlyFutureToggle.checked = state.onlyFuture;
   }
+}
+
+function applyInitialView() {
+  switchView(state.view, { silent: true });
+}
+
+function switchView(next, options = {}) {
+  const target = next === 'cards' ? 'cards' : 'table';
+  state.view = target;
+  if (tableContainer) {
+    tableContainer.hidden = target !== 'table';
+  }
+  if (cardsContainer) {
+    cardsContainer.hidden = target !== 'cards';
+  }
+  viewToggleButtons.forEach((btn) => {
+    const isActive = btn.dataset.viewToggle === target;
+    btn.classList.toggle('bg-bg-elev3', isActive);
+    btn.classList.toggle('text-fg-primary', isActive);
+    btn.classList.toggle('bg-bg-elev2', !isActive);
+    btn.classList.toggle('text-fg-muted', !isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+  updateEmptyStates();
+  if (!options.silent) {
+    syncQueryState();
+  }
+}
+
+function setupCardVirtualization() {
+  if (!cardsRoot || cards.length <= 200) return null;
+  const batchSize = 60;
+  let visibleCount = batchSize;
+  cards.forEach((card, index) => {
+    card.dataset.virtualIndex = String(index);
+    if (index < visibleCount) {
+      card.dataset.virtualHidden = '0';
+    } else {
+      card.dataset.virtualHidden = '1';
+      card.hidden = true;
+      card.classList.add('is-hidden');
+    }
+  });
+  const sentinel = document.createElement('div');
+  sentinel.dataset.virtualSentinel = 'cards';
+  sentinel.style.width = '100%';
+  sentinel.style.height = '1px';
+  cardsRoot.appendChild(sentinel);
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        const targetCount = Math.min(cards.length, visibleCount + batchSize);
+        for (let i = visibleCount; i < targetCount; i += 1) {
+          const card = cards[i];
+          if (!card) continue;
+          card.dataset.virtualHidden = '0';
+        }
+        visibleCount = targetCount;
+        applyFilters();
+        if (visibleCount >= cards.length) {
+          observer.disconnect();
+          sentinel.remove();
+        }
+      });
+    },
+    { root: null, rootMargin: '0px 0px 200px 0px' },
+  );
+  observer.observe(sentinel);
+  return { observer, sentinel, get visibleCount() { return visibleCount; } };
+}
+
+function disableCardVirtualization() {
+  if (!cardVirtualizer) return;
+  if (cardVirtualizer.observer) {
+    cardVirtualizer.observer.disconnect();
+  }
+  if (cardVirtualizer.sentinel && cardVirtualizer.sentinel.parentNode) {
+    cardVirtualizer.sentinel.remove();
+  }
+  cards.forEach((card) => {
+    card.dataset.virtualHidden = '0';
+    card.hidden = false;
+    card.classList.remove('is-hidden');
+  });
+  cardVirtualizer = null;
+}
+
+function setRoleButtonState() {
+  roleSwitchButtons.forEach((btn) => {
+    const isActive = btn.dataset.roleTarget === state.role;
+    btn.classList.toggle('bg-bg-elev3', isActive);
+    btn.classList.toggle('text-fg-primary', isActive);
+    btn.classList.toggle('bg-bg-elev2', !isActive);
+    btn.classList.toggle('text-fg-muted', !isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
 }
 
 function hydrateTokens() {
@@ -419,7 +587,7 @@ function removeToken(token) {
 
 function updateSearchPlaceholder() {
   if (!searchInput) return;
-  searchInput.placeholder = state.tokens.length ? '' : 'Поиск по кандидату, городу, ID…';
+  searchInput.placeholder = state.tokens.length ? '' : 'Добавьте токен и нажмите Enter';
 }
 
 function toggleSelection(id, checked) {
@@ -459,45 +627,88 @@ function updateSelectionUI() {
 
 function applyFilters() {
   const now = Date.now();
-  let visible = 0;
+  const filtersActive = areFiltersActive();
+
+  if (cardVirtualizer && cards.length <= 200) {
+    disableCardVirtualization();
+  }
+  if (cardVirtualizer && filtersActive) {
+    disableCardVirtualization();
+  } else if (!cardVirtualizer && !filtersActive && cards.length > 200) {
+    cardVirtualizer = setupCardVirtualization();
+  }
+
+  let visibleRows = 0;
+  let visibleCards = 0;
   const tokens = state.tokens.map((token) => token.toLowerCase());
 
-  rows.forEach((row) => {
-    let show = true;
-    if (state.filters.recruiter && row.dataset.recruiterId !== state.filters.recruiter) show = false;
-    if (show && state.filters.status && row.dataset.status !== state.filters.status) show = false;
-    if (show && state.filters.city && row.dataset.cityId !== state.filters.city) show = false;
-    if (show && state.onlyFuture) {
-      const ts = Date.parse(row.dataset.startIso || '') || 0;
-      if (ts < now) show = false;
+  const matchesFilters = (element) => {
+    if (state.filters.recruiter && element.dataset.recruiterId !== state.filters.recruiter) return false;
+    if (state.filters.status && element.dataset.status !== state.filters.status) return false;
+    if (state.filters.city && element.dataset.cityId !== state.filters.city) return false;
+    if (state.filters.purpose && element.dataset.purpose !== state.filters.purpose) return false;
+    if (state.filters.date) {
+      const iso = element.dataset.startIso || '';
+      if (!iso.startsWith(state.filters.date)) return false;
     }
-    if (show && tokens.length) {
+    if (state.onlyFuture) {
+      const ts = Date.parse(element.dataset.startIso || '') || 0;
+      if (ts < now) return false;
+    }
+    if (tokens.length) {
       const haystack = [
-        row.dataset.id,
-        row.dataset.recruiter,
-        row.dataset.candidate,
-        row.dataset.cityName,
+        element.dataset.id,
+        element.dataset.recruiter,
+        element.dataset.candidate,
+        element.dataset.cityName,
+        element.dataset.statusLabel,
+        element.dataset.purpose,
       ]
         .join(' ')
         .toLowerCase();
-      show = tokens.every((token) => haystack.includes(token));
+      if (!tokens.every((token) => haystack.includes(token))) return false;
     }
+    return true;
+  };
+
+  rows.forEach((row) => {
+    const show = matchesFilters(row);
     row.style.display = show ? '' : 'none';
     row.classList.toggle('is-hidden', !show);
     if (show) {
-      visible += 1;
+      visibleRows += 1;
       updateTimeCells(row);
       updateDeadline(row);
     }
   });
 
+  const virtualizationActive = Boolean(cardVirtualizer);
+
+  cards.forEach((card) => {
+    const virtHidden = virtualizationActive && card.dataset.virtualHidden === '1';
+    const show = matchesFilters(card);
+    const shouldHide = virtHidden || !show;
+    card.hidden = shouldHide;
+    card.classList.toggle('is-hidden', shouldHide);
+    if (show && !virtHidden) {
+      visibleCards += 1;
+      updateTimeCells(card);
+    }
+  });
+
   updateCounts();
-  toggleEmptyState(visible);
+  updateEmptyStates({ table: visibleRows, cards: visibleCards });
   updateSelectionUI();
 }
 
+function areFiltersActive() {
+  if (state.onlyFuture) return true;
+  if (state.tokens.length) return true;
+  return Object.values(state.filters).some((value) => Boolean(value));
+}
+
 function updateCounts() {
-  const totals = { total: 0, free: 0, pending: 0, booked: 0, confirmed: 0 };
+  const totals = { total: 0, free: 0, pending: 0, booked: 0, canceled: 0 };
   rows.forEach((row) => {
     if (row.style.display === 'none') return;
     totals.total += 1;
@@ -505,20 +716,33 @@ function updateCounts() {
     if (status === 'FREE') totals.free += 1;
     else if (status === 'PENDING') totals.pending += 1;
     else if (status === 'BOOKED') totals.booked += 1;
-    else if (status === 'CONFIRMED_BY_CANDIDATE' || status === 'CONFIRMED') totals.confirmed += 1;
+    else if (status === 'CANCELED') totals.canceled += 1;
   });
   if (kpiIds.total) kpiIds.total.textContent = totals.total;
   if (kpiIds.free) kpiIds.free.textContent = totals.free;
   if (kpiIds.pending) kpiIds.pending.textContent = totals.pending;
   if (kpiIds.booked) kpiIds.booked.textContent = totals.booked;
-  if (kpiIds.confirmed) kpiIds.confirmed.textContent = totals.confirmed;
+  if (kpiIds.canceled) kpiIds.canceled.textContent = totals.canceled;
 }
 
-function toggleEmptyState(visibleCount) {
-  if (!emptyCard) return;
-  const show = visibleCount === 0;
-  emptyCard.hidden = !show;
-  emptyCard.setAttribute('aria-hidden', show ? 'false' : 'true');
+function updateEmptyStates(counts = {}) {
+  const tableCount = typeof counts.table === 'number'
+    ? counts.table
+    : rows.filter((row) => row.style.display !== 'none').length;
+  const cardCount = typeof counts.cards === 'number'
+    ? counts.cards
+    : cards.filter((card) => !card.hidden).length;
+
+  if (tableEmpty) {
+    const show = tableCount === 0;
+    tableEmpty.hidden = !show;
+    tableEmpty.setAttribute('aria-hidden', show ? 'false' : 'true');
+  }
+  if (cardEmpty) {
+    const show = cardCount === 0;
+    cardEmpty.hidden = !show;
+    cardEmpty.setAttribute('aria-hidden', show ? 'false' : 'true');
+  }
 }
 
 function applySort(key, dir, { silent = false } = {}) {
@@ -611,44 +835,24 @@ function updateTimeCells(row) {
   }
 }
 
-function openFilterDrawer(targetKey) {
-  if (!filterSheet || !filterBackdrop) return;
-  filterSheet.hidden = false;
-  filterBackdrop.hidden = false;
-  filterSheet.dataset.activeFilter = targetKey || '';
-  document.body.classList.add('sheet-open');
+function resetFilters() {
+  state.filters = { recruiter: '', status: '', city: '', purpose: '', date: '' };
+  if (filterCitySelect) filterCitySelect.value = '';
+  if (filterStatusSelect) filterStatusSelect.value = '';
+  if (filterRecruiterSelect) filterRecruiterSelect.value = '';
+  if (filterPurposeSelect) filterPurposeSelect.value = '';
+  if (filterDateInput) filterDateInput.value = '';
+  state.onlyFuture = false;
+  if (onlyFutureToggle) onlyFutureToggle.checked = false;
+  state.tokens = [];
+  if (searchTokensWrap) searchTokensWrap.innerHTML = '';
+  if (searchInput) searchInput.value = '';
+  updateSearchPlaceholder();
+  applyFilterSelection({ ...state.filters }, { resetTokens: true });
 }
 
-function closeFilterDrawer() {
-  if (!filterSheet || !filterBackdrop) return;
-  filterSheet.hidden = true;
-  filterBackdrop.hidden = true;
-  filterSheet.dataset.activeFilter = '';
-  document.body.classList.remove('sheet-open');
-}
-
-function readFilterForm() {
-  if (!filterSheet) return { ...state.filters };
-  const recruiter = filterSheet.querySelector('input[name="filter_recruiter"]:checked');
-  const status = filterSheet.querySelector('input[name="filter_status"]:checked');
-  const city = filterSheet.querySelector('input[name="filter_city"]:checked');
-  return {
-    recruiter: recruiter ? recruiter.value : '',
-    status: status ? status.value : '',
-    city: city ? city.value : '',
-  };
-}
-
-function resetFilterForm() {
-  if (!filterSheet) return;
-  filterSheet.querySelectorAll('input[type="radio"]').forEach((input) => {
-    if (input.value === '') input.checked = true;
-    else input.checked = false;
-  });
-}
-
-function applyFilterSelection(nextFilters) {
-  state.filters = { ...nextFilters };
+function applyFilterSelection(nextFilters, options = {}) {
+  state.filters = { ...state.filters, ...nextFilters };
   const params = new URLSearchParams(window.location.search);
   params.set('page', '1');
   if (state.filters.recruiter) params.set('recruiter_id', state.filters.recruiter);
@@ -657,8 +861,25 @@ function applyFilterSelection(nextFilters) {
   else params.delete('status');
   if (state.filters.city) params.set('city_id', state.filters.city);
   else params.delete('city_id');
+  if (state.filters.purpose) params.set('purpose', state.filters.purpose);
+  else params.delete('purpose');
+  if (state.filters.date) params.set('date', state.filters.date);
+  else params.delete('date');
   if (perPageSelect && perPageSelect.value) params.set('per_page', perPageSelect.value);
-  window.location.href = `${window.location.pathname}?${params.toString()}`;
+  if (state.onlyFuture) params.set('future', '1');
+  else params.delete('future');
+  if (state.role === 'candidate') params.set('role', 'candidate');
+  else params.delete('role');
+  if (state.view === 'cards') params.set('view', 'cards');
+  else params.delete('view');
+
+  params.delete('search');
+  const tokens = options.resetTokens ? [] : state.tokens;
+  tokens.forEach((token) => params.append('search', token));
+
+  const query = params.toString();
+  const url = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+  window.location.href = url;
 }
 
 function syncQueryState() {
@@ -667,11 +888,72 @@ function syncQueryState() {
   else params.delete('future');
   if (state.role === 'candidate') params.set('role', 'candidate');
   else params.delete('role');
-  if (state.tokens.length) params.set('search', state.tokens.join(','));
-  else params.delete('search');
+  if (state.view === 'cards') params.set('view', 'cards');
+  else params.delete('view');
+  params.delete('search');
+  state.tokens.forEach((token) => params.append('search', token));
   const queryString = params.toString();
   const url = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
   window.history.replaceState(null, '', url);
+}
+
+async function exportSlots(button) {
+  if (!button) return;
+  button.disabled = true;
+  button.dataset.loading = "1";
+  try {
+    const params = new URLSearchParams();
+    if (state.filters.recruiter) params.set('recruiter_id', state.filters.recruiter);
+    if (state.filters.status) params.set('status', state.filters.status);
+    if (state.filters.city) params.set('city_id', state.filters.city);
+    if (state.filters.purpose) params.set('purpose', state.filters.purpose);
+    if (state.filters.date) params.set('date', state.filters.date);
+    if (state.onlyFuture) params.set('future', '1');
+    state.tokens.forEach((token) => params.append('search', token));
+    params.set('limit', '500');
+    const response = await fetch('/api/slots?' + params.toString());
+    if (!response.ok) throw new Error('bad-response:' + response.status);
+    const payload = await response.json();
+    if (!Array.isArray(payload) || !payload.length) {
+      toast('Нет данных для экспорта', 'warning');
+      return;
+    }
+    const header = ['ID', 'Recruiter', 'Start (UTC)', 'Status', 'Candidate', 'Candidate TG'];
+    const rows = payload.map((item) => [
+      item.id || '',
+      item.recruiter_name || '',
+      item.start_utc || '',
+      item.status || '',
+      item.candidate_fio || '',
+      item.candidate_tg_id || '',
+    ]);
+    const csvLines = [header].concat(rows).map((line) => line.map(escapeCsv).join(';'));
+    const blob = new Blob([csvLines.join('\\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const stamp = new Date().toISOString().slice(0, 10);
+    link.download = 'slots-export-' + stamp + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast('Экспортирован CSV', 'success');
+  } catch (err) {
+    console.error('slots.export', err);
+    toast('Не удалось экспортировать слоты', 'danger');
+  } finally {
+    button.disabled = false;
+    button.removeAttribute('data-loading');
+  }
+}
+
+function escapeCsv(value) {
+  const text = value == null ? '' : String(value);
+  if (/[";\\n]/.test(text)) {
+    return '"' + text.replace(/"/g, '""') + '"';
+  }
+  return text;
 }
 
 function handleRowAction(row, action, button) {
@@ -979,6 +1261,11 @@ async function performDelete(row, force = false) {
       row.remove();
       state.selection.delete(row.dataset.id);
       rows = rows.filter((item) => item !== row);
+      const card = cards.find((item) => item.dataset.id === row.dataset.id);
+      if (card) {
+        card.remove();
+        cards = cards.filter((item) => item !== card);
+      }
       updateSelectionUI();
       applyFilters();
     } else if (data?.code === 'requires_force') {
