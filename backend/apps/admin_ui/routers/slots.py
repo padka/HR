@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 from backend.apps.admin_ui.config import templates
+from backend.apps.admin_ui.schemas import CityOption, RecruiterOption
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import list_recruiters
@@ -158,7 +159,10 @@ async def slots_list(
     city_filter = parse_optional_int(city_id)
     result = await list_slots(recruiter, status_norm, page, per_page, city_id=city_filter)
     recruiter_rows = await list_recruiters()
-    recruiter_options = [row["rec"] for row in recruiter_rows]
+    recruiter_options = [
+        RecruiterOption.model_validate(row["rec"]).model_dump()
+        for row in recruiter_rows
+    ]
     slots = result["items"]
     aggregated = result.get("status_counts") or {}
     status_counts: Dict[str, int] = {
@@ -171,7 +175,10 @@ async def slots_list(
         ),
     }
     flash = _pop_flash(request)
-    city_options = await list_cities(order_by_name=True)
+    city_options = [
+        CityOption.model_validate(city).model_dump()
+        for city in await list_cities(order_by_name=True)
+    ]
 
     context = {
         "request": request,
