@@ -4,6 +4,31 @@ import os
 import sys
 
 import pytest
+import uvloop
+
+
+@pytest.fixture(scope="session", autouse=True)
+def event_loop_policy():
+    class _SafeUVLoopPolicy(uvloop.EventLoopPolicy):
+        def get_event_loop(self):  # type: ignore[override]
+            try:
+                return super().get_event_loop()
+            except RuntimeError:
+                loop = self.new_event_loop()
+                self.set_event_loop(loop)
+                return loop
+
+    policy: asyncio.AbstractEventLoopPolicy = _SafeUVLoopPolicy()
+    asyncio.set_event_loop_policy(policy)
+    loop = policy.new_event_loop()
+    policy.set_event_loop(loop)
+    try:
+        yield policy
+    finally:
+        if not loop.is_closed():
+            loop.close()
+        asyncio.set_event_loop(None)
+        asyncio.set_event_loop_policy(None)
 
 
 @pytest.fixture(scope="session")
