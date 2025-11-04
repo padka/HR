@@ -61,6 +61,58 @@ quick start template):
 The `/health/bot` endpoint reports the runtime state of the integration
 (`enabled`, `ready`, `status`) which simplifies operational diagnostics.
 
+## Security configuration
+
+### Environment variables setup
+
+**IMPORTANT:** Never commit the `.env` file to version control. All sensitive credentials must be configured through environment variables.
+
+Required security settings:
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `SESSION_SECRET` | **Yes** | Session signing key. Must be at least 32 characters. Generate with: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `ADMIN_PASSWORD` | **Yes** | Admin UI password. Use a strong password (16+ characters, mixed case, numbers, symbols). |
+| `ADMIN_USER` | No | Admin UI username (default: `admin`). |
+| `BOT_TOKEN` | **Yes** | Telegram bot token from @BotFather. Keep this secret! |
+
+### Deployment checklist
+
+Before deploying to production:
+
+1. Generate a strong `SESSION_SECRET`:
+   ```bash
+   python -c "import secrets; print(secrets.token_hex(32))"
+   ```
+
+2. Set a strong `ADMIN_PASSWORD` (do not use the example value).
+
+3. Configure environment variables on your server (do not use `.env` file in production).
+
+4. Verify that `.env` is listed in `.gitignore` (already configured).
+
+5. Remove any `.env` file from your working directory:
+   ```bash
+   rm .env  # Only if you're using environment variables directly
+   ```
+
+### Example: Setting environment variables
+
+**Development (using .env file locally):**
+```bash
+cp .env.example .env
+# Edit .env with your values
+nano .env
+```
+
+**Production (using system environment):**
+```bash
+export SESSION_SECRET="your-generated-secret-here"
+export ADMIN_PASSWORD="your-strong-password-here"
+export BOT_TOKEN="your-telegram-bot-token"
+# ... other variables
+```
+
 ## Runtime data storage
 
 All runtime artefacts (SQLite databases, generated reports, uploaded resumes)

@@ -6,6 +6,7 @@ import shutil
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 from backend.core.env import load_env
 
@@ -35,6 +36,38 @@ class Settings:
     session_cookie_secure: bool
     session_cookie_samesite: str
     state_ttl_seconds: int
+    notification_poll_interval: float
+    notification_batch_size: int
+    notification_rate_limit_per_sec: float
+    notification_retry_base_seconds: int
+    notification_retry_max_seconds: int
+    notification_max_attempts: int
+
+
+def _get_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and value < minimum:
+        return default
+    return value
+
+
+def _get_float(name: str, default: float, *, minimum: Optional[float] = None) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw.strip())
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and value < minimum:
+        return default
+    return value
 
 
 load_env()
@@ -121,6 +154,26 @@ def get_settings() -> Settings:
         or secrets.token_urlsafe(32)
     )
 
+    # Validate SESSION_SECRET strength
+    weak_secrets = {
+        "change-me",
+        "change-me-session-secret",
+        "secret",
+        "session-secret",
+        "my-secret-key",
+        "CHANGE_ME_SESSION_SECRET"
+    }
+    if session_secret.lower() in weak_secrets:
+        raise ValueError(
+            f"SESSION_SECRET must be changed from default value '{session_secret}'. "
+            "Generate a strong secret with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    if len(session_secret) < 32:
+        raise ValueError(
+            f"SESSION_SECRET must be at least 32 characters (current: {len(session_secret)}). "
+            "Generate a strong secret with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+
     admin_username = os.getenv("ADMIN_USER", "").strip()
     admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
     admin_docs_enabled = _get_bool("ADMIN_DOCS_ENABLED", default=False)
@@ -136,6 +189,15 @@ def get_settings() -> Settings:
         state_ttl_seconds = 604800
     if state_ttl_seconds <= 0:
         state_ttl_seconds = 604800
+
+    notification_poll_interval = _get_float("NOTIFICATION_POLL_INTERVAL", 3.0, minimum=0.1)
+    notification_batch_size = _get_int("NOTIFICATION_BATCH_SIZE", 100, minimum=1)
+    notification_rate_limit_per_sec = _get_float("NOTIFICATION_RATE_LIMIT_PER_SEC", 5.0, minimum=0.0)
+    notification_retry_base_seconds = _get_int("NOTIFICATION_RETRY_BASE_SECONDS", 30, minimum=1)
+    notification_retry_max_seconds = _get_int("NOTIFICATION_RETRY_MAX_SECONDS", 3600, minimum=1)
+    if notification_retry_max_seconds < notification_retry_base_seconds:
+        notification_retry_max_seconds = notification_retry_base_seconds
+    notification_max_attempts = _get_int("NOTIFICATION_MAX_ATTEMPTS", 8, minimum=1)
 
     return Settings(
         data_dir=data_dir,
@@ -161,4 +223,10 @@ def get_settings() -> Settings:
         session_cookie_secure=session_cookie_secure,
         session_cookie_samesite=session_cookie_samesite,
         state_ttl_seconds=state_ttl_seconds,
+        notification_poll_interval=notification_poll_interval,
+        notification_batch_size=notification_batch_size,
+        notification_rate_limit_per_sec=notification_rate_limit_per_sec,
+        notification_retry_base_seconds=notification_retry_base_seconds,
+        notification_retry_max_seconds=notification_retry_max_seconds,
+        notification_max_attempts=notification_max_attempts,
     )
