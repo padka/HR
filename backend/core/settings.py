@@ -42,6 +42,10 @@ class Settings:
     notification_retry_base_seconds: int
     notification_retry_max_seconds: int
     notification_max_attempts: int
+    db_pool_size: int
+    db_max_overflow: int
+    db_pool_timeout: int
+    db_pool_recycle: int
 
 
 def _get_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
@@ -199,6 +203,12 @@ def get_settings() -> Settings:
         notification_retry_max_seconds = notification_retry_base_seconds
     notification_max_attempts = _get_int("NOTIFICATION_MAX_ATTEMPTS", 8, minimum=1)
 
+    # Database connection pool settings
+    db_pool_size = _get_int("DB_POOL_SIZE", 20, minimum=1)
+    db_max_overflow = _get_int("DB_MAX_OVERFLOW", 10, minimum=0)
+    db_pool_timeout = _get_int("DB_POOL_TIMEOUT", 30, minimum=1)
+    db_pool_recycle = _get_int("DB_POOL_RECYCLE", 3600, minimum=60)
+
     return Settings(
         data_dir=data_dir,
         database_url_async=async_url,
@@ -229,4 +239,8 @@ def get_settings() -> Settings:
         notification_retry_base_seconds=notification_retry_base_seconds,
         notification_retry_max_seconds=notification_retry_max_seconds,
         notification_max_attempts=notification_max_attempts,
+        db_pool_size=db_pool_size,
+        db_max_overflow=db_max_overflow,
+        db_pool_timeout=db_pool_timeout,
+        db_pool_recycle=db_pool_recycle,
     )

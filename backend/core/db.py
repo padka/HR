@@ -18,10 +18,25 @@ from backend.migrations import upgrade_to_head
 
 _settings = get_settings()
 
+# Build engine kwargs with pool settings only for non-SQLite databases
+_async_engine_kwargs = {
+    "echo": _settings.sql_echo,
+    "future": True,
+}
+
+# SQLite uses NullPool and doesn't support pool parameters
+if not _settings.database_url_async.startswith("sqlite"):
+    _async_engine_kwargs.update({
+        "pool_size": _settings.db_pool_size,
+        "max_overflow": _settings.db_max_overflow,
+        "pool_timeout": _settings.db_pool_timeout,
+        "pool_pre_ping": True,
+        "pool_recycle": _settings.db_pool_recycle,
+    })
+
 async_engine: AsyncEngine = create_async_engine(
     _settings.database_url_async,
-    echo=_settings.sql_echo,
-    future=True,
+    **_async_engine_kwargs,
 )
 _async_session_factory = async_sessionmaker(
     bind=async_engine,
@@ -29,10 +44,23 @@ _async_session_factory = async_sessionmaker(
     class_=AsyncSession,
 )
 
+_sync_engine_kwargs = {
+    "echo": _settings.sql_echo,
+    "future": True,
+}
+
+if not _settings.database_url_sync.startswith("sqlite"):
+    _sync_engine_kwargs.update({
+        "pool_size": _settings.db_pool_size,
+        "max_overflow": _settings.db_max_overflow,
+        "pool_timeout": _settings.db_pool_timeout,
+        "pool_pre_ping": True,
+        "pool_recycle": _settings.db_pool_recycle,
+    })
+
 sync_engine = create_engine(
     _settings.database_url_sync,
-    echo=_settings.sql_echo,
-    future=True,
+    **_sync_engine_kwargs,
 )
 _sync_session_factory = sessionmaker(
     bind=sync_engine,
