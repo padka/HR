@@ -1,18 +1,58 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
 {% block title %}Кандидат {{ user.fio }}{% endblock %}
 {% block content %}
 <style>
+  /* Liquid Glass Variables */
+  :root {
+    --liquid-glass-bg: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.05) 0%,
+      rgba(255, 255, 255, 0.02) 100%);
+    --liquid-glass-bg-hover: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.09) 0%,
+      rgba(255, 255, 255, 0.04) 100%);
+    --liquid-glass-border: rgba(255, 255, 255, 0.08);
+    --liquid-glass-highlight: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.12) 0%,
+      rgba(255, 255, 255, 0) 50%);
+    --liquid-glass-shadow:
+      0 8px 32px 0 rgba(0, 0, 0, 0.25),
+      inset 0 1px 2px 0 rgba(255, 255, 255, 0.05);
+    --liquid-glass-shadow-hover:
+      0 16px 48px 0 rgba(0, 0, 0, 0.35),
+      inset 0 1px 2px 0 rgba(255, 255, 255, 0.08);
+    --liquid-glass-blur: blur(40px);
+  }
+
+  html[data-theme="light"] {
+    --liquid-glass-bg: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.6) 0%,
+      rgba(255, 255, 255, 0.4) 100%);
+    --liquid-glass-bg-hover: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.8) 0%,
+      rgba(255, 255, 255, 0.55) 100%);
+    --liquid-glass-border: rgba(255, 255, 255, 0.4);
+    --liquid-glass-highlight: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.95) 0%,
+      rgba(255, 255, 255, 0) 50%);
+    --liquid-glass-shadow:
+      0 8px 32px 0 rgba(31, 38, 135, 0.15),
+      inset 0 1px 2px 0 rgba(255, 255, 255, 0.6);
+    --liquid-glass-shadow-hover:
+      0 16px 48px 0 rgba(31, 38, 135, 0.22),
+      inset 0 1px 2px 0 rgba(255, 255, 255, 0.75);
+    --liquid-glass-blur: blur(35px);
+  }
+
   .cards-grid {
     display: grid;
-    gap: 24px;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    margin-bottom: 24px;
+    gap: 28px;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    margin-bottom: 32px;
   }
 
   .candidate-card .data-list {
     display: grid;
-    gap: 12px;
+    gap: 14px;
   }
 
   .candidate-card .data-list div {
@@ -21,12 +61,251 @@
     gap: 12px;
   }
 
+  .candidate-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .candidate-card__header .section-hint {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  .candidate-highlights {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-bottom: 24px;
+  }
+
+  .candidate-highlight {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .candidate-highlight::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 100%;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+    pointer-events: none;
+  }
+
+  .candidate-highlight:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .candidate-highlight__label {
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .candidate-highlight strong {
+    font-size: 1.15rem;
+    background: linear-gradient(135deg, var(--fg-strong), var(--accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .candidate-highlight__meta {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  .data-list--split {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .data-list--grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+
+  .data-list--split div,
+  .data-list--grid div {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .data-list--grid dt {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+  }
+
+  .data-list--grid dd {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .candidate-card__code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    background: rgba(15, 23, 42, 0.06);
+    padding: 2px 6px;
+    border-radius: 6px;
+  }
+
+  .candidate-card__note {
+    color: #6b7280;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+
   .surface.mt-lg {
     margin-top: 32px;
   }
 
   .text-prewrap {
     white-space: pre-wrap;
+  }
+
+  .test-results-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+
+  .test-result-card {
+    padding: 20px;
+    border-radius: 24px;
+    background: var(--liquid-glass-bg);
+    backdrop-filter: var(--liquid-glass-blur) saturate(200%);
+    -webkit-backdrop-filter: var(--liquid-glass-blur) saturate(200%);
+    border: 1px solid var(--liquid-glass-border);
+    box-shadow: var(--liquid-glass-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .test-result-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 100%;
+    background: var(--liquid-glass-highlight);
+    pointer-events: none;
+  }
+  .test-result-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--liquid-glass-shadow-hover);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .test-result-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .test-result-card__title {
+    margin: 0;
+    font-size: 1.05rem;
+  }
+
+  .test-result-card__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .test-result-card__actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .test-result-card__body dl {
+    display: grid;
+    gap: 8px;
+  }
+
+  .test-result-card__body dl div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .test-result-card__details {
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
+    padding-top: 12px;
+  }
+
+  .test-result-card__details summary {
+    cursor: pointer;
+    font-weight: 600;
+    margin-bottom: 8px;
+    outline: none;
+  }
+
+  .test-result-card__stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 0.9rem;
+    margin-bottom: 12px;
+  }
+
+  .test-result-card__stats span {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    padding: 6px 12px;
+    transition: all 0.3s ease;
+  }
+  .test-result-card__stats span:hover {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04));
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .test-result-card__questions .list-table th,
+  .test-result-card__questions .list-table td {
+    vertical-align: top;
+  }
+
+  .status-note {
+    font-size: 0.85rem;
+    color: #6b7280;
+  }
+
+  .test-history {
+    margin-top: 16px;
+    font-size: 0.9rem;
+  }
+
+  .test-history ul {
+    margin: 8px 0 0;
+    padding-left: 18px;
   }
 </style>
 {% set saved = request.query_params.get('saved') %}
@@ -64,8 +343,49 @@
 
 <div class="cards-grid">
   <article class="glass grain candidate-card">
-    <h2 class="section-title">Сводка</h2>
-    <dl class="data-list">
+    <header class="candidate-card__header">
+      <div>
+        <h2 class="section-title">Сводка</h2>
+        <p class="section-hint">Статус кандидата и ключевые показатели.</p>
+      </div>
+      <span class="badge badge--soft">{{ stage or 'Без статуса' }}</span>
+    </header>
+    {% set avg_score_label = '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' %}
+    <div class="candidate-highlights">
+      <div class="candidate-highlight">
+        <span class="candidate-highlight__label">Текущая стадия</span>
+        <strong>{{ stage or 'Без интервью' }}</strong>
+        <span class="candidate-highlight__meta">
+          {% if user.last_activity %}
+            Последняя активность {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
+          {% else %}
+            Последняя активность не зафиксирована
+          {% endif %}
+        </span>
+      </div>
+      <div class="candidate-highlight">
+        <span class="candidate-highlight__label">Ближайшее действие</span>
+        {% if upcoming_slot and upcoming_slot.start_utc %}
+          <strong>{{ fmt_local(upcoming_slot.start_utc, upcoming_slot.candidate_tz or 'Europe/Moscow') }}</strong>
+          <span class="candidate-highlight__meta">
+            {% set slot_city = upcoming_slot.city.name if upcoming_slot.city else (user.city or 'Город не указан') %}
+            {{ slot_city }}
+            {% if upcoming_slot.recruiter %}
+              · {{ upcoming_slot.recruiter.name }}
+            {% endif %}
+          </span>
+        {% else %}
+          <strong>Нет в календаре</strong>
+          <span class="candidate-highlight__meta">Назначьте интервью или тест, чтобы увидеть дату.</span>
+        {% endif %}
+      </div>
+      <div class="candidate-highlight">
+        <span class="candidate-highlight__label">Активность</span>
+        <strong>{{ stats.tests_total }} тестов</strong>
+        <span class="candidate-highlight__meta">Средний балл: {{ avg_score_label }} · Сообщений: {{ messages|length }}</span>
+      </div>
+    </div>
+    <dl class="data-list data-list--split">
       <div>
         <dt>Статус</dt>
         <dd>
@@ -81,91 +401,227 @@
         <dd>{{ user.city or '—' }}</dd>
       </div>
       <div>
-        <dt>Последняя активность</dt>
-        <dd>{{ user.last_activity.strftime('%d.%m.%Y %H:%M') if user.last_activity else '—' }}</dd>
+        <dt>Отчёт Тест 1</dt>
+        <dd>
+          {% if user.test1_report_url %}
+            <a class="btn btn-soft btn-xs" href="/candidates/{{ user.id }}/reports/test1" download>Скачать</a>
+          {% else %}
+            <span class="muted">нет отчёта</span>
+          {% endif %}
+        </dd>
       </div>
       <div>
-        <dt>Тестов пройдено</dt>
-        <dd>{{ stats.tests_total }}</dd>
+        <dt>Отчёт Тест 2</dt>
+        <dd>
+          {% if user.test2_report_url %}
+            <a class="btn btn-soft btn-xs" href="/candidates/{{ user.id }}/reports/test2" download>Скачать</a>
+          {% else %}
+            <span class="muted">нет отчёта</span>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Телемост</dt>
+        <dd>
+          {% if telemost_url %}
+            <a class="btn btn-primary btn-xs" href="{{ telemost_url }}" target="_blank" rel="noopener noreferrer">Перейти</a>
+            {% if telemost_source == 'upcoming' %}
+              <span class="muted">предстоящее интервью</span>
+            {% elif telemost_source == 'recent' %}
+              <span class="muted">последний слот</span>
+            {% endif %}
+          {% else %}
+            <span class="muted">Ссылка не настроена</span>
+          {% endif %}
+        </dd>
       </div>
       <div>
         <dt>Средний балл</dt>
-        <dd>{{ '%.2f'|format(stats.average_score) if stats.average_score is not none else '—' }}</dd>
+        <dd>{{ avg_score_label }}</dd>
       </div>
     </dl>
   </article>
 
-  {% call forms.shell(
-    title="Редактирование",
-    description="Обновите данные кандидата.",
-    form_id="candidate-update",
-    action='/candidates/' ~ user.id ~ '/update',
-    actions=[{"type": "submit", "text": "Сохранить", "variant": "primary"}]
-  ) %}
-    {% call forms.section("Основные поля") %}
-      <div class="form-grid form-grid--two">
-        {% call forms.field("ФИО") %}
-          <input type="text" name="fio" value="{{ user.fio }}" required>
-        {% endcall %}
-        {% call forms.field("Telegram ID") %}
-          <input type="number" name="telegram_id" value="{{ user.telegram_id }}" min="1" step="1" required>
-        {% endcall %}
+  <article class="glass grain candidate-card candidate-card--profile">
+    <header class="candidate-card__header">
+      <div>
+        <h2 class="section-title">Личные данные</h2>
+        <p class="section-hint">Редактирование отключено — данные фиксируются автоматически.</p>
       </div>
-      <div class="form-grid form-grid--two">
-        {% call forms.field("Город") %}
-          <input type="text" name="city" value="{{ user.city or '' }}" placeholder="Москва">
-        {% endcall %}
-        {% call forms.field("Статус") %}
-          {{ forms.switch(name='is_active', value='true', checked=user.is_active, label='Активен') }}
-        {% endcall %}
+      <span class="badge badge--muted">Только чтение</span>
+    </header>
+    <p class="candidate-card__note">Чтобы скорректировать информацию, обновите карточку кандидата в исходной системе.</p>
+    <dl class="data-list data-list--grid">
+      <div>
+        <dt>ФИО</dt>
+        <dd>{{ user.fio }}</dd>
       </div>
-    {% endcall %}
-  {% endcall %}
+      <div>
+        <dt>Telegram ID</dt>
+        <dd>
+          <span class="candidate-card__code">{{ user.telegram_id }}</span>
+          <a class="btn btn-primary btn-xs" href="tg://user?id={{ user.telegram_id }}" style="margin-left: 8px;">Открыть чат</a>
+        </dd>
+      </div>
+      <div>
+        <dt>Внутренний ID</dt>
+        <dd><span class="candidate-card__code">{{ user.id }}</span></dd>
+      </div>
+      <div>
+        <dt>Город</dt>
+        <dd>{{ user.city or '—' }}</dd>
+      </div>
+      <div>
+        <dt>Последняя активность</dt>
+        <dd>{{ fmt_local(user.last_activity, 'Europe/Moscow') if user.last_activity else '—' }}</dd>
+      </div>
+      <div>
+        <dt>Статус</dt>
+        <dd>
+          {% if user.is_active %}
+            <span class="badge badge--success">Активен</span>
+          {% else %}
+            <span class="badge badge--muted">Отключен</span>
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+  </article>
 </div>
 
 <section class="surface glass grain mt-lg">
   <header class="section-header">
     <h2 class="section-title">Результаты тестов</h2>
-    <p class="section-hint">Полная история прохождений с ключевыми показателями.</p>
+    <p class="section-hint">Статус прохождения и подробные ответы кандидата.</p>
   </header>
-  {% if tests %}
-    <div class="list-table-wrapper">
-      <table class="list-table">
-        <thead>
-          <tr>
-            <th scope="col">Дата</th>
-            <th scope="col">Балл</th>
-            <th scope="col">Рейтинг</th>
-            <th scope="col">Время (сек)</th>
-            <th scope="col">Ответы</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for result in tests %}
-          {% set answers = answers_map.get(result.id, {}) %}
-          <tr>
-            <td>{{ result.created_at.strftime('%d.%m.%Y %H:%M') if result.created_at else '—' }}</td>
-            <td><strong>{{ result.final_score }}</strong> из {{ result.raw_score }}</td>
-            <td>{{ result.rating }}</td>
-            <td>{{ result.total_time }}</td>
-            <td>
-              {% if answers %}
-                {{ answers.questions_correct }}/{{ answers.questions_total }} верно
-                {% if answers.questions_overtime %}
-                  · <span class="muted">{{ answers.questions_overtime }} проср.</span>
+  {% set status_meta = {
+    'passed': {'class': 'badge badge--success', 'icon': '✅', 'label': 'Пройден'},
+    'failed': {'class': 'badge badge--warning', 'icon': '❌', 'label': 'Не пройден'},
+    'in_progress': {'class': 'badge badge--info', 'icon': '⏳', 'label': 'В процессе'},
+    'not_started': {'class': 'badge badge--muted', 'icon': '—', 'label': 'Не проходил'}
+  } %}
+  <div class="test-results-grid">
+    {% for section in test_sections %}
+      {% set meta = status_meta.get(section.status, status_meta['not_started']) %}
+      {% set stats = section.details.stats %}
+      <article class="test-result-card">
+        <header class="test-result-card__header">
+          <div class="test-result-card__meta">
+            <h3 class="test-result-card__title">{{ section.title }}</h3>
+            <span class="{{ meta.class }}">{{ meta.icon }} {{ section.status_label or meta.label }}</span>
+          </div>
+          <div class="test-result-card__actions">
+            {% if section.report_url %}
+              <a class="btn btn-soft btn-xs" href="{{ section.report_url }}" download>Скачать отчёт</a>
+            {% endif %}
+          </div>
+        </header>
+        <div class="test-result-card__body">
+          <dl>
+            <div>
+              <dt>Статус</dt>
+              <dd>{{ meta.icon }} {{ section.status_label or meta.label }}</dd>
+            </div>
+            <div>
+              <dt>Прохождение</dt>
+              <dd>
+                {% if section.completed_at %}
+                  {{ fmt_local(section.completed_at, 'Europe/Moscow') }}
+                {% else %}
+                  <span class="muted">—</span>
                 {% endif %}
-              {% else %}
-                <span class="muted">—</span>
+              </dd>
+            </div>
+            <div>
+              <dt>Кратко</dt>
+              <dd>{{ section.summary }}</dd>
+            </div>
+          </dl>
+        </div>
+        {% if section.pending_since %}
+          <p class="status-note">Последнее приглашение отправлено {{ fmt_local(section.pending_since, 'Europe/Moscow') }}</p>
+        {% endif %}
+        {% set has_details = section.details.questions|length > 0 or section.history|length > 1 %}
+        {% if has_details %}
+          <details class="test-result-card__details">
+            <summary>Открыть детали</summary>
+            <div class="test-result-card__stats">
+              <span>Всего вопросов: {{ stats.total_questions }}</span>
+              <span>Верно: {{ stats.correct_answers }}</span>
+              {% if stats.overtime_questions %}
+                <span>Просрочено: {{ stats.overtime_questions }}</span>
               {% endif %}
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  {% else %}
-    <p class="muted">Тесты пока не пройдены.</p>
-  {% endif %}
+              {% if stats.final_score is not none %}
+                <span>Баллы: {{ '%.1f'|format(stats.final_score) }}</span>
+              {% endif %}
+              {% if stats.total_time %}
+                <span>Время: {{ stats.total_time }} сек</span>
+              {% endif %}
+            </div>
+            <div class="test-result-card__questions list-table-wrapper">
+              <table class="list-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Вопрос</th>
+                    <th scope="col">Ответ кандидата</th>
+                    <th scope="col">Проверка</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for question in section.details.questions %}
+                    <tr>
+                      <td>
+                        <strong>{{ question.question_index }}.</strong>
+                        <div class="text-prewrap">{{ question.question_text }}</div>
+                      </td>
+                      <td class="text-prewrap">{{ question.user_answer or '—' }}</td>
+                      <td>
+                        {% if question.correct_answer %}
+                          <div class="text-prewrap">Правильный ответ: {{ question.correct_answer }}</div>
+                        {% endif %}
+                        <div>
+                          {% if question.is_correct %}
+                            <span class="badge badge--success">Верно</span>
+                          {% else %}
+                            <span class="badge badge--muted">Неверно</span>
+                          {% endif %}
+                          {% if question.overtime %}
+                            <span class="badge badge--warning">Просрочено</span>
+                          {% endif %}
+                          {% if question.attempts_count and question.attempts_count > 1 %}
+                            <span class="badge badge--soft">Попыток: {{ question.attempts_count }}</span>
+                          {% endif %}
+                        </div>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% if section.history|length > 1 %}
+            <div class="test-history">
+              <strong>История попыток</strong>
+              <ul>
+                {% for item in section.history %}
+                  <li>
+                    {% if item.completed_at %}
+                      {{ fmt_local(item.completed_at, 'Europe/Moscow') }}
+                    {% else %}
+                      —
+                    {% endif %}
+                    · {{ '%.1f'|format(item.final_score) if item.final_score is not none else '—' }} баллов
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+          </details>
+        {% else %}
+          <p class="muted">Детали появятся после прохождения теста.</p>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </div>
 </section>
 
 <section class="surface glass grain mt-lg">
