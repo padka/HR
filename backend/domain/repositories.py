@@ -1,7 +1,9 @@
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import aliased, selectinload
 from dataclasses import dataclass
 from typing import Literal
@@ -9,17 +11,23 @@ from typing import Literal
 
 from backend.core.db import async_session
 from backend.domain.candidates.services import create_or_update_user
+
+_UNSET = object()
+
 from .models import (
     City,
+    MessageTemplate,
     NotificationLog,
+    BotMessageLog,
+    OutboxNotification,
     Recruiter,
     Slot,
     SlotReservationLock,
     SlotStatus,
     TelegramCallbackLog,
     Template,
+    recruiter_city_association,
 )
-
 
 def _to_aware_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -49,16 +57,22 @@ async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
 
     now = datetime.now(timezone.utc)
 
+    rc = recruiter_city_association.alias("rc")
+    city_alias = aliased(City)
+
     async with async_session() as session:
         res = await session.scalars(
             select(Recruiter)
             .outerjoin(
-                City,
+                rc,
                 and_(
-                    City.responsible_recruiter_id == Recruiter.id,
-                    City.id == city_id,
-                    City.active.is_(True),
+                    rc.c.recruiter_id == Recruiter.id,
+                    rc.c.city_id == city_id,
                 ),
+            )
+            .outerjoin(
+                city_alias,
+                and_(city_alias.id == rc.c.city_id, city_alias.active.is_(True)),
             )
             .outerjoin(
                 Slot,
@@ -71,7 +85,7 @@ async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
             )
             .where(
                 Recruiter.active.is_(True),
-                or_(City.id == city_id, Slot.id.is_not(None)),
+                or_(city_alias.id == city_id, Slot.id.is_not(None)),
             )
             .group_by(Recruiter.id)
             .order_by(Recruiter.name.asc())
@@ -92,6 +106,7 @@ async def get_candidate_cities() -> List[City]:
 
     now = datetime.now(timezone.utc)
 
+    rc = recruiter_city_association.alias("rc")
     responsible = aliased(Recruiter)
     slot = aliased(Slot)
     slot_owner = aliased(Recruiter)
@@ -100,9 +115,13 @@ async def get_candidate_cities() -> List[City]:
         res = await session.scalars(
             select(City)
             .outerjoin(
+                rc,
+                rc.c.city_id == City.id,
+            )
+            .outerjoin(
                 responsible,
                 and_(
-                    responsible.id == City.responsible_recruiter_id,
+                    responsible.id == rc.c.recruiter_id,
                     responsible.active.is_(True),
                 ),
             )
@@ -144,7 +163,12 @@ async def get_city_by_name(name: str) -> Optional[City]:
 
 async def get_city(city_id: int) -> Optional[City]:
     async with async_session() as session:
-        return await session.get(City, city_id)
+        result = await session.execute(
+            select(City)
+            .options(selectinload(City.recruiters))
+            .where(City.id == city_id)
+        )
+        return result.scalar_one_or_none()
 
 
 async def get_free_slots_by_recruiter(
@@ -239,10 +263,46 @@ async def get_template(city_id: Optional[int], key: str) -> Optional[Template]:
         return fallback.first()
 
 
+async def get_message_template(
+    key: str,
+    *,
+    locale: str = "ru",
+    channel: str = "tg",
+) -> Optional[MessageTemplate]:
+    async with async_session() as session:
+        result = await session.scalars(
+            select(MessageTemplate)
+            .where(
+                MessageTemplate.key == key,
+                MessageTemplate.locale == locale,
+                MessageTemplate.channel == channel,
+                MessageTemplate.is_active.is_(True),
+            )
+            .order_by(MessageTemplate.version.desc(), MessageTemplate.updated_at.desc())
+            .limit(1)
+        )
+        return result.first()
+
+
 @dataclass
 class ReservationResult:
     status: Literal["reserved", "slot_taken", "duplicate_candidate", "already_reserved"]
     slot: Optional[Slot] = None
+
+
+@dataclass
+class OutboxItem:
+    """Lightweight representation of a pending outbox notification."""
+
+    id: int
+    booking_id: Optional[int]
+    type: str
+    payload: Dict[str, Any]
+    candidate_tg_id: Optional[int]
+    recruiter_tg_id: Optional[int]
+    attempts: int
+    created_at: datetime
+    next_retry_at: Optional[datetime] = None
 
 
 @dataclass
@@ -276,10 +336,13 @@ async def register_callback(callback_id: str) -> bool:
 def _log_candidate_clause(candidate_tg_id: Optional[int]):
     if candidate_tg_id is None:
         return NotificationLog.candidate_tg_id.is_(None)
-    return or_(
-        NotificationLog.candidate_tg_id == candidate_tg_id,
-        NotificationLog.candidate_tg_id.is_(None),
-    )
+    return NotificationLog.candidate_tg_id == candidate_tg_id
+
+
+def _outbox_candidate_clause(candidate_tg_id: Optional[int]):
+    if candidate_tg_id is None:
+        return OutboxNotification.candidate_tg_id.is_(None)
+    return OutboxNotification.candidate_tg_id == candidate_tg_id
 
 
 async def notification_log_exists(
@@ -303,12 +366,53 @@ async def notification_log_exists(
         return existing is not None
 
 
+async def get_notification_log(
+    notification_type: str,
+    booking_id: int,
+    *,
+    candidate_tg_id: Optional[int] = None,
+    for_update: bool = False,
+) -> Optional[NotificationLog]:
+    async with async_session() as session:
+        if candidate_tg_id is None:
+            candidate_tg_id = await session.scalar(
+                select(Slot.candidate_tg_id).where(Slot.id == booking_id)
+            )
+        query = select(NotificationLog).where(
+            NotificationLog.type == notification_type,
+            NotificationLog.booking_id == booking_id,
+            _log_candidate_clause(candidate_tg_id),
+        )
+        if for_update:
+            query = query.with_for_update()
+        return await session.scalar(query)
+
+
+async def get_notification_log_by_id(
+    log_id: int,
+    *,
+    for_update: bool = False,
+) -> Optional[NotificationLog]:
+    async with async_session() as session:
+        query = select(NotificationLog).where(NotificationLog.id == log_id)
+        if for_update:
+            query = query.with_for_update()
+        return await session.scalar(query)
+
+
 async def add_notification_log(
     notification_type: str,
     booking_id: int,
     *,
     candidate_tg_id: Optional[int] = None,
     payload: Optional[str] = None,
+    delivery_status: str = "sent",
+    attempts: int = 1,
+    last_error: Optional[str] = None,
+    next_retry_at: Optional[datetime] = None,
+    overwrite: bool = False,
+    template_key: Optional[str] = None,
+    template_version: Optional[int] = None,
 ) -> bool:
     async with async_session() as session:
         async with session.begin():
@@ -316,8 +420,58 @@ async def add_notification_log(
                 candidate_tg_id = await session.scalar(
                     select(Slot.candidate_tg_id).where(Slot.id == booking_id)
                 )
-            exists = await session.scalar(
-                select(NotificationLog.id)
+            values = {
+                "booking_id": booking_id,
+                "candidate_tg_id": candidate_tg_id,
+                "type": notification_type,
+                "payload": payload,
+                "delivery_status": delivery_status,
+                "attempts": attempts,
+                "last_error": last_error,
+                "next_retry_at": next_retry_at,
+                "template_key": template_key,
+                "template_version": template_version,
+                "created_at": datetime.now(timezone.utc),
+            }
+            bind = session.get_bind()
+            dialect_name = bind.dialect.name if bind is not None else ""
+
+            if dialect_name in {"sqlite", "postgresql"}:
+                insert_factory = sqlite_insert if dialect_name == "sqlite" else pg_insert
+                stmt = (
+                    insert_factory(NotificationLog)
+                    .values(**values)
+                    .on_conflict_do_nothing(
+                        index_elements=["type", "booking_id", "candidate_tg_id"]
+                    )
+                )
+                result = await session.execute(stmt)
+                inserted = result.rowcount == 1
+                if inserted or not overwrite:
+                    return inserted
+
+                update_stmt = (
+                    update(NotificationLog)
+                    .where(
+                        NotificationLog.type == notification_type,
+                        NotificationLog.booking_id == booking_id,
+                        _log_candidate_clause(candidate_tg_id),
+                    )
+                    .values(
+                        payload=payload,
+                        delivery_status=delivery_status,
+                        attempts=attempts,
+                        last_error=last_error,
+                        next_retry_at=next_retry_at,
+                        template_key=template_key,
+                        template_version=template_version,
+                    )
+                )
+                await session.execute(update_stmt)
+                return False
+
+            existing = await session.scalar(
+                select(NotificationLog)
                 .where(
                     NotificationLog.type == notification_type,
                     NotificationLog.booking_id == booking_id,
@@ -325,20 +479,287 @@ async def add_notification_log(
                 )
                 .with_for_update()
             )
-            if exists:
+            if existing:
+                if overwrite:
+                    existing.payload = payload
+                    existing.delivery_status = delivery_status
+                    existing.attempts = attempts
+                    existing.last_error = last_error
+                    existing.next_retry_at = next_retry_at
+                    existing.template_key = template_key
+                    existing.template_version = template_version
                 return False
-            session.add(
-                NotificationLog(
-                    booking_id=booking_id,
-                    candidate_tg_id=candidate_tg_id,
-                    type=notification_type,
-                    payload=payload,
-                    created_at=datetime.now(timezone.utc),
+
+            session.add(NotificationLog(**values))
+            return True
+
+
+async def add_bot_message_log(
+    message_type: str,
+    *,
+    candidate_tg_id: Optional[int] = None,
+    slot_id: Optional[int] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> None:
+    async with async_session() as session:
+        session.add(
+            BotMessageLog(
+                message_type=message_type,
+                candidate_tg_id=candidate_tg_id,
+                slot_id=slot_id,
+                payload_json=payload,
+                sent_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+
+
+async def update_notification_log_fields(
+    log_id: int,
+    *,
+    delivery_status: Optional[str] = None,
+    payload: object = _UNSET,
+    attempts: Optional[int] = None,
+    last_error: object = _UNSET,
+    next_retry_at: object = _UNSET,
+    template_key: object = _UNSET,
+    template_version: object = _UNSET,
+) -> None:
+    async with async_session() as session:
+        async with session.begin():
+            log = await session.get(NotificationLog, log_id, with_for_update=True)
+            if not log:
+                return
+            if delivery_status is not None:
+                log.delivery_status = delivery_status
+            if payload is not _UNSET:
+                log.payload = payload  # type: ignore[assignment]
+            if attempts is not None:
+                log.attempts = attempts
+            if last_error is not _UNSET:
+                log.last_error = last_error  # type: ignore[assignment]
+            if next_retry_at is not _UNSET:
+                log.next_retry_at = next_retry_at  # type: ignore[assignment]
+            if template_key is not _UNSET:
+                log.template_key = template_key  # type: ignore[assignment]
+            if template_version is not _UNSET:
+                log.template_version = template_version  # type: ignore[assignment]
+
+
+async def add_outbox_notification(
+    *,
+    notification_type: str,
+    booking_id: Optional[int],
+    payload: Optional[Dict[str, Any]] = None,
+    candidate_tg_id: Optional[int] = None,
+    recruiter_tg_id: Optional[int] = None,
+    correlation_id: Optional[str] = None,
+    session=None,
+) -> OutboxNotification:
+    payload = payload or {}
+    now = datetime.now(timezone.utc)
+
+    async def _add(sess) -> OutboxNotification:
+        existing = await sess.scalar(
+            select(OutboxNotification)
+            .where(
+                OutboxNotification.type == notification_type,
+                OutboxNotification.booking_id == booking_id,
+                OutboxNotification.candidate_tg_id == candidate_tg_id,
+                OutboxNotification.status == "pending",  # Only reuse pending entries
+            )
+            .with_for_update()
+        )
+        if existing:
+            if recruiter_tg_id is not None:
+                existing.recruiter_tg_id = recruiter_tg_id
+            if payload:
+                existing.payload_json = payload
+            if correlation_id:
+                existing.correlation_id = correlation_id
+            existing.status = "pending"
+            existing.next_retry_at = None
+            existing.locked_at = None
+            if existing.attempts > 0:
+                existing.attempts = 0
+            return existing
+
+        entry = OutboxNotification(
+            booking_id=booking_id,
+            type=notification_type,
+            payload_json=payload,
+            candidate_tg_id=candidate_tg_id,
+            recruiter_tg_id=recruiter_tg_id,
+            status="pending",
+            attempts=0,
+            created_at=now,
+            locked_at=None,
+            next_retry_at=None,
+            correlation_id=correlation_id,
+        )
+        sess.add(entry)
+        return entry
+
+    if session is not None:
+        return await _add(session)
+
+    async with async_session() as sess:
+        async with sess.begin():
+            entry = await _add(sess)
+        await sess.refresh(entry)
+        return entry
+
+
+async def claim_outbox_batch(
+    *,
+    batch_size: int,
+    lock_timeout: timedelta = timedelta(seconds=30),
+) -> List[OutboxItem]:
+    now = datetime.now(timezone.utc)
+    stale_before = now - lock_timeout
+    async with async_session() as session:
+        async with session.begin():
+            rows = (
+                await session.execute(
+                    select(OutboxNotification)
+                    .where(
+                        OutboxNotification.status == "pending",
+                        or_(
+                            OutboxNotification.next_retry_at.is_(None),
+                            OutboxNotification.next_retry_at <= now,
+                        ),
+                        or_(
+                            OutboxNotification.locked_at.is_(None),
+                            OutboxNotification.locked_at <= stale_before,
+                        ),
+                    )
+                    .order_by(OutboxNotification.id.asc())
+                    .limit(batch_size)
+                )
+            ).scalars().all()
+
+            for row in rows:
+                row.locked_at = now
+
+            if rows:
+                await session.flush()
+
+            items: List[OutboxItem] = []
+            for row in rows:
+                items.append(
+                    OutboxItem(
+                        id=row.id,
+                        booking_id=row.booking_id,
+                        type=row.type,
+                        payload=dict(row.payload_json or {}),
+                        candidate_tg_id=row.candidate_tg_id,
+                        recruiter_tg_id=row.recruiter_tg_id,
+                        attempts=row.attempts,
+                        created_at=row.created_at,
+                        next_retry_at=row.next_retry_at,
+                )
+        )
+        return items
+
+
+async def update_outbox_entry(
+    outbox_id: int,
+    *,
+    status: Optional[str] = None,
+    attempts: Optional[int] = None,
+    next_retry_at: object = _UNSET,
+    last_error: object = _UNSET,
+    correlation_id: Optional[str] = None,
+) -> None:
+    values: Dict[str, Any] = {"locked_at": None}
+    if status is not None:
+        values["status"] = status
+    if attempts is not None:
+        values["attempts"] = attempts
+    if next_retry_at is not _UNSET:
+        if next_retry_at is None or isinstance(next_retry_at, datetime):
+            values["next_retry_at"] = next_retry_at
+    if last_error is not _UNSET:
+        values["last_error"] = last_error
+    if correlation_id is not None:
+        values["correlation_id"] = correlation_id
+
+    async with async_session() as session:
+        async with session.begin():
+            await session.execute(
+                update(OutboxNotification)
+                .where(OutboxNotification.id == outbox_id)
+                .values(values)
+            )
+
+
+async def mark_outbox_notification_sent(
+    notification_type: str,
+    booking_id: Optional[int],
+    *,
+    candidate_tg_id: Optional[int] = None,
+) -> int:
+    async with async_session() as session:
+        async with session.begin():
+            stmt = (
+                update(OutboxNotification)
+                .where(
+                    OutboxNotification.type == notification_type,
+                    OutboxNotification.booking_id == booking_id,
+                    _outbox_candidate_clause(candidate_tg_id),
+                    OutboxNotification.status == "pending",
+                )
+                .values(
+                    status="sent",
+                    locked_at=None,
+                    attempts=1,
+                    next_retry_at=None,
+                    last_error=None,
                 )
             )
-    return True
+            result = await session.execute(stmt)
+            return int(result.rowcount or 0)
 
 
+async def get_outbox_queue_depth() -> int:
+    async with async_session() as session:
+        count = await session.scalar(
+            select(func.count())
+            .select_from(OutboxNotification)
+            .where(OutboxNotification.status == "pending")
+        )
+        return int(count or 0)
+
+
+async def get_outbox_item(outbox_id: int) -> Optional[OutboxItem]:
+    async with async_session() as session:
+        entry = await session.get(OutboxNotification, outbox_id)
+        if entry is None:
+            return None
+        return OutboxItem(
+            id=entry.id,
+            booking_id=entry.booking_id,
+            type=entry.type,
+            payload=dict(entry.payload_json or {}),
+            candidate_tg_id=entry.candidate_tg_id,
+            recruiter_tg_id=entry.recruiter_tg_id,
+            attempts=entry.attempts,
+            created_at=entry.created_at,
+            next_retry_at=entry.next_retry_at,
+        )
+
+
+async def reset_outbox_entry(outbox_id: int) -> None:
+    async with async_session() as session:
+        async with session.begin():
+            entry = await session.get(OutboxNotification, outbox_id, with_for_update=True)
+            if not entry:
+                return
+            entry.status = "pending"
+            entry.locked_at = None
+            entry.next_retry_at = None
+            entry.attempts = 0
+            entry.last_error = None
 async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult:
     async with async_session() as session:
         async with session.begin():
@@ -384,6 +805,21 @@ async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult
                     type="candidate_confirm",
                     created_at=datetime.now(timezone.utc),
                 )
+            )
+
+            recruiter_tg_id = (
+                slot.recruiter.tg_chat_id if slot.recruiter and slot.recruiter.tg_chat_id else None
+            )
+            await add_outbox_notification(
+                notification_type="recruiter_candidate_confirmed_notice",
+                booking_id=slot.id,
+                candidate_tg_id=candidate_tg_id,
+                recruiter_tg_id=recruiter_tg_id,
+                payload={
+                    "event": "candidate_confirmed",
+                    "slot_id": slot.id,
+                },
+                session=session,
             )
 
         slot.start_utc = _to_aware_utc(slot.start_utc)
@@ -503,11 +939,11 @@ async def reserve_slot(
                 expires_at=now_utc + timedelta(minutes=5),
             )
             session.add(lock)
-            city_name = slot.city.name if slot.city else None
+            city_name = slot.city.name_plain if slot.city else None
             if city_name is None and candidate_city_id is not None:
                 city = await session.get(City, candidate_city_id)
                 if city:
-                    city_name = city.name
+                    city_name = city.name_plain
 
         slot.start_utc = _to_aware_utc(slot.start_utc)
     try:
@@ -524,27 +960,50 @@ async def reserve_slot(
 
 async def approve_slot(slot_id: int) -> Optional[Slot]:
     async with async_session() as session:
-        slot = await session.get(Slot, slot_id, with_for_update=True)
-        status_value = (slot.status or "").lower() if slot else None
-        allowed_statuses = {
-            SlotStatus.PENDING,
-            SlotStatus.BOOKED,
-            SlotStatus.CONFIRMED_BY_CANDIDATE,
-        }
-        if not slot or status_value not in allowed_statuses:
+        async with session.begin():
+            slot = await session.get(Slot, slot_id, with_for_update=True)
+            status_value = (slot.status or "").lower() if slot else None
+            allowed_statuses = {
+                SlotStatus.PENDING,
+                SlotStatus.BOOKED,
+                SlotStatus.CONFIRMED_BY_CANDIDATE,
+            }
+            if not slot or status_value not in allowed_statuses:
+                return None
+            if status_value == SlotStatus.BOOKED:
+                slot.start_utc = _to_aware_utc(slot.start_utc)
+                return slot
+            if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
+                slot.start_utc = _to_aware_utc(slot.start_utc)
+                return slot
+
+            slot.status = SlotStatus.BOOKED
+
+            if slot.candidate_tg_id is not None:
+                await add_outbox_notification(
+                    notification_type="interview_confirmed_candidate",
+                    booking_id=slot.id,
+                    candidate_tg_id=slot.candidate_tg_id,
+                    payload={
+                        "event": "approved",
+                        "slot_id": slot.id,
+                    },
+                    session=session,
+                )
+
+        if not slot:
             return None
-        if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
-            await session.commit()
-            slot.start_utc = _to_aware_utc(slot.start_utc)
-            return slot
-        slot.status = SlotStatus.BOOKED
-        await session.commit()
         await session.refresh(slot)
         slot.start_utc = _to_aware_utc(slot.start_utc)
         return slot
 
 
-async def reject_slot(slot_id: int) -> Optional[Slot]:
+async def reject_slot(
+    slot_id: int,
+    *,
+    outbox_type: Optional[str] = None,
+    outbox_payload: Optional[Dict[str, Any]] = None,
+) -> Optional[Slot]:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id, with_for_update=True)
         if not slot:
@@ -579,6 +1038,15 @@ async def reject_slot(slot_id: int) -> Optional[Slot]:
         slot.candidate_tz = None
         slot.candidate_city_id = None
         slot.purpose = "interview"
+        if outbox_type and candidate_tg_id is not None:
+            await add_outbox_notification(
+                notification_type=outbox_type,
+                booking_id=slot.id,
+                candidate_tg_id=candidate_tg_id,
+                recruiter_tg_id=None,
+                payload=outbox_payload or {"event": outbox_type},
+                session=session,
+            )
         await session.commit()
         await session.refresh(slot)
         slot.start_utc = _to_aware_utc(slot.start_utc)
