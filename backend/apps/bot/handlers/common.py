@@ -28,6 +28,15 @@ async def cmd_start(message: Message) -> None:
         return
 
     username = getattr(user, "username", None)
+    logger.info(
+        "User started interview",
+        extra={
+            "user_id": user_id,
+            "username": username,
+            "first_name": getattr(user, "first_name", None),
+            "last_name": getattr(user, "last_name", None),
+        }
+    )
     await services.begin_interview(user_id, username=username)
 
 
