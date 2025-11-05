@@ -510,6 +510,29 @@ async def candidates_schedule_intro_day_submit(
         slot_tz = getattr(city, "tz", None) or getattr(recruiter, "tz", None) or "Europe/Moscow"
         candidate_tz = slot_tz  # Assume candidate timezone same as city
 
+        # Check if intro_day slot already exists for this candidate+recruiter
+        existing_slot_query = select(Slot).where(
+            Slot.candidate_tg_id == user.telegram_id,
+            Slot.recruiter_id == recruiter_id,
+            Slot.purpose == "intro_day",
+        )
+        existing_slot_result = await session.execute(existing_slot_query)
+        existing_slot = existing_slot_result.scalar_one_or_none()
+
+        if existing_slot:
+            errors.append(
+                f"Ознакомительный день уже назначен для этого кандидата с рекрутером {recruiter.name}. "
+                f"Дата: {existing_slot.start_utc.strftime('%d.%m.%Y %H:%M')} UTC"
+            )
+            recruiters_data = await recruiters_for_slot_form()
+            context = {
+                "request": request,
+                "candidate": user,
+                "recruiters": recruiters_data,
+                "errors": errors,
+            }
+            return templates.TemplateResponse("schedule_intro_day.html", context, status_code=400)
+
         # Create intro_day slot
         slot = Slot(
             recruiter_id=recruiter_id,

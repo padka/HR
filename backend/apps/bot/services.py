@@ -1387,7 +1387,11 @@ class NotificationService:
         )
 
     async def _process_intro_day_invitation(self, item: OutboxItem) -> None:
-        """Process intro day invitation - immediate invitation with confirmation"""
+        """Process intro day invitation - immediate invitation with confirmation
+
+        Uses city-specific template 'intro_day_invitation' which should contain
+        personalized information like address, contact person, etc.
+        """
         slot = await get_slot(item.booking_id) if item.booking_id is not None else None
         if not slot or slot.candidate_tg_id != item.candidate_tg_id:
             await self._mark_failed(
@@ -1418,29 +1422,61 @@ class NotificationService:
         recruiter = await get_recruiter(slot.recruiter_id) if slot.recruiter_id else None
         tz = slot.candidate_tz or DEFAULT_TZ
         labels = slot_local_labels(slot.start_utc, tz)
+
+        # Get city name for template context
+        city_name = ""
+        if slot.candidate_city_id:
+            from backend.core.db import async_session
+            from backend.domain.models import City
+            async with async_session() as session:
+                city = await session.get(City, slot.candidate_city_id)
+                if city:
+                    city_name = getattr(city, "name", "") or getattr(city, "name_plain", "") or ""
+
         context = {
             "candidate_name": slot.candidate_fio or str(candidate_id or ""),
             "candidate_fio": slot.candidate_fio or str(candidate_id or ""),
             "recruiter_name": recruiter.name if recruiter else "",
             "dt_local": TemplateProvider.format_local_dt(slot.start_utc, tz),
             "tz_name": tz,
+            "city_name": city_name,
             "join_link": getattr(recruiter, "telemost_url", "") or "",
             **labels,
         }
 
-        # Use template provider for intro_day_invitation
+        # Try to render from message templates (new system) first, then fallback to old system
         rendered = await self._template_provider.render("intro_day_invitation", context)
+
         if rendered is None:
-            await self._mark_failed(
-                item,
-                item.attempts,
-                log_type,
-                notification_type,
-                "template_missing",
-                None,
-                candidate_tg_id=candidate_id,
+            # Fallback to old template system (city-specific templates)
+            fallback_text = await templates.tpl(
+                slot.candidate_city_id,
+                "intro_day_invitation",  # Key in old templates table
+                candidate_fio=context["candidate_fio"],
+                candidate_name=context["candidate_name"],
+                recruiter_name=context["recruiter_name"],
+                dt_local=context["dt_local"],
+                city_name=city_name,
+                **labels,
             )
-            return
+            if fallback_text:
+                from types import SimpleNamespace
+                rendered = SimpleNamespace(
+                    text=fallback_text,
+                    key="intro_day_invitation",
+                    version=None,
+                )
+            else:
+                await self._mark_failed(
+                    item,
+                    item.attempts,
+                    log_type,
+                    notification_type,
+                    "template_missing",
+                    None,
+                    candidate_tg_id=candidate_id,
+                )
+                return
 
         attempt = item.attempts + 1
         await self._ensure_log(
