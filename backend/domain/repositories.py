@@ -560,30 +560,37 @@ async def add_outbox_notification(
     now = datetime.now(timezone.utc)
 
     async def _add(sess) -> OutboxNotification:
+        # First, check if entry exists (regardless of status) to ensure idempotency
         existing = await sess.scalar(
             select(OutboxNotification)
             .where(
                 OutboxNotification.type == notification_type,
                 OutboxNotification.booking_id == booking_id,
                 OutboxNotification.candidate_tg_id == candidate_tg_id,
-                OutboxNotification.status == "pending",  # Only reuse pending entries
             )
             .with_for_update()
         )
-        if existing:
-            if recruiter_tg_id is not None:
-                existing.recruiter_tg_id = recruiter_tg_id
-            if payload:
-                existing.payload_json = payload
-            if correlation_id:
-                existing.correlation_id = correlation_id
-            existing.status = "pending"
-            existing.next_retry_at = None
-            existing.locked_at = None
-            if existing.attempts > 0:
-                existing.attempts = 0
-            return existing
 
+        if existing:
+            # If status is 'pending', update it (reuse for retry)
+            if existing.status == "pending":
+                if recruiter_tg_id is not None:
+                    existing.recruiter_tg_id = recruiter_tg_id
+                if payload:
+                    existing.payload_json = payload
+                if correlation_id:
+                    existing.correlation_id = correlation_id
+                existing.next_retry_at = None
+                existing.locked_at = None
+                if existing.attempts > 0:
+                    existing.attempts = 0
+                return existing
+            else:
+                # Status is 'sent' or 'failed' - return as-is (idempotent)
+                # Don't modify sent/failed entries to prevent duplicate messages
+                return existing
+
+        # No existing entry - create new one
         entry = OutboxNotification(
             booking_id=booking_id,
             type=notification_type,

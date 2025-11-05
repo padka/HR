@@ -13,14 +13,13 @@ from backend.domain.repositories import add_outbox_notification, update_outbox_e
 
 
 @pytest.mark.asyncio
-async def test_add_outbox_notification_does_not_reuse_sent_entries():
+async def test_add_outbox_notification_is_idempotent_for_sent_entries():
     """
-    Regression test: Verify that add_outbox_notification does not reuse sent entries.
+    Test that add_outbox_notification is idempotent for sent entries.
 
-    Previously, when creating a new reminder, the code would find already-sent
-    entries and change their status back to 'pending', causing duplicate messages.
-
-    Now it should only reuse entries with status='pending'.
+    When trying to create a notification that already exists with status='sent',
+    the function should return the existing entry WITHOUT modifying it.
+    This prevents IntegrityError and ensures idempotency.
     """
     # Create test slot
     async with async_session() as session:
@@ -72,7 +71,7 @@ async def test_add_outbox_notification_does_not_reuse_sent_entries():
         assert sent_entry.status == "sent"
 
     # Create second outbox entry with same parameters
-    # This simulates what happens when a duplicate reminder is scheduled
+    # This simulates what happens when reject_booking is called twice
     entry2 = await add_outbox_notification(
         notification_type="slot_reminder",
         booking_id=slot_id,
@@ -80,17 +79,17 @@ async def test_add_outbox_notification_does_not_reuse_sent_entries():
         payload={"reminder_kind": "confirm_2h"},
     )
 
-    # CRITICAL: entry2 should be a NEW entry, not the old sent one
-    assert entry2.id != entry1_id, "Should create new entry, not reuse sent entry"
-    assert entry2.status == "pending"
+    # CRITICAL: Should return the SAME entry (idempotent behavior)
+    assert entry2.id == entry1_id, "Should return existing sent entry (idempotent)"
+    assert entry2.status == "sent", "Status should remain 'sent'"
 
-    # Verify that the original sent entry is still marked as sent
+    # Verify that the entry is still marked as sent
     async with async_session() as session:
         sent_entry = await session.get(OutboxNotification, entry1_id)
         assert sent_entry is not None
-        assert sent_entry.status == "sent", "Original entry should remain sent"
+        assert sent_entry.status == "sent", "Entry should remain sent"
 
-    # Verify there are now 2 entries in the database
+    # Verify there is only 1 entry in the database (no duplicate created)
     async with async_session() as session:
         from sqlalchemy import select
         result = await session.execute(
@@ -100,13 +99,9 @@ async def test_add_outbox_notification_does_not_reuse_sent_entries():
             )
         )
         all_entries = result.scalars().all()
-        assert len(all_entries) == 2, "Should have 2 separate entries"
-
-        sent_count = sum(1 for e in all_entries if e.status == "sent")
-        pending_count = sum(1 for e in all_entries if e.status == "pending")
-
-        assert sent_count == 1, "Should have 1 sent entry"
-        assert pending_count == 1, "Should have 1 pending entry"
+        assert len(all_entries) == 1, "Should have only 1 entry (idempotent)"
+        assert all_entries[0].status == "sent"
+        assert all_entries[0].id == entry1_id
 
 
 @pytest.mark.asyncio
