@@ -10,12 +10,16 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 
-from backend.core.db import init_models
 from backend.core.settings import get_settings
 
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
-from .services import StateManager, configure as configure_services
+from .services import (
+    NotificationService,
+    StateManager,
+    configure as configure_services,
+    configure_notification_service,
+)
 from .reminders import (
     ReminderService,
     configure_reminder_service,
@@ -58,7 +62,7 @@ def create_dispatcher() -> Dispatcher:
 
 async def create_application(
     token: str | None = None,
-) -> Tuple[Bot, Dispatcher, StateManager, ReminderService]:
+) -> Tuple[Bot, Dispatcher, StateManager, ReminderService, NotificationService]:
     """Create and configure the bot application components."""
     bot = create_bot(token)
     dispatcher = create_dispatcher()
@@ -71,20 +75,32 @@ async def create_application(
     reminder_service = ReminderService(scheduler=scheduler)
     configure_reminder_service(reminder_service)
     await reminder_service.sync_jobs()
-    configure_services(bot, state_manager)
-    return bot, dispatcher, state_manager, reminder_service
+    notification_service = NotificationService(
+        scheduler=scheduler,
+        poll_interval=settings.notification_poll_interval,
+        batch_size=settings.notification_batch_size,
+        rate_limit_per_sec=settings.notification_rate_limit_per_sec,
+        max_attempts=settings.notification_max_attempts,
+        retry_base_delay=settings.notification_retry_base_seconds,
+        retry_max_delay=settings.notification_retry_max_seconds,
+    )
+    configure_notification_service(notification_service)
+    configure_services(bot, state_manager, dispatcher)
+    return bot, dispatcher, state_manager, reminder_service, notification_service
 
 
 async def main() -> None:
-    bot, dispatcher, _, reminder_service = await create_application()
+    bot, dispatcher, _, reminder_service, notification_service = await create_application()
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         me = await bot.get_me()
         logging.warning("BOOT: using bot id=%s, username=@%s", me.id, me.username)
-        await init_models()
+        # NOTE: Database migrations should be run separately before starting the bot
+        # Run: python scripts/run_migrations.py
         await dispatcher.start_polling(bot)
     finally:
         await reminder_service.shutdown()
+        await notification_service.shutdown()
 
 
 if __name__ == "__main__":

@@ -3,12 +3,29 @@
 [![CI](https://github.com/OWNER/HR/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-85%25+-brightgreen.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 
+## Database Migrations
+
+⚠️ **Important:** Database migrations must be run **before** starting any application services.
+
+Migrations are managed using Alembic and should be executed separately to prevent race conditions in multi-instance deployments:
+
+```bash
+# Run migrations
+python scripts/run_migrations.py
+```
+
+For detailed migration documentation, Docker/K8s setup, and troubleshooting, see [docs/MIGRATIONS.md](docs/MIGRATIONS.md).
+
 ## Admin UI
 The admin interface is served by a single FastAPI application located at
 `backend.apps.admin_ui.app:app`. Any ASGI server (for example, Uvicorn) can
 load it directly:
 
 ```bash
+# Run migrations first (required)
+python scripts/run_migrations.py
+
+# Then start the admin UI
 python3 -m uvicorn backend.apps.admin_ui.app:app
 ```
 
@@ -18,6 +35,10 @@ the new application factory defined in `backend.apps.bot.app`. To launch the
 bot locally, ensure `BOT_TOKEN` is configured (for example via `.env`) and run:
 
 ```bash
+# Run migrations first (required)
+python scripts/run_migrations.py
+
+# Then start the bot
 python bot.py
 ```
 

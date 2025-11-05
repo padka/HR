@@ -12,6 +12,7 @@ from backend.apps.admin_ui.routers import (
     candidates,
     cities,
     dashboard,
+    message_templates,
     questions,
     recruiters,
     slots,
@@ -20,13 +21,13 @@ from backend.apps.admin_ui.routers import (
 )
 from backend.apps.admin_ui.security import require_admin
 from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
-from backend.core.db import init_models
 from backend.core.settings import get_settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_models()
+    # NOTE: Database migrations should be run separately before starting the app
+    # Run: python scripts/run_migrations.py
     register_template_globals()
     integration: BotIntegration = await setup_bot_state(app)
     routes = [r.path for r in app.routes if hasattr(r, "path")]
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(recruiters.router, dependencies=[Depends(require_admin)])
     app.include_router(cities.router, dependencies=[Depends(require_admin)])
     app.include_router(templates.router, dependencies=[Depends(require_admin)])
+    app.include_router(message_templates.router, dependencies=[Depends(require_admin)])
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
     app.include_router(api.router, dependencies=[Depends(require_admin)])
 
