@@ -1,0 +1,412 @@
+{% extends "base.html" %}
+{% block title %}Шаблоны сообщений{% endblock %}
+{% block content %}
+<section class="page">
+  <header class="page-header">
+    <div>
+      <h1 class="page-title">Шаблоны сообщений</h1>
+      <p class="page-description">
+        Управляйте всеми текстами бота: сообщения на этапах интервью и автоматические уведомления.
+        Изменения вступают в силу сразу после сохранения.
+      </p>
+    </div>
+  </header>
+
+  <!-- Main Tabs: Этапы / Уведомления -->
+  <nav class="template-tabs template-tabs--main" role="tablist" aria-label="Типы шаблонов">
+    <button type="button" class="template-tab is-active" data-main-tab="stages">
+      📋 Этапы интервью
+    </button>
+    <button type="button" class="template-tab" data-main-tab="notifications">
+      🔔 Уведомления
+    </button>
+  </nav>
+
+  <!-- Tab 1: ЭТАПЫ ИНТЕРВЬЮ -->
+  <div class="tab-content is-active" data-main-content="stages">
+    <div class="page-actions mt-md">
+      <a class="btn btn-primary" href="/templates/new">Новый шаблон этапа</a>
+    </div>
+
+    <div class="card glass grain mt-md">
+      <h2 class="section-title">Этапы коммуникации</h2>
+      <p class="section-subtitle">Ключевые шаги, на которых кандидат взаимодействует с ботом.</p>
+      <ol class="stage-flow muted">
+        <li><strong>Шаг 1.</strong> Приглашение выбрать время для видеоинтервью.</li>
+        <li><strong>Шаг 2.</strong> Напоминание за 2 часа до интервью с подтверждением.</li>
+        <li><strong>Шаг 3.</strong> Приглашение на ознакомительный день после согласования даты.</li>
+        <li><strong>Шаг 4.</strong> Напоминание и подтверждение явки за 2 часа до ознакомительного дня.</li>
+      </ol>
+      <div class="badge info-badge">
+        {% raw %}
+        Доступные переменные: <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>, <code>{{interview_dt_hint}}</code>,
+        <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>, <code>{{slot_datetime_local}}</code>,
+        <code>{{recruiter_name}}</code>, <code>{{address}}</code>.
+        {% endraw %}
+      </div>
+    </div>
+
+    <!-- Sub-tabs for Stages: Global / Cities -->
+    <nav class="template-tabs mt-md" role="tablist" aria-label="Области действия">
+      <button type="button" class="template-tab is-active" data-tab-target="global">Глобальные шаблоны</button>
+      <button type="button" class="template-tab" data-tab-target="cities">Шаблоны городов</button>
+    </nav>
+
+    <!-- Global Templates -->
+    <section class="card glass grain mt-sm template-panel is-active" data-panel="global">
+      <header class="template-panel__header">
+        <div>
+          <h3 class="card-title">Глобальные шаблоны</h3>
+          <p class="page-description">Используются, если для города нет собственного текста.</p>
+        </div>
+      </header>
+      <div class="list-table-wrapper">
+        <table class="list-table template-table" data-template-table="global">
+          <thead>
+            <tr>
+              <th scope="col">Этап</th>
+              <th scope="col" class="is-optional">Описание</th>
+              <th scope="col">Текст</th>
+              <th scope="col" class="col-align-end">Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for stage in overview.global.stages %}
+              {% set preview_text = stage.value or stage.default %}
+              <tr
+                class="template-row{% if stage.is_custom %} is-custom{% endif %}"
+                data-template-row
+                data-stage="{{ stage.key }}"
+                data-stage-title="{{ stage.title }}"
+                data-city=""
+                data-default="{{ stage.default|e }}"
+                data-current="{{ stage.value|e }}"
+              >
+                <td data-label="Этап">
+                  <div class="template-stage">
+                    <strong>{{ stage.title }}</strong>
+                    <span class="template-stage__key"><code class="text-mono">{{ stage.key }}</code></span>
+                  </div>
+                </td>
+                <td data-label="Описание" class="template-description is-optional">{{ stage.description }}</td>
+                <td data-label="Текст" class="template-cell">
+                  <div class="template-preview" data-role="preview">{{ preview_text or "—" }}</div>
+                  <div class="template-status-line">
+                    <span class="badge template-status{% if stage.is_custom %} template-status--custom{% endif %}" data-role="status">
+                      {% if stage.is_custom %}Свой текст{% else %}По умолчанию{% endif %}
+                    </span>
+                    <span class="badge muted template-save-indicator" data-role="save-indicator" hidden>Сохранено</span>
+                  </div>
+                  <textarea
+                    class="template-editor"
+                    data-role="editor"
+                    data-default="{{ stage.default|e }}"
+                    rows="6"
+                    hidden
+                  >{{ stage.value or "" }}</textarea>
+                </td>
+                <td data-label="Действия" class="col-align-end">
+                  <div class="template-actions" data-role="view-actions">
+                    <button type="button" class="btn btn-soft btn--small" data-action="edit">Редактировать</button>
+                    <button type="button" class="btn btn-ghost btn--small template-action--danger" data-action="clear">Удалить</button>
+                  </div>
+                  <div class="template-actions" data-role="edit-actions" hidden>
+                    <button type="button" class="btn btn-primary btn--small" data-action="save">Сохранить</button>
+                    <button type="button" class="btn btn-soft btn--small" data-action="cancel">Отмена</button>
+                    <button type="button" class="btn btn-ghost btn--small" data-action="reset">Сбросить к умолчанию</button>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- City Templates -->
+    <section class="card glass grain mt-sm template-panel" data-panel="cities">
+      <header class="template-panel__header">
+        <div>
+          <h3 class="card-title">Шаблоны городов</h3>
+          <p class="page-description">Переопределения для отдельных городов. Если не заданы, используются глобальные.</p>
+        </div>
+      </header>
+      {% for city_data in overview.cities %}
+        <div class="city-block">
+          <h4 class="city-block__title">{{ city_data.city_name }}</h4>
+          <div class="list-table-wrapper">
+            <table class="list-table template-table" data-template-table="city-{{ city_data.city_id }}">
+              <thead>
+                <tr>
+                  <th scope="col">Этап</th>
+                  <th scope="col">Текст</th>
+                  <th scope="col" class="col-align-end">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for stage in city_data.stages %}
+                  {% set preview_text = stage.value or stage.default %}
+                  <tr
+                    class="template-row{% if stage.is_custom %} is-custom{% endif %}"
+                    data-template-row
+                    data-stage="{{ stage.key }}"
+                    data-stage-title="{{ stage.title }}"
+                    data-city="{{ city_data.city_id }}"
+                    data-default="{{ stage.default|e }}"
+                    data-current="{{ stage.value|e }}"
+                  >
+                    <td data-label="Этап">
+                      <div class="template-stage">
+                        <strong>{{ stage.title }}</strong>
+                        <span class="template-stage__key"><code class="text-mono">{{ stage.key }}</code></span>
+                      </div>
+                    </td>
+                    <td data-label="Текст" class="template-cell">
+                      <div class="template-preview" data-role="preview">{{ preview_text or "—" }}</div>
+                      <div class="template-status-line">
+                        <span class="badge template-status{% if stage.is_custom %} template-status--custom{% endif %}" data-role="status">
+                          {% if stage.is_custom %}Свой текст{% else %}Глобальный{% endif %}
+                        </span>
+                        <span class="badge muted template-save-indicator" data-role="save-indicator" hidden>Сохранено</span>
+                      </div>
+                      <textarea
+                        class="template-editor"
+                        data-role="editor"
+                        data-default="{{ stage.default|e }}"
+                        rows="6"
+                        hidden
+                      >{{ stage.value or "" }}</textarea>
+                    </td>
+                    <td data-label="Действия" class="col-align-end">
+                      <div class="template-actions" data-role="view-actions">
+                        <button type="button" class="btn btn-soft btn--small" data-action="edit">Редактировать</button>
+                        <button type="button" class="btn btn-ghost btn--small template-action--danger" data-action="clear">Удалить</button>
+                      </div>
+                      <div class="template-actions" data-role="edit-actions" hidden>
+                        <button type="button" class="btn btn-primary btn--small" data-action="save">Сохранить</button>
+                        <button type="button" class="btn btn-soft btn--small" data-action="cancel">Отмена</button>
+                        <button type="button" class="btn btn-ghost btn--small" data-action="reset">Сбросить к глобальному</button>
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endfor %}
+    </section>
+  </div>
+
+  <!-- Tab 2: УВЕДОМЛЕНИЯ -->
+  <div class="tab-content" data-main-content="notifications">
+    <div class="page-actions mt-md">
+      <a class="btn btn-primary" href="/message-templates/new">Новое уведомление</a>
+    </div>
+
+    {% if missing_required %}
+      <div class="alert alert--warning mt-md">
+        <strong>Не хватает шаблонов для ключей:</strong>
+        <span class="badge-list">
+          {% for key in missing_required %}
+            <span class="badge badge--warning">{{ key }}</span>
+          {% endfor %}
+        </span>
+        <p class="mt-xs">Добавьте тексты для перечисленных ключей, чтобы бот мог отправлять все уведомления.</p>
+      </div>
+    {% endif %}
+
+    <div class="card glass grain mt-md">
+      <h2 class="card-title">Справочник ключей уведомлений</h2>
+      <p class="page-description mb-sm">
+        Эти ключи используются для автоматических уведомлений кандидатам и рекрутерам.
+      </p>
+      <div class="list-table-wrapper">
+        <table class="list-table">
+          <thead>
+            <tr>
+              <th scope="col">Ключ</th>
+              <th scope="col">Назначение</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for key, hint in known_hints.items() %}
+              <tr>
+                <td><code class="text-mono">{{ key }}</code></td>
+                <td>{{ hint }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card glass grain mt-md">
+      <h2 class="card-title">Все уведомления</h2>
+      {% if message_templates %}
+        <div class="list-table-wrapper">
+          <table class="list-table">
+            <thead>
+              <tr>
+                <th scope="col">Ключ</th>
+                <th scope="col">Локаль</th>
+                <th scope="col">Канал</th>
+                <th scope="col">Версия</th>
+                <th scope="col">Статус</th>
+                <th scope="col">Обновлено</th>
+                <th scope="col">Фрагмент</th>
+                <th scope="col" class="col-align-end">Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for tmpl in message_templates %}
+                <tr>
+                  <td data-label="Ключ">
+                    <code class="text-mono">{{ tmpl.key }}</code>
+                  </td>
+                  <td data-label="Локаль">{{ tmpl.locale }}</td>
+                  <td data-label="Канал">{{ tmpl.channel }}</td>
+                  <td data-label="Версия">v{{ tmpl.version }}</td>
+                  <td data-label="Статус">
+                    {% if tmpl.is_active %}
+                      <span class="badge badge--success">Активен</span>
+                    {% else %}
+                      <span class="badge badge--muted">Отключен</span>
+                    {% endif %}
+                  </td>
+                  <td data-label="Обновлено">
+                    <time datetime="{{ tmpl.updated_at.isoformat() }}">
+                      {{ tmpl.updated_at.strftime('%d.%m.%Y %H:%M') }}
+                    </time>
+                  </td>
+                  <td data-label="Фрагмент" class="text-truncate" style="max-width: 300px;">
+                    {{ tmpl.body_md[:100] }}{% if tmpl.body_md|length > 100 %}...{% endif %}
+                  </td>
+                  <td data-label="Действия" class="col-align-end">
+                    <a href="/message-templates/{{ tmpl.id }}/edit" class="btn btn-soft btn--small">Редактировать</a>
+                    <form method="post" action="/message-templates/{{ tmpl.id }}/delete" style="display:inline;" onsubmit="return confirm('Удалить этот шаблон?');">
+                      <button type="submit" class="btn btn-ghost btn--small">Удалить</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="muted">Нет созданных уведомлений. Используйте кнопку «Новое уведомление» для добавления.</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<style>
+  /* Main tabs styling */
+  .template-tabs--main {
+    margin-top: 1.5rem;
+    border-bottom: 2px solid var(--color-border, #e5e7eb);
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .template-tabs--main .template-tab {
+    font-size: 1rem;
+    padding: 0.75rem 1.5rem;
+    font-weight: 500;
+  }
+
+  .tab-content {
+    display: none;
+  }
+
+  .tab-content.is-active {
+    display: block;
+  }
+
+  .city-block {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: 0.5rem;
+  }
+
+  .city-block__title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--color-primary, #3b82f6);
+  }
+
+  .stage-flow {
+    padding-left: 1.5rem;
+    line-height: 1.8;
+    color: var(--color-text-secondary, #6b7280);
+  }
+
+  .stage-flow li {
+    margin-bottom: 0.5rem;
+  }
+
+  .info-badge {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background-color: var(--color-info-light, #dbeafe);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    line-height: 1.6;
+  }
+
+  .badge-list {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+</style>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    // Main tabs (Этапы / Уведомления)
+    const mainTabs = document.querySelectorAll('[data-main-tab]');
+    const mainContents = document.querySelectorAll('[data-main-content]');
+
+    mainTabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const target = tab.dataset.mainTab;
+
+        // Update tabs
+        mainTabs.forEach(t => t.classList.remove('is-active'));
+        tab.classList.add('is-active');
+
+        // Update content
+        mainContents.forEach(c => c.classList.remove('is-active'));
+        const activeContent = document.querySelector(`[data-main-content="${target}"]`);
+        if (activeContent) {
+          activeContent.classList.add('is-active');
+        }
+      });
+    });
+
+    // Sub-tabs (Global / Cities) - existing functionality
+    const subTabs = document.querySelectorAll('[data-tab-target]');
+    const panels = document.querySelectorAll('[data-panel]');
+
+    subTabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const target = tab.dataset.tabTarget;
+
+        // Update tabs
+        subTabs.forEach(t => t.classList.remove('is-active'));
+        tab.classList.add('is-active');
+
+        // Update panels
+        panels.forEach(p => p.classList.remove('is-active'));
+        const activePanel = document.querySelector(`[data-panel="${target}"]`);
+        if (activePanel) {
+          activePanel.classList.add('is-active');
+        }
+      });
+    });
+  });
+</script>
+{% endblock %}

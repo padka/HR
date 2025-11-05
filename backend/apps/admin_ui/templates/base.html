@@ -338,7 +338,7 @@
   .container {
     max-width: 1100px;
     margin: 0 auto;
-    padding: 24px 16px 32px;
+    padding: clamp(84px, 12vw, 120px) 16px clamp(36px, 6vw, 52px);
   }
 
   .cards {
@@ -658,7 +658,7 @@
         <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">Города</a>
         <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">Слоты</a>
         <a href="/candidates" class="{% if request.url.path.startswith('/candidates') %}active{% endif %}">Кандидаты</a>
-        <a href="/templates" class="{% if request.url.path.startswith('/templates') %}active{% endif %}">Шаблоны</a>
+        <a href="/templates" class="{% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}">Шаблоны</a>
         <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">Вопросы</a>
       </div>
       <div class="nav__section nav__meta">

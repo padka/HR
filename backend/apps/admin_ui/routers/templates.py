@@ -16,6 +16,7 @@ from backend.apps.admin_ui.services.templates import (
     update_template,
     update_templates_for_city,
 )
+from backend.apps.admin_ui.services.message_templates import list_message_templates
 from backend.apps.admin_ui.utils import parse_optional_int
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -23,12 +24,20 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 
 @router.get("", response_class=HTMLResponse)
 async def templates_list(request: Request):
-    data = await list_templates()
+    # Get data for stages (old system)
+    stages_data = await list_templates()
+
+    # Get data for notifications (new system)
+    notifications_data = await list_message_templates()
+
     context = {
         "request": request,
-        **data,
+        **stages_data,  # overview, global, cities
+        "message_templates": notifications_data["templates"],
+        "missing_required": notifications_data["missing_required"],
+        "known_hints": notifications_data["known_hints"],
     }
-    return jinja_templates.TemplateResponse("templates_list.html", context)
+    return jinja_templates.TemplateResponse("templates_unified.html", context)
 
 
 @router.get("/new", response_class=HTMLResponse)
