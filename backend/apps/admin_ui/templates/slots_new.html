@@ -73,7 +73,7 @@
           {% for item in recruiters %}
             {% set r = item.rec %}
             {% for city in item.cities %}
-              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.name }} ({{ city.tz or "Europe/Moscow" }})</option>
+              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.display_name }} ({{ city.tz or "Europe/Moscow" }})</option>
             {% endfor %}
           {% endfor %}
         </select>
@@ -110,6 +110,7 @@
       <b>Превью</b><br>
       Укажите рекрутёра, дату и время — покажем UTC.
     </div>
+    {% call forms.note(id='one_submit_hint') %}Заполните рекрутёра, город, дату и время, чтобы создать слот.{% endcall %}
   {% endcall %}
 
   {% call forms.shell(
@@ -146,7 +147,7 @@
           {% for item in recruiters %}
             {% set r = item.rec %}
             {% for city in item.cities %}
-              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.name }} ({{ city.tz or "Europe/Moscow" }})</option>
+              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.display_name }} ({{ city.tz or "Europe/Moscow" }})</option>
             {% endfor %}
           {% endfor %}
         </select>
@@ -204,6 +205,7 @@
       <b>Превью</b><br>
       Выберите период — посчитаем примерное количество слотов (только будни).
     </div>
+    {% call forms.note(id='bulk_submit_hint') %}Заполните рекрутёра, город и период, чтобы создать серию слотов.{% endcall %}
   {% endcall %}
 {% endif %}
 
@@ -366,7 +368,9 @@
   const tzOne  = $('#tz_one_hint');
   const prevOne= $('#preview-one');
   const btnOne = $('#btn-create-one');
+  const hintSubmitOne = $('#one_submit_hint');
   const offsetText = $('#offset_text');
+  let canSubmitOne = false;
 
   function currentTZ(selectEl){
     const el = selectEl || selOne;
@@ -446,7 +450,11 @@
     const cityVal = cityOne ? cityOne.value : '';
     if (cityOne) storageSet(LS.cityOne, cityVal || '');
     const ready = !!(selOne.value && hasCities && cityVal && d && t);
+    canSubmitOne = ready;
     btnOne.disabled = !ready;
+    if (hintSubmitOne){
+      hintSubmitOne.hidden = ready;
+    }
 
     if (!ready){
       prevOne.innerHTML = '<b>Превью</b><br>Укажите рекрутёра, дату и время — покажем UTC.';
@@ -559,8 +567,10 @@
   const sd = $('#start_date'), ed = $('#end_date');
   const prevBulk = $('#preview-bulk');
   const btnBulk = $('#btn-create-bulk');
+  const hintSubmitBulk = $('#bulk_submit_hint');
   const includeWeekends = $('#include_weekends');
   const useBreak = $('#use_break');
+  let canSubmitBulk = false;
 
   const adv = {
     start:  $('#adv_start_time'),
@@ -637,7 +647,11 @@
     const cityVal = cityBulk ? cityBulk.value : '';
     if (cityBulk) storageSet(LS.cityBulk, cityVal || '');
     const ready = !!(selBulk.value && hasCities && cityVal && s && e);
+    canSubmitBulk = ready;
     btnBulk.disabled = !ready;
+    if (hintSubmitBulk){
+      hintSubmitBulk.hidden = ready;
+    }
 
     const st = hid.start.value, en = hid.end.value, bs = hid.bstart.value, be = hid.bend.value, step = parseInt(hid.step.value||'30',10);
 
@@ -690,6 +704,42 @@
     }
     updateBulk();
   })();
+
+  const formOne = document.getElementById('form-one');
+  if (formOne){
+    formOne.addEventListener('submit', (event)=>{
+      if (!canSubmitOne){
+        event.preventDefault();
+        if (hintSubmitOne){
+          hintSubmitOne.hidden = false;
+          hintSubmitOne.textContent = 'Заполните рекрутёра, город, дату и время, чтобы создать слот.';
+        }
+        formOne.reportValidity();
+        const focusTarget = !selOne?.value
+          ? selOne
+          : (!cityOne?.value ? cityOne : (!dateOne?.value ? dateOne : (!timeOne?.value ? timeOne : null)));
+        focusTarget?.focus();
+      }
+    });
+  }
+
+  const formBulk = document.getElementById('form-bulk');
+  if (formBulk){
+    formBulk.addEventListener('submit', (event)=>{
+      if (!canSubmitBulk){
+        event.preventDefault();
+        if (hintSubmitBulk){
+          hintSubmitBulk.hidden = false;
+          hintSubmitBulk.textContent = 'Заполните рекрутёра, город и период, чтобы создать серию слотов.';
+        }
+        formBulk.reportValidity();
+        const focusTarget = !selBulk?.value
+          ? selBulk
+          : (!cityBulk?.value ? cityBulk : (!sd?.value ? sd : (!ed?.value ? ed : null)));
+        focusTarget?.focus();
+      }
+    });
+  }
 
   updateNowChip(); setInterval(updateNowChip, 60000);
 

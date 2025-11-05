@@ -2,7 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -138,12 +138,56 @@ async def slots_new(request: Request):
 
 @router.post("/create")
 async def slots_create(
+    request: Request,
     recruiter_id: int = Form(...),
-    city_id: int = Form(...),
-    date: str = Form(...),
-    time: str = Form(...),
+    city_id: str = Form(""),
+    date: str = Form(""),
+    time: str = Form(""),
 ):
-    ok = await create_slot(recruiter_id, date, time, city_id=city_id)
+    city_raw = (city_id or "").strip()
+    date_value = (date or "").strip()
+    time_value = (time or "").strip()
+
+    missing_parts: List[str] = []
+    if not city_raw:
+        missing_parts.append("город")
+    if not date_value:
+        missing_parts.append("дату")
+    if not time_value:
+        missing_parts.append("время")
+
+    if missing_parts:
+        recruiters = await recruiters_for_slot_form()
+
+        if len(missing_parts) == 1:
+            missing_label = missing_parts[0]
+        else:
+            head = ", ".join(missing_parts[:-1]) if len(missing_parts) > 2 else missing_parts[0]
+            missing_label = f"{head} и {missing_parts[-1]}"
+
+        message = f"Укажите {missing_label} перед созданием слота."
+        context = {
+            "request": request,
+            "recruiters": recruiters,
+            "flash": {"status": "error", "message": message},
+        }
+        return templates.TemplateResponse(request, "slots_new.html", context, status_code=422)
+
+    try:
+        city_value = int(city_raw)
+    except (TypeError, ValueError):
+        recruiters = await recruiters_for_slot_form()
+        context = {
+            "request": request,
+            "recruiters": recruiters,
+            "flash": {
+                "status": "error",
+                "message": "Укажите корректный город для слота.",
+            },
+        }
+        return templates.TemplateResponse(request, "slots_new.html", context, status_code=422)
+
+    ok = await create_slot(recruiter_id, date_value, time_value, city_id=city_value)
     redirect = "/slots" if ok else "/slots/new"
     response = RedirectResponse(url=redirect, status_code=303)
     if ok:

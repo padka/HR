@@ -19,9 +19,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from backend.apps.bot import templates
 from backend.apps.bot.config import DEFAULT_TZ
 from backend.apps.bot.keyboards import kb_attendance_confirm
+from backend.apps.bot.metrics import (
+    record_reminder_executed,
+    record_reminder_scheduled,
+    record_reminder_skipped,
+)
 from backend.core.db import async_session
 from backend.domain.models import SlotReminderJob, SlotStatus
-from backend.domain.repositories import get_slot
+from backend.domain.repositories import add_outbox_notification, get_slot
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +35,10 @@ _DEFAULT_ZONE = ZoneInfo(DEFAULT_TZ)
 _ZONE_ALIASES = {name.lower(): name for name in available_timezones()}
 _ZONE_ALIASES.setdefault(DEFAULT_TZ.lower(), DEFAULT_TZ)
 
+_QUIET_HOURS_START = 22  # 22:00 local time
+_QUIET_HOURS_END = 8     # 08:00 local time
+_QUIET_GRACE = timedelta(minutes=1)
+
 
 class ReminderKind(str, Enum):
     REMIND_24H = "remind_24h"
@@ -37,6 +46,14 @@ class ReminderKind(str, Enum):
     REMIND_1H = "remind_1h"
     CONFIRM_6H = "confirm_6h"
     CONFIRM_2H = "confirm_2h"
+
+
+@dataclass(frozen=True)
+class ReminderPlan:
+    kind: ReminderKind
+    run_at_utc: datetime
+    run_at_local: datetime
+    adjusted_reason: Optional[str] = None
 
 
 class ReminderService:
@@ -80,6 +97,19 @@ class ReminderService:
                     )
                     await session.commit()
                 continue
+            if kind is ReminderKind.REMIND_1H:
+                logger.info(
+                    "reminder.schedule.skip",
+                    extra={"slot_id": row.slot_id, "kind": row.kind, "reason": "disabled"},
+                )
+                async with async_session() as session:
+                    await session.execute(
+                        SlotReminderJob.__table__.delete().where(
+                            SlotReminderJob.job_id == job_id
+                        )
+                    )
+                    await session.commit()
+                continue
             if self._scheduler.get_job(job_id) is None:
                 run_at = _ensure_aware(row.scheduled_at)
                 if run_at <= datetime.now(timezone.utc):
@@ -109,7 +139,7 @@ class ReminderService:
             }:
                 return
 
-            reminders = self._build_schedule(
+            plans = self._build_schedule(
                 slot.start_utc,
                 slot.candidate_tz or DEFAULT_TZ,
             )
@@ -119,65 +149,95 @@ class ReminderService:
                     ReminderKind.CONFIRM_2H,
                     ReminderKind.REMIND_2H,
                 }
-                reminders = [
-                    item for item in reminders if item[0] not in confirm_kinds
-                ]
-            if not reminders:
+                plans = [plan for plan in plans if plan.kind not in confirm_kinds]
+            if not plans:
+                logger.info(
+                    "reminder.schedule.empty",
+                    extra={"slot_id": slot_id, "reason": "no_plans"},
+                )
                 return
 
             candidate_zone = _safe_zone(slot.candidate_tz)
             now_local = datetime.now(candidate_zone)
 
+            immediate_map: Dict[str, ReminderPlan] = {}
+            future_plans: List[ReminderPlan] = []
+
+            for plan in plans:
+                if plan.run_at_local <= now_local:
+                    group = _immediate_group(plan.kind)
+                    current = immediate_map.get(group)
+                    if current is None or plan.run_at_local > current.run_at_local:
+                        immediate_map[group] = plan
+                else:
+                    future_plans.append(plan)
+
             async with async_session() as session:
-                immediate: Dict[str, tuple[ReminderKind, datetime, datetime]] = {}
-                future: List[tuple[ReminderKind, datetime, datetime]] = []
-
-                for kind, run_at_utc, run_at_local in reminders:
-                    if run_at_local <= now_local:
-                        group = _immediate_group(kind)
-                        current = immediate.get(group)
-                        if current is None or run_at_local > current[2]:
-                            immediate[group] = (kind, run_at_utc, run_at_local)
-                    else:
-                        future.append((kind, run_at_utc, run_at_local))
-
-                for kind, run_at_utc, _run_at_local in sorted(
-                    immediate.values(), key=lambda item: item[2]
-                ):
+                for plan in sorted(immediate_map.values(), key=lambda item: item.run_at_local):
+                    await record_reminder_scheduled(
+                        plan.kind,
+                        immediate=True,
+                        adjusted=plan.adjusted_reason is not None,
+                    )
                     await session.execute(
                         SlotReminderJob.__table__.delete().where(
                             SlotReminderJob.slot_id == slot_id,
-                            SlotReminderJob.kind == kind.value,
+                            SlotReminderJob.kind == plan.kind.value,
                         )
                     )
                     await session.commit()
-                    await self._execute_job(slot_id, kind)
+                    logger.info(
+                        "reminder.dispatch.immediate",
+                        extra={
+                            "slot_id": slot_id,
+                            "kind": plan.kind.value,
+                            "run_at_local": plan.run_at_local.isoformat(),
+                            "adjusted": plan.adjusted_reason or "",
+                        },
+                    )
+                    await self._execute_job(slot_id, plan.kind)
 
-                for kind, run_at_utc, _run_at_local in future:
-                    job_id = self._job_id(slot_id, kind)
+                for plan in sorted(future_plans, key=lambda item: item.run_at_local):
+                    await record_reminder_scheduled(
+                        plan.kind,
+                        immediate=False,
+                        adjusted=plan.adjusted_reason is not None,
+                    )
+                    job_id = self._job_id(slot_id, plan.kind)
                     self._scheduler.add_job(
                         self._execute_job,
                         "date",
-                        run_date=_ensure_aware(run_at_utc),
+                        run_date=_ensure_aware(plan.run_at_utc),
                         id=job_id,
-                        args=[slot_id, kind],
+                        args=[slot_id, plan.kind],
                         replace_existing=True,
                     )
                     await session.execute(
                         SlotReminderJob.__table__.delete().where(
                             SlotReminderJob.slot_id == slot_id,
-                            SlotReminderJob.kind == kind.value,
+                            SlotReminderJob.kind == plan.kind.value,
                         )
                     )
                     await session.execute(
                         SlotReminderJob.__table__.insert().values(
                             slot_id=slot_id,
-                            kind=kind.value,
+                            kind=plan.kind.value,
                             job_id=job_id,
-                            scheduled_at=_ensure_aware(run_at_utc),
+                            scheduled_at=_ensure_aware(plan.run_at_utc),
                             created_at=datetime.now(timezone.utc),
                             updated_at=datetime.now(timezone.utc),
                         )
+                    )
+                    logger.info(
+                        "reminder.dispatch.scheduled",
+                        extra={
+                            "slot_id": slot_id,
+                            "kind": plan.kind.value,
+                            "run_at_local": plan.run_at_local.isoformat(),
+                            "run_at_utc": plan.run_at_utc.isoformat(),
+                            "adjusted": plan.adjusted_reason or "",
+                            "job_id": job_id,
+                        },
                     )
                 await session.commit()
 
@@ -236,6 +296,11 @@ class ReminderService:
 
         slot = await get_slot(slot_id)
         if not slot:
+            await record_reminder_skipped(kind, "slot_missing")
+            logger.info(
+                "reminder.job.skip",
+                extra={"slot_id": slot_id, "kind": kind.value, "reason": "slot_missing"},
+            )
             return
         status = (slot.status or "").lower()
         if status not in {
@@ -243,82 +308,111 @@ class ReminderService:
             SlotStatus.BOOKED,
             SlotStatus.CONFIRMED_BY_CANDIDATE,
         }:
+            await record_reminder_skipped(kind, "status_invalid")
+            logger.info(
+                "reminder.job.skip",
+                extra={
+                    "slot_id": slot_id,
+                    "kind": kind.value,
+                    "reason": f"status:{status}",
+                },
+            )
             return
         candidate_id = slot.candidate_tg_id
         if candidate_id is None:
-            return
-
-        tz = slot.candidate_tz or DEFAULT_TZ
-        labels = _slot_local_labels(slot.start_utc, tz)
-        try:
-            from backend.apps.bot.services import get_bot  # type: ignore
-        except Exception:
-            logger.warning("Bot not configured; skipping reminder for slot %s", slot_id)
-            return
-
-        try:
-            bot = get_bot()
-        except Exception:
-            logger.warning("Bot not configured; skipping reminder for slot %s", slot_id)
-            return
-
-        confirm_templates = {
-            ReminderKind.CONFIRM_6H: "confirm_6h",
-            ReminderKind.CONFIRM_2H: "confirm_2h",
-            # Historical jobs stored as ``remind_2h`` should now behave like confirmations.
-            ReminderKind.REMIND_2H: "confirm_2h",
-        }
-        if kind in confirm_templates:
-            text = await templates.tpl(
-                getattr(slot, "candidate_city_id", None),
-                confirm_templates[kind],
-                candidate_fio=getattr(slot, "candidate_fio", "") or "",
-                dt=_fmt_dt_local(slot.start_utc, tz),
-                **labels,
+            await record_reminder_skipped(kind, "candidate_missing")
+            logger.info(
+                "reminder.job.skip",
+                extra={
+                    "slot_id": slot_id,
+                    "kind": kind.value,
+                    "reason": "candidate_missing",
+                },
             )
-            try:
-                await bot.send_message(
-                    candidate_id,
-                    text,
-                    reply_markup=kb_attendance_confirm(slot_id),
-                )
-            except Exception:  # pragma: no cover - network errors
-                logger.exception("Failed to send confirmation prompt")
             return
 
-        template_key = {
-            ReminderKind.REMIND_24H: "reminder_24h",
-            ReminderKind.REMIND_1H: "reminder_1h",
-        }[kind]
-
-        text = await templates.tpl(
-            getattr(slot, "candidate_city_id", None),
-            template_key,
-            candidate_fio=getattr(slot, "candidate_fio", "") or "",
-            dt=_fmt_dt_local(slot.start_utc, tz),
-            **labels,
-        )
-        if not text:
+        if kind is ReminderKind.REMIND_1H:
+            await record_reminder_skipped(kind, "disabled")
+            logger.info(
+                "reminder.job.skip",
+                extra={"slot_id": slot_id, "kind": kind.value, "reason": "disabled"},
+            )
             return
+
+        reminder_kind = kind.value
+        try:  # defer import to avoid circular dependency during module load
+            from backend.apps.bot.services import get_notification_service
+        except Exception:
+            await record_reminder_skipped(kind, "service_import_error")
+            logger.warning("Notification service missing; skipping reminder for slot %s", slot_id)
+            return
+
         try:
-            await bot.send_message(candidate_id, text)
-        except Exception:  # pragma: no cover - network errors
-            logger.exception("Failed to send reminder %s for slot %s", kind, slot_id)
+            notification_service = get_notification_service()
+        except RuntimeError:
+            await record_reminder_skipped(kind, "service_unconfigured")
+            logger.warning("Notification service not configured; skipping reminder for slot %s", slot_id)
+            return
 
-    def _build_schedule(
-        self, start_utc: datetime, tz: Optional[str]
-    ) -> List[tuple[ReminderKind, datetime, datetime]]:
+        try:
+            outbox_entry = await add_outbox_notification(
+                notification_type="slot_reminder",
+                booking_id=slot_id,
+                candidate_tg_id=candidate_id,
+                payload={"reminder_kind": reminder_kind},
+            )
+            enqueued = await notification_service._enqueue_outbox(
+                outbox_entry.id,
+                attempt=outbox_entry.attempts,
+            )
+            if enqueued:
+                await record_reminder_executed(kind)
+                logger.info(
+                    "reminder.job.enqueued",
+                    extra={
+                        "slot_id": slot_id,
+                        "kind": reminder_kind,
+                        "outbox_id": outbox_entry.id,
+                    },
+                )
+            else:
+                await record_reminder_skipped(kind, "enqueue_failed")
+                logger.warning(
+                    "Reminder enqueue failed for slot %s",
+                    slot_id,
+                    extra={"slot_id": slot_id, "kind": reminder_kind},
+                )
+        except Exception:
+            await record_reminder_skipped(kind, "enqueue_exception")
+            logger.exception("Failed to enqueue reminder for slot %s", slot_id)
+
+    def _build_schedule(self, start_utc: datetime, tz: Optional[str]) -> List[ReminderPlan]:
         zone = _safe_zone(tz)
         start_local = start_utc.astimezone(zone)
         targets: List[tuple[ReminderKind, timedelta]] = [
+            (ReminderKind.REMIND_24H, timedelta(hours=24)),
+            (ReminderKind.CONFIRM_6H, timedelta(hours=6)),
             (ReminderKind.CONFIRM_2H, timedelta(hours=2)),
-            (ReminderKind.REMIND_1H, timedelta(hours=1)),
         ]
-        schedule: List[tuple[ReminderKind, datetime, datetime]] = []
+        plans: List[ReminderPlan] = []
+        seen: set[ReminderKind] = set()
         for kind, delta in targets:
+            if kind in seen:
+                continue
+            seen.add(kind)
             local_time = start_local - delta
-            schedule.append((kind, local_time.astimezone(timezone.utc), local_time))
-        return schedule
+            adjusted_local, reason = _apply_quiet_hours(local_time)
+            run_at_utc = adjusted_local.astimezone(timezone.utc)
+            plans.append(
+                ReminderPlan(
+                    kind=kind,
+                    run_at_utc=run_at_utc,
+                    run_at_local=adjusted_local,
+                    adjusted_reason=reason,
+                )
+            )
+        plans.sort(key=lambda plan: plan.run_at_local)
+        return plans
 
     def _job_id(self, slot_id: int, kind: ReminderKind) -> str:
         return f"slot:{slot_id}:{kind.value}"
@@ -360,6 +454,45 @@ def _safe_zone(tz: Optional[str]) -> ZoneInfo:
     if not tz:
         return _DEFAULT_ZONE
     return _resolve_zone(tz)
+
+
+def _in_quiet_hours(local_dt: datetime) -> bool:
+    if _QUIET_HOURS_START == _QUIET_HOURS_END:
+        return False
+    start_hour = _QUIET_HOURS_START % 24
+    end_hour = _QUIET_HOURS_END % 24
+    minutes = local_dt.hour * 60 + local_dt.minute
+    start_minutes = start_hour * 60
+    end_minutes = end_hour * 60
+    if start_minutes < end_minutes:
+        return start_minutes <= minutes < end_minutes
+    return minutes >= start_minutes or minutes < end_minutes
+
+
+def _apply_quiet_hours(local_dt: datetime) -> tuple[datetime, Optional[str]]:
+    if _QUIET_HOURS_START == _QUIET_HOURS_END:
+        return local_dt, None
+    if not _in_quiet_hours(local_dt):
+        return local_dt, None
+
+    start_hour = _QUIET_HOURS_START % 24
+    end_hour = _QUIET_HOURS_END % 24
+    boundary = local_dt.replace(
+        hour=start_hour,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    if _QUIET_HOURS_START > _QUIET_HOURS_END:
+        if local_dt.hour > start_hour or (
+            local_dt.hour == start_hour and local_dt.minute >= 0
+        ):
+            adjusted = boundary - _QUIET_GRACE
+        else:
+            adjusted = (boundary - timedelta(days=1)) - _QUIET_GRACE
+    else:
+        adjusted = boundary - _QUIET_GRACE
+    return adjusted, "quiet_hours"
 
 
 @lru_cache(maxsize=None)
@@ -434,7 +567,6 @@ def _immediate_group(kind: ReminderKind) -> str:
         return "confirm"
     if kind in {
         ReminderKind.REMIND_24H,
-        ReminderKind.REMIND_1H,
     }:
         return "reminder"
     return kind.value

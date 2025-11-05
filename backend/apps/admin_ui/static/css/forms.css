@@ -79,6 +79,11 @@
   display: grid;
   gap: clamp(18px, 3vw, 28px);
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  padding-bottom: clamp(60px, 9vh, 96px);
+}
+
+.form-shell__form :is(input, select, textarea) {
+  scroll-margin-bottom: clamp(80px, 12vh, 120px);
 }
 
 .form-shell__section {
@@ -179,6 +184,19 @@
   flex-direction: column;
   gap: clamp(6px, 1.6vw, 10px);
   font-size: 13px;
+}
+
+.form-error {
+  margin: 0;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--bad) 80%, var(--fg));
+}
+
+input.is-invalid,
+select.is-invalid,
+textarea.is-invalid {
+  border-color: color-mix(in srgb, var(--bad) 65%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bad) 28%, transparent);
 }
 
 .form-field--inline {

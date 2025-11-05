@@ -7,6 +7,7 @@ from datetime import datetime
 from datetime import time as time_type
 from datetime import timedelta, timezone
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.inspection import inspect as sa_inspect
@@ -17,12 +18,13 @@ from backend.apps.admin_ui.services.bot_service import (
     get_bot_service as resolve_bot_service,
 )
 from backend.apps.bot.services import (
+    BookingNotificationStatus,
+    NotificationService,
     SlotSnapshot,
     cancel_slot_reminders,
     capture_slot_snapshot,
+    get_notification_service,
     get_state_manager as _get_state_manager,
-    notify_rejection,
-    notify_reschedule,
 )
 
 try:  # pragma: no cover - optional dependency during tests
@@ -37,7 +39,7 @@ from backend.apps.admin_ui.utils import (
 )
 from backend.core.db import async_session
 from backend.core.settings import get_settings
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
 from backend.domain.repositories import reject_slot
 
 __all__ = [
@@ -60,6 +62,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_COMPANY_NAME = "SMART SERVICE"
+DEFAULT_SLOT_TZ = "Europe/Moscow"
 REJECTION_TEMPLATE_KEY = "result_fail"
 
 
@@ -120,30 +123,23 @@ async def list_slots(
 async def recruiters_for_slot_form() -> List[Dict[str, object]]:
     inspector = sa_inspect(Recruiter)
     has_active = "active" in getattr(inspector, "columns", {})
-    query = select(Recruiter).order_by(Recruiter.name.asc())
+    query = select(Recruiter).options(selectinload(Recruiter.cities)).order_by(Recruiter.name.asc())
     if has_active:
         query = query.where(getattr(Recruiter, "active") == True)  # noqa: E712
     async with async_session() as session:
         recs = (await session.scalars(query)).all()
         if not recs:
             return []
-
-        rec_ids = [rec.id for rec in recs]
-        city_rows = (
-            await session.scalars(
-                select(City)
-                .where(City.responsible_recruiter_id.in_(rec_ids))
-                .order_by(City.name.asc())
-            )
-        ).all()
-
-        city_map: Dict[int, List[City]] = {}
-        for city in city_rows:
-            if city.responsible_recruiter_id is None:
-                continue
-            city_map.setdefault(city.responsible_recruiter_id, []).append(city)
-
-    return [{"rec": rec, "cities": city_map.get(rec.id, [])} for rec in recs]
+    return [
+        {
+            "rec": rec,
+            "cities": sorted(
+                rec.cities,
+                key=lambda city: (getattr(city, "name_plain", "") or "").lower(),
+            ),
+        }
+        for rec in recs
+    ]
 
 
 async def create_slot(
@@ -158,11 +154,21 @@ async def create_slot(
         if not recruiter:
             return False
         city = await session.get(City, city_id)
-        if not city or city.responsible_recruiter_id != recruiter_id:
+        if not city:
+            return False
+        allowed = await session.scalar(
+            select(recruiter_city_association.c.city_id)
+            .where(
+                recruiter_city_association.c.recruiter_id == recruiter_id,
+                recruiter_city_association.c.city_id == city_id,
+            )
+        )
+        if allowed is None:
             return False
         dt_utc = recruiter_time_to_utc(date, time, getattr(recruiter, "tz", None))
         if not dt_utc:
             return False
+        slot_tz = getattr(city, "tz", None) or getattr(recruiter, "tz", None) or DEFAULT_SLOT_TZ
         status_free = getattr(SlotStatus, "FREE", "FREE")
         if hasattr(status_free, "value"):
             status_free = status_free.value
@@ -170,6 +176,7 @@ async def create_slot(
             Slot(
                 recruiter_id=recruiter_id,
                 city_id=city_id,
+                tz_name=slot_tz,
                 start_utc=dt_utc,
                 status=status_free,
             )
@@ -388,7 +395,7 @@ def _plan_rejection_dispatch(slot: Slot, service: Optional[BotService]) -> BotDi
         template_context={
             "candidate_fio": getattr(slot, "candidate_fio", "") or "",
             "company_name": DEFAULT_COMPANY_NAME,
-            "city_name": slot.city.name if slot.city else "",
+            "city_name": slot.city.name_plain if slot.city else "",
             "recruiter_name": slot.recruiter.name if slot.recruiter else "",
         },
         scheduled_at=scheduled_at,
@@ -437,6 +444,7 @@ async def execute_bot_dispatch(
                 plan.candidate_name,
                 bot_service=service,
                 required=plan.required,
+                slot_id=plan.slot_id,
             )
             action_result = _map_test2_status(result.status)
             success = result.ok and action_result == "sent_test2"
@@ -500,6 +508,7 @@ async def _trigger_test2(
     *,
     bot_service: Optional[BotService],
     required: bool,
+    slot_id: Optional[int] = None,
 ) -> BotSendResult:
     service = bot_service
     if service is None:
@@ -525,6 +534,7 @@ async def _trigger_test2(
         candidate_city,
         candidate_name,
         required=required,
+        slot_id=slot_id,
     )
 
 
@@ -544,11 +554,38 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
     await reject_slot(slot_id)
     await cancel_slot_reminders(slot_id)
+    try:
+        notification_service = get_notification_service()
+    except RuntimeError:
+        settings = get_settings()
+        notification_service = NotificationService(
+            poll_interval=settings.notification_poll_interval,
+            batch_size=settings.notification_batch_size,
+            rate_limit_per_sec=settings.notification_rate_limit_per_sec,
+            max_attempts=settings.notification_max_attempts,
+            retry_base_delay=settings.notification_retry_base_seconds,
+            retry_max_delay=settings.notification_retry_max_seconds,
+        )
 
-    sent = await notify_reschedule(snapshot)
-    if sent:
+    result = await notification_service.on_booking_status_changed(
+        slot_id,
+        BookingNotificationStatus.RESCHEDULE_REQUESTED,
+        snapshot=snapshot,
+    )
+
+    if result.status == "sent":
         return True, "Слот освобождён. Кандидату отправлено уведомление о переносе.", True
-    return True, "Слот освобождён. Бот недоступен — сообщите кандидату вручную.", False
+    if result.status == "failed":
+        return (
+            True,
+            "Слот освобождён. Бот недоступен — сообщите кандидату вручную.",
+            False,
+        )
+    return (
+        True,
+        "Слот освобождён. Уведомление не отправлено.",
+        False,
+    )
 
 
 async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
@@ -567,11 +604,38 @@ async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
     await reject_slot(slot_id)
     await cancel_slot_reminders(slot_id)
+    try:
+        notification_service = get_notification_service()
+    except RuntimeError:
+        settings = get_settings()
+        notification_service = NotificationService(
+            poll_interval=settings.notification_poll_interval,
+            batch_size=settings.notification_batch_size,
+            rate_limit_per_sec=settings.notification_rate_limit_per_sec,
+            max_attempts=settings.notification_max_attempts,
+            retry_base_delay=settings.notification_retry_base_seconds,
+            retry_max_delay=settings.notification_retry_max_seconds,
+        )
 
-    sent = await notify_rejection(snapshot)
-    if sent:
+    result = await notification_service.on_booking_status_changed(
+        slot_id,
+        BookingNotificationStatus.CANCELLED,
+        snapshot=snapshot,
+    )
+
+    if result.status == "sent":
         return True, "Слот освобождён. Кандидату отправлен отказ.", True
-    return True, "Слот освобождён. Сообщите кандидату об отказе вручную.", False
+    if result.status == "failed":
+        return (
+            True,
+            "Слот освобождён. Сообщите кандидату об отказе вручную.",
+            False,
+        )
+    return (
+        True,
+        "Слот освобождён. Уведомление не отправлено.",
+        False,
+    )
 
 
 
@@ -642,7 +706,14 @@ async def bulk_create_slots(
         city = await session.get(City, city_id)
         if not city:
             return 0, "Город не найден"
-        if city.responsible_recruiter_id != recruiter_id:
+        allowed = await session.scalar(
+            select(recruiter_city_association.c.city_id)
+            .where(
+                recruiter_city_association.c.recruiter_id == recruiter_id,
+                recruiter_city_association.c.city_id == city_id,
+            )
+        )
+        if allowed is None:
             return 0, "Город не привязан к выбранному рекрутёру"
 
         try:
@@ -675,6 +746,8 @@ async def bulk_create_slots(
         break_end_minutes = pause_end.hour * 60 + pause_end.minute
 
         tz = getattr(recruiter, "tz", None)
+        city_tz = getattr(city, "tz", None)
+        slot_tz = city_tz or tz or DEFAULT_SLOT_TZ
 
         planned_pairs: List[Tuple[datetime, datetime]] = []  # (original, normalized)
         planned_norms = set()
@@ -738,12 +811,25 @@ async def bulk_create_slots(
                     start_utc=dt,
                     status=status_free,
                     duration_min=max(step_min, 1),
+                    tz_name=slot_tz,
                 )
                 for dt in to_insert
             ]
         )
         await session.commit()
         return len(to_insert), None
+
+
+def _format_slot_local_time(slot: Slot) -> str:
+    tz_label = getattr(slot, "tz_name", None) or DEFAULT_SLOT_TZ
+    start = slot.start_utc
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    try:
+        zone = ZoneInfo(tz_label)
+    except Exception:
+        zone = ZoneInfo(DEFAULT_SLOT_TZ)
+    return start.astimezone(zone).isoformat()
 
 
 async def api_slots_payload(
@@ -773,6 +859,8 @@ async def api_slots_payload(
             "status": norm_status(sl.status),
             "candidate_fio": getattr(sl, "candidate_fio", None),
             "candidate_tg_id": getattr(sl, "candidate_tg_id", None),
+            "tz_name": getattr(sl, "tz_name", None),
+            "local_time": _format_slot_local_time(sl),
         }
         for sl in slots
     ]

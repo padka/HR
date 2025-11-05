@@ -11,6 +11,7 @@ from .services import (  # noqa: F401
     get_active_auto_messages,
     create_notification,
     mark_notification_sent,
+    update_candidate_reports,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "get_active_auto_messages",
     "create_notification",
     "mark_notification_sent",
+    "update_candidate_reports",
 ]

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Dict, Optional
 
 from fastapi import Request
+from backend.domain.repositories import get_city
 
 try:  # pragma: no cover - optional dependency handling
     from aiohttp import ClientError as _AioHttpClientError
@@ -16,10 +17,11 @@ except Exception:  # pragma: no cover - optional dependency
     _AioHttpClientError = Exception  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency handling
-    from backend.apps.bot import templates as bot_templates
+    from backend.apps.bot import templates as bot_templates, services
     from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS
     from backend.apps.bot.config import State as BotState
     from backend.apps.bot.services import StateManager, get_bot, start_test2
+    from backend.apps.bot.events import InterviewSuccessEvent
 
     BOT_RUNTIME_AVAILABLE = True
 except Exception:  # pragma: no cover - fallback when bot package is unavailable
@@ -66,6 +68,24 @@ except Exception:  # pragma: no cover - fallback when bot package is unavailable
 
     def get_bot():  # type: ignore[override]
         raise RuntimeError("Bot runtime is unavailable")
+
+    async def _dummy_async(*_args, **_kwargs):  # pragma: no cover - runtime safety net
+        return None
+
+    services = SimpleNamespace(
+        set_pending_test2=_dummy_async,
+        dispatch_interview_success=_dummy_async,
+    )
+
+    @dataclass
+    class InterviewSuccessEvent:  # pragma: no cover - runtime safety net
+        candidate_id: int
+        candidate_name: str
+        candidate_tz: str
+        city_id: Optional[int]
+        city_name: Optional[str]
+        slot_id: Optional[int] = None
+        required: bool = False
 
 
 logger = logging.getLogger(__name__)
@@ -169,6 +189,7 @@ class BotService:
         candidate_name: str,
         *,
         required: Optional[bool] = None,
+        slot_id: Optional[int] = None,
     ) -> BotSendResult:
         """Launch Test 2 for a candidate."""
 
@@ -212,53 +233,47 @@ class BotService:
             await self.state_manager.get(candidate_id) or {}
         )
 
-        sequence = previous_state.get("t1_sequence")
-        if sequence:
-            try:
-                sequence = list(sequence)
-            except TypeError:
-                sequence = list(TEST1_QUESTIONS)
-        else:
-            sequence = list(TEST1_QUESTIONS)
+        candidate_tz_value = (
+            candidate_tz or previous_state.get("candidate_tz") or DEFAULT_TZ
+        )
+        city_id_value = previous_state.get("city_id", candidate_city)
+        city_name_value = previous_state.get("city_name")
 
-        new_state: BotState = BotState(
-            flow="intro",
-            t1_idx=None,
-            t1_current_idx=None,
-            test1_answers=previous_state.get("test1_answers", {}),
-            t1_last_prompt_id=None,
-            t1_last_question_text="",
-            t1_requires_free_text=False,
-            t1_sequence=sequence,
-            fio=previous_state.get("fio", candidate_name or ""),
-            city_name=previous_state.get("city_name", ""),
-            city_id=previous_state.get("city_id", candidate_city),
-            candidate_tz=candidate_tz or previous_state.get("candidate_tz", DEFAULT_TZ),
-            t2_attempts={},
-            picked_recruiter_id=None,
-            picked_slot_id=None,
+        if not city_name_value and city_id_value is not None:
+            try:
+                city = await get_city(int(city_id_value))
+            except Exception:
+                city = None
+            if city is not None:
+                city_name_value = getattr(city, "name_plain", None) or getattr(city, "name", "")
+
+        candidate_name_value = previous_state.get("fio", candidate_name or "") or ""
+
+        await services.set_pending_test2(
+            candidate_id,
+            {
+                "candidate_tz": candidate_tz_value,
+                "candidate_city_id": city_id_value,
+                "candidate_name": candidate_name_value,
+                "slot_id": slot_id,
+                "required": must_succeed,
+            },
         )
 
-        await self.state_manager.set(candidate_id, new_state)
+        event = InterviewSuccessEvent(
+            candidate_id=candidate_id,
+            candidate_name=candidate_name_value or "Кандидат",
+            candidate_tz=candidate_tz_value or DEFAULT_TZ,
+            city_id=city_id_value,
+            city_name=city_name_value,
+            slot_id=slot_id,
+            required=must_succeed,
+        )
 
         try:
-            await start_test2(candidate_id)
-        except Exception as exc:  # pragma: no cover - network/environment errors
-            if _is_transient_error(exc):
-                logger.exception("Test 2 dispatch experienced transient error")
-                if must_succeed:
-                    return BotSendResult(
-                        ok=False,
-                        status="queued_retry",
-                        error=self.transient_message,
-                    )
-                return BotSendResult(
-                    ok=True,
-                    status="queued_retry",
-                    message=self.transient_message,
-                )
-
-            logger.exception("Failed to start Test 2 for candidate %s", candidate_id)
+            await services.dispatch_interview_success(event)
+        except Exception:  # pragma: no cover - defensive logging
+            logger.exception("Failed to dispatch interview success event")
             if must_succeed:
                 return BotSendResult(
                     ok=False,
@@ -271,7 +286,7 @@ class BotService:
                 message=self.failure_message,
             )
 
-        return BotSendResult(ok=True, status="sent")
+        return BotSendResult(ok=True, status="sent_test2")
 
     async def send_rejection(
         self,

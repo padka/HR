@@ -25,12 +25,10 @@ async def _create_booked_slot() -> Tuple[int, int]:
     async with async_session() as session:
         recruiter = models.Recruiter(name="API", tz="Europe/Moscow", active=True)
         city = models.City(name="API City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
-        await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
         await session.refresh(city)
 
         slot = models.Slot(
@@ -69,6 +67,30 @@ async def _async_request(
             return response
 
     return await asyncio.to_thread(_call)
+
+
+@pytest.fixture
+def admin_slots_app(monkeypatch) -> Any:
+    class _DummyIntegration:
+        async def shutdown(self) -> None:
+            return None
+
+    async def fake_setup(app) -> _DummyIntegration:
+        app.state.bot = None
+        app.state.state_manager = None
+        app.state.bot_service = None
+        app.state.bot_integration_switch = None
+        app.state.reminder_service = None
+        return _DummyIntegration()
+
+    monkeypatch.setenv("ADMIN_USER", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup)
+    monkeypatch.setattr("backend.apps.admin_ui.app.setup_bot_state", fake_setup)
+    return create_app()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -294,6 +316,64 @@ async def test_health_check_reports_ok():
 
 
 @pytest.mark.asyncio
+async def test_slots_create_returns_422_when_required_fields_missing(admin_slots_app) -> None:
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Slot Admin", tz="Europe/Moscow", active=True)
+        city = models.City(name="Slot City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        recruiter_id = recruiter.id
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        "/slots/create",
+        data={
+            "recruiter_id": str(recruiter_id),
+            "city_id": "",
+            "date": "",
+            "time": "",
+        },
+        allow_redirects=False,
+    )
+
+    assert response.status_code == 422
+    assert "Укажите город" in response.text
+
+
+@pytest.mark.asyncio
+async def test_slots_create_returns_422_when_city_id_invalid(admin_slots_app) -> None:
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Slot Admin 2", tz="Europe/Moscow", active=True)
+        city = models.City(name="Slot City 2", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        recruiter_id = recruiter.id
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        "/slots/create",
+        data={
+            "recruiter_id": str(recruiter_id),
+            "city_id": "abc",
+            "date": "2024-10-10",
+            "time": "10:00",
+        },
+        allow_redirects=False,
+    )
+
+    assert response.status_code == 422
+    assert "Укажите корректный город" in response.text
+
+
+@pytest.mark.asyncio
 async def test_bot_health_endpoint_reports_status(monkeypatch):
     app = create_app()
     response = await _async_request(app, "get", "/health/bot")
@@ -303,3 +383,41 @@ async def test_bot_health_endpoint_reports_status(monkeypatch):
     assert payload["runtime"]["mode"] in {"real", "null"}
     assert "switch_enabled" in payload["runtime"]
     assert "integration_enabled" in payload["config"]
+
+
+@pytest.mark.asyncio
+async def test_api_slots_returns_local_time(admin_slots_app) -> None:
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Local TZ", tz="Europe/Moscow", active=True)
+        city = models.City(name="Новосибирск", tz="Asia/Novosibirsk", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime(2024, 1, 1, 6, 0, tzinfo=timezone.utc),
+            duration_min=45,
+            status=models.SlotStatus.FREE,
+            tz_name=city.tz,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    response = await _async_request(
+        admin_slots_app,
+        "get",
+        "/api/slots",
+        params={"limit": 5},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    found = next((item for item in payload if item["id"] == slot.id), None)
+    assert found is not None
+    assert found["tz_name"] == "Asia/Novosibirsk"
+    assert found["start_utc"] == "2024-01-01T06:00:00+00:00"
+    assert found["local_time"] == "2024-01-01T13:00:00+07:00"

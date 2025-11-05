@@ -43,7 +43,7 @@
         <select id="city_id" name="city_id" {% if not has_cities %}disabled{% else %}required{% endif %}>
           <option value="" {% if not form_data.city_id %}selected{% endif %} disabled>— выберите город —</option>
           {% for c in cities %}
-            <option value="{{ c.id }}" {% if form_data.city_id == c.id %}selected{% endif %}>{{ c.name }} ({{ c.tz or "Europe/Moscow" }})</option>
+            <option value="{{ c.id }}" {% if form_data.city_id == c.id %}selected{% endif %}>{{ c.display_name }} ({{ c.tz or "Europe/Moscow" }})</option>
           {% endfor %}
         </select>
         <input id="city_filter" type="text" placeholder="Поиск по городам…" {% if not has_cities %}disabled{% endif %}>
@@ -58,7 +58,7 @@
         <option value="">— не выбирать пресет —</option>
         <option value="invite_interview">Приглашение на интервью</option>
         <option value="confirm_2h">Подтверждение за 2 часа</option>
-        <option value="reminder_1h">Напоминание за 1 час</option>
+        <option value="reminder_24h">Напоминание за 24 часа</option>
         <option value="after_meeting">После согласования руководителем</option>
         <option value="day_intro">Напоминание про ознакомительный день</option>
         <option value="slot_rejected">Слот отклонён (выбрать заново)</option>

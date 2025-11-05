@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
+import html
 from typing import Dict, Iterable, List, Optional
 
 from backend.domain.models import City
@@ -18,8 +19,14 @@ class CityInfo:
     """Immutable snapshot of a city relevant for bot lookups."""
 
     id: int
-    name: str
+    name_plain: str
+    display_name: str
     tz: str
+
+    @property
+    def name(self) -> str:
+        """Backward compatible alias for plain city name."""
+        return self.name_plain
 
 
 class CandidateCityRegistry:
@@ -40,7 +47,15 @@ class CandidateCityRegistry:
             if self._cache and time.monotonic() < self._expires_at:
                 return self._cache
             records: Iterable[City] = await get_candidate_cities()
-            snapshot = [CityInfo(id=city.id, name=city.name, tz=city.tz) for city in records]
+            snapshot = [
+                CityInfo(
+                    id=city.id,
+                    name_plain=city.name_plain,
+                    display_name=html.unescape(str(city.display_name)) or city.name_plain,
+                    tz=city.tz,
+                )
+                for city in records
+            ]
             self._cache = snapshot
             self._expires_at = time.monotonic() + self._ttl_seconds
             return snapshot
@@ -56,7 +71,7 @@ class CandidateCityRegistry:
         if not name_norm:
             return None
         for city in await self.list_cities():
-            if city.name.lower() == name_norm:
+            if city.name_plain.lower() == name_norm:
                 return city
         return None
 

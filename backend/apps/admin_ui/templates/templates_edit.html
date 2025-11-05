@@ -39,17 +39,17 @@
     {% call forms.field("Город", hint="Для глобального шаблона город не нужен.") %}
       <select id="city_id" name="city_id" {% if tmpl.is_global or (tmpl.city_id is none) %}disabled{% else %}required{% endif %}>
         {% for c in cities %}
-          <option value="{{ c.id }}" {% if c.id == tmpl.city_id %}selected{% endif %}>{{ c.name }} ({{ c.tz or "Europe/Moscow" }})</option>
+          <option value="{{ c.id }}" {% if c.id == tmpl.city_id %}selected{% endif %}>{{ c.display_name }} ({{ c.tz or "Europe/Moscow" }})</option>
         {% endfor %}
       </select>
     {% endcall %}
 
     {% call forms.field("Ключ", hint="Ключ используют бот и админка для поиска нужного сообщения") %}
-      <input id="key" type="text" name="key" required value="{{ tmpl.key }}" placeholder="например: intro, confirm_2h, reminder_1h" list="key_suggestions">
+      <input id="key" type="text" name="key" required value="{{ tmpl.key }}" placeholder="например: intro, confirm_2h, reminder_24h" list="key_suggestions">
       <datalist id="key_suggestions">
         <option value="invite_interview"></option>
         <option value="confirm_2h"></option>
-        <option value="reminder_1h"></option>
+        <option value="reminder_24h"></option>
         <option value="after_meeting"></option>
         <option value="followup_missed"></option>
         <option value="slot_rejected"></option>

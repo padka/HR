@@ -3,6 +3,7 @@
 {% block title %}Редактирование рекрутёра{% endblock %}
 {% block content %}
 {% set form_state = form_data or {} %}
+{% set errors = field_errors or {} %}
 {% set selected_values = form_state.get('cities', selected_ids) %}
 {% if form_error %}
   <div class="surface glass grain alert" data-tone="danger" role="alert">
@@ -42,25 +43,35 @@
     <div class="form-grid form-grid--two">
       {% call forms.field("Ссылка на Телемост", hint="Например: https://telemost.yandex.ru/j/XXXXX") %}
         {% set telemost_value = form_state.get('telemost', recruiter.telemost_url or '') %}
-        <input type="url" name="telemost" value="{{ telemost_value }}">
+        <input type="url" name="telemost" value="{{ telemost_value }}"{% if errors.get('telemost') %} class="is-invalid"{% endif %}>
+        {% if errors.get('telemost') %}
+          <p class="form-error" role="alert">{{ errors.get('telemost') }}</p>
+        {% endif %}
       {% endcall %}
-      {% call forms.field("Telegram chat_id", hint="Можно оставить пустым, если чат ещё не связан") %}
+      {% call forms.field("Telegram chat_id", hint="ID берётся из Telegram, только цифры. Можно оставить пустым, если чат ещё не связан.") %}
         {% set tg_value = form_state.get('tg_chat_id', recruiter.tg_chat_id or '') %}
-        <input type="number" name="tg_chat_id" value="{{ tg_value }}" min="1" step="1">
+        <input type="number" name="tg_chat_id" value="{{ tg_value }}" min="1" step="1" inputmode="numeric" placeholder="Например: 7588303412"{% if errors.get('tg_chat_id') %} class="is-invalid"{% endif %}>
+        {% if errors.get('tg_chat_id') %}
+          <p class="form-error" role="alert">{{ errors.get('tg_chat_id') }}</p>
+        {% endif %}
       {% endcall %}
     </div>
   {% endcall %}
 
   {% call forms.section("Ответственные города", hint="Выберите несколько — бот будет назначать им заявки") %}
-    <div class="choice-grid" role="group" aria-label="Ответственные города">
-      {% for city in cities %}
-        <label class="choice-tile">
-          {% set checked = city.id in selected_values %}
-          <input type="checkbox" name="cities" value="{{ city.id }}" {% if checked %}checked{% endif %}>
-          <span class="choice-tile__title">{{ city.name }}</span>
-          <span class="choice-tile__meta">{{ city.tz }}</span>
-        </label>
-      {% endfor %}
+    <div class="multiselect" data-multiselect>
+      <input type="search" class="input" placeholder="Поиск города" aria-label="Поиск города" data-multiselect-search>
+      <div class="choice-grid" role="group" aria-label="Ответственные города" data-multiselect-options>
+        {% for city in cities %}
+          <label class="choice-tile" data-filter="{{ city.name_plain|lower }} {{ city.tz|lower }}">
+            {% set checked = city.id in selected_values %}
+            <input type="checkbox" name="cities" value="{{ city.id }}" {% if checked %}checked{% endif %}>
+            <span class="choice-tile__title">{{ city.display_name }}</span>
+            <span class="choice-tile__meta">{{ city.tz }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      <p class="muted" data-multiselect-empty hidden>Совпадений не найдено</p>
     </div>
   {% endcall %}
 
@@ -69,3 +80,41 @@
   {% endcall %}
 {% endcall %}
 {% endblock %}
+
+<script>
+(function(){
+  const form = document.getElementById('recruiter-edit');
+  if (!form) return;
+  form.addEventListener('submit', ()=>{
+    window.requestAnimationFrame(()=>{ window.scrollTo(0, 0); });
+  });
+})();
+
+(function(){
+  const widgets = document.querySelectorAll('[data-multiselect]');
+  widgets.forEach((widget) => {
+    const search = widget.querySelector('[data-multiselect-search]');
+    const options = Array.from(widget.querySelectorAll('[data-filter]'));
+    const emptyHint = widget.querySelector('[data-multiselect-empty]');
+    if (!search || !options.length) {
+      if (emptyHint) {
+        emptyHint.hidden = true;
+      }
+      return;
+    }
+    search.addEventListener('input', () => {
+      const term = search.value.trim().toLowerCase();
+      let visible = 0;
+      options.forEach((option) => {
+        const haystack = option.getAttribute('data-filter') || '';
+        const match = !term || haystack.indexOf(term) !== -1;
+        option.hidden = !match;
+        if (match) visible += 1;
+      });
+      if (emptyHint) {
+        emptyHint.hidden = visible !== 0;
+      }
+    });
+  });
+})();
+</script>

@@ -10,6 +10,7 @@ from . import (
     system,
     templates,
     questions,
+    message_templates,
 )  # noqa: F401
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "system",
     "templates",
     "questions",
+    "message_templates",
 ]

@@ -22,7 +22,7 @@ async def test_template_payloads_and_city_owner_assignment():
 
     stage_key = CITY_TEMPLATE_STAGES[0].key
 
-    error = await update_city_settings(
+    error, updated_city, updated_owner = await update_city_settings(
         city_id=city.id,
         responsible_id=recruiter.id,
         templates={stage_key: "custom text"},
@@ -32,11 +32,17 @@ async def test_template_payloads_and_city_owner_assignment():
         plan_month=48,
     )
     assert error is None
+    assert updated_city is not None
+    assert updated_city.plan_week == 12
+    assert updated_city.plan_month == 48
+    assert updated_owner is not None
+    assert updated_owner.id == recruiter.id
 
     async with async_session() as session:
         refreshed_city = await session.get(models.City, city.id)
         assert refreshed_city is not None
-        assert refreshed_city.responsible_recruiter_id == recruiter.id
+        await session.refresh(refreshed_city, attribute_names=["recruiters"])
+        assert any(rec.id == recruiter.id for rec in refreshed_city.recruiters)
         assert refreshed_city.criteria == "Опыт продаж"
         assert refreshed_city.experts == "Эксперт А"
         assert refreshed_city.plan_week == 12
@@ -62,7 +68,7 @@ async def test_update_city_settings_rolls_back_on_template_error():
         await session.refresh(recruiter)
         await session.refresh(city)
 
-    error = await update_city_settings(
+    error, _, _ = await update_city_settings(
         city_id=city.id,
         responsible_id=recruiter.id,
         templates={"invalid_key": "should fail"},
@@ -77,8 +83,8 @@ async def test_update_city_settings_rolls_back_on_template_error():
 
     async with async_session() as session:
         refreshed_city = await session.get(models.City, city.id)
-        assert refreshed_city.responsible_recruiter_id is None
-        await session.refresh(refreshed_city, attribute_names=["templates"])
+        await session.refresh(refreshed_city, attribute_names=["recruiters", "templates"])
+        assert refreshed_city.recruiters == []
         assert refreshed_city.templates == []
 
 

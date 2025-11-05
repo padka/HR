@@ -86,13 +86,11 @@
                 </div>
               </summary>
               <div class="recruiter-card__fold-body">
-                {% call badge_row(empty='не назначены') %}
-                  {% if item.cities %}
-                    {% for cname, ctz in item.cities %}
-                      <span class="badge" title="{{ ctz }}">{{ cname }}</span>
-                    {% endfor %}
-                  {% endif %}
-                {% endcall %}
+                {% if item.cities %}
+                  <p>{{ item.cities_display }}</p>
+                {% else %}
+                  <span class="muted">не назначены</span>
+                {% endif %}
               </div>
             </details>
 

@@ -34,7 +34,7 @@ async def test_recruiter_and_city_queries():
         await session.refresh(recruiter_active)
         await session.refresh(recruiter_inactive)
         await session.refresh(city)
-        city.responsible_recruiter_id = recruiter_active.id
+        recruiter_active.cities.append(city)
         await session.commit()
 
     active = await get_active_recruiters()
@@ -68,8 +68,7 @@ async def test_city_recruiter_lookup_includes_slot_owners():
         await session.refresh(responsible)
         await session.refresh(extra)
         await session.refresh(city)
-
-        city.responsible_recruiter_id = responsible.id
+        responsible.cities.append(city)
 
         session.add(
             models.Slot(
@@ -99,7 +98,7 @@ async def test_slot_workflow_and_templates():
         await session.commit()
         await session.refresh(recruiter)
         await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
+        recruiter.cities.append(city)
         await session.commit()
 
         slot_free = models.Slot(

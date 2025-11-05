@@ -24,12 +24,10 @@ async def test_dashboard_and_slot_listing():
     async with async_session() as session:
         recruiter = models.Recruiter(name="UI", tz="Europe/Moscow", active=True)
         city = models.City(name="UI City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
-        await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
         await session.refresh(city)
 
     created = await create_slot(
@@ -76,12 +74,10 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
     async with async_session() as session:
         recruiter = models.Recruiter(name="UI", tz="Europe/Moscow", active=True)
         city = models.City(name="City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
-        await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
         await session.refresh(city)
 
         now = datetime.now(timezone.utc)
@@ -122,6 +118,8 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
         "BOOKED",
         "CONFIRMED_BY_CANDIDATE",
     }
+    assert all("local_time" in item for item in payload)
+    assert all(item.get("tz_name") == city.tz for item in payload)
 
     register_template_globals()
     scope = {

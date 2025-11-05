@@ -21,11 +21,11 @@ sequenceDiagram
     B->>D: `approve_slot` (PENDING → BOOKED)
     B->>D: `add_notification_log(type="candidate_interview_confirmed")`
     B->>C: send `approved_msg`
-    B->>S: `schedule_for_slot` (confirm_2h + remind_1h)
+    B->>S: `schedule_for_slot` (reminder_24h + confirm_6h + confirm_2h)
     C->>B: `att_yes:<slot_id>`
     B->>D: `confirm_slot_by_candidate` (BOOKED → CONFIRMED)
     B->>C: send link (`att_confirmed_link`)
-    B->>S: reschedule reminders (only remind_1h)
+    B->>S: reschedule reminders (только напоминания без подтверждения)
 ```
 
 ## 2. Нет свободных слотов

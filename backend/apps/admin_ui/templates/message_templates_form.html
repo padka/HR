@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% import "partials/form_shell.html" as forms %}
+{% set is_edit = is_edit or False %}
+{% set form_data = form_data or {} %}
+{% set action = is_edit and '/message-templates/' ~ template_id ~ '/update' or '/message-templates/create' %}
+{% set title = is_edit and 'Редактирование шаблона' or 'Новый шаблон уведомления' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% call forms.shell(
+  title=title,
+  description="Шаблон используется при отправке уведомлений ботом. Доступные переменные можно вставлять в текст сообщений.",
+  form_id="msgTemplateForm",
+  action=action,
+  autocomplete="off",
+  actions=[
+    {"type": "submit", "text": is_edit and "Сохранить" or "Создать", "variant": "primary"},
+    {"href": "/message-templates", "text": "Отмена", "variant": "ghost"}
+  ]
+) %}
+  {% if errors %}
+    <div class="alert alert--danger mt-sm">
+      <ul>
+        {% for err in errors %}
+          <li>{{ err }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% call forms.section("Основные параметры") %}
+    {% call forms.field("Ключ", hint="Например, candidate_rejection или confirm_2h.") %}
+      <input type="text" name="key" id="key" value="{{ form_data.key or '' }}" required {% if is_edit %}readonly{% endif %} class="text-mono">
+      {% if not is_edit %}
+        <p class="hint mt-xs">Используйте один из известных ключей или добавьте новый. См. таблицу на странице списка.</p>
+      {% endif %}
+    {% endcall %}
+
+    {% call forms.field("Локаль") %}
+      <input type="text" name="locale" id="locale" value="{{ form_data.locale or 'ru' }}" required class="text-mono">
+      <p class="hint mt-xs">Стандартная локаль — <code class="text-mono">ru</code>.</p>
+    {% endcall %}
+
+    {% call forms.field("Канал") %}
+      <select id="channel" name="channel" required>
+        {% for item in allowed_channels %}
+          <option value="{{ item }}" {% if (form_data.channel or 'tg') == item %}selected{% endif %}>{{ item|upper }}</option>
+        {% endfor %}
+      </select>
+      <p class="hint mt-xs">Telegram использует канал <code class="text-mono">tg</code>.</p>
+    {% endcall %}
+
+    <div class="form-row">
+      <div class="form-column">
+        {% if not is_edit %}
+          {% call forms.field("Версия") %}
+            <input type="number" name="version" id="version" min="1" value="{{ form_data.version or 1 }}">
+          {% endcall %}
+        {% else %}
+          {% call forms.meta() %}
+            <span class="badge muted">Текущая версия: v{{ form_data.version or 1 }}</span>
+          {% endcall %}
+        {% endif %}
+      </div>
+      <div class="form-column">
+        {% call forms.meta() %}
+          {{ forms.switch(
+            id='is_active',
+            name='is_active',
+            checked=form_data.is_active is not defined or form_data.is_active,
+            label='Включить шаблон'
+          ) }}
+        {% endcall %}
+      </div>
+    </div>
+
+    {% if is_edit %}
+      <div class="form-row">
+        <div class="form-column">
+          <label class="form-switch">
+            <input type="checkbox" id="bump_version" name="bump_version" value="1">
+            <span class="form-switch__track" aria-hidden="true"><span class="form-switch__thumb"></span></span>
+            <span class="form-switch__label">Повысить версию при сохранении</span>
+          </label>
+          <p class="hint mt-xs">Отметьте, если хотите создать новую версию вместо перезаписи текущей.</p>
+        </div>
+      </div>
+    {% endif %}
+  {% endcall %}
+
+  {% call forms.section("Текст сообщения", span='full') %}
+    {% call forms.field("Текст") %}
+      <textarea name="body" id="body" rows="16" required class="text-mono">{{ form_data.body or '' }}</textarea>
+      <div class="hint mt-xs">
+        {% raw %}
+        Доступные переменные: <code>{{candidate_name}}</code>, <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>,
+        <code>{{dt_local}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>,
+        <code>{{slot_datetime_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{join_link}}</code>.
+        Отсутствующие переменные выводятся как <code>{placeholder}</code>.
+        {% endraw %}
+      </div>
+    {% endcall %}
+  {% endcall %}
+
+{% endcall %}
+{% endblock %}

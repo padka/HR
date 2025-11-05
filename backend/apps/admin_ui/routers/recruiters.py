@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import (
+    RecruiterValidationError,
     build_recruiter_payload,
     create_recruiter,
     delete_recruiter,
@@ -51,13 +52,6 @@ async def recruiters_create(
 ):
     tz_value = (tz or DEFAULT_TZ).strip() or DEFAULT_TZ
     city_values = _normalize_cities_form_value(cities)
-    payload: Dict[str, object] = build_recruiter_payload(
-        name=name,
-        tz=tz_value,
-        telemost=telemost,
-        tg_chat_id=tg_chat_id,
-        active=active,
-    )
     form_state = {
         "name": name,
         "tz": tz_value,
@@ -66,15 +60,41 @@ async def recruiters_create(
         "active": bool(active),
         "cities": [int(cid.strip()) for cid in city_values if cid and cid.strip().isdigit()],
     }
-    result = await create_recruiter(payload, cities=city_values)
-    if not result.get("ok"):
+    try:
+        payload: Dict[str, object] = build_recruiter_payload(
+            name=name,
+            tz=tz_value,
+            telemost=telemost,
+            tg_chat_id=tg_chat_id,
+            active=active,
+        )
+    except RecruiterValidationError as exc:
         cities_list = await list_cities()
         context = {
             "request": request,
             "cities": cities_list,
             "tz_options": timezone_options(),
-            "form_error": result.get("error", {}).get("message"),
-            "error_field": result.get("error", {}).get("field"),
+            "form_error": str(exc),
+            "error_field": exc.field,
+            "field_errors": {exc.field: str(exc)},
+            "form_data": form_state,
+        }
+        return templates.TemplateResponse("recruiters_new.html", context, status_code=422)
+    result = await create_recruiter(payload, cities=city_values)
+    if not result.get("ok"):
+        error_payload = result.get("error", {})
+        error_field = error_payload.get("field")
+        field_errors = {error_field: error_payload.get("message")}
+        if not error_field:
+            field_errors = {}
+        cities_list = await list_cities()
+        context = {
+            "request": request,
+            "cities": cities_list,
+            "tz_options": timezone_options(),
+            "form_error": error_payload.get("message"),
+            "error_field": error_field,
+            "field_errors": field_errors,
             "form_data": form_state,
         }
         return templates.TemplateResponse("recruiters_new.html", context, status_code=400)
@@ -109,13 +129,6 @@ async def recruiters_update(
 ):
     tz_value = (tz or DEFAULT_TZ).strip() or DEFAULT_TZ
     city_values = _normalize_cities_form_value(cities)
-    payload: Dict[str, object] = build_recruiter_payload(
-        name=name,
-        tz=tz_value,
-        telemost=telemost,
-        tg_chat_id=tg_chat_id,
-        active=active,
-    )
     form_state = {
         "name": name,
         "tz": tz_value,
@@ -124,6 +137,29 @@ async def recruiters_update(
         "active": bool(active) if active is not None else False,
         "cities": [int(cid.strip()) for cid in city_values if cid and cid.strip().isdigit()],
     }
+    try:
+        payload: Dict[str, object] = build_recruiter_payload(
+            name=name,
+            tz=tz_value,
+            telemost=telemost,
+            tg_chat_id=tg_chat_id,
+            active=active,
+        )
+    except RecruiterValidationError as exc:
+        data = await get_recruiter_detail(rec_id)
+        if not data:
+            return RedirectResponse(url="/recruiters", status_code=303)
+        tz_current = getattr(data.get("recruiter"), "tz", None) if data else None
+        context = {
+            "request": request,
+            **data,
+            "tz_options": timezone_options(include_extra=[tz_current] if tz_current else None),
+            "form_error": str(exc),
+            "error_field": exc.field,
+            "field_errors": {exc.field: str(exc)},
+            "form_data": form_state,
+        }
+        return templates.TemplateResponse("recruiters_edit.html", context, status_code=422)
     result = await update_recruiter(rec_id, payload, cities=city_values)
     if not result.get("ok"):
         error = result.get("error", {})
@@ -133,12 +169,17 @@ async def recruiters_update(
         if not data:
             return RedirectResponse(url="/recruiters", status_code=303)
         tz_current = getattr(data.get("recruiter"), "tz", None) if data else None
+        error_field = error.get("field")
+        field_errors = {error_field: error.get("message")}
+        if not error_field:
+            field_errors = {}
         context = {
             "request": request,
             **data,
             "tz_options": timezone_options(include_extra=[tz_current] if tz_current else None),
             "form_error": error.get("message"),
-            "error_field": error.get("field"),
+            "error_field": error_field,
+            "field_errors": field_errors,
             "form_data": form_state,
         }
         return templates.TemplateResponse("recruiters_edit.html", context, status_code=400)

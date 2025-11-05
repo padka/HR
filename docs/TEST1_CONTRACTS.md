@@ -46,7 +46,7 @@
 | `approve_slot(slot_id) -> Slot?` | Переводит `pending` → `booked`. При `confirmed_by_candidate` возвращает слот без изменений. |
 | `reject_slot(slot_id) -> Slot?` | Освобождает слот, очищает кандидата, удаляет `SlotReservationLock`. **Не** очищает `NotificationLog` (см. P0). |
 | `confirm_slot_by_candidate(slot_id) -> CandidateConfirmationResult` | Статусы: `confirmed`, `already_confirmed`, `invalid_status`, `not_found`. Использует NotificationLog для идемпотентности. |
-| `ReminderService.schedule_for_slot(slot_id, skip_confirmation_prompts=False)` | Строит расписание `[confirm_2h, remind_1h]`, сохраняет в `slot_reminder_jobs`, отменяет прошедшие задания. |
+| `ReminderService.schedule_for_slot(slot_id, skip_confirmation_prompts=False)` | Строит расписание `<reminder_24h, confirm_6h, confirm_2h>`, сохраняет в `slot_reminder_jobs`, отменяет прошедшие задания. |
 | `ReminderService.cancel_for_slot(slot_id)` | Удаляет задания из БД и APScheduler. |
 
 ## Ошибочные статусы/коды

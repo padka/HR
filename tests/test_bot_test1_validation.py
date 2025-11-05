@@ -16,10 +16,14 @@ from backend.apps.bot.config import (
 )
 from backend.apps.bot.metrics import get_test1_metrics_snapshot, reset_test1_metrics
 from backend.apps.bot.services import (
+    Test1AnswerResult as BotTest1AnswerResult,
     begin_interview,
     configure,
+    handle_test1_answer,
     save_test1_answer,
+    send_test1_question,
     _handle_test1_rejection,
+    _resolve_test1_options,
 )
 from backend.apps.bot.state_store import InMemoryStateStore, StateManager
 
@@ -60,7 +64,14 @@ async def test_city_validation_returns_hints(bot_context, monkeypatch):
     manager, _ = bot_context
 
     async def fake_list():
-        return [CityInfo(id=1, name="Москва", tz="Europe/Moscow")]
+        return [
+            CityInfo(
+                id=1,
+                name_plain="Москва",
+                display_name="Москва",
+                tz="Europe/Moscow",
+            )
+        ]
 
     async def fake_find_by_name(name: str):
         return None
@@ -264,3 +275,148 @@ async def test_format_flexible_request_triggers_clarification(bot_context):
 
     assert result.status == "ok"
     assert result.template_key == "t1_format_clarify"
+
+
+@pytest.mark.asyncio
+async def test_resolve_test1_options_uses_display_name(monkeypatch):
+    cities = [
+        CityInfo(
+            id=10,
+            name_plain="Новосибирск",
+            display_name="Новосибирск",
+            tz="Asia/Novosibirsk",
+        )
+    ]
+
+    async def fake_list():
+        return cities
+
+    monkeypatch.setattr("backend.apps.bot.services.list_candidate_cities", fake_list)
+
+    result = await _resolve_test1_options({"id": "city"})
+    assert result is not None
+    assert result[0]["label"] == "Новосибирск"
+    assert result[0]["value"] == "Новосибирск"
+    assert result[0]["city_id"] == 10
+    assert result[0]["tz"] == "Asia/Novosibirsk"
+
+
+@pytest.mark.asyncio
+async def test_send_test1_question_uses_display_name_in_buttons(bot_context, monkeypatch):
+    manager, dummy_bot = bot_context
+
+    dummy_bot.send_message.reset_mock()
+
+    city = CityInfo(
+        id=5,
+        name_plain="Санкт-Петербург",
+        display_name="Санкт-Петербург",
+        tz="Europe/Moscow",
+    )
+
+    async def fake_list():
+        return [city]
+
+    async def fake_tpl(*_args, **_kwargs):
+        return "1/5"
+
+    monkeypatch.setattr("backend.apps.bot.services.list_candidate_cities", fake_list)
+    monkeypatch.setattr("backend.apps.bot.services.templates.tpl", fake_tpl)
+
+    await manager.set(
+        USER_ID,
+        State(
+            flow="interview",
+            t1_idx=0,
+            t1_current_idx=0,
+            test1_answers={},
+            t1_last_prompt_id=None,
+            t1_last_question_text="",
+            t1_requires_free_text=True,
+            t1_sequence=[{"id": "city", "prompt": "Ваш город?"}],
+            fio="",
+            city_name="",
+            city_id=None,
+            candidate_tz=DEFAULT_TZ,
+            t2_attempts={},
+            picked_recruiter_id=None,
+            picked_slot_id=None,
+            test1_payload={},
+        ),
+    )
+
+    await send_test1_question(USER_ID)
+
+    assert dummy_bot.send_message.await_count == 1
+    _, kwargs = dummy_bot.send_message.await_args_list[0]
+    markup = kwargs.get("reply_markup")
+    assert markup is not None
+    button = markup.inline_keyboard[0][0]
+    assert button.text == "Санкт-Петербург"
+
+    state = await manager.get(USER_ID)
+    stored_question = state["t1_sequence"][0]
+    options = stored_question.get("options")
+    assert options is not None
+    assert options[0]["label"] == "Санкт-Петербург"
+    assert options[0]["value"] == "Санкт-Петербург"
+
+
+@pytest.mark.asyncio
+async def test_handle_test1_answer_advances_on_success(bot_context, monkeypatch):
+    manager, dummy_bot = bot_context
+
+    state = State(
+        flow="interview",
+        t1_idx=0,
+        t1_current_idx=0,
+        test1_answers={},
+        t1_last_prompt_id=99,
+        t1_last_question_text="Вопрос",
+        t1_requires_free_text=True,
+        t1_sequence=[{"id": "fio", "prompt": "Ваше ФИО?"}, {"id": "city", "prompt": "Город"}],
+        fio="",
+        city_name="",
+        city_id=None,
+        candidate_tz=DEFAULT_TZ,
+        t2_attempts={},
+        picked_recruiter_id=None,
+        picked_slot_id=None,
+        test1_payload={},
+    )
+    await manager.set(USER_ID, state)
+
+    async def fake_save(_user_id, _question, _answer):
+        return BotTest1AnswerResult(status="ok")
+
+    send_mock = AsyncMock()
+    finalize_mock = AsyncMock()
+
+    monkeypatch.setattr("backend.apps.bot.services.save_test1_answer", fake_save)
+    monkeypatch.setattr("backend.apps.bot.services.send_test1_question", send_mock)
+    monkeypatch.setattr("backend.apps.bot.services.finalize_test1", finalize_mock)
+    monkeypatch.setattr(
+        "backend.apps.bot.services._resolve_followup_message",
+        AsyncMock(return_value=None),
+    )
+
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=USER_ID),
+        text="Иванов Иван",
+        reply_to_message=SimpleNamespace(message_id=99),
+    )
+    message.reply = AsyncMock()
+    message.answer = AsyncMock()
+
+    dummy_bot.edit_message_text.reset_mock()
+
+    await handle_test1_answer(message)
+
+    assert message.reply.await_count == 0
+    assert message.answer.await_count == 0
+    assert send_mock.await_count == 1
+    assert finalize_mock.await_count == 0
+
+    updated = await manager.get(USER_ID)
+    assert updated["t1_idx"] == 1
+    assert dummy_bot.edit_message_text.await_count == 1

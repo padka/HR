@@ -77,34 +77,36 @@
           <tbody id="cities_tbody">
             {% for c in cities %}
               {% set tz = c.tz or "Europe/Moscow" %}
-              {% set criteria = c.criteria|default('') %}
-              {% set experts = c.experts|default('') %}
-              {% set plan_week = c.plan_week|default('') %}
-              {% set plan_month = c.plan_month|default('') %}
+            {% set criteria = c.criteria or '' %}
+            {% set experts = c.experts or '' %}
+            {% set plan_week = c.plan_week %}
+            {% set plan_month = c.plan_month %}
+            {% set plan_week_data = plan_week if plan_week is not none else '' %}
+            {% set plan_month_data = plan_month if plan_month is not none else '' %}
               {% set owner_id = owners.get(c.id) %}
               {% set owner = rec_map.get(owner_id) if owner_id else None %}
               {% set stages = city_stages.get(c.id, []) %}
               <tr class="city-row"
                   tabindex="0"
                   data-id="{{ c.id }}"
-                  data-name="{{ c.name|lower }}"
+                  data-name="{{ c.name_plain|lower }}"
                   data-tz="{{ tz|lower }}"
                   data-owner="{{ (owner.name if owner else '')|lower }}"
                   data-criteria="{{ criteria|e }}"
                   data-experts="{{ experts|e }}"
-                  data-plan-week="{{ plan_week }}"
-                  data-plan-month="{{ plan_month }}"
+                  data-plan-week="{{ plan_week_data }}"
+                  data-plan-month="{{ plan_month_data }}"
                   data-owner-id="{{ owner_id or '' }}">
                 <td class="col-toggle" data-label="">
                   <button type="button"
                           class="row-expand"
                           aria-expanded="false"
-                          aria-label="Показать детали по городу {{ c.name }}">
+                          aria-label="Показать детали по городу {{ c.name_plain }}">
                     <span class="row-expand__icon" aria-hidden="true"></span>
                   </button>
                 </td>
                 <td data-label="Город" class="col-name">
-                  <span class="cell-title">{{ c.name }}</span>
+                  <span class="cell-title">{{ c.display_name }}</span>
                 </td>
                 <td data-label="Часовой пояс" class="col-tz">
                   <span class="badge badge--soft"><code>{{ tz }}</code></span>
@@ -114,11 +116,11 @@
                     {% if owner %}{{ owner.name }}{% else %}Не назначен{% endif %}
                   </span>
                 </td>
-                <td data-label="План · нед" class="col-week is-optional" data-sort="{{ plan_week or 0 }}">
-                  {{ plan_week or '—' }}
+                <td data-label="План · нед" class="col-week is-optional" data-sort="{{ plan_week if plan_week is not none else 0 }}">
+                  {{ plan_week if plan_week is not none else '—' }}
                 </td>
-                <td data-label="План · мес" class="col-month is-optional" data-sort="{{ plan_month or 0 }}">
-                  {{ plan_month or '—' }}
+                <td data-label="План · мес" class="col-month is-optional" data-sort="{{ plan_month if plan_month is not none else 0 }}">
+                  {{ plan_month if plan_month is not none else '—' }}
                 </td>
                 <td data-label="" class="cell-actions">
                   <button class="btn btn-soft btn--small btn-edit" type="button">Настроить</button>
@@ -127,10 +129,10 @@
               {% set stage_ns = namespace(custom=0, total=0) %}
               <tr class="city-row city-row--details" data-details-for="{{ c.id }}" hidden>
                 <td colspan="7">
-                  <section class="city-insight" aria-label="Детали по городу {{ c.name }}">
+                  <section class="city-insight" aria-label="Детали по городу {{ c.name_plain }}">
                     <header class="city-insight__header">
                       <div class="city-insight__title">
-                        <h3>{{ c.name }}</h3>
+                        <h3>{{ c.display_name }}</h3>
                         <p class="muted">Часовой пояс: {{ tz }}</p>
                       </div>
                       <div class="city-insight__meta">
@@ -143,20 +145,20 @@
                     <div class="city-insight__grid">
                       <article class="city-insight__block">
                         <h4>Критерии отбора</h4>
-                        {% set criteria_clean = criteria|default('')|trim %}
+                        {% set criteria_clean = criteria|trim %}
                         {% if criteria_clean %}
                           <p data-field="criteria">{{ criteria_clean|replace('\n','<br>')|safe }}</p>
                         {% else %}
-                          <p class="muted" data-field="criteria">Нет описания</p>
+                          <p class="muted" data-field="criteria">{{ render_or_empty('') }}</p>
                         {% endif %}
                       </article>
                       <article class="city-insight__block">
                         <h4>Ресурсы экспертов</h4>
-                        {% set experts_clean = experts|default('')|trim %}
+                        {% set experts_clean = experts|trim %}
                         {% if experts_clean %}
                           <p data-field="experts">{{ experts_clean|replace('\n','<br>')|safe }}</p>
                         {% else %}
-                          <p class="muted" data-field="experts">Не заполнено</p>
+                          <p class="muted" data-field="experts">{{ render_or_empty('') }}</p>
                         {% endif %}
                       </article>
                       <article class="city-insight__block city-insight__block--stages">
@@ -165,8 +167,8 @@
                           <ul class="stage-summary" role="list">
                             {% for stage in stages %}
                               {% set stage_ns.total = stage_ns.total + 1 %}
-                              {% set stage_value = stage.value|default('')|trim %}
-                              {% set stage_default = stage.default|default('')|trim %}
+                              {% set stage_value = (stage.value or '')|trim %}
+                              {% set stage_default = (stage.default or '')|trim %}
                               {% set is_custom = stage_value and stage_value != stage_default %}
                               {% if is_custom %}{% set stage_ns.custom = stage_ns.custom + 1 %}{% endif %}
                               <li class="stage-summary__item{% if is_custom %} is-custom{% endif %}"
@@ -213,13 +215,13 @@
                         </div>
                       </summary>
                       <div class="stage-item__body">
-                        <textarea
+                          <textarea
                           id="stage_{{ stage.key }}_{{ c.id }}"
                           name="stage__{{ stage.key }}"
                           data-stage="{{ stage.key }}"
-                          data-default="{{ stage.default|e }}"
+                          data-default="{{ (stage.default or '')|e }}"
                           rows="5"
-                          placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
+                          placeholder="{{ (stage.default or '')|e }}">{{ stage.value or '' }}</textarea>
                         <div class="stage-controls">
                           <button type="button" class="btn btn-ghost btn--small stage-default-btn" data-stage="{{ stage.key }}">Вставить по умолчанию</button>
                           <span class="muted">{{ stage.description }}</span>
@@ -286,18 +288,20 @@
             </select>
             <p class="form-note">Назначьте ответственного, чтобы заявки автоматически падали к нужному рекрутёру.</p>
           </div>
-          <div class="form-grid form-grid--two">
-            <div class="form-field form-field--compact">
-              <label for="plan_week">План на неделю</label>
+            <div class="form-grid form-grid--two">
+              <div class="form-field form-field--compact">
+                <label for="plan_week">План на неделю</label>
               <input id="plan_week" name="plan_week" type="number" inputmode="numeric" min="0" step="1" placeholder="Например, 12">
+              <p class="form-error" id="plan_week_error" role="alert" hidden></p>
               <p class="form-note">Используется в отчётах и сводках.</p>
-            </div>
-            <div class="form-field form-field--compact">
-              <label for="plan_month">План на месяц</label>
+              </div>
+              <div class="form-field form-field--compact">
+                <label for="plan_month">План на месяц</label>
               <input id="plan_month" name="plan_month" type="number" inputmode="numeric" min="0" step="1" placeholder="Например, 48">
-              <p class="form-note">Можно оставить пустым, если пока нет цели.</p>
+              <p class="form-error" id="plan_month_error" role="alert" hidden></p>
+                <p class="form-note">Можно оставить пустым, если пока нет цели.</p>
+              </div>
             </div>
-          </div>
         </div>
       </section>
 
@@ -359,6 +363,20 @@
     </footer>
   </aside>
 
+  <div id="confirm_modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="confirm_modal_title">
+    <div id="confirm_modal_backdrop" class="modal__backdrop" data-action="dismiss-confirm"></div>
+    <div class="modal__dialog glass">
+      <div class="modal__content">
+        <h3 id="confirm_modal_title" class="modal__title">Удалить город?</h3>
+        <p id="confirm_modal_text" class="modal__text">Город и связанные с ним данные могут быть недоступны. Продолжить?</p>
+        <div class="modal__actions">
+          <button id="confirm_modal_submit" class="btn btn-danger" type="button">Удалить</button>
+          <button id="confirm_modal_cancel" class="btn btn-ghost" type="button">Отмена</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
 </section>
 
@@ -392,6 +410,13 @@
   const taExperts = $('#experts');
   const prevCrit = $('#crit_preview');
   const prevExp = $('#exp_preview');
+  const errWeek = $('#plan_week_error');
+  const errMonth = $('#plan_month_error');
+  const confirmModal = $('#confirm_modal');
+  const confirmBackdrop = $('#confirm_modal_backdrop');
+  const confirmSubmit = $('#confirm_modal_submit');
+  const confirmCancel = $('#confirm_modal_cancel');
+  const confirmText = $('#confirm_modal_text');
 
   const overviewName = $('#city_overview_name');
   const overviewTz = $('#city_overview_tz');
@@ -411,6 +436,66 @@
   const rows = $$('.city-row[data-id]', tbody);
 
   const truncate = (v, n=120)=>!v ? '—' : (v.length>n ? v.slice(0,n).trimEnd()+'…' : v);
+
+  const planFieldMap = {
+    plan_week: { input: inWeek, error: errWeek },
+    plan_month: { input: inMonth, error: errMonth },
+  };
+
+  function hidePlanError(field){
+    const config = planFieldMap[field];
+    if (!config) return;
+    if (config.input) config.input.classList.remove('is-invalid');
+    if (config.error){
+      config.error.hidden = true;
+      config.error.textContent = '';
+    }
+  }
+
+  function clearPlanErrors(){
+    Object.keys(planFieldMap).forEach(hidePlanError);
+  }
+
+  function showPlanError(field, message){
+    const config = planFieldMap[field];
+    if (!config) return;
+    if (config.input) config.input.classList.add('is-invalid');
+    if (config.error){
+      config.error.textContent = message || 'Введите корректное значение';
+      config.error.hidden = false;
+    }
+  }
+
+  const confirmDefaultLabel = confirmSubmit ? confirmSubmit.textContent : 'Удалить';
+
+  function resetConfirmButton(){
+    if (!confirmSubmit) return;
+    confirmSubmit.disabled = false;
+    confirmSubmit.textContent = confirmDefaultLabel;
+  }
+
+  function openDeleteConfirm(){
+    if (!currentRow || !confirmModal) return;
+    const cityName = sheetTitle.textContent?.trim() || 'город';
+    if (confirmText){
+      confirmText.textContent = `Город «${cityName}» и связанные с ним данные могут быть недоступны. Продолжить?`;
+    }
+    confirmModal.hidden = false;
+    requestAnimationFrame(()=>{
+      confirmModal.classList.add('open');
+      confirmSubmit?.focus();
+    });
+  }
+
+  function closeDeleteModal(focusBack = true){
+    if (!confirmModal) return;
+    confirmModal.classList.remove('open');
+    const focusTarget = btnDelete;
+    setTimeout(()=>{
+      confirmModal.hidden = true;
+      if (focusBack && focusTarget) focusTarget.focus();
+    }, 180);
+  }
 
   const stagePlaceholderHTML = '<p class="muted stage-placeholder">Выберите город в таблице, чтобы загрузить тексты.</p>';
   function resetStagePlaceholder(){
@@ -705,7 +790,9 @@
   }
   [inWeek, inMonth].forEach(input=>{
     if (!input) return;
+    const fieldKey = (input === inWeek) ? 'plan_week' : 'plan_month';
     input.addEventListener('input', ()=>{
+      hidePlanError(fieldKey);
       setDirty(true);
       if (!sheet.hidden) syncOverviewFromForm();
     });
@@ -734,6 +821,7 @@
     taExperts.value = row.dataset.experts || '';
     prevCrit.textContent = truncate(taCriteria.value);
     prevExp.textContent = truncate(taExperts.value);
+    clearPlanErrors();
 
     if (sheetStagesBody){
       sheetStagesBody.innerHTML = '';
@@ -788,6 +876,10 @@
   }
   function closeSheet(reset=false){
     sheet.classList.remove('open'); sheetBackdrop.classList.remove('open');
+    resetConfirmButton();
+    if (confirmModal && !confirmModal.hidden){
+      closeDeleteModal(false);
+    }
     setTimeout(()=>{
       sheet.hidden = true; sheetBackdrop.hidden = true;
       document.body.classList.remove('sheet-open');
@@ -862,10 +954,10 @@
   async function doSave(){
     if (!currentRow) return;
     const id = inputId.value;
-
-    const ownerId = (selOwner.value || '').trim();
-    const plan_week = inWeek.value ? parseInt(inWeek.value,10) : null;
-    const plan_month = inMonth.value ? parseInt(inMonth.value,10) : null;
+    const ownerIdRaw = (selOwner.value || '').trim();
+    const ownerId = ownerIdRaw ? Number(ownerIdRaw) : null;
+    const planWeekValue = inWeek.value === '' ? null : inWeek.valueAsNumber;
+    const planMonthValue = inMonth.value === '' ? null : inMonth.valueAsNumber;
 
     const templates = {};
     const stageValues = {};
@@ -880,44 +972,10 @@
       stageDefaults[k] = def;
     });
 
-    const ownerLabel = currentRow.querySelector('.owner-label');
-    const colWeek = currentRow.querySelector('.col-week');
-    const colMonth = currentRow.querySelector('.col-month');
-
-    const prev = {
-      criteria: currentRow.dataset.criteria,
-      experts: currentRow.dataset.experts,
-      planWeek: currentRow.dataset.planWeek,
-      planMonth: currentRow.dataset.planMonth,
-      ownerId: currentRow.dataset.ownerId,
-      ownerText: ownerLabel?.textContent,
-      weekText: colWeek?.textContent,
-      monthText: colMonth?.textContent,
-      weekSort: colWeek?.dataset.sort,
-      monthSort: colMonth?.dataset.sort
-    };
-
+    clearPlanErrors();
     saveStatus.textContent = 'Сохранение…';
-    saveStatus.classList.add('ok'); saveStatus.classList.remove('err');
-
-    currentRow.dataset.criteria = taCriteria.value.trim();
-    currentRow.dataset.experts = taExperts.value.trim();
-    currentRow.dataset.planWeek = plan_week ?? '';
-    currentRow.dataset.planMonth = plan_month ?? '';
-    currentRow.dataset.ownerId = ownerId ? String(Number(ownerId)) : '';
-    currentRow.dataset.owner = ownerId ? selOwner.options[selOwner.selectedIndex].textContent.trim().toLowerCase() : '';
-
-    if (ownerLabel){
-      if (ownerId){
-        ownerLabel.textContent = selOwner.options[selOwner.selectedIndex].textContent;
-        ownerLabel.classList.remove('muted');
-      } else {
-        ownerLabel.textContent = 'Не назначен';
-        ownerLabel.classList.add('muted');
-      }
-    }
-    if (colWeek){ colWeek.textContent = plan_week ?? '—'; colWeek.dataset.sort = String(plan_week ?? 0); }
-    if (colMonth){ colMonth.textContent = plan_month ?? '—'; colMonth.dataset.sort = String(plan_month ?? 0); }
+    saveStatus.classList.add('ok');
+    saveStatus.classList.remove('err');
 
     try{
       const resp = await fetch(`/cities/${id}/settings`, {
@@ -926,17 +984,77 @@
         body: JSON.stringify({
           criteria: taCriteria.value.trim(),
           experts: taExperts.value.trim(),
-          plan_week, plan_month,
+          plan_week: planWeekValue,
+          plan_month: planMonthValue,
           templates,
-          responsible_recruiter_id: ownerId ? Number(ownerId) : null
+          responsible_recruiter_id: ownerId
         })
       });
-      const json = await resp.json();
-      if (!json || json.ok !== true) throw new Error(json && json.error || 'Ошибка сохранения');
+      let json = null;
+      try {
+        json = await resp.json();
+      } catch(_err) {
+        json = null;
+      }
+      if (resp.status === 422 && json && json.error){
+        const field = json.error.field || 'plan_week';
+        showPlanError(field, json.error.message);
+        saveStatus.textContent = 'Исправьте ошибки';
+        saveStatus.classList.remove('ok');
+        saveStatus.classList.add('err');
+        if (navigator.vibrate) navigator.vibrate(50);
+        toast(json.error.message || 'Исправьте ошибки', 'error');
+        return;
+      }
+      if (!resp.ok || !json || json.ok !== true){
+        throw new Error(json && json.error ? json.error : 'Ошибка сохранения');
+      }
 
-      setDirty(false);
-      saveStatus.textContent = 'Сохранено';
-      saveStatus.classList.add('ok'); saveStatus.classList.remove('err');
+      const cityData = json.city || {};
+      const ownerData = cityData.responsible_recruiter || null;
+      const criteriaValue = (cityData.criteria || '').trim();
+      const expertsValue = (cityData.experts || '').trim();
+      const planWeekNormalized = typeof cityData.plan_week === 'number' ? cityData.plan_week : null;
+      const planMonthNormalized = typeof cityData.plan_month === 'number' ? cityData.plan_month : null;
+
+      if (selOwner){
+        selOwner.value = cityData.responsible_recruiter_id ? String(cityData.responsible_recruiter_id) : '';
+      }
+      inWeek.value = planWeekNormalized ?? '';
+      inMonth.value = planMonthNormalized ?? '';
+      taCriteria.value = criteriaValue;
+      taExperts.value = expertsValue;
+      prevCrit.textContent = truncate(criteriaValue);
+      prevExp.textContent = truncate(expertsValue);
+
+      const ownerLabel = currentRow.querySelector('.owner-label');
+      const colWeek = currentRow.querySelector('.col-week');
+      const colMonth = currentRow.querySelector('.col-month');
+
+      currentRow.dataset.criteria = criteriaValue;
+      currentRow.dataset.experts = expertsValue;
+      currentRow.dataset.planWeek = planWeekNormalized ?? '';
+      currentRow.dataset.planMonth = planMonthNormalized ?? '';
+      currentRow.dataset.ownerId = cityData.responsible_recruiter_id ? String(cityData.responsible_recruiter_id) : '';
+      currentRow.dataset.owner = ownerData && ownerData.name ? ownerData.name.trim().toLowerCase() : '';
+
+      if (ownerLabel){
+        if (ownerData && ownerData.name){
+          ownerLabel.textContent = ownerData.name;
+          ownerLabel.classList.remove('muted');
+        } else {
+          ownerLabel.textContent = 'Не назначен';
+          ownerLabel.classList.add('muted');
+        }
+      }
+      if (colWeek){
+        colWeek.textContent = planWeekNormalized ?? '—';
+        colWeek.dataset.sort = String(planWeekNormalized ?? 0);
+      }
+      if (colMonth){
+        colMonth.textContent = planMonthNormalized ?? '—';
+        colMonth.dataset.sort = String(planMonthNormalized ?? 0);
+      }
 
       const detailsRow = getDetailsRow(currentRow);
       if (detailsRow){
@@ -952,22 +1070,22 @@
             target.classList.add('muted');
           }
         };
-        updateRich('criteria', taCriteria.value, 'Нет описания');
-        updateRich('experts', taExperts.value, 'Не заполнено');
+        updateRich('criteria', criteriaValue, 'Нет описания');
+        updateRich('experts', expertsValue, 'Не заполнено');
 
         const weekBadge = detailsRow.querySelector('[data-field="plan-week"]');
         if (weekBadge){
-          weekBadge.textContent = `План нед: ${plan_week ?? '—'}`;
+          weekBadge.textContent = `План нед: ${planWeekNormalized ?? '—'}`;
         }
         const monthBadge = detailsRow.querySelector('[data-field="plan-month"]');
         if (monthBadge){
-          monthBadge.textContent = `План мес: ${plan_month ?? '—'}`;
+          monthBadge.textContent = `План мес: ${planMonthNormalized ?? '—'}`;
         }
 
         const ownerInfo = detailsRow.querySelector('.city-insight__owner');
         if (ownerInfo){
-          if (ownerId){
-            ownerInfo.innerHTML = `Ответственный: <strong>${escapeHTML(selOwner.options[selOwner.selectedIndex].textContent.trim())}</strong>`;
+          if (ownerData && ownerData.name){
+            ownerInfo.innerHTML = `Ответственный: <strong>${escapeHTML(ownerData.name)}</strong>`;
             ownerInfo.classList.remove('muted');
           } else {
             ownerInfo.textContent = 'Ответственный не назначен';
@@ -1007,20 +1125,17 @@
         }
       }
 
+      setDirty(false);
+      saveStatus.textContent = 'Сохранено';
+      saveStatus.classList.add('ok');
+      saveStatus.classList.remove('err');
       updateOverviewFromRow(currentRow);
 
       toast('Изменения сохранены', 'success');
       closeSheet(false);
       applySort();
     }catch(err){
-      currentRow.dataset.criteria = prev.criteria ?? '';
-      currentRow.dataset.experts = prev.experts ?? '';
-      currentRow.dataset.planWeek = prev.planWeek ?? '';
-      currentRow.dataset.planMonth = prev.planMonth ?? '';
-      currentRow.dataset.ownerId = prev.ownerId ?? '';
-      if (ownerLabel){ ownerLabel.textContent = prev.ownerText ?? ownerLabel.textContent; }
-      if (colWeek){ colWeek.textContent = prev.weekText ?? colWeek.textContent; colWeek.dataset.sort = prev.weekSort ?? '0'; }
-      if (colMonth){ colMonth.textContent = prev.monthText ?? colMonth.textContent; colMonth.dataset.sort = prev.monthSort ?? '0'; }
+      console.error(err);
       saveStatus.textContent = 'Ошибка';
       saveStatus.classList.remove('ok'); saveStatus.classList.add('err');
       if (navigator.vibrate) navigator.vibrate(60);
@@ -1031,16 +1146,16 @@
   async function doDelete(){
     if (!currentRow || !btnDelete) return;
     const id = inputId.value;
-    const cityName = sheetTitle.textContent?.trim() || 'город';
-    const ok = confirm(`Удалить город «${cityName}»? Действие нельзя отменить.`);
-    if (!ok) return;
-
-    const prevLabel = btnDelete.textContent;
+    const prevSheetLabel = btnDelete.textContent;
     btnDelete.disabled = true;
     btnDelete.textContent = 'Удаление…';
+    if (confirmSubmit){
+      confirmSubmit.disabled = true;
+      confirmSubmit.textContent = 'Удаление…';
+    }
 
     try{
-      const resp = await fetch(`/cities/${id}/delete`, {
+      const resp = await fetch(`/cities/${id}/delete?confirm=1`, {
         method: 'POST',
         headers: { 'Accept': 'application/json' }
       });
@@ -1053,6 +1168,9 @@
       if (!resp.ok || !json || json.ok !== true){
         throw new Error(json && json.error ? json.error : 'delete_failed');
       }
+
+      resetConfirmButton();
+      closeDeleteModal(false);
 
       const detailsRow = getDetailsRow(currentRow);
       if (detailsRow){
@@ -1079,13 +1197,29 @@
       console.error(err);
       toast('Не удалось удалить', 'error');
       btnDelete.disabled = false;
-      btnDelete.textContent = prevLabel;
+      btnDelete.textContent = prevSheetLabel;
+      resetConfirmButton();
       return;
     }
   }
 
   on(btnSave, 'click', doSave);
-  on(btnDelete, 'click', doDelete);
+  on(btnDelete, 'click', (e)=>{
+    if (!btnDelete || btnDelete.disabled) return;
+    e.preventDefault();
+    resetConfirmButton();
+    openDeleteConfirm();
+  });
+  on(confirmSubmit, 'click', doDelete);
+  on(confirmCancel, 'click', ()=>{ resetConfirmButton(); closeDeleteModal(true); });
+  on(confirmBackdrop, 'click', ()=>{ resetConfirmButton(); closeDeleteModal(true); });
+  on(confirmModal, 'keydown', (e)=>{
+    if (e.key === 'Escape'){
+      e.preventDefault();
+      resetConfirmButton();
+      closeDeleteModal(true);
+    }
+  });
   on(taCriteria, 'input', ()=>{ prevCrit.textContent = truncate(taCriteria.value); setDirty(true); });
   on(taExperts, 'input', ()=>{ prevExp.textContent = truncate(taExperts.value); setDirty(true); });
 

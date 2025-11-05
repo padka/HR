@@ -1,12 +1,15 @@
 import asyncio
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.app import create_app
 from backend.core.db import async_session
+from backend.domain.candidates import services as candidate_services
 from backend.domain import models
 
 
@@ -89,6 +92,81 @@ async def test_create_recruiter_duplicate_chat_id_returns_validation_message(adm
 
 
 @pytest.mark.asyncio
+async def test_create_recruiter_invalid_chat_id_returns_422(admin_app) -> None:
+    payload = {
+        "name": "Recruiter Invalid",
+        "tz": "Europe/Moscow",
+        "telemost": "",
+        "tg_chat_id": "12abc",
+        "active": "1",
+    }
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        "/recruiters/create",
+        data=payload,
+        allow_redirects=False,
+    )
+
+    assert response.status_code == 422
+    assert "chat_id: только цифры" in response.text
+
+
+@pytest.mark.asyncio
+async def test_create_recruiter_invalid_telemost_returns_422(admin_app) -> None:
+    payload = {
+        "name": "Recruiter Invalid Link",
+        "tz": "Europe/Moscow",
+        "telemost": "not-a-url",
+        "tg_chat_id": "",
+        "active": "1",
+    }
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        "/recruiters/create",
+        data=payload,
+        allow_redirects=False,
+    )
+
+    assert response.status_code == 422
+    assert "Ссылка: укажите корректный URL" in response.text
+
+
+@pytest.mark.asyncio
+async def test_update_recruiter_invalid_chat_id_returns_422(admin_app) -> None:
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Existing",
+            tz="Europe/Moscow",
+            active=True,
+        )
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/recruiters/{recruiter_id}/update",
+        data={
+            "name": "Existing",
+            "tz": "Europe/Moscow",
+            "telemost": "",
+            "tg_chat_id": "tg-123",
+            "active": "1",
+        },
+        allow_redirects=False,
+    )
+
+    assert response.status_code == 422
+    assert "chat_id: только цифры" in response.text
+
+
+@pytest.mark.asyncio
 async def test_update_recruiter_duplicate_chat_id_returns_validation_message(admin_app) -> None:
     async with async_session() as session:
         recruiter_one = models.Recruiter(
@@ -168,6 +246,163 @@ async def test_update_recruiter_single_city_checkbox_value(admin_app) -> None:
     assert response_ok.status_code == 303
 
     async with async_session() as session:
-        updated_city = await session.get(models.City, city_id)
-        assert updated_city is not None
-        assert updated_city.responsible_recruiter_id == recruiter_id
+        link = await session.scalar(
+            select(models.recruiter_city_association.c.city_id)
+            .where(models.recruiter_city_association.c.city_id == city_id)
+            .where(models.recruiter_city_association.c.recruiter_id == recruiter_id)
+        )
+        assert link == city_id
+
+
+@pytest.mark.asyncio
+async def test_api_recruiters_includes_city_ids(admin_app) -> None:
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="API Cities", tz="Europe/Moscow", active=True)
+        city = models.City(name="API Сity", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+    response = await _async_request(admin_app, "get", "/api/recruiters")
+    assert response.status_code == 200
+    payload = response.json()
+    found = next((item for item in payload if item.get("id") == recruiter.id), None)
+    assert found is not None
+    assert found.get("city_ids") == [city.id]
+
+
+@pytest.mark.asyncio
+async def test_api_candidate_detail_includes_report_urls(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=424242,
+        fio="API Candidate",
+        city="Воронеж",
+    )
+    await candidate_services.update_candidate_reports(
+        candidate.id,
+        test1_path="reports/1/test1.txt",
+        test2_path=None,
+    )
+
+    response = await _async_request(admin_app, "get", f"/api/candidates/{candidate.id}")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == candidate.id
+    assert payload["test1_report_url"] == f"/candidates/{candidate.id}/reports/test1"
+    assert payload["test2_report_url"] is None
+    assert "test_results" in payload
+    assert payload.get("telemost_url") is None
+
+
+@pytest.mark.asyncio
+async def test_api_create_recruiter_accepts_multiple_cities(admin_app) -> None:
+    async with async_session() as session:
+        city_one = models.City(name="Create City 1", tz="Europe/Moscow", active=True)
+        city_two = models.City(name="Create City 2", tz="Asia/Novosibirsk", active=True)
+        session.add_all([city_one, city_two])
+        await session.commit()
+        await session.refresh(city_one)
+        await session.refresh(city_two)
+
+    payload = {
+        "name": "API Creator",
+        "tz": "Europe/Moscow",
+        "telemost": "",
+        "tg_chat_id": 123456789,
+        "active": True,
+        "city_ids": [city_one.id, city_two.id],
+    }
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        "/api/recruiters",
+        json=payload,
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert sorted(data.get("city_ids")) == sorted([city_one.id, city_two.id])
+    assert data.get("name") == "API Creator"
+    assert response.headers.get("Location") == f"/api/recruiters/{data.get('id')}"
+
+    async with async_session() as session:
+        stored = await session.scalar(
+            select(models.Recruiter)
+            .options(selectinload(models.Recruiter.cities))
+            .where(models.Recruiter.id == data["id"])
+        )
+        assert stored is not None
+        assert sorted(city.id for city in stored.cities) == sorted([city_one.id, city_two.id])
+
+
+@pytest.mark.asyncio
+async def test_api_update_recruiter_replaces_city_ids(admin_app) -> None:
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Updater", tz="Europe/Moscow", active=True)
+        city_a = models.City(name="City A", tz="Europe/Moscow", active=True)
+        city_b = models.City(name="City B", tz="Asia/Yekaterinburg", active=True)
+        recruiter.cities.append(city_a)
+        session.add_all([recruiter, city_a, city_b])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city_a)
+        await session.refresh(city_b)
+        recruiter_id = recruiter.id
+
+    payload = {
+        "name": "Updater",
+        "tz": "Europe/Moscow",
+        "telemost": "",
+        "tg_chat_id": None,
+        "active": True,
+        "city_ids": [city_b.id],
+    }
+
+    response = await _async_request(
+        admin_app,
+        "put",
+        f"/api/recruiters/{recruiter_id}",
+        json=payload,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("city_ids") == [city_b.id]
+
+    async with async_session() as session:
+        stored = await session.scalar(
+            select(models.Recruiter)
+            .options(selectinload(models.Recruiter.cities))
+            .where(models.Recruiter.id == recruiter_id)
+        )
+        assert stored is not None
+        assert [city.id for city in stored.cities] == [city_b.id]
+
+    # ensure city can be unassigned
+    clear_payload = {
+        "name": "Updater",
+        "tz": "Europe/Moscow",
+        "telemost": "",
+        "tg_chat_id": None,
+        "active": True,
+        "city_ids": [],
+    }
+    response_clear = await _async_request(
+        admin_app,
+        "put",
+        f"/api/recruiters/{recruiter_id}",
+        json=clear_payload,
+    )
+    assert response_clear.status_code == 200
+    data_clear = response_clear.json()
+    assert data_clear.get("city_ids") == []
+
+    async with async_session() as session:
+        stored_clear = await session.scalar(
+            select(models.Recruiter)
+            .options(selectinload(models.Recruiter.cities))
+            .where(models.Recruiter.id == recruiter_id)
+        )
+        assert stored_clear is not None
+        assert stored_clear.cities == []

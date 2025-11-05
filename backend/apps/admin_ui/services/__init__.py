@@ -8,6 +8,7 @@ from .candidates import (
     toggle_candidate_activity,
     upsert_candidate,
     update_candidate,
+    update_candidate_status,
 )
 from .recruiters import (
     api_recruiters_payload,
@@ -21,7 +22,6 @@ from .recruiters import (
 from .cities import (
     api_cities_payload,
     api_city_owners_payload,
-    city_owner_field_name,
     create_city,
     list_cities,
     update_city_settings,
@@ -61,6 +61,7 @@ __all__ = [
     "toggle_candidate_activity",
     "update_candidate",
     "delete_candidate",
+    "update_candidate_status",
     "list_recruiters",
     "create_recruiter",
     "get_recruiter_detail",
@@ -70,7 +71,6 @@ __all__ = [
     "list_cities",
     "create_city",
     "update_city_settings",
-    "city_owner_field_name",
     "get_stage_templates",
     "stage_payload_for_ui",
     "templates_overview",

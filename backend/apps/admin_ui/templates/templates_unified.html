@@ -280,7 +280,7 @@
                     </time>
                   </td>
                   <td data-label="Фрагмент" class="text-truncate" style="max-width: 300px;">
-                    {{ tmpl.body_md[:100] }}{% if tmpl.body_md|length > 100 %}...{% endif %}
+                    {{ tmpl.preview }}
                   </td>
                   <td data-label="Действия" class="col-align-end">
                     <a href="/message-templates/{{ tmpl.id }}/edit" class="btn btn-soft btn--small">Редактировать</a>

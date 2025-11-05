@@ -17,14 +17,13 @@ async def test_bulk_create_slots_creates_unique_series():
             name="Bulk City",
             tz="Europe/Moscow",
             active=True,
-            responsible_recruiter_id=None,
         )
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
         await session.refresh(city)
+        city_tz_value = city.tz
 
     start = date(2024, 1, 8)
 
@@ -83,6 +82,7 @@ async def test_bulk_create_slots_creates_unique_series():
             )
         )
         stored = {slot.start_utc for slot in stored_slots}
+        tz_values = {slot.tz_name for slot in stored_slots}
 
     expected = {
         recruiter_time_to_utc(start.isoformat(), "10:00", recruiter.tz),
@@ -97,6 +97,8 @@ async def test_bulk_create_slots_creates_unique_series():
 
     for slot in stored_slots:
         assert slot.duration_min == 30
+
+    assert tz_values == {city_tz_value}
 
     async with async_session() as session:
         city_ids = set(

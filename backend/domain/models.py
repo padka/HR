@@ -1,7 +1,9 @@
 from datetime import datetime, timezone, date
 from typing import Optional, List
+import html
 
 from sqlalchemy import (
+    Column,
     String,
     Integer,
     BigInteger,
@@ -12,10 +14,23 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     UniqueConstraint,
+    JSON,
+    Table,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from markupsafe import Markup
 
 from .base import Base
+
+
+recruiter_city_association = Table(
+    "recruiter_cities",
+    Base.metadata,
+    Column("recruiter_id", Integer, ForeignKey("recruiters.id", ondelete="CASCADE"), primary_key=True),
+    Column("city_id", Integer, ForeignKey("cities.id", ondelete="CASCADE"), primary_key=True),
+    UniqueConstraint("city_id", name="uq_recruiter_city_unique_city"),
+)
+from backend.core.sanitizers import sanitize_plain_text
 
 
 class Recruiter(Base):
@@ -29,6 +44,10 @@ class Recruiter(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     slots: Mapped[List["Slot"]] = relationship(back_populates="recruiter", cascade="all, delete-orphan")
+    cities: Mapped[List["City"]] = relationship(
+        secondary=lambda: recruiter_city_association,
+        back_populates="recruiters",
+    )
 
     def __repr__(self) -> str:
         return f"<Recruiter {self.id} {self.name}>"
@@ -42,9 +61,6 @@ class City(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     tz: Mapped[str] = mapped_column(String(64), default="Europe/Moscow", nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    responsible_recruiter_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("recruiters.id", ondelete="SET NULL"), nullable=True
-    )
     criteria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     experts: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     plan_week: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -52,9 +68,27 @@ class City(Base):
 
     templates: Mapped[List["Template"]] = relationship(back_populates="city", cascade="all, delete-orphan")
     slots: Mapped[List["Slot"]] = relationship(back_populates="city", foreign_keys="Slot.city_id")
-    responsible_recruiter: Mapped[Optional["Recruiter"]] = relationship(
-        foreign_keys=[responsible_recruiter_id]
+    recruiters: Mapped[List["Recruiter"]] = relationship(
+        secondary=lambda: recruiter_city_association,
+        back_populates="cities",
     )
+
+    @validates("name")
+    def _sanitize_name(self, _key, value: Optional[str]) -> str:
+        sanitized = sanitize_plain_text(value)
+        if not sanitized:
+            raise ValueError("City name cannot be empty")
+        return sanitized
+
+    @property
+    def name_plain(self) -> str:
+        """Return the original (unescaped) city name for non-HTML contexts."""
+        return html.unescape(self.name or "")
+
+    @property
+    def display_name(self) -> Markup:
+        """Return a Markup-safe representation for HTML rendering."""
+        return Markup(sanitize_plain_text(self.name_plain))
 
     def __repr__(self) -> str:
         return f"<City {self.name} ({self.tz})>"
@@ -95,6 +129,7 @@ class Slot(Base):
         ForeignKey("cities.id", ondelete="SET NULL"), nullable=True
     )
     purpose: Mapped[str] = mapped_column(String(32), default="interview", nullable=False)
+    tz_name: Mapped[str] = mapped_column(String(64), default="Europe/Moscow", nullable=False)
 
     start_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_min: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
@@ -222,7 +257,32 @@ class NotificationLog(Base):
     candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     type: Mapped[str] = mapped_column(String(50), nullable=False)
     payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    delivery_status: Mapped[str] = mapped_column(
+        "status", String(20), default="sent", nullable=False
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    template_key: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    template_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class BotMessageLog(Base):
+    __tablename__ = "bot_message_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    message_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    slot_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
@@ -239,3 +299,53 @@ class TelegramCallbackLog(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+class MessageTemplate(Base):
+    __tablename__ = "message_templates"
+    __table_args__ = (
+        UniqueConstraint(
+            "key", "locale", "channel", "version", name="uq_template_key_locale_channel_version"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    locale: Mapped[str] = mapped_column(String(16), nullable=False, default="ru")
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="tg")
+    body_md: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<MessageTemplate {self.key} v{self.version} locale={self.locale}>"
+
+
+class OutboxNotification(Base):
+    __tablename__ = "outbox_notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    booking_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("slots.id", ondelete="CASCADE"), nullable=True
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    recruiter_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<OutboxNotification {self.type} booking={self.booking_id} status={self.status}>"

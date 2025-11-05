@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
+from urllib.parse import urlparse
+import html
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, func, select, delete
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.utils import format_optional_local
 from backend.core.db import async_session
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
+from backend.core.sanitizers import sanitize_plain_text
+from markupsafe import Markup
 
 __all__ = [
     "list_recruiters",
@@ -19,18 +24,19 @@ __all__ = [
     "delete_recruiter",
     "build_recruiter_payload",
     "api_recruiters_payload",
+    "api_get_recruiter",
+    "RecruiterValidationError",
 ]
 
 
 async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]:
     async with async_session() as session:
-        query = select(Recruiter)
+        query = select(Recruiter).options(selectinload(Recruiter.cities))
         if order_by_name:
             query = query.order_by(Recruiter.name.asc())
         recs = list((await session.scalars(query)).all())
 
         stats_map: Dict[int, Dict[str, object]] = {}
-        city_map: Dict[int, List[Tuple[str, str]]] = {}
 
         if recs:
             rec_ids = [r.id for r in recs]
@@ -73,17 +79,6 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
                 for row in stats_rows
             }
 
-            city_rows = (
-                await session.execute(
-                    select(City.id, City.name, City.tz, City.responsible_recruiter_id)
-                    .where(City.responsible_recruiter_id.in_(rec_ids))
-                    .order_by(City.name.asc())
-                )
-            ).all()
-
-            for row in city_rows:
-                city_map.setdefault(row.responsible_recruiter_id, []).append((row.name, row.tz))
-
     now = datetime.now(timezone.utc)
     out = []
     for rec in recs:
@@ -102,14 +97,33 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
             next_local = None
             next_future = False
 
+        sorted_cities = sorted(
+            rec.cities,
+            key=lambda city: (getattr(city, "name_plain", "") or "").lower(),
+        )
+        cities_entries: List[Tuple[Markup, str]] = []
+        for city in sorted_cities:
+            name_markup: Markup
+            if hasattr(city, "display_name"):
+                name_markup = city.display_name
+            else:
+                name_markup = Markup(sanitize_plain_text(getattr(city, "name", "") or ""))
+            cities_entries.append((name_markup, getattr(city, "tz", "")))
         out.append(
             {
                 "rec": rec,
                 "stats": stats,
                 "next_free_local": next_local,
                 "next_is_future": next_future,
-                "cities": city_map.get(rec.id, []),
-                "cities_text": " ".join(name.lower() for name, _ in city_map.get(rec.id, [])),
+                "cities": cities_entries,
+                "cities_text": " ".join(
+                    (getattr(city, "name_plain", "") or "").lower() for city in sorted_cities
+                ),
+                "cities_display": ", ".join(
+                    sanitize_plain_text(city.name_plain)
+                    for city in sorted_cities
+                    if getattr(city, "name_plain", None)
+                ),
             }
         )
 
@@ -121,23 +135,21 @@ async def create_recruiter(
 ) -> Dict[str, object]:
     async with async_session() as session:
         try:
+            selected_ids = _parse_city_ids(cities)
             recruiter = Recruiter(**payload)
             session.add(recruiter)
+            if selected_ids:
+                await session.execute(
+                    delete(recruiter_city_association).where(
+                        recruiter_city_association.c.city_id.in_(selected_ids)
+                    )
+                )
+                linked_cities = (
+                    await session.scalars(select(City).where(City.id.in_(selected_ids)))
+                ).all()
+                recruiter.cities = list(linked_cities)
             await session.commit()
             await session.refresh(recruiter)
-
-            selected: List[int] = []
-            if cities:
-                for cid in cities:
-                    if cid and cid.strip().isdigit():
-                        selected.append(int(cid.strip()))
-            if selected:
-                await session.execute(
-                    update(City)
-                    .where(City.id.in_(selected))
-                    .values(responsible_recruiter_id=recruiter.id)
-                )
-                await session.commit()
         except IntegrityError as exc:  # pragma: no cover - defensive, regression covered by tests
             await session.rollback()
             return {"ok": False, "error": _integrity_error_payload(exc)}
@@ -147,11 +159,16 @@ async def create_recruiter(
 
 async def get_recruiter_detail(rec_id: int) -> Optional[Dict[str, object]]:
     async with async_session() as session:
-        recruiter = await session.get(Recruiter, rec_id)
+        recruiter_result = await session.execute(
+            select(Recruiter)
+            .options(selectinload(Recruiter.cities))
+            .where(Recruiter.id == rec_id)
+        )
+        recruiter = recruiter_result.scalar_one_or_none()
         if not recruiter:
             return None
         cities = (await session.scalars(select(City).order_by(City.name.asc()))).all()
-        selected_ids = {c.id for c in cities if c.responsible_recruiter_id == rec_id}
+        selected_ids = {city.id for city in recruiter.cities}
     return {
         "recruiter": recruiter,
         "cities": cities,
@@ -166,7 +183,12 @@ async def update_recruiter(
     cities: Optional[List[str]] = None,
 ) -> Dict[str, object]:
     async with async_session() as session:
-        recruiter = await session.get(Recruiter, rec_id)
+        recruiter_result = await session.execute(
+            select(Recruiter)
+            .options(selectinload(Recruiter.cities))
+            .where(Recruiter.id == rec_id)
+        )
+        recruiter = recruiter_result.scalar_one_or_none()
         if not recruiter:
             return {
                 "ok": False,
@@ -177,23 +199,19 @@ async def update_recruiter(
             for key, value in payload.items():
                 setattr(recruiter, key, value)
 
-            selected: List[int] = []
-            if cities:
-                for cid in cities:
-                    if cid and cid.strip().isdigit():
-                        selected.append(int(cid.strip()))
-
-            await session.execute(
-                update(City)
-                .where(City.responsible_recruiter_id == rec_id)
-                .values(responsible_recruiter_id=None)
-            )
-            if selected:
+            selected_ids = _parse_city_ids(cities)
+            if selected_ids:
                 await session.execute(
-                    update(City)
-                    .where(City.id.in_(selected))
-                    .values(responsible_recruiter_id=rec_id)
+                    delete(recruiter_city_association).where(
+                        recruiter_city_association.c.city_id.in_(selected_ids)
+                    )
                 )
+                linked_cities = (
+                    await session.scalars(select(City).where(City.id.in_(selected_ids)))
+                ).all()
+                recruiter.cities = list(linked_cities)
+            else:
+                recruiter.cities = []
 
             await session.commit()
         except IntegrityError as exc:  # pragma: no cover - defensive, regression covered by tests
@@ -209,9 +227,9 @@ async def delete_recruiter(rec_id: int) -> None:
         if not recruiter:
             return
         await session.execute(
-            update(City)
-            .where(City.responsible_recruiter_id == rec_id)
-            .values(responsible_recruiter_id=None)
+            delete(recruiter_city_association).where(
+                recruiter_city_association.c.recruiter_id == rec_id
+            )
         )
         await session.delete(recruiter)
         await session.commit()
@@ -232,18 +250,26 @@ def build_recruiter_payload(
     if tz_field:
         payload[tz_field] = tz.strip() if tz else "Europe/Moscow"
 
-    link = (telemost or "").strip() or None
     telemost_field = _pick_field(
         allowed,
         ["telemost_url", "telemost", "meet_link", "meet_url", "video_link", "video_url", "link", "room_url"],
     )
     if telemost_field:
-        payload[telemost_field] = link
+        link_raw = (telemost or "").strip()
+        if link_raw:
+            if not _is_valid_url(link_raw):
+                raise RecruiterValidationError("telemost", "Ссылка: укажите корректный URL")
+            payload[telemost_field] = link_raw
+        else:
+            payload[telemost_field] = None
 
     chat_field = _pick_field(allowed, ["tg_chat_id", "telegram_chat_id", "chat_id"])
     if chat_field:
-        if tg_chat_id and tg_chat_id.strip().isdigit():
-            payload[chat_field] = int(tg_chat_id.strip())
+        raw_chat = (tg_chat_id or "").strip()
+        if raw_chat:
+            if not raw_chat.isdigit():
+                raise RecruiterValidationError("tg_chat_id", "chat_id: только цифры")
+            payload[chat_field] = int(raw_chat)
         else:
             payload[chat_field] = None
 
@@ -275,9 +301,34 @@ def _integrity_error_payload(exc: IntegrityError) -> Dict[str, object]:
     return payload
 
 
+def _parse_city_ids(raw: Optional[List[str]]) -> List[int]:
+    if not raw:
+        return []
+    seen: set[int] = set()
+    result: List[int] = []
+    for value in raw:
+        if not isinstance(value, str):
+            continue
+        trimmed = value.strip()
+        if not trimmed or not trimmed.isdigit():
+            continue
+        city_id = int(trimmed)
+        if city_id in seen:
+            continue
+        seen.add(city_id)
+        result.append(city_id)
+    return result
+
+
 async def api_recruiters_payload() -> List[Dict[str, object]]:
     async with async_session() as session:
-        recs = (await session.scalars(select(Recruiter).order_by(Recruiter.id.asc()))).all()
+        recs = (
+            await session.scalars(
+                select(Recruiter)
+                .options(selectinload(Recruiter.cities))
+                .order_by(Recruiter.id.asc())
+            )
+        ).all()
     return [
         {
             "id": r.id,
@@ -285,6 +336,45 @@ async def api_recruiters_payload() -> List[Dict[str, object]]:
             "tz": getattr(r, "tz", None),
             "tg_chat_id": getattr(r, "tg_chat_id", None),
             "active": getattr(r, "active", True),
+            "city_ids": sorted(city.id for city in r.cities),
         }
         for r in recs
     ]
+
+
+async def api_get_recruiter(recruiter_id: int) -> Optional[Dict[str, object]]:
+    async with async_session() as session:
+        recruiter = await session.scalar(
+            select(Recruiter)
+            .options(selectinload(Recruiter.cities))
+            .where(Recruiter.id == recruiter_id)
+        )
+    if recruiter is None:
+        return None
+    return {
+        "id": recruiter.id,
+        "name": recruiter.name,
+        "tz": getattr(recruiter, "tz", None),
+        "tg_chat_id": getattr(recruiter, "tg_chat_id", None),
+        "active": getattr(recruiter, "active", True),
+        "city_ids": sorted(city.id for city in recruiter.cities),
+    }
+
+
+class RecruiterValidationError(ValueError):
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(message)
+        self.field = field
+
+
+def _is_valid_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in {"http", "https"}:
+        return False
+    if not parsed.netloc:
+        return False
+    return True

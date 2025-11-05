@@ -228,6 +228,16 @@
   color: var(--bad);
 }
 
+.chip--primary {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: color-mix(in srgb, var(--accent) 80%, var(--fg));
+}
+
+.chip--muted {
+  border-color: color-mix(in srgb, var(--glass-stroke) 65%, transparent);
+  color: color-mix(in srgb, var(--muted) 80%, var(--fg));
+}
+
 /* Buttons */
 .btn-primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
@@ -927,6 +937,74 @@ button.sort[aria-sort="descending"] .arrow {
 
 .sheet.open {
   transform: translateX(0);
+}
+
+/* Confirmation modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease;
+  z-index: 220;
+}
+
+.modal.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 12, 18, 0.65);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.modal__dialog {
+  position: relative;
+  max-width: min(420px, 100%);
+  width: 100%;
+  border-radius: var(--radius-lg);
+  padding: clamp(22px, 3vw, 28px);
+  box-shadow: var(--shadow-2);
+  transform: translateY(18px);
+  transition: transform .2s ease;
+  z-index: 1;
+}
+
+.modal.open .modal__dialog {
+  transform: translateY(0);
+}
+
+.modal__content {
+  display: grid;
+  gap: clamp(14px, 2vw, 20px);
+}
+
+.modal__title {
+  margin: 0;
+  font-size: clamp(18px, 2.4vw, 22px);
+  font-weight: 650;
+  color: var(--fg-strong);
+}
+
+.modal__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .sheet-header {

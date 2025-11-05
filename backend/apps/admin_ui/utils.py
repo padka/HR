@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import math
@@ -100,3 +100,14 @@ def recruiter_time_to_utc(date: str, time: str, recruiter_tz: Optional[str]) -> 
         return None
     dt_local = dt_local.replace(tzinfo=safe_zone(recruiter_tz))
     return dt_local.astimezone(timezone.utc)
+
+
+def render_or_empty(value: Optional[Any], placeholder: str = "нет данных") -> str:
+    if value is None:
+        return placeholder
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or placeholder
+    if value == "":
+        return placeholder
+    return str(value)

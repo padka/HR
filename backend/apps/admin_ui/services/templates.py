@@ -202,13 +202,16 @@ async def list_templates() -> Dict[str, object]:
         if item.key in STAGE_KEYS:
             continue
         city = getattr(item, "city", None)
+        city_display = getattr(city, "display_name", None) if city else None
+        city_plain = getattr(city, "name_plain", None) if city else None
         preview = _preview_text(item.content)
         custom_templates.append(
             {
                 "id": item.id,
                 "key": item.key,
                 "city_id": item.city_id,
-                "city_name": getattr(city, "name", None),
+                "city_name": city_display,
+                "city_name_plain": city_plain,
                 "city_tz": getattr(city, "tz", None),
                 "is_global": item.city_id is None,
                 "length": len(item.content or ""),

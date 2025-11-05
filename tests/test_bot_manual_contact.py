@@ -39,8 +39,8 @@ async def test_manual_contact_links_responsible_recruiter(monkeypatch):
             name="Тестоград",
             tz="Europe/Moscow",
             active=True,
-            responsible_recruiter_id=recruiter.id,
         )
+        city.recruiters.append(recruiter)
         session.add(city)
         await session.commit()
         city_id = city.id
@@ -102,8 +102,8 @@ async def test_manual_contact_without_responsible_link(monkeypatch):
             name="Нетлинк",
             tz="Europe/Moscow",
             active=True,
-            responsible_recruiter_id=recruiter.id,
         )
+        city.recruiters.append(recruiter)
         session.add(city)
         await session.commit()
         city_id = city.id

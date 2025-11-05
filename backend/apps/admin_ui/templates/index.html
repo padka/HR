@@ -595,7 +595,7 @@
         {% for c in cities %}
           <li class="entity-card">
             <span class="entity-card__id">#{{ c.id }}</span>
-            <span class="entity-card__title">{{ c.name }}</span>
+            <span class="entity-card__title">{{ c.display_name }}</span>
             <span class="entity-card__meta">{{ c.tz or "Europe/Moscow" }}</span>
             <span class="entity-card__status"></span>
           </li>
