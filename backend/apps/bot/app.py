@@ -90,6 +90,33 @@ async def create_application(
 
 
 async def main() -> None:
+    settings = get_settings()
+
+    # Initialize Phase 2 Performance Cache
+    redis_url = settings.redis_url
+    if redis_url:
+        try:
+            from urllib.parse import urlparse
+            from backend.core.cache import CacheConfig, init_cache, connect_cache, disconnect_cache
+
+            parsed = urlparse(redis_url)
+            cache_config = CacheConfig(
+                host=parsed.hostname or "localhost",
+                port=parsed.port or 6379,
+                db=int(parsed.path.strip("/") or "0") if parsed.path else 0,
+                password=parsed.password,
+            )
+            init_cache(cache_config)
+            await connect_cache()
+            logging.info(f"✓ Phase 2 Cache initialized: {parsed.hostname}:{parsed.port}")
+        except Exception as e:
+            if settings.environment == "production":
+                raise RuntimeError(f"Failed to initialize cache in production: {e}") from e
+            else:
+                logging.warning(f"Cache initialization failed (non-production): {e}")
+    else:
+        logging.info("Cache disabled (no REDIS_URL)")
+
     bot, dispatcher, _, reminder_service, notification_service = await create_application()
     try:
         await bot.delete_webhook(drop_pending_updates=True)
@@ -101,6 +128,13 @@ async def main() -> None:
     finally:
         await reminder_service.shutdown()
         await notification_service.shutdown()
+        # Disconnect cache
+        try:
+            if redis_url:
+                from backend.core.cache import disconnect_cache
+                await disconnect_cache()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

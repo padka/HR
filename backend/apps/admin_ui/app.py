@@ -22,12 +22,45 @@ from backend.apps.admin_ui.routers import (
 from backend.apps.admin_ui.security import require_admin
 from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
 from backend.core.settings import get_settings
+from backend.core.cache import CacheConfig, init_cache, connect_cache, disconnect_cache
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # NOTE: Database migrations should be run separately before starting the app
     # Run: python scripts/run_migrations.py
+
+    settings = get_settings()
+
+    # Initialize Phase 2 Performance Cache
+    redis_url = settings.redis_url
+    if redis_url:
+        try:
+            # Parse Redis URL to extract host/port
+            # Format: redis://host:port/db or redis://host:port
+            from urllib.parse import urlparse
+            parsed = urlparse(redis_url)
+
+            cache_config = CacheConfig(
+                host=parsed.hostname or "localhost",
+                port=parsed.port or 6379,
+                db=int(parsed.path.strip("/") or "0") if parsed.path else 0,
+                password=parsed.password,
+            )
+            init_cache(cache_config)
+            await connect_cache()
+            logging.info(f"✓ Phase 2 Cache initialized: {parsed.hostname}:{parsed.port}")
+        except Exception as e:
+            if settings.environment == "production":
+                raise RuntimeError(f"Failed to initialize cache in production: {e}") from e
+            else:
+                logging.warning(f"Cache initialization failed (non-production): {e}")
+    else:
+        if settings.environment == "production":
+            logging.warning("⚠ REDIS_URL not set in production - cache disabled")
+        else:
+            logging.info("Cache disabled (no REDIS_URL)")
+
     register_template_globals()
     integration: BotIntegration = await setup_bot_state(app)
     routes = [r.path for r in app.routes if hasattr(r, "path")]
@@ -36,6 +69,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await integration.shutdown()
+        # Disconnect cache
+        try:
+            await disconnect_cache()
+        except Exception:
+            pass
 
 
 def create_app() -> FastAPI:

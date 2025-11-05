@@ -42,6 +42,26 @@ async def health_check(request: Request) -> JSONResponse:
             "ok" if getattr(request.app.state, "state_manager", None) else "missing"
         ),
     }
+
+    # Check Phase 2 Redis Cache
+    cache_status = "disabled"
+    try:
+        from backend.core.cache import get_cache
+        cache = get_cache()
+        # Try a simple ping operation
+        test_result = await cache.exists("__health_check__")
+        if test_result.is_success():
+            cache_status = "ok"
+        else:
+            cache_status = "error"
+    except RuntimeError:
+        # Cache not initialized
+        cache_status = "disabled"
+    except Exception as exc:
+        logger.warning(f"Cache health check failed: {exc}")
+        cache_status = "error"
+    checks["cache"] = cache_status
+
     bot_service = getattr(request.app.state, "bot_service", None)
     bot_client_status = bot_service.health_status if bot_service else "missing"
     checks["bot_client"] = bot_client_status
