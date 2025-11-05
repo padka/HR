@@ -13,6 +13,7 @@ from backend.core.env import load_env
 
 @dataclass(frozen=True)
 class Settings:
+    environment: str  # development, production, staging
     data_dir: Path
     database_url_async: str
     database_url_sync: str
@@ -121,6 +122,11 @@ def _get_bool_with_fallback(*names: str, default: bool = False) -> bool:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    # Determine environment (default to development for safety)
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    if environment not in {"development", "production", "staging"}:
+        environment = "development"
+
     data_dir = _default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     if not os.getenv("DATABASE_URL"):
@@ -210,6 +216,7 @@ def get_settings() -> Settings:
     db_pool_recycle = _get_int("DB_POOL_RECYCLE", 3600, minimum=60)
 
     return Settings(
+        environment=environment,
         data_dir=data_dir,
         database_url_async=async_url,
         database_url_sync=sync_url,

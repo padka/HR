@@ -24,10 +24,20 @@ from backend.apps.bot.reminders import (
     configure_reminder_service,
     create_scheduler,
 )
-from backend.apps.bot.services import StateManager
-from backend.apps.bot.services import configure as configure_bot_services
+from backend.apps.bot.services import (
+    NotificationService,
+    StateManager,
+    configure as configure_bot_services,
+    configure_notification_service,
+)
 from backend.apps.bot.state_store import build_state_manager
 from backend.core.settings import get_settings
+from backend.apps.bot.broker import InMemoryNotificationBroker, NotificationBroker
+
+try:  # pragma: no cover - redis is optional in some environments
+    from redis.asyncio import Redis
+except Exception:  # pragma: no cover
+    Redis = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +51,8 @@ class BotIntegration:
     bot_service: BotService
     integration_switch: IntegrationSwitch
     reminder_service: ReminderService
+    notification_service: NotificationService
+    notification_broker: Optional[object]
 
     async def shutdown(self) -> None:
         """Shutdown resources created for the integration."""
@@ -60,6 +72,11 @@ class BotIntegration:
             await self.reminder_service.shutdown()
         except Exception:  # pragma: no cover - scheduler cleanup issues
             logger.exception("Failed to shutdown reminder service cleanly")
+
+        try:
+            await self.notification_service.shutdown()
+        except Exception:  # pragma: no cover - cleanup issues
+            logger.exception("Failed to shutdown notification service cleanly")
 
 
 def _build_bot(settings) -> Tuple[Optional[Bot], bool]:
@@ -127,9 +144,70 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
 
     switch = IntegrationSwitch(initial=settings.bot_integration_enabled)
     scheduler = create_scheduler(getattr(settings, "redis_url", None))
+
+    redis_url = getattr(settings, "redis_url", None)
+    broker_instance: Optional[object] = None
+
+    # Production MUST use Redis - no in-memory fallback allowed
+    if settings.environment == "production":
+        if not redis_url:
+            raise RuntimeError(
+                "REDIS_URL is required in production environment. "
+                "InMemory broker is not allowed in production. "
+                "Please configure REDIS_URL environment variable."
+            )
+        if Redis is None:
+            raise RuntimeError(
+                "Redis client is not available. Install redis package: pip install redis"
+            )
+
+    if redis_url and Redis is not None:
+        try:
+            redis_client = Redis.from_url(redis_url)
+            broker_instance = NotificationBroker(redis_client)
+            await broker_instance.start()
+            logger.info(f"Redis notification broker initialized (environment: {settings.environment})")
+        except Exception as e:
+            if settings.environment == "production":
+                # In production, fail fast - don't fallback to in-memory
+                raise RuntimeError(
+                    f"Failed to initialize Redis notification broker in production: {e}"
+                ) from e
+            else:
+                # In development/staging, allow fallback to in-memory
+                logger.warning(
+                    f"Failed to initialise Redis notification broker; using in-memory fallback. "
+                    f"Error: {e}"
+                )
+                broker_instance = None
+
+    if broker_instance is None:
+        if settings.environment == "production":
+            raise RuntimeError(
+                "Cannot use in-memory notification broker in production. "
+                "Redis is required for distributed worker coordination."
+            )
+        logger.warning(
+            f"Using InMemoryNotificationBroker (environment: {settings.environment}). "
+            "This is only suitable for development/testing."
+        )
+        broker_instance = InMemoryNotificationBroker()
+        await broker_instance.start()
+
     reminder_service = ReminderService(scheduler=scheduler)
     configure_reminder_service(reminder_service)
     await reminder_service.sync_jobs()
+    notification_service = NotificationService(
+        scheduler=scheduler,
+        broker=broker_instance,
+        poll_interval=settings.notification_poll_interval,
+        batch_size=settings.notification_batch_size,
+        rate_limit_per_sec=settings.notification_rate_limit_per_sec,
+        max_attempts=settings.notification_max_attempts,
+        retry_base_delay=settings.notification_retry_base_seconds,
+        retry_max_delay=settings.notification_retry_max_seconds,
+    )
+    configure_notification_service(notification_service)
     bot_service = BotService(
         state_manager=state_manager,
         enabled=settings.bot_enabled,
@@ -167,6 +245,7 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     app.state.bot_service = bot_service
     app.state.bot_integration_switch = switch
     app.state.reminder_service = reminder_service
+    app.state.notification_service = notification_service
 
     return BotIntegration(
         state_manager=state_manager,
@@ -174,6 +253,8 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
         bot_service=bot_service,
         integration_switch=switch,
         reminder_service=reminder_service,
+        notification_service=notification_service,
+        notification_broker=broker_instance,
     )
 
 
