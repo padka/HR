@@ -205,3 +205,96 @@ async def test_intro_day_duplicate_prevention():
 
         assert existing_slot is not None, "Should find existing intro_day slot"
         assert existing_slot.id == slot1.id, "Should find the same slot we just created"
+
+
+@pytest.mark.asyncio
+async def test_intro_day_and_interview_slots_can_coexist():
+    """Test that a candidate can have both interview and intro_day slots with same recruiter"""
+    # Create candidate who passed TEST2
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=888004,
+        fio="Алексей Комбинированный",
+        city="Москва",
+    )
+
+    question_data = [
+        {
+            "question_index": i,
+            "question_text": f"Test2 Q{i}",
+            "correct_answer": "A",
+            "user_answer": "A" if i <= 8 else "B",
+            "attempts_count": 1,
+            "time_spent": 30,
+            "is_correct": i <= 8,
+            "overtime": False,
+        }
+        for i in range(1, 11)
+    ]
+
+    await candidate_services.save_test_result(
+        user_id=candidate.id,
+        raw_score=8,
+        final_score=8.0,
+        rating="TEST2",
+        total_time=300,
+        question_data=question_data,
+    )
+
+    async with async_session() as session:
+        city = City(name="Москва")
+        session.add(city)
+        await session.flush()
+
+        recruiter = Recruiter(
+            name="Универсальный Рекрутер",
+            tg_chat_id=777003,
+            tz="Europe/Moscow",
+        )
+        session.add(recruiter)
+        await session.flush()
+
+        # Create interview slot first
+        interview_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            candidate_city_id=city.id,
+            purpose="interview",
+            tz_name="Europe/Moscow",
+            start_utc=datetime.utcnow() + timedelta(days=1),
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(interview_slot)
+        await session.commit()
+
+        # Now create intro_day slot with SAME candidate and recruiter
+        # This should succeed with new unique index that includes purpose
+        intro_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            candidate_city_id=city.id,
+            purpose="intro_day",
+            tz_name="Europe/Moscow",
+            start_utc=datetime.utcnow() + timedelta(days=2),
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(intro_slot)
+        await session.commit()  # This should NOT fail
+
+        # Verify both slots exist
+        all_slots_query = select(Slot).where(
+            Slot.candidate_tg_id == candidate.telegram_id,
+            Slot.recruiter_id == recruiter.id,
+        )
+        result = await session.execute(all_slots_query)
+        all_slots = result.scalars().all()
+
+        assert len(all_slots) == 2, "Should have both interview and intro_day slots"
+
+        purposes = {slot.purpose for slot in all_slots}
+        assert purposes == {"interview", "intro_day"}, "Should have one of each purpose"
