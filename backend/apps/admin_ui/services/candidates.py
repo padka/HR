@@ -39,6 +39,7 @@ STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
     [
         ("new", {"label": "Новые", "icon": "🆕", "tone": "muted"}),
         ("in_progress", {"label": "В обработке", "icon": "🛠️", "tone": "info"}),
+        ("needs_intro_day", {"label": "Нужно назначить ОД", "icon": "📆", "tone": "warning"}),
         ("awaiting_confirmation", {"label": "Ожидает подтверждения", "icon": "⏳", "tone": "warning"}),
         ("assigned", {"label": "Назначен на собеседование", "icon": "📅", "tone": "primary"}),
         ("confirmed", {"label": "Подтвердил явку", "icon": "✅", "tone": "success"}),
@@ -494,6 +495,15 @@ async def list_candidates(
             .correlate(User)
         )
 
+        has_intro_day_slot_expr = exists(
+            select(1)
+            .where(
+                Slot.candidate_tg_id == User.telegram_id,
+                Slot.purpose == 'intro_day',
+            )
+            .correlate(User)
+        )
+
         status_case = case(
             (
                 success_outcome_expr,
@@ -518,6 +528,10 @@ async def list_candidates(
             (
                 past_slot_expr,
                 literal('completed'),
+            ),
+            (
+                test2_pass_expr & ~has_intro_day_slot_expr,
+                literal('needs_intro_day'),
             ),
             (
                 has_tests_expr,
@@ -1422,6 +1436,15 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
 
         telemost_url, telemost_source = _resolve_telemost_url(slots)
 
+        # Check if candidate needs intro day
+        test2_passed = False
+        if "test2" in test_sections_map:
+            test2_section = test_sections_map["test2"]
+            test2_passed = test2_section.get("status") == "passed"
+
+        has_intro_day_slot = any(slot.purpose == "intro_day" for slot in slots)
+        needs_intro_day = test2_passed and not has_intro_day_slot
+
     return {
         "user": user,
         "tests": test_results,
@@ -1433,6 +1456,7 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
         "upcoming_slot": upcoming_slot,
         "stage": stage,
         "timeline": timeline,
+        "needs_intro_day": needs_intro_day,
         "stats": {
             "tests_total": int(tests_total or 0),
             "average_score": float(avg_score) if avg_score is not None else None,

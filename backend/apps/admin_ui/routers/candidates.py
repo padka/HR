@@ -376,3 +376,174 @@ async def candidates_download_report(candidate_id: int, report_key: str):
         raise HTTPException(status_code=404)
     media_type = "application/pdf" if file_path.suffix.lower() == ".pdf" else "text/plain"
     return FileResponse(file_path, filename=file_path.name, media_type=media_type)
+
+
+@router.get("/{candidate_id}/schedule-intro-day", response_class=HTMLResponse)
+async def candidates_schedule_intro_day_form(
+    request: Request,
+    candidate_id: int,
+) -> HTMLResponse:
+    """Show form to schedule an intro day for a candidate"""
+    from backend.apps.admin_ui.services.slots import recruiters_for_slot_form
+
+    detail = await get_candidate_detail(candidate_id)
+    if not detail:
+        return RedirectResponse(url="/candidates", status_code=303)
+
+    user = detail["user"]
+
+    # Check if candidate needs intro day
+    if not detail.get("needs_intro_day", False):
+        return RedirectResponse(url=f"/candidates/{candidate_id}", status_code=303)
+
+    # Get recruiters for the form
+    recruiters_data = await recruiters_for_slot_form()
+
+    # Mark recruiter as default if they match candidate's city
+    for rec_data in recruiters_data:
+        rec_data["is_default"] = False
+        if user.city:
+            for city in rec_data.get("cities", []):
+                city_name = getattr(city, "name", None) or getattr(city, "name_plain", None)
+                if city_name and user.city.lower() in city_name.lower():
+                    rec_data["is_default"] = True
+                    break
+
+    context = {
+        "request": request,
+        "candidate": user,
+        "recruiters": recruiters_data,
+        "errors": [],
+    }
+    return templates.TemplateResponse("schedule_intro_day.html", context)
+
+
+@router.post("/{candidate_id}/schedule-intro-day")
+async def candidates_schedule_intro_day_submit(
+    request: Request,
+    candidate_id: int,
+    recruiter_id: int = Form(...),
+    date: str = Form(...),
+    time: str = Form(...),
+    bot_service: BotService = Depends(provide_bot_service),
+) -> HTMLResponse:
+    """Create intro_day slot and send invitation to candidate"""
+    from backend.domain.repositories import reserve_slot
+    from backend.apps.admin_ui.services.slots import recruiters_for_slot_form, recruiter_time_to_utc
+    from backend.domain.repositories import add_outbox_notification
+
+    detail = await get_candidate_detail(candidate_id)
+    if not detail:
+        return RedirectResponse(url="/candidates", status_code=303)
+
+    user = detail["user"]
+    errors = []
+
+    # Validate inputs
+    if not date or not time:
+        errors.append("Укажите дату и время ознакомительного дня")
+
+    if errors:
+        recruiters_data = await recruiters_for_slot_form()
+        context = {
+            "request": request,
+            "candidate": user,
+            "recruiters": recruiters_data,
+            "errors": errors,
+        }
+        return templates.TemplateResponse("schedule_intro_day.html", context, status_code=400)
+
+    # Convert local time to UTC
+    from backend.core.db import async_session
+    from backend.domain.models import Recruiter, City, Slot, SlotStatus
+
+    async with async_session() as session:
+        recruiter = await session.get(Recruiter, recruiter_id)
+        if not recruiter:
+            errors.append("Рекрутёр не найден")
+
+        if not errors:
+            dt_utc = recruiter_time_to_utc(date, time, getattr(recruiter, "tz", None))
+            if not dt_utc:
+                errors.append("Некорректная дата или время")
+
+        if errors:
+            recruiters_data = await recruiters_for_slot_form()
+            context = {
+                "request": request,
+                "candidate": user,
+                "recruiters": recruiters_data,
+                "errors": errors,
+            }
+            return templates.TemplateResponse("schedule_intro_day.html", context, status_code=400)
+
+        # Determine city for the slot
+        city_id = None
+        if user.city and recruiter.cities:
+            for city in recruiter.cities:
+                city_name = getattr(city, "name", None) or getattr(city, "name_plain", None)
+                if city_name and user.city.lower() in city_name.lower():
+                    city_id = city.id
+                    break
+
+        # If no matching city, use recruiter's first city
+        if city_id is None and recruiter.cities:
+            city_id = recruiter.cities[0].id
+
+        if city_id is None:
+            errors.append("Не удалось определить город для назначения. Проверьте привязку рекрутёра к городам.")
+            recruiters_data = await recruiters_for_slot_form()
+            context = {
+                "request": request,
+                "candidate": user,
+                "recruiters": recruiters_data,
+                "errors": errors,
+            }
+            return templates.TemplateResponse("schedule_intro_day.html", context, status_code=400)
+
+        city = await session.get(City, city_id)
+        slot_tz = getattr(city, "tz", None) or getattr(recruiter, "tz", None) or "Europe/Moscow"
+        candidate_tz = slot_tz  # Assume candidate timezone same as city
+
+        # Create intro_day slot
+        slot = Slot(
+            recruiter_id=recruiter_id,
+            city_id=city_id,
+            candidate_city_id=city_id,
+            purpose="intro_day",
+            tz_name=slot_tz,
+            start_utc=dt_utc,
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=user.telegram_id,
+            candidate_fio=user.fio,
+            candidate_tz=candidate_tz,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        # Send invitation notification
+        try:
+            await add_outbox_notification(
+                notification_type="intro_day_invitation",
+                booking_id=slot.id,
+                candidate_tg_id=user.telegram_id,
+                payload={},
+            )
+        except Exception as e:
+            # Log error but don't fail the request
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.exception("Failed to enqueue intro day invitation", extra={"slot_id": slot.id})
+
+        # Schedule reminders
+        try:
+            from backend.apps.bot.reminders import get_reminder_service
+            reminder_service = get_reminder_service()
+            await reminder_service.schedule_for_slot(slot.id, skip_confirmation_prompts=False)
+        except Exception:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.exception("Failed to schedule reminders for intro day", extra={"slot_id": slot.id})
+
+    return RedirectResponse(url=f"/candidates/{candidate_id}", status_code=303)

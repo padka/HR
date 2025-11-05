@@ -45,6 +45,7 @@ class ReminderKind(str, Enum):
     REMIND_2H = "remind_2h"
     REMIND_1H = "remind_1h"
     CONFIRM_6H = "confirm_6h"
+    CONFIRM_3H = "confirm_3h"
     CONFIRM_2H = "confirm_2h"
 
 
@@ -146,6 +147,7 @@ class ReminderService:
             if skip_confirmation_prompts:
                 confirm_kinds = {
                     ReminderKind.CONFIRM_6H,
+                    ReminderKind.CONFIRM_3H,
                     ReminderKind.CONFIRM_2H,
                     ReminderKind.REMIND_2H,
                 }
@@ -250,6 +252,7 @@ class ReminderService:
         total = len(jobs)
         confirm_suffixes = {
             ReminderKind.CONFIRM_6H.value,
+            ReminderKind.CONFIRM_3H.value,
             ReminderKind.CONFIRM_2H.value,
         }
         confirm = sum(
@@ -392,6 +395,7 @@ class ReminderService:
         targets: List[tuple[ReminderKind, timedelta]] = [
             (ReminderKind.REMIND_24H, timedelta(hours=24)),
             (ReminderKind.CONFIRM_6H, timedelta(hours=6)),
+            (ReminderKind.CONFIRM_3H, timedelta(hours=3)),
             (ReminderKind.CONFIRM_2H, timedelta(hours=2)),
         ]
         plans: List[ReminderPlan] = []
@@ -561,6 +565,7 @@ def _ensure_aware(dt: datetime) -> datetime:
 def _immediate_group(kind: ReminderKind) -> str:
     if kind in {
         ReminderKind.CONFIRM_6H,
+        ReminderKind.CONFIRM_3H,
         ReminderKind.CONFIRM_2H,
         ReminderKind.REMIND_2H,
     }:

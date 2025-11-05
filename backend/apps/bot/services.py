@@ -625,6 +625,7 @@ class NotificationService:
             "recruiter_candidate_confirmed_notice": self._process_recruiter_notice,
             "interview_reminder_2h": self._process_interview_reminder,
             "slot_reminder": self._process_interview_reminder,
+            "intro_day_invitation": self._process_intro_day_invitation,
         }
         handler = handlers.get(item.type)
         previous_message = self._current_message
@@ -1259,6 +1260,7 @@ class NotificationService:
 
         confirm_map = {
             ReminderKind.CONFIRM_6H: "confirm_6h",
+            ReminderKind.CONFIRM_3H: "confirm_3h",
             ReminderKind.CONFIRM_2H: "confirm_2h",
             ReminderKind.REMIND_2H: "confirm_2h",
         }
@@ -1325,6 +1327,158 @@ class NotificationService:
             await _send_with_retry(
                 bot,
                 SendMessage(chat_id=candidate_id, text=rendered.text, reply_markup=reply_markup),
+                correlation_id=f"outbox:{slot.id}:{uuid.uuid4().hex}",
+            )
+        except TelegramRetryAfter as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type=log_type,
+                notification_type=notification_type,
+                error=str(exc),
+                rendered=rendered,
+                retry_after=exc.retry_after,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except (TelegramServerError, asyncio.TimeoutError, ClientError) as exc:
+            self._open_circuit()
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type=log_type,
+                notification_type=notification_type,
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except TelegramBadRequest as exc:
+            await self._mark_failed(
+                item,
+                attempt,
+                log_type,
+                notification_type,
+                str(exc),
+                rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type=log_type,
+                notification_type=notification_type,
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        await self._mark_sent(
+            item,
+            attempt,
+            log_type,
+            notification_type,
+            rendered,
+            candidate_id,
+        )
+
+    async def _process_intro_day_invitation(self, item: OutboxItem) -> None:
+        """Process intro day invitation - immediate invitation with confirmation"""
+        slot = await get_slot(item.booking_id) if item.booking_id is not None else None
+        if not slot or slot.candidate_tg_id != item.candidate_tg_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "intro_day_invitation",
+                "intro_day_invitation",
+                "slot_mismatch",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        candidate_id = slot.candidate_tg_id
+        log_type = "intro_day_invitation"
+        notification_type = "intro_day_invitation"
+
+        if await self._has_sent_log(log_type, slot.id, candidate_id):
+            await update_outbox_entry(
+                item.id,
+                status="sent",
+                attempts=item.attempts,
+                next_retry_at=None,
+                last_error=None,
+            )
+            return
+
+        recruiter = await get_recruiter(slot.recruiter_id) if slot.recruiter_id else None
+        tz = slot.candidate_tz or DEFAULT_TZ
+        labels = slot_local_labels(slot.start_utc, tz)
+        context = {
+            "candidate_name": slot.candidate_fio or str(candidate_id or ""),
+            "candidate_fio": slot.candidate_fio or str(candidate_id or ""),
+            "recruiter_name": recruiter.name if recruiter else "",
+            "dt_local": TemplateProvider.format_local_dt(slot.start_utc, tz),
+            "tz_name": tz,
+            "join_link": getattr(recruiter, "telemost_url", "") or "",
+            **labels,
+        }
+
+        # Use template provider for intro_day_invitation
+        rendered = await self._template_provider.render("intro_day_invitation", context)
+        if rendered is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                log_type,
+                notification_type,
+                "template_missing",
+                None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        attempt = item.attempts + 1
+        await self._ensure_log(
+            log_type,
+            item,
+            attempt,
+            rendered,
+            candidate_id,
+        )
+
+        if self._is_circuit_open():
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type=log_type,
+                notification_type=notification_type,
+                error="circuit_open",
+                rendered=rendered,
+                retry_after=self._breaker_remaining(),
+                candidate_tg_id=candidate_id,
+                count_failure=False,
+            )
+            return
+
+        await self._throttle()
+        bot = get_bot()
+
+        # Send with confirmation keyboard
+        from backend.apps.bot.keyboards import kb_attendance_confirm
+
+        try:
+            await _send_with_retry(
+                bot,
+                SendMessage(
+                    chat_id=candidate_id,
+                    text=rendered.text,
+                    reply_markup=kb_attendance_confirm(slot.id),
+                ),
                 correlation_id=f"outbox:{slot.id}:{uuid.uuid4().hex}",
             )
         except TelegramRetryAfter as exc:

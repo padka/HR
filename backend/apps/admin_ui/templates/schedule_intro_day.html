@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% import "partials/form_shell.html" as forms %}
+{% block title %}Назначить ознакомительный день для {{ candidate.fio }}{% endblock %}
+{% block content %}
+<section class="form-shell" data-tilt>
+  <header class="form-shell__header">
+    <div class="form-shell__heading">
+      <h1 class="form-shell__title">Ознакомительный день</h1>
+      <p class="form-shell__description">Назначьте ознакомительный день для {{ candidate.fio }}</p>
+    </div>
+    {% call forms.meta() %}
+      <span class="chip" id="now_chip" title="Текущее время в выбранном поясе">⏱️ <span id="now_text">—:—</span></span>
+    {% endcall %}
+  </header>
+</section>
+
+{% set tone_map = {'success': 'success', 'error': 'danger', 'info': 'info'} %}
+{% if errors %}
+  <div class="surface glass grain alert" data-tone="danger" role="alert">
+    <ul>
+      {% for error in errors %}
+        <li>{{ error }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+{% if not recruiters %}
+  <div class="surface glass grain alert" role="alert">
+    <h2 class="form-shell__section-title">Нет рекрутёров</h2>
+    <p class="form-shell__section-hint">Сначала добавьте рекрутёра для города {{ candidate.city }}.</p>
+    <div class="btn-group mt-sm">
+      <a class="btn btn--primary" href="/recruiters/new">+ Добавить рекрутёра</a>
+      <a class="btn btn--ghost" href="/candidates/{{ candidate.id }}">← Вернуться к кандидату</a>
+    </div>
+  </div>
+{% else %}
+  {% call forms.shell(
+    title="Назначение ознакомительного дня",
+    description="Укажите дату и время — кандидату автоматически отправится приглашение с подтверждением",
+    form_id="form-intro-day",
+    action="/candidates/" + candidate.id|string + "/schedule-intro-day",
+    autocomplete="off",
+    section_id="panel-intro-day",
+    actions=[
+      {"type": "submit", "text": "Назначить и отправить приглашение", "variant": "primary", "id": "btn-schedule", "disabled": true},
+      {"href": "/candidates/" + candidate.id|string, "text": "Отмена", "variant": "ghost"}
+    ]
+  ) %}
+    {% call forms.section("Информация о кандидате") %}
+      <div class="data-list">
+        <div>
+          <dt>ФИО</dt>
+          <dd><strong>{{ candidate.fio }}</strong></dd>
+        </div>
+        <div>
+          <dt>Город</dt>
+          <dd>{{ candidate.city or "Не указан" }}</dd>
+        </div>
+        <div>
+          <dt>Telegram</dt>
+          <dd>
+            <span class="candidate-card__code">{{ candidate.telegram_id }}</span>
+            {% if candidate.username %}
+              <a class="btn btn-primary btn-xs" href="https://t.me/{{ candidate.username }}" target="_blank" style="margin-left: 8px;">Открыть чат</a>
+            {% endif %}
+          </dd>
+        </div>
+      </div>
+    {% endcall %}
+
+    {% call forms.section("Рекрутёр") %}
+      {% call forms.field("Рекрутёр", hint="Выберите рекрутёра для проведения ознакомительного дня") %}
+        <select id="recruiter_id" name="recruiter_id" required>
+          <option value="" disabled selected>— выберите рекрутёра —</option>
+          {% for item in recruiters %}
+            {% set r = item.rec %}
+            {% set tz_value = r.tz or 'Europe/Moscow' %}
+            {% set tz_label = tz_display(tz_value) %}
+            <option value="{{ r.id }}"
+                    data-tz="{{ tz_value }}"
+                    data-tz-label="{{ tz_label }}"
+                    {% if item.is_default %}selected{% endif %}>{{ r.name }} ({{ tz_label }})</option>
+          {% endfor %}
+        </select>
+      {% endcall %}
+      {% call forms.meta() %}
+        {% call forms.note(inline=True, id='tz_hint') %}Регион: —{% endcall %}
+        <span class="chip" id="offset_chip" title="Смещение от UTC">GMT <span id="offset_text">±0</span></span>
+      {% endcall %}
+    {% endcall %}
+
+    {% call forms.section("Дата и время") %}
+      <div class="form-grid form-grid--two">
+        {% call forms.field("Дата (локальная)", hint="Дата в часовом поясе рекрутёра") %}
+          <input id="date" type="date" name="date" required>
+          <div class="btn-group">
+            <button class="btn btn--ghost btn--sm" type="button" data-quick="today">Сегодня</button>
+            <button class="btn btn--ghost btn--sm" type="button" data-quick="tomorrow">Завтра</button>
+            <button class="btn btn--ghost btn--sm" type="button" data-quick="next-week">Через неделю</button>
+          </div>
+        {% endcall %}
+        {% call forms.field("Время (локальное)", hint="Время в часовом поясе рекрутёра") %}
+          <input id="time" type="time" name="time" required value="10:00">
+          <div class="btn-group">
+            <button class="btn btn--ghost btn--sm" type="button" data-time="10:00">10:00</button>
+            <button class="btn btn--ghost btn--sm" type="button" data-time="14:00">14:00</button>
+            <button class="btn btn--ghost btn--sm" type="button" data-time="16:00">16:00</button>
+          </div>
+        {% endcall %}
+      </div>
+    {% endcall %}
+
+    <input type="hidden" name="candidate_id" value="{{ candidate.id }}">
+    <input type="hidden" name="candidate_telegram_id" value="{{ candidate.telegram_id }}">
+    <input type="hidden" name="candidate_fio" value="{{ candidate.fio }}">
+    <input type="hidden" name="candidate_city" value="{{ candidate.city or '' }}">
+
+    <div class="preview-panel" id="preview" aria-live="polite">
+      <b>Превью</b><br>
+      Выберите рекрутёра, дату и время — покажем UTC и время кандидата.
+    </div>
+    {% call forms.note(id='submit_hint') %}Заполните все поля, чтобы назначить ознакомительный день.{% endcall %}
+  {% endcall %}
+{% endif %}
+
+<script>
+  const form = document.getElementById('form-intro-day');
+  const recruiterSelect = document.getElementById('recruiter_id');
+  const dateInput = document.getElementById('date');
+  const timeInput = document.getElementById('time');
+  const preview = document.getElementById('preview');
+  const submitBtn = document.getElementById('btn-schedule');
+  const nowText = document.getElementById('now_text');
+  const tzHint = document.getElementById('tz_hint');
+  const offsetText = document.getElementById('offset_text');
+
+  let currentTz = 'Europe/Moscow';
+
+  function updateNow() {
+    if (!currentTz) return;
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: currentTz,
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    nowText.textContent = formatter.format(now);
+  }
+
+  function getTzOffset(tz) {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'short',
+    });
+    const parts = formatter.formatToParts(now);
+    const tzPart = parts.find(p => p.type === 'timeZoneName');
+    if (tzPart && tzPart.value.startsWith('GMT')) {
+      return tzPart.value.replace('GMT', '');
+    }
+    // Fallback: calculate offset
+    const utcDate = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
+    const tzDate = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+    const offset = (tzDate - utcDate) / (1000 * 60 * 60);
+    return offset >= 0 ? `+${offset}` : `${offset}`;
+  }
+
+  function updatePreview() {
+    const recruiter = recruiterSelect.options[recruiterSelect.selectedIndex];
+    const date = dateInput.value;
+    const time = timeInput.value;
+
+    if (!recruiter || !recruiter.dataset.tz || !date || !time) {
+      preview.innerHTML = '<b>Превью</b><br>Выберите рекрутёра, дату и время.';
+      submitBtn.disabled = true;
+      return;
+    }
+
+    currentTz = recruiter.dataset.tz;
+    const tzLabel = recruiter.dataset.tzLabel || currentTz;
+
+    tzHint.innerHTML = `Регион: <strong>${tzLabel}</strong>`;
+    offsetText.textContent = getTzOffset(currentTz);
+
+    // Parse local datetime
+    const localDatetime = new Date(`${date}T${time}`);
+
+    // Convert to UTC
+    const utcFormatter = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    // Candidate timezone (assuming same as city or recruiter for now)
+    const candidateFormatter = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: currentTz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    preview.innerHTML = `
+      <b>Превью назначения</b><br>
+      <strong>Локальное время рекрутёра:</strong> ${date} ${time} (${tzLabel})<br>
+      <strong>UTC:</strong> ${utcFormatter.format(localDatetime)}<br>
+      <strong>Время кандидата:</strong> ${candidateFormatter.format(localDatetime)}<br>
+      <br>
+      <em>После назначения кандидату автоматически отправится приглашение с просьбой подтвердить участие.</em>
+    `;
+
+    submitBtn.disabled = false;
+  }
+
+  recruiterSelect.addEventListener('change', () => {
+    updatePreview();
+    updateNow();
+  });
+  dateInput.addEventListener('change', updatePreview);
+  timeInput.addEventListener('input', updatePreview);
+
+  // Quick date buttons
+  document.querySelectorAll('[data-quick]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.quick;
+      const now = new Date();
+      let targetDate = now;
+
+      if (action === 'tomorrow') {
+        targetDate.setDate(now.getDate() + 1);
+      } else if (action === 'next-week') {
+        targetDate.setDate(now.getDate() + 7);
+      }
+
+      const year = targetDate.getFullYear();
+      const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+      const day = String(targetDate.getDate()).padStart(2, '0');
+      dateInput.value = `${year}-${month}-${day}`;
+      updatePreview();
+    });
+  });
+
+  // Quick time buttons
+  document.querySelectorAll('[data-time]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      timeInput.value = btn.dataset.time;
+      updatePreview();
+    });
+  });
+
+  // Update clock every minute
+  setInterval(updateNow, 60000);
+  updateNow();
+  updatePreview();
+</script>
+{% endblock %}

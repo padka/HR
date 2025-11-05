@@ -326,6 +326,11 @@
     <p class="page-description">Telegram ID {{ user.telegram_id }} · {{ user.city or 'Город не указан' }}</p>
   </div>
   <div class="page-actions">
+    {% if needs_intro_day %}
+      <a href="/candidates/{{ user.id }}/schedule-intro-day" class="btn btn-primary">
+        📆 Назначить ознакомительный день
+      </a>
+    {% endif %}
     <form method="post" action="/candidates/{{ user.id }}/toggle">
       {% if user.is_active %}
         <input type="hidden" name="active" value="false">
