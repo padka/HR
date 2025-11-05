@@ -24,8 +24,11 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)
     fio: Mapped[str] = mapped_column(String(160), nullable=False)
     city: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    test1_report_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    test2_report_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_activity: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False

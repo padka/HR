@@ -27,7 +27,8 @@ async def cmd_start(message: Message) -> None:
         logger.warning("/start command without user", extra={"has_user": True})
         return
 
-    await services.begin_interview(user_id)
+    username = getattr(user, "username", None)
+    await services.begin_interview(user_id, username=username)
 
 
 @router.message(Command(commands=["intro", "test2"]))

@@ -2418,7 +2418,7 @@ async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Pa
     return delivered
 
 
-async def begin_interview(user_id: int) -> None:
+async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
     state_manager = get_state_manager()
     bot = get_bot()
     await state_manager.set(
@@ -2439,6 +2439,7 @@ async def begin_interview(user_id: int) -> None:
             picked_recruiter_id=None,
             picked_slot_id=None,
             test1_payload={},
+            username=username or "",  # Save username for later use
         ),
     )
     intro = await templates.tpl(None, "t1_intro")
@@ -3044,10 +3045,12 @@ async def finalize_test1(user_id: int) -> None:
     try:
         fio = state.get("fio") or f"TG {user_id}"
         city_name = state.get("city_name") or ""
+        username = state.get("username") or None
         candidate = await candidate_services.create_or_update_user(
             telegram_id=user_id,
             fio=fio,
             city=city_name,
+            username=username,
         )
 
         answers = state.get("test1_answers") or {}
@@ -3260,6 +3263,7 @@ async def finalize_test2(user_id: int) -> None:
 
     fio = state.get("fio") or f"TG {user_id}"
     city_name = state.get("city_name") or ""
+    username = state.get("username") or None
 
     candidate = None
     try:
@@ -3269,12 +3273,14 @@ async def finalize_test2(user_id: int) -> None:
                 telegram_id=user_id,
                 fio=fio,
                 city=city_name,
+                username=username,
             )
         else:
             candidate = await candidate_services.create_or_update_user(
                 telegram_id=user_id,
                 fio=fio,
                 city=city_name,
+                username=username,
             )
     except Exception:
         logger.exception("Failed to ensure candidate profile before Test 2 report")

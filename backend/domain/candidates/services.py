@@ -9,7 +9,12 @@ from backend.core.db import async_session
 from .models import AutoMessage, Notification, QuestionAnswer, TestResult, User
 
 
-async def create_or_update_user(telegram_id: int, fio: str, city: str) -> User:
+async def create_or_update_user(
+    telegram_id: int,
+    fio: str,
+    city: str,
+    username: Optional[str] = None
+) -> User:
     async with async_session() as session:
         result = await session.execute(
             select(User).where(User.telegram_id == telegram_id)
@@ -19,9 +24,13 @@ async def create_or_update_user(telegram_id: int, fio: str, city: str) -> User:
             user.fio = fio
             user.city = city
             user.last_activity = datetime.now(timezone.utc)
+            # Update username if provided (user might add/change it)
+            if username is not None:
+                user.username = username
         else:
             user = User(
                 telegram_id=telegram_id,
+                username=username,
                 fio=fio,
                 city=city,
                 last_activity=datetime.now(timezone.utc),
@@ -154,4 +163,25 @@ async def mark_notification_sent(notification_id: int) -> None:
         if notification:
             notification.is_sent = True
             notification.sent_at = datetime.now(timezone.utc)
+            await session.commit()
+
+
+async def update_candidate_reports(
+    user_id: int,
+    *,
+    test1_path: Optional[str] = None,
+    test2_path: Optional[str] = None,
+) -> None:
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            return
+        updated = False
+        if test1_path is not None:
+            user.test1_report_url = test1_path
+            updated = True
+        if test2_path is not None:
+            user.test2_report_url = test2_path
+            updated = True
+        if updated:
             await session.commit()

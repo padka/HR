@@ -460,7 +460,11 @@
         <dt>Telegram ID</dt>
         <dd>
           <span class="candidate-card__code">{{ user.telegram_id }}</span>
-          <a class="btn btn-primary btn-xs" href="tg://user?id={{ user.telegram_id }}" style="margin-left: 8px;">Открыть чат</a>
+          {% if user.username %}
+          <a class="btn btn-primary btn-xs" href="https://t.me/{{ user.username }}" target="_blank" style="margin-left: 8px;">Открыть чат</a>
+          {% else %}
+          <span style="margin-left: 8px; font-size: 0.85em; color: #666;">(нет username)</span>
+          {% endif %}
         </dd>
       </div>
       <div>
