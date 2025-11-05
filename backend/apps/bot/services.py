@@ -2837,6 +2837,14 @@ async def handle_test1_answer(message: Message) -> None:
     if not state or state.get("flow") != "interview":
         return
 
+    # Update username if available (for existing users)
+    username = getattr(message.from_user, "username", None)
+    if username and state.get("username") != username:
+        def _update_username(st: State) -> Tuple[State, None]:
+            st["username"] = username
+            return st, None
+        await state_manager.atomic_update(user_id, _update_username)
+
     idx = state.get("t1_current_idx", state.get("t1_idx", 0))
     sequence = state.get("t1_sequence") or list(TEST1_QUESTIONS)
     total = len(sequence)
@@ -3598,6 +3606,15 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         await callback.answer("Сессия истекла. Введите /start", show_alert=True)
         return
 
+    # Update username if available (for existing users)
+    username = getattr(callback.from_user, "username", None)
+    if username and state.get("username") != username:
+        def _update_username(st: State) -> Tuple[State, None]:
+            st["username"] = username
+            return st, None
+        await state_manager.atomic_update(user_id, _update_username)
+        state["username"] = username  # Update local state copy
+
     is_intro = state.get("flow") == "intro"
     city_id = state.get("city_id")
     reservation = await reserve_slot(
@@ -3606,6 +3623,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         candidate_fio=state.get("fio", str(user_id)),
         candidate_tz=state.get("candidate_tz", DEFAULT_TZ),
         candidate_city_id=state.get("city_id"),
+        candidate_username=state.get("username"),  # Pass username to reserve_slot
         purpose="intro_day" if is_intro else "interview",
         expected_recruiter_id=recruiter_id,
         expected_city_id=city_id,

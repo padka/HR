@@ -840,6 +840,7 @@ async def reserve_slot(
     candidate_tz: str,
     *,
     candidate_city_id: Optional[int] = None,
+    candidate_username: Optional[str] = None,
     purpose: str = "interview",
     expected_recruiter_id: Optional[int] = None,
     expected_city_id: Optional[int] = None,
@@ -958,6 +959,7 @@ async def reserve_slot(
             telegram_id=candidate_tg_id,
             fio=candidate_fio,
             city=city_name or "",
+            username=candidate_username,
         )
     except Exception:
         # Candidate directory sync should not break reservation flow
