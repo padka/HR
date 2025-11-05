@@ -456,9 +456,14 @@ async def candidates_schedule_intro_day_submit(
     # Convert local time to UTC
     from backend.core.db import async_session
     from backend.domain.models import Recruiter, City, Slot, SlotStatus
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     async with async_session() as session:
-        recruiter = await session.get(Recruiter, recruiter_id)
+        # Load recruiter with cities relationship
+        recruiter_query = select(Recruiter).where(Recruiter.id == recruiter_id).options(selectinload(Recruiter.cities))
+        result = await session.execute(recruiter_query)
+        recruiter = result.scalar_one_or_none()
         if not recruiter:
             errors.append("Рекрутёр не найден")
 
