@@ -60,7 +60,7 @@ async def test_slot_repository_uses_cache():
             recruiter_id=recruiter.id,
             city_id=city.id,
             start_utc=datetime.now(timezone.utc),
-            end_utc=datetime.now(timezone.utc),
+            duration_min=60,
             status=SlotStatus.FREE,
         )
         session.add(slot)
@@ -133,7 +133,7 @@ async def test_cache_disabled_gracefully():
             recruiter_id=recruiter.id,
             city_id=city.id,
             start_utc=datetime.now(timezone.utc),
-            end_utc=datetime.now(timezone.utc),
+            duration_min=60,
             status=SlotStatus.FREE,
         )
         session.add(slot)

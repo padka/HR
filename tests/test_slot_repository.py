@@ -34,7 +34,7 @@ async def test_get_upcoming_for_candidate_uses_correct_field():
             recruiter_id=recruiter.id,
             city_id=city.id,
             start_utc=now + timedelta(hours=1),
-            end_utc=now + timedelta(hours=2),
+            duration_min=60,
             status=SlotStatus.BOOKED,
             candidate_tg_id=candidate_tg_id,  # This field should be used
         )
@@ -44,7 +44,7 @@ async def test_get_upcoming_for_candidate_uses_correct_field():
             recruiter_id=recruiter.id,
             city_id=city.id,
             start_utc=now - timedelta(hours=2),
-            end_utc=now - timedelta(hours=1),
+            duration_min=60,
             status=SlotStatus.BOOKED,
             candidate_tg_id=candidate_tg_id,
         )
@@ -54,7 +54,7 @@ async def test_get_upcoming_for_candidate_uses_correct_field():
             recruiter_id=recruiter.id,
             city_id=city.id,
             start_utc=now + timedelta(hours=3),
-            end_utc=now + timedelta(hours=4),
+            duration_min=60,
             status=SlotStatus.BOOKED,
             candidate_tg_id=999999999,  # Different candidate
         )
@@ -64,7 +64,7 @@ async def test_get_upcoming_for_candidate_uses_correct_field():
             recruiter_id=recruiter.id,
             city_id=city.id,
             start_utc=now + timedelta(hours=5),
-            end_utc=now + timedelta(hours=6),
+            duration_min=60,
             status=SlotStatus.BOOKED,
             candidate_tg_id=candidate_tg_id,
         )
@@ -138,7 +138,7 @@ async def test_get_free_for_recruiter():
             recruiter_id=recruiter.id,
             city_id=city.id,
             start_utc=now + timedelta(hours=1),
-            end_utc=now + timedelta(hours=2),
+            duration_min=60,
             status=SlotStatus.FREE,
         )
 
@@ -147,7 +147,7 @@ async def test_get_free_for_recruiter():
             recruiter_id=recruiter.id,
             city_id=city.id,
             start_utc=now + timedelta(hours=3),
-            end_utc=now + timedelta(hours=4),
+            duration_min=60,
             status=SlotStatus.BOOKED,
         )
 

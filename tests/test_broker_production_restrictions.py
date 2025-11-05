@@ -15,10 +15,18 @@ async def test_inmemory_broker_forbidden_in_production():
     """
     from backend.core.settings import Settings
 
-    # Mock production settings
+    # Mock production settings with all required attributes
     prod_settings = Mock(spec=Settings)
     prod_settings.environment = "production"
     prod_settings.redis_url = ""  # No Redis URL provided
+    prod_settings.bot_enabled = False
+    prod_settings.bot_integration_enabled = False
+    prod_settings.notification_poll_interval = 3.0
+    prod_settings.notification_batch_size = 100
+    prod_settings.notification_rate_limit_per_sec = 5.0
+    prod_settings.notification_max_attempts = 8
+    prod_settings.notification_retry_base_seconds = 30
+    prod_settings.notification_retry_max_seconds = 3600
 
     # Import the setup function
     with patch("backend.apps.admin_ui.state.get_settings", return_value=prod_settings):
@@ -46,6 +54,7 @@ async def test_inmemory_broker_allowed_in_development():
     dev_settings.redis_url = ""  # No Redis URL
     dev_settings.bot_enabled = False
     dev_settings.bot_integration_enabled = False
+    dev_settings.bot_provider = "telegram"
     dev_settings.notification_poll_interval = 3.0
     dev_settings.notification_batch_size = 100
     dev_settings.notification_rate_limit_per_sec = 5.0
@@ -78,6 +87,14 @@ async def test_redis_required_message_in_production():
     prod_settings = Mock(spec=Settings)
     prod_settings.environment = "production"
     prod_settings.redis_url = None
+    prod_settings.bot_enabled = False
+    prod_settings.bot_integration_enabled = False
+    prod_settings.notification_poll_interval = 3.0
+    prod_settings.notification_batch_size = 100
+    prod_settings.notification_rate_limit_per_sec = 5.0
+    prod_settings.notification_max_attempts = 8
+    prod_settings.notification_retry_base_seconds = 30
+    prod_settings.notification_retry_max_seconds = 3600
 
     with patch("backend.apps.admin_ui.state.get_settings", return_value=prod_settings):
         with patch("backend.apps.admin_ui.state.Redis", None):
