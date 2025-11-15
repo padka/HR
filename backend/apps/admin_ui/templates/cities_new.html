@@ -22,11 +22,11 @@
   ]
 ) %}
   {% call forms.section("Параметры") %}
-    {% call forms.field("Название", hint="Например: Новосибирск") %}
-      <input id="name" type="text" name="name" value="{{ form_state.get('name', '') }}" placeholder="Новосибирск" required autofocus>
+    {% call forms.field("Название", hint="Например: Новосибирск", required=True) %}
+      <input id="name" type="text" name="name" value="{{ form_state.get('name', '') }}" placeholder="Новосибирск" required aria-required="true" autofocus>
     {% endcall %}
 
-    {% call forms.field("Часовой пояс (IANA)", hint="Например: Europe/Moscow, Asia/Novosibirsk") %}
+    {% call forms.field("Часовой пояс (IANA)", hint="Например: Europe/Moscow, Asia/Novosibirsk", required=True) %}
       <input id="tz"
              type="text"
              name="tz"
@@ -36,7 +36,8 @@
              inputmode="text"
              pattern="[A-Za-z_]+(?:\/[A-Za-z_\-]+)+"
              title="Например: Europe/Moscow, Europe/Samara, Asia/Novosibirsk"
-             required>
+             required
+             aria-required="true">
       <datalist id="tz-list">
         <option value="Europe/Moscow"></option>
         <option value="Europe/Samara"></option>

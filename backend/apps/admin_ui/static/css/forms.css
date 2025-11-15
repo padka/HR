@@ -244,6 +244,23 @@ textarea.is-invalid {
   color: color-mix(in srgb, var(--muted) 85%, var(--fg));
 }
 
+/* Required field indicator */
+.form-field--required .form-field__label::after {
+  content: " *";
+  color: color-mix(in srgb, var(--bad) 85%, var(--fg));
+  font-weight: 700;
+  margin-left: 2px;
+  speak: literal;
+  aria-label: "обязательное поле";
+}
+
+/* Optional: subtle border styling for required inputs */
+.form-field--required .form-field__surface:has(input:not(:placeholder-shown)),
+.form-field--required .form-field__surface:has(select:not([value=""])),
+.form-field--required .form-field__surface:has(textarea:not(:placeholder-shown)) {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--field-border));
+}
+
 .form-field__surface {
   display: flex;
   flex-direction: column;

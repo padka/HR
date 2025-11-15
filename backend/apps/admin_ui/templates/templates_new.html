@@ -65,8 +65,8 @@
       </select>
     {% endcall %}
 
-    {% call forms.field("Текст", hint="Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.") %}
-      <textarea id="text" name="text" rows="14" required placeholder="Текст сообщения. Поддерживаются переносы строк." class="text-mono">{{ form_data.text or '' }}</textarea>
+    {% call forms.field("Текст", hint="Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.", required=True) %}
+      <textarea id="text" name="text" rows="14" required aria-required="true" placeholder="Текст сообщения. Поддерживаются переносы строк." class="text-mono">{{ form_data.text or '' }}</textarea>
       {% call forms.note() %}Доступные плейсхолдеры (клик вставит в текст):{% endcall %}
       <div class="btn-group">
         {% raw %}

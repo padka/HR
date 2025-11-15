@@ -551,8 +551,8 @@
     ]
   ) %}
     {% call forms.section("Рекрутёр") %}
-      {% call forms.field("Рекрутёр", hint="Выберите, для кого создаём слот") %}
-        <select id="recruiter_id" name="recruiter_id" required>
+      {% call forms.field("Рекрутёр", hint="Выберите, для кого создаём слот", required=True) %}
+        <select id="recruiter_id" name="recruiter_id" required aria-required="true">
           <option value="" disabled selected>— выберите рекрутёра —</option>
           {% for item in recruiters %}
             {% set r = item.rec %}
@@ -565,8 +565,8 @@
           {% endfor %}
         </select>
       {% endcall %}
-      {% call forms.field("Город", hint="Слот будет доступен кандидатам выбранного города") %}
-        <select id="city_id" name="city_id" required disabled>
+      {% call forms.field("Город", hint="Слот будет доступен кандидатам выбранного города", required=True) %}
+        <select id="city_id" name="city_id" required aria-required="true" disabled>
           <option value="" disabled selected>— выберите город —</option>
           {% for item in recruiters %}
             {% set r = item.rec %}
@@ -585,15 +585,15 @@
 
     {% call forms.section("Дата и время") %}
       <div class="form-grid form-grid--two">
-        {% call forms.field("Дата (локальная)") %}
-          <input id="date" type="date" name="date" required>
+        {% call forms.field("Дата (локальная)", required=True) %}
+          <input id="date" type="date" name="date" required aria-required="true">
           <div class="btn-group">
             <button class="btn btn--ghost btn--sm" type="button" data-quick="today">Сегодня</button>
             <button class="btn btn--ghost btn--sm" type="button" data-quick="tomorrow">Завтра</button>
           </div>
         {% endcall %}
-        {% call forms.field("Время (локальное)") %}
-          <input id="time" type="time" name="time" required>
+        {% call forms.field("Время (локальное)", required=True) %}
+          <input id="time" type="time" name="time" required aria-required="true">
           <div class="btn-group">
             <button class="btn btn--ghost btn--sm" type="button" data-time="next30">+30 мин</button>
             <button class="btn btn--ghost btn--sm" type="button" data-time="next60">+1 час</button>
@@ -646,8 +646,8 @@
     ]
   ) %}
     {% call forms.section("Рекрутёр") %}
-      {% call forms.field("Рекрутёр", hint="Слоты будут созданы в его часовом поясе") %}
-        <select id="recruiter_id_bulk" name="recruiter_id" required>
+      {% call forms.field("Рекрутёр", hint="Слоты будут созданы в его часовом поясе", required=True) %}
+        <select id="recruiter_id_bulk" name="recruiter_id" required aria-required="true">
           <option value="" disabled selected>— выберите рекрутёра —</option>
           {% for item in recruiters %}
             {% set r = item.rec %}
@@ -660,8 +660,8 @@
           {% endfor %}
         </select>
       {% endcall %}
-      {% call forms.field("Город", hint="Слоты будут созданы для указанного города") %}
-        <select id="city_id_bulk" name="city_id" required disabled>
+      {% call forms.field("Город", hint="Слоты будут созданы для указанного города", required=True) %}
+        <select id="city_id_bulk" name="city_id" required aria-required="true" disabled>
           <option value="" disabled selected>— выберите город —</option>
           {% for item in recruiters %}
             {% set r = item.rec %}
@@ -677,11 +677,11 @@
 
     {% call forms.section("Период") %}
       <div class="form-grid form-grid--two">
-        {% call forms.field("Дата начала") %}
-          <input id="start_date" type="date" name="start_date" required>
+        {% call forms.field("Дата начала", required=True) %}
+          <input id="start_date" type="date" name="start_date" required aria-required="true">
         {% endcall %}
-        {% call forms.field("Дата окончания") %}
-          <input id="end_date" type="date" name="end_date" required>
+        {% call forms.field("Дата окончания", required=True) %}
+          <input id="end_date" type="date" name="end_date" required aria-required="true">
         {% endcall %}
       </div>
       {% call forms.meta() %}

@@ -25,11 +25,11 @@
 ) %}
   {% call forms.section("Основные данные") %}
     <div class="form-grid form-grid--two">
-      {% call forms.field("ФИО") %}
-        <input type="text" name="fio" placeholder="Иван Иванов" required>
+      {% call forms.field("ФИО", required=True) %}
+        <input type="text" name="fio" placeholder="Иван Иванов" required aria-required="true">
       {% endcall %}
-      {% call forms.field("Telegram ID", hint="Числовой идентификатор кандидата в Telegram") %}
-        <input type="number" name="telegram_id" min="1" step="1" placeholder="123456789" required>
+      {% call forms.field("Telegram ID", hint="Числовой идентификатор кандидата в Telegram", required=True) %}
+        <input type="number" name="telegram_id" min="1" step="1" placeholder="123456789" required aria-required="true">
       {% endcall %}
     </div>
     <div class="form-grid form-grid--two">

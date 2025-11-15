@@ -26,12 +26,12 @@
 ) %}
   {% call forms.section("Основные данные") %}
     <div class="form-grid form-grid--two">
-      {% call forms.field("Имя") %}
-        <input type="text" name="name" value="{{ form_state.get('name', recruiter.name) }}" required>
+      {% call forms.field("Имя", required=True) %}
+        <input type="text" name="name" value="{{ form_state.get('name', recruiter.name) }}" required aria-required="true">
       {% endcall %}
-      {% call forms.field("Регион", hint="Определяет локальное время рекрутёра при создании слотов") %}
+      {% call forms.field("Регион", hint="Определяет локальное время рекрутёра при создании слотов", required=True) %}
         {% set current_tz = form_state.get('tz', recruiter.tz or 'Europe/Moscow') %}
-        <select name="tz" required>
+        <select name="tz" required aria-required="true">
           {% for option in tz_options %}
             <option value="{{ option.value }}" {% if option.value == current_tz %}selected{% endif %}>
               {{ option.label }}
