@@ -60,6 +60,24 @@ def _parse_plan_value(raw: object) -> Optional[int]:
     return number
 
 
+def _coerce_bool(raw: object) -> Optional[bool]:
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    if isinstance(raw, str):
+        value = raw.strip().lower()
+        if value == "":
+            return None
+        if value in {"1", "true", "yes", "on", "active"}:
+            return True
+        if value in {"0", "false", "no", "off", "inactive"}:
+            return False
+    raise ValueError
+
+
 @router.get("", response_class=HTMLResponse)
 async def cities_list(request: Request):
     cities = await list_cities()
@@ -76,6 +94,7 @@ async def cities_list(request: Request):
     context = {
         "request": request,
         "cities": cities,
+        "city_count": len(cities),
         "owners": owners,
         "rec_map": rec_map,
         "recruiter_rows": recruiter_rows,
@@ -84,12 +103,12 @@ async def cities_list(request: Request):
         "city_stages": city_stages,
         "global_defaults": {key: STAGE_DEFAULTS[key] for key in STAGE_DEFAULTS},
     }
-    return templates.TemplateResponse("cities_list.html", context)
+    return templates.TemplateResponse(request, "cities_list.html", context)
 
 
 @router.get("/new", response_class=HTMLResponse)
 async def cities_new(request: Request):
-    return templates.TemplateResponse("cities_new.html", {"request": request})
+    return templates.TemplateResponse(request, "cities_new.html", {"request": request})
 
 
 @router.post("/create")
@@ -107,7 +126,7 @@ async def cities_create(
             "form_error": str(exc),
             "form_data": {"name": (name or "").strip(), "tz": tz_value or ""},
         }
-        return templates.TemplateResponse("cities_new.html", context, status_code=422)
+        return templates.TemplateResponse(request, "cities_new.html", context, status_code=422)
 
     try:
         await create_city(name, normalized_tz)
@@ -117,7 +136,7 @@ async def cities_create(
             "form_error": str(exc),
             "form_data": {"name": (name or "").strip(), "tz": tz_value or ""},
         }
-        return templates.TemplateResponse("cities_new.html", context, status_code=422)
+        return templates.TemplateResponse(request, "cities_new.html", context, status_code=422)
     return RedirectResponse(url="/cities", status_code=303)
 
 
@@ -154,6 +173,27 @@ async def update_city_settings(city_id: int, request: Request):
             status_code=422,
         )
 
+    tz_normalized: Optional[str] = None
+    if "tz" in payload:
+        try:
+            tz_normalized = normalize_city_timezone(payload.get("tz"))
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "error": {"field": "tz", "message": str(exc)}},
+                status_code=422,
+            )
+
+    try:
+        active_value = _coerce_bool(payload.get("active"))
+    except ValueError:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": {"field": "active", "message": "Укажите корректный статус активности"},
+            },
+            status_code=422,
+        )
+
     error, city, owner = await update_city_settings_service(
         city_id,
         responsible_id=responsible_id,
@@ -162,6 +202,8 @@ async def update_city_settings(city_id: int, request: Request):
         experts=experts,
         plan_week=plan_week,
         plan_month=plan_month,
+        tz=tz_normalized,
+        active=active_value,
     )
     if error:
         status = 404 if "not found" in error.lower() else 400
@@ -173,6 +215,7 @@ async def update_city_settings(city_id: int, request: Request):
         "name": city.name_plain if city else "",
         "name_html": sanitize_plain_text(city.name_plain) if city else "",
         "tz": getattr(city, "tz", None) if city else None,
+        "active": getattr(city, "active", None) if city else None,
         "criteria": getattr(city, "criteria", None) if city else None,
         "experts": getattr(city, "experts", None) if city else None,
         "plan_week": getattr(city, "plan_week", None) if city else None,

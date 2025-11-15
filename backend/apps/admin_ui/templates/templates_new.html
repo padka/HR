@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Новый шаблон{% endblock %}
 {% block content %}
 {% set has_cities = (cities|length) > 0 %}
@@ -58,7 +58,6 @@
         <option value="">— не выбирать пресет —</option>
         <option value="invite_interview">Приглашение на интервью</option>
         <option value="confirm_2h">Подтверждение за 2 часа</option>
-        <option value="reminder_24h">Напоминание за 24 часа</option>
         <option value="after_meeting">После согласования руководителем</option>
         <option value="day_intro">Напоминание про ознакомительный день</option>
         <option value="slot_rejected">Слот отклонён (выбрать заново)</option>
@@ -78,6 +77,8 @@
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{recruiter_name}}">{{recruiter_name}}</button>
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{recruiter_phone}}">{{recruiter_phone}}</button>
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{address}}">{{address}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{intro_address}}">{{intro_address}}</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{intro_contact}}">{{intro_contact}}</button>
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
         {% endraw %}
       </div>

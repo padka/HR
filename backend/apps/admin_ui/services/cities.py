@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from backend.core.cache import CacheKeys, CacheTTL, get_cache
 from backend.core.db import async_session
 from backend.core.sanitizers import sanitize_plain_text
-from backend.domain.models import City, Recruiter
+from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.repositories import city_has_available_slots
 
 from .templates import update_templates_for_city
 
@@ -20,6 +23,7 @@ __all__ = [
     "api_cities_payload",
     "api_city_owners_payload",
     "normalize_city_timezone",
+    "get_city_capacity",
 ]
 
 
@@ -66,6 +70,8 @@ async def update_city_settings(
     experts: Optional[str],
     plan_week: Optional[int],
     plan_month: Optional[int],
+    tz: Optional[str] = None,
+    active: Optional[bool] = None,
 ) -> Tuple[Optional[str], Optional[City], Optional[Recruiter]]:
     async with async_session() as session:
         try:
@@ -97,6 +103,15 @@ async def update_city_settings(
             normalized_month = plan_month if plan_month is None or plan_month >= 0 else None
             city.plan_week = normalized_week
             city.plan_month = normalized_month
+
+            if tz is not None:
+                try:
+                    city.tz = normalize_city_timezone(tz)
+                except ValueError as exc:
+                    await session.rollback()
+                    return str(exc), None, None
+            if active is not None:
+                city.active = bool(active)
 
             error = await update_templates_for_city(city_id, templates, session=session)
             if error:
@@ -178,3 +193,68 @@ def _primary_recruiter(city: City) -> Optional[Recruiter]:
         if recruiter is not None:
             return recruiter
     return None
+
+
+async def get_city_capacity(city_id: int) -> Optional[Dict[str, object]]:
+    """Get capacity information for a city including slot availability.
+
+    Returns a dictionary with:
+    - has_available_slots: boolean indicating if there are any free slots
+    - total_free_slots: count of available slots
+    - city: basic city info (id, name, tz)
+
+    Returns None if city is not found.
+    Cached for 5 minutes (CacheTTL.SHORT).
+    """
+    # Try to get from cache first
+    try:
+        cache = get_cache()
+        cache_key = CacheKeys.city_capacity(city_id)
+        result = await cache.get(cache_key)
+        if result.is_success and result.unwrap() is not None:
+            return result.unwrap()
+    except RuntimeError:
+        # Cache not initialized (e.g., in tests), skip caching
+        pass
+
+    async with async_session() as session:
+        city = await session.get(City, city_id)
+        if not city:
+            return None
+
+        # Check if city has available slots
+        has_slots = await city_has_available_slots(city_id)
+
+        # Count total free slots
+        now_utc = datetime.now(timezone.utc)
+        total_free = await session.scalar(
+            select(func.count())
+            .select_from(Slot)
+            .where(
+                Slot.city_id == city_id,
+                func.lower(Slot.status) == SlotStatus.FREE,
+                Slot.start_utc > now_utc,
+            )
+        )
+
+        capacity_data = {
+            "has_available_slots": has_slots,
+            "total_free_slots": total_free or 0,
+            "city": {
+                "id": city.id,
+                "name": city.name_plain,
+                "tz": getattr(city, "tz", None),
+                "active": getattr(city, "active", None),
+            },
+        }
+
+        # Cache the result for 5 minutes
+        try:
+            cache = get_cache()
+            cache_key = CacheKeys.city_capacity(city_id)
+            await cache.set(cache_key, capacity_data, ttl=CacheTTL.SHORT)
+        except RuntimeError:
+            # Cache not initialized, skip caching
+            pass
+
+        return capacity_data

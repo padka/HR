@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,8 +12,10 @@ from backend.apps.admin_ui.services.candidates import (
     update_candidate_status,
 )
 from backend.domain.candidates import services as candidate_services
+from backend.domain.candidates import models as candidate_models
+from backend.domain.candidates.status import CandidateStatus
 from backend.core.db import async_session
-from backend.domain.models import Recruiter, Slot, SlotStatus
+from backend.domain.models import Recruiter, Slot, SlotStatus, City
 
 
 @pytest.mark.asyncio
@@ -231,3 +234,156 @@ async def test_update_candidate_status_changes_slot_and_outcome():
         )
         assert refreshed is not None
         assert refreshed.interview_outcome == "success"
+
+
+@pytest.mark.asyncio
+async def test_list_candidates_pipeline_filters_renders_correct_stage():
+    interview_candidate = await candidate_services.create_or_update_user(
+        telegram_id=900001,
+        fio="Interview Candidate",
+        city="Москва",
+    )
+    intro_candidate = await candidate_services.create_or_update_user(
+        telegram_id=900002,
+        fio="Intro Candidate",
+        city="Санкт-Петербург",
+    )
+
+    async with async_session() as session:
+        city = City(name="Фантомный город", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Pipeline Recruiter", tz="Europe/Moscow", active=True)
+        session.add_all([city, recruiter])
+        await session.flush()
+        interview_user = await session.get(candidate_models.User, interview_candidate.id)
+        intro_user = await session.get(candidate_models.User, intro_candidate.id)
+        interview_user.candidate_status = CandidateStatus.INTERVIEW_SCHEDULED
+        intro_user.candidate_status = CandidateStatus.INTRO_DAY_SCHEDULED
+        session.add(
+            Slot(
+                recruiter_id=recruiter.id,
+                city_id=city.id,
+                start_utc=datetime.now(timezone.utc) + timedelta(hours=2),
+                status=SlotStatus.BOOKED,
+                candidate_tg_id=interview_candidate.telegram_id,
+                candidate_fio=interview_candidate.fio,
+                candidate_tz="Europe/Moscow",
+            )
+        )
+        session.add(
+            Slot(
+                recruiter_id=recruiter.id,
+                city_id=city.id,
+                start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+                status=SlotStatus.BOOKED,
+                purpose="intro_day",
+                candidate_tg_id=intro_candidate.telegram_id,
+                candidate_fio=intro_candidate.fio,
+                candidate_tz="Europe/Moscow",
+            )
+        )
+        await session.commit()
+
+    interview_payload = await list_candidates(
+        page=1,
+        per_page=20,
+        search=None,
+        city=None,
+        is_active=None,
+        rating=None,
+        has_tests=None,
+        has_messages=None,
+        stage=None,
+        statuses=None,
+        recruiter_id=None,
+        city_ids=None,
+        date_from=None,
+        date_to=None,
+        test1_status=None,
+        test2_status=None,
+        sort=None,
+        sort_dir=None,
+        calendar_mode=None,
+        pipeline="interview",
+    )
+    assert interview_payload["total"] == 1
+    assert interview_payload["summary"]["raw_status_totals"].get("interview_scheduled") == 1
+    assert interview_payload["summary"]["raw_status_totals"].get("intro_day_scheduled", 0) == 0
+    assert interview_payload["summary"]["funnel"]
+    assert interview_payload["summary"]["funnel"][0]["statuses"]
+
+    intro_payload = await list_candidates(
+        page=1,
+        per_page=20,
+        search=None,
+        city=None,
+        is_active=None,
+        rating=None,
+        has_tests=None,
+        has_messages=None,
+        stage=None,
+        statuses=None,
+        recruiter_id=None,
+        city_ids=None,
+        date_from=None,
+        date_to=None,
+        test1_status=None,
+        test2_status=None,
+        sort=None,
+        sort_dir=None,
+        calendar_mode=None,
+        pipeline="intro_day",
+    )
+    assert intro_payload["total"] == 1
+    assert intro_payload["summary"]["raw_status_totals"].get("intro_day_scheduled") == 1
+    assert intro_payload["summary"]["raw_status_totals"].get("interview_scheduled", 0) == 0
+    intro_rows = intro_payload["views"]["table"]["rows"]
+    assert intro_rows
+    assert intro_rows[0]["intro_day"] is not None
+    assert intro_rows[0]["intro_day"]["slot"].purpose == "intro_day"
+
+
+@pytest.mark.asyncio
+async def test_update_candidate_status_assigned_sends_notification(monkeypatch):
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777010,
+        fio="Notifier Candidate",
+        city="Казань",
+    )
+
+    async with async_session() as session:
+        recruiter = Recruiter(name="Notify Recruiter", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
+        await session.flush()
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            candidate_city_id=None,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=SlotStatus.PENDING,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    calls = {}
+
+    async def fake_approve(slot_id: int, *, force_notify: bool = False):
+        calls["slot_id"] = slot_id
+        calls["force_notify"] = force_notify
+        return SimpleNamespace(status="approved", message="ok", slot=None)
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.approve_slot_and_notify",
+        fake_approve,
+    )
+
+    ok, message, stored_status, dispatch = await update_candidate_status(candidate.id, "assigned")
+    assert ok is True
+    assert stored_status == "assigned"
+    assert dispatch is None
+    assert calls.get("slot_id") is not None
+    assert calls.get("force_notify") is True

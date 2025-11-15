@@ -29,6 +29,75 @@ python scripts/run_migrations.py
 python3 -m uvicorn backend.apps.admin_ui.app:app
 ```
 
+For day-to-day development there is also a resilient wrapper that auto-restarts
+the server on code changes or unexpected crashes:
+
+```bash
+python scripts/dev_server.py
+# customize command or watch paths via flags:
+python scripts/dev_server.py --cmd "uvicorn backend.apps.admin_ui.app:app --port 8100" --watch backend --watch admin_app
+```
+
+### Кандидаты: представления по воронкам
+
+Страница `/candidates` поддерживает два специализированных режима работы, выбираемых через
+query‑параметр `pipeline` (и переключатель в UI):
+
+| Pipeline | URL-пример | Описание |
+| --- | --- | --- |
+| `interview` _(по умолчанию)_ | `/candidates` | Классическая воронка до Test2: поиск, фильтры, канбан и календарь работают с интервальными слотами (`purpose != intro_day`). |
+| `intro_day` | `/candidates?pipeline=intro_day` | Отдельная доска кандидатов, прошедших Test2. Показывает стадии «Ждут назначения», «Приглашены», «Подтвердили», «Результат», «Отказались», календарь и список привязаны к слотам `purpose == intro_day`. |
+
+В режиме `intro_day` появляются:
+
+- **Funnel Overview** — карточки с конверсией по стадиям и списком статусов (используется `summary.funnel` из сервиса `list_candidates`).
+- **Расширенная таблица** — отдельные колонки для адреса/контакта, ответственного рекрутёра, кнопки «Назначить ОД» и «Переназначить».
+- **Фильтры и экспорт** автоматически прокидывают активный `pipeline`, поэтому при переключении режимов сохраняются выбранные города, статусы и пагинация.
+
+API `GET /candidates` и соответствующие сервисы (`list_candidates`, `candidate_filter_options`) принимают параметр `pipeline`, что позволяет UI/автоматизации получать нужное представление без дополнительных маршрутов.
+
+## Notifications Broker (Redis)
+
+Интеграционные тесты для уведомлений и полноценный NotificationService ожидают работающий
+Redis. Для локальной разработки достаточно поднять контейнер:
+
+```bash
+docker compose up -d redis_notifications
+```
+
+Установите `NOTIFICATION_BROKER=redis` и `REDIS_URL=redis://redis_notifications:6379/0`
+в `.env`, чтобы сервер и интеграционные тесты использовали Redis вместо InMemory брокера.
+Для интеграционных проверок запустите `pytest -m notifications --redis-url redis://localhost:6379/0`
+— параметр `--redis-url` также пробрасывается в CI.
+
+Тесты с маркером `notifications` используют InMemory broker, если Redis недоступен, но сценарии
+из `tests/integration/test_notification_broker_redis.py` подключаются к указанному `--redis-url` и
+автоматически пропускаются, если сервис не запущен.
+
+### Load tests
+
+- Dev sanity: `PYTHONPATH=. python scripts/loadtest_notifications.py --count 200`
+- Pre-release baseline: `PYTHONPATH=. python scripts/loadtest_notifications.py --broker redis --count 2000 --rate-limit 50 --metrics-json docs/reliability/<date>-redis.json`
+
+Все артефакты из нагрузочных и эксплуатационных проверок складывайте в `docs/reliability/`
+с ISO-датой в имени файла (см. `docs/NOTIFICATIONS_LOADTEST.md`).
+
+### Health endpoints
+
+- `GET /health` — базовый статус БД, state manager и кэша.
+- `GET /health/bot` — запускаемость Telegram‑бота и состояние интеграции.
+- `GET /health/notifications` — состояние брокера уведомлений, работы воркера/напоминаний и
+  факт запуска бота (polling). Для Redis брокера эндпоинт делает лёгкий `PING` и вернёт 503,
+  если брокер или воркер недоступны.
+- `GET /metrics/notifications` — Prometheus-совместимые метрики (`seconds_since_poll`, `poll_skipped_total`,
+  `rate_limit_wait_seconds`, per-type counters и др.) для построения графиков/алертов.
+
+### Sandbox & диагностика
+
+- `PYTHONPATH=. python scripts/e2e_notifications_sandbox.py` — поднимает локальный Telegram sandbox,
+  прогоняет кандидат + рекрутер уведомления end-to-end и формирует `NotificationLog` записи.
+  Подробности в `docs/NOTIFICATIONS_E2E.md`.
+
 ## Telegram bot
 The Telegram bot is exposed through a small CLI wrapper (`bot.py`) that calls
 the new application factory defined in `backend.apps.bot.app`. To launch the
@@ -78,6 +147,10 @@ quick start template):
 | `BOT_WEBHOOK_URL` | _(empty)_ | Public webhook endpoint used when `BOT_USE_WEBHOOK=true`. |
 | `TEST2_REQUIRED` | `false` | When `true`, a bot failure results in HTTP 503 responses from `/slots/{id}/outcome`. When `false`, the request succeeds and Test 2 is skipped. |
 | `BOT_FAILFAST` | `false` | If enabled, the admin UI refuses to start when the bot is misconfigured while `BOT_ENABLED=true`. |
+| `BOT_AUTOSTART` | `true` (dev) | When enabled, the Telegram bot long-polling worker starts automatically with the admin server (forced off in production). |
+| `LOG_LEVEL` | `INFO` | Global logging verbosity (`DEBUG`, `INFO`, `WARNING`, ...). |
+| `LOG_JSON` | `false` | Emit JSON logs to stdout/file when `true`. |
+| `LOG_FILE` | _(auto)_ | Override log file path (defaults to `data/logs/app.log`). |
 
 The `/health/bot` endpoint reports the runtime state of the integration
 (`enabled`, `ready`, `status`) which simplifies operational diagnostics.

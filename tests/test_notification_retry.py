@@ -9,6 +9,7 @@ from aiogram.methods import SendMessage
 from sqlalchemy import select, update, func, delete
 from sqlalchemy.exc import IntegrityError
 
+from backend.apps.bot.broker import InMemoryNotificationBroker
 from backend.apps.bot.metrics import get_notification_metrics_snapshot
 from backend.apps.bot.services import (
     BookingNotificationStatus,
@@ -32,17 +33,22 @@ from backend.domain.repositories import add_outbox_notification, get_slot
 
 
 @pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_retry_with_backoff_and_jitter(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)
     dummy_bot = SimpleNamespace()
     configure(dummy_bot, manager)
 
+    broker = InMemoryNotificationBroker()
+    await broker.start()
+
     service = NotificationService(
         poll_interval=0.05,
         retry_base_delay=10,
         retry_max_delay=40,
         rate_limit_per_sec=10,
+        broker=broker,
     )
     configure_notification_service(service)
 
@@ -167,6 +173,7 @@ async def test_retry_with_backoff_and_jitter(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_poll_once_handles_duplicate_notification_logs(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)
@@ -266,6 +273,7 @@ async def test_poll_once_handles_duplicate_notification_logs(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_candidate_rejection_uses_message_template(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)
@@ -297,7 +305,10 @@ async def test_candidate_rejection_uses_message_template(monkeypatch):
 
     reset_template_provider()
 
-    service = NotificationService(poll_interval=0.05, rate_limit_per_sec=10)
+    broker = InMemoryNotificationBroker()
+    await broker.start()
+
+    service = NotificationService(poll_interval=0.05, rate_limit_per_sec=10, broker=broker)
     configure_notification_service(service)
 
     send_calls: List[SendMessage] = []
@@ -372,6 +383,7 @@ async def test_candidate_rejection_uses_message_template(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_fatal_error_marks_outbox_failed(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)
@@ -456,6 +468,7 @@ async def test_fatal_error_marks_outbox_failed(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_broker_dlq_on_max_attempts(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)
@@ -528,6 +541,7 @@ async def test_broker_dlq_on_max_attempts(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_broker_bootstrap_from_outbox(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)
@@ -648,3 +662,163 @@ async def test_broker_bootstrap_from_outbox(monkeypatch):
         import backend.apps.bot.services as bot_services
 
         bot_services._notification_service = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.notifications
+async def test_direct_fallback_marks_outbox_sent(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    configure(dummy_bot, manager)
+
+    service = NotificationService()
+    service.start()
+    monkeypatch.setattr("backend.apps.bot.services._notification_service", service)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Нет брокера",
+            tz="Europe/Moscow",
+            active=True,
+        )
+        city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=1),
+            status=SlotStatus.PENDING,
+            candidate_tg_id=1010,
+            candidate_fio="Fallback Тест",
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    called = {}
+
+    async def fake_notify(snapshot):
+        called["slot_id"] = snapshot.slot_id
+        return True
+
+    monkeypatch.setattr("backend.apps.bot.services.notify_reschedule", fake_notify)
+
+    try:
+        snapshot = await capture_slot_snapshot(slot)
+        result = await service.on_booking_status_changed(
+            slot.id,
+            BookingNotificationStatus.RESCHEDULE_REQUESTED,
+            snapshot=snapshot,
+        )
+
+        assert result.status == "sent"
+        assert result.reason == "direct:no-broker"
+        assert called["slot_id"] == slot.id
+
+        async with async_session() as session:
+            entry = await session.scalar(
+                select(OutboxNotification).where(
+                    OutboxNotification.booking_id == slot.id,
+                    OutboxNotification.type == "candidate_reschedule_prompt",
+                )
+            )
+            assert entry is not None
+            assert entry.status == "sent"
+            assert entry.attempts == 1
+    finally:
+        await service.shutdown()
+        await manager.clear()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.notifications
+async def test_direct_fallback_failure_sets_error(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    configure(dummy_bot, manager)
+
+    service = NotificationService()
+    service.start()
+    monkeypatch.setattr("backend.apps.bot.services._notification_service", service)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Нет брокера 2",
+            tz="Europe/Moscow",
+            active=True,
+        )
+        city = models.City(name="СПб", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=2),
+            status=SlotStatus.PENDING,
+            candidate_tg_id=2020,
+            candidate_fio="Fallback Fail",
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    async def fake_notify_failure(_snapshot):
+        return False
+
+    monkeypatch.setattr(
+        "backend.apps.bot.services.notify_reschedule",
+        fake_notify_failure,
+    )
+
+    try:
+        snapshot = await capture_slot_snapshot(slot)
+        result = await service.on_booking_status_changed(
+            slot.id,
+            BookingNotificationStatus.RESCHEDULE_REQUESTED,
+            snapshot=snapshot,
+        )
+
+        assert result.status == "failed"
+        assert result.reason == "broker_unavailable"
+
+        async with async_session() as session:
+            entry = await session.scalar(
+                select(OutboxNotification).where(
+                    OutboxNotification.booking_id == slot.id,
+                    OutboxNotification.type == "candidate_reschedule_prompt",
+                )
+            )
+            assert entry is not None
+            assert entry.status == "failed"
+            assert entry.last_error == "broker_unavailable"
+    finally:
+        await service.shutdown()
+        await manager.clear()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.notifications
+async def test_notification_service_health_snapshot_reports_broker():
+    broker = InMemoryNotificationBroker()
+    await broker.start()
+    service = NotificationService(broker=broker, poll_interval=0.01, batch_size=1)
+    snapshot = await service.health_snapshot()
+    assert snapshot["broker_backend"] == "memory"
+    assert snapshot["started"] is False
+    ping = await service.broker_ping()
+    assert ping is True

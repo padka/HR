@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 import html
 
-from sqlalchemy import case, func, select, delete
+from sqlalchemy import case, func, select, delete, insert
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -138,18 +138,26 @@ async def create_recruiter(
             selected_ids = _parse_city_ids(cities)
             recruiter = Recruiter(**payload)
             session.add(recruiter)
+
+            # Flush to get recruiter.id
+            await session.flush()
+
             if selected_ids:
+                # Clear any existing associations (defensive)
                 await session.execute(
                     delete(recruiter_city_association).where(
-                        recruiter_city_association.c.city_id.in_(selected_ids)
+                        recruiter_city_association.c.recruiter_id == recruiter.id
                     )
                 )
-                linked_cities = (
-                    await session.scalars(select(City).where(City.id.in_(selected_ids)))
-                ).all()
-                recruiter.cities = list(linked_cities)
+                # Directly insert into association table
+                await session.execute(
+                    insert(recruiter_city_association),
+                    [{"recruiter_id": recruiter.id, "city_id": city_id} for city_id in selected_ids]
+                )
+
             await session.commit()
-            await session.refresh(recruiter)
+            # Refresh with relationship loaded
+            await session.refresh(recruiter, ["cities"])
         except IntegrityError as exc:  # pragma: no cover - defensive, regression covered by tests
             await session.rollback()
             return {"ok": False, "error": _integrity_error_payload(exc)}
@@ -200,20 +208,24 @@ async def update_recruiter(
                 setattr(recruiter, key, value)
 
             selected_ids = _parse_city_ids(cities)
+
+            # Clear all existing associations for this recruiter
+            await session.execute(
+                delete(recruiter_city_association).where(
+                    recruiter_city_association.c.recruiter_id == rec_id
+                )
+            )
+
+            # Insert new associations
             if selected_ids:
                 await session.execute(
-                    delete(recruiter_city_association).where(
-                        recruiter_city_association.c.city_id.in_(selected_ids)
-                    )
+                    insert(recruiter_city_association),
+                    [{"recruiter_id": rec_id, "city_id": city_id} for city_id in selected_ids]
                 )
-                linked_cities = (
-                    await session.scalars(select(City).where(City.id.in_(selected_ids)))
-                ).all()
-                recruiter.cities = list(linked_cities)
-            else:
-                recruiter.cities = []
 
             await session.commit()
+            # Refresh to get updated relationships
+            await session.refresh(recruiter, ["cities"])
         except IntegrityError as exc:  # pragma: no cover - defensive, regression covered by tests
             await session.rollback()
             return {"ok": False, "error": _integrity_error_payload(exc)}

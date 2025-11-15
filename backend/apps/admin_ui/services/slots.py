@@ -6,7 +6,7 @@ from datetime import date as date_type
 from datetime import datetime
 from datetime import time as time_type
 from datetime import timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Literal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select
@@ -19,12 +19,14 @@ from backend.apps.admin_ui.services.bot_service import (
 )
 from backend.apps.bot.services import (
     BookingNotificationStatus,
-    NotificationService,
     SlotSnapshot,
     cancel_slot_reminders,
     capture_slot_snapshot,
     get_notification_service,
     get_state_manager as _get_state_manager,
+    NotificationNotConfigured,
+    approve_slot_and_notify,
+    SlotApprovalResult,
 )
 
 try:  # pragma: no cover - optional dependency during tests
@@ -39,8 +41,8 @@ from backend.apps.admin_ui.utils import (
 )
 from backend.core.db import async_session
 from backend.core.settings import get_settings
-from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
-from backend.domain.repositories import reject_slot
+from backend.domain.models import City, Recruiter, Slot, SlotStatus, ManualSlotAuditLog, recruiter_city_association
+from backend.domain.repositories import reject_slot, reserve_slot
 
 __all__ = [
     "list_slots",
@@ -50,11 +52,13 @@ __all__ = [
     "api_slots_payload",
     "delete_slot",
     "delete_all_slots",
+    "schedule_manual_candidate_slot",
     "set_slot_outcome",
     "get_state_manager",
     "execute_bot_dispatch",
     "reschedule_slot_booking",
     "reject_slot_booking",
+    "ManualSlotError",
 ]
 
 
@@ -64,6 +68,46 @@ logger = logging.getLogger(__name__)
 DEFAULT_COMPANY_NAME = "SMART SERVICE"
 DEFAULT_SLOT_TZ = "Europe/Moscow"
 REJECTION_TEMPLATE_KEY = "result_fail"
+
+
+NotificationAction = Literal["reschedule", "reject"]
+
+
+class ManualSlotError(Exception):
+    """Raised when manual slot scheduling cannot be completed."""
+
+
+def _notification_feedback(action: NotificationAction, result) -> Tuple[str, bool]:
+    status = getattr(result, "status", "") or ""
+    reason = (getattr(result, "reason", "") or "").lower()
+    notified = status in {"queued", "sent"}
+
+    if action == "reschedule":
+        queued_msg = "Слот освобождён. Уведомление поставлено в очередь."
+        sent_msg = "Слот освобождён. Кандидату отправлено уведомление о переносе."
+        failed_default = "Слот освобождён. Уведомление не отправлено."
+        failed_broker = (
+            "Слот освобождён. Сообщите кандидату вручную: брокер уведомлений недоступен."
+        )
+    else:
+        queued_msg = "Слот освобождён. Уведомление об отмене поставлено в очередь."
+        sent_msg = "Слот освобождён. Кандидату отправлено уведомление об отмене."
+        failed_default = "Слот освобождён. Уведомление об отмене не отправлено."
+        failed_broker = (
+            "Слот освобождён. Уведомление об отмене не доставлено: брокер уведомлений недоступен."
+        )
+
+    if status == "queued":
+        return queued_msg, True
+    if status == "sent":
+        if reason == "direct:no-broker":
+            return "Слот освобождён. Отправлено напрямую (no-broker).", True
+        return sent_msg, True
+    if status == "failed":
+        if reason == "broker_unavailable":
+            return failed_broker, False
+        return failed_default, False
+    return failed_default, False
 
 
 def get_state_manager():
@@ -80,6 +124,8 @@ async def list_slots(
 ) -> Dict[str, object]:
     async with async_session() as session:
         filtered = select(Slot)
+        # Exclude intro_day slots (they are managed separately on candidates page)
+        filtered = filtered.where(Slot.purpose != "intro_day")
         if recruiter_id is not None:
             filtered = filtered.where(Slot.recruiter_id == recruiter_id)
         if status:
@@ -104,12 +150,20 @@ async def list_slots(
         pages_total, page, offset = paginate(total, page, per_page)
 
         query = (
-            filtered.options(selectinload(Slot.recruiter))
+            filtered.options(
+                selectinload(Slot.recruiter),
+                selectinload(Slot.city),
+            )
             .order_by(Slot.start_utc.desc())
             .offset(offset)
             .limit(per_page)
         )
         items = (await session.scalars(query)).all()
+
+        # Ensure all datetime fields are timezone-aware
+        for item in items:
+            if item.start_utc:
+                item.start_utc = item.start_utc.replace(tzinfo=timezone.utc) if item.start_utc.tzinfo is None else item.start_utc
 
     return {
         "items": items,
@@ -165,10 +219,11 @@ async def create_slot(
         )
         if allowed is None:
             return False
-        dt_utc = recruiter_time_to_utc(date, time, getattr(recruiter, "tz", None))
+        # Use city timezone (or fall back to recruiter timezone) for time conversion
+        slot_tz = getattr(city, "tz", None) or getattr(recruiter, "tz", None) or DEFAULT_SLOT_TZ
+        dt_utc = recruiter_time_to_utc(date, time, slot_tz)
         if not dt_utc:
             return False
-        slot_tz = getattr(city, "tz", None) or getattr(recruiter, "tz", None) or DEFAULT_SLOT_TZ
         status_free = getattr(SlotStatus, "FREE", "FREE")
         if hasattr(status_free, "value"):
             status_free = status_free.value
@@ -251,6 +306,172 @@ async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
     return deleted, remaining_after
 
 
+def _reservation_error_message(status: str) -> str:
+    messages = {
+        "slot_taken": "На выбранное время уже есть слот. Попробуйте другое время.",
+        "duplicate_candidate": "У кандидата уже назначено собеседование.",
+        "already_reserved": "У кандидата уже забронирован слот на эту дату.",
+    }
+    return messages.get(status, "Не удалось забронировать слот. Попробуйте другое время.")
+
+
+async def _log_manual_slot_assignment(
+    *,
+    slot_id: int,
+    candidate_tg_id: int,
+    recruiter_id: int,
+    city_id: int,
+    slot_datetime_utc: datetime,
+    slot_tz: str,
+    admin_username: str,
+    ip_address: Optional[str],
+    user_agent: Optional[str],
+    custom_message_sent: bool,
+    custom_message_text: Optional[str],
+    candidate_previous_status: Optional[str],
+) -> None:
+    """Log manual slot assignment to audit table."""
+    try:
+        async with async_session() as session:
+            audit_log = ManualSlotAuditLog(
+                slot_id=slot_id,
+                candidate_tg_id=candidate_tg_id,
+                recruiter_id=recruiter_id,
+                city_id=city_id,
+                slot_datetime_utc=slot_datetime_utc,
+                slot_tz=slot_tz,
+                purpose="interview",
+                custom_message_sent=custom_message_sent,
+                custom_message_text=custom_message_text,
+                admin_username=admin_username,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                candidate_previous_status=candidate_previous_status,
+            )
+            session.add(audit_log)
+            await session.commit()
+    except Exception as exc:
+        logger = logging.getLogger(__name__)
+        logger.error("Failed to log manual slot assignment to audit: %s", exc, exc_info=True)
+
+
+async def schedule_manual_candidate_slot(
+    *,
+    candidate: "User",
+    recruiter: Recruiter,
+    city: City,
+    dt_utc: datetime,
+    slot_tz: str,
+    duration_min: int = 60,
+    admin_username: str = "admin",
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    custom_message_sent: bool = False,
+    custom_message_text: Optional[str] = None,
+) -> SlotApprovalResult:
+    if candidate.telegram_id is None:
+        raise ManualSlotError("Для кандидата не указан Telegram ID.")
+
+    normalized_dt = _as_utc(dt_utc)
+
+    async with async_session() as session:
+        # Check for exact duplicate
+        existing = await session.scalar(
+            select(Slot.id)
+            .where(Slot.recruiter_id == recruiter.id)
+            .where(Slot.start_utc == normalized_dt)
+        )
+        if existing:
+            raise ManualSlotError("На выбранное время уже существует слот у этого рекрутёра.")
+
+        # Check for overlapping slots within ±15 minutes
+        overlap_window_start = normalized_dt - timedelta(minutes=15)
+        overlap_window_end = normalized_dt + timedelta(minutes=15 + duration_min)
+
+        overlapping_slots = await session.execute(
+            select(Slot.id, Slot.start_utc, Slot.duration_min)
+            .where(Slot.recruiter_id == recruiter.id)
+            .where(
+                # Slot starts within our window, or our slot starts within their window
+                (Slot.start_utc >= overlap_window_start) & (Slot.start_utc < overlap_window_end)
+            )
+        )
+        conflicts = overlapping_slots.all()
+
+        if conflicts:
+            conflict_times = []
+            for conflict_id, conflict_start, conflict_duration in conflicts:
+                # Check if there's actual overlap (not just within ±15 min window)
+                conflict_end = conflict_start + timedelta(minutes=conflict_duration or 60)
+                new_slot_end = normalized_dt + timedelta(minutes=duration_min)
+
+                # Overlaps if: (new_start < conflict_end) AND (new_end > conflict_start)
+                if normalized_dt < conflict_end and new_slot_end > conflict_start:
+                    from backend.apps.admin_ui.timezones import fmt_local
+                    conflict_time_str = fmt_local(conflict_start, slot_tz)
+                    conflict_times.append(conflict_time_str)
+
+            if conflict_times:
+                raise ManualSlotError(
+                    f"Конфликт расписания: у рекрутёра уже есть слот(ы) в это время: {', '.join(conflict_times)}. "
+                    f"Выберите другое время с интервалом минимум 15 минут."
+                )
+
+        status_free = getattr(SlotStatus, "FREE", "FREE")
+        if hasattr(status_free, "value"):
+            status_free = status_free.value
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=slot_tz,
+            start_utc=normalized_dt,
+            status=status_free,
+            duration_min=max(1, duration_min),
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    reservation = await reserve_slot(
+        slot_id,
+        candidate.telegram_id,
+        candidate.fio,
+        slot_tz,
+        candidate_city_id=city.id,
+        candidate_username=candidate.username,
+        purpose="interview",
+        expected_recruiter_id=recruiter.id,
+        expected_city_id=city.id,
+    )
+
+    if reservation.status != "reserved":
+        await delete_slot(slot_id, force=True)
+        raise ManualSlotError(_reservation_error_message(reservation.status))
+
+    result = await approve_slot_and_notify(slot_id, force_notify=True)
+    if result.status in {"approved", "notify_failed", "already"}:
+        # Log manual slot assignment to audit table
+        await _log_manual_slot_assignment(
+            slot_id=slot_id,
+            candidate_tg_id=candidate.telegram_id,
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            slot_datetime_utc=normalized_dt,
+            slot_tz=slot_tz,
+            admin_username=admin_username,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            custom_message_sent=custom_message_sent,
+            custom_message_text=custom_message_text,
+            candidate_previous_status=candidate.candidate_status.value if candidate.candidate_status else None,
+        )
+        return result
+
+    raise ManualSlotError(result.message or "Не удалось согласовать слот.")
+
+
 @dataclass
 class BotDispatchPlan:
     kind: str
@@ -330,10 +551,7 @@ async def set_slot_outcome(
         except RuntimeError:
             reminder_service = None
     if reminder_service is not None:
-        if normalized == "success":
-            await reminder_service.schedule_for_slot(slot_id)
-        else:
-            await reminder_service.cancel_for_slot(slot_id)
+        await reminder_service.cancel_for_slot(slot_id)
     return True, message, normalized, dispatch
 
 
@@ -552,20 +770,16 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
         return False, "Слот не привязан к кандидату.", False
 
     snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
-    await reject_slot(slot_id)
-    await cancel_slot_reminders(slot_id)
     try:
         notification_service = get_notification_service()
-    except RuntimeError:
-        settings = get_settings()
-        notification_service = NotificationService(
-            poll_interval=settings.notification_poll_interval,
-            batch_size=settings.notification_batch_size,
-            rate_limit_per_sec=settings.notification_rate_limit_per_sec,
-            max_attempts=settings.notification_max_attempts,
-            retry_base_delay=settings.notification_retry_base_seconds,
-            retry_max_delay=settings.notification_retry_max_seconds,
-        )
+    except NotificationNotConfigured:
+        notification_service = None
+
+    await reject_slot(slot_id)
+    await cancel_slot_reminders(slot_id)
+
+    if notification_service is None:
+        return True, "Слот освобождён. Уведомления не отправлены (сервис недоступен).", False
 
     result = await notification_service.on_booking_status_changed(
         slot_id,
@@ -573,19 +787,8 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
         snapshot=snapshot,
     )
 
-    if result.status == "sent":
-        return True, "Слот освобождён. Кандидату отправлено уведомление о переносе.", True
-    if result.status == "failed":
-        return (
-            True,
-            "Слот освобождён. Бот недоступен — сообщите кандидату вручную.",
-            False,
-        )
-    return (
-        True,
-        "Слот освобождён. Уведомление не отправлено.",
-        False,
-    )
+    message, notified = _notification_feedback("reschedule", result)
+    return True, message, notified
 
 
 async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
@@ -602,20 +805,16 @@ async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
         return False, "Слот не привязан к кандидату.", False
 
     snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
-    await reject_slot(slot_id)
-    await cancel_slot_reminders(slot_id)
     try:
         notification_service = get_notification_service()
-    except RuntimeError:
-        settings = get_settings()
-        notification_service = NotificationService(
-            poll_interval=settings.notification_poll_interval,
-            batch_size=settings.notification_batch_size,
-            rate_limit_per_sec=settings.notification_rate_limit_per_sec,
-            max_attempts=settings.notification_max_attempts,
-            retry_base_delay=settings.notification_retry_base_seconds,
-            retry_max_delay=settings.notification_retry_max_seconds,
-        )
+    except NotificationNotConfigured:
+        notification_service = None
+
+    await reject_slot(slot_id)
+    await cancel_slot_reminders(slot_id)
+
+    if notification_service is None:
+        return True, "Слот освобождён. Уведомления не отправлены (сервис недоступен).", False
 
     result = await notification_service.on_booking_status_changed(
         slot_id,
@@ -623,19 +822,8 @@ async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
         snapshot=snapshot,
     )
 
-    if result.status == "sent":
-        return True, "Слот освобождён. Кандидату отправлен отказ.", True
-    if result.status == "failed":
-        return (
-            True,
-            "Слот освобождён. Сообщите кандидату об отказе вручную.",
-            False,
-        )
-    return (
-        True,
-        "Слот освобождён. Уведомление не отправлено.",
-        False,
-    )
+    message, notified = _notification_feedback("reject", result)
+    return True, message, notified
 
 
 
@@ -766,8 +954,9 @@ async def bulk_create_slots(
 
                     hours, minutes = divmod(current_minutes, 60)
                     time_str = f"{hours:02d}:{minutes:02d}"
+                    # Use slot_tz (city timezone) instead of recruiter timezone
                     dt_utc = recruiter_time_to_utc(
-                        current_date.isoformat(), time_str, tz
+                        current_date.isoformat(), time_str, slot_tz
                     )
                     if not dt_utc:
                         return 0, "Не удалось преобразовать время в UTC"

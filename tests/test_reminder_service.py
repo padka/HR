@@ -1,17 +1,92 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+from aiogram.exceptions import TelegramRetryAfter, TelegramServerError
+from aiogram.methods import SendMessage
+from sqlalchemy import select
 
+from backend.apps.bot.broker import InMemoryNotificationBroker
 from backend.apps.bot.metrics import (
     get_reminder_metrics_snapshot,
     reset_reminder_metrics,
 )
 from backend.apps.bot.reminders import ReminderKind, ReminderService, create_scheduler
+from backend.apps.bot.services import NotificationService
 from backend.apps.bot.state_store import build_state_manager
 from backend.core.db import async_session
 from backend.domain import models
+from backend.domain.models import MessageTemplate
+from backend.domain.repositories import add_outbox_notification, get_outbox_item
+
+
+class DummyBucket:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def consume(self, tokens: float = 1.0) -> None:
+        self.calls += 1
+
+
+class FakeRetryAfter(TelegramRetryAfter):
+    def __init__(self, retry_after: float) -> None:
+        self.retry_after = retry_after
+        self.message = f"retry after {retry_after}"
+        self.args = (self.message,)
+
+
+async def _ensure_message_template(key: str) -> None:
+    async with async_session() as session:
+        existing = await session.scalar(
+            select(MessageTemplate).where(
+                MessageTemplate.key == key,
+                MessageTemplate.locale == "ru",
+                MessageTemplate.channel == "tg",
+            )
+        )
+        if existing:
+            return
+        template = MessageTemplate(
+            key=key,
+            locale="ru",
+            channel="tg",
+            body_md="Напоминание {candidate_name}",
+            version=1,
+            is_active=True,
+            updated_at=datetime.now(timezone.utc),
+        )
+        session.add(template)
+        await session.commit()
+
+
+async def _create_booked_slot(*, candidate_id: int = 4321) -> models.Slot:
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Reminder Recruiter",
+            tz="Europe/Moscow",
+            active=True,
+            telemost_url="https://telemost.example",
+        )
+        city = models.City(name="Reminder City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=6),
+            status=models.SlotStatus.BOOKED,
+            candidate_tg_id=candidate_id,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        return slot
 
 
 @pytest.mark.asyncio
@@ -54,8 +129,8 @@ async def test_reminder_service_schedules_and_reschedules(monkeypatch):
         await service.schedule_for_slot(slot_id)
         jobs = {job.id: job for job in scheduler.get_jobs()}
         expected = {
-            f"slot:{slot_id}:{ReminderKind.REMIND_24H.value}",
             f"slot:{slot_id}:{ReminderKind.CONFIRM_6H.value}",
+            f"slot:{slot_id}:{ReminderKind.CONFIRM_3H.value}",
             f"slot:{slot_id}:{ReminderKind.CONFIRM_2H.value}",
         }
         assert set(jobs) == expected
@@ -126,8 +201,7 @@ async def test_quiet_hours_adjustment_and_metrics():
 
         snapshot = await get_reminder_metrics_snapshot()
         assert snapshot.adjusted_total.get(ReminderKind.CONFIRM_2H.value, 0) == 1
-        assert ReminderKind.REMIND_1H.value not in snapshot.adjusted_total
-        assert snapshot.scheduled_total.get(ReminderKind.REMIND_24H.value, 0) >= 1
+        assert snapshot.scheduled_total.get(ReminderKind.CONFIRM_6H.value, 0) >= 1
     finally:
         await service.shutdown()
 
@@ -214,8 +288,141 @@ async def test_reminders_sent_immediately_for_past_targets(monkeypatch):
         kinds = {kind for _slot_id, kind in triggered if _slot_id == slot_id}
         assert ReminderKind.CONFIRM_2H in kinds
         assert ReminderKind.CONFIRM_6H not in kinds
-        assert ReminderKind.REMIND_24H in kinds
         assert scheduler.get_jobs() == []
+    finally:
+        await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_reminder_retry_backoff_on_channel_failure(monkeypatch):
+    await _ensure_message_template("confirm_2h")
+    slot = await _create_booked_slot()
+    outbox_entry = await add_outbox_notification(
+        notification_type="slot_reminder",
+        booking_id=slot.id,
+        candidate_tg_id=slot.candidate_tg_id,
+        payload={"reminder_kind": ReminderKind.CONFIRM_2H.value},
+    )
+    item = await get_outbox_item(outbox_entry.id)
+    broker = InMemoryNotificationBroker()
+    await broker.start()
+    service = NotificationService(
+        broker=broker,
+        poll_interval=0.05,
+        batch_size=1,
+        rate_limit_per_sec=2.0,
+        retry_base_delay=20,
+        retry_max_delay=40,
+    )
+    bucket = DummyBucket()
+    service._token_bucket = bucket
+    jitter_factor = 1.12
+    monkeypatch.setattr("backend.apps.bot.services.random.uniform", lambda a, b: jitter_factor)
+    dummy_bot = SimpleNamespace()
+    monkeypatch.setattr("backend.apps.bot.services.get_bot", lambda: dummy_bot)
+
+    async def failing_send(bot, method, correlation_id):
+        raise TelegramServerError("channel down")
+
+    monkeypatch.setattr("backend.apps.bot.services._send_with_retry", failing_send)
+
+    await service._process_interview_reminder(item)
+
+    async with async_session() as session:
+        entry = await session.get(models.OutboxNotification, outbox_entry.id)
+        assert entry is not None
+        assert entry.status == "pending"
+        assert entry.next_retry_at is not None
+        next_retry = entry.next_retry_at
+        if next_retry.tzinfo is None:
+            next_retry = next_retry.replace(tzinfo=timezone.utc)
+        delay = (next_retry - datetime.now(timezone.utc)).total_seconds()
+    expected = service._retry_base * jitter_factor
+    assert delay >= expected - 1.0
+    assert bucket.calls == 1
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_reminder_retry_honors_retry_after_hint(monkeypatch):
+    await _ensure_message_template("confirm_2h")
+    slot = await _create_booked_slot(candidate_id=9898)
+    outbox_entry = await add_outbox_notification(
+        notification_type="slot_reminder",
+        booking_id=slot.id,
+        candidate_tg_id=slot.candidate_tg_id,
+        payload={"reminder_kind": ReminderKind.CONFIRM_2H.value},
+    )
+    item = await get_outbox_item(outbox_entry.id)
+    broker = InMemoryNotificationBroker()
+    await broker.start()
+    service = NotificationService(
+        broker=broker,
+        poll_interval=0.05,
+        batch_size=1,
+        rate_limit_per_sec=1.0,
+        retry_base_delay=10,
+        retry_max_delay=40,
+    )
+    bucket = DummyBucket()
+    service._token_bucket = bucket
+    monkeypatch.setattr("backend.apps.bot.services.random.uniform", lambda a, b: 1.0)
+    dummy_bot = SimpleNamespace()
+    monkeypatch.setattr("backend.apps.bot.services.get_bot", lambda: dummy_bot)
+
+    async def rate_limited_send(bot, method, correlation_id):
+        raise FakeRetryAfter(retry_after=12)
+
+    monkeypatch.setattr("backend.apps.bot.services._send_with_retry", rate_limited_send)
+
+    await service._process_interview_reminder(item)
+
+    async with async_session() as session:
+        entry = await session.get(models.OutboxNotification, outbox_entry.id)
+        assert entry is not None
+        assert entry.next_retry_at is not None
+        next_retry = entry.next_retry_at
+        if next_retry.tzinfo is None:
+            next_retry = next_retry.replace(tzinfo=timezone.utc)
+        delay = (next_retry - datetime.now(timezone.utc)).total_seconds()
+    assert delay >= 12 - 0.5
+    assert bucket.calls == 1
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_intro_day_gets_three_hour_reminder(monkeypatch):
+    scheduler = create_scheduler(redis_url=None)
+    service = ReminderService(scheduler=scheduler)
+    service.start()
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Intro", tz="Europe/Moscow", active=True)
+        city = models.City(name="Intro City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=12),
+            status=models.SlotStatus.BOOKED,
+            candidate_tg_id=3030,
+            candidate_tz="Europe/Moscow",
+            purpose="intro_day",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    try:
+        await service.schedule_for_slot(slot_id)
+        jobs = {job.id for job in scheduler.get_jobs()}
+        expected_job = f"slot:{slot_id}:{ReminderKind.INTRO_REMIND_3H.value}"
+        assert jobs == {expected_job}
     finally:
         await service.shutdown()
 
@@ -260,9 +467,7 @@ async def test_schedule_can_skip_confirmation_prompts(monkeypatch):
         )
         job_ids = {job.id for job in scheduler.get_jobs()}
         assert f"slot:{slot_id}:{ReminderKind.CONFIRM_2H.value}" not in job_ids
-        assert all(kind != ReminderKind.CONFIRM_2H for _, kind in triggered)
-        assert all(kind != ReminderKind.CONFIRM_6H for _, kind in triggered)
-        assert any(kind == ReminderKind.REMIND_24H for _, kind in triggered)
+        assert not triggered
         assert not job_ids
     finally:
         await service.shutdown()
@@ -305,7 +510,7 @@ async def test_execute_job_enqueues_outbox_notification(monkeypatch):
 
     monkeypatch.setattr("backend.apps.bot.services.get_notification_service", lambda: fake_service)
 
-    await service._execute_job(slot_id, ReminderKind.REMIND_24H)
+    await service._execute_job(slot_id, ReminderKind.CONFIRM_6H)
 
     assert fake_service.calls, "Expected reminder to enqueue outbox notification"
     outbox_id, attempt = fake_service.calls[0]
@@ -315,7 +520,7 @@ async def test_execute_job_enqueues_outbox_notification(monkeypatch):
         outbox = await session.get(models.OutboxNotification, outbox_id)
         assert outbox is not None
         assert outbox.type == "slot_reminder"
-        assert outbox.payload_json.get("reminder_kind") == ReminderKind.REMIND_24H.value
+        assert outbox.payload_json.get("reminder_kind") == ReminderKind.CONFIRM_6H.value
 
     await service.shutdown()
 
@@ -327,7 +532,7 @@ def test_schedule_respects_non_canonical_timezone():
     messy_tz = " asia/novosibirsk "
     start_utc = datetime(2025, 2, 1, 9, 0, tzinfo=timezone.utc)
 
-    reminders = service._build_schedule(start_utc, messy_tz)
+    reminders = service._build_schedule(start_utc, messy_tz, "interview")
 
     assert reminders
     local_zone = reminders[0].run_at_local.tzinfo

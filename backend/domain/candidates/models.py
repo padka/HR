@@ -13,10 +13,14 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Enum as SQLEnum,
+    JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import func
 
 from backend.domain.base import Base
+from backend.domain.candidates.status import CandidateStatus
 
 
 class User(Base):
@@ -30,6 +34,12 @@ class User(Base):
     test1_report_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     test2_report_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    candidate_status: Mapped[Optional[CandidateStatus]] = mapped_column(
+        SQLEnum(CandidateStatus, name="candidate_status_enum", create_constraint=True),
+        nullable=True,
+        index=True,
+    )
+    status_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_activity: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
@@ -37,9 +47,14 @@ class User(Base):
     test_results: Mapped[List["TestResult"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    interview_note: Mapped[Optional["InterviewNote"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
-        return f"<User {self.id} tg={self.telegram_id}>"
+        return f"<User {self.id} tg={self.telegram_id} status={self.candidate_status}>"
 
 
 class TestResult(Base):
@@ -128,3 +143,23 @@ class Notification(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<Notification {self.id} type={self.notification_type}>"
+
+
+class InterviewNote(Base):
+    __tablename__ = "interview_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    interviewer_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="interview_note")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<InterviewNote user_id={self.user_id}>"

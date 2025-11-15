@@ -15,6 +15,7 @@ Example:
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Callable, Generic, TypeVar, Union, cast
 
@@ -23,7 +24,10 @@ E = TypeVar("E")
 U = TypeVar("U")
 
 
-@dataclass(frozen=True, slots=True)
+_DATACLASS_SLOTS: dict[str, bool] = {"slots": True} if sys.version_info >= (3, 10) else {}
+
+
+@dataclass(frozen=True, **_DATACLASS_SLOTS)
 class Success(Generic[T]):
     """Represents a successful operation result."""
 
@@ -61,7 +65,7 @@ class Success(Generic[T]):
         return f"Success({self.value!r})"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **_DATACLASS_SLOTS)
 class Failure(Generic[E]):
     """Represents a failed operation result."""
 
@@ -111,7 +115,7 @@ def failure(error: E) -> Failure[E]:
 
 
 # Common error types
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **_DATACLASS_SLOTS)
 class NotFoundError:
     """Entity not found error."""
 
@@ -125,7 +129,7 @@ class NotFoundError:
         return f"{self.entity_type} with id={self.entity_id} not found"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **_DATACLASS_SLOTS)
 class ValidationError:
     """Validation failed error."""
 
@@ -139,7 +143,7 @@ class ValidationError:
         return f"{self.field}: {self.message}"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **_DATACLASS_SLOTS)
 class DatabaseError:
     """Database operation error."""
 
@@ -151,7 +155,7 @@ class DatabaseError:
         return f"Database error during {self.operation}: {self.message}"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **_DATACLASS_SLOTS)
 class ConflictError:
     """Conflict error (e.g., duplicate key, constraint violation)."""
 

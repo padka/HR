@@ -1,4 +1,5 @@
 const board = document.querySelector('[data-kanban-board]');
+const csrfToken = window.__CSRF_TOKEN__ || '';
 let draggedCard = null;
 let sourceColumn = null;
 
@@ -15,6 +16,7 @@ async function postStatus(candidateId, status) {
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
+      'X-CSRFToken': csrfToken,
     },
     body: JSON.stringify({ status }),
   });
@@ -103,4 +105,3 @@ if (board) {
     });
   });
 }
-

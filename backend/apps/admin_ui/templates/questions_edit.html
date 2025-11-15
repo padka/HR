@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Редактирование вопроса{% endblock %}
 {% block content %}
 {% call forms.shell(

@@ -25,27 +25,27 @@
   {% endif %}
 
   <section class="slot-summary" aria-label="Быстрая статистика по слотам">
-    <article class="slot-summary__item" data-tone="success">
+    <article class="slot-summary__item" data-tone="success" data-icon="🟢">
       <span class="slot-summary__label">Свободные</span>
       <span class="slot-summary__value" id="cnt-free">{{ status_counts.FREE }}</span>
       <p class="slot-summary__hint">Готовы к бронированию</p>
     </article>
-    <article class="slot-summary__item" data-tone="warning">
+    <article class="slot-summary__item" data-tone="warning" data-icon="⏳">
       <span class="slot-summary__label">Ожидают</span>
       <span class="slot-summary__value" id="cnt-pending">{{ status_counts.PENDING }}</span>
       <p class="slot-summary__hint">Заявки требуют подтверждения</p>
     </article>
-    <article class="slot-summary__item" data-tone="info">
+    <article class="slot-summary__item" data-tone="info" data-icon="📅">
       <span class="slot-summary__label">Забронированы</span>
       <span class="slot-summary__value" id="cnt-booked">{{ status_counts.BOOKED }}</span>
       <p class="slot-summary__hint">Интервью назначены кандидатам</p>
     </article>
-    <article class="slot-summary__item" data-tone="primary">
+    <article class="slot-summary__item" data-tone="primary" data-icon="✅">
       <span class="slot-summary__label">Подтверждены</span>
       <span class="slot-summary__value" id="cnt-confirmed">{{ status_counts.CONFIRMED_BY_CANDIDATE }}</span>
       <p class="slot-summary__hint">Кандидаты подтвердили участие</p>
     </article>
-    <article class="slot-summary__item" data-tone="neutral">
+    <article class="slot-summary__item" data-tone="neutral" data-icon="📊">
       <span class="slot-summary__label">Всего</span>
       <span class="slot-summary__value" id="cnt-total">{{ status_counts.total }}</span>
       <p class="slot-summary__hint">С учётом действующих фильтров</p>
@@ -113,12 +113,12 @@
         <thead>
           <tr>
             <th scope="col" class="sortable">
-              <button class="sort" type="button" data-key="id" aria-sort="ascending">ID <span class="arrow" aria-hidden="true"></span></button>
+              <button class="sort" type="button" data-key="recruiter" aria-sort="none">Слот <span class="arrow" aria-hidden="true"></span></button>
             </th>
-            <th scope="col" class="sortable">
-              <button class="sort" type="button" data-key="recruiter" aria-sort="none">Рекрутёр <span class="arrow" aria-hidden="true"></span></button>
+            <th scope="col" class="sortable is-optional">
+              <button class="sort" type="button" data-key="city" aria-sort="none">Город <span class="arrow" aria-hidden="true"></span></button>
             </th>
-            <th scope="col" class="sortable">
+            <th scope="col" class="sortable col-utc">
               <button class="sort" type="button" data-key="utc" aria-sort="none">UTC <span class="arrow" aria-hidden="true"></span></button>
             </th>
             <th scope="col">Локальное (TZ рекрутёра)</th>
@@ -150,18 +150,31 @@
               data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
               data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
               data-recruiter-tz="{{ tz_rec }}"
+              data-city="{{ s.city.name if s.city else '' }}"
               data-duration="{{ s.duration_min }}"
               data-candidate="{{ s.candidate_fio or '' }}"
               data-candidate-id="{{ s.candidate_tg_id or '' }}"
               data-candidate-tz="{{ cand_tz or '' }}"
               data-outcome="{{ s.interview_outcome or '' }}"
               data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
-            <td data-label="ID">ID {{ s.id }}</td>
-            <td data-label="Рекрутёр">
+            <td data-label="Слот">
               <div class="slot-cell-primary">{{ s.recruiter.name if s.recruiter else "—" }}</div>
-              <span class="badge badge--soft">{{ tz_display(tz_rec) }}</span>
+              <div class="slot-cell-meta">
+                <span class="badge badge--soft">ID {{ s.id }}</span>
+                <span class="badge badge--soft">{{ tz_display(tz_rec) }}</span>
+              </div>
             </td>
-            <td data-label="UTC">
+            <td data-label="Город" class="is-optional">
+              {% if s.city %}
+                <div class="slot-cell-primary">{{ s.city.name or "—" }}</div>
+                {% if s.city.tz %}
+                  <span class="badge badge--soft">{{ tz_display(s.city.tz) }}</span>
+                {% endif %}
+              {% else %}
+                <span class="badge badge--soft">—</span>
+              {% endif %}
+            </td>
+            <td data-label="UTC" class="col-utc">
               <div class="slot-time">
                 <span class="slot-time__value">{{ fmt_utc(s.start_utc) }}</span>
                 <span class="slot-time__relative" data-role="relative">—</span>
@@ -198,7 +211,6 @@
               {% endif %}
             </td>
             <td class="col-actions" data-label="Действия">
-              <button type="button" class="btn btn-soft btn--small" data-action="open-slot">Подробнее</button>
               <button type="button"
                       class="btn btn-danger btn--small"
                       data-action="delete-slot">
@@ -243,110 +255,6 @@
       </div>
     </div>
   {% endif %}
-
-  <div id="slot_backdrop" class="sheet-backdrop" hidden></div>
-  <aside id="slot_sheet" class="sheet slot-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="slot_sheet_title">
-    <header class="sheet-header">
-      <div>
-        <h3 id="slot_sheet_title" class="sheet-title">Слот не выбран</h3>
-        <p id="slot_sheet_sub" class="sheet-sub muted">Выберите запись в таблице.</p>
-      </div>
-      <button id="slot_sheet_close" class="btn btn-ghost btn--small" type="button" aria-label="Закрыть">✕</button>
-    </header>
-
-    <div class="sheet-body slot-sheet-body">
-      <section class="slot-overview" aria-live="polite">
-        <div class="slot-overview__top">
-          <span class="badge badge--soft" id="slot_sheet_id">ID —</span>
-          <span class="status-badge" id="slot_sheet_status" data-tone="info">Статус: —</span>
-        </div>
-        <div class="slot-overview__meta">
-          <div>
-            <span class="slot-overview__hint">UTC</span>
-            <p class="slot-overview__value" id="slot_sheet_utc">—</p>
-          </div>
-          <div>
-            <span class="slot-overview__hint">Локальное (рекрутёр)</span>
-            <p class="slot-overview__value" id="slot_sheet_local">—</p>
-          </div>
-          <div id="slot_sheet_local_candidate_wrap">
-            <span class="slot-overview__hint">Локальное (кандидат)</span>
-            <p class="slot-overview__value" id="slot_sheet_local_candidate">—</p>
-          </div>
-        </div>
-        <p class="slot-overview__rel" id="slot_sheet_rel">—</p>
-      </section>
-
-      <section class="slot-panel">
-        <div class="slot-panel__header">
-          <span class="slot-panel__icon" aria-hidden="true">🧑‍💼</span>
-          <div>
-            <h4 class="slot-panel__title">Рекрутёр</h4>
-            <p class="slot-panel__hint">Текущий владелец слота</p>
-          </div>
-        </div>
-        <div class="slot-panel__body" id="slot_sheet_recruiter">
-          <p class="muted">Не назначен</p>
-        </div>
-      </section>
-
-      <section class="slot-panel" id="slot_sheet_candidate_section">
-        <div class="slot-panel__header">
-          <span class="slot-panel__icon" aria-hidden="true">🧑‍🎓</span>
-          <div>
-            <h4 class="slot-panel__title">Кандидат</h4>
-            <p class="slot-panel__hint">Бронь и контакты</p>
-          </div>
-        </div>
-        <div class="slot-panel__body" id="slot_sheet_candidate">
-          <p class="muted">Пока никто не забронировал слот.</p>
-        </div>
-        <div class="slot-panel__actions" id="slot_sheet_candidate_actions">
-          <button type="button" class="btn btn-soft btn--small" id="slot_reschedule_btn" disabled>Перенести бронь</button>
-          <button type="button" class="btn btn-danger btn--small" id="slot_reject_btn" disabled>Отказать кандидату</button>
-        </div>
-      </section>
-
-      <section class="slot-panel" id="slot_sheet_outcome_section">
-        <div class="slot-panel__header">
-          <span class="slot-panel__icon" aria-hidden="true">✅</span>
-          <div>
-            <h4 class="slot-panel__title">Исход интервью</h4>
-            <p class="slot-panel__hint">Выберите результат встречи</p>
-          </div>
-        </div>
-        <div class="slot-panel__body">
-          <p class="muted" id="slot_sheet_outcome_hint">Доступно после назначения кандидата.</p>
-          <div class="slot-outcome__actions" id="slot_sheet_outcome_actions">
-            <button type="button" class="btn btn-ghost btn--small" data-outcome="success">Прошёл</button>
-            <button type="button" class="btn btn-ghost btn--small" data-outcome="reject">Не прошёл</button>
-          </div>
-          <p class="slot-outcome__status" id="slot_sheet_outcome_status">Исход не выбран</p>
-        </div>
-      </section>
-
-      <section class="slot-panel">
-        <div class="slot-panel__header">
-          <span class="slot-panel__icon" aria-hidden="true">⏱</span>
-          <div>
-            <h4 class="slot-panel__title">Параметры</h4>
-            <p class="slot-panel__hint">Продолжительность и статус</p>
-          </div>
-        </div>
-        <div class="slot-panel__body">
-          <ul class="slot-meta" id="slot_sheet_meta"></ul>
-        </div>
-      </section>
-    </div>
-
-    <footer class="sheet-footer slot-sheet-footer">
-      <div class="form-actions">
-        <button id="slot_delete_btn" class="btn btn-danger btn--small" type="button" disabled>Удалить слот</button>
-        <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
-      </div>
-    </footer>
-  </aside>
-
   <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
 </section>
 
@@ -370,35 +278,11 @@
   const chipPending = $('#cnt-pending');
   const chipBookedEl = $('#cnt-booked');
 
-  const slotSheet = $('#slot_sheet');
-  const slotBackdrop = $('#slot_backdrop');
-  const slotClose = $('#slot_sheet_close');
-
-  const slotTitle = $('#slot_sheet_title');
-  const slotSub = $('#slot_sheet_sub');
-  const slotId = $('#slot_sheet_id');
-  const slotStatus = $('#slot_sheet_status');
-  const slotUtc = $('#slot_sheet_utc');
-  const slotLocal = $('#slot_sheet_local');
-  const slotLocalCandidateWrap = $('#slot_sheet_local_candidate_wrap');
-  const slotLocalCandidate = $('#slot_sheet_local_candidate');
-  const slotRel = $('#slot_sheet_rel');
-  const slotRecruiter = $('#slot_sheet_recruiter');
-  const slotCandidateSection = $('#slot_sheet_candidate_section');
-  const slotCandidate = $('#slot_sheet_candidate');
-  const slotCandidateActions = $('#slot_sheet_candidate_actions');
-  const slotRescheduleBtn = $('#slot_reschedule_btn');
-  const slotRejectBookingBtn = $('#slot_reject_btn');
-  const slotOutcomeSection = $('#slot_sheet_outcome_section');
-  const slotOutcomeHint = $('#slot_sheet_outcome_hint');
-  const slotOutcomeActions = $('#slot_sheet_outcome_actions');
-  const slotOutcomeStatus = $('#slot_sheet_outcome_status');
-  const slotMeta = $('#slot_sheet_meta');
-  const slotDeleteBtn = $('#slot_delete_btn');
   const toastStack = $('#toasts');
+  const notificationFeedKey = 'slots.notifications.lastId';
+  let notificationFeedTimer = null;
 
   let sortState = { key: 'utc', dir: 'asc' };
-  let currentRow = null;
   let relTimer = null;
 
   const storage = window.localStorage;
@@ -406,6 +290,7 @@
     future: 'slots.onlyFuture',
     candidate: 'slots.showCandidateTz'
   };
+  const csrfToken = window.__CSRF_TOKEN__ || '';
 
   function toast(text, kind='info'){
     if (!toastStack) return;
@@ -417,6 +302,86 @@
     requestAnimationFrame(() => el.classList.add('toast--show'));
     setTimeout(() => el.classList.add('toast--hide'), 1800);
     setTimeout(() => el.remove(), 2200);
+  }
+
+  const notificationLabels = {
+    interview_confirmed_candidate: 'Подтверждение слота',
+    candidate_reschedule_prompt: 'Перенос слота',
+    candidate_rejection: 'Отказ кандидату',
+    intro_day_invitation: 'Ознакомительный день',
+  };
+
+  const reminderLabels = {
+    confirm_6h: 'Подтверждение за 6 часов',
+    confirm_3h: 'Подтверждение за 3 часа',
+    confirm_2h: 'Подтверждение за 2 часа',
+    intro_remind_3h: 'Ознакомительный день через 3 часа',
+  };
+
+  function labelForNotification(item){
+    if (!item) return 'Уведомление';
+    const direct = notificationLabels[item.type];
+    if (direct) return direct;
+    if (item.type && item.type.startsWith('slot_reminder:')){
+      const [, kind] = item.type.split(':', 2);
+      return reminderLabels[kind] || 'Напоминание о встрече';
+    }
+    return item.type || 'Уведомление';
+  }
+
+  function shouldDisplayNotification(item){
+    const status = (item?.status || '').toLowerCase();
+    return status === 'failed' || status === 'pending';
+  }
+
+  function toastKindForStatus(status){
+    if (status === 'failed') return 'error';
+    if (status === 'pending') return 'info';
+    return 'info';
+  }
+
+  function formatNotificationMessage(item){
+    const label = labelForNotification(item);
+    const status = (item?.status || '').toLowerCase();
+    if (status === 'failed'){
+      return `${label}: ${item?.last_error || 'ошибка доставки'}`;
+    }
+    if (status === 'pending'){
+      return `${label}: ожидает подтверждения`;
+    }
+    return `${label}: статус обновлён`;
+  }
+
+  async function fetchNotificationFeed(){
+    const lastId = storage.getItem(notificationFeedKey);
+    const query = lastId ? `?after_id=${encodeURIComponent(lastId)}` : '';
+    try {
+      const res = await fetch(`/api/notifications/feed${query}`);
+      if (!res.ok) return;
+      const payload = await res.json();
+      const items = payload.items || [];
+      const latestId = payload.latest_id || (items.length ? items[items.length - 1].id : null);
+      if (!lastId){
+        if (latestId) storage.setItem(notificationFeedKey, latestId);
+        return;
+      }
+      items.forEach(item => {
+        if (!shouldDisplayNotification(item)) return;
+        const status = (item.status || '').toLowerCase();
+        toast(formatNotificationMessage(item), toastKindForStatus(status));
+      });
+      if (latestId) storage.setItem(notificationFeedKey, latestId);
+    } catch (err) {
+      console.warn('notification feed error', err);
+    }
+  }
+
+  function startNotificationFeed(){
+    if (notificationFeedTimer){
+      clearInterval(notificationFeedTimer);
+    }
+    fetchNotificationFeed();
+    notificationFeedTimer = setInterval(fetchNotificationFeed, 30000);
   }
 
   function parseTime(row){
@@ -439,6 +404,14 @@
     if (abs < 60) return `${diffMin >= 0 ? 'через' : ''} ${abs} мин`;
     const hours = Math.round(abs / 60);
     return `${diffMin >= 0 ? 'через' : ''} ${hours} ч`;
+  }
+
+  function relativeState(diffMin){
+    if (!Number.isFinite(diffMin)) return 'distant';
+    if (diffMin < -5) return 'past';
+    if (diffMin <= 15) return 'now';
+    if (diffMin <= 120) return 'soon';
+    return 'distant';
   }
 
   function updateCounters(result){
@@ -497,6 +470,8 @@
         return parseTime(row);
       case 'recruiter':
         return (row.dataset.recruiter || '').toLowerCase();
+      case 'city':
+        return (row.dataset.city || '').toLowerCase();
       case 'candidate':
         return (row.dataset.candidate || '').toLowerCase();
       case 'status':
@@ -529,22 +504,19 @@
   }
 
   function updateRelativeLabels(){
+    const now = Date.now();
     rows.forEach(row => {
       const relEl = $('[data-role="relative"]', row);
-      if (!relEl) return;
-      relEl.textContent = formatRelative(parseTime(row));
-    });
-    if (currentRow && slotRel){
-      slotRel.textContent = formatRelative(parseTime(currentRow));
-    }
-  }
-
-  function fillList(container, items){
-    container.innerHTML = '';
-    items.forEach(text => {
-      const li = document.createElement('li');
-      li.textContent = text;
-      container.appendChild(li);
+      const ts = parseTime(row);
+      if (!relEl || !Number.isFinite(ts)) return;
+      const diffMin = Math.round((ts - now) / 60000);
+      const state = relativeState(diffMin);
+      relEl.textContent = formatRelative(ts);
+      relEl.dataset.state = state;
+      row.classList.toggle('is-past', state === 'past');
+      row.classList.toggle('is-now', state === 'now');
+      row.classList.toggle('is-soon', state === 'soon');
+      row.classList.toggle('is-distant', state === 'distant');
     });
   }
 
@@ -555,265 +527,6 @@
       rows.splice(idx, 1);
     }
     row.remove();
-  }
-
-  function openSheet(){
-    if (!slotSheet || !slotBackdrop) return;
-    slotSheet.hidden = false;
-    slotBackdrop.hidden = false;
-    requestAnimationFrame(() => {
-      slotSheet.classList.add('open');
-      slotBackdrop.classList.add('open');
-      document.body.classList.add('sheet-open');
-    });
-  }
-
-  function closeSheet(){
-    if (!slotSheet || !slotBackdrop) return;
-    slotSheet.classList.remove('open');
-    slotBackdrop.classList.remove('open');
-    setTimeout(() => {
-      slotSheet.hidden = true;
-      slotBackdrop.hidden = true;
-      document.body.classList.remove('sheet-open');
-      currentRow = null;
-      resetSheet();
-    }, 200);
-  }
-
-  function resetSheet(){
-    if (slotTitle) slotTitle.textContent = 'Слот не выбран';
-    if (slotSub) slotSub.textContent = 'Выберите запись в таблице.';
-    if (slotId) slotId.textContent = 'ID —';
-    if (slotStatus){
-      slotStatus.textContent = 'Статус: —';
-      slotStatus.dataset.tone = 'info';
-    }
-    if (slotUtc) slotUtc.textContent = '—';
-    if (slotLocal) slotLocal.textContent = '—';
-    if (slotLocalCandidateWrap){
-      slotLocalCandidateWrap.hidden = true;
-    }
-    if (slotRel) slotRel.textContent = '—';
-    if (slotRecruiter) slotRecruiter.innerHTML = '<p class="muted">Не назначен</p>';
-    if (slotCandidateSection){
-      slotCandidateSection.hidden = true;
-    }
-    if (slotCandidate) slotCandidate.innerHTML = '';
-    if (slotOutcomeSection){
-      slotOutcomeSection.hidden = true;
-    }
-    if (slotOutcomeHint){
-      slotOutcomeHint.textContent = 'Доступно после назначения кандидата.';
-    }
-    if (slotOutcomeStatus){
-      slotOutcomeStatus.textContent = 'Исход не выбран';
-    }
-    if (slotOutcomeActions){
-      $$('button', slotOutcomeActions).forEach(btn => {
-        btn.disabled = true;
-        btn.classList.remove('is-active');
-      });
-    }
-    if (slotMeta) slotMeta.innerHTML = '';
-    if (slotDeleteBtn){
-      slotDeleteBtn.disabled = true;
-      slotDeleteBtn.dataset.slotId = '';
-      slotDeleteBtn.dataset.forceAllowed = '0';
-      slotDeleteBtn.textContent = 'Удалить слот';
-    }
-  }
-
-  function toneForStatus(status){
-    if (status === 'FREE') return 'success';
-    if (status === 'PENDING') return 'warning';
-    if (status === 'BOOKED') return 'info';
-    return 'neutral';
-  }
-
-  function normalizeOutcome(raw){
-    const value = (raw || '').toLowerCase();
-    if (value === 'passed' || value === 'success') return 'success';
-    if (value === 'failed' || value === 'reject') return 'reject';
-    return '';
-  }
-
-  function setOutcomeButtonsEnabled(enabled){
-    if (!slotOutcomeActions) return;
-    $$('button', slotOutcomeActions).forEach(btn => {
-      btn.disabled = !enabled;
-    });
-  }
-
-  function updateOutcomeUI(outcome){
-    if (!slotOutcomeStatus || !slotOutcomeActions) return;
-    const normalized = normalizeOutcome(outcome);
-    $$('button', slotOutcomeActions).forEach(btn => {
-      btn.classList.toggle('is-active', btn.dataset.outcome === normalized);
-    });
-    if (!normalized){
-      slotOutcomeStatus.textContent = 'Исход не выбран';
-      return;
-    }
-    slotOutcomeStatus.textContent = normalized === 'success'
-      ? 'Кандидат прошёл интервью'
-      : 'Кандидат не прошёл интервью';
-  }
-
-  function hydrateSheet(row){
-    const id = row.dataset.id || '—';
-    const status = row.dataset.status || '—';
-    const recruiterName = row.dataset.recruiter || '—';
-    const recruiterTz = row.dataset.recruiterTz || 'Europe/Moscow';
-    const candidateName = row.dataset.candidate || '';
-    const candidateTz = row.dataset.candidateTz || '';
-    const candidateId = row.dataset.candidateId || '';
-    const duration = parseInt(row.dataset.duration || '0', 10);
-    const outcome = normalizeOutcome(row.dataset.outcome || '');
-
-    if (slotTitle) slotTitle.textContent = recruiterName ? `Слот у ${recruiterName}` : `Слот #${id}`;
-    if (slotSub) slotSub.textContent = `ID: ${id}`;
-    if (slotId) slotId.textContent = `ID ${id}`;
-    if (slotStatus){
-      slotStatus.textContent = `Статус: ${status}`;
-      slotStatus.dataset.tone = toneForStatus(status);
-    }
-    if (slotUtc) slotUtc.textContent = row.dataset.startUtc || '—';
-    if (slotLocal) slotLocal.textContent = row.dataset.startRec || '—';
-    if (slotLocalCandidateWrap){
-      if (candidateTz && row.dataset.startCand){
-        slotLocalCandidateWrap.hidden = false;
-        if (slotLocalCandidate) slotLocalCandidate.textContent = `${row.dataset.startCand} (${candidateTz})`;
-      } else {
-        slotLocalCandidateWrap.hidden = true;
-      }
-    }
-    if (slotRel) slotRel.textContent = formatRelative(parseTime(row));
-
-    if (slotRecruiter){
-      slotRecruiter.innerHTML = `
-        <div class="slot-person">
-          <span class="slot-person__name">${recruiterName || '—'}</span>
-          <span class="badge badge--soft">${recruiterTz}</span>
-        </div>`;
-    }
-
-    if (slotCandidateSection){
-      if (candidateName){
-        slotCandidateSection.hidden = false;
-        if (slotCandidate){
-          slotCandidate.innerHTML = `
-            <div class="slot-person">
-              <span class="slot-person__name">${candidateName}</span>
-              ${candidateTz ? `<span class="badge badge--soft">${candidateTz}</span>` : ''}
-            </div>
-            <p class="muted">tg_id: ${candidateId || '—'}</p>`;
-        }
-        if (slotCandidateActions) slotCandidateActions.hidden = false;
-      } else {
-        slotCandidateSection.hidden = false;
-        if (slotCandidate) slotCandidate.innerHTML = '<p class="muted">Пока никто не забронировал слот.</p>';
-        if (slotCandidateActions) slotCandidateActions.hidden = true;
-      }
-    }
-
-    if (slotRescheduleBtn){
-      slotRescheduleBtn.disabled = !candidateName;
-      slotRescheduleBtn.dataset.slotId = id || '';
-    }
-    if (slotRejectBookingBtn){
-      slotRejectBookingBtn.disabled = !candidateName;
-      slotRejectBookingBtn.dataset.slotId = id || '';
-    }
-
-    if (slotOutcomeSection){
-      slotOutcomeSection.hidden = false;
-      const hasCandidate = !!(candidateName && candidateName.trim().length);
-      if (slotOutcomeHint){
-        slotOutcomeHint.textContent = hasCandidate
-          ? 'Отметьте исход. При выборе «Прошёл» бот отправит Тест 2.'
-          : 'Назначьте кандидата, чтобы отметить исход.';
-      }
-      setOutcomeButtonsEnabled(hasCandidate);
-      if (hasCandidate){
-        updateOutcomeUI(outcome);
-      } else if (slotOutcomeStatus){
-        slotOutcomeStatus.textContent = 'Недоступно — кандидат не назначен';
-        if (slotOutcomeActions){
-          $$('button', slotOutcomeActions).forEach(btn => btn.classList.remove('is-active'));
-        }
-      }
-    }
-
-    row.dataset.outcome = outcome;
-
-    if (slotMeta){
-      const items = [];
-      items.push(`Длительность: ${duration || 60} мин`);
-      items.push(`UTC: ${row.dataset.startUtc || '—'}`);
-      items.push(`TZ рекрутёра: ${recruiterTz}`);
-      if (candidateTz) items.push(`TZ кандидата: ${candidateTz}`);
-      fillList(slotMeta, items);
-    }
-
-    if (slotDeleteBtn){
-      const canDelete = row.dataset.canDelete === '1';
-      slotDeleteBtn.disabled = false;
-      slotDeleteBtn.dataset.slotId = id;
-      slotDeleteBtn.dataset.status = status;
-      slotDeleteBtn.dataset.recruiter = recruiterName || '';
-      slotDeleteBtn.dataset.forceAllowed = canDelete ? '0' : '1';
-      slotDeleteBtn.textContent = canDelete ? 'Удалить слот' : 'Удалить принудительно';
-    }
-
-  }
-
-  async function submitOutcome(outcome){
-    if (!currentRow) return;
-    if (!slotOutcomeActions) return;
-    const slotId = currentRow.dataset.id;
-    if (!slotId) return;
-    const hasCandidate = !!(currentRow.dataset.candidate && currentRow.dataset.candidate.trim().length);
-    if (!hasCandidate){
-      toast('Назначьте кандидата, чтобы отметить исход.', 'warning');
-      return;
-    }
-
-    setOutcomeButtonsEnabled(false);
-    try {
-      const response = await fetch(`/slots/${slotId}/outcome`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outcome })
-      });
-      let data = {};
-      try {
-        data = await response.json();
-      } catch (err) {
-        data = {};
-      }
-      if (!response.ok || !data.ok){
-        toast((data && data.message) || 'Не удалось сохранить исход.', 'error');
-        return;
-      }
-      const stored = normalizeOutcome(data.outcome || outcome);
-      currentRow.dataset.outcome = stored;
-      updateOutcomeUI(stored);
-      toast((data && data.message) || 'Исход сохранён.', 'success');
-    } catch (err){
-      console.error(err);
-      toast('Не удалось сохранить исход.', 'error');
-    } finally {
-      const stillHasCandidate = !!(currentRow && currentRow.dataset.candidate && currentRow.dataset.candidate.trim().length);
-      setOutcomeButtonsEnabled(stillHasCandidate);
-    }
-  }
-
-  function openSlot(row){
-    if (!row) return;
-    currentRow = row;
-    hydrateSheet(row);
-    openSheet();
   }
 
   async function performDelete(row, options = {}){
@@ -844,12 +557,14 @@
 
     const rowDeleteBtn = row.querySelector('[data-action="delete-slot"]');
     if (rowDeleteBtn) rowDeleteBtn.disabled = true;
-    if (slotDeleteBtn && currentRow === row) slotDeleteBtn.disabled = true;
 
     try {
       const response = await fetch(`/slots/${id}?force=${force ? 1 : 0}`, {
         method: 'DELETE',
-        headers: { 'Accept': 'application/json' },
+        headers: {
+          'Accept': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
       });
       const payload = await response.json().catch(() => null);
 
@@ -863,16 +578,10 @@
         }
         toast(message, 'error');
         if (rowDeleteBtn) rowDeleteBtn.disabled = false;
-        if (slotDeleteBtn && currentRow === row){
-          slotDeleteBtn.disabled = false;
-        }
         return;
       }
 
       toast(payload.message || 'Слот удалён', 'success');
-      if (currentRow === row){
-        closeSheet();
-      }
       removeRow(row);
       applyFutureFilter();
       updateRelativeLabels();
@@ -880,94 +589,6 @@
       console.error(err);
       toast('Не удалось удалить слот.', 'error');
       if (rowDeleteBtn) rowDeleteBtn.disabled = false;
-      if (slotDeleteBtn && currentRow === row){
-        slotDeleteBtn.disabled = false;
-      }
-    }
-  }
-
-  function markRowAsFree(row){
-    if (!row) return;
-    row.dataset.status = 'FREE';
-    row.dataset.statusOrder = '0';
-    row.dataset.candidate = '';
-    row.dataset.candidateId = '';
-    row.dataset.candidateTz = '';
-    row.dataset.outcome = '';
-    row.dataset.canDelete = '1';
-    row.dataset.startCand = '';
-
-    const statusCell = row.querySelector('[data-label="Статус"]');
-    if (statusCell) statusCell.innerHTML = '<span class="status-badge" data-tone="success">FREE</span>';
-
-    const candidateCell = row.querySelector('[data-label="Кандидат"]');
-    if (candidateCell) candidateCell.innerHTML = '<span class="badge badge--soft">—</span>';
-
-    const candTimeCell = row.querySelector('[data-label="Время (кандидат)"]');
-    if (candTimeCell) candTimeCell.innerHTML = '<span class="badge badge--soft">—</span>';
-  }
-
-  async function triggerReschedule(row){
-    if (!row) return;
-    const slotId = row.dataset.id;
-    if (!slotId) return;
-    if (slotRescheduleBtn) slotRescheduleBtn.disabled = true;
-    if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = true;
-    try {
-      const response = await fetch(`/slots/${slotId}/reschedule`, {
-        method: 'POST',
-        headers: { 'Accept': 'application/json' },
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload || payload.ok !== true){
-        const message = payload && payload.message ? payload.message : 'Не удалось перенести бронь.';
-        toast(message, 'error');
-        return;
-      }
-      toast(payload.message || 'Слот освобождён.', 'success');
-      markRowAsFree(row);
-      hydrateSheet(row);
-      updateCounters();
-    } catch (err){
-      console.error(err);
-      toast('Не удалось перенести бронь.', 'error');
-    } finally {
-      const candidateValue = (row.dataset.candidate || '').trim();
-      const hasCandidate = candidateValue.length > 0;
-      if (slotRescheduleBtn) slotRescheduleBtn.disabled = !hasCandidate;
-      if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = !hasCandidate;
-    }
-  }
-
-  async function triggerReject(row){
-    if (!row) return;
-    const slotId = row.dataset.id;
-    if (!slotId) return;
-    if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = true;
-    if (slotRescheduleBtn) slotRescheduleBtn.disabled = true;
-    try {
-      const response = await fetch(`/slots/${slotId}/reject_booking`, {
-        method: 'POST',
-        headers: { 'Accept': 'application/json' },
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload || payload.ok !== true){
-        const message = payload && payload.message ? payload.message : 'Не удалось отправить отказ.';
-        toast(message, 'error');
-        return;
-      }
-      toast(payload.message || 'Кандидату отправлен отказ.', 'success');
-      markRowAsFree(row);
-      hydrateSheet(row);
-      updateCounters();
-    } catch (err){
-      console.error(err);
-      toast('Не удалось отправить отказ.', 'error');
-    } finally {
-      const candidateValue = (row.dataset.candidate || '').trim();
-      const hasCandidate = candidateValue.length > 0;
-      if (slotRescheduleBtn) slotRescheduleBtn.disabled = !hasCandidate;
-      if (slotRejectBookingBtn) slotRejectBookingBtn.disabled = !hasCandidate;
     }
   }
 
@@ -983,7 +604,11 @@
     try {
       const response = await fetch('/slots/delete_all', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
         body: JSON.stringify({ force })
       });
       const payload = await response.json().catch(() => null);
@@ -1040,7 +665,6 @@
 
   if (!table || !tbody) return;
 
-  resetSheet();
   restorePreferences();
   setCandidateColumnVisibility(candToggle ? candToggle.checked : false);
   applySort();
@@ -1060,27 +684,6 @@
       performDelete(row);
       return;
     }
-    const actionBtn = e.target.closest('[data-action="open-slot"]');
-    if (actionBtn){
-      const row = actionBtn.closest('.slot-row');
-      openSlot(row);
-      return;
-    }
-    const row = e.target.closest('.slot-row');
-    if (row) openSlot(row);
-  });
-
-  on(tbody, 'dblclick', e => {
-    const row = e.target.closest('.slot-row');
-    if (row) openSlot(row);
-  });
-
-  on(tbody, 'keydown', e => {
-    const row = e.target.closest('.slot-row');
-    if (!row) return;
-    if (e.target.closest('[data-action="delete-slot"]')) return;
-    if (e.key === 'Enter'){ e.preventDefault(); openSlot(row); }
-    if (e.key === ' '){ e.preventDefault(); openSlot(row); }
   });
 
   on(table, 'click', e => {
@@ -1109,36 +712,11 @@
     setCandidateColumnVisibility(candToggle.checked);
   });
 
-  on(slotOutcomeActions, 'click', e => {
-    const btn = e.target.closest('button[data-outcome]');
-    if (!btn || btn.disabled) return;
-    e.preventDefault();
-    submitOutcome(btn.dataset.outcome);
-  });
-
-  on(slotRescheduleBtn, 'click', () => {
-    if (currentRow) triggerReschedule(currentRow);
-  });
-
-  on(slotRejectBookingBtn, 'click', () => {
-    if (currentRow) triggerReject(currentRow);
-  });
-
-  on(slotDeleteBtn, 'click', () => {
-    if (currentRow) performDelete(currentRow);
-  });
-
   on(deleteAllBtn, 'click', () => {
     deleteAllSlots(false);
   });
 
-  on(slotBackdrop, 'click', closeSheet);
-  on(slotClose, 'click', closeSheet);
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !slotSheet.hidden){
-      e.preventDefault();
-      closeSheet();
-    }
     if (e.key === 'f' && onlyFuture){
       onlyFuture.checked = !onlyFuture.checked;
       persistPreference(storageKeys.future, onlyFuture.checked);
@@ -1150,6 +728,8 @@
       setCandidateColumnVisibility(candToggle.checked);
     }
   });
+
+  startNotificationFeed();
 
 })();
 </script>

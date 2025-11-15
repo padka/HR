@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Новый рекрутёр{% endblock %}
 {% block content %}
 {% set form_state = form_data or {} %}
@@ -53,20 +53,25 @@
     </div>
   {% endcall %}
 
-  {% call forms.section("Ответственные города", hint="Выберите несколько — бот будет назначать им заявки") %}
+  {% call forms.section("Ответственные города", hint="Можно выбрать несколько городов одновременно") %}
     <div class="multiselect" data-multiselect>
-      <input type="search" class="input" placeholder="Поиск города" aria-label="Поиск города" data-multiselect-search>
+      <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px;">
+        <input type="search" class="input" placeholder="Поиск города" aria-label="Поиск города" data-multiselect-search style="flex: 1;">
+        <span class="badge" data-cities-counter style="background: var(--accent); color: white; padding: 6px 12px; border-radius: 16px; font-size: 14px; font-weight: 600; min-width: 60px; text-align: center;">0 выбрано</span>
+      </div>
       <div class="choice-grid" role="group" aria-label="Ответственные города" data-multiselect-options>
         {% for city in cities %}
           <label class="choice-tile" data-filter="{{ city.name_plain|lower }} {{ city.tz|lower }}">
             {% set checked = city.id in selected_cities %}
-            <input type="checkbox" name="cities" value="{{ city.id }}" {% if checked %}checked{% endif %}>
+            <input type="checkbox" name="cities" value="{{ city.id }}" {% if checked %}checked{% endif %} data-city-checkbox>
+            <span class="choice-tile__checkmark" style="position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; border-radius: 4px; border: 2px solid currentColor; display: none; align-items: center; justify-content: center; background: var(--accent); color: white; font-size: 14px; font-weight: bold;">✓</span>
             <span class="choice-tile__title">{{ city.display_name }}</span>
             <span class="choice-tile__meta">{{ city.tz }}</span>
           </label>
         {% endfor %}
       </div>
       <p class="muted" data-multiselect-empty hidden>Совпадений не найдено</p>
+      <p class="form-note" style="margin-top: 12px; color: var(--muted); font-size: 13px;">💡 Совет: Кликните на несколько городов для выбора. Выбранные города будут подсвечены.</p>
     </div>
   {% endcall %}
 
@@ -91,6 +96,37 @@
     const search = widget.querySelector('[data-multiselect-search]');
     const options = Array.from(widget.querySelectorAll('[data-filter]'));
     const emptyHint = widget.querySelector('[data-multiselect-empty]');
+    const counter = widget.querySelector('[data-cities-counter]');
+    const checkboxes = Array.from(widget.querySelectorAll('[data-city-checkbox]'));
+
+    // Update counter and checkmarks
+    function updateSelection() {
+      const checkedCount = checkboxes.filter(cb => cb.checked).length;
+      if (counter) {
+        counter.textContent = checkedCount === 0 ? '0 выбрано' :
+                              checkedCount === 1 ? '1 выбран' :
+                              `${checkedCount} выбрано`;
+      }
+
+      // Update checkmarks visibility
+      checkboxes.forEach(cb => {
+        const label = cb.closest('.choice-tile');
+        const checkmark = label ? label.querySelector('.choice-tile__checkmark') : null;
+        if (checkmark) {
+          checkmark.style.display = cb.checked ? 'flex' : 'none';
+        }
+      });
+    }
+
+    // Listen to checkbox changes
+    checkboxes.forEach(cb => {
+      cb.addEventListener('change', updateSelection);
+    });
+
+    // Initial update
+    updateSelection();
+
+    // Search functionality
     if (!search || !options.length) {
       if (emptyHint) {
         emptyHint.hidden = true;

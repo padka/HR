@@ -142,6 +142,8 @@ class Slot(Base):
     interview_outcome: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     test2_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    intro_address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    intro_contact: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -349,3 +351,40 @@ class OutboxNotification(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<OutboxNotification {self.type} booking={self.booking_id} status={self.status}>"
+
+
+class ManualSlotAuditLog(Base):
+    """Audit log for manually assigned slots via admin UI."""
+    __tablename__ = "manual_slot_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slot_id: Mapped[int] = mapped_column(ForeignKey("slots.id", ondelete="CASCADE"), nullable=False)
+    candidate_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    recruiter_id: Mapped[int] = mapped_column(ForeignKey("recruiters.id", ondelete="CASCADE"), nullable=False)
+    city_id: Mapped[Optional[int]] = mapped_column(ForeignKey("cities.id", ondelete="SET NULL"), nullable=True)
+
+    # What was assigned
+    slot_datetime_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    slot_tz: Mapped[str] = mapped_column(String(64), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), default="interview", nullable=False)
+
+    # Custom message if sent
+    custom_message_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    custom_message_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Audit metadata
+    admin_username: Mapped[str] = mapped_column(String(100), nullable=False)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)  # IPv6 max length
+    user_agent: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Candidate state at time of assignment
+    candidate_previous_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ManualSlotAuditLog slot={self.slot_id} candidate={self.candidate_tg_id} by={self.admin_username}>"

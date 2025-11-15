@@ -41,6 +41,14 @@ async def on_interview_success(event: InterviewSuccessEvent) -> None:
             message_text,
             reply_markup=keyboard,
         )
+
+        # Update candidate status to TEST2_SENT after successful message delivery
+        try:
+            from backend.domain.candidates.status_service import set_status_test2_sent
+            await set_status_test2_sent(event.candidate_id)
+        except Exception:
+            logger.exception("Failed to update candidate status to TEST2_SENT for candidate %s", event.candidate_id)
+
     except TelegramBadRequest as exc:
         payload["status"] = "bad_request"
         payload["error"] = str(exc)

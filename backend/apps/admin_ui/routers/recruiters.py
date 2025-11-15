@@ -26,7 +26,7 @@ async def recruiters_list(request: Request):
         "request": request,
         "recruiter_rows": recruiter_rows,
     }
-    return templates.TemplateResponse("recruiters_list.html", context)
+    return templates.TemplateResponse(request, "recruiters_list.html", context)
 
 
 @router.get("/new", response_class=HTMLResponse)
@@ -37,7 +37,7 @@ async def recruiters_new(request: Request):
         "cities": cities,
         "tz_options": timezone_options(),
     }
-    return templates.TemplateResponse("recruiters_new.html", context)
+    return templates.TemplateResponse(request, "recruiters_new.html", context)
 
 
 @router.post("/create")
@@ -79,7 +79,7 @@ async def recruiters_create(
             "field_errors": {exc.field: str(exc)},
             "form_data": form_state,
         }
-        return templates.TemplateResponse("recruiters_new.html", context, status_code=422)
+        return templates.TemplateResponse(request, "recruiters_new.html", context, status_code=422)
     result = await create_recruiter(payload, cities=city_values)
     if not result.get("ok"):
         error_payload = result.get("error", {})
@@ -97,7 +97,7 @@ async def recruiters_create(
             "field_errors": field_errors,
             "form_data": form_state,
         }
-        return templates.TemplateResponse("recruiters_new.html", context, status_code=400)
+        return templates.TemplateResponse(request, "recruiters_new.html", context, status_code=400)
 
     return RedirectResponse(url="/recruiters", status_code=303)
 
@@ -113,7 +113,7 @@ async def recruiters_edit(request: Request, rec_id: int):
         **data,
         "tz_options": timezone_options(include_extra=[tz_current] if tz_current else None),
     }
-    return templates.TemplateResponse("recruiters_edit.html", context)
+    return templates.TemplateResponse(request, "recruiters_edit.html", context)
 
 
 @router.post("/{rec_id}/update")
@@ -159,7 +159,7 @@ async def recruiters_update(
             "field_errors": {exc.field: str(exc)},
             "form_data": form_state,
         }
-        return templates.TemplateResponse("recruiters_edit.html", context, status_code=422)
+        return templates.TemplateResponse(request, "recruiters_edit.html", context, status_code=422)
     result = await update_recruiter(rec_id, payload, cities=city_values)
     if not result.get("ok"):
         error = result.get("error", {})
@@ -182,7 +182,7 @@ async def recruiters_update(
             "field_errors": field_errors,
             "form_data": form_state,
         }
-        return templates.TemplateResponse("recruiters_edit.html", context, status_code=400)
+        return templates.TemplateResponse(request, "recruiters_edit.html", context, status_code=400)
 
     return RedirectResponse(url="/recruiters", status_code=303)
 

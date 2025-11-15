@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -84,7 +85,7 @@ async def test_finalize_test1_notifies_recruiter():
 
 
 @pytest.mark.asyncio
-async def test_finalize_test1_deduplicates_by_chat_id():
+async def test_finalize_test1_deduplicates_by_chat_id(monkeypatch):
     templates.clear_cache()
 
     async with async_session() as session:
@@ -99,7 +100,7 @@ async def test_finalize_test1_deduplicates_by_chat_id():
             name="Бэкап",
             tz="Europe/Moscow",
             active=True,
-            tg_chat_id=shared_chat,
+            tg_chat_id=shared_chat + 1,
         )
         city = models.City(name="Уфа", tz="Europe/Moscow", active=True)
         recruiter.cities.append(city)
@@ -118,6 +119,18 @@ async def test_finalize_test1_deduplicates_by_chat_id():
             )
         )
         await session.commit()
+
+    async def fake_get_active_recruiters(city_id):
+        assert city_id == city.id
+        return [
+            SimpleNamespace(id=recruiter.id, tg_chat_id=shared_chat),
+            SimpleNamespace(id=backup.id, tg_chat_id=shared_chat),
+        ]
+
+    monkeypatch.setattr(
+        "backend.apps.bot.services.get_active_recruiters_for_city",
+        fake_get_active_recruiters,
+    )
 
     store = InMemoryStateStore(ttl_seconds=60)
     state_manager = StateManager(store)

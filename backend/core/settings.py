@@ -23,11 +23,16 @@ class Settings:
     bot_token: str
     bot_api_base: str
     redis_url: str
+    notification_broker: str
     bot_use_webhook: bool
     bot_webhook_url: str
     test2_required: bool
     bot_failfast: bool
     bot_integration_enabled: bool
+    bot_autostart: bool
+    log_level: str
+    log_json: bool
+    log_file: str
     admin_chat_id: int
     timezone: str
     session_secret: str
@@ -40,6 +45,7 @@ class Settings:
     notification_poll_interval: float
     notification_batch_size: int
     notification_rate_limit_per_sec: float
+    notification_worker_concurrency: int
     notification_retry_base_seconds: int
     notification_retry_max_seconds: int
     notification_max_attempts: int
@@ -151,11 +157,15 @@ def get_settings() -> Settings:
     bot_token = os.getenv("BOT_TOKEN", "")
     bot_api_base = os.getenv("BOT_API_BASE", "").strip()
     redis_url = os.getenv("REDIS_URL", "").strip()
+    notification_broker = os.getenv("NOTIFICATION_BROKER", "memory").strip().lower() or "memory"
+    if notification_broker not in {"memory", "redis"}:
+        notification_broker = "memory"
     bot_integration_enabled = _get_bool("BOT_INTEGRATION_ENABLED", default=True)
     bot_use_webhook = _get_bool("BOT_USE_WEBHOOK", default=False)
     bot_webhook_url = os.getenv("BOT_WEBHOOK_URL", "").strip()
     test2_required = _get_bool("TEST2_REQUIRED", default=False)
     bot_failfast = _get_bool("BOT_FAILFAST", default=False)
+    bot_autostart = _get_bool("BOT_AUTOSTART", default=environment != "production")
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
     session_secret = (
@@ -202,12 +212,20 @@ def get_settings() -> Settings:
 
     notification_poll_interval = _get_float("NOTIFICATION_POLL_INTERVAL", 3.0, minimum=0.1)
     notification_batch_size = _get_int("NOTIFICATION_BATCH_SIZE", 100, minimum=1)
-    notification_rate_limit_per_sec = _get_float("NOTIFICATION_RATE_LIMIT_PER_SEC", 5.0, minimum=0.0)
+    notification_rate_limit_per_sec = _get_float("NOTIFICATION_RATE_LIMIT_PER_SEC", 10.0, minimum=0.0)
+    notification_worker_concurrency = _get_int("NOTIFICATION_WORKER_CONCURRENCY", 1, minimum=1)
     notification_retry_base_seconds = _get_int("NOTIFICATION_RETRY_BASE_SECONDS", 30, minimum=1)
     notification_retry_max_seconds = _get_int("NOTIFICATION_RETRY_MAX_SECONDS", 3600, minimum=1)
     if notification_retry_max_seconds < notification_retry_base_seconds:
         notification_retry_max_seconds = notification_retry_base_seconds
     notification_max_attempts = _get_int("NOTIFICATION_MAX_ATTEMPTS", 8, minimum=1)
+    log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
+    log_json = _get_bool("LOG_JSON", default=False)
+    log_file = os.getenv("LOG_FILE", "").strip()
+    if not log_file:
+        log_dir = data_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = str(log_dir / "app.log")
 
     # Database connection pool settings
     db_pool_size = _get_int("DB_POOL_SIZE", 20, minimum=1)
@@ -226,11 +244,16 @@ def get_settings() -> Settings:
         bot_token=bot_token,
         bot_api_base=bot_api_base,
         redis_url=redis_url,
+        notification_broker=notification_broker,
         bot_integration_enabled=bot_integration_enabled,
         bot_use_webhook=bot_use_webhook,
         bot_webhook_url=bot_webhook_url,
         test2_required=test2_required,
         bot_failfast=bot_failfast,
+        bot_autostart=bot_autostart,
+        log_level=log_level,
+        log_json=log_json,
+        log_file=log_file,
         admin_chat_id=admin_chat_id,
         timezone=timezone,
         session_secret=session_secret,
@@ -243,6 +266,7 @@ def get_settings() -> Settings:
         notification_poll_interval=notification_poll_interval,
         notification_batch_size=notification_batch_size,
         notification_rate_limit_per_sec=notification_rate_limit_per_sec,
+        notification_worker_concurrency=notification_worker_concurrency,
         notification_retry_base_seconds=notification_retry_base_seconds,
         notification_retry_max_seconds=notification_retry_max_seconds,
         notification_max_attempts=notification_max_attempts,

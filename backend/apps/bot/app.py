@@ -10,6 +10,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 
+from backend.core.logging import configure_logging
 from backend.core.settings import get_settings
 
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
@@ -18,17 +19,20 @@ from .services import (
     NotificationService,
     StateManager,
     configure as configure_services,
-    configure_notification_service,
 )
 from .reminders import (
     ReminderService,
     configure_reminder_service,
     create_scheduler,
 )
+from .notifications.bootstrap import (
+    configure_notification_service as bootstrap_notification_service,
+)
 from .state_store import build_state_manager
 
 __all__ = ["create_application", "create_bot", "create_dispatcher", "main"]
 
+configure_logging()
 
 def create_bot(token: str | None = None) -> Bot:
     actual_token = token or BOT_TOKEN
@@ -75,16 +79,10 @@ async def create_application(
     reminder_service = ReminderService(scheduler=scheduler)
     configure_reminder_service(reminder_service)
     await reminder_service.sync_jobs()
-    notification_service = NotificationService(
+    notification_service = bootstrap_notification_service(
+        broker=None,
         scheduler=scheduler,
-        poll_interval=settings.notification_poll_interval,
-        batch_size=settings.notification_batch_size,
-        rate_limit_per_sec=settings.notification_rate_limit_per_sec,
-        max_attempts=settings.notification_max_attempts,
-        retry_base_delay=settings.notification_retry_base_seconds,
-        retry_max_delay=settings.notification_retry_max_seconds,
     )
-    configure_notification_service(notification_service)
     configure_services(bot, state_manager, dispatcher)
     return bot, dispatcher, state_manager, reminder_service, notification_service
 
@@ -119,6 +117,10 @@ async def main() -> None:
 
     bot, dispatcher, _, reminder_service, notification_service = await create_application()
     try:
+        # Start notification service to process outbox queue
+        notification_service.start()
+        logging.info("✓ Notification service started")
+
         await bot.delete_webhook(drop_pending_updates=True)
         me = await bot.get_me()
         logging.warning("BOOT: using bot id=%s, username=@%s", me.id, me.username)

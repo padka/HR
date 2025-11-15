@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% set is_edit = is_edit or False %}
 {% set form_data = form_data or {} %}
 {% set action = is_edit and '/message-templates/' ~ template_id ~ '/update' or '/message-templates/create' %}

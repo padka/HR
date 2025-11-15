@@ -1,7 +1,496 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Новый слот{% endblock %}
 {% block content %}
+
+<style>
+  /* === Liquid Glass Variables === */
+  :root {
+    --liquid-glass-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.06) 100%);
+    --liquid-glass-bg-hover: linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.10) 100%);
+    --liquid-glass-border: linear-gradient(135deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.10) 50%, rgba(255, 255, 255, 0.05) 100%);
+    --liquid-glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.25) 0%, rgba(255, 255, 255, 0.05) 30%, rgba(255, 255, 255, 0) 60%);
+    --liquid-glass-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.08), 0 8px 24px -4px rgba(0, 0, 0, 0.12), inset 0 1px 2px 0 rgba(255, 255, 255, 0.15);
+    --liquid-glass-shadow-hover: 0 4px 12px -2px rgba(0, 0, 0, 0.10), 0 12px 32px -4px rgba(0, 0, 0, 0.15), 0 24px 64px -8px rgba(0, 0, 0, 0.20), inset 0 1px 3px 0 rgba(255, 255, 255, 0.20);
+    --liquid-glass-blur: blur(28px);
+    --liquid-glass-saturate: saturate(180%);
+    --liquid-glass-brightness: brightness(1.05);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --ease-modal: cubic-bezier(0.34, 1.26, 0.64, 1);
+    --ease-fade: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    --duration-fast: 0.18s;
+    --duration-normal: 0.3s;
+    --duration-slow: 0.5s;
+  }
+
+  /* === Enhanced Segmented Control === */
+  .segmented {
+    position: relative;
+    display: inline-flex;
+    gap: 6px;
+    padding: 6px;
+    background: var(--liquid-glass-bg);
+    backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+    -webkit-backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+    border: 1px solid transparent;
+    border-radius: 16px;
+    box-shadow: var(--liquid-glass-shadow);
+    isolation: isolate;
+  }
+
+  /* Gradient border */
+  .segmented::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: var(--liquid-glass-border);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Sliding indicator */
+  .segmented::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    height: calc(100% - 12px);
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(var(--accent-rgb, 15, 98, 254), 0.25) 0%, rgba(var(--accent-rgb, 15, 98, 254), 0.15) 100%);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    border: 1px solid rgba(var(--accent-rgb, 15, 98, 254), 0.3);
+    box-shadow: 0 2px 8px rgba(var(--accent-rgb, 15, 98, 254), 0.15), inset 0 1px 2px rgba(255, 255, 255, 0.3);
+    transition: all 0.4s var(--ease-spring);
+    z-index: 1;
+  }
+
+  .segmented[data-active="0"]::after {
+    width: calc(50% - 9px);
+    transform: translateX(0);
+  }
+
+  .segmented[data-active="1"]::after {
+    width: calc(50% - 9px);
+    transform: translateX(calc(100% + 6px));
+  }
+
+  .segmented button {
+    position: relative;
+    z-index: 2;
+    padding: 10px 28px;
+    border: none;
+    background: transparent;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    transition: color var(--duration-normal) ease;
+    white-space: nowrap;
+  }
+
+  .segmented button:hover {
+    color: var(--fg);
+  }
+
+  .segmented button.active {
+    color: var(--accent, #0f62fe);
+    text-shadow: 0 0 20px rgba(var(--accent-rgb, 15, 98, 254), 0.3);
+  }
+
+  /* === Preview Panel with Glass Effect === */
+  .preview-panel {
+    position: relative;
+    padding: 20px;
+    margin-top: 20px;
+    background: var(--liquid-glass-bg);
+    backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate) var(--liquid-glass-brightness);
+    -webkit-backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate) var(--liquid-glass-brightness);
+    border: 1px solid transparent;
+    border-radius: 20px;
+    box-shadow: var(--liquid-glass-shadow);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* Gradient border for preview */
+  .preview-panel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: var(--liquid-glass-border);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Specular highlight */
+  .preview-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--liquid-glass-highlight);
+    pointer-events: none;
+    opacity: 0.6;
+    mix-blend-mode: overlay;
+  }
+
+  .preview-panel b {
+    display: inline-block;
+    margin-bottom: 8px;
+    font-size: 15px;
+    background: linear-gradient(135deg, var(--fg-strong) 0%, var(--accent) 80%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .preview-panel .ok {
+    color: var(--success, #24a148);
+    font-weight: 600;
+  }
+
+  .preview-panel .bad {
+    color: var(--danger, #da1e28);
+    font-weight: 600;
+  }
+
+  .preview-panel .warn {
+    color: var(--warning, #f1c21b);
+    font-weight: 600;
+  }
+
+  .preview-panel .hint {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .preview-panel code {
+    padding: 2px 6px;
+    background: rgba(var(--accent-rgb, 15, 98, 254), 0.1);
+    border: 1px solid rgba(var(--accent-rgb, 15, 98, 254), 0.2);
+    border-radius: 6px;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    font-size: 12px;
+  }
+
+  /* === Panel Transitions === */
+  .form-shell[id^="panel-"] {
+    animation: panel-fade-in 0.5s var(--ease-modal) backwards;
+  }
+
+  @keyframes panel-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(20px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  /* === Chip Styling === */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    background: var(--liquid-glass-bg);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+  }
+
+  /* === Kbd Styling === */
+  .kbd {
+    display: inline-block;
+    padding: 3px 8px;
+    background: var(--liquid-glass-bg);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  }
+
+  /* === Form Note Enhancement === */
+  .form-note {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 8px;
+    padding-left: 4px;
+  }
+
+  /* === Button Group Enhancement === */
+  .btn-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+
+  .btn--ghost.btn--sm {
+    padding: 6px 12px;
+    font-size: 13px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: all var(--duration-fast) var(--ease-spring);
+  }
+
+  .btn--ghost.btn--sm:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.15);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
+  }
+
+  .btn--ghost.btn--sm:active {
+    transform: translateY(-1px) scale(0.98);
+  }
+
+  /* === Advanced Settings === */
+  .form-advanced summary {
+    cursor: pointer;
+    user-select: none;
+    padding: 10px 16px;
+    background: var(--liquid-glass-bg);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    transition: all var(--duration-normal) ease;
+  }
+
+  .form-advanced summary:hover {
+    background: var(--liquid-glass-bg-hover);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .form-advanced[open] summary {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    margin-bottom: 16px;
+  }
+
+  /* === Accessibility === */
+  @media (prefers-reduced-motion: reduce) {
+    .segmented::after,
+    .segmented button,
+    .preview-panel,
+    .form-shell[id^="panel-"],
+    .btn--ghost.btn--sm {
+      transition-duration: 0.01s;
+      animation-duration: 0.01s;
+    }
+  }
+
+  /* === Focus States === */
+  .segmented button:focus-visible {
+    outline: 2px solid var(--accent, #0f62fe);
+    outline-offset: 4px;
+  }
+
+  /* === Modal Windows === */
+  .slot-modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 1000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s var(--ease-fade);
+  }
+
+  .slot-modal.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Modal backdrop */
+  .slot-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(8, 12, 18, 0.40);
+    backdrop-filter: blur(12px) saturate(120%);
+    -webkit-backdrop-filter: blur(12px) saturate(120%);
+    opacity: 0;
+    transition: all 0.4s var(--ease-fade);
+  }
+
+  .slot-modal.is-open .slot-modal__backdrop {
+    opacity: 1;
+  }
+
+  /* Modal panel */
+  .slot-modal__panel {
+    position: relative;
+    width: min(900px, 100%);
+    max-width: 900px;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+    background: var(--liquid-glass-bg);
+    backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+    -webkit-backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+    border: 1px solid transparent;
+    border-radius: 28px;
+    box-shadow:
+      0 8px 32px -4px rgba(0, 0, 0, 0.20),
+      0 24px 64px -8px rgba(0, 0, 0, 0.28),
+      inset 0 2px 4px 0 rgba(255, 255, 255, 0.12);
+
+    /* Initial state for animation */
+    opacity: 0;
+    transform: scale(0.95) translateY(20px);
+    transition: all 0.4s var(--ease-modal);
+  }
+
+  .slot-modal.is-open .slot-modal__panel {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+
+  /* Gradient border */
+  .slot-modal__panel::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: var(--liquid-glass-border);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Specular highlight */
+  .slot-modal__panel::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 50%;
+    background: var(--liquid-glass-highlight);
+    border-radius: 28px 28px 0 0;
+    pointer-events: none;
+    opacity: 0.7;
+    mix-blend-mode: overlay;
+    z-index: 0;
+  }
+
+  /* Modal header */
+  .slot-modal__header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 24px 32px;
+    background: rgba(var(--surface-rgb, 15, 23, 42), 0.95);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 28px 28px 0 0;
+  }
+
+  .slot-modal__title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--fg-strong) 0%, var(--accent) 80%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .slot-modal__close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--liquid-glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 50%;
+    font-size: 20px;
+    cursor: pointer;
+    color: var(--muted);
+    transition: all 0.3s ease;
+  }
+
+  .slot-modal__close:hover {
+    background: var(--liquid-glass-bg-hover);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: var(--fg);
+    transform: rotate(90deg);
+  }
+
+  .slot-modal__body {
+    padding: 32px;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .slot-modal__panel {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  }
+
+  .slot-modal__panel::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .slot-modal__panel::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .slot-modal__panel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+  }
+
+  .slot-modal__panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  /* Prevent body scroll when modal is open */
+  body.modal-open {
+    overflow: hidden;
+  }
+
+  /* Update accessibility */
+  @media (prefers-reduced-motion: reduce) {
+    .slot-modal,
+    .slot-modal__backdrop,
+    .slot-modal__panel {
+      transition-duration: 0.01s;
+    }
+  }
+</style>
 <section class="form-shell" id="slot-switcher" data-tilt>
   <header class="form-shell__header">
     <div class="form-shell__heading">
@@ -14,9 +503,9 @@
   </header>
   <div class="form-shell__body">
     {% call forms.meta('role="tablist" aria-label="Режим создания"') %}
-      <div class="segmented">
-        <button id="tab-one" class="active" type="button" role="tab" aria-selected="true" aria-controls="panel-one">Один слот</button>
-        <button id="tab-bulk" type="button" role="tab" aria-selected="false" aria-controls="panel-bulk">Серия</button>
+      <div class="segmented" data-active="0">
+        <button id="btn-open-one" type="button" role="tab" aria-selected="true" aria-controls="modal-one">Один слот</button>
+        <button id="btn-open-bulk" type="button" role="tab" aria-selected="false" aria-controls="modal-bulk">Серия</button>
       </div>
       {% call forms.note(inline=True) %}Горячие клавиши: <span class="kbd">/</span> — фокус на дате, <span class="kbd">⌘/Ctrl+Enter</span> — создать.{% endcall %}
     {% endcall %}
@@ -31,7 +520,16 @@
   </div>
 {% endif %}
 
-{% if not recruiters %}
+<!-- Modal: Один слот -->
+<div class="slot-modal" id="modal-one" aria-labelledby="modal-one-title" aria-hidden="true">
+  <div class="slot-modal__backdrop" data-modal-close></div>
+  <div class="slot-modal__panel">
+    <div class="slot-modal__header">
+      <h2 class="slot-modal__title" id="modal-one-title">Создание одного слота</h2>
+      <button class="slot-modal__close" type="button" data-modal-close aria-label="Закрыть">×</button>
+    </div>
+    <div class="slot-modal__body">
+      {% if not recruiters %}
   <div class="surface glass grain alert" role="alert">
     <h2 class="form-shell__section-title">Нет рекрутёров</h2>
     <p class="form-shell__section-hint">Сначала добавьте рекрутёра, затем создайте слот.</p>
@@ -73,7 +571,7 @@
           {% for item in recruiters %}
             {% set r = item.rec %}
             {% for city in item.cities %}
-              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.display_name }} ({{ city.tz or "Europe/Moscow" }})</option>
+              <option value="{{ city.id }}" data-rec="{{ r.id }}" data-tz="{{ city.tz or 'Europe/Moscow' }}">{{ city.display_name }} ({{ city.tz or "Europe/Moscow" }})</option>
             {% endfor %}
           {% endfor %}
         </select>
@@ -112,7 +610,29 @@
     </div>
     {% call forms.note(id='one_submit_hint') %}Заполните рекрутёра, город, дату и время, чтобы создать слот.{% endcall %}
   {% endcall %}
+{% endif %}
+    </div>
+  </div>
+</div>
 
+<!-- Modal: Серия слотов -->
+<div class="slot-modal" id="modal-bulk" aria-labelledby="modal-bulk-title" aria-hidden="true">
+  <div class="slot-modal__backdrop" data-modal-close></div>
+  <div class="slot-modal__panel">
+    <div class="slot-modal__header">
+      <h2 class="slot-modal__title" id="modal-bulk-title">Создание серии слотов</h2>
+      <button class="slot-modal__close" type="button" data-modal-close aria-label="Закрыть">×</button>
+    </div>
+    <div class="slot-modal__body">
+      {% if not recruiters %}
+  <div class="surface glass grain alert" role="alert">
+    <h2 class="form-shell__section-title">Нет рекрутёров</h2>
+    <p class="form-shell__section-hint">Сначала добавьте рекрутёра, затем создайте слоты.</p>
+    <div class="btn-group mt-sm">
+      <a class="btn btn--primary" href="/recruiters/new">+ Добавить рекрутёра</a>
+    </div>
+  </div>
+{% else %}
   {% call forms.shell(
     title="Серия слотов",
     description="Создаст слоты каждый будний день с 10:00 до 16:00, перерыв 12:00–13:00, шаг 30 минут. Дубликаты пропускаются.",
@@ -120,7 +640,6 @@
     action="/slots/bulk_create",
     autocomplete="off",
     section_id="panel-bulk",
-    hidden=True,
     actions=[
       {"type": "submit", "text": "Создать слоты пакетом", "variant": "primary", "id": "btn-create-bulk", "disabled": true},
       {"href": "/slots", "text": "Отмена", "variant": "ghost"}
@@ -147,7 +666,7 @@
           {% for item in recruiters %}
             {% set r = item.rec %}
             {% for city in item.cities %}
-              <option value="{{ city.id }}" data-rec="{{ r.id }}">{{ city.display_name }} ({{ city.tz or "Europe/Moscow" }})</option>
+              <option value="{{ city.id }}" data-rec="{{ r.id }}" data-tz="{{ city.tz or 'Europe/Moscow' }}">{{ city.display_name }} ({{ city.tz or "Europe/Moscow" }})</option>
             {% endfor %}
           {% endfor %}
         </select>
@@ -208,6 +727,9 @@
     {% call forms.note(id='bulk_submit_hint') %}Заполните рекрутёра, город и период, чтобы создать серию слотов.{% endcall %}
   {% endcall %}
 {% endif %}
+    </div>
+  </div>
+</div>
 
 {% raw %}
 <script>
@@ -240,26 +762,86 @@
     catch { /* ignore */ }
   };
 
-  const tabOne = $('#tab-one'), tabBulk = $('#tab-bulk');
-  const panelOne = $('#panel-one'), panelBulk = $('#panel-bulk');
+  // Modal management
+  const btnOpenOne = $('#btn-open-one');
+  const btnOpenBulk = $('#btn-open-bulk');
+  const modalOne = $('#modal-one');
+  const modalBulk = $('#modal-bulk');
+  const segmentedControl = $('.segmented');
 
-  function activate(tab){
-    if (!tabOne || !tabBulk || !panelOne || !panelBulk) return;
-    if (tab === 'one'){
-      tabOne.classList.add('active'); tabOne.setAttribute('aria-selected','true');
-      tabBulk.classList.remove('active'); tabBulk.setAttribute('aria-selected','false');
-      panelOne.hidden = false; panelBulk.hidden = true;
-      storageSet(LS.tab, 'one');
-    } else {
-      tabBulk.classList.add('active'); tabBulk.setAttribute('aria-selected','true');
-      tabOne.classList.remove('active'); tabOne.setAttribute('aria-selected','false');
-      panelBulk.hidden = false; panelOne.hidden = true;
-      storageSet(LS.tab, 'bulk');
-    }
+  function openModal(modal, index) {
+    if (!modal) return;
+    modal.classList.add('is-open');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+    if (segmentedControl) segmentedControl.setAttribute('data-active', String(index));
+    storageSet(LS.tab, index === 0 ? 'one' : 'bulk');
   }
-  tabOne?.addEventListener('click', ()=>activate('one'));
-  tabBulk?.addEventListener('click', ()=>activate('bulk'));
-  activate(storageGet(LS.tab) || 'one');
+
+  function closeModal(modal) {
+    if (!modal) return;
+    modal.classList.remove('is-open');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+  }
+
+  function closeAllModals() {
+    closeModal(modalOne);
+    closeModal(modalBulk);
+  }
+
+  // Open modal on button click
+  btnOpenOne?.addEventListener('click', () => {
+    closeAllModals();
+    openModal(modalOne, 0);
+    btnOpenOne.classList.add('active');
+    btnOpenOne.setAttribute('aria-selected', 'true');
+    if (btnOpenBulk) {
+      btnOpenBulk.classList.remove('active');
+      btnOpenBulk.setAttribute('aria-selected', 'false');
+    }
+  });
+
+  btnOpenBulk?.addEventListener('click', () => {
+    closeAllModals();
+    openModal(modalBulk, 1);
+    btnOpenBulk.classList.add('active');
+    btnOpenBulk.setAttribute('aria-selected', 'true');
+    if (btnOpenOne) {
+      btnOpenOne.classList.remove('active');
+      btnOpenOne.setAttribute('aria-selected', 'false');
+    }
+  });
+
+  // Close on backdrop or close button click
+  $$('[data-modal-close]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const modal = e.target.closest('.slot-modal');
+      if (modal) closeModal(modal);
+    });
+  });
+
+  // Keyboard shortcuts
+  window.addEventListener('keydown', (e) => {
+    // Escape: close modals
+    if (e.key === 'Escape') {
+      closeAllModals();
+    }
+    // Cmd/Ctrl+Enter: submit active form
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'enter') {
+      const activeTab = storageGet(LS.tab) || 'one';
+      const form = activeTab === 'one' ? document.getElementById('form-one') : document.getElementById('form-bulk');
+      if (form) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    }
+    // /: focus on date field
+    if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      (document.getElementById('date') || document.body).focus();
+    }
+  });
 
   const fmt2 = (n)=> String(n).padStart(2,'0');
   const browserTZ = (()=>{
@@ -391,6 +973,29 @@
     return '—';
   }
 
+  // Get effective timezone: city timezone if city is selected, otherwise recruiter timezone
+  function getEffectiveTimezone(citySelect, recruiterSelect){
+    // Try to get timezone from selected city first
+    if (citySelect && citySelect.value) {
+      const cityOpt = citySelect.selectedOptions[0];
+      const cityTz = cityOpt ? cityOpt.getAttribute('data-tz') : null;
+      if (cityTz) return cityTz;
+    }
+    // Fallback to recruiter timezone
+    return currentTZ(recruiterSelect);
+  }
+
+  // Get effective timezone label: city name+tz if city is selected, otherwise recruiter label
+  function getEffectiveTimezoneLabel(citySelect, recruiterSelect){
+    if (citySelect && citySelect.value) {
+      const cityOpt = citySelect.selectedOptions[0];
+      if (cityOpt) {
+        return cityOpt.textContent.trim();
+      }
+    }
+    return currentTZLabel(recruiterSelect);
+  }
+
   function updateCityOptions(recSelect, citySelect, hintEl){
     if (!citySelect) return false;
     const recId = recSelect?.value || '';
@@ -439,9 +1044,10 @@
 
   function updateOne(){
     const hasCities = updateCityOptions(selOne, cityOne, cityHintOne);
-    const tz = currentTZ(selOne);
+    // Use city timezone if city is selected, otherwise use recruiter timezone
+    const tz = getEffectiveTimezone(cityOne, selOne);
     const hasRecruiter = !!selOne?.value;
-    const tzLabel = hasRecruiter ? currentTZLabel(selOne) : '—';
+    const tzLabel = hasRecruiter ? getEffectiveTimezoneLabel(cityOne, selOne) : '—';
     tzOne.textContent = `Регион: ${tzLabel}`;
     offsetText.textContent = hasRecruiter ? getOffsetLabel(tz, new Date()) : '±0';
     updateNowChip();
@@ -639,8 +1245,9 @@
   function updateBulk(){
     const hasCities = updateCityOptions(selBulk, cityBulk, cityHintBulk);
     const hasRecruiter = !!selBulk?.value;
-    const tz = currentTZ(selBulk);
-    const tzLabel = hasRecruiter ? currentTZLabel(selBulk) : '—';
+    // Use city timezone if city is selected, otherwise use recruiter timezone
+    const tz = getEffectiveTimezone(cityBulk, selBulk);
+    const tzLabel = hasRecruiter ? getEffectiveTimezoneLabel(cityBulk, selBulk) : '—';
     tzBulk.textContent = `Регион: ${tzLabel}`;
 
     const s = sd.value, e = ed.value;
@@ -742,17 +1349,6 @@
   }
 
   updateNowChip(); setInterval(updateNowChip, 60000);
-
-  window.addEventListener('keydown', (e)=>{
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase()==='enter'){
-      const activeTab = storageGet(LS.tab) || 'one';
-      const form = activeTab==='one' ? document.getElementById('form-one') : document.getElementById('form-bulk');
-      if (form){ e.preventDefault(); form.requestSubmit(); }
-    }
-    if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey){
-      e.preventDefault(); (document.getElementById('date')||document.body).focus();
-    }
-  });
 })();
 </script>
 {% endraw %}

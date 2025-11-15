@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  # Redis для брокера уведомлений (критичная очередь)
+  redis_notifications:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - redis_notifications_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - recruitsmart
+
+  # Redis для кеша (ephemeral, быстрый)
+  redis_cache:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - recruitsmart
+
+volumes:
+  redis_notifications_data:
+    driver: local
+
+networks:
+  recruitsmart:
+    driver: bridge

@@ -37,7 +37,7 @@ async def templates_list(request: Request):
         "missing_required": notifications_data["missing_required"],
         "known_hints": notifications_data["known_hints"],
     }
-    return jinja_templates.TemplateResponse("templates_unified.html", context)
+    return jinja_templates.TemplateResponse(request, "templates_unified.html", context)
 
 
 @router.get("/new", response_class=HTMLResponse)
@@ -49,7 +49,7 @@ async def templates_new(request: Request):
         "errors": [],
         "form_data": {},
     }
-    return jinja_templates.TemplateResponse("templates_new.html", context)
+    return jinja_templates.TemplateResponse(request, "templates_new.html", context)
 
 
 @router.post("/create")
@@ -85,7 +85,7 @@ async def templates_create(
                 "is_global": global_template,
             },
         }
-        return jinja_templates.TemplateResponse("templates_new.html", context, status_code=400)
+        return jinja_templates.TemplateResponse(request, "templates_new.html", context, status_code=400)
 
     await create_template(text_value, parsed_city)
     notify_templates_changed()
@@ -162,7 +162,7 @@ async def templates_edit(request: Request, tmpl_id: int):
         "cities": cities,
         "errors": [],
     }
-    return jinja_templates.TemplateResponse("templates_edit.html", context)
+    return jinja_templates.TemplateResponse(request, "templates_edit.html", context)
 
 
 @router.post("/{tmpl_id}/update")
@@ -220,7 +220,7 @@ async def templates_update(
             "cities": cities,
             "errors": errors,
         }
-        return jinja_templates.TemplateResponse("templates_edit.html", context, status_code=400)
+        return jinja_templates.TemplateResponse(request, "templates_edit.html", context, status_code=400)
 
     updated = await update_template(
         tmpl_id,
@@ -237,7 +237,7 @@ async def templates_update(
                 "Не удалось сохранить шаблон. Проверьте уникальность ключа и попробуйте ещё раз."
             ],
         }
-        return jinja_templates.TemplateResponse("templates_edit.html", context, status_code=400)
+        return jinja_templates.TemplateResponse(request, "templates_edit.html", context, status_code=400)
 
     notify_templates_changed()
     return RedirectResponse(url="/templates", status_code=303)

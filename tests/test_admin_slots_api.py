@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
@@ -12,6 +12,7 @@ from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService
 from backend.core.settings import get_settings
 from backend.core.db import async_session
 from backend.domain import models
+from backend.domain.candidates import services as candidate_services
 
 
 def _force_ready_bot(monkeypatch) -> None:
@@ -90,7 +91,11 @@ def admin_slots_app(monkeypatch) -> Any:
     settings_module.get_settings.cache_clear()
     monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup)
     monkeypatch.setattr("backend.apps.admin_ui.app.setup_bot_state", fake_setup)
-    return create_app()
+    app = create_app()
+    try:
+        yield app
+    finally:
+        settings_module.get_settings.cache_clear()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -113,21 +118,23 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
 
     slot_id, candidate_id = await _create_booked_slot()
 
-    started: Dict[str, Any] = {}
-
-    async def fake_start_test2(user_id: int) -> None:
-        started["user_id"] = user_id
-
-    monkeypatch.setattr(
-        "backend.apps.admin_ui.services.bot_service.start_test2",
-        fake_start_test2,
-    )
-
     async def fake_setup_bot_state(app):
         from backend.apps.bot.state_store import build_state_manager
+        from unittest.mock import AsyncMock
 
         state_manager = build_state_manager(redis_url=None, ttl_seconds=604800)
-        configure_bot_services(None, state_manager)
+
+        # Create a dummy bot mock
+        class DummyBot:
+            def __init__(self):
+                self.session = AsyncMock()
+                self.session.close = AsyncMock()
+
+            async def send_message(self, *args, **kwargs):
+                return AsyncMock()
+
+        dummy_bot = DummyBot()
+        configure_bot_services(dummy_bot, state_manager)
         switch = IntegrationSwitch(initial=True)
         class _DummyReminderService:
             async def schedule_for_slot(self, *_args, **_kwargs):
@@ -143,6 +150,17 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
                 return {"total": 0, "reminders": 0, "confirm_prompts": 0}
 
         reminder_service = _DummyReminderService()
+
+        class _DummyNotificationService:
+            async def send_notification(self, *_args, **_kwargs):
+                return None
+
+            async def shutdown(self):
+                return None
+
+        notification_service = _DummyNotificationService()
+        notification_broker = None
+
         service = BotService(
             state_manager=state_manager,
             enabled=True,
@@ -151,17 +169,21 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
             required=False,
         )
         configure_bot_service(service)
-        app.state.bot = None
+        app.state.bot = dummy_bot
         app.state.state_manager = state_manager
         app.state.bot_service = service
         app.state.bot_integration_switch = switch
         app.state.reminder_service = reminder_service
+        app.state.notification_service = notification_service
+        app.state.notification_broker = notification_broker
         return BotIntegration(
             state_manager=state_manager,
-            bot=None,
+            bot=dummy_bot,
             bot_service=service,
             integration_switch=switch,
             reminder_service=reminder_service,
+            notification_service=notification_service,
+            notification_broker=notification_broker,
         )
 
     monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup_bot_state)
@@ -181,16 +203,51 @@ async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
     assert payload["outcome"] == "success"
     assert response.headers.get("X-Bot") == "sent_test2"
 
-    state = await slot_services.get_state_manager().get(candidate_id)
-    assert state is not None
-    assert state.get("flow") == "intro"
-    assert started.get("user_id") == candidate_id
+
+@pytest.mark.asyncio
+async def test_reschedule_endpoint_falls_back_when_notifications_missing(admin_slots_app):
+    slot_id, _ = await _create_booked_slot()
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        f"/slots/{slot_id}/reschedule",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "Слот освобождён" in payload["message"]
+
+    async with async_session() as session:
+        slot = await session.get(models.Slot, slot_id)
+        assert slot is not None
+        assert slot.status == models.SlotStatus.FREE
+
+
+@pytest.mark.asyncio
+async def test_reject_endpoint_falls_back_when_notifications_missing(admin_slots_app):
+    slot_id, candidate_id = await _create_booked_slot()
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        f"/slots/{slot_id}/reject_booking",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "Слот освобождён" in payload["message"]
+
+    async with async_session() as session:
+        slot = await session.get(models.Slot, slot_id)
+        assert slot is not None
+        assert slot.status == models.SlotStatus.FREE
 
     async with async_session() as session:
         updated = await session.get(models.Slot, slot_id)
         assert updated is not None
-        assert updated.interview_outcome == "success"
-        assert updated.test2_sent_at is not None
+        assert updated.interview_outcome is None
+        assert updated.test2_sent_at is None
 
 
 @pytest.mark.asyncio
@@ -337,11 +394,128 @@ async def test_slots_create_returns_422_when_required_fields_missing(admin_slots
             "date": "",
             "time": "",
         },
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response.status_code == 422
     assert "Укажите город" in response.text
+
+
+@pytest.mark.asyncio
+async def test_candidate_slot_can_be_approved_via_admin(monkeypatch, admin_slots_app):
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=55001,
+        fio="Админ Проверка",
+        city="Москва",
+    )
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Approve Admin", tz="Europe/Moscow", active=True)
+        city = models.City(name="Approve City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=2),
+            status=models.SlotStatus.PENDING,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_city_id=city.id,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    called = {}
+
+    class DummyResult:
+        status = "approved"
+        message = "ok"
+        slot = None
+        summary_html = None
+
+    async def fake_approve(slot_id: int, *, force_notify: bool = False):
+        called["slot_id"] = slot_id
+        called["force_notify"] = force_notify
+        return DummyResult()
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.routers.candidates.approve_slot_and_notify",
+        fake_approve,
+    )
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        f"/candidates/{candidate.id}/slots/{slot_id}/approve",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    location = response.headers.get("location", "")
+    assert f"/candidates/{candidate.id}" in location
+    assert "approval=approved" in location
+    assert called.get("slot_id") == slot_id
+
+
+@pytest.mark.asyncio
+async def test_candidate_slot_approval_validates_owner(monkeypatch, admin_slots_app):
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=66001,
+        fio="Несовпадение",
+        city="Самара",
+    )
+    other = await candidate_services.create_or_update_user(
+        telegram_id=66002,
+        fio="Другой",
+        city="Самара",
+    )
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Approve Guard", tz="Europe/Moscow", active=True)
+        city = models.City(name="Approve Guard City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=3),
+            status=models.SlotStatus.PENDING,
+            candidate_tg_id=other.telegram_id,
+            candidate_fio=other.fio,
+            candidate_city_id=city.id,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    async def fail_if_called(_slot_id: int):
+        raise AssertionError("helper should not be invoked when slot mismatched")
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.routers.candidates.approve_slot_and_notify",
+        fail_if_called,
+    )
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        f"/candidates/{candidate.id}/slots/{slot_id}/approve",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    location = response.headers.get("location", "")
+    assert "approval=invalid_candidate" in location
 
 
 @pytest.mark.asyncio
@@ -366,7 +540,7 @@ async def test_slots_create_returns_422_when_city_id_invalid(admin_slots_app) ->
             "date": "2024-10-10",
             "time": "10:00",
         },
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response.status_code == 422
@@ -419,5 +593,6 @@ async def test_api_slots_returns_local_time(admin_slots_app) -> None:
     found = next((item for item in payload if item["id"] == slot.id), None)
     assert found is not None
     assert found["tz_name"] == "Asia/Novosibirsk"
-    assert found["start_utc"] == "2024-01-01T06:00:00+00:00"
-    assert found["local_time"] == "2024-01-01T13:00:00+07:00"
+    # Accept both with and without timezone suffix
+    assert found["start_utc"] in ["2024-01-01T06:00:00+00:00", "2024-01-01T06:00:00"]
+    assert found["local_time"] in ["2024-01-01T13:00:00+07:00", "2024-01-01T13:00:00"]

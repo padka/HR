@@ -33,7 +33,11 @@ def cities_admin_app(monkeypatch) -> Any:
     settings_module.get_settings.cache_clear()
     monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup)
     monkeypatch.setattr("backend.apps.admin_ui.app.setup_bot_state", fake_setup)
-    return create_app()
+    app = create_app()
+    try:
+        yield app
+    finally:
+        settings_module.get_settings.cache_clear()
 
 
 async def _async_request(app, method: str, path: str, **kwargs) -> Any:
@@ -52,7 +56,7 @@ async def test_create_city_invalid_timezone_returns_422(cities_admin_app) -> Non
         "post",
         "/cities/create",
         data={"name": "Invalid City", "tz": "Invalid/Zone"},
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response.status_code == 422
@@ -66,7 +70,7 @@ async def test_create_city_accepts_valid_iana_timezone(cities_admin_app) -> None
         "post",
         "/cities/create",
         data={"name": "New York", "tz": "America/New_York"},
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response.status_code == 303
@@ -179,7 +183,7 @@ async def test_city_name_is_sanitized_for_storage_and_api(cities_admin_app) -> N
         "post",
         "/cities/create",
         data={"name": raw_name, "tz": "Europe/Moscow"},
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response.status_code == 303

@@ -132,9 +132,9 @@
 
   .dashboard-metrics {
     display: grid;
-    gap: 16px;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    margin-bottom: 32px;
+    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    margin-bottom: 36px;
   }
 
   @media (max-width: 640px) {
@@ -174,11 +174,38 @@
 
   .metric-card {
     position: relative;
+    overflow: hidden;
     display: grid;
     grid-template-rows: auto auto 1fr;
     gap: 16px;
-    padding: 24px;
+    padding: 26px;
+    border-radius: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.84), rgba(15, 23, 42, 0.52));
+    box-shadow: 0 30px 60px rgba(2, 6, 23, 0.35);
+    backdrop-filter: blur(22px);
     min-height: 220px;
+  }
+
+  .metric-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.25), transparent 55%);
+    opacity: .9;
+    pointer-events: none;
+  }
+
+  .metric-card > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  html[data-theme="light"] .metric-card {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 255, 0.9));
+    border-color: rgba(15, 23, 42, 0.08);
+    box-shadow: 0 35px 55px rgba(15, 23, 42, 0.18);
   }
 
   .metric-card__label {
@@ -190,7 +217,7 @@
   }
 
   .metric-card__value {
-    font-size: clamp(30px, 6vw, 42px);
+    font-size: clamp(30px, 5vw, 40px);
     font-weight: 900;
     letter-spacing: -.2px;
     color: var(--fg-strong);
@@ -236,22 +263,6 @@
     font-size: 12px;
     line-height: 1.2;
     letter-spacing: .08px;
-  }
-
-  .metric-card__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .metric-card__actions .btn[disabled] {
-    opacity: .55;
-    pointer-events: none;
-  }
-
-  .metric-card__note {
-    font-size: 12px;
-    color: color-mix(in srgb, var(--fg) 70%, var(--muted) 30%);
   }
 
   .metric-card__meta-row:empty {
@@ -505,51 +516,6 @@
     </div>
   </article>
 
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">Интеграция бота</span>
-    <div class="metric-card__value">{{ bot_status.runtime_enabled and 'ON' or 'OFF' }}</div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row metric-card__badges">
-        <span class="badge badge--soft">Config: {{ bot_status.config_enabled }}</span>
-        <span class="badge badge--soft">Health: {{ bot_status.health }}</span>
-        <span class="badge badge--soft">Mode: {{ bot_status.mode }}</span>
-      </div>
-      <div class="metric-card__meta-row metric-card__actions">
-        <button class="btn btn--ghost" data-bot-toggle data-enabled="1" {% if bot_status.runtime_enabled %}disabled{% endif %}>Включить</button>
-        <button class="btn btn--ghost" data-bot-toggle data-enabled="0" {% if not bot_status.runtime_enabled %}disabled{% endif %}>Выключить</button>
-      </div>
-      {% if bot_status.updated_at %}
-      <div class="metric-card__meta-row metric-card__note">Обновлено: {{ bot_status.updated_at }}</div>
-      {% endif %}
-    </div>
-  </article>
-
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">Автоотсев Теста 1</span>
-    <div class="metric-card__value">{{ counts.test1_rejections_percent }}%</div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row metric-card__badges">
-        <span class="badge badge--soft">Отказы: {{ counts.test1_rejections_total }}</span>
-        <span class="badge badge--soft">Всего: {{ counts.test1_total_seen }}</span>
-      </div>
-      {% if counts.test1_rejections_breakdown %}
-        <div class="metric-card__meta-row metric-card__list">
-          {% for reason, value in counts.test1_rejections_breakdown.items() %}
-            <span class="metric-card__pill">{{ reason | replace('_', ' ') }} — {{ value }}</span>
-          {% endfor %}
-        </div>
-      {% endif %}
-    </div>
-  </article>
-
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">Шаблоны</span>
-    <div class="metric-card__value">{{ counts.templates|default(0) }}</div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row"></div>
-      <a class="metric-card__link" href="/templates">Перейти к списку<span aria-hidden="true">→</span></a>
-    </div>
-  </article>
 </section>
 
 {% set actives = recruiters | selectattr('active') | list %}
@@ -604,35 +570,5 @@
     {% endif %}
   </article>
 </section>
-
-<script>
-  (function () {
-    const buttons = document.querySelectorAll('[data-bot-toggle]');
-    if (!buttons.length) return;
-    buttons.forEach(function (btn) {
-      btn.addEventListener('click', function (event) {
-        event.preventDefault();
-        const enabled = btn.dataset.enabled === '1';
-        fetch('/api/bot/integration', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled })
-        })
-          .then(function (response) {
-            if (!response.ok) {
-              throw new Error('Toggle failed');
-            }
-            return response.json();
-          })
-          .then(function () {
-            window.location.reload();
-          })
-          .catch(function () {
-            alert('Не удалось обновить состояние интеграции.');
-          });
-      });
-    });
-  })();
-</script>
 
 {% endblock %}

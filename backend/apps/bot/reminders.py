@@ -41,12 +41,12 @@ _QUIET_GRACE = timedelta(minutes=1)
 
 
 class ReminderKind(str, Enum):
-    REMIND_24H = "remind_24h"
+    REMIND_24H = "remind_24h"  # legacy reminder, kept for backward compatibility
     REMIND_2H = "remind_2h"
-    REMIND_1H = "remind_1h"
     CONFIRM_6H = "confirm_6h"
     CONFIRM_3H = "confirm_3h"
     CONFIRM_2H = "confirm_2h"
+    INTRO_REMIND_3H = "intro_remind_3h"
 
 
 @dataclass(frozen=True)
@@ -98,19 +98,6 @@ class ReminderService:
                     )
                     await session.commit()
                 continue
-            if kind is ReminderKind.REMIND_1H:
-                logger.info(
-                    "reminder.schedule.skip",
-                    extra={"slot_id": row.slot_id, "kind": row.kind, "reason": "disabled"},
-                )
-                async with async_session() as session:
-                    await session.execute(
-                        SlotReminderJob.__table__.delete().where(
-                            SlotReminderJob.job_id == job_id
-                        )
-                    )
-                    await session.commit()
-                continue
             if self._scheduler.get_job(job_id) is None:
                 run_at = _ensure_aware(row.scheduled_at)
                 if run_at <= datetime.now(timezone.utc):
@@ -143,6 +130,7 @@ class ReminderService:
             plans = self._build_schedule(
                 slot.start_utc,
                 slot.candidate_tz or DEFAULT_TZ,
+                getattr(slot, "purpose", "interview") or "interview",
             )
             if skip_confirmation_prompts:
                 confirm_kinds = {
@@ -334,17 +322,24 @@ class ReminderService:
             )
             return
 
-        if kind is ReminderKind.REMIND_1H:
+        if kind is ReminderKind.REMIND_24H:
             await record_reminder_skipped(kind, "disabled")
             logger.info(
                 "reminder.job.skip",
-                extra={"slot_id": slot_id, "kind": kind.value, "reason": "disabled"},
+                extra={
+                    "slot_id": slot_id,
+                    "kind": kind.value,
+                    "reason": "disabled",
+                },
             )
             return
 
         reminder_kind = kind.value
         try:  # defer import to avoid circular dependency during module load
-            from backend.apps.bot.services import get_notification_service
+            from backend.apps.bot.services import (
+                NotificationNotConfigured,
+                get_notification_service,
+            )
         except Exception:
             await record_reminder_skipped(kind, "service_import_error")
             logger.warning("Notification service missing; skipping reminder for slot %s", slot_id)
@@ -352,7 +347,7 @@ class ReminderService:
 
         try:
             notification_service = get_notification_service()
-        except RuntimeError:
+        except NotificationNotConfigured:
             await record_reminder_skipped(kind, "service_unconfigured")
             logger.warning("Notification service not configured; skipping reminder for slot %s", slot_id)
             return
@@ -389,15 +384,25 @@ class ReminderService:
             await record_reminder_skipped(kind, "enqueue_exception")
             logger.exception("Failed to enqueue reminder for slot %s", slot_id)
 
-    def _build_schedule(self, start_utc: datetime, tz: Optional[str]) -> List[ReminderPlan]:
+    def _build_schedule(
+        self,
+        start_utc: datetime,
+        tz: Optional[str],
+        purpose: str,
+    ) -> List[ReminderPlan]:
         zone = _safe_zone(tz)
         start_local = start_utc.astimezone(zone)
-        targets: List[tuple[ReminderKind, timedelta]] = [
-            (ReminderKind.REMIND_24H, timedelta(hours=24)),
-            (ReminderKind.CONFIRM_6H, timedelta(hours=6)),
-            (ReminderKind.CONFIRM_3H, timedelta(hours=3)),
-            (ReminderKind.CONFIRM_2H, timedelta(hours=2)),
-        ]
+        normalized_purpose = (purpose or "interview").strip().lower() or "interview"
+        if normalized_purpose == "intro_day":
+            targets: List[tuple[ReminderKind, timedelta]] = [
+                (ReminderKind.INTRO_REMIND_3H, timedelta(hours=3)),
+            ]
+        else:
+            targets = [
+                (ReminderKind.CONFIRM_6H, timedelta(hours=6)),
+                (ReminderKind.CONFIRM_3H, timedelta(hours=3)),
+                (ReminderKind.CONFIRM_2H, timedelta(hours=2)),
+            ]
         plans: List[ReminderPlan] = []
         seen: set[ReminderKind] = set()
         for kind, delta in targets:
@@ -420,6 +425,18 @@ class ReminderService:
 
     def _job_id(self, slot_id: int, kind: ReminderKind) -> str:
         return f"slot:{slot_id}:{kind.value}"
+
+    def health_snapshot(self) -> Dict[str, Any]:
+        """Return lightweight scheduler diagnostics."""
+
+        try:
+            jobs = self._scheduler.get_jobs()
+        except Exception:  # pragma: no cover - scheduler may not be running
+            jobs = []
+        return {
+            "scheduler_running": getattr(self._scheduler, "running", False),
+            "job_count": len(jobs),
+        }
 
 
 _reminder_service: Optional[ReminderService] = None
@@ -574,4 +591,6 @@ def _immediate_group(kind: ReminderKind) -> str:
         ReminderKind.REMIND_24H,
     }:
         return "reminder"
+    if kind is ReminderKind.INTRO_REMIND_3H:
+        return "intro"
     return kind.value

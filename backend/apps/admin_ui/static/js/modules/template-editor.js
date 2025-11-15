@@ -8,6 +8,8 @@ const DEFAULT_PREVIEW_FIELDS = {
   '{{recruiter_name}}': 'pv_rec',
   '{{recruiter_phone}}': 'pv_phone',
   '{{address}}': 'pv_addr',
+  '{{intro_address}}': 'pv_addr',
+  '{{intro_contact}}': 'pv_phone',
   '{{whatsapp_link}}': 'pv_wa'
 };
 
@@ -19,6 +21,8 @@ const DEFAULT_PREVIEW_VALUES = {
   '{{recruiter_name}}': 'Михаил',
   '{{recruiter_phone}}': '+7 (900) 000-00-00',
   '{{address}}': 'ул. Пушкина, 10',
+  '{{intro_address}}': 'ул. Пушкина, 10',
+  '{{intro_contact}}': 'Иван Иванов, +7 (900) 000-00-00',
   '{{whatsapp_link}}': 'https://wa.me/79000000000'
 };
 

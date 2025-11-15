@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import types
+from typing import Optional
 
 import pytest
 
@@ -6,7 +9,7 @@ from backend.apps.bot.handlers import common
 
 
 class DummyMessage:
-    def __init__(self, user_id: int | None = 1) -> None:
+    def __init__(self, user_id: Optional[int] = 1) -> None:
         if user_id is None:
             self.from_user = None
         else:
@@ -18,7 +21,7 @@ class DummyMessage:
 
 
 class DummyStateManager:
-    def __init__(self, state, *, exc: Exception | None = None) -> None:
+    def __init__(self, state, *, exc: Optional[Exception] = None) -> None:
         self._state = state
         self._exc = exc
         self.calls = 0

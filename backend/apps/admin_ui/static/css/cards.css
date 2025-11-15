@@ -19,6 +19,7 @@
     0 16px 48px 0 rgba(0, 0, 0, 0.35),
     inset 0 1px 2px 0 rgba(255, 255, 255, 0.08);
   --liquid-glass-blur: blur(40px);
+  --liquid-glass-saturate: saturate(200%);
 }
 
 html[data-theme="light"] {
@@ -39,6 +40,7 @@ html[data-theme="light"] {
     0 16px 48px 0 rgba(31, 38, 135, 0.22),
     inset 0 1px 2px 0 rgba(255, 255, 255, 0.75);
   --liquid-glass-blur: blur(35px);
+  --liquid-glass-saturate: saturate(180%);
 }
 
 .card-grid {
@@ -59,8 +61,8 @@ html[data-theme="light"] {
   border-radius: clamp(20px, 2.2vw, 28px);
   border: 1px solid var(--liquid-glass-border);
   background: var(--liquid-glass-bg);
-  backdrop-filter: var(--liquid-glass-blur) saturate(200%);
-  -webkit-backdrop-filter: var(--liquid-glass-blur) saturate(200%);
+  backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+  -webkit-backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
   box-shadow: var(--liquid-glass-shadow);
   isolation: isolate;
   overflow: hidden;
@@ -263,9 +265,9 @@ html[data-theme="light"] {
 /* Recruiter list cards */
 .recruiter-card {
   min-height: 0;
-  background: var(--liquid-glass-bg);
-  backdrop-filter: var(--liquid-glass-blur) saturate(200%);
-  -webkit-backdrop-filter: var(--liquid-glass-blur) saturate(200%);
+    background: var(--liquid-glass-bg);
+    backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+    -webkit-backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
   border: 1px solid var(--liquid-glass-border);
   box-shadow: var(--liquid-glass-shadow);
   border-radius: clamp(20px, 2.2vw, 28px);

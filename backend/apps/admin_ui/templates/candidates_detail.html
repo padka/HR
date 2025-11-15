@@ -43,135 +43,301 @@
     --liquid-glass-blur: blur(35px);
   }
 
-  .cards-grid {
+  .candidate-overview {
+    margin-top: 32px;
+    padding: 32px;
+    border-radius: 32px;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(15, 23, 42, 0.55));
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 45px 70px rgba(2, 6, 23, 0.45);
     display: grid;
-    gap: 28px;
-    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-    margin-bottom: 32px;
+    gap: 32px;
   }
 
-  .candidate-card .data-list {
-    display: grid;
-    gap: 14px;
+  html[data-theme="light"] .candidate-overview {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 255, 0.9));
+    border-color: rgba(15, 23, 42, 0.12);
+    box-shadow: 0 35px 60px rgba(15, 23, 42, 0.18);
   }
 
-  .candidate-card .data-list div {
+  .candidate-hero {
     display: flex;
     justify-content: space-between;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+
+  .candidate-hero__summary {
+    flex: 1 1 320px;
+    min-width: 280px;
+  }
+
+  .candidate-hero__eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+
+  .candidate-hero__stage-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .candidate-hero__stage {
+    font-size: 2rem;
+    line-height: 1.2;
+    margin: 0;
+  }
+
+  .candidate-hero__stage-pill {
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  html[data-theme="light"] .candidate-hero__stage-pill {
+    border-color: rgba(15, 23, 42, 0.15);
+    background: rgba(15, 23, 42, 0.05);
+  }
+
+  .candidate-hero__meta {
+    margin-top: 6px;
+    color: var(--muted);
+  }
+
+  .candidate-hero__tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .candidate-hero__tag {
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 0.85rem;
+  }
+
+  html[data-theme="light"] .candidate-hero__tag {
+    border-color: rgba(15, 23, 42, 0.12);
+    background: rgba(15, 23, 42, 0.05);
+  }
+
+  .candidate-hero__chat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .candidate-hero__chat-note {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-left: 4px;
+  }
+
+  .candidate-hero__status {
+    flex: 1 1 260px;
+    min-width: 240px;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
   }
 
-  .candidate-card__header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 16px;
-    margin-bottom: 20px;
+  .candidate-hero__status-pill {
+    align-self: flex-start;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-weight: 600;
+    background: rgba(52, 211, 153, 0.15);
+    border: 1px solid rgba(52, 211, 153, 0.4);
   }
 
-  .candidate-card__header .section-hint {
-    margin: 6px 0 0;
+  html[data-theme="light"] .candidate-hero__status-pill {
+    background: rgba(34, 197, 94, 0.15);
+    border-color: rgba(34, 197, 94, 0.35);
+  }
+
+  .candidate-hero__status-pill.is-muted {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+
+  .candidate-hero__status-note {
     color: var(--muted);
     font-size: 0.9rem;
   }
 
-  .candidate-highlights {
+  .candidate-hero__metrics {
     display: grid;
-    gap: 16px;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    margin-bottom: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 12px;
   }
 
-  .candidate-highlight {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 18px;
-    padding: 16px 18px;
+  .candidate-hero__metrics div {
+    padding: 12px 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  html[data-theme="light"] .candidate-hero__metrics div {
+    border-color: rgba(15, 23, 42, 0.12);
+    background: rgba(15, 23, 42, 0.05);
+  }
+
+  .candidate-hero__metrics dt {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .candidate-hero__metrics dd {
+    font-size: 1.25rem;
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .candidate-next {
+    padding: 24px;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  html[data-theme="light"] .candidate-next {
+    background: rgba(15, 23, 42, 0.03);
+    border-color: rgba(15, 23, 42, 0.08);
+  }
+
+  .candidate-next__eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+
+  .candidate-next__timeline {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 12px;
+  }
+
+  .candidate-next__dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #34d399, #059669);
+    box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.18);
+    margin-top: 6px;
+  }
+
+  html[data-theme="light"] .candidate-next__dot {
+    background: linear-gradient(180deg, #2563eb, #1d4ed8);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.22);
+  }
+
+  .candidate-next__time {
+    font-size: 1.45rem;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+
+  .candidate-next__meta,
+  .candidate-next__note {
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+
+  .candidate-next__actions {
+    margin-top: 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    position: relative;
-    overflow: hidden;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    gap: 6px;
   }
 
-  .candidate-highlight::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 100%;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
-    pointer-events: none;
-  }
-
-  .candidate-highlight:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
-    border-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .candidate-highlight__label {
-    font-size: 0.7rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--muted);
-    font-weight: 600;
-  }
-
-  .candidate-highlight strong {
-    font-size: 1.15rem;
-    background: linear-gradient(135deg, var(--fg-strong), var(--accent));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .candidate-highlight__meta {
-    color: var(--muted);
-    font-size: 0.85rem;
-  }
-
-  .data-list--split {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  }
-
-  .data-list--grid {
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  }
-
-  .data-list--split div,
-  .data-list--grid div {
+  .candidate-slot-control {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 18px;
+    padding: 14px 16px;
+    background: rgba(15, 23, 42, 0.35);
+    display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    gap: 12px;
   }
 
-  .data-list--grid dt {
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: #6b7280;
+  html[data-theme="light"] .candidate-slot-control {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(15, 23, 42, 0.12);
   }
 
-  .data-list--grid dd {
-    font-size: 1rem;
+  .candidate-slot-control__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .candidate-slot-panel {
+    display: grid;
+    gap: 14px;
+  }
+
+  .candidate-slot-panel[hidden] {
+    display: none;
+  }
+
+  .candidate-slot-panel__group {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 12px;
+    display: grid;
+    gap: 10px;
+  }
+
+  html[data-theme="light"] .candidate-slot-panel__group {
+    border-top-color: rgba(15, 23, 42, 0.08);
+  }
+
+  .candidate-slot-panel__label {
+    margin: 0;
     font-weight: 600;
   }
 
-  .candidate-card__code {
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    background: rgba(15, 23, 42, 0.06);
-    padding: 2px 6px;
-    border-radius: 6px;
+  .candidate-slot-panel__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
-  .candidate-card__note {
-    color: #6b7280;
-    font-size: 0.85rem;
-    margin-bottom: 16px;
+  .candidate-slot-panel__hint {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+
+  .candidate-slot-panel__hint[data-tone="success"] {
+    color: color-mix(in srgb, var(--ok) 80%, var(--fg));
+  }
+
+  .candidate-slot-panel__hint[data-tone="error"] {
+    color: color-mix(in srgb, var(--bad) 80%, var(--fg));
+  }
+
+  .candidate-slot-control.is-disabled {
+    opacity: 0.6;
   }
 
   .surface.mt-lg {
@@ -180,6 +346,187 @@
 
   .text-prewrap {
     white-space: pre-wrap;
+  }
+
+  .interview-section {
+    padding: 32px;
+  }
+
+  .questionnaire {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.85fr) minmax(360px, 1.15fr);
+    gap: 32px;
+  }
+
+  @media (max-width: 1100px) {
+    .questionnaire {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .questionnaire-summary,
+  .questionnaire-form {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 28px;
+    padding: 24px;
+    background: rgba(15, 23, 42, 0.3);
+  }
+
+  html[data-theme="light"] .questionnaire-summary,
+  html[data-theme="light"] .questionnaire-form {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(15, 23, 42, 0.08);
+  }
+
+  .interview-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px;
+    border-radius: 20px;
+    background: rgba(15, 23, 42, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 20px;
+  }
+
+  html[data-theme="light"] .interview-card {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(15, 23, 42, 0.08);
+  }
+
+  .interview-card__eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  .interview-card__title {
+    margin: 6px 0;
+    font-size: 1.2rem;
+  }
+
+  .interview-card__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.9rem;
+  }
+
+  .interview-card__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .questionnaire-form fieldset {
+    border: none;
+    margin: 0 0 24px;
+    padding: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 20px;
+  }
+
+  .questionnaire-form fieldset:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  html[data-theme="light"] .questionnaire-form fieldset {
+    border-color: rgba(15, 23, 42, 0.08);
+  }
+
+  .questionnaire-form legend {
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .question-description {
+    margin: 0 0 16px;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+
+  .checkbox-pill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    margin-bottom: 10px;
+  }
+
+  html[data-theme="light"] .checkbox-pill {
+    background: rgba(15, 23, 42, 0.04);
+    border-color: rgba(15, 23, 42, 0.12);
+  }
+
+  .checkbox-pill input {
+    width: 18px;
+    height: 18px;
+  }
+
+  .question-field {
+    margin-bottom: 16px;
+  }
+
+  .question-field label {
+    display: block;
+    font-size: 0.9rem;
+    margin-bottom: 6px;
+  }
+
+  .questionnaire-form textarea,
+  .questionnaire-form input[type="text"],
+  .questionnaire-form input[type="datetime-local"] {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(15, 23, 42, 0.15);
+    padding: 10px 12px;
+    color: inherit;
+    font-size: 0.95rem;
+  }
+
+  html[data-theme="light"] .questionnaire-form textarea,
+  html[data-theme="light"] .questionnaire-form input[type="text"],
+  html[data-theme="light"] .questionnaire-form input[type="datetime-local"] {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(15, 23, 42, 0.12);
+  }
+
+  .questionnaire-form textarea {
+    min-height: 90px;
+    resize: vertical;
+  }
+
+  .decision-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .decision-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(15, 23, 42, 0.2);
+  }
+
+  html[data-theme="light"] .decision-option {
+    border-color: rgba(15, 23, 42, 0.15);
+    background: rgba(15, 23, 42, 0.04);
+  }
+
+  .questionnaire-form .btn {
+    margin-top: 12px;
   }
 
   .test-results-grid {
@@ -307,7 +654,32 @@
     margin: 8px 0 0;
     padding-left: 18px;
   }
+
+  .page-actions form.approve-form {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+  }
+
+  .page-actions__note {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .approve-form__hint {
+    font-size: 12px;
+    color: var(--muted);
+  }
 </style>
+{% set slots = slots or [] %}
+{% set pending_ns = namespace(slot=None) %}
+{% for slot in slots %}
+  {% if pending_ns.slot is none and slot.status == 'pending' %}
+    {% set pending_ns.slot = slot %}
+  {% endif %}
+{% endfor %}
+{% set pending_slot = pending_ns.slot %}
 {% set saved = request.query_params.get('saved') %}
 {% set error = request.query_params.get('error') %}
 {% if saved %}
@@ -319,6 +691,72 @@
     Не удалось обновить данные кандидата.
   </div>
 {% endif %}
+{% set interview_saved = request.query_params.get('interview_saved') %}
+{% if interview_saved %}
+  <div class="surface glass grain alert" data-tone="success" role="status">
+    Скрипт собеседования сохранён.
+  </div>
+{% elif request.query_params.get('interview_error') %}
+  <div class="surface glass grain alert" data-tone="danger" role="alert">
+    Не удалось сохранить заметки по собеседованию.
+  </div>
+{% endif %}
+{% set approval_status = request.query_params.get('approval') %}
+{% if approval_status %}
+  {% set approval_tone = {
+    'approved': 'success',
+    'notify_failed': 'warning',
+    'already': 'info',
+    'slot_free': 'warning',
+    'missing_candidate': 'danger',
+    'not_found': 'danger',
+    'error': 'danger',
+    'candidate_missing': 'danger',
+    'telegram_missing': 'warning',
+    'slot_missing': 'warning',
+    'invalid_candidate': 'danger'
+  } %}
+  {% set approval_messages = {
+    'approved': 'Интервью согласовано, кандидат уведомлён.',
+    'notify_failed': 'Слот подтверждён, но отправить сообщение кандидату не удалось.',
+    'already': 'Слот уже был согласован ранее.',
+    'slot_free': 'Слот уже освобождён.',
+    'missing_candidate': 'Слот не привязан к кандидату.',
+    'not_found': 'Заявка уже обработана или слот не найден.',
+    'error': 'Не удалось согласовать слот.',
+    'candidate_missing': 'Кандидат не найден.',
+    'telegram_missing': 'Для кандидата не указан Telegram ID.',
+    'slot_missing': 'Слот не найден или уже удалён.',
+    'invalid_candidate': 'Слот принадлежит другому кандидату.'
+  } %}
+  {% set approval_message = request.query_params.get('approval_message') %}
+  {% set tone = approval_tone.get(approval_status, 'info') %}
+  <div class="surface glass grain alert" data-tone="{{ tone }}" role="status">
+    {{ approval_message or approval_messages.get(approval_status, 'Действие выполнено.') }}
+  </div>
+{% endif %}
+{% set manual_slot_status = request.query_params.get('slot_scheduled') %}
+{% if manual_slot_status %}
+  {% set slot_tones = {
+    'success': 'success',
+    'notify_failed': 'warning',
+    'missing_telegram': 'danger'
+  } %}
+  {% set slot_messages = {
+    'success': 'Собеседование назначено и кандидат уведомлён.',
+    'notify_failed': 'Слот создан, но отправить сообщение кандидату не удалось — свяжитесь вручную.',
+    'missing_telegram': 'Нельзя назначить собеседование — у кандидата отсутствует Telegram ID.'
+  } %}
+  <div class="surface glass grain alert" data-tone="{{ slot_tones.get(manual_slot_status, 'info') }}" role="status">
+    {{ slot_messages.get(manual_slot_status, 'Статус обновлён.') }}
+  </div>
+{% endif %}
+{% set interview_record = interview_notes|default({}) %}
+{% set interview_data = interview_record.get('data', {}) or {} %}
+{% set interview_recommendation = interview_data.get('recommendation', 'undecided') %}
+{% set interview_sections = interview_form_sections or [] %}
+{% set recommendation_lookup = interview_recommendation_lookup or {} %}
+{% set show_interview_form = request.query_params.get('interview_edit') or (interview_data|length == 0) %}
 <section class="page-header">
   <div>
     <a class="muted" href="/candidates">← К списку кандидатов</a>
@@ -326,12 +764,54 @@
     <p class="page-description">Telegram ID {{ user.telegram_id }} · {{ user.city or 'Город не указан' }}</p>
   </div>
   <div class="page-actions">
-    {% if needs_intro_day %}
+    {% if user.username %}
+      <a class="btn btn-soft" href="https://t.me/{{ user.username }}" target="_blank" rel="noopener">Открыть чат</a>
+    {% elif user.telegram_id %}
+      <span class="page-actions__note">Telegram {{ user.telegram_id }} · username не указан</span>
+    {% endif %}
+    {% if not (has_intro_day_slot | default(false)) %}
       <a href="/candidates/{{ user.id }}/schedule-intro-day" class="btn btn-primary">
         📆 Назначить ознакомительный день
       </a>
     {% endif %}
+    {% if user.candidate_status in ['waiting_slot', 'stalled_waiting_slot', 'test1_completed', 'interview_declined', 'interview_scheduled'] or not has_interview_slot %}
+      <a href="/candidates/{{ user.id }}/schedule-slot" class="btn {% if user.candidate_status in ['waiting_slot', 'stalled_waiting_slot'] %}btn-primary{% else %}btn-secondary{% endif %}">
+        🕒 {% if user.candidate_status in ['waiting_slot', 'stalled_waiting_slot'] %}Предложить время собеседования{% else %}Назначить/перенести собеседование{% endif %}
+      </a>
+    {% endif %}
+    {% if pending_slot %}
+      <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve" class="approve-form">
+        {{ csrf_input(request) }}
+        <button class="btn btn-primary" type="submit">
+          ✅ Согласовать интервью
+        </button>
+        <span class="approve-form__hint">
+          {{ fmt_local(pending_slot.start_utc, pending_slot.candidate_tz or 'Europe/Moscow') }} ·
+          {% if pending_slot.recruiter %}{{ pending_slot.recruiter.name }}{% else %}Без рекрутёра{% endif %}
+        </span>
+      </form>
+    {% endif %}
+
+    {# Manual status change buttons for HIRED/NOT_HIRED #}
+    {% if user.candidate_status and user.candidate_status in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] %}
+      <form method="post" action="/candidates/{{ user.id }}/status" style="display: inline;">
+        {{ csrf_input(request) }}
+        <input type="hidden" name="status" value="hired">
+        <button class="btn btn-primary" type="submit" onclick="return confirm('Закрепить {{ user.fio }} на обучение?');">
+          🎉 Закреплен на обучение
+        </button>
+      </form>
+      <form method="post" action="/candidates/{{ user.id }}/status" style="display: inline;">
+        {{ csrf_input(request) }}
+        <input type="hidden" name="status" value="not_hired">
+        <button class="btn btn-ghost" type="submit" onclick="return confirm('Пометить {{ user.fio }} как не закрепленного?');">
+          ⚠️ Не закреплен
+        </button>
+      </form>
+    {% endif %}
+
     <form method="post" action="/candidates/{{ user.id }}/toggle">
+      {{ csrf_input(request) }}
       {% if user.is_active %}
         <input type="hidden" name="active" value="false">
         <button class="btn btn-ghost" type="submit">Отключить</button>
@@ -341,162 +821,249 @@
       {% endif %}
     </form>
     <form method="post" action="/candidates/{{ user.id }}/delete" onsubmit="return confirm('Удалить кандидата {{ user.fio }}?');">
+      {{ csrf_input(request) }}
       <button class="btn btn-soft" type="submit">Удалить</button>
     </form>
   </div>
 </section>
 
-<div class="cards-grid">
-  <article class="glass grain candidate-card">
-    <header class="candidate-card__header">
-      <div>
-        <h2 class="section-title">Сводка</h2>
-        <p class="section-hint">Статус кандидата и ключевые показатели.</p>
-      </div>
-      <span class="badge badge--soft">{{ stage or 'Без статуса' }}</span>
-    </header>
-    {% set avg_score_label = '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' %}
-    <div class="candidate-highlights">
-      <div class="candidate-highlight">
-        <span class="candidate-highlight__label">Текущая стадия</span>
-        <strong>{{ stage or 'Без интервью' }}</strong>
-        <span class="candidate-highlight__meta">
-          {% if user.last_activity %}
-            Последняя активность {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
+{% set avg_score_label = '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' %}
+<section class="surface glass grain candidate-overview" id="candidate-overview">
+  <div class="candidate-hero">
+    <div class="candidate-hero__summary">
+      <p class="candidate-hero__eyebrow">Текущая стадия</p>
+      <div class="candidate-hero__stage-wrap">
+        <p class="candidate-hero__stage">{{ stage or 'Без интервью' }}</p>
+        <span class="candidate-hero__stage-pill">
+          {% if upcoming_slot and upcoming_slot.start_utc %}
+            Назначено интервью
+          {% elif stats.tests_total %}
+            Идёт оценка
           {% else %}
-            Последняя активность не зафиксирована
+            Нужно действие
           {% endif %}
         </span>
       </div>
-      <div class="candidate-highlight">
-        <span class="candidate-highlight__label">Ближайшее действие</span>
+      <p class="candidate-hero__meta">
+        {% if user.last_activity %}
+          Обновлён {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
+        {% else %}
+          Активность пока не зафиксирована
+        {% endif %}
+      </p>
+      <div class="candidate-hero__tags">
+        <span class="candidate-hero__tag">{{ user.city or 'Город не указан' }}</span>
+        {% if user.telegram_id %}
+          <span class="candidate-hero__tag">Telegram {{ user.telegram_id }}</span>
+        {% endif %}
+        {% if user.username %}
+          <a class="btn btn-primary btn-xs candidate-hero__chat" href="https://t.me/{{ user.username }}" target="_blank" rel="noopener">
+            Открыть чат
+          </a>
+        {% elif user.telegram_id %}
+          <span class="candidate-hero__chat-note">username не указан</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="candidate-hero__status">
+      <span class="candidate-hero__status-pill {% if not user.is_active %}is-muted{% endif %}">
+        {% if user.is_active %}Активен{% else %}Отключён{% endif %}
+      </span>
+      <p class="candidate-hero__status-note">
         {% if upcoming_slot and upcoming_slot.start_utc %}
-          <strong>{{ fmt_local(upcoming_slot.start_utc, upcoming_slot.candidate_tz or 'Europe/Moscow') }}</strong>
-          <span class="candidate-highlight__meta">
-            {% set slot_city = upcoming_slot.city.name if upcoming_slot.city else (user.city or 'Город не указан') %}
+          Следующее событие {{ fmt_local(upcoming_slot.start_utc, upcoming_slot.candidate_tz or 'Europe/Moscow') }}
+        {% elif stats.tests_total %}
+          Прошёл {{ stats.tests_total }} тест(а)
+        {% else %}
+          Нет запланированных активностей
+        {% endif %}
+      </p>
+      <dl class="candidate-hero__metrics">
+        <div>
+          <dt>Тестов</dt>
+          <dd>{{ stats.tests_total }}</dd>
+        </div>
+        <div>
+          <dt>Средний балл</dt>
+          <dd>{{ avg_score_label }}</dd>
+        </div>
+        <div>
+          <dt>Сообщений</dt>
+          <dd>{{ messages|length }}</dd>
+        </div>
+      </dl>
+    </div>
+  </div>
+
+  <div class="candidate-next">
+    <p class="candidate-next__eyebrow">Ближайшее действие</p>
+    <div class="candidate-next__timeline">
+      <span class="candidate-next__dot" aria-hidden="true"></span>
+      <div>
+        {% if upcoming_slot and upcoming_slot.start_utc %}
+          <p class="candidate-next__time">{{ fmt_local(upcoming_slot.start_utc, upcoming_slot.candidate_tz or 'Europe/Moscow') }}</p>
+          <p class="candidate-next__meta">
+            {% set slot_city = upcoming_slot.city.name if upcoming_slot.city else (upcoming_slot.candidate_city or user.city or 'Город не указан') %}
             {{ slot_city }}
             {% if upcoming_slot.recruiter %}
               · {{ upcoming_slot.recruiter.name }}
             {% endif %}
-          </span>
+          </p>
         {% else %}
-          <strong>Нет в календаре</strong>
-          <span class="candidate-highlight__meta">Назначьте интервью или тест, чтобы увидеть дату.</span>
+          <p class="candidate-next__time">Нет в календаре</p>
+          <p class="candidate-next__meta">Назначьте интервью или тест, чтобы запланировать следующий шаг.</p>
         {% endif %}
       </div>
-      <div class="candidate-highlight">
-        <span class="candidate-highlight__label">Активность</span>
-        <strong>{{ stats.tests_total }} тестов</strong>
-        <span class="candidate-highlight__meta">Средний балл: {{ avg_score_label }} · Сообщений: {{ messages|length }}</span>
-      </div>
     </div>
-    <dl class="data-list data-list--split">
-      <div>
-        <dt>Статус</dt>
-        <dd>
-          {% if user.is_active %}
-            <span class="badge badge--success">Активен</span>
+    <div class="candidate-next__actions">
+      {% if telemost_url %}
+        <a class="btn btn-soft btn-xs" href="{{ telemost_url }}" target="_blank" rel="noopener noreferrer">Открыть телемост</a>
+        <span class="candidate-next__note">
+          {% if telemost_source == 'upcoming' %}
+            Ссылка для ближайшего интервью
+          {% elif telemost_source == 'recent' %}
+            Ссылка на последний подтверждённый слот
           {% else %}
-            <span class="badge badge--muted">Отключен</span>
+            Постоянная ссылка кандидата
           {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>Город</dt>
-        <dd>{{ user.city or '—' }}</dd>
-      </div>
-      <div>
-        <dt>Отчёт Тест 1</dt>
-        <dd>
-          {% if user.test1_report_url %}
-            <a class="btn btn-soft btn-xs" href="/candidates/{{ user.id }}/reports/test1" download>Скачать</a>
-          {% else %}
-            <span class="muted">нет отчёта</span>
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>Отчёт Тест 2</dt>
-        <dd>
-          {% if user.test2_report_url %}
-            <a class="btn btn-soft btn-xs" href="/candidates/{{ user.id }}/reports/test2" download>Скачать</a>
-          {% else %}
-            <span class="muted">нет отчёта</span>
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>Телемост</dt>
-        <dd>
-          {% if telemost_url %}
-            <a class="btn btn-primary btn-xs" href="{{ telemost_url }}" target="_blank" rel="noopener noreferrer">Перейти</a>
-            {% if telemost_source == 'upcoming' %}
-              <span class="muted">предстоящее интервью</span>
-            {% elif telemost_source == 'recent' %}
-              <span class="muted">последний слот</span>
-            {% endif %}
-          {% else %}
-            <span class="muted">Ссылка не настроена</span>
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>Средний балл</dt>
-        <dd>{{ avg_score_label }}</dd>
-      </div>
-    </dl>
-  </article>
+        </span>
+      {% else %}
+        <span class="candidate-next__note">Ссылка появится после назначения интервью.</span>
+      {% endif %}
 
-  <article class="glass grain candidate-card candidate-card--profile">
-    <header class="candidate-card__header">
-      <div>
-        <h2 class="section-title">Личные данные</h2>
-        <p class="section-hint">Редактирование отключено — данные фиксируются автоматически.</p>
+      {% if upcoming_slot %}
+        {% set slot_state = (upcoming_slot.status or '')|lower %}
+        <div class="candidate-slot-control"
+             data-slot-controls
+             data-slot-id="{{ upcoming_slot.id }}"
+             data-slot-status="{{ slot_state }}"
+             data-slot-has-candidate="{{ 1 if upcoming_slot.candidate_tg_id else 0 }}">
+          <div class="candidate-slot-control__header">
+            <strong>Слот с {{ fmt_local(upcoming_slot.start_utc, upcoming_slot.candidate_tz or 'Europe/Moscow') }}</strong>
+            <button class="btn btn-ghost btn--small" type="button" data-slot-toggle>Редактировать слот</button>
+          </div>
+          <div class="candidate-slot-panel" data-slot-panel hidden>
+            <div class="candidate-slot-panel__group">
+              <p class="candidate-slot-panel__label">Бронь</p>
+              <div class="candidate-slot-panel__actions">
+                <button class="btn btn-ghost btn--small" type="button" data-slot-action="reschedule">Перенести</button>
+                <button class="btn btn-ghost btn--small" type="button" data-slot-action="cancel">Отменить бронь</button>
+              </div>
+              <p class="candidate-slot-panel__hint" data-slot-message></p>
+            </div>
+            <div class="candidate-slot-panel__group">
+              <p class="candidate-slot-panel__label">Исход интервью</p>
+              <div class="candidate-slot-panel__actions">
+                <button class="btn btn-ghost btn--small" type="button" data-slot-outcome="success">Прошёл</button>
+                <button class="btn btn-ghost btn--small" type="button" data-slot-outcome="reject">Не прошёл</button>
+              </div>
+              <p class="candidate-slot-panel__hint" data-slot-outcome-status>
+                {% if upcoming_slot.interview_outcome == 'success' %}
+                  Отмечен как «Прошёл»
+                {% elif upcoming_slot.interview_outcome == 'reject' %}
+                  Отмечен как «Не прошёл»
+                {% else %}
+                  Исход ещё не выбран
+                {% endif %}
+              </p>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="surface glass grain mt-lg interview-section" id="interview-script">
+  <header class="section-header">
+    <div>
+      <h2 class="section-title">Анкета собеседования Smart Service</h2>
+      <p class="section-hint">Заполняйте по ходу разговора — итог останется в профиле кандидата.</p>
+    </div>
+    <div class="interview-meta">
+      {% if interview_record.get('updated_at') %}
+        <span class="muted">Обновлено {{ fmt_local(interview_record.get('updated_at'), 'Europe/Moscow') }}</span>
+      {% endif %}
+    </div>
+  </header>
+  <div class="questionnaire">
+    <aside class="questionnaire-summary">
+      {% if interview_data %}
+        {% set rec_meta = recommendation_lookup.get(interview_recommendation) %}
+        <div class="interview-card">
+          <div>
+            <span class="interview-card__eyebrow">Сохранено</span>
+            <h3 class="interview-card__title">{{ rec_meta.label if rec_meta else 'Анкета заполнена' }}</h3>
+            <div class="interview-card__meta">
+              <span>Интервьюер: {{ interview_record.get('interviewer_name') or '—' }}</span>
+              <span>Проведено: {{ interview_data.get('interviewed_at') or '—' }}</span>
+            </div>
+          </div>
+          <div class="interview-card__actions">
+            <a class="btn btn-soft" href="/candidates/{{ user.id }}/interview-notes/download" rel="noopener">📄 Скачать</a>
+            <a class="btn btn-primary" href="/candidates/{{ user.id }}?interview_edit=1#interview-script">✏️ Редактировать</a>
+          </div>
+        </div>
+      {% else %}
+        <p class="muted">Анкета пока не заполнена. Нажмите «Заполнить анкету», чтобы пройти скрипт.</p>
+        <a class="btn btn-primary" href="/candidates/{{ user.id }}?interview_edit=1#interview-script">Заполнить анкету</a>
+      {% endif %}
+    </aside>
+    {% if show_interview_form %}
+      <div class="questionnaire-form">
+        <form method="post" action="/candidates/{{ user.id }}/interview-notes">
+          {{ csrf_input(request) }}
+          {% for section in interview_sections %}
+            <fieldset>
+              <legend>{{ section.title }}</legend>
+              {% if section.description %}
+                <p class="question-description">{{ section.description }}</p>
+              {% endif %}
+              {% for question in section.questions %}
+                {% set field_id = 'question-' ~ question.key %}
+                {% set value = interview_data.get(question.key) %}
+                {% if question.type == 'checkbox' %}
+                  <label class="checkbox-pill" for="{{ field_id }}">
+                    <input type="checkbox" id="{{ field_id }}" name="{{ question.key }}" {% if value %}checked{% endif %}>
+                    <span>{{ question.label }}</span>
+                  </label>
+                {% elif question.type == 'textarea' %}
+                  <div class="question-field">
+                    <label for="{{ field_id }}">{{ question.label }}</label>
+                    <textarea id="{{ field_id }}" name="{{ question.key }}" placeholder="{{ question.placeholder or '' }}">{{ value or '' }}</textarea>
+                  </div>
+                {% elif question.type == 'text' %}
+                  <div class="question-field">
+                    <label for="{{ field_id }}">{{ question.label }}</label>
+                    <input type="text" id="{{ field_id }}" name="{{ question.key }}" value="{{ value or '' }}" placeholder="{{ question.placeholder or '' }}">
+                  </div>
+                {% elif question.type == 'datetime' %}
+                  <div class="question-field">
+                    <label for="{{ field_id }}">{{ question.label }}</label>
+                    <input type="datetime-local" id="{{ field_id }}" name="{{ question.key }}" value="{{ value or '' }}">
+                  </div>
+                {% elif question.type == 'radio' %}
+                  <div class="question-field">
+                    <label>{{ question.label }}</label>
+                    <div class="decision-options">
+                      {% for option in question.options %}
+                        <label class="decision-option">
+                          <input type="radio" name="{{ question.key }}" value="{{ option.value }}" {% if interview_recommendation == option.value %}checked{% endif %}>
+                          <span>{{ option.label }}</span>
+                        </label>
+                      {% endfor %}
+                    </div>
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </fieldset>
+          {% endfor %}
+          <button type="submit" class="btn btn-primary">Сохранить анкету</button>
+        </form>
       </div>
-      <span class="badge badge--muted">Только чтение</span>
-    </header>
-    <p class="candidate-card__note">Чтобы скорректировать информацию, обновите карточку кандидата в исходной системе.</p>
-    <dl class="data-list data-list--grid">
-      <div>
-        <dt>ФИО</dt>
-        <dd>{{ user.fio }}</dd>
-      </div>
-      <div>
-        <dt>Telegram ID</dt>
-        <dd>
-          <span class="candidate-card__code">{{ user.telegram_id }}</span>
-          {% if user.username %}
-          <a class="btn btn-primary btn-xs" href="https://t.me/{{ user.username }}" target="_blank" style="margin-left: 8px;">Открыть чат</a>
-          {% else %}
-          <span style="margin-left: 8px; font-size: 0.85em; color: #666;">(нет username)</span>
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>Внутренний ID</dt>
-        <dd><span class="candidate-card__code">{{ user.id }}</span></dd>
-      </div>
-      <div>
-        <dt>Город</dt>
-        <dd>{{ user.city or '—' }}</dd>
-      </div>
-      <div>
-        <dt>Последняя активность</dt>
-        <dd>{{ fmt_local(user.last_activity, 'Europe/Moscow') if user.last_activity else '—' }}</dd>
-      </div>
-      <div>
-        <dt>Статус</dt>
-        <dd>
-          {% if user.is_active %}
-            <span class="badge badge--success">Активен</span>
-          {% else %}
-            <span class="badge badge--muted">Отключен</span>
-          {% endif %}
-        </dd>
-      </div>
-    </dl>
-  </article>
-</div>
+    {% endif %}
+  </div>
+</section>
 
 <section class="surface glass grain mt-lg">
   <header class="section-header">
@@ -633,71 +1200,176 @@
   </div>
 </section>
 
-<section class="surface glass grain mt-lg">
-  <header class="section-header">
-    <h2 class="section-title">Сообщения кандидату</h2>
-    <p class="section-hint">Отображаются авто-сообщения, назначенные на Telegram ID кандидата.</p>
-  </header>
-  {% if messages %}
-    <div class="list-table-wrapper">
-      <table class="list-table">
-        <thead>
-          <tr>
-            <th scope="col">Создано</th>
-            <th scope="col">Отправка</th>
-            <th scope="col">Текст</th>
-            <th scope="col">Статус</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for msg in messages %}
-          <tr>
-            <td>{{ msg.created_at.strftime('%d.%m.%Y %H:%M') if msg.created_at else '—' }}</td>
-            <td>{{ msg.send_time }}</td>
-            <td class="text-prewrap">{{ msg.message_text }}</td>
-            <td>
-              {% if msg.is_active %}
-                <span class="badge badge--success">Активно</span>
-              {% else %}
-                <span class="badge badge--muted">Отключено</span>
-              {% endif %}
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  {% else %}
-    <p class="muted">Сообщений пока нет.</p>
-  {% endif %}
-</section>
+<script>
+(function(){
+  const slotControls = document.querySelector('[data-slot-controls]');
+  if (!slotControls) return;
+  const slotId = slotControls.dataset.slotId;
+  if (!slotId) return;
+  const toggleBtn = slotControls.querySelector('[data-slot-toggle]');
+  const panel = slotControls.querySelector('[data-slot-panel]');
+  const messageEl = slotControls.querySelector('[data-slot-message]');
+  const outcomeStatusEl = slotControls.querySelector('[data-slot-outcome-status]');
+  const nextTime = document.querySelector('.candidate-next__time');
+  const nextMeta = document.querySelector('.candidate-next__meta');
+  const emptyMetaText = 'Назначьте интервью или тест, чтобы запланировать следующий шаг.';
+  const csrfToken = window.__CSRF_TOKEN__ || document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+  const slotStatus = (slotControls.dataset.slotStatus || '').toLowerCase();
+  const slotHasCandidate = slotControls.dataset.slotHasCandidate !== '0';
+  const actionableStatuses = new Set(['pending', 'booked', 'confirmed_by_candidate']);
+  const slotEligible = slotHasCandidate && actionableStatuses.has(slotStatus);
 
-<section class="surface glass grain mt-lg">
-  <header class="section-header">
-    <h2 class="section-title">Хронология действий</h2>
-    <p class="section-hint">События объединяют интервью, тесты и сообщения.</p>
-  </header>
-  {% if timeline %}
-    <div class="timeline">
-      {% for event in timeline %}
-        <article class="timeline-item">
-          <div class="timeline-item__meta">{{ fmt_local(event.dt, event.tz or 'Europe/Moscow') }}</div>
-          {% if event.kind == 'slot' %}
-            <strong>Интервью · {{ event.status|upper }}</strong>
-            <span class="timeline-item__meta">{{ event.recruiter or 'Рекрутёр не указан' }} · {{ event.city or 'Город не указан' }}</span>
-          {% elif event.kind == 'test' %}
-            <strong>Тест</strong>
-            <span class="timeline-item__meta">Баллы: {{ event.score }} · Рейтинг {{ event.rating }}</span>
-          {% elif event.kind == 'message' %}
-            <strong>Сообщение</strong>
-            <span class="timeline-item__meta">План: {{ event.send_time }}{% if not event.is_active %} · отключено{% endif %}</span>
-            <span class="text-prewrap">{{ event.text }}</span>
-          {% endif %}
-        </article>
-      {% endfor %}
-    </div>
-  {% else %}
-    <p class="muted">События ещё не зафиксированы.</p>
-  {% endif %}
-</section>
+  const setMessage = (el, text, tone = 'muted') => {
+    if (!el) { return; }
+    el.textContent = text || '';
+    if (tone) {
+      el.dataset.tone = tone;
+    } else {
+      el.removeAttribute('data-tone');
+    }
+  };
+
+  const disableButtons = (selector, disabled) => {
+    slotControls.querySelectorAll(selector).forEach(btn => {
+      btn.disabled = disabled;
+    });
+  };
+
+  const closePanel = () => {
+    if (!panel) { return; }
+    panel.setAttribute('hidden', '');
+    slotControls.classList.remove('is-open');
+    if (toggleBtn) {
+      toggleBtn.textContent = 'Редактировать слот';
+    }
+  };
+
+  const lockPanel = (message, tone = 'warning') => {
+    closePanel();
+    slotControls.classList.add('is-disabled');
+    disableButtons('[data-slot-action]', true);
+    disableButtons('[data-slot-outcome]', true);
+    if (toggleBtn) {
+      toggleBtn.disabled = true;
+    }
+    setMessage(messageEl, message || '', tone);
+  };
+
+  toggleBtn?.addEventListener('click', () => {
+    if (!panel) return;
+    const isHidden = panel.hasAttribute('hidden');
+    if (isHidden) {
+      panel.removeAttribute('hidden');
+      slotControls.classList.add('is-open');
+      toggleBtn.textContent = 'Скрыть панель';
+    } else {
+      closePanel();
+    }
+  });
+
+  async function postSlotAction(path) {
+    const response = await fetch(`/slots/${slotId}/${path}`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'X-CSRFToken': csrfToken,
+      },
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok === false) {
+      const message = payload && payload.message ? payload.message : 'Не удалось выполнить действие.';
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  }
+
+  async function postOutcome(outcome) {
+    const response = await fetch(`/slots/${slotId}/outcome`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+      },
+      body: JSON.stringify({ outcome }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok === false) {
+      const message = payload && payload.message ? payload.message : 'Не удалось обновить исход.';
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  }
+
+  const markSlotAsInactive = (message, tone = 'success') => {
+    lockPanel(message, tone);
+    if (nextTime) {
+      nextTime.textContent = 'Нет в календаре';
+    }
+    if (nextMeta) {
+      nextMeta.textContent = emptyMetaText;
+    }
+  };
+
+  if (!slotEligible) {
+    const warningText = slotHasCandidate
+      ? 'Слот в этом статусе нельзя редактировать из карточки кандидата.'
+      : 'Слот не привязан к кандидату.';
+    lockPanel(warningText, slotHasCandidate ? 'warning' : 'error');
+    return;
+  }
+
+  slotControls.addEventListener('click', async (event) => {
+    const actionBtn = event.target.closest('[data-slot-action]');
+    if (!actionBtn || actionBtn.disabled) return;
+    const action = actionBtn.dataset.slotAction;
+    if (!action) return;
+    actionBtn.disabled = true;
+    setMessage(messageEl, 'Выполняем…');
+    try {
+      const payload = await postSlotAction(action === 'reschedule' ? 'reschedule' : 'reject_booking');
+      markSlotAsInactive(payload.message || 'Слот обновлён.');
+    } catch (err) {
+      console.error(err);
+      setMessage(messageEl, err.message || 'Не удалось изменить слот.', 'error');
+      if (err && err.status === 404) {
+        markSlotAsInactive(err.message || 'Слот больше недоступен.', 'warning');
+        return;
+      }
+      actionBtn.disabled = false;
+    }
+  });
+
+  slotControls.addEventListener('click', async (event) => {
+    const outcomeBtn = event.target.closest('[data-slot-outcome]');
+    if (!outcomeBtn || outcomeBtn.disabled) return;
+    const outcome = outcomeBtn.dataset.slotOutcome;
+    if (!outcome) return;
+    outcomeBtn.disabled = true;
+    disableButtons('[data-slot-outcome]', true);
+    setMessage(outcomeStatusEl, 'Обновляем исход…');
+    let unlockOutcomes = true;
+    try {
+      const payload = await postOutcome(outcome);
+      setMessage(outcomeStatusEl, payload.message || 'Исход обновлён.', 'success');
+    } catch (err) {
+      console.error(err);
+      setMessage(outcomeStatusEl, err.message || 'Не удалось обновить исход.', 'error');
+      if (err && err.status === 404) {
+        markSlotAsInactive(err.message || 'Слот больше недоступен.', 'warning');
+        unlockOutcomes = false;
+      }
+    } finally {
+      if (unlockOutcomes) {
+        disableButtons('[data-slot-outcome]', false);
+      }
+    }
+  });
+})();
+</script>
+{# Сообщения кандидату и хронология скрыты по запросу #}
 {% endblock %}

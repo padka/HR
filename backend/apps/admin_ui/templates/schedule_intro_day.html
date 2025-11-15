@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Назначить ознакомительный день для {{ candidate.fio }}{% endblock %}
 {% block content %}
 <section class="form-shell" data-tilt>
@@ -25,10 +25,22 @@
   </div>
 {% endif %}
 
-{% if not recruiters %}
+{% if city_missing %}
   <div class="surface glass grain alert" role="alert">
-    <h2 class="form-shell__section-title">Нет рекрутёров</h2>
-    <p class="form-shell__section-hint">Сначала добавьте рекрутёра для города {{ candidate.city }}.</p>
+    <h2 class="form-shell__section-title">Город не определён</h2>
+    <p class="form-shell__section-hint">
+      У кандидата не указан или не найден город. Добавьте город в карточке кандидата, чтобы система могла отправить сообщение по городскому шаблону.
+    </p>
+    <div class="btn-group mt-sm">
+      <a class="btn btn--primary" href="/candidates/{{ candidate.id }}">← Вернуться к кандидату</a>
+    </div>
+  </div>
+{% elif recruiter_missing %}
+  <div class="surface glass grain alert" role="alert">
+    <h2 class="form-shell__section-title">Нет рекрутёра для города</h2>
+    <p class="form-shell__section-hint">
+      К городу {{ candidate.city or (city.name_plain if city else '') }} не привязан ни один активный рекрутёр. Добавьте рекрутёра на странице города, чтобы продолжить.
+    </p>
     <div class="btn-group mt-sm">
       <a class="btn btn--primary" href="/recruiters/new">+ Добавить рекрутёра</a>
       <a class="btn btn--ghost" href="/candidates/{{ candidate.id }}">← Вернуться к кандидату</a>
@@ -66,33 +78,24 @@
             {% endif %}
           </dd>
         </div>
+        <div>
+          <dt>Город/шаблон</dt>
+          <dd>{{ (city.name_plain if city else candidate.city) or "Не указан" }}</dd>
+        </div>
+        <div>
+          <dt>Часовой пояс города</dt>
+          <dd id="tz_hint">Регион: <strong>{{ city_timezone_label }}</strong></dd>
+        </div>
+        <div>
+          <dt>Смещение от UTC</dt>
+          <dd><span class="chip" id="offset_chip" title="Смещение от UTC">GMT <span id="offset_text">±0</span></span></dd>
+        </div>
       </div>
-    {% endcall %}
-
-    {% call forms.section("Рекрутёр") %}
-      {% call forms.field("Рекрутёр", hint="Выберите рекрутёра для проведения ознакомительного дня") %}
-        <select id="recruiter_id" name="recruiter_id" required>
-          <option value="" disabled selected>— выберите рекрутёра —</option>
-          {% for item in recruiters %}
-            {% set r = item.rec %}
-            {% set tz_value = r.tz or 'Europe/Moscow' %}
-            {% set tz_label = tz_display(tz_value) %}
-            <option value="{{ r.id }}"
-                    data-tz="{{ tz_value }}"
-                    data-tz-label="{{ tz_label }}"
-                    {% if item.is_default %}selected{% endif %}>{{ r.name }} ({{ tz_label }})</option>
-          {% endfor %}
-        </select>
-      {% endcall %}
-      {% call forms.meta() %}
-        {% call forms.note(inline=True, id='tz_hint') %}Регион: —{% endcall %}
-        <span class="chip" id="offset_chip" title="Смещение от UTC">GMT <span id="offset_text">±0</span></span>
-      {% endcall %}
     {% endcall %}
 
     {% call forms.section("Дата и время") %}
       <div class="form-grid form-grid--two">
-        {% call forms.field("Дата (локальная)", hint="Дата в часовом поясе рекрутёра") %}
+        {% call forms.field("Дата (локальная)", hint="Дата в часовом поясе города ознакомительного дня") %}
           <input id="date" type="date" name="date" required>
           <div class="btn-group">
             <button class="btn btn--ghost btn--sm" type="button" data-quick="today">Сегодня</button>
@@ -100,7 +103,7 @@
             <button class="btn btn--ghost btn--sm" type="button" data-quick="next-week">Через неделю</button>
           </div>
         {% endcall %}
-        {% call forms.field("Время (локальное)", hint="Время в часовом поясе рекрутёра") %}
+        {% call forms.field("Время (локальное)", hint="Время в часовом поясе города") %}
           <input id="time" type="time" name="time" required value="10:00">
           <div class="btn-group">
             <button class="btn btn--ghost btn--sm" type="button" data-time="10:00">10:00</button>
@@ -111,22 +114,27 @@
       </div>
     {% endcall %}
 
+    {% call forms.section("Информация по встрече") %}
+      {% call forms.note() %}
+        Адрес площадки и контакт руководителя будут подставлены автоматически из шаблона города. Проверьте шаблон <code>intro_day_invitation</code>, чтобы убедиться, что данные актуальны.
+      {% endcall %}
+    {% endcall %}
+
     <input type="hidden" name="candidate_id" value="{{ candidate.id }}">
     <input type="hidden" name="candidate_telegram_id" value="{{ candidate.telegram_id }}">
     <input type="hidden" name="candidate_fio" value="{{ candidate.fio }}">
     <input type="hidden" name="candidate_city" value="{{ candidate.city or '' }}">
+    <input type="hidden" id="city_tz_value" value="{{ city_timezone }}" data-tz-label="{{ city_timezone_label }}">
 
     <div class="preview-panel" id="preview" aria-live="polite">
       <b>Превью</b><br>
-      Выберите рекрутёра, дату и время — покажем UTC и время кандидата.
+      Укажите дату и время — покажем перевод времени для города и UTC.
     </div>
     {% call forms.note(id='submit_hint') %}Заполните все поля, чтобы назначить ознакомительный день.{% endcall %}
   {% endcall %}
 {% endif %}
 
 <script>
-  const form = document.getElementById('form-intro-day');
-  const recruiterSelect = document.getElementById('recruiter_id');
   const dateInput = document.getElementById('date');
   const timeInput = document.getElementById('time');
   const preview = document.getElementById('preview');
@@ -134,11 +142,12 @@
   const nowText = document.getElementById('now_text');
   const tzHint = document.getElementById('tz_hint');
   const offsetText = document.getElementById('offset_text');
+  const cityTzInput = document.getElementById('city_tz_value');
 
-  let currentTz = 'Europe/Moscow';
+  let currentTz = (cityTzInput && cityTzInput.value) || 'Europe/Moscow';
 
   function updateNow() {
-    if (!currentTz) return;
+    if (!currentTz || !nowText) return;
     const now = new Date();
     const formatter = new Intl.DateTimeFormat('ru-RU', {
       timeZone: currentTz,
@@ -149,6 +158,7 @@
   }
 
   function getTzOffset(tz) {
+    if (!tz) return '±0';
     const now = new Date();
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
@@ -159,7 +169,6 @@
     if (tzPart && tzPart.value.startsWith('GMT')) {
       return tzPart.value.replace('GMT', '');
     }
-    // Fallback: calculate offset
     const utcDate = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
     const tzDate = new Date(now.toLocaleString('en-US', { timeZone: tz }));
     const offset = (tzDate - utcDate) / (1000 * 60 * 60);
@@ -167,86 +176,70 @@
   }
 
   function updatePreview() {
-    const recruiter = recruiterSelect.options[recruiterSelect.selectedIndex];
     const date = dateInput.value;
     const time = timeInput.value;
 
-    if (!recruiter || !recruiter.dataset.tz || !date || !time) {
-      preview.innerHTML = '<b>Превью</b><br>Выберите рекрутёра, дату и время.';
+    if (!currentTz || !date || !time) {
+      preview.innerHTML = '<b>Превью</b><br>Укажите дату и время ознакомительного дня.';
       submitBtn.disabled = true;
       return;
     }
 
-    currentTz = recruiter.dataset.tz;
-    const tzLabel = recruiter.dataset.tzLabel || currentTz;
+    const tzLabel = (cityTzInput && cityTzInput.dataset.tzLabel) || currentTz;
+    if (tzHint) {
+      tzHint.innerHTML = `Регион: <strong>${tzLabel}</strong>`;
+    }
+    if (offsetText) {
+      offsetText.textContent = getTzOffset(currentTz);
+    }
 
-    tzHint.innerHTML = `Регион: <strong>${tzLabel}</strong>`;
-    offsetText.textContent = getTzOffset(currentTz);
-
-    // Parse local datetime
     const localDatetime = new Date(`${date}T${time}`);
+    const utcDatetime = new Date(localDatetime.toLocaleString('en-US', { timeZone: 'UTC' }));
 
-    // Convert to UTC
-    const utcFormatter = new Intl.DateTimeFormat('ru-RU', {
-      timeZone: 'UTC',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
+    const formatterLocal = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: currentTz,
+      dateStyle: 'long',
+      timeStyle: 'short',
     });
 
-    // Candidate timezone (assuming same as city or recruiter for now)
-    const candidateFormatter = new Intl.DateTimeFormat('ru-RU', {
-      timeZone: currentTz,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
+    const formatterUTC = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: 'UTC',
+      dateStyle: 'long',
+      timeStyle: 'short',
     });
 
     preview.innerHTML = `
-      <b>Превью назначения</b><br>
-      <strong>Локальное время рекрутёра:</strong> ${date} ${time} (${tzLabel})<br>
-      <strong>UTC:</strong> ${utcFormatter.format(localDatetime)}<br>
-      <strong>Время кандидата:</strong> ${candidateFormatter.format(localDatetime)}<br>
+      <b>Превью</b><br>
+      🕒 ${formatterLocal.format(localDatetime)} (${tzLabel})<br>
+      🌐 ${formatterUTC.format(utcDatetime)} (UTC)<br>
       <br>
-      <em>После назначения кандидату автоматически отправится приглашение с просьбой подтвердить участие.</em>
+      Адрес и контакт будут взяты из шаблона города.
     `;
 
     submitBtn.disabled = false;
   }
 
-  recruiterSelect.addEventListener('change', () => {
-    updatePreview();
-    updateNow();
-  });
   dateInput.addEventListener('change', updatePreview);
   timeInput.addEventListener('input', updatePreview);
 
-  // Quick date buttons
   document.querySelectorAll('[data-quick]').forEach(btn => {
     btn.addEventListener('click', () => {
       const action = btn.dataset.quick;
       const now = new Date();
-      let targetDate = now;
-
+      const target = new Date(now);
       if (action === 'tomorrow') {
-        targetDate.setDate(now.getDate() + 1);
+        target.setDate(now.getDate() + 1);
       } else if (action === 'next-week') {
-        targetDate.setDate(now.getDate() + 7);
+        target.setDate(now.getDate() + 7);
       }
-
-      const year = targetDate.getFullYear();
-      const month = String(targetDate.getMonth() + 1).padStart(2, '0');
-      const day = String(targetDate.getDate()).padStart(2, '0');
+      const year = target.getFullYear();
+      const month = String(target.getMonth() + 1).padStart(2, '0');
+      const day = String(target.getDate()).padStart(2, '0');
       dateInput.value = `${year}-${month}-${day}`;
       updatePreview();
     });
   });
 
-  // Quick time buttons
   document.querySelectorAll('[data-time]').forEach(btn => {
     btn.addEventListener('click', () => {
       timeInput.value = btn.dataset.time;
@@ -254,7 +247,6 @@
     });
   });
 
-  // Update clock every minute
   setInterval(updateNow, 60000);
   updateNow();
   updatePreview();

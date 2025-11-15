@@ -28,7 +28,7 @@ async def message_templates_list(request: Request):
         "missing_required": payload["missing_required"],
         "known_hints": payload["known_hints"],
     }
-    return jinja_templates.TemplateResponse("message_templates_list.html", context)
+    return jinja_templates.TemplateResponse(request, "message_templates_list.html", context)
 
 
 @router.get("/new", response_class=HTMLResponse)
@@ -48,7 +48,7 @@ async def message_templates_new(request: Request):
         "known_hints": KNOWN_TEMPLATE_HINTS,
         "is_edit": False,
     }
-    return jinja_templates.TemplateResponse("message_templates_form.html", context)
+    return jinja_templates.TemplateResponse(request, "message_templates_form.html", context)
 
 
 @router.post("/create")
@@ -87,7 +87,7 @@ async def message_templates_create(
         "known_hints": KNOWN_TEMPLATE_HINTS,
         "is_edit": False,
     }
-    return jinja_templates.TemplateResponse("message_templates_form.html", context, status_code=400)
+    return jinja_templates.TemplateResponse(request, "message_templates_form.html", context, status_code=400)
 
 
 @router.get("/{template_id}/edit", response_class=HTMLResponse)
@@ -112,7 +112,7 @@ async def message_templates_edit(request: Request, template_id: int):
         "known_hints": KNOWN_TEMPLATE_HINTS,
         "is_edit": True,
     }
-    return jinja_templates.TemplateResponse("message_templates_form.html", context)
+    return jinja_templates.TemplateResponse(request, "message_templates_form.html", context)
 
 
 @router.post("/{template_id}/update")
@@ -153,7 +153,7 @@ async def message_templates_update(
         "known_hints": KNOWN_TEMPLATE_HINTS,
         "is_edit": True,
     }
-    return jinja_templates.TemplateResponse("message_templates_form.html", context, status_code=400)
+    return jinja_templates.TemplateResponse(request, "message_templates_form.html", context, status_code=400)
 
 
 @router.post("/{template_id}/delete")

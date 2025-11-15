@@ -25,6 +25,7 @@ from backend.apps.admin_ui.services.slots import (
 )
 from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
 from backend.core.settings import get_settings
+from backend.apps.bot.services import NotificationNotConfigured
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
@@ -68,6 +69,19 @@ def _set_flash(response: RedirectResponse, status: str, message: str) -> None:
     )
 
 
+def _ensure_csrf_config(request: Request) -> None:
+    state = getattr(request, "state", None)
+    if state is None:
+        return
+    request.scope.setdefault("session", {})
+    if getattr(state, "csrf_config", None):
+        return
+    state.csrf_config = {
+        "csrf_secret": _SETTINGS.session_secret,
+        "csrf_field_name": "csrf_token",
+    }
+
+
 @router.get("", response_class=HTMLResponse)
 async def slots_list(
     request: Request,
@@ -105,7 +119,8 @@ async def slots_list(
         "status_counts": status_counts,
         "flash": flash,
     }
-    response = templates.TemplateResponse("slots_list.html", context)
+    _ensure_csrf_config(request)
+    response = templates.TemplateResponse(request, "slots_list.html", context)
     if flash:
         response.delete_cookie(
             _FLASH_COOKIE,
@@ -121,7 +136,9 @@ async def slots_list(
 async def slots_new(request: Request):
     recruiters = await recruiters_for_slot_form()
     flash = _pop_flash(request)
+    _ensure_csrf_config(request)
     response = templates.TemplateResponse(
+        request,
         "slots_new.html",
         {"request": request, "recruiters": recruiters, "flash": flash},
     )
@@ -306,7 +323,13 @@ async def slots_set_outcome(
 
 @router.post("/{slot_id}/reschedule")
 async def slots_reschedule(slot_id: int):
-    ok, message, notified = await reschedule_slot_booking(slot_id)
+    try:
+        ok, message, notified = await reschedule_slot_booking(slot_id)
+    except NotificationNotConfigured:
+        return JSONResponse(
+            {"error": "notifications_unavailable"},
+            status_code=503,
+        )
     status_code = 200 if ok else (404 if "не найден" in message.lower() else 400)
     return JSONResponse(
         {"ok": ok, "message": message, "bot_notified": notified},
@@ -316,7 +339,13 @@ async def slots_reschedule(slot_id: int):
 
 @router.post("/{slot_id}/reject_booking")
 async def slots_reject_booking(slot_id: int):
-    ok, message, notified = await reject_slot_booking(slot_id)
+    try:
+        ok, message, notified = await reject_slot_booking(slot_id)
+    except NotificationNotConfigured:
+        return JSONResponse(
+            {"error": "notifications_unavailable"},
+            status_code=503,
+        )
     status_code = 200 if ok else (404 if "не найден" in message.lower() else 400)
     return JSONResponse(
         {"ok": ok, "message": message, "bot_notified": notified},

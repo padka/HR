@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from backend.apps.admin_ui.services.cities import (
     api_cities_payload,
     api_city_owners_payload,
+    get_city_capacity,
 )
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
 from backend.apps.admin_ui.services.recruiters import (
@@ -22,6 +23,7 @@ from backend.apps.admin_ui.services.templates import api_templates_payload
 from backend.apps.admin_ui.utils import parse_optional_int, status_filter
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.admin_ui.services.candidates import api_candidate_detail_payload
+from backend.apps.admin_ui.services.notifications import notification_feed
 from backend.core.settings import get_settings
 
 router = APIRouter(prefix="/api", tags=["api"])
@@ -154,6 +156,23 @@ async def api_cities():
     return JSONResponse(await api_cities_payload())
 
 
+@router.get("/cities/{city_id}/capacity")
+async def api_city_capacity(city_id: int):
+    """Get slot capacity information for a specific city.
+
+    Returns:
+        JSON with has_available_slots, total_free_slots, and city info.
+        Returns 404 if city is not found.
+    """
+    capacity = await get_city_capacity(city_id)
+    if capacity is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "Город не найден"},
+        )
+    return JSONResponse(capacity)
+
+
 @router.get("/slots")
 async def api_slots(
     recruiter_id: Optional[str] = Query(default=None),
@@ -192,11 +211,25 @@ async def api_template_keys():
             "after_approval",
             "intro_day_reminder",
             "confirm_2h",
-            "reminder_24h",
             "followup_missed",
             "after_meeting",
             "slot_rejected",
         ]
+    )
+
+
+@router.get("/notifications/feed")
+async def api_notifications_feed(
+    after_id: Optional[int] = Query(default=None, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    items = await notification_feed(after_id, limit)
+    latest_id = items[-1]["id"] if items else after_id
+    return JSONResponse(
+        {
+            "items": items,
+            "latest_id": latest_id,
+        }
     )
 
 

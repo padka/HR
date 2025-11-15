@@ -114,6 +114,7 @@
           <footer class="recruiter-card__footer">
             <a class="btn btn-soft btn--grow" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
             <form class="inline-form" method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');">
+              {{ csrf_input(request) }}
               <button class="btn btn-danger btn--grow" type="submit">Удалить</button>
             </form>
           </footer>

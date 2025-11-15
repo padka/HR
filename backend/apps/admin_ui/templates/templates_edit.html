@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Шаблон #{{ tmpl.id }}{% endblock %}
 {% block content %}
 {% call forms.shell(
@@ -45,11 +45,10 @@
     {% endcall %}
 
     {% call forms.field("Ключ", hint="Ключ используют бот и админка для поиска нужного сообщения") %}
-      <input id="key" type="text" name="key" required value="{{ tmpl.key }}" placeholder="например: intro, confirm_2h, reminder_24h" list="key_suggestions">
+      <input id="key" type="text" name="key" required value="{{ tmpl.key }}" placeholder="например: intro, confirm_2h, intro_day_reminder" list="key_suggestions">
       <datalist id="key_suggestions">
         <option value="invite_interview"></option>
         <option value="confirm_2h"></option>
-        <option value="reminder_24h"></option>
         <option value="after_meeting"></option>
         <option value="followup_missed"></option>
         <option value="slot_rejected"></option>
@@ -71,6 +70,8 @@
         <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{recruiter_name}}">{{recruiter_name}}</button>
         <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{recruiter_phone}}">{{recruiter_phone}}</button>
         <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{address}}">{{address}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{intro_address}}">{{intro_address}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{intro_contact}}">{{intro_contact}}</button>
         <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
         {% endraw %}
       </div>
@@ -117,6 +118,7 @@
   <h2 class="form-shell__section-title">Опасная зона</h2>
   <p class="form-shell__section-hint">Удаление шаблона безвозвратно.</p>
   <form method="post" action="/templates/{{ tmpl.id }}/delete" onsubmit="return confirm('Удалить шаблон безвозвратно?');" class="mt-sm">
+    {{ csrf_input(request) }}
     <button type="submit" class="btn btn--danger">Удалить шаблон</button>
   </form>
 </div>

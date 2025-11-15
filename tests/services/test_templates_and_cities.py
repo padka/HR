@@ -118,6 +118,38 @@ async def test_update_template_returns_false_on_duplicate_key():
 
     async with async_session() as session:
         persisted = await session.get(models.Template, original_id)
+    assert persisted is not None
+    assert persisted.key == "greeting"
+    assert persisted.content == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_update_city_settings_updates_timezone_and_active():
+    async with async_session() as session:
+        city = models.City(name="Advanced City", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+
+    error, updated_city, _ = await update_city_settings(
+        city_id=city.id,
+        responsible_id=None,
+        templates={},
+        criteria=None,
+        experts=None,
+        plan_week=None,
+        plan_month=None,
+        tz="Asia/Vladivostok",
+        active=False,
+    )
+
+    assert error is None
+    assert updated_city is not None
+    assert updated_city.tz == "Asia/Vladivostok"
+    assert updated_city.active is False
+
+    async with async_session() as session:
+        persisted = await session.get(models.City, city.id)
         assert persisted is not None
-        assert persisted.key == "greeting"
-        assert persisted.content == "Hello"
+        assert persisted.tz == "Asia/Vladivostok"
+        assert persisted.active is False

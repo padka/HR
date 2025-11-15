@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Select, select
@@ -27,7 +28,6 @@ REQUIRED_TG_TEMPLATE_KEYS: Sequence[str] = (
     "recruiter_candidate_confirmed_notice",
     "confirm_6h",
     "confirm_2h",
-    "reminder_24h",
 )
 
 
@@ -38,7 +38,6 @@ KNOWN_TEMPLATE_HINTS: Dict[str, str] = {
     "recruiter_candidate_confirmed_notice": "Уведомление рекрутёру, когда кандидат подтвердил участие.",
     "confirm_6h": "Напоминание кандидату за 6 часов до встречи с кнопками подтверждения.",
     "confirm_2h": "Напоминание/подтверждение за 2 часа до встречи.",
-    "reminder_24h": "Напоминание кандидату за сутки до встречи.",
 }
 
 
@@ -133,6 +132,8 @@ async def create_message_template(
     if not body_value:
         errors.append("Введите текст шаблона.")
 
+    errors.extend(_validate_template_markup(body_value))
+
     if version is None:
         version_value = DEFAULT_VERSION
     else:
@@ -202,6 +203,8 @@ async def update_message_template(
     if not body_value:
         errors.append("Введите текст шаблона.")
 
+    errors.extend(_validate_template_markup(body_value))
+
     if errors:
         return False, errors
 
@@ -261,6 +264,63 @@ async def _invalidate_cache(key: str, locale: str, channel: str) -> None:
             "Failed to invalidate template cache",
             extra={"key": key, "locale": locale, "channel": channel},
         )
+
+
+class _TelegramHTMLValidator(HTMLParser):
+    _ALLOWED_TAGS = {"b", "strong", "i", "em", "u", "s", "code", "pre", "a", "span"}
+    _SELF_CLOSING = {"br"}
+    _ALLOWED_ATTRS = {
+        "a": {"href"},
+        "span": {"class"},
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._stack: List[str] = []
+        self.errors: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[override]
+        tag = tag.lower()
+        if tag not in self._ALLOWED_TAGS and tag not in self._SELF_CLOSING:
+            self.errors.append(f"Тег <{tag}> не поддерживается Telegram.")
+            return
+        allowed_attrs = self._ALLOWED_ATTRS.get(tag, set())
+        for attr, _value in attrs:
+            if attr not in allowed_attrs:
+                self.errors.append(f"Атрибут '{attr}' не разрешён в теге <{tag}>.")
+        if tag in self._SELF_CLOSING:
+            return
+        self._stack.append(tag)
+
+    def handle_endtag(self, tag: str) -> None:  # type: ignore[override]
+        tag = tag.lower()
+        if tag in self._SELF_CLOSING:
+            return
+        if tag not in self._ALLOWED_TAGS:
+            self.errors.append(f"Тег </{tag}> не поддерживается Telegram.")
+            return
+        if not self._stack:
+            self.errors.append(f"Лишний закрывающий тег </{tag}>.")
+            return
+        expected = self._stack.pop()
+        if expected != tag:
+            self.errors.append(f"Ожидался закрывающий тег </{expected}>, но найден </{tag}>.")
+
+    def close(self) -> None:  # type: ignore[override]
+        super().close()
+        while self._stack:
+            tag = self._stack.pop()
+            self.errors.append(f"Тег <{tag}> не закрыт.")
+
+
+def _validate_template_markup(text: str) -> List[str]:
+    validator = _TelegramHTMLValidator()
+    try:
+        validator.feed(text)
+    except Exception as exc:
+        return [f"Не удалось разобрать HTML: {exc}"]
+    validator.close()
+    return validator.errors
 
 
 __all__ = [

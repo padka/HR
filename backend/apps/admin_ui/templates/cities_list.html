@@ -3,6 +3,14 @@
 {% block title %}Города{% endblock %}
 {% block content %}
 {% set city_count = cities|length %}
+{% set timezone_presets = [
+  ('Europe/Moscow', 'Москва · GMT+3'),
+  ('Europe/Samara', 'Самара · GMT+4'),
+  ('Asia/Yekaterinburg', 'Екатеринбург · GMT+5'),
+  ('Asia/Novosibirsk', 'Новосибирск · GMT+7'),
+  ('Asia/Krasnoyarsk', 'Красноярск · GMT+7'),
+  ('Asia/Vladivostok', 'Владивосток · GMT+10')
+] %}
 <section class="page page--cities" data-page="cities" aria-labelledby="cities-title">
   <header class="page-header">
     <div>
@@ -15,6 +23,49 @@
       <a class="btn btn-primary" href="/cities/new" aria-label="Добавить новый город">+ Новый город</a>
     </div>
   </header>
+
+  {% if city_count %}
+    {% set city_stats = namespace(total=city_count, with_owner=0, without_owner=0, custom=0) %}
+    {% for city in cities %}
+      {% if owners.get(city.id) %}
+        {% set city_stats.with_owner = city_stats.with_owner + 1 %}
+      {% endif %}
+      {% set custom_ns = namespace(value=false) %}
+      {% for stage in city_stages.get(city.id, []) %}
+        {% set stage_value = (stage.value or '')|trim %}
+        {% set stage_default = (stage.default or '')|trim %}
+        {% if stage_value and stage_value != stage_default %}
+          {% set custom_ns.value = true %}
+        {% endif %}
+      {% endfor %}
+      {% if custom_ns.value %}
+        {% set city_stats.custom = city_stats.custom + 1 %}
+      {% endif %}
+    {% endfor %}
+    {% set city_stats.without_owner = city_stats.total - city_stats.with_owner %}
+    <section class="slot-summary city-summary" aria-label="Сводная статистика по городам">
+      <article class="slot-summary__item" data-tone="primary" data-icon="🏙">
+        <span class="slot-summary__label">Городов</span>
+        <span class="slot-summary__value">{{ city_stats.total }}</span>
+        <p class="slot-summary__hint">Всего в списке</p>
+      </article>
+      <article class="slot-summary__item" data-tone="success" data-icon="👤">
+        <span class="slot-summary__label">С ответственным</span>
+        <span class="slot-summary__value">{{ city_stats.with_owner }}</span>
+        <p class="slot-summary__hint">Назначен рекрутёр</p>
+      </article>
+      <article class="slot-summary__item" data-tone="warning" data-icon="⚠️">
+        <span class="slot-summary__label">Без ответственного</span>
+        <span class="slot-summary__value">{{ city_stats.without_owner }}</span>
+        <p class="slot-summary__hint">Требуется назначение</p>
+      </article>
+      <article class="slot-summary__item" data-tone="info" data-icon="📝">
+        <span class="slot-summary__label">Кастомные этапы</span>
+        <span class="slot-summary__value">{{ city_stats.custom }}</span>
+        <p class="slot-summary__hint">Города с изменёнными текстами</p>
+      </article>
+    </section>
+  {% endif %}
 
   {% call list_toolbar(
     form_id="city_filters",
@@ -91,12 +142,14 @@
                   data-id="{{ c.id }}"
                   data-name="{{ c.name_plain|lower }}"
                   data-tz="{{ tz|lower }}"
+                  data-tz-value="{{ tz }}"
                   data-owner="{{ (owner.name if owner else '')|lower }}"
                   data-criteria="{{ criteria|e }}"
                   data-experts="{{ experts|e }}"
                   data-plan-week="{{ plan_week_data }}"
                   data-plan-month="{{ plan_month_data }}"
-                  data-owner-id="{{ owner_id or '' }}">
+                  data-owner-id="{{ owner_id or '' }}"
+                  data-active="{{ 1 if c.active else 0 }}">
                 <td class="col-toggle" data-label="">
                   <button type="button"
                           class="row-expand"
@@ -112,15 +165,20 @@
                   <span class="badge badge--soft"><code>{{ tz }}</code></span>
                 </td>
                 <td data-label="Ответственный" class="col-owner">
-                  <span class="owner-label {% if not owner %}muted{% endif %}">
+                  <span class="owner-label {% if not owner %}is-empty{% endif %}">
+                    <span class="owner-label__dot" aria-hidden="true"></span>
                     {% if owner %}{{ owner.name }}{% else %}Не назначен{% endif %}
                   </span>
                 </td>
                 <td data-label="План · нед" class="col-week is-optional" data-sort="{{ plan_week if plan_week is not none else 0 }}">
-                  {{ plan_week if plan_week is not none else '—' }}
+                  <span class="plan-chip" data-plan="{{ plan_week if plan_week is not none else '' }}">
+                    {{ plan_week if plan_week is not none else '—' }}
+                  </span>
                 </td>
                 <td data-label="План · мес" class="col-month is-optional" data-sort="{{ plan_month if plan_month is not none else 0 }}">
-                  {{ plan_month if plan_month is not none else '—' }}
+                  <span class="plan-chip" data-plan="{{ plan_month if plan_month is not none else '' }}">
+                    {{ plan_month if plan_month is not none else '—' }}
+                  </span>
                 </td>
                 <td data-label="" class="cell-actions">
                   <button class="btn btn-soft btn--small btn-edit" type="button">Настроить</button>
@@ -139,6 +197,10 @@
                         <span class="badge badge--soft" data-field="id">ID {{ c.id }}</span>
                         <span class="badge badge--soft" data-field="plan-week">План нед: {{ plan_week or '—' }}</span>
                         <span class="badge badge--soft" data-field="plan-month">План мес: {{ plan_month or '—' }}</span>
+                        <span class="badge badge--soft" data-field="tz">TZ {{ tz }}</span>
+                        <span class="badge city-status-badge{% if not c.active %} is-paused{% endif %}" data-field="status">
+                          {{ 'Активен' if c.active else 'Пауза' }}
+                        </span>
                       </div>
                     </header>
 
@@ -257,6 +319,7 @@
             <span class="badge badge--soft city-overview__id" id="city_overview_id">ID —</span>
             <h4 class="city-overview__title" id="city_overview_name">Город не выбран</h4>
             <p class="city-overview__tz muted" id="city_overview_tz">Часовой пояс: —</p>
+            <span class="city-status-pill" id="city_overview_active">Статус: —</span>
           </div>
           <div class="city-overview__metrics">
             <span class="badge badge--soft" id="city_overview_week">План нед: —</span>
@@ -302,6 +365,92 @@
                 <p class="form-note">Можно оставить пустым, если пока нет цели.</p>
               </div>
             </div>
+        </div>
+      </section>
+
+      <section class="city-settings">
+        <div class="city-settings__intro glass grain">
+          <div>
+            <p class="city-settings__eyebrow">CityOS</p>
+            <h3 class="city-settings__headline">Панель управления городом</h3>
+            <p class="city-settings__sub">
+              Настройте приём заявок, рабочие часовые пояса и автоматизации так, как будто это новая версия iOS.
+            </p>
+          </div>
+          <div class="city-settings__indicators">
+            <span class="city-settings__indicator" id="city_status_badge" data-state="">Статус: —</span>
+            <span class="city-settings__indicator city-settings__indicator--tz">Часовой пояс · <span id="city_tz_badge">Europe/Moscow</span></span>
+          </div>
+        </div>
+        <div class="city-settings__grid">
+          <article class="city-settings-card city-settings-card--status glass grain">
+            <header class="city-settings-card__header">
+              <span class="city-settings-card__icon" aria-hidden="true">🌐</span>
+              <div>
+                <p class="city-settings-card__eyebrow">Live Mode</p>
+                <h4>Приём заявок</h4>
+                <p class="city-settings-card__hint">Включите город, чтобы новые кандидаты автоматически направлялись к ответственным.</p>
+              </div>
+            </header>
+            <label class="city-switch city-switch--inline">
+              <input type="checkbox" id="city_active" name="city_active" checked>
+              <span class="city-switch__track" aria-hidden="true">
+                <span class="city-switch__thumb"></span>
+              </span>
+              <div>
+                <span class="city-switch__label">Город активен</span>
+                <span class="city-switch__hint">При выключении город исчезает из автозаписи и чат-бота.</span>
+              </div>
+            </label>
+          </article>
+          <article class="city-settings-card city-settings-card--tz glass grain">
+            <header class="city-settings-card__header">
+              <span class="city-settings-card__icon" aria-hidden="true">🕒</span>
+              <div>
+                <p class="city-settings-card__eyebrow">Timezone</p>
+                <h4>Рабочее время</h4>
+                <p class="city-settings-card__hint">Настройте локальный TZ — он влияет на напоминания, расписания и телемосты.</p>
+              </div>
+            </header>
+            <p class="city-settings-card__meta" id="city_tz_meta">Europe/Moscow</p>
+            <label class="city-settings-card__field-label" for="city_tz">Основной TZ</label>
+            <input id="city_tz"
+                   name="city_tz"
+                   class="city-settings-card__input"
+                   type="text"
+                   list="city_tz_list"
+                   placeholder="Europe/Moscow"
+                   autocomplete="off">
+            <datalist id="city_tz_list">
+              {% for value, label in timezone_presets %}
+                <option value="{{ value }}">{{ label }}</option>
+              {% endfor %}
+            </datalist>
+            <p class="form-error" id="city_tz_error" role="alert" hidden></p>
+            <div class="city-settings-card__chips">
+              {% for value, label in timezone_presets %}
+                <button class="chip chip--muted city-tz-chip" type="button" data-tz="{{ value }}" data-label="{{ label }}">
+                  {{ label }}
+                </button>
+              {% endfor %}
+            </div>
+            <p class="city-settings-card__note">Можно указать любой идентификатор TZ вручную — для редких регионов.</p>
+          </article>
+          <article class="city-settings-card city-settings-card--tips glass grain">
+            <header class="city-settings-card__header">
+              <span class="city-settings-card__icon" aria-hidden="true">✨</span>
+              <div>
+                <p class="city-settings-card__eyebrow">Automation</p>
+                <h4>Прозрачные процессы</h4>
+              </div>
+            </header>
+            <ul class="city-settings-card__list">
+              <li>Все изменения синхронизируются с ботом и планировщиком без перезапуска.</li>
+              <li>Часовой пояс управляет напоминаниями Test 2, интервью и телемостами.</li>
+              <li>Статус «Пауза» не удаляет данных — город можно включить обратно в любой момент.</li>
+            </ul>
+            <p class="city-settings-card__note">Ниже находятся цели по найму, критерии и тексты этапов.</p>
+          </article>
         </div>
       </section>
 
@@ -425,22 +574,77 @@
   const overviewWeek = $('#city_overview_week');
   const overviewMonth = $('#city_overview_month');
   const overviewStages = $('#city_overview_stages');
+  const overviewActive = $('#city_overview_active');
   const btnExpandStages = $('#stages_expand');
   const btnCollapseStages = $('#stages_collapse');
   const totalCountEl = $('#total_count');
+
+  const inputActive = $('#city_active');
+  const tzInput = $('#city_tz');
+  const tzBadge = $('#city_tz_badge');
+  const tzMeta = $('#city_tz_meta');
+  const tzChips = $$('.city-tz-chip');
+  const statusBadge = $('#city_status_badge');
+  const tzError = $('#city_tz_error');
 
   if (!tbody) return;
 
   clearOverview();
 
   const rows = $$('.city-row[data-id]', tbody);
-
   const truncate = (v, n=120)=>!v ? '—' : (v.length>n ? v.slice(0,n).trimEnd()+'…' : v);
 
   const planFieldMap = {
     plan_week: { input: inWeek, error: errWeek },
     plan_month: { input: inMonth, error: errMonth },
   };
+  const csrfToken = window.__CSRF_TOKEN__ || '';
+
+  const getTzLabel = (value) => {
+    const normalized = (value || '').trim();
+    if (!normalized) return 'Europe/Moscow';
+    let label = '';
+    tzChips.forEach(chip => {
+      if (chip.dataset.tz === normalized){
+        label = chip.dataset.label || chip.textContent.trim();
+      }
+    });
+    return label || normalized;
+  };
+
+  function updateTzPreview(){
+    if (!tzInput) return;
+    const value = (tzInput.value || '').trim() || 'Europe/Moscow';
+    const label = getTzLabel(value);
+    if (tzBadge) tzBadge.textContent = label;
+    if (tzMeta) tzMeta.textContent = label;
+    if (sheetSub) sheetSub.textContent = `Часовой пояс: ${label}`;
+    if (overviewTz) overviewTz.textContent = `Часовой пояс: ${label}`;
+  }
+
+  function updateOverviewActiveState(isActive){
+    if (!overviewActive) return;
+    overviewActive.textContent = isActive ? 'Статус: Активен' : 'Статус: Пауза';
+    overviewActive.dataset.state = isActive ? 'on' : 'off';
+    if (statusBadge){
+      statusBadge.textContent = isActive ? 'Статус: Активен' : 'Статус: Пауза';
+      statusBadge.dataset.state = isActive ? 'on' : 'off';
+    }
+  }
+
+  function applyRowActiveState(row, isActive){
+    if (!row) return;
+    row.dataset.active = isActive ? '1' : '0';
+    row.classList.toggle('is-paused', !isActive);
+    const details = getDetailsRow(row);
+    if (details){
+      const badge = details.querySelector('[data-field="status"]');
+      if (badge){
+        badge.textContent = isActive ? 'Активен' : 'Пауза';
+        badge.classList.toggle('is-paused', !isActive);
+      }
+    }
+  }
 
   function hidePlanError(field){
     const config = planFieldMap[field];
@@ -454,6 +658,26 @@
 
   function clearPlanErrors(){
     Object.keys(planFieldMap).forEach(hidePlanError);
+  }
+
+  function clearTzError(){
+    if (tzInput){
+      tzInput.classList.remove('is-invalid');
+    }
+    if (tzError){
+      tzError.hidden = true;
+      tzError.textContent = '';
+    }
+  }
+
+  function showTzError(message){
+    if (tzInput){
+      tzInput.classList.add('is-invalid');
+    }
+    if (tzError){
+      tzError.hidden = false;
+      tzError.textContent = message || 'Укажите корректный часовой пояс';
+    }
   }
 
   function showPlanError(field, message){
@@ -563,6 +787,17 @@
       overviewOwner.textContent = 'Ответственный не назначен';
       overviewOwner.classList.add('muted');
     }
+    if (overviewActive){
+      overviewActive.textContent = 'Статус: —';
+      overviewActive.dataset.state = '';
+    }
+    if (statusBadge){
+      statusBadge.textContent = 'Статус: —';
+      statusBadge.dataset.state = '';
+    }
+    if (tzMeta){
+      tzMeta.textContent = 'Europe/Moscow';
+    }
     setOverviewStages(0, 0);
     setStageControlsDisabled(true);
   }
@@ -572,13 +807,14 @@
     const id = row.dataset.id || '—';
     const nameText = row.querySelector('.col-name .cell-title')?.textContent?.trim() || 'Город';
     const tzText = row.querySelector('.col-tz code')?.textContent?.trim() || 'Europe/Moscow';
+    const tzValue = row.dataset.tzValue || tzText;
     const ownerNode = row.querySelector('.owner-label');
     const ownerText = ownerNode?.textContent?.trim() || '';
     const weekText = row.querySelector('.col-week')?.textContent?.trim() || '—';
     const monthText = row.querySelector('.col-month')?.textContent?.trim() || '—';
 
     if (overviewName) overviewName.textContent = nameText;
-    if (overviewTz) overviewTz.textContent = `Часовой пояс: ${tzText}`;
+    if (overviewTz) overviewTz.textContent = `Часовой пояс: ${getTzLabel(tzValue)}`;
     if (overviewId) overviewId.textContent = `ID ${id}`;
     if (overviewWeek) overviewWeek.textContent = `План нед: ${weekText || '—'}`;
     if (overviewMonth) overviewMonth.textContent = `План мес: ${monthText || '—'}`;
@@ -593,6 +829,8 @@
       }
     }
 
+    const isActive = (row.dataset.active || '1') !== '0';
+    updateOverviewActiveState(isActive);
     updateOverviewStagesFromDetails(row);
   }
 
@@ -657,6 +895,14 @@
     } else {
       overviewOwner.textContent = 'Ответственный не назначен';
       overviewOwner.classList.add('muted');
+    }
+
+    if (tzInput){
+      const value = (tzInput.value || '').trim();
+      overviewTz.textContent = `Часовой пояс: ${getTzLabel(value || 'Europe/Moscow')}`;
+    }
+    if (inputActive){
+      updateOverviewActiveState(inputActive.checked);
     }
   }
 
@@ -797,6 +1043,26 @@
       if (!sheet.hidden) syncOverviewFromForm();
     });
   });
+  if (inputActive){
+    inputActive.addEventListener('change', ()=>{
+      setDirty(true);
+      updateOverviewActiveState(inputActive.checked);
+    });
+  }
+  if (tzInput){
+    tzInput.addEventListener('input', ()=>{
+      setDirty(true);
+      clearTzError();
+      updateTzPreview();
+    });
+  }
+  tzChips.forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      if (!tzInput) return;
+      tzInput.value = chip.dataset.tz || '';
+      tzInput.dispatchEvent(new Event('input'));
+    });
+  });
   on(btnExpandStages, 'click', ()=> toggleAllStageDetails(true));
   on(btnCollapseStages, 'click', ()=> toggleAllStageDetails(false));
 
@@ -805,8 +1071,14 @@
     const id = row.dataset.id;
     const name = row.querySelector('.col-name .cell-title')?.textContent?.trim() || 'Город';
     const tzLabel = row.querySelector('.col-tz code')?.textContent?.trim() || 'Europe/Moscow';
+    const tzValue = row.dataset.tzValue || tzLabel;
     sheetTitle.textContent = name;
-    sheetSub.textContent = `Часовой пояс: ${tzLabel}`;
+    if (tzInput){
+      tzInput.value = tzValue;
+      updateTzPreview();
+    } else {
+      sheetSub.textContent = `Часовой пояс: ${tzLabel}`;
+    }
     updateOverviewFromRow(row);
     inputId.value = id;
     if (btnDelete){
@@ -819,9 +1091,15 @@
     inMonth.value = row.dataset.planMonth || '';
     taCriteria.value = row.dataset.criteria || '';
     taExperts.value = row.dataset.experts || '';
+    if (inputActive){
+      inputActive.checked = (row.dataset.active || '1') !== '0';
+      updateOverviewActiveState(inputActive.checked);
+    }
     prevCrit.textContent = truncate(taCriteria.value);
     prevExp.textContent = truncate(taExperts.value);
     clearPlanErrors();
+    clearTzError();
+    clearTzError();
 
     if (sheetStagesBody){
       sheetStagesBody.innerHTML = '';
@@ -939,16 +1217,19 @@
       return;
     }
 
-    const btn = e.target.closest('.btn-edit');
-    if (!btn) return;
-    const row = btn.closest('tr.city-row[data-id]');
-    if (!row) return;
-    openSheetForRow(row);
-  });
-  on(tbody,'dblclick',(e)=>{
-    const row = e.target.closest('tr.city-row[data-id]');
-    if (!row) return;
-    openSheetForRow(row);
+    const editBtn = e.target.closest('.btn-edit');
+    if (editBtn){
+      let row = editBtn.closest('tr.city-row[data-id]');
+      if (!row){
+        const targetId = editBtn.getAttribute('data-target');
+        if (targetId){
+          row = tbody.querySelector(`tr.city-row[data-id="${CSS.escape(targetId)}"]`);
+        }
+      }
+      if (row){
+        openSheetForRow(row);
+      }
+    }
   });
 
   async function doSave(){
@@ -958,6 +1239,8 @@
     const ownerId = ownerIdRaw ? Number(ownerIdRaw) : null;
     const planWeekValue = inWeek.value === '' ? null : inWeek.valueAsNumber;
     const planMonthValue = inMonth.value === '' ? null : inMonth.valueAsNumber;
+    const tzValue = tzInput ? (tzInput.value || '').trim() : '';
+    const activeValue = inputActive ? Boolean(inputActive.checked) : undefined;
 
     const templates = {};
     const stageValues = {};
@@ -980,12 +1263,17 @@
     try{
       const resp = await fetch(`/cities/${id}/settings`, {
         method:'POST',
-        headers:{ 'Content-Type':'application/json' },
+        headers:{
+          'Content-Type':'application/json',
+          'X-CSRFToken': csrfToken,
+        },
         body: JSON.stringify({
           criteria: taCriteria.value.trim(),
           experts: taExperts.value.trim(),
           plan_week: planWeekValue,
           plan_month: planMonthValue,
+          tz: tzValue,
+          active: activeValue,
           templates,
           responsible_recruiter_id: ownerId
         })
@@ -997,8 +1285,12 @@
         json = null;
       }
       if (resp.status === 422 && json && json.error){
-        const field = json.error.field || 'plan_week';
-        showPlanError(field, json.error.message);
+        const errorField = json.error.field || 'plan_week';
+        if (errorField === 'tz'){
+          showTzError(json.error.message);
+        } else {
+          showPlanError(errorField, json.error.message);
+        }
         saveStatus.textContent = 'Исправьте ошибки';
         saveStatus.classList.remove('ok');
         saveStatus.classList.add('err');
@@ -1016,7 +1308,12 @@
       const expertsValue = (cityData.experts || '').trim();
       const planWeekNormalized = typeof cityData.plan_week === 'number' ? cityData.plan_week : null;
       const planMonthNormalized = typeof cityData.plan_month === 'number' ? cityData.plan_month : null;
-
+      const tzNormalized = (cityData.tz || tzInput?.value || '').trim() || 'Europe/Moscow';
+      const isActiveNormalized = (
+        cityData.active === undefined || cityData.active === null
+      )
+        ? (inputActive ? inputActive.checked : true)
+        : Boolean(cityData.active);
       if (selOwner){
         selOwner.value = cityData.responsible_recruiter_id ? String(cityData.responsible_recruiter_id) : '';
       }
@@ -1027,10 +1324,23 @@
       prevCrit.textContent = truncate(criteriaValue);
       prevExp.textContent = truncate(expertsValue);
 
+      if (tzInput){
+        tzInput.value = tzNormalized;
+        updateTzPreview();
+      }
+      if (inputActive){
+        inputActive.checked = isActiveNormalized;
+        updateOverviewActiveState(isActiveNormalized);
+      }
+
       const ownerLabel = currentRow.querySelector('.owner-label');
       const colWeek = currentRow.querySelector('.col-week');
       const colMonth = currentRow.querySelector('.col-month');
+      const tzCell = currentRow.querySelector('.col-tz code');
 
+      currentRow.dataset.tz = tzNormalized.toLowerCase();
+      currentRow.dataset.tzValue = tzNormalized;
+      currentRow.dataset.active = isActiveNormalized ? '1' : '0';
       currentRow.dataset.criteria = criteriaValue;
       currentRow.dataset.experts = expertsValue;
       currentRow.dataset.planWeek = planWeekNormalized ?? '';
@@ -1038,6 +1348,9 @@
       currentRow.dataset.ownerId = cityData.responsible_recruiter_id ? String(cityData.responsible_recruiter_id) : '';
       currentRow.dataset.owner = ownerData && ownerData.name ? ownerData.name.trim().toLowerCase() : '';
 
+      if (tzCell){
+        tzCell.textContent = tzNormalized;
+      }
       if (ownerLabel){
         if (ownerData && ownerData.name){
           ownerLabel.textContent = ownerData.name;
@@ -1072,6 +1385,11 @@
         };
         updateRich('criteria', criteriaValue, 'Нет описания');
         updateRich('experts', expertsValue, 'Не заполнено');
+
+        const detailTz = detailsRow.querySelector('[data-field="tz"]');
+        if (detailTz){
+          detailTz.textContent = `TZ ${tzNormalized}`;
+        }
 
         const weekBadge = detailsRow.querySelector('[data-field="plan-week"]');
         if (weekBadge){
@@ -1125,6 +1443,7 @@
         }
       }
 
+      applyRowActiveState(currentRow, isActiveNormalized);
       setDirty(false);
       saveStatus.textContent = 'Сохранено';
       saveStatus.classList.add('ok');
@@ -1157,7 +1476,10 @@
     try{
       const resp = await fetch(`/cities/${id}/delete?confirm=1`, {
         method: 'POST',
-        headers: { 'Accept': 'application/json' }
+        headers: {
+          'Accept': 'application/json',
+          'X-CSRFToken': csrfToken,
+        }
       });
       let json = null;
       try {

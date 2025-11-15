@@ -8,9 +8,21 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+    env:
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,11 +38,58 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Wait for Redis
+        run: |
+          python - <<'PY'
+import asyncio
+import os
+import sys
+
+async def main():
+    url = os.environ["REDIS_URL"]
+    try:
+        import redis.asyncio as redis  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        raise SystemExit(f"redis-py missing: {exc}") from exc
+    client = redis.Redis.from_url(url)
+    for attempt in range(30):
+        try:
+            await client.ping()
+            await client.aclose()
+            return
+        except Exception:
+            await asyncio.sleep(1)
+    raise SystemExit(f"Redis not reachable at {url}")
+
+asyncio.run(main())
+PY
+
       - name: Run pre-commit
         run: pre-commit run --all-files
 
       - name: Run tests
         run: pytest --cov=backend --cov=tests --cov-report=xml --cov-report=term --cov-fail-under=85
+
+      - name: Run notification tests (Redis)
+        run: pytest -m notifications --redis-url "$REDIS_URL" --cov=backend.apps.bot --cov-report=term-missing
+
+      - name: Run notification load test
+        env:
+          METRICS_PATH: docs/reliability/ci_loadtest_${{ matrix.python-version }}.json
+        run: |
+          mkdir -p docs/reliability
+          PYTHONPATH=. python scripts/loadtest_notifications.py \
+            --broker redis \
+            --redis-url "$REDIS_URL" \
+            --count 2000 \
+            --rate-limit 50 \
+            --metrics-json "$METRICS_PATH"
+
+      - name: Upload load test metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-${{ matrix.python-version }}
+          path: docs/reliability/ci_loadtest_${{ matrix.python-version }}.json
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

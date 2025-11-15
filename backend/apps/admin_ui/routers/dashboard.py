@@ -44,6 +44,7 @@ async def index(request: Request):
         "mode": mode,
     }
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
             "request": request,

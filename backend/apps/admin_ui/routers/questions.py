@@ -32,7 +32,7 @@ async def questions_list(request: Request):
         "request": request,
         "tests": tests,
     }
-    return jinja_templates.TemplateResponse("questions_list.html", context)
+    return jinja_templates.TemplateResponse(request, "questions_list.html", context)
 
 
 @router.get("/{question_id}/edit", response_class=HTMLResponse)
@@ -47,7 +47,7 @@ async def questions_edit(request: Request, question_id: int):
         "detail": detail,
         "error_message": ERROR_MESSAGES.get(error_code),
     }
-    return jinja_templates.TemplateResponse("questions_edit.html", context)
+    return jinja_templates.TemplateResponse(request, "questions_edit.html", context)
 
 
 @router.post("/{question_id}/update")

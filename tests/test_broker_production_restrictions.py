@@ -9,9 +9,7 @@ from backend.apps.bot.broker import InMemoryNotificationBroker
 @pytest.mark.asyncio
 async def test_inmemory_broker_forbidden_in_production():
     """
-    Test that InMemory broker cannot be used in production environment.
-
-    This is a critical safety test to ensure distributed workers work correctly.
+    Production should stay alive but report degraded status when Redis is missing.
     """
     from backend.core.settings import Settings
 
@@ -24,21 +22,35 @@ async def test_inmemory_broker_forbidden_in_production():
     prod_settings.notification_poll_interval = 3.0
     prod_settings.notification_batch_size = 100
     prod_settings.notification_rate_limit_per_sec = 5.0
+    prod_settings.notification_worker_concurrency = 1
     prod_settings.notification_max_attempts = 8
     prod_settings.notification_retry_base_seconds = 30
     prod_settings.notification_retry_max_seconds = 3600
+    prod_settings.bot_provider = "telegram"
+    prod_settings.bot_token = ""
+    prod_settings.bot_use_webhook = False
+    prod_settings.bot_webhook_url = ""
+    prod_settings.bot_failfast = False
+    prod_settings.bot_autostart = False
+    prod_settings.bot_enabled = False
+    prod_settings.test2_required = False
+    prod_settings.session_secret = "secret"
+    prod_settings.session_cookie_samesite = "lax"
+    prod_settings.session_cookie_secure = False
+    prod_settings.notification_broker = "redis"
+    prod_settings.state_ttl_seconds = 60
 
-    # Import the setup function
     with patch("backend.apps.admin_ui.state.get_settings", return_value=prod_settings):
         with patch("backend.apps.admin_ui.state.Redis", None):
-            # Should raise RuntimeError in production without Redis
-            with pytest.raises(RuntimeError) as exc_info:
-                from backend.apps.admin_ui.state import setup_bot_state
+            from backend.apps.admin_ui.state import setup_bot_state
 
-                app = Mock()
-                await setup_bot_state(app)
+            app = Mock()
+            app.state = Mock()
+            integration = await setup_bot_state(app)
 
-            assert "REDIS_URL is required in production" in str(exc_info.value)
+            assert integration.notification_broker is None
+            assert app.state.notification_broker_status == "degraded"
+            assert integration.notification_watch_task is None
 
 
 @pytest.mark.asyncio
@@ -58,10 +70,16 @@ async def test_inmemory_broker_allowed_in_development():
     dev_settings.notification_poll_interval = 3.0
     dev_settings.notification_batch_size = 100
     dev_settings.notification_rate_limit_per_sec = 5.0
+    dev_settings.notification_worker_concurrency = 1
     dev_settings.notification_max_attempts = 8
     dev_settings.notification_retry_base_seconds = 30
     dev_settings.notification_retry_max_seconds = 3600
     dev_settings.test2_required = False
+    dev_settings.session_secret = "secret"
+    dev_settings.session_cookie_samesite = "lax"
+    dev_settings.session_cookie_secure = False
+    dev_settings.notification_broker = "memory"
+    dev_settings.state_ttl_seconds = 60
 
     with patch("backend.apps.admin_ui.state.get_settings", return_value=dev_settings):
         with patch("backend.apps.admin_ui.state.Redis", None):
@@ -81,7 +99,7 @@ async def test_inmemory_broker_allowed_in_development():
 
 @pytest.mark.asyncio
 async def test_redis_required_message_in_production():
-    """Test that error message clearly states Redis is required in production."""
+    """Production readiness probe should report degraded status when Redis URL missing."""
     from backend.core.settings import Settings
 
     prod_settings = Mock(spec=Settings)
@@ -92,22 +110,34 @@ async def test_redis_required_message_in_production():
     prod_settings.notification_poll_interval = 3.0
     prod_settings.notification_batch_size = 100
     prod_settings.notification_rate_limit_per_sec = 5.0
+    prod_settings.notification_worker_concurrency = 1
     prod_settings.notification_max_attempts = 8
     prod_settings.notification_retry_base_seconds = 30
     prod_settings.notification_retry_max_seconds = 3600
+    prod_settings.bot_provider = "telegram"
+    prod_settings.bot_token = ""
+    prod_settings.bot_use_webhook = False
+    prod_settings.bot_webhook_url = ""
+    prod_settings.bot_failfast = False
+    prod_settings.bot_autostart = False
+    prod_settings.bot_enabled = False
+    prod_settings.test2_required = False
+    prod_settings.session_secret = "secret"
+    prod_settings.session_cookie_samesite = "lax"
+    prod_settings.session_cookie_secure = False
+    prod_settings.notification_broker = "redis"
+    prod_settings.state_ttl_seconds = 60
 
     with patch("backend.apps.admin_ui.state.get_settings", return_value=prod_settings):
         with patch("backend.apps.admin_ui.state.Redis", None):
-            with pytest.raises(RuntimeError) as exc_info:
-                from backend.apps.admin_ui.state import setup_bot_state
+            from backend.apps.admin_ui.state import setup_bot_state
 
-                app = Mock()
-                await setup_bot_state(app)
+            app = Mock()
+            app.state = Mock()
+            integration = await setup_bot_state(app)
 
-            error_message = str(exc_info.value)
-            assert "REDIS_URL is required" in error_message
-            assert "production" in error_message
-            assert "InMemory broker is not allowed" in error_message
+            assert integration.notification_broker is None
+            assert app.state.notification_broker_status == "degraded"
 
 
 @pytest.mark.asyncio

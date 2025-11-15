@@ -35,7 +35,11 @@ def admin_app(monkeypatch) -> Any:
     settings_module.get_settings.cache_clear()
     monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup)
     monkeypatch.setattr("backend.apps.admin_ui.app.setup_bot_state", fake_setup)
-    return create_app()
+    app = create_app()
+    try:
+        yield app
+    finally:
+        settings_module.get_settings.cache_clear()
 
 
 async def _async_request(app, method: str, path: str, **kwargs) -> Any:
@@ -62,7 +66,7 @@ async def test_create_recruiter_duplicate_chat_id_returns_validation_message(adm
         "post",
         "/recruiters/create",
         data=first_payload,
-        allow_redirects=False,
+        follow_redirects=False,
     )
     assert response_ok.status_code == 303
 
@@ -79,7 +83,7 @@ async def test_create_recruiter_duplicate_chat_id_returns_validation_message(adm
         "post",
         "/recruiters/create",
         data=second_payload,
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response_error.status_code == 400
@@ -106,7 +110,7 @@ async def test_create_recruiter_invalid_chat_id_returns_422(admin_app) -> None:
         "post",
         "/recruiters/create",
         data=payload,
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response.status_code == 422
@@ -128,7 +132,7 @@ async def test_create_recruiter_invalid_telemost_returns_422(admin_app) -> None:
         "post",
         "/recruiters/create",
         data=payload,
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response.status_code == 422
@@ -159,7 +163,7 @@ async def test_update_recruiter_invalid_chat_id_returns_422(admin_app) -> None:
             "tg_chat_id": "tg-123",
             "active": "1",
         },
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response.status_code == 422
@@ -200,7 +204,7 @@ async def test_update_recruiter_duplicate_chat_id_returns_validation_message(adm
         "post",
         f"/recruiters/{recruiter_two_id}/update",
         data=update_payload,
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response_error.status_code == 400
@@ -240,7 +244,7 @@ async def test_update_recruiter_single_city_checkbox_value(admin_app) -> None:
             "active": "1",
             "cities": str(city_id),
         },
-        allow_redirects=False,
+        follow_redirects=False,
     )
 
     assert response_ok.status_code == 303

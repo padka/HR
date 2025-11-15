@@ -6,6 +6,7 @@ import asyncio
 import html
 import importlib
 import logging
+import re
 import math
 import random
 import time
@@ -61,6 +62,9 @@ from backend.domain.repositories import (
     get_outbox_queue_depth,
     get_recruiter,
     get_slot,
+    get_message_template,
+    city_has_available_slots,
+    find_city_by_plain_name,
     notification_log_exists,
     register_callback,
     reject_slot,
@@ -106,11 +110,17 @@ from .city_registry import (
     list_candidate_cities,
 )
 from .metrics import (
+    NotificationMetricsSnapshot,
+    get_notification_metrics_snapshot,
     record_circuit_open,
     record_notification_failed,
     record_notification_sent,
+    record_candidate_confirmed_notice,
     record_notification_poll_cycle,
     record_notification_poll_skipped,
+    record_notification_poll_backoff,
+    record_notification_poll_staleness,
+    record_rate_limit_wait,
     record_send_retry,
     record_test1_completion,
     record_test1_rejection,
@@ -124,18 +134,54 @@ from .template_provider import TemplateProvider, RenderedTemplate
 
 logger = logging.getLogger(__name__)
 
+def _sanitize_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return html.escape(str(value), quote=True)
+
+
+def _strip_markup(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    text = re.sub(r"<[^>]+>", "", str(value))
+    return html.unescape(text)
+
+
+def _intro_detail(
+    value: Optional[str],
+    fallback: Optional[str] = None,
+    default: str = "",
+) -> Tuple[str, str]:
+    raw = (value or "").strip()
+    if not raw and fallback:
+        raw = str(fallback).strip()
+    if not raw:
+        raw = default
+    return _sanitize_text(raw), raw
+
+
+async def _resolve_intro_day_template_key(city_name: Optional[str]) -> str:
+    base_key = "intro_day_invitation"
+    if not city_name:
+        return base_key
+    city_key = f"intro_day_invitation_{city_name.lower()}"
+    template = await get_message_template(city_key)
+    return city_key if template else base_key
+
 
 async def _send_with_retry(bot: Bot, method: SendMessage, correlation_id: str) -> Any:
     attempt = 0
     delay = 1.0
-    method = method.as_(bot)
+    send_method = method
+    fallback_plain_used = False
     while True:
         attempt += 1
         try:
+            prepared_method = send_method.as_(bot)
             session = bot.session
             client = await session.create_session()
-            url = session.api.api_url(token=bot.token, method=method.__api_method__)
-            form = session.build_form_data(bot=bot, method=method)
+            url = session.api.api_url(token=bot.token, method=prepared_method.__api_method__)
+            form = session.build_form_data(bot=bot, method=prepared_method)
             async with client.post(
                 url,
                 data=form,
@@ -146,7 +192,7 @@ async def _send_with_retry(bot: Bot, method: SendMessage, correlation_id: str) -
                 status_code = resp.status
             response = session.check_response(
                 bot=bot,
-                method=method,
+                method=prepared_method,
                 status_code=status_code,
                 content=raw_result,
             )
@@ -160,6 +206,27 @@ async def _send_with_retry(bot: Bot, method: SendMessage, correlation_id: str) -
                 raise
             await asyncio.sleep(delay)
             delay = min(delay * 2, 10.0)
+        except TelegramBadRequest as exc:
+            message = str(exc).lower()
+            if (
+                not fallback_plain_used
+                and "can't parse entities" in message
+                and isinstance(send_method, SendMessage)
+            ):
+                fallback_plain_used = True
+                safe_text = _strip_markup(send_method.text)
+                logger.warning(
+                    "telegram.send.fallback_plain",
+                    extra={"correlation_id": correlation_id},
+                )
+                send_method = SendMessage(
+                    chat_id=send_method.chat_id,
+                    text=safe_text,
+                    reply_markup=send_method.reply_markup,
+                    parse_mode=None,
+                )
+                continue
+            raise
         except (asyncio.TimeoutError, ClientError):
             if attempt >= 5:
                 raise
@@ -203,11 +270,29 @@ def register_interview_success_handler(
     return handler
 
 
+class NotificationNotConfigured(RuntimeError):
+    """Raised when notification infrastructure is unavailable."""
+
+
 @dataclass
 class NotificationResult:
     status: Literal["queued", "sent", "skipped", "scheduled_retry", "failed"]
     reason: Optional[str] = None
     payload: Optional[str] = None
+
+
+@dataclass
+class SlotApprovalResult:
+    status: str
+    message: str
+    slot: Optional[Slot] = None
+    summary_html: Optional[str] = None
+
+
+DIRECT_NO_BROKER_REASON = "direct:no-broker"
+BROKER_UNAVAILABLE_REASON = "broker_unavailable"
+INTRO_ADDRESS_FALLBACK = "Адрес уточняется — рекрутёр подтвердит детали перед встречей"
+INTRO_CONTACT_FALLBACK = "Руководитель свяжется с вами для подтверждения деталей"
 
 
 class NotificationService:
@@ -221,11 +306,12 @@ class NotificationService:
         broker: Optional[NotificationBrokerProtocol] = None,
         poll_interval: float = 3.0,
         batch_size: int = 100,
-        rate_limit_per_sec: float = 5.0,
+        rate_limit_per_sec: float = 10.0,
         max_attempts: int = 8,
         retry_base_delay: int = 30,
         retry_max_delay: int = 3600,
         circuit_break_window: tuple[int, int] = (30, 60),
+        worker_concurrency: int = 1,
     ) -> None:
         self._scheduler = scheduler
         if template_provider is None:
@@ -249,28 +335,129 @@ class NotificationService:
         )
         self._broker = broker
         self._job_id = "notification:outbox_worker"
-        self._lock = asyncio.Lock()
+        self._worker_concurrency = max(1, worker_concurrency)
+        self._poll_gate = asyncio.Semaphore(self._worker_concurrency)
         self._task: Optional[asyncio.Task] = None
-        self._poll_task: Optional[asyncio.Task] = None
+        self._poll_tasks: set[asyncio.Task] = set()
         self._claim_idle_ms = 60000
         self._current_message: Optional[BrokerMessage] = None
         self._skipped_runs: int = 0
         self._started: bool = False
+        self._loop_enabled: bool = False
+        self._watchdog_task: Optional[asyncio.Task] = None
+        self._watchdog_interval = max(self._poll_interval * 2, 10.0)
+        self._watchdog_alert_threshold = max(self._poll_interval * 6, 15.0)
+        self._last_poll_ts: float = 0.0
 
     def start(self, *, allow_poll_loop: bool = False) -> None:
+        if self._started:
+            return
+
+        scheduler_started = False
+        scheduler_failed = False
+
         if self._scheduler is not None:
-            self._ensure_scheduler_job()
+            try:
+                self._ensure_scheduler_job()
+                scheduler_started = True
+            except Exception:
+                scheduler_failed = True
+                logger.exception("notification.worker.scheduler_start_failed")
+
+        if scheduler_started:
             self._started = True
+            self._ensure_watchdog()
             return
 
-        if self._started or not allow_poll_loop:
+        if scheduler_failed:
+            logger.warning("notification.worker.scheduler_fallback_loop")
+            self._enable_poll_loop()
+            self._started = True
+            self._ensure_watchdog()
             return
 
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._poll_loop())
+        if not allow_poll_loop:
+            return
+
+        self._enable_poll_loop()
         self._started = True
+        self._ensure_watchdog()
+
+    def _enable_poll_loop(self) -> None:
+        self._loop_enabled = True
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("notification.worker.poll_loop_start_failed", extra={"reason": "no_loop"})
+            return
+        if self._task is None or self._task.done():
+            self._task = loop.create_task(self._poll_loop())
+
+    def _ensure_watchdog(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = loop.create_task(self._watchdog_loop())
+
+    async def _stop_watchdog(self) -> None:
+        if self._watchdog_task is None:
+            return
+        self._watchdog_task.cancel()
+        try:
+            await self._watchdog_task
+        except asyncio.CancelledError:
+            pass
+        self._watchdog_task = None
+
+    async def _watchdog_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self._watchdog_interval)
+                if not self._started:
+                    return
+                if self._scheduler is not None:
+                    job = self._scheduler.get_job(self._job_id)
+                    if job is None:
+                        logger.warning("notification.worker.watchdog_job_missing")
+                        try:
+                            self._ensure_scheduler_job()
+                        except Exception:
+                            logger.exception("notification.worker.watchdog_job_restart_failed")
+                            if not self._loop_enabled:
+                                self._enable_poll_loop()
+                    elif not self._scheduler.running:
+                        try:
+                            self._scheduler.start()
+                        except SchedulerAlreadyRunningError:
+                            pass
+                        except Exception:
+                            logger.exception("notification.worker.watchdog_scheduler_start_failed")
+                elif self._loop_enabled:
+                    if self._task is None or self._task.done():
+                        logger.warning("notification.worker.watchdog_restart_loop")
+                        self._enable_poll_loop()
+                seconds_since_poll = None
+                if self._last_poll_ts:
+                    seconds_since_poll = max(0.0, time.monotonic() - self._last_poll_ts)
+                    await record_notification_poll_staleness(seconds_since_poll)
+                    if seconds_since_poll > self._watchdog_alert_threshold:
+                        logger.warning(
+                            "notification.worker.poll_stalled",
+                            extra={"seconds_since_poll": round(seconds_since_poll, 2)},
+                        )
+                else:
+                    await record_notification_poll_staleness(0.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("notification.worker.watchdog_failed")
 
     async def shutdown(self) -> None:
+        self._started = False
+        self._loop_enabled = False
+        await self._stop_watchdog()
         if self._scheduler is not None:
             try:
                 self._scheduler.remove_job(self._job_id)
@@ -283,20 +470,20 @@ class NotificationService:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        if self._poll_task is not None:
-            self._poll_task.cancel()
+        for task in list(self._poll_tasks):
+            task.cancel()
             try:
-                await self._poll_task
+                await task
             except asyncio.CancelledError:
                 pass
-            self._poll_task = None
+        self._poll_tasks.clear()
         if self._broker is not None:
             try:
                 await self._broker.close()
             except Exception:
                 logger.exception("Failed to close notification broker")
-        self._started = False
         self._skipped_runs = 0
+        self._last_poll_ts = 0.0
 
     def _ensure_scheduler_job(self) -> None:
         if self._scheduler is None:
@@ -326,6 +513,93 @@ class NotificationService:
             except SchedulerAlreadyRunningError:
                 pass
 
+    async def health_snapshot(self) -> Dict[str, Any]:
+        broker_backend = "missing"
+        broker_kind = None
+        if self._broker is not None:
+            broker_kind = self._broker.__class__.__name__
+            broker_backend = "redis" if hasattr(self._broker, "_redis") else "memory"
+        job_exists = bool(self._scheduler and self._scheduler.get_job(self._job_id))
+        watchdog_running = self._watchdog_task is not None and not self._watchdog_task.done()
+        seconds_since_poll = None
+        if self._last_poll_ts:
+            seconds_since_poll = max(0.0, time.monotonic() - self._last_poll_ts)
+        rate_limit = None
+        rate_capacity = None
+        if self._token_bucket is not None:
+            rate_limit = self._token_bucket.rate
+            rate_capacity = self._token_bucket.capacity
+        metrics = await get_notification_metrics_snapshot()
+        return {
+            "started": self._started,
+            "loop_enabled": self._loop_enabled,
+            "broker_backend": broker_backend,
+            "broker_kind": broker_kind,
+            "scheduler_job": job_exists,
+            "watchdog_running": watchdog_running,
+            "circuit_open": self._is_circuit_open(),
+            "seconds_since_poll": seconds_since_poll,
+            "rate_limit_per_sec": rate_limit,
+            "rate_limit_capacity": rate_capacity,
+            "worker_concurrency": self._worker_concurrency,
+            "metrics": {
+                "outbox_queue_depth": metrics.outbox_queue_depth,
+                "poll_skipped_total": metrics.poll_skipped_total,
+                "poll_skipped_reasons": metrics.poll_skipped_reasons,
+                "poll_backoff_total": metrics.poll_backoff_total,
+                "poll_backoff_reasons": metrics.poll_backoff_reasons,
+                "poll_staleness_seconds": metrics.poll_staleness_seconds,
+                "rate_limit_wait_total": metrics.rate_limit_wait_total,
+                "rate_limit_wait_seconds": metrics.rate_limit_wait_seconds,
+                "notifications_sent_total": metrics.notifications_sent_total,
+                "notifications_failed_total": metrics.notifications_failed_total,
+            },
+        }
+
+    async def metrics_snapshot(self) -> NotificationMetricsSnapshot:
+        return await get_notification_metrics_snapshot()
+
+    async def broker_ping(self) -> Optional[bool]:
+        if self._broker is None:
+            return None
+        redis_client = getattr(self._broker, "_redis", None)
+        if redis_client is None:
+            return True
+        try:
+            result = await redis_client.ping()
+            return bool(result)
+        except Exception:
+            logger.exception("notification.worker.broker_ping_failed")
+            return False
+
+    async def attach_broker(self, broker: NotificationBrokerProtocol) -> None:
+        """Attach (or replace) the notification broker at runtime."""
+        if broker is None:
+            raise ValueError("broker must not be None")
+        try:
+            await broker.start()
+        except Exception:
+            logger.exception("notification.worker.broker_start_failed")
+            raise
+        if self._broker is not None and self._broker is not broker:
+            try:
+                await self._broker.close()
+            except Exception:
+                logger.exception("notification.worker.broker_close_failed")
+        self._broker = broker
+        self._last_poll_ts = 0.0
+
+    async def detach_broker(self) -> None:
+        """Detach current broker (used when Redis becomes unavailable)."""
+        if self._broker is None:
+            return
+        try:
+            await self._broker.close()
+        except Exception:
+            logger.exception("notification.worker.broker_close_failed")
+        finally:
+            self._broker = None
+
 
     async def on_booking_status_changed(
         self,
@@ -353,44 +627,195 @@ class NotificationService:
         }
 
         if status_value is BookingNotificationStatus.RESCHEDULE_REQUESTED:
-            outbox = await add_outbox_notification(
+            return await self._queue_with_direct_fallback(
                 notification_type="candidate_reschedule_prompt",
                 booking_id=booking_id,
-                candidate_tg_id=candidate_id,
+                candidate_id=candidate_id,
                 payload=payload,
+                snapshot=snapshot,
+                status_value=status_value,
+                queued_reason="reschedule_prompt_queued",
             )
-            await self._enqueue_outbox(outbox.id, attempt=outbox.attempts)
-            return NotificationResult(status="queued", reason="reschedule_prompt_queued")
 
         if status_value is BookingNotificationStatus.CANCELLED:
-            outbox = await add_outbox_notification(
+            return await self._queue_with_direct_fallback(
                 notification_type="candidate_rejection",
                 booking_id=booking_id,
-                candidate_tg_id=candidate_id,
+                candidate_id=candidate_id,
                 payload=payload,
+                snapshot=snapshot,
+                status_value=status_value,
+                queued_reason="rejection_queued",
             )
-            await self._enqueue_outbox(outbox.id, attempt=outbox.attempts)
-            return NotificationResult(status="queued", reason="rejection_queued")
 
         return NotificationResult(status="skipped", reason=status_value.value)
 
+    async def _queue_with_direct_fallback(
+        self,
+        *,
+        notification_type: str,
+        booking_id: Optional[int],
+        candidate_id: int,
+        payload: Dict[str, Any],
+        snapshot: SlotSnapshot,
+        status_value: BookingNotificationStatus,
+        queued_reason: str,
+    ) -> NotificationResult:
+        outbox = await add_outbox_notification(
+            notification_type=notification_type,
+            booking_id=booking_id,
+            candidate_tg_id=candidate_id,
+            payload=payload,
+        )
+        enqueued = await self._enqueue_outbox(outbox.id, attempt=outbox.attempts)
+        if enqueued:
+            return NotificationResult(status="queued", reason=queued_reason)
+        return await self._direct_or_fail(
+            notification_type=notification_type,
+            status_value=status_value,
+            snapshot=snapshot,
+            outbox_id=outbox.id,
+            outbox_attempts=outbox.attempts,
+            booking_id=booking_id or snapshot.slot_id,
+            candidate_id=candidate_id,
+        )
+
+    async def _direct_or_fail(
+        self,
+        *,
+        notification_type: str,
+        status_value: BookingNotificationStatus,
+        snapshot: SlotSnapshot,
+        outbox_id: int,
+        outbox_attempts: int,
+        booking_id: Optional[int],
+        candidate_id: Optional[int],
+    ) -> NotificationResult:
+        sent = await self._attempt_direct_delivery(status_value, snapshot)
+        if sent:
+            await self._finalize_direct_success(
+                outbox_id,
+                attempts=outbox_attempts,
+                booking_id=booking_id,
+                notification_type=notification_type,
+                candidate_id=candidate_id,
+            )
+            logger.warning(
+                "notification.direct_delivery",
+                extra={
+                    "notification_type": notification_type,
+                    "booking_id": booking_id,
+                    "candidate_tg_id": candidate_id,
+                },
+            )
+            return NotificationResult(status="sent", reason=DIRECT_NO_BROKER_REASON)
+
+        await update_outbox_entry(
+            outbox_id,
+            status="failed",
+            attempts=outbox_attempts,
+            next_retry_at=None,
+            last_error=BROKER_UNAVAILABLE_REASON,
+        )
+        await record_notification_failed(notification_type)
+        logger.error(
+            "notification.direct_delivery_failed",
+            extra={
+                "notification_type": notification_type,
+                "booking_id": booking_id,
+                "candidate_tg_id": candidate_id,
+            },
+        )
+        return NotificationResult(status="failed", reason=BROKER_UNAVAILABLE_REASON)
+
+    async def _attempt_direct_delivery(
+        self,
+        status_value: BookingNotificationStatus,
+        snapshot: SlotSnapshot,
+    ) -> bool:
+        await self._throttle()
+        if status_value is BookingNotificationStatus.RESCHEDULE_REQUESTED:
+            return await notify_reschedule(snapshot)
+        if status_value is BookingNotificationStatus.CANCELLED:
+            return await notify_rejection(snapshot)
+        return False
+
+    async def _finalize_direct_success(
+        self,
+        outbox_id: int,
+        *,
+        attempts: int,
+        booking_id: Optional[int],
+        notification_type: str,
+        candidate_id: Optional[int],
+    ) -> None:
+        final_attempts = max(1, attempts + 1)
+        await update_outbox_entry(
+            outbox_id,
+            status="sent",
+            attempts=final_attempts,
+            next_retry_at=None,
+            last_error=None,
+        )
+        if booking_id:
+            try:
+                await add_notification_log(
+                    notification_type,
+                    booking_id,
+                    candidate_tg_id=candidate_id,
+                    payload=DIRECT_NO_BROKER_REASON,
+                    delivery_status="sent",
+                    attempts=final_attempts,
+                    last_error=None,
+                    overwrite=True,
+                )
+            except IntegrityError:
+                logger.debug(
+                    "notification.direct.log_duplicate",
+                    extra={"booking_id": booking_id, "notification_type": notification_type},
+                )
+            except Exception:
+                logger.exception(
+                    "notification.direct.log_failed",
+                    extra={"booking_id": booking_id, "notification_type": notification_type},
+                )
+        await record_notification_sent(notification_type)
+
     async def retry_notification(self, outbox_id: int) -> "NotificationResult":
         await reset_outbox_entry(outbox_id)
-        await self._enqueue_outbox(outbox_id, attempt=0)
+        success = await self._enqueue_outbox(outbox_id, attempt=0)
+        if not success:
+            return NotificationResult(status="failed", reason=BROKER_UNAVAILABLE_REASON)
         return NotificationResult(status="queued")
 
     async def _poll_loop(self) -> None:
+        delay = self._poll_interval
         try:
             while True:
-                await self._poll_once()
-                await asyncio.sleep(self._poll_interval)
+                try:
+                    await self._poll_once()
+                    delay = self._poll_interval
+                except asyncio.CancelledError:
+                    raise
+                except asyncio.TimeoutError:
+                    delay = self._compute_poll_backoff(delay, reason="transient")
+                    await record_notification_poll_backoff("transient_error", delay)
+                    logger.warning(
+                        "notification.worker.loop_iteration_retry",
+                        extra={"reason": "timeout", "delay": round(delay, 2)},
+                    )
+                except Exception:
+                    delay = self._compute_poll_backoff(delay, reason="fatal")
+                    await record_notification_poll_backoff("fatal_error", delay)
+                    logger.exception("notification.worker.loop_iteration_failed")
+                    self._open_circuit()
+                await asyncio.sleep(delay)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.exception("notification.worker.loop_failed")
 
     async def _scheduled_poll(self) -> None:
-        if self._poll_task is not None and not self._poll_task.done():
+        self._poll_tasks = {task for task in self._poll_tasks if not task.done()}
+        if len(self._poll_tasks) >= self._worker_concurrency:
             await self._handle_poll_skipped(reason="inflight")
             return
         try:
@@ -400,11 +825,12 @@ class NotificationService:
             await self._handle_poll_skipped(reason="no_loop")
             return
 
-        self._poll_task = loop.create_task(self._poll_once())
-        self._poll_task.add_done_callback(self._on_poll_task_done)
+        task = loop.create_task(self._poll_once())
+        self._poll_tasks.add(task)
+        task.add_done_callback(self._on_poll_task_done)
 
     def _on_poll_task_done(self, task: asyncio.Task) -> None:
-        self._poll_task = None
+        self._poll_tasks.discard(task)
         if task.cancelled():
             return
         exc = task.exception()
@@ -430,8 +856,9 @@ class NotificationService:
             extra={"started_at": started_at, "skipped_total": self._skipped_runs},
         )
 
+        previous_poll_ts = self._last_poll_ts
         try:
-            async with self._lock:
+            async with self._poll_gate:
                 if self._broker is not None:
                     processed, source = await self._poll_broker_queue()
                 else:
@@ -448,6 +875,11 @@ class NotificationService:
             await set_outbox_queue_depth(0)
         finally:
             duration = time.perf_counter() - start
+            now_ts = time.monotonic()
+            seconds_since_prev = 0.0
+            if previous_poll_ts:
+                seconds_since_prev = max(0.0, now_ts - previous_poll_ts)
+            self._last_poll_ts = now_ts
             logger.info(
                 "notification.worker.poll_cycle processed=%s source=%s skipped_total=%s",
                 processed,
@@ -466,7 +898,9 @@ class NotificationService:
                 processed=processed,
                 source=source,
                 skipped_total=self._skipped_runs,
+                seconds_since_poll=seconds_since_prev,
             )
+            await record_notification_poll_staleness(0.0)
 
     async def _process_broker_message(self, message: BrokerMessage) -> None:
         if self._broker is None:
@@ -510,6 +944,10 @@ class NotificationService:
         delay: float = 0.0,
     ) -> bool:
         if self._broker is None:
+            logger.error(
+                "notification.worker.enqueue_missing_broker",
+                extra={"outbox_id": outbox_id, "attempt": attempt},
+            )
             return False
         payload = {
             "outbox_id": outbox_id,
@@ -1230,7 +1668,7 @@ class NotificationService:
         try:
             reminder_kind = ReminderKind(reminder_raw)
         except (ValueError, TypeError):
-            reminder_kind = ReminderKind.REMIND_24H
+            reminder_kind = ReminderKind.CONFIRM_2H
 
         log_type = f"slot_reminder:{reminder_kind.value}"
         notification_type = log_type
@@ -1257,6 +1695,34 @@ class NotificationService:
             "join_link": getattr(recruiter, "telemost_url", "") or "",
             **labels,
         }
+        intro_address_safe, _ = _intro_detail(
+            getattr(slot, "intro_address", None),
+            fallback=None,
+            default=INTRO_ADDRESS_FALLBACK,
+        )
+        recruiter_contact_fallback = recruiter.name if recruiter else None
+        intro_contact_safe, _ = _intro_detail(
+            getattr(slot, "intro_contact", None),
+            fallback=recruiter_contact_fallback,
+            default=INTRO_CONTACT_FALLBACK,
+        )
+        context.update(
+            {
+                "intro_address": intro_address_safe,
+                "intro_contact": intro_contact_safe,
+            }
+        )
+        if (
+            reminder_kind is ReminderKind.INTRO_REMIND_3H
+            or (slot.purpose or "").lower() == "intro_day"
+        ):
+            context.update(
+                {
+                    "address": intro_address_safe,
+                    "city_address": intro_address_safe,
+                    "recruiter_contact": intro_contact_safe,
+                }
+            )
 
         confirm_map = {
             ReminderKind.CONFIRM_6H: "confirm_6h",
@@ -1264,26 +1730,33 @@ class NotificationService:
             ReminderKind.CONFIRM_2H: "confirm_2h",
             ReminderKind.REMIND_2H: "confirm_2h",
         }
-        reminder_map = {
-            ReminderKind.REMIND_24H: "reminder_24h",
-        }
 
-        if reminder_kind in confirm_map:
+        if reminder_kind is ReminderKind.INTRO_REMIND_3H:
+            template_key = "intro_day_reminder"
+            reply_markup = kb_attendance_confirm(slot.id)
+        elif reminder_kind in confirm_map:
             template_key = confirm_map[reminder_kind]
             reply_markup = kb_attendance_confirm(slot.id)
+        elif reminder_kind is ReminderKind.REMIND_24H:
+            await self._mark_sent(
+                item,
+                item.attempts + 1,
+                log_type,
+                notification_type,
+                None,
+                candidate_id,
+            )
+            return
         else:
-            template_key = reminder_map.get(reminder_kind)
-            if template_key is None:
-                await self._mark_sent(
-                    item,
-                    item.attempts + 1,
-                    log_type,
-                    notification_type,
-                    None,
-                    candidate_id,
-                )
-                return
-            reply_markup = None
+            await self._mark_sent(
+                item,
+                item.attempts + 1,
+                log_type,
+                notification_type,
+                None,
+                candidate_id,
+            )
+            return
 
         rendered = await self._template_provider.render(template_key, context)
         if rendered is None:
@@ -1443,9 +1916,35 @@ class NotificationService:
             "join_link": getattr(recruiter, "telemost_url", "") or "",
             **labels,
         }
+        recruiter_contact_fallback = recruiter.name if recruiter else None
+        intro_address_safe, _ = _intro_detail(
+            getattr(slot, "intro_address", None),
+            fallback=city_name,
+            default=INTRO_ADDRESS_FALLBACK,
+        )
+        intro_contact_safe, _ = _intro_detail(
+            getattr(slot, "intro_contact", None),
+            fallback=recruiter_contact_fallback,
+            default=INTRO_CONTACT_FALLBACK,
+        )
+        context.update(
+            {
+                "intro_address": intro_address_safe,
+                "intro_contact": intro_contact_safe,
+                "address": intro_address_safe,
+                "city_address": intro_address_safe,
+                "recruiter_contact": intro_contact_safe,
+            }
+        )
 
-        # Try to render from message templates (new system) first, then fallback to old system
-        rendered = await self._template_provider.render("intro_day_invitation", context)
+        # Try to render a city-specific template only when it actually exists to avoid
+        # silently downgrading to the generic status message.
+        template_key = await _resolve_intro_day_template_key(city_name)
+        rendered = await self._template_provider.render(template_key, context)
+
+        # If a city-specific template failed to render, fall back to the generic one.
+        if rendered is None and template_key != "intro_day_invitation":
+            rendered = await self._template_provider.render("intro_day_invitation", context)
 
         if rendered is None:
             # Fallback to old template system (city-specific templates)
@@ -1457,6 +1956,11 @@ class NotificationService:
                 recruiter_name=context["recruiter_name"],
                 dt_local=context["dt_local"],
                 city_name=city_name,
+                intro_address=intro_address_safe,
+                intro_contact=intro_contact_safe,
+                address=intro_address_safe,
+                city_address=intro_address_safe,
+                recruiter_contact=intro_contact_safe,
                 **labels,
             )
             if fallback_text:
@@ -1503,9 +2007,6 @@ class NotificationService:
 
         await self._throttle()
         bot = get_bot()
-
-        # Send with confirmation keyboard
-        from backend.apps.bot.keyboards import kb_attendance_confirm
 
         try:
             await _send_with_retry(
@@ -1564,6 +2065,13 @@ class NotificationService:
                 candidate_tg_id=candidate_id,
             )
             return
+
+        # Update candidate status to INTRO_DAY_SCHEDULED after successful send
+        try:
+            from backend.domain.candidates.status_service import set_status_intro_day_scheduled
+            await set_status_intro_day_scheduled(candidate_id)
+        except Exception:
+            logger.exception("Failed to update candidate status to INTRO_DAY_SCHEDULED for candidate %s", candidate_id)
 
         await self._mark_sent(
             item,
@@ -1876,7 +2384,24 @@ class NotificationService:
                 "log_created": created,
             },
         )
-        await self._enqueue_outbox(item.id, attempt=max(attempt, item.attempts), delay=delay)
+        requeued = await self._enqueue_outbox(
+            item.id,
+            attempt=max(attempt, item.attempts),
+            delay=delay,
+        )
+        if not requeued:
+            await self._mark_failed(
+                item,
+                attempt,
+                log_type,
+                notification_type,
+                BROKER_UNAVAILABLE_REASON,
+                rendered,
+                candidate_tg_id=candidate_tg_id,
+            )
+            if count_failure:
+                await record_notification_failed(notification_type)
+            return
         if count_failure:
             await record_notification_failed(notification_type)
         await record_send_retry()
@@ -1887,6 +2412,15 @@ class NotificationService:
 
     def _apply_jitter(self, delay: float) -> float:
         return max(1.0, delay * random.uniform(0.85, 1.15))
+
+    def _compute_poll_backoff(self, previous: float, *, reason: str) -> float:
+        min_delay = max(1.0, self._poll_interval)
+        max_delay = max(min_delay, 5.0)
+        base = max(previous, min_delay)
+        if reason == "transient":
+            return min_delay
+        next_delay = base * 1.5
+        return min(max(next_delay, min_delay), max_delay)
 
     async def _throttle(self) -> None:
         if self._token_bucket is None:
@@ -1922,6 +2456,7 @@ class _TokenBucket:
     async def consume(self, tokens: float = 1.0) -> None:
         tokens = max(tokens, 0.0)
         while True:
+            wait_time = 0.0
             async with self._lock:
                 now = time.monotonic()
                 delta = now - self._updated
@@ -1933,7 +2468,25 @@ class _TokenBucket:
                     return
                 deficit = tokens - self._tokens
                 wait_time = deficit / self._rate if self._rate else 0.1
+            if wait_time > 0:
+                await record_rate_limit_wait(wait_time)
+                logger.info(
+                    "notification.worker.rate_limit_wait",
+                    extra={
+                        "wait_seconds": round(wait_time, 4),
+                        "rate_per_sec": round(self._rate, 4),
+                        "capacity": round(self._capacity, 2),
+                    },
+                )
             await asyncio.sleep(max(wait_time, 0.05))
+
+    @property
+    def rate(self) -> float:
+        return self._rate
+
+    @property
+    def capacity(self) -> float:
+        return self._capacity
 
 
 def configure_notification_service(service: NotificationService) -> None:
@@ -1944,7 +2497,7 @@ def configure_notification_service(service: NotificationService) -> None:
 
 def get_notification_service() -> NotificationService:
     if _notification_service is None:
-        raise RuntimeError("Notification service is not configured")
+        raise NotificationNotConfigured("Notification service is not configured")
     return _notification_service
 
 
@@ -2500,8 +3053,13 @@ async def _send_final_rejection_notice(snapshot: SlotSnapshot) -> bool:
         logger.warning("Rejection template produced empty message for candidate %s", snapshot.candidate_id)
         return False
 
+    bot = get_bot()
+    if not hasattr(bot, "send_message"):
+        logger.warning("Bot instance missing send_message; cannot send rejection message")
+        return False
+
     try:
-        await get_bot().send_message(snapshot.candidate_id, text)
+        await bot.send_message(snapshot.candidate_id, text)
         def _mark_rejected(st: State) -> Tuple[State, None]:
             st["flow"] = "rejected"
             st["picked_slot_id"] = None
@@ -2605,6 +3163,71 @@ async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Pa
             logger.exception(
                 "Failed to send Test 1 summary to recruiter %s", recruiter.id
             )
+    return delivered
+
+
+async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city_name: str, city_id: Optional[int]) -> bool:
+    """Notify recruiters when a candidate is waiting for a manual slot assignment.
+
+    Args:
+        user_id: Telegram ID of the candidate
+        candidate_name: Full name of the candidate
+        city_name: Name of the city
+        city_id: ID of the city (for finding responsible recruiters)
+
+    Returns:
+        True if at least one recruiter was notified
+    """
+    try:
+        recruiters = await get_active_recruiters_for_city(city_id) if city_id else []
+    except Exception:
+        logger.exception("Failed to get active recruiters for city %s", city_id)
+        recruiters = []
+
+    if not recruiters:
+        logger.warning("No active recruiters found for city %s (candidate %s waiting)", city_id, user_id)
+        return False
+
+    # Deduplicate recruiters by chat_id
+    recipients: List[Any] = []
+    seen_chats: set[Any] = set()
+    for rec in recruiters:
+        chat_id = getattr(rec, "tg_chat_id", None)
+        if not chat_id or chat_id in seen_chats:
+            continue
+        recipients.append(rec)
+        seen_chats.add(chat_id)
+
+    if not recipients:
+        logger.warning("No recruiters with chat_id found for city %s", city_id)
+        return False
+
+    bot = get_bot()
+    message = (
+        "⏳ <b>Кандидат ждёт назначения слота</b>\n\n"
+        f"👤 {candidate_name}\n"
+        f"📍 {city_name}\n"
+        f"TG: <code>{user_id}</code>\n\n"
+        "⚠️ <b>Нет доступных автоматических слотов</b>\n"
+        "Требуется ручное назначение времени собеседования через админ-панель."
+    )
+
+    delivered = False
+    for recruiter in recipients:
+        try:
+            await bot.send_message(recruiter.tg_chat_id, message, parse_mode="HTML")
+            delivered = True
+            logger.info(
+                "Sent waiting_slot notification to recruiter %s (chat_id=%s) for candidate %s",
+                recruiter.id,
+                recruiter.tg_chat_id,
+                user_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send waiting_slot notification to recruiter %s", recruiter.id
+            )
+
     return delivered
 
 
@@ -3279,6 +3902,40 @@ async def finalize_test1(user_id: int) -> None:
             question_data=question_data,
         )
 
+        # Update candidate status to TEST1_COMPLETED (and mark waiting if no slots)
+        try:
+            from backend.domain.candidates.status_service import (
+                set_status_test1_completed,
+                set_status_waiting_slot,
+            )
+
+            await set_status_test1_completed(candidate.telegram_id)
+
+            if candidate.city:
+                city_record = await find_city_by_plain_name(candidate.city)
+                if city_record and not await city_has_available_slots(city_record.id):
+                    # Set waiting_slot status
+                    status_updated = await set_status_waiting_slot(candidate.telegram_id)
+
+                    # Notify recruiters that candidate is waiting for manual slot assignment
+                    if status_updated:
+                        try:
+                            candidate_name = state.get("fio") or f"User {candidate.telegram_id}"
+                            city_name = state.get("city_name") or candidate.city
+                            await notify_recruiters_waiting_slot(
+                                user_id=candidate.telegram_id,
+                                candidate_name=candidate_name,
+                                city_name=city_name,
+                                city_id=city_record.id,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Failed to notify recruiters about waiting_slot for candidate %s",
+                                candidate.telegram_id
+                            )
+        except Exception:
+            logger.exception("Failed to update candidate Test1/slot status for user %s", candidate.telegram_id)
+
         try:
             report_dir = REPORTS_DIR / str(candidate.id)
             report_dir.mkdir(parents=True, exist_ok=True)
@@ -3577,6 +4234,14 @@ async def finalize_test2(user_id: int) -> None:
     if pct < PASS_THRESHOLD:
         fail_text = await templates.tpl(state.get("city_id"), "result_fail")
         await bot.send_message(user_id, fail_text)
+
+        # Update candidate status to TEST2_FAILED
+        try:
+            from backend.domain.candidates.status_service import set_status_test2_failed
+            await set_status_test2_failed(user_id)
+        except Exception:
+            logger.exception("Failed to update candidate status to TEST2_FAILED for user %s", user_id)
+
         await state_manager.delete(user_id)
         return
 
@@ -3584,6 +4249,13 @@ async def finalize_test2(user_id: int) -> None:
     if not final_notice:
         final_notice = "Заявка отправлена. Ожидайте подтверждения."
     await bot.send_message(user_id, final_notice)
+
+    # Update candidate status to TEST2_COMPLETED
+    try:
+        from backend.domain.candidates.status_service import set_status_test2_completed
+        await set_status_test2_completed(user_id)
+    except Exception:
+        logger.exception("Failed to update candidate status to TEST2_COMPLETED for user %s", user_id)
 
 
 async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> None:
@@ -3952,8 +4624,21 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
     tz = slot.candidate_tz or DEFAULT_TZ
     labels = slot_local_labels(slot.start_utc, tz)
     state = await _resolve_candidate_state_for_slot(slot)
-    candidate_name = slot.candidate_fio or ""
-    city_name = state.get("city_name") or ""
+    candidate_name_raw = slot.candidate_fio or ""
+    city_name_raw = state.get("city_name") or ""
+    candidate_name = _sanitize_text(candidate_name_raw)
+    city_name = _sanitize_text(city_name_raw)
+    intro_address_safe, _ = _intro_detail(
+        getattr(slot, "intro_address", None),
+        fallback=city_name_raw,
+        default=INTRO_ADDRESS_FALLBACK,
+    )
+    intro_contact_safe, _ = _intro_detail(
+        getattr(slot, "intro_contact", None),
+        fallback=None,
+        default=INTRO_CONTACT_FALLBACK,
+    )
+    is_intro_day = (getattr(slot, "purpose", "") or "").strip().lower() == "intro_day"
     context = {
         "candidate_name": candidate_name,
         "candidate_fio": candidate_name,
@@ -3967,10 +4652,21 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
         "slot_day_name_local": labels.get("slot_day_name_local", ""),
         "recruiter_name": "",
         "join_link": "",
+        "intro_address": intro_address_safe,
+        "intro_contact": intro_contact_safe,
     }
+    if getattr(slot, "purpose", "interview") == "intro_day":
+        context.update(
+            {
+                "address": intro_address_safe,
+                "city_address": intro_address_safe,
+                "recruiter_contact": intro_contact_safe,
+            }
+        )
+    template_key = "intro_day_invitation" if is_intro_day else "interview_confirmed_candidate"
     provider = get_template_provider()
     rendered = await provider.render(
-        "interview_confirmed_candidate",
+        template_key,
         context,
         locale="ru",
         channel="tg",
@@ -3978,51 +4674,81 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
     if rendered is not None:
         return rendered.text, tz, city_name, rendered.key, rendered.version
 
-    template_key = (
-        "stage3_intro_invite"
-        if getattr(slot, "purpose", "interview") == "intro_day"
-        else "approved_msg"
+    legacy_keys = (
+        ["intro_day_invitation", "stage3_intro_invite"]
+        if is_intro_day
+        else ["approved_msg"]
     )
-    fallback_text = await templates.tpl(
-        getattr(slot, "candidate_city_id", None),
-        template_key,
-        candidate_fio=candidate_name,
-        city_name=city_name,
-        dt=context["dt_local"],
-        **labels,
-    )
-    return fallback_text, tz, city_name, "interview_confirmed_candidate", None
+    city_id = getattr(slot, "candidate_city_id", None)
+    for legacy_key in legacy_keys:
+        fallback_text = await templates.tpl(
+            city_id,
+            legacy_key,
+            candidate_fio=candidate_name,
+            city_name=city_name,
+            dt=context["dt_local"],
+            intro_address=intro_address_safe,
+            intro_contact=intro_contact_safe,
+            address=intro_address_safe,
+            city_address=intro_address_safe,
+            recruiter_contact=intro_contact_safe,
+            **labels,
+        )
+        if fallback_text:
+            return fallback_text, tz, city_name, template_key, None
+
+    return "", tz, city_name, template_key, None
 
 
-async def handle_approve_slot(callback: CallbackQuery) -> None:
-    slot_id = int(callback.data.split(":", 1)[1])
+async def approve_slot_and_notify(slot_id: int, *, force_notify: bool = False) -> SlotApprovalResult:
     slot = await get_slot(slot_id)
     if not slot:
-        await callback.answer("Заявка уже обработана.", show_alert=True)
-        await safe_remove_reply_markup(callback.message)
-        return
+        return SlotApprovalResult(
+            status="not_found",
+            message="Заявка уже обработана или слот не найден.",
+        )
 
     status_value = (slot.status or "").lower()
-
-    if status_value in {SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE}:
-        await callback.answer("Уже согласовано ✔️")
-        await safe_remove_reply_markup(callback.message)
-        return
-
+    already_booked = status_value in {SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE}
+    if already_booked and not force_notify:
+        return SlotApprovalResult(
+            status="already",
+            message="Слот уже согласован.",
+            slot=slot,
+        )
     if status_value == SlotStatus.FREE:
-        await callback.answer("Слот уже освобождён.", show_alert=True)
-        await safe_remove_reply_markup(callback.message)
-        return
-
+        return SlotApprovalResult(
+            status="slot_free",
+            message="Слот уже освобождён.",
+            slot=slot,
+        )
     if slot.candidate_tg_id is None:
-        await callback.answer("Кандидат не найден.", show_alert=True)
-        await safe_remove_reply_markup(callback.message)
-        return
+        return SlotApprovalResult(
+            status="missing_candidate",
+            message="Слот не привязан к кандидату.",
+            slot=slot,
+        )
 
-    slot = await approve_slot(slot_id)
-    if not slot:
-        await callback.answer("Не удалось согласовать.", show_alert=True)
-        return
+    if not already_booked:
+        slot = await approve_slot(slot_id)
+        if not slot:
+            return SlotApprovalResult(
+                status="error",
+                message="Не удалось согласовать слот.",
+            )
+
+    candidate_label = (
+        slot.candidate_fio
+        or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "—")
+    )
+    message_text, candidate_tz, candidate_city, template_key, template_version = await _render_candidate_notification(
+        slot
+    )
+
+    try:
+        reminder_service = get_reminder_service()
+    except RuntimeError:
+        reminder_service = None
 
     already_sent = await notification_log_exists(
         "candidate_interview_confirmed",
@@ -4030,17 +4756,38 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
         candidate_tg_id=slot.candidate_tg_id,
     )
 
-    message_text, candidate_tz, candidate_city, template_key, template_version = await _render_candidate_notification(
-        slot
-    )
-    bot = get_bot()
+    should_notify = force_notify or (not already_sent)
 
-    try:
-        reminder_service = get_reminder_service()
-    except RuntimeError:
-        reminder_service = None
+    if should_notify:
+        bot = None
+        try:
+            bot = get_bot()
+        except RuntimeError:
+            logger.warning("Bot is not configured; cannot send approval notification.")
 
-    if not already_sent:
+        if bot is None:
+            failure_parts = [
+                "⚠️ Слот подтверждён, но бот недоступен и отправить сообщение кандидату невозможно.",
+                f"👤 {html.escape(candidate_label)}",
+                f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
+            ]
+            if candidate_city:
+                failure_parts.append(f"📍 {html.escape(candidate_city)}")
+            failure_parts.extend(
+                [
+                    "",
+                    "<b>Текст сообщения:</b>",
+                    f"<blockquote>{message_text}</blockquote>",
+                    "Свяжитесь с кандидатом вручную и передайте детали встречи.",
+                ]
+            )
+            return SlotApprovalResult(
+                status="notify_failed",
+                message="Слот подтверждён, но бот недоступен. Свяжитесь с кандидатом вручную.",
+                slot=slot,
+                summary_html="\n".join(failure_parts),
+            )
+
         try:
             await _send_with_retry(
                 bot,
@@ -4049,10 +4796,6 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
             )
         except Exception:
             logger.exception("Failed to send approval message to candidate")
-            candidate_label = (
-                slot.candidate_fio
-                or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "—")
-            )
             failure_parts = [
                 "⚠️ Слот подтверждён, но отправить сообщение кандидату не удалось.",
                 f"👤 {html.escape(candidate_label)}",
@@ -4068,12 +4811,12 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
                     "Свяжитесь с кандидатом вручную.",
                 ]
             )
-            failure_text = "\n".join(failure_parts)
-
-            await safe_edit_text_or_caption(callback.message, failure_text)
-            await safe_remove_reply_markup(callback.message)
-            await callback.answer("Не удалось отправить сообщение кандидату.", show_alert=True)
-            return
+            return SlotApprovalResult(
+                status="notify_failed",
+                message="Слот подтверждён, но отправить сообщение кандидату не удалось. Свяжитесь вручную.",
+                slot=slot,
+                summary_html="\n".join(failure_parts),
+            )
 
         logged = await add_notification_log(
             "candidate_interview_confirmed",
@@ -4082,6 +4825,7 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
             payload=message_text,
             template_key=template_key,
             template_version=template_version,
+            overwrite=force_notify,
         )
         if not logged:
             logger.warning("Notification log already exists for slot %s", slot.id)
@@ -4094,11 +4838,6 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
 
         if reminder_service is not None:
             await reminder_service.schedule_for_slot(slot.id)
-
-        candidate_label = (
-            slot.candidate_fio
-            or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "—")
-        )
 
         summary_parts = [
             "✅ Слот подтверждён. Сообщение отправлено кандидату автоматически.",
@@ -4114,15 +4853,63 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
                 f"<blockquote>{message_text}</blockquote>",
             ]
         )
-        summary_text = "\n".join(summary_parts)
+    else:
+        summary_parts = [
+            "ℹ️ Слот уже был подтверждён ранее — повторная отправка сообщения не выполнялась.",
+            f"👤 {html.escape(candidate_label)}",
+            f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
+        ]
+        if candidate_city:
+            summary_parts.append(f"📍 {html.escape(candidate_city)}")
 
-        await safe_edit_text_or_caption(callback.message, summary_text)
+    return SlotApprovalResult(
+        status="approved" if should_notify else "already",
+        message="Интервью согласовано, кандидат уведомлён." if should_notify else "Слот уже был согласован ранее.",
+        slot=slot,
+        summary_html="\n".join(summary_parts),
+    )
+
+
+async def handle_approve_slot(callback: CallbackQuery) -> None:
+    slot_id = int(callback.data.split(":", 1)[1])
+    result = await approve_slot_and_notify(slot_id)
+
+    if result.status == "not_found":
+        await callback.answer("Заявка уже обработана.", show_alert=True)
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    if result.status == "slot_free":
+        await callback.answer("Слот уже освобождён.", show_alert=True)
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    if result.status == "missing_candidate":
+        await callback.answer("Кандидат не найден.", show_alert=True)
+        await safe_remove_reply_markup(callback.message)
+        return
+
+    if result.status == "error":
+        await callback.answer("Не удалось согласовать.", show_alert=True)
+        return
+
+    if result.status == "notify_failed":
+        await safe_edit_text_or_caption(
+            callback.message,
+            result.summary_html or result.message,
+        )
+        await safe_remove_reply_markup(callback.message)
+        await callback.answer("Не удалось отправить сообщение кандидату.", show_alert=True)
+        return
+
+    if result.status == "approved":
+        await safe_edit_text_or_caption(
+            callback.message,
+            result.summary_html or result.message,
+        )
         await safe_remove_reply_markup(callback.message)
         await callback.answer("Сообщение отправлено кандидату.")
         return
-
-    if reminder_service is not None:
-        await reminder_service.schedule_for_slot(slot.id)
 
     await callback.answer("Уже согласовано ✔️")
     await safe_remove_reply_markup(callback.message)
@@ -4318,6 +5105,28 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
                 slot_id, skip_confirmation_prompts=True
             )
 
+        # Update candidate status for intro day confirmations
+        if slot.candidate_tg_id and getattr(slot, "purpose", "interview") == "intro_day":
+            try:
+                from backend.domain.candidates.status_service import (
+                    get_candidate_status,
+                    set_status_intro_day_confirmed_preliminary,
+                    set_status_intro_day_confirmed_day_of,
+                )
+                from backend.domain.candidates.status import CandidateStatus
+
+                # Check current status to determine which confirmation this is
+                current_status = await get_candidate_status(slot.candidate_tg_id)
+
+                if current_status == CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY:
+                    # This is a day-of confirmation (responding to 3H reminder)
+                    await set_status_intro_day_confirmed_day_of(slot.candidate_tg_id)
+                else:
+                    # This is the initial confirmation
+                    await set_status_intro_day_confirmed_preliminary(slot.candidate_tg_id)
+            except Exception:
+                logger.exception("Failed to update intro day confirmation status for candidate %s", slot.candidate_tg_id)
+
         ack_text = await templates.tpl(
             city_id,
             "att_confirmed_ack",
@@ -4409,6 +5218,7 @@ __all__ = [
     "StateManager",
     "BookingNotificationStatus",
     "NotificationService",
+    "NotificationNotConfigured",
     "configure_notification_service",
     "get_notification_service",
     "calculate_score",
@@ -4445,6 +5255,8 @@ __all__ = [
     "handle_approve_slot",
     "handle_reschedule_slot",
     "handle_reject_slot",
+    "approve_slot_and_notify",
+    "SlotApprovalResult",
     "capture_slot_snapshot",
     "cancel_slot_reminders",
     "notify_reschedule",

@@ -59,12 +59,16 @@ async def test_manual_contact_links_responsible_recruiter(monkeypatch):
     assert dummy_bot.send_message.await_count == 1
 
     call = dummy_bot.send_message.await_args_list[0]
+    args = call.args
     kwargs = call.kwargs
     markup = kwargs.get("reply_markup")
     assert markup is not None, "expected contact link for responsible recruiter"
     button = markup.inline_keyboard[0][0]
     assert button.url == "tg://user?id=123456789"
-    assert "Анна" in kwargs.get("text", "")
+    text = kwargs.get("text")
+    if text is None and len(args) >= 2:
+        text = args[1]
+    assert text and "Анна" in text
 
     state = await manager.get(USER_ID)
     assert state.get("manual_contact_prompt_sent") is True

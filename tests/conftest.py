@@ -2,15 +2,24 @@ import asyncio
 import importlib
 import os
 import sys
+import time
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.exc import OperationalError
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+@pytest_asyncio.fixture(scope="session")
+def event_loop_policy():
+    """
+    Provide pytest-asyncio with a predictable loop policy without overriding the
+    built-in ``event_loop`` fixture (now deprecated in pytest-asyncio 0.23+).
+
+    Returning the default policy keeps the plugin happy and removes the warning
+    about redefining the loop fixture, while still letting us control loop scope
+    when tests request ``pytest.mark.asyncio(scope="session")`` if needed.
+    """
+    return asyncio.DefaultEventLoopPolicy()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -56,6 +65,15 @@ def clean_database():
     from backend.domain.base import Base
     from backend.core.db import sync_engine
 
-    Base.metadata.drop_all(bind=sync_engine)
-    Base.metadata.create_all(bind=sync_engine)
+    for attempt in range(5):
+        try:
+            Base.metadata.drop_all(bind=sync_engine)
+            Base.metadata.create_all(bind=sync_engine)
+            break
+        except OperationalError as exc:
+            message = str(exc).lower()
+            if "database is locked" in message and attempt < 4:
+                time.sleep(0.05 * (attempt + 1))
+                continue
+            raise
     yield

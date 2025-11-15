@@ -6,6 +6,7 @@ from backend.apps.admin_ui.services.candidates import get_candidate_detail
 from backend.domain.candidates import services as candidate_services
 from backend.domain.models import Recruiter, Slot, SlotStatus, City
 from backend.core.db import async_session
+from backend.apps.admin_ui.routers import candidates as candidates_router
 
 
 @pytest.mark.asyncio
@@ -298,3 +299,28 @@ async def test_intro_day_and_interview_slots_can_coexist():
 
         purposes = {slot.purpose for slot in all_slots}
         assert purposes == {"interview", "intro_day"}, "Should have one of each purpose"
+
+
+@pytest.mark.asyncio
+async def test_city_lookup_is_case_insensitive_for_unicode():
+    """City lookup should handle Cyrillic casing mismatches (SQLite regression)."""
+
+    async with async_session() as session:
+        city = City(name="Волгоград", tz="Europe/Volgograd", active=True)
+        session.add(city)
+        await session.flush()
+
+        recruiter = Recruiter(
+            name="Case Recruiter",
+            tg_chat_id=777100,
+            tz="Europe/Volgograd",
+        )
+        recruiter.cities.append(city)
+        session.add(recruiter)
+        await session.commit()
+        city_id = city.id
+
+    matched_city = await candidates_router._load_city_with_recruiters("волгоград")
+    assert matched_city is not None
+    assert matched_city.id == city_id
+    assert matched_city.recruiters, "Recruiters should be eager-loaded for matched city"

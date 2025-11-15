@@ -50,6 +50,7 @@ class DummyBot:
 
 
 @pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_reapprove_after_reschedule_notifies_new_candidate(monkeypatch):
     templates.clear_cache()
 

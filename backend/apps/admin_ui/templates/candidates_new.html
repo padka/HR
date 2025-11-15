@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Новый кандидат{% endblock %}
 {% block content %}
 {% set error = request.query_params.get('error') %}

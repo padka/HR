@@ -19,6 +19,9 @@
     {% endif %}
   </header>
   <form class="form-shell__form {{ form_class }}"{% if form_id %} id="{{ form_id }}"{% endif %}{% if action %} action="{{ action }}"{% endif %}{% if method %} method="{{ method }}"{% endif %}{% if autocomplete %} autocomplete="{{ autocomplete }}"{% endif %}{% if enctype %} enctype="{{ enctype }}"{% endif %}>
+    {% if method and method|lower == 'post' %}
+      {{ csrf_input(request) }}
+    {% endif %}
     <div class="form-shell__body">
       {{ caller() }}
     </div>

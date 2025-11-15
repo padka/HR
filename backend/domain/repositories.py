@@ -1,3 +1,6 @@
+import html
+import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -10,6 +13,7 @@ from typing import Literal
 
 
 from backend.core.db import async_session
+from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.candidates.services import create_or_update_user
 
 _UNSET = object()
@@ -28,6 +32,8 @@ from .models import (
     Template,
     recruiter_city_association,
 )
+
+logger = logging.getLogger(__name__)
 
 def _to_aware_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -159,6 +165,75 @@ async def get_city_by_name(name: str) -> Optional[City]:
     async with async_session() as session:
         res = await session.scalars(select(City).where(City.name.ilike(name.strip())))
         return res.first()
+
+
+_CITY_PREFIX_RE = re.compile(r"^(город|гор\.?|г\.?)\s+", re.IGNORECASE)
+_CITY_SPLIT_SEPARATORS = [",", "/", "(", ")", "—", "-", ";", "|"]
+
+
+def _normalize_city_part(value: str) -> str:
+    candidate = sanitize_plain_text(value)
+    plain = html.unescape(candidate or "").strip()
+    if not plain:
+        return ""
+    plain = _CITY_PREFIX_RE.sub("", plain).strip()
+    plain = plain.replace("ё", "е")
+    plain = re.sub(r"[^\w\s-]", " ", plain, flags=re.UNICODE)
+    plain = re.sub(r"\s+", " ", plain).strip()
+    return plain.casefold()
+
+
+def _city_variants(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    parts = {value}
+    for sep in _CITY_SPLIT_SEPARATORS:
+        for chunk in value.split(sep):
+            parts.add(chunk.strip())
+    normalized = []
+    for part in parts:
+        norm = _normalize_city_part(part)
+        if norm:
+            normalized.append(norm)
+    return normalized
+
+
+async def find_city_by_plain_name(name: Optional[str]) -> Optional[City]:
+    """Case-insensitive lookup tolerant к приставкам (“г.”) и составным названиям."""
+
+    candidates = _city_variants(name)
+    if not candidates:
+        return None
+
+    async with async_session() as session:
+        result = await session.execute(select(City.id, City.name))
+        match_city_id: Optional[int] = None
+        for city_id, stored_name in result:
+            stored_plain = html.unescape(stored_name or "")
+            stored_variants = _city_variants(stored_plain)
+            if any(candidate in stored_variants for candidate in candidates):
+                match_city_id = city_id
+                break
+        if match_city_id is None:
+            return None
+        return await session.get(City, match_city_id)
+
+
+async def city_has_available_slots(city_id: int, *, now_utc: Optional[datetime] = None) -> bool:
+    """Return True if there is at least one free future slot for the city."""
+
+    now_utc = now_utc or datetime.now(timezone.utc)
+    async with async_session() as session:
+        total = await session.scalar(
+            select(func.count())
+            .select_from(Slot)
+            .where(
+                Slot.city_id == city_id,
+                func.lower(Slot.status) == SlotStatus.FREE,
+                Slot.start_utc > now_utc,
+            )
+        )
+        return bool(total)
 
 
 async def get_city(city_id: int) -> Optional[City]:
@@ -805,6 +880,15 @@ async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult
                 return CandidateConfirmationResult(status="already_confirmed", slot=slot)
 
             slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
+
+            # Update candidate status to INTERVIEW_CONFIRMED
+            if candidate_tg_id is not None:
+                try:
+                    from backend.domain.candidates.status_service import set_status_interview_confirmed
+                    await set_status_interview_confirmed(candidate_tg_id)
+                except Exception:
+                    logger.exception("Failed to update candidate status to INTERVIEW_CONFIRMED for candidate %s", candidate_tg_id)
+
             session.add(
                 NotificationLog(
                     booking_id=slot.id,
@@ -989,6 +1073,13 @@ async def approve_slot(slot_id: int) -> Optional[Slot]:
             slot.status = SlotStatus.BOOKED
 
             if slot.candidate_tg_id is not None:
+                # Update candidate status to INTERVIEW_SCHEDULED
+                try:
+                    from backend.domain.candidates.status_service import set_status_interview_scheduled
+                    await set_status_interview_scheduled(slot.candidate_tg_id)
+                except Exception:
+                    logger.exception("Failed to update candidate status to INTERVIEW_SCHEDULED for candidate %s", slot.candidate_tg_id)
+
                 await add_outbox_notification(
                     notification_type="interview_confirmed_candidate",
                     booking_id=slot.id,
@@ -1041,6 +1132,33 @@ async def reject_slot(
                     SlotReservationLock.reservation_date == reservation_date,
                 )
             )
+        # Update candidate status based on slot purpose before clearing candidate_tg_id
+        if candidate_tg_id is not None:
+            slot_purpose = getattr(slot, "purpose", "interview")
+            try:
+                if slot_purpose == "intro_day":
+                    from backend.domain.candidates.status_service import (
+                        get_candidate_status,
+                        set_status_intro_day_declined_invitation,
+                        set_status_intro_day_declined_day_of,
+                    )
+                    from backend.domain.candidates.status import CandidateStatus
+
+                    # Check current status to determine which decline this is
+                    current_status = await get_candidate_status(candidate_tg_id)
+
+                    if current_status == CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY:
+                        # This is a day-of decline (responding to 3H reminder)
+                        await set_status_intro_day_declined_day_of(candidate_tg_id)
+                    else:
+                        # This is declining the initial invitation
+                        await set_status_intro_day_declined_invitation(candidate_tg_id)
+                else:
+                    from backend.domain.candidates.status_service import set_status_interview_declined
+                    await set_status_interview_declined(candidate_tg_id)
+            except Exception:
+                logger.exception("Failed to update candidate status to DECLINED for candidate %s (purpose=%s)", candidate_tg_id, slot_purpose)
+
         slot.status = SlotStatus.FREE
         slot.candidate_tg_id = None
         slot.candidate_fio = None

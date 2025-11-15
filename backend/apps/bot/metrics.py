@@ -75,6 +75,11 @@ class NotificationMetricsSnapshot:
     poll_cycle_source_last: str
     poll_skipped_total: int
     poll_skipped_reasons: Dict[str, int]
+    rate_limit_wait_total: int
+    rate_limit_wait_seconds: float
+    poll_backoff_total: int
+    poll_backoff_reasons: Dict[str, int]
+    poll_staleness_seconds: float
 
 
 class _NotificationMetrics:
@@ -92,6 +97,11 @@ class _NotificationMetrics:
         self._poll_source_last: str = "idle"
         self._poll_skipped_total: int = 0
         self._poll_skipped_reasons: Counter[str] = Counter()
+        self._rate_limit_wait_total: int = 0
+        self._rate_limit_wait_seconds: float = 0.0
+        self._poll_backoff_total: int = 0
+        self._poll_backoff_reasons: Counter[str] = Counter()
+        self._poll_staleness_seconds: float = 0.0
 
     async def record_sent(self, notification_type: Optional[str]) -> None:
         async with self._lock:
@@ -133,17 +143,33 @@ class _NotificationMetrics:
         processed: int,
         source: str,
         skipped_total: int,
+        seconds_since_poll: float,
     ) -> None:
         async with self._lock:
             self._poll_duration_ms = max(duration_seconds, 0.0) * 1000.0
             self._poll_processed_last = max(processed, 0)
             self._poll_source_last = source
             self._poll_skipped_total = max(skipped_total, 0)
+            self._poll_staleness_seconds = max(seconds_since_poll, 0.0)
 
     async def record_poll_skipped(self, reason: str, skipped_total: int) -> None:
         async with self._lock:
             self._poll_skipped_total = max(skipped_total, 0)
             self._poll_skipped_reasons[reason] += 1
+
+    async def record_rate_limit_wait(self, wait_seconds: float) -> None:
+        async with self._lock:
+            self._rate_limit_wait_total += 1
+            self._rate_limit_wait_seconds += max(wait_seconds, 0.0)
+
+    async def record_poll_backoff(self, reason: str, delay: float) -> None:
+        async with self._lock:
+            self._poll_backoff_total += 1
+            self._poll_backoff_reasons[reason] += 1
+
+    async def record_poll_staleness(self, seconds: float) -> None:
+        async with self._lock:
+            self._poll_staleness_seconds = max(seconds, 0.0)
 
     async def snapshot(self) -> NotificationMetricsSnapshot:
         async with self._lock:
@@ -160,6 +186,11 @@ class _NotificationMetrics:
                 poll_cycle_source_last=self._poll_source_last,
                 poll_skipped_total=self._poll_skipped_total,
                 poll_skipped_reasons=dict(self._poll_skipped_reasons),
+                rate_limit_wait_total=self._rate_limit_wait_total,
+                rate_limit_wait_seconds=self._rate_limit_wait_seconds,
+                poll_backoff_total=self._poll_backoff_total,
+                poll_backoff_reasons=dict(self._poll_backoff_reasons),
+                poll_staleness_seconds=self._poll_staleness_seconds,
             )
 
     async def reset(self) -> None:
@@ -176,6 +207,11 @@ class _NotificationMetrics:
             self._poll_source_last = "idle"
             self._poll_skipped_total = 0
             self._poll_skipped_reasons.clear()
+            self._rate_limit_wait_total = 0
+            self._rate_limit_wait_seconds = 0.0
+            self._poll_backoff_total = 0
+            self._poll_backoff_reasons.clear()
+            self._poll_staleness_seconds = 0.0
 
 
 _notification_metrics = _NotificationMetrics()
@@ -313,17 +349,31 @@ async def record_notification_poll_cycle(
     processed: int,
     source: str,
     skipped_total: int,
+    seconds_since_poll: float,
 ) -> None:
     await _notification_metrics.record_poll_cycle(
         duration_seconds=duration,
         processed=processed,
         source=source,
         skipped_total=skipped_total,
+        seconds_since_poll=seconds_since_poll,
     )
 
 
 async def record_notification_poll_skipped(*, reason: str, skipped_total: int) -> None:
     await _notification_metrics.record_poll_skipped(reason, skipped_total)
+
+
+async def record_rate_limit_wait(wait_seconds: float) -> None:
+    await _notification_metrics.record_rate_limit_wait(wait_seconds)
+
+
+async def record_notification_poll_backoff(reason: str, delay: float) -> None:
+    await _notification_metrics.record_poll_backoff(reason, delay)
+
+
+async def record_notification_poll_staleness(seconds: float) -> None:
+    await _notification_metrics.record_poll_staleness(seconds)
 
 
 async def get_notification_metrics_snapshot() -> NotificationMetricsSnapshot:
@@ -379,6 +429,9 @@ __all__ = [
     "set_outbox_queue_depth",
     "record_notification_poll_cycle",
     "record_notification_poll_skipped",
+    "record_notification_poll_backoff",
+    "record_notification_poll_staleness",
+    "record_rate_limit_wait",
     "get_notification_metrics_snapshot",
     "reset_notification_metrics",
     "ReminderMetricsSnapshot",

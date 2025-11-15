@@ -95,6 +95,17 @@ class CacheClient:
             self._pool = None
 
         logger.info("Redis cache disconnected")
+    
+    async def ping(self) -> bool:
+        """Check Redis availability."""
+        if self._client is None:
+            raise RuntimeError("Cache client not connected. Call connect() first.")
+        try:
+            result = await self._client.ping()
+            return bool(result)
+        except RedisError as exc:
+            logger.warning("Cache ping failed: %s", exc)
+            return False
 
     @property
     def client(self) -> Redis:
@@ -352,6 +363,10 @@ class CacheKeys:
     @staticmethod
     def cities_active() -> str:
         return "cities:active"
+
+    @staticmethod
+    def city_capacity(city_id: int) -> str:
+        return f"city:{city_id}:capacity"
 
     @staticmethod
     def slot(slot_id: int) -> str:

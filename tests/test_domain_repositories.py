@@ -13,6 +13,8 @@ from backend.domain.repositories import (
     get_candidate_cities,
     get_city,
     get_city_by_name,
+    city_has_available_slots,
+    find_city_by_plain_name,
     get_free_slots_by_recruiter,
     get_recruiter,
     get_slot,
@@ -29,13 +31,12 @@ async def test_recruiter_and_city_queries():
         recruiter_active = models.Recruiter(name="Михаил", tz="Europe/Moscow", active=True)
         recruiter_inactive = models.Recruiter(name="Иван", tz="Europe/Moscow", active=False)
         city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter_active.cities.append(city)
         session.add_all([recruiter_active, recruiter_inactive, city])
         await session.commit()
         await session.refresh(recruiter_active)
         await session.refresh(recruiter_inactive)
         await session.refresh(city)
-        recruiter_active.cities.append(city)
-        await session.commit()
 
     active = await get_active_recruiters()
     assert [r.name for r in active] == ["Михаил"]
@@ -56,6 +57,35 @@ async def test_recruiter_and_city_queries():
 
 
 @pytest.mark.asyncio
+async def test_city_helpers_cover_casefold_and_slots():
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Рекрутёр", tz="Europe/Moscow", active=True)
+        city = models.City(name="г. Волгоград", tz="Europe/Volgograd", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.flush()
+
+        session.add(
+            models.Slot(
+                recruiter_id=recruiter.id,
+                city_id=city.id,
+                start_utc=now + timedelta(hours=3),
+                status=models.SlotStatus.FREE,
+            )
+        )
+        await session.commit()
+        await session.refresh(city)
+
+    found = await find_city_by_plain_name("волгоград (центр)")
+    assert found is not None
+    assert found.id == city.id
+
+    assert await city_has_available_slots(city.id) is True
+
+
+@pytest.mark.asyncio
 async def test_city_recruiter_lookup_includes_slot_owners():
     now = datetime.now(timezone.utc)
 
@@ -63,12 +93,9 @@ async def test_city_recruiter_lookup_includes_slot_owners():
         responsible = models.Recruiter(name="Ответственный", tz="Europe/Moscow", active=True)
         extra = models.Recruiter(name="Помощник", tz="Europe/Moscow", active=True)
         city = models.City(name="Казань", tz="Europe/Moscow", active=True)
-        session.add_all([responsible, extra, city])
-        await session.commit()
-        await session.refresh(responsible)
-        await session.refresh(extra)
-        await session.refresh(city)
         responsible.cities.append(city)
+        session.add_all([responsible, extra, city])
+        await session.flush()
 
         session.add(
             models.Slot(
@@ -80,6 +107,9 @@ async def test_city_recruiter_lookup_includes_slot_owners():
         )
 
         await session.commit()
+        await session.refresh(responsible)
+        await session.refresh(extra)
+        await session.refresh(city)
 
     recruiters = await get_active_recruiters_for_city(city.id)
     names = {r.name for r in recruiters}
@@ -94,12 +124,11 @@ async def test_slot_workflow_and_templates():
     async with async_session() as session:
         recruiter = models.Recruiter(name="Мария", tz="Europe/Moscow", active=True)
         city = models.City(name="Санкт-Петербург", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
         await session.refresh(city)
-        recruiter.cities.append(city)
-        await session.commit()
 
         slot_free = models.Slot(
             recruiter_id=recruiter.id,

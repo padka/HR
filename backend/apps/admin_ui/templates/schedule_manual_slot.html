@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% import "partials/form_shell.html" as forms with context %}
+{% block title %}Назначить собеседование — {{ candidate.fio }}{% endblock %}
+{% block content %}
+<section class="form-shell" data-tilt>
+  <header class="form-shell__header">
+    <div class="form-shell__heading">
+      <h1 class="form-shell__title">Назначить собеседование</h1>
+      <p class="form-shell__description">Подберите дату и время — кандидат получит уведомление в Telegram.</p>
+    </div>
+  </header>
+</section>
+
+{% if errors %}
+  <div class="surface glass grain alert" data-tone="danger" role="alert">
+    <ul>
+      {% for error in errors %}
+        <li>{{ error }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+{% if candidate.candidate_status not in ['waiting_slot', 'stalled_waiting_slot'] %}
+  <div class="surface glass grain alert" data-tone="warning" role="alert">
+    <strong>⚠️ Внимание:</strong> Кандидат имеет статус <em>{{ candidate.candidate_status or 'не указан' }}</em>.
+    Ручное назначение доступно для всех статусов, но убедитесь, что это нужное действие.
+  </div>
+{% endif %}
+
+{% call forms.shell(
+  title="Параметры встречи",
+  description="Выберите рекрутёра, город и время встречи — бот отправит приглашение кандидату.",
+  form_id="form-manual-slot",
+  action="/candidates/" + candidate.id|string + "/schedule-slot",
+  method="post",
+  autocomplete="off",
+  actions=[
+    {"type": "submit", "text": "Назначить собеседование", "variant": "primary"},
+    {"href": "/candidates/" + candidate.id|string, "text": "Отмена", "variant": "ghost"}
+  ]
+) %}
+  {{ csrf_input(request) }}
+  {% call forms.section("Информация о кандидате") %}
+    <div class="data-list">
+      <div>
+        <dt>ФИО</dt>
+        <dd><strong>{{ candidate.fio }}</strong></dd>
+      </div>
+      <div>
+        <dt>Город</dt>
+        <dd>{{ candidate.city or "Не указан" }}</dd>
+      </div>
+      <div>
+        <dt>Telegram</dt>
+        <dd>
+          {% if candidate.username %}
+            <a href="https://t.me/{{ candidate.username }}" target="_blank" rel="noopener">@{{ candidate.username }}</a>
+          {% else %}
+            {{ candidate.telegram_id }}
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Текущий статус</dt>
+        <dd>{{ candidate.candidate_status or "Нет статуса" }}</dd>
+      </div>
+    </div>
+  {% endcall %}
+
+  {% call forms.section("Настройки слота") %}
+    {% call forms.field("Рекрутёр", hint="Показываются только активные рекрутёры") %}
+      <select name="recruiter_id" required>
+        <option value="" disabled {% if not form_values.recruiter_id %}selected{% endif %}>— выберите рекрутёра —</option>
+        {% for entry in recruiters %}
+          {% set rec = entry.rec %}
+          <option value="{{ rec.id }}" {% if form_values.recruiter_id == rec.id %}selected{% endif %}>
+            {{ rec.name }}
+          </option>
+        {% endfor %}
+      </select>
+    {% endcall %}
+
+    {% call forms.field("Город и таймзона", hint="Время встречи указывается в часовом поясе выбранного города") %}
+      <select id="city_id" name="city_id" required data-role="city-select">
+        <option value="" disabled {% if not form_values.city_id %}selected{% endif %}>— выберите город —</option>
+        {% for city in cities %}
+          <option
+            value="{{ city.id }}"
+            data-tz="{{ city.tz or 'Europe/Moscow' }}"
+            {% if form_values.city_id == city.id %}selected{% endif %}
+          >
+            {{ city.name_plain }}
+          </option>
+        {% endfor %}
+      </select>
+      <p class="form-field__hint" id="tz_hint">
+        Таймзона: <span data-role="tz-label">—</span>
+        <span data-role="tz-offset" style="color: var(--muted, #888);"></span>
+      </p>
+    {% endcall %}
+
+    <div class="form-grid form-grid--two">
+      {% call forms.field("Дата") %}
+        <input type="date" name="date" required value="{{ form_values.date }}">
+      {% endcall %}
+      {% call forms.field("Время") %}
+        <input type="time" name="time" required value="{{ form_values.time or '10:00' }}">
+      {% endcall %}
+    </div>
+  {% endcall %}
+
+  {% call forms.section("Дополнительные параметры") %}
+    {% call forms.field("Персональное сообщение", hint="Отправить кандидату кастомное сообщение вместо стандартного шаблона") %}
+      <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+        <input type="checkbox" name="send_custom_message" id="send_custom_message" value="1">
+        <span>Отправить персональное сообщение</span>
+      </label>
+      <div id="custom_message_container" style="display: none; margin-top: 1rem;">
+        <textarea
+          name="custom_message"
+          rows="5"
+          placeholder="Введите текст сообщения для кандидата..."
+          style="width: 100%; font-family: inherit;"
+        ></textarea>
+      </div>
+    {% endcall %}
+  {% endcall %}
+
+  {% call forms.note() %}
+    После сохранения кандидату автоматически придёт сообщение с предложенным временем и просьбой подтвердить участие.
+  {% endcall %}
+{% endcall %}
+
+<script>
+  (function(){
+    // Timezone display with GMT offset
+    const citySelect = document.querySelector('[data-role="city-select"]');
+    const tzLabel = document.querySelector('[data-role="tz-label"]');
+    const tzOffset = document.querySelector('[data-role="tz-offset"]');
+    const dateInput = document.querySelector('input[name="date"]');
+    const timeInput = document.querySelector('input[name="time"]');
+
+    // Custom message toggle
+    const customMessageCheckbox = document.getElementById('send_custom_message');
+    const customMessageContainer = document.getElementById('custom_message_container');
+
+    if (customMessageCheckbox && customMessageContainer) {
+      customMessageCheckbox.addEventListener('change', function() {
+        customMessageContainer.style.display = this.checked ? 'block' : 'none';
+      });
+    }
+
+    // Timezone and offset calculation
+    function getTimezoneOffset(timezone) {
+      try {
+        const now = new Date();
+        const formatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          timeZoneName: 'shortOffset'
+        });
+        const parts = formatter.formatToParts(now);
+        const offsetPart = parts.find(p => p.type === 'timeZoneName');
+        return offsetPart ? offsetPart.value : '';
+      } catch (e) {
+        // Fallback: calculate offset manually
+        try {
+          const utcDate = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
+          const tzDate = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+          const offset = (tzDate - utcDate) / (1000 * 60 * 60);
+          const sign = offset >= 0 ? '+' : '-';
+          const hours = Math.floor(Math.abs(offset));
+          const minutes = Math.round((Math.abs(offset) - hours) * 60);
+          return `GMT${sign}${String(hours).padStart(2, '0')}${minutes ? ':' + String(minutes).padStart(2, '0') : ''}`;
+        } catch (e2) {
+          return '';
+        }
+      }
+    }
+
+    function updateTimezoneDisplay() {
+      if (!citySelect || !tzLabel) return;
+
+      const option = citySelect.options[citySelect.selectedIndex];
+      if (!option || !option.value) {
+        tzLabel.textContent = "—";
+        if (tzOffset) tzOffset.textContent = "";
+        return;
+      }
+
+      const timezone = option.dataset.tz || "Europe/Moscow";
+      tzLabel.textContent = timezone;
+
+      if (tzOffset) {
+        const offset = getTimezoneOffset(timezone);
+        tzOffset.textContent = offset ? `(${offset})` : "";
+      }
+    }
+
+    if (citySelect) {
+      citySelect.addEventListener('change', updateTimezoneDisplay);
+      updateTimezoneDisplay();
+    }
+  })();
+</script>
+{% endblock %}
