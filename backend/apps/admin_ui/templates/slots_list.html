@@ -25,27 +25,27 @@
   {% endif %}
 
   <section class="slot-summary" aria-label="Быстрая статистика по слотам">
-    <article class="slot-summary__item" data-tone="success" data-icon="🟢">
+    <article class="slot-summary__item liquid-glass-card liquid-glass-card--interactive" data-tone="success" data-icon="🟢" data-animate-in data-parallax>
       <span class="slot-summary__label">Свободные</span>
       <span class="slot-summary__value" id="cnt-free">{{ status_counts.FREE }}</span>
       <p class="slot-summary__hint">Готовы к бронированию</p>
     </article>
-    <article class="slot-summary__item" data-tone="warning" data-icon="⏳">
+    <article class="slot-summary__item liquid-glass-card liquid-glass-card--interactive" data-tone="warning" data-icon="⏳" data-animate-in data-parallax>
       <span class="slot-summary__label">Ожидают</span>
       <span class="slot-summary__value" id="cnt-pending">{{ status_counts.PENDING }}</span>
       <p class="slot-summary__hint">Заявки требуют подтверждения</p>
     </article>
-    <article class="slot-summary__item" data-tone="info" data-icon="📅">
+    <article class="slot-summary__item liquid-glass-card liquid-glass-card--interactive" data-tone="info" data-icon="📅" data-animate-in data-parallax>
       <span class="slot-summary__label">Забронированы</span>
       <span class="slot-summary__value" id="cnt-booked">{{ status_counts.BOOKED }}</span>
       <p class="slot-summary__hint">Интервью назначены кандидатам</p>
     </article>
-    <article class="slot-summary__item" data-tone="primary" data-icon="✅">
+    <article class="slot-summary__item liquid-glass-card liquid-glass-card--interactive" data-tone="primary" data-icon="✅" data-animate-in data-parallax data-glow-pulse>
       <span class="slot-summary__label">Подтверждены</span>
       <span class="slot-summary__value" id="cnt-confirmed">{{ status_counts.CONFIRMED_BY_CANDIDATE }}</span>
       <p class="slot-summary__hint">Кандидаты подтвердили участие</p>
     </article>
-    <article class="slot-summary__item" data-tone="neutral" data-icon="📊">
+    <article class="slot-summary__item liquid-glass-card liquid-glass-card--interactive" data-tone="neutral" data-icon="📊" data-animate-in data-parallax>
       <span class="slot-summary__label">Всего</span>
       <span class="slot-summary__value" id="cnt-total">{{ status_counts.total }}</span>
       <p class="slot-summary__hint">С учётом действующих фильтров</p>
@@ -108,8 +108,9 @@
   </div>
 
   {% if has_slots %}
-    <div class="list-table-wrapper">
-      <table class="list-table list-table--responsive slot-table" id="slots_table">
+    <div class="liquid-glass-table" data-animate-in>
+      <div class="list-table-wrapper">
+        <table class="list-table list-table--responsive slot-table" id="slots_table">
         <thead>
           <tr>
             <th scope="col" class="sortable">
@@ -193,13 +194,13 @@
             </td>
             <td data-label="Статус">
               {% if st == "FREE" %}
-                <span class="status-badge" data-tone="success">FREE</span>
+                <span class="liquid-glass-badge liquid-glass-badge--success">FREE</span>
               {% elif st == "PENDING" %}
-                <span class="status-badge" data-tone="warning">PENDING</span>
+                <span class="liquid-glass-badge liquid-glass-badge--warning">PENDING</span>
               {% elif st == "BOOKED" %}
-                <span class="status-badge" data-tone="info">BOOKED</span>
+                <span class="liquid-glass-badge liquid-glass-badge--info">BOOKED</span>
               {% else %}
-                <span class="badge badge--soft">{{ st or "—" }}</span>
+                <span class="liquid-glass-badge liquid-glass-badge--neutral">{{ st or "—" }}</span>
               {% endif %}
             </td>
             <td data-label="Кандидат" class="is-optional">
@@ -221,6 +222,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
 
     <div class="pagination">
@@ -247,11 +249,11 @@
       {% endif %}
     </div>
   {% else %}
-    <div class="card glass grain slot-empty-state" role="status">
+    <div class="liquid-glass-card slot-empty-state" role="status" data-animate-in>
       <h3 class="section-title">Пока пусто</h3>
       <p class="page-description">Создайте первый слот или измените фильтры, чтобы увидеть расписание.</p>
       <div class="slot-empty-state__actions">
-        <a class="btn btn-primary" href="/slots/new">+ Новый слот</a>
+        <a class="liquid-glass-btn liquid-glass-btn--primary" href="/slots/new">+ Новый слот</a>
       </div>
     </div>
   {% endif %}

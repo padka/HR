@@ -6,7 +6,8 @@
 {% set errors = field_errors or {} %}
 {% set selected_values = form_state.get('cities', selected_ids) %}
 {% if form_error %}
-  <div class="surface glass grain alert" data-tone="danger" role="alert">
+  <div class="liquid-glass-card alert" data-tone="danger" role="alert" data-animate-in>
+    <span class="liquid-glass-badge liquid-glass-badge--danger">Ошибка</span>
     {{ form_error }}
   </div>
 {% endif %}

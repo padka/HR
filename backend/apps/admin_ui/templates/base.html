@@ -6,6 +6,8 @@
   <title>{% block title %}Админка{% endblock %} · TG Bot Admin</title>
   <link rel="icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/css/design-system.css">
+  <link rel="stylesheet" href="/static/css/liquid-glass.css">
+  <link rel="stylesheet" href="/static/css/liquid-glass-integration.css">
   <link rel="stylesheet" href="/static/css/lists.css">
   <link rel="stylesheet" href="/static/css/forms.css">
   <meta name="csrf-token" content="{{ csrf_token(request) }}">
@@ -1049,6 +1051,7 @@ html[data-theme="light"] {
   <div id="toast-root" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
 <script src="/static/js/modules/notifications.js" defer></script>
 <script src="/static/js/modules/form-validation.js" defer></script>
+<script src="/static/js/modules/glass-effects.js" defer></script>
 <script>
   (function(){
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;

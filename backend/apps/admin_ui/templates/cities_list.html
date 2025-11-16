@@ -44,22 +44,22 @@
     {% endfor %}
     {% set city_stats.without_owner = city_stats.total - city_stats.with_owner %}
     <section class="slot-summary city-summary" aria-label="Сводная статистика по городам">
-      <article class="slot-summary__item" data-tone="primary" data-icon="🏙">
+      <article class="slot-summary__item liquid-glass-card" data-tone="primary" data-icon="🏙" data-animate-in>
         <span class="slot-summary__label">Городов</span>
         <span class="slot-summary__value">{{ city_stats.total }}</span>
         <p class="slot-summary__hint">Всего в списке</p>
       </article>
-      <article class="slot-summary__item" data-tone="success" data-icon="👤">
+      <article class="slot-summary__item liquid-glass-card" data-tone="success" data-icon="👤" data-animate-in data-glow-pulse>
         <span class="slot-summary__label">С ответственным</span>
         <span class="slot-summary__value">{{ city_stats.with_owner }}</span>
         <p class="slot-summary__hint">Назначен рекрутёр</p>
       </article>
-      <article class="slot-summary__item" data-tone="warning" data-icon="⚠️">
+      <article class="slot-summary__item liquid-glass-card" data-tone="warning" data-icon="⚠️" data-animate-in>
         <span class="slot-summary__label">Без ответственного</span>
         <span class="slot-summary__value">{{ city_stats.without_owner }}</span>
         <p class="slot-summary__hint">Требуется назначение</p>
       </article>
-      <article class="slot-summary__item" data-tone="info" data-icon="📝">
+      <article class="slot-summary__item liquid-glass-card" data-tone="info" data-icon="📝" data-animate-in>
         <span class="slot-summary__label">Кастомные этапы</span>
         <span class="slot-summary__value">{{ city_stats.custom }}</span>
         <p class="slot-summary__hint">Города с изменёнными текстами</p>
@@ -81,15 +81,15 @@
   {% endcall %}
 
   {% if not cities %}
-    <div class="card glass grain">
+    <div class="liquid-glass-card" data-animate-in>
       <h3 class="section-title">Пока пусто</h3>
       <p class="page-description">Добавьте первый город, чтобы настроить планы и сообщения.</p>
       <div class="page-actions">
-        <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
+        <a class="liquid-glass-btn liquid-glass-btn--primary" href="/cities/new">+ Новый город</a>
       </div>
     </div>
   {% else %}
-    <article class="card glass grain city-table-card">
+    <article class="liquid-glass-table city-table-card" data-animate-in>
       <div class="list-table-wrapper">
         <table class="list-table list-table--responsive city-table" id="city_table">
           <thead>
@@ -162,7 +162,7 @@
                   <span class="cell-title">{{ c.display_name }}</span>
                 </td>
                 <td data-label="Часовой пояс" class="col-tz">
-                  <span class="badge badge--soft"><code>{{ tz }}</code></span>
+                  <span class="liquid-glass-badge liquid-glass-badge--neutral"><code>{{ tz }}</code></span>
                 </td>
                 <td data-label="Ответственный" class="col-owner">
                   <span class="owner-label {% if not owner %}is-empty{% endif %}">
