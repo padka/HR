@@ -102,7 +102,7 @@
         </div>
       </div>
 
-      <textarea name="payload" id="payload-editor" rows="18" class="text-mono" required spellcheck="false">{{ detail.payload_json }}</textarea>
+      <textarea name="payload" id="payload-editor" rows="18" class="text-mono" required aria-required="true" spellcheck="false">{{ detail.payload_json }}</textarea>
       <p class="payload-status" id="payload-status" aria-live="polite"></p>
       <div class="payload-preview" id="payload-preview" aria-live="polite" aria-atomic="true"></div>
       {% call forms.note() %}Поддерживаются ключи <code>prompt</code>, <code>options</code>, <code>correct</code>, <code>validation</code>, <code>hints</code> и др. Некорректный JSON не позволит сохранить изменения.{% endcall %}
