@@ -16,11 +16,11 @@
   </header>
 
   {% if not recruiter_rows %}
-    <div class="glass-card glass-card--summary grain">
+    <div class="liquid-glass-card" data-animate-in style="text-align: center; padding: 48px 24px;">
       <h3 class="section-title">Пока пусто</h3>
       <p class="page-description">Записи отсутствуют. Создайте первого рекрутёра, чтобы начать работу.</p>
-      <div class="page-actions">
-        <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
+      <div class="page-actions" style="margin-top: 24px;">
+        <a class="liquid-glass-btn liquid-glass-btn--primary" href="/recruiters/new">Добавить рекрутёра</a>
       </div>
     </div>
   {% else %}
@@ -35,7 +35,7 @@
         {% else %}
           {% set next_slot_label = None %}
         {% endif %}
-        <article class="glass-card recruiter-card">
+        <article class="liquid-glass-card liquid-glass-card--interactive recruiter-card" data-animate-in data-parallax>
           <header class="recruiter-card__header">
             <div class="recruiter-card__identity">
               <h2 class="recruiter-card__name">{{ r.name }}</h2>
@@ -47,7 +47,9 @@
                 {% endif %}
               {% endcall %}
             </div>
-            {{ status_pill('Активен' if active else 'Отключен', tone='success' if active else 'muted') }}
+            <span class="liquid-glass-badge liquid-glass-badge--{{ 'success' if active else 'neutral' }}">
+              {{ 'Активен' if active else 'Отключен' }}
+            </span>
           </header>
 
           <div class="recruiter-card__body">
@@ -103,7 +105,7 @@
               </summary>
               <div class="recruiter-card__fold-body">
                 {% if next_slot_label %}
-                  <span class="badge">{{ next_slot_label }}</span>
+                  <span class="liquid-glass-badge liquid-glass-badge--info">{{ next_slot_label }}</span>
                 {% else %}
                   <span class="muted">Нет свободных слотов</span>
                 {% endif %}
@@ -112,10 +114,10 @@
           </div>
 
           <footer class="recruiter-card__footer">
-            <a class="btn btn-soft btn--grow" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
+            <a class="liquid-glass-btn liquid-glass-btn--soft btn--grow" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
             <form class="inline-form" method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');">
               {{ csrf_input(request) }}
-              <button class="btn btn-danger btn--grow" type="submit">Удалить</button>
+              <button class="liquid-glass-btn liquid-glass-btn--danger btn--grow" type="submit">Удалить</button>
             </form>
           </footer>
         </article>
