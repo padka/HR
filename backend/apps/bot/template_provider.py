@@ -9,21 +9,42 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from jinja2 import TemplateNotFound
+
 from backend.domain.repositories import get_message_template
 from backend.apps.bot.templates import DEFAULT_TEMPLATES
 from backend.apps.bot.metrics import record_template_fallback
+from backend.apps.bot.jinja_renderer import get_renderer as get_jinja_renderer
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class TemplateRecord:
+    """Message template record from database.
+
+    Attributes:
+        key: Template identifier (e.g., "interview_confirmed")
+        locale: Language code (e.g., "ru", "en")
+        channel: Delivery channel (e.g., "tg" for Telegram)
+        version: Template version number
+        city_id: Optional city-specific template
+        body: Template content (interpretation depends on use_jinja flag)
+        use_jinja: If True, body contains a Jinja2 template path (e.g., "messages/interview_confirmed")
+                   If False, body contains a Python format string (e.g., "Hello {name}")
+
+    Important: When use_jinja=True, the body field MUST contain a file path relative
+    to the templates_jinja/ directory, NOT inline template content. Inline Jinja2
+    templates are not supported - use use_jinja=False with .format() syntax instead.
+    """
+
     key: str
     locale: str
     channel: str
     version: int
     city_id: Optional[int]
     body: str
+    use_jinja: bool = False
 
 
 @dataclass
@@ -93,6 +114,7 @@ class TemplateProvider:
             version=template.version,
             city_id=getattr(template, "city_id", None),
             body=template.body_md,
+            use_jinja=getattr(template, "use_jinja", False),
         )
         async with self._lock:
             self._cache[cache_key] = (record, now + self._cache_ttl)
@@ -111,11 +133,38 @@ class TemplateProvider:
         template = await self.get(key, locale=locale, channel=channel, city_id=city_id, strict=strict)
         if template is None:
             return None
-        try:
-            text = template.body.format_map(_SafeDict(context))
-        except Exception:
-            logger.exception("Failed to format template %s", key)
-            text = template.body
+
+        # Choose renderer based on use_jinja flag
+        if template.use_jinja:
+            # Use Jinja2 renderer for modern file-based templates
+            # When use_jinja=True, template.body MUST contain a template path
+            # (e.g., "messages/interview_confirmed"), not inline template content.
+            # Inline Jinja2 templates are not yet supported - for that use case,
+            # keep use_jinja=False and the template will use .format() instead.
+            try:
+                jinja_renderer = get_jinja_renderer()
+                # Render file-based template from path in body field
+                text = jinja_renderer.render(template.body, context)
+            except TemplateNotFound:
+                logger.exception(
+                    "Jinja2 template file not found: %s (key=%s). "
+                    "Check that template exists in templates_jinja/ directory.",
+                    template.body,
+                    key,
+                )
+                # Fallback: treat as format string
+                text = template.body.format_map(_SafeDict(context))
+            except Exception:
+                logger.exception("Failed to render Jinja2 template %s (path=%s)", key, template.body)
+                text = template.body
+        else:
+            # Use legacy .format() renderer
+            try:
+                text = template.body.format_map(_SafeDict(context))
+            except Exception:
+                logger.exception("Failed to format template %s", key)
+                text = template.body
+
         return RenderedTemplate(
             key=template.key,
             version=template.version,
