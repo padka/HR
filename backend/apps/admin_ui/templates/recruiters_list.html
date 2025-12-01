@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% from "partials/components.html" import status_pill, meta_list, badge_row %}
 {% block title %}Рекрутёры{% endblock %}
 {% block content %}
+{% set city_filter_options = city_filter_options if city_filter_options is defined else [] %}
+{% set selected_city_ids = selected_city_ids if selected_city_ids is defined else [] %}
 <section class="page">
   <header class="page-header">
     <div>
@@ -11,11 +12,11 @@
       </p>
     </div>
     <div class="page-actions">
-      <a class="btn btn-primary" href="/recruiters/new">Добавить рекрутёра</a>
+      <a class="liquid-glass-btn liquid-glass-btn--primary" href="/recruiters/new">Добавить рекрутёра</a>
     </div>
   </header>
 
-  {% if not recruiter_rows %}
+{% if not recruiter_rows %}
     <div class="liquid-glass-card" data-animate-in style="text-align: center; padding: 48px 24px;">
       <h3 class="section-title">Пока пусто</h3>
       <p class="page-description">Записи отсутствуют. Создайте первого рекрутёра, чтобы начать работу.</p>
@@ -30,6 +31,10 @@
         {% set stats = item.stats %}
         {% set active = r.active if r.active is not none else False %}
         {% set city_count = item.cities|length if item.cities else 0 %}
+        {% set name_parts = r.name.split() if r.name else [] %}
+        {% set initials = ((name_parts[0][0] if name_parts else 'R') ~ (name_parts[1][0] if name_parts|length > 1 else ''))[:2].upper() %}
+        {% set total_slots = stats.total or 0 %}
+        {% set load_percent = (stats.booked / total_slots * 100) if total_slots else 0 %}
         {% if item.next_free_local %}
           {% set next_slot_label = item.next_free_local ~ (" · истёк" if not item.next_is_future else "") %}
         {% else %}
@@ -38,86 +43,119 @@
         <article class="liquid-glass-card liquid-glass-card--interactive recruiter-card" data-animate-in data-parallax>
           <header class="recruiter-card__header">
             <div class="recruiter-card__identity">
-              <h2 class="recruiter-card__name">{{ r.name }}</h2>
-              {% call meta_list() %}
-                <span>#{{ r.id }}</span>
-              <span title="Часовой пояс">{{ tz_display(r.tz) }}</span>
-                {% if r.tg_chat_id %}
-                  <span title="ID чата в Telegram">chat_id {{ r.tg_chat_id }}</span>
-                {% endif %}
-              {% endcall %}
+              <div class="recruiter-card__avatar" aria-hidden="true">{{ initials }}</div>
+              <div>
+                <h2 class="recruiter-card__name">{{ r.name }}</h2>
+                <div class="recruiter-card__meta">
+                  <span class="recruiter-card__badge">ID #{{ r.id }}</span>
+                  <span class="recruiter-card__badge" title="Часовой пояс">{{ tz_display(r.tz) }}</span>
+                  {% if r.tg_chat_id %}
+                    <span class="recruiter-card__badge recruiter-card__badge--ghost">chat {{ r.tg_chat_id }}</span>
+                  {% endif %}
+                </div>
+              </div>
             </div>
-            <span class="liquid-glass-badge liquid-glass-badge--{{ 'success' if active else 'neutral' }}">
+            <span class="recruiter-card__status" data-variant="{{ 'active' if active else 'inactive' }}">
+              <span class="status-dot"></span>
               {{ 'Активен' if active else 'Отключен' }}
             </span>
           </header>
 
           <div class="recruiter-card__body">
-            <section class="card-surface recruiter-card__section recruiter-card__section--metrics">
-              <h3 class="section-title">Нагрузка</h3>
-              <dl class="recruiter-metrics">
-                <div>
-                  <dt>Свободно</dt>
-                  <dd>{{ stats.free }}</dd>
-                </div>
-                <div>
-                  <dt>Ожидают</dt>
-                  <dd>{{ stats.pending }}</dd>
-                </div>
-                <div>
-                  <dt>Занято</dt>
-                  <dd>{{ stats.booked }}</dd>
-                </div>
-                <div>
-                  <dt>Всего</dt>
-                  <dd>{{ stats.total }}</dd>
-                </div>
-              </dl>
-            </section>
+            <div class="recruiter-card__stats">
+              <div class="recruiter-card__stat-pill" data-tone="primary">
+                <span>Свободно</span>
+                <strong>{{ stats.free }}</strong>
+              </div>
+              <div class="recruiter-card__stat-pill" data-tone="amber">
+                <span>Ожидают</span>
+                <strong>{{ stats.pending }}</strong>
+              </div>
+              <div class="recruiter-card__stat-pill" data-tone="rose">
+                <span>Занято</span>
+                <strong>{{ stats.booked }}</strong>
+              </div>
+              <div class="recruiter-card__stat-pill" data-tone="slate">
+                <span>Всего</span>
+                <strong>{{ stats.total }}</strong>
+              </div>
+            </div>
 
-            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
-              <summary>
-                <div class="recruiter-card__fold-head">
-                  <h3 class="section-title">Города</h3>
+            <div class="recruiter-card__highlights">
+              <div class="recruiter-card__highlight" data-tone="accent">
+                <div class="recruiter-card__highlight-icon">⚡</div>
+                <div>
+                  <p class="recruiter-card__highlight-label">Занятость</p>
+                  <p class="recruiter-card__highlight-value">{{ load_percent|round(0, 'ceil') }}%</p>
+                </div>
+              </div>
+              <div class="recruiter-card__highlight" data-tone="info">
+                <div class="recruiter-card__highlight-icon">🗓</div>
+                <div>
+                  <p class="recruiter-card__highlight-label">Ближайший слот</p>
+                  <p class="recruiter-card__highlight-value">{{ next_slot_label if next_slot_label else 'Нет свободных' }}</p>
+                </div>
+              </div>
+              <div class="recruiter-card__highlight" data-tone="muted">
+                <div class="recruiter-card__highlight-icon">🌍</div>
+                <div>
                   {% if city_count %}
                     {% set city_word = 'город' if city_count % 10 == 1 and city_count % 100 != 11 else ('города' if city_count % 10 in [2, 3, 4] and city_count % 100 not in [12, 13, 14] else 'городов') %}
-                    <span class="recruiter-card__fold-hint">{{ city_count }} {{ city_word }}</span>
+                    <p class="recruiter-card__highlight-label">Города</p>
+                    <p class="recruiter-card__highlight-value">{{ city_count }} {{ city_word }}</p>
                   {% else %}
-                    <span class="recruiter-card__fold-hint">Нет городов</span>
+                    <p class="recruiter-card__highlight-label">Города</p>
+                    <p class="recruiter-card__highlight-value">Не назначены</p>
                   {% endif %}
                 </div>
-              </summary>
-              <div class="recruiter-card__fold-body">
-                {% if item.cities %}
-                  <p>{{ item.cities_display }}</p>
-                {% else %}
-                  <span class="muted">не назначены</span>
-                {% endif %}
               </div>
-            </details>
+            </div>
 
-            <details class="recruiter-card__fold recruiter-card__section" data-collapsible open>
-              <summary>
-                <div class="recruiter-card__fold-head">
-                  <h3 class="section-title">Ближайший свободный слот</h3>
-                  <span class="recruiter-card__fold-hint">{{ next_slot_label if next_slot_label else 'Нет слотов' }}</span>
+            <div class="recruiter-card__details">
+              <div class="recruiter-card__load" aria-live="polite">
+                <div class="recruiter-card__load-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ load_percent|round(0, 'floor') }}">
+                  <span style="width: {{ load_percent }}%;"></span>
                 </div>
-              </summary>
-              <div class="recruiter-card__fold-body">
-                {% if next_slot_label %}
-                  <span class="liquid-glass-badge liquid-glass-badge--info">{{ next_slot_label }}</span>
+                <p class="recruiter-card__load-hint">
+                  {{ stats.booked }} занято · {{ stats.free }} свободно · {{ stats.pending }} ожидают
+                </p>
+              </div>
+              <div class="recruiter-card__cities">
+                {% if item.cities %}
+                  {% for city_entry in item.cities[:6] %}
+                    {% set city_name = city_entry[0] %}
+                    {% set city_tz = city_entry[1] %}
+                    <span class="recruiter-card__city-pill" title="Таймзона: {{ city_tz }}">
+                      {{ city_name }}
+                    </span>
+                  {% endfor %}
+                  {% if city_count > 6 %}
+                    <span class="recruiter-card__city-pill">+{{ city_count - 6 }}</span>
+                  {% endif %}
                 {% else %}
-                  <span class="muted">Нет свободных слотов</span>
+                  <span class="muted">Города не назначены</span>
                 {% endif %}
               </div>
-            </details>
+            </div>
           </div>
 
           <footer class="recruiter-card__footer">
-            <a class="liquid-glass-btn liquid-glass-btn--soft btn--grow" href="/recruiters/{{ r.id }}/edit">Редактировать</a>
+            <a class="liquid-glass-btn liquid-glass-btn--secondary btn--grow" href="/recruiters/{{ r.id }}/edit">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+              </svg>
+              Редактировать
+            </a>
             <form class="inline-form" method="post" action="/recruiters/{{ r.id }}/delete" onsubmit="return confirm('Удалить рекрутёра {{ r.name }}?');">
               {{ csrf_input(request) }}
-              <button class="liquid-glass-btn liquid-glass-btn--danger btn--grow" type="submit">Удалить</button>
+              <button class="liquid-glass-btn liquid-glass-btn--danger btn--grow" type="submit">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                Удалить
+              </button>
             </form>
           </footer>
         </article>
@@ -153,6 +191,77 @@
     isWide = next;
     applyState(isWide);
   });
+})();
+
+(function () {
+  const filter = document.querySelector('[data-city-filter]');
+  if (!filter) return;
+  const search = filter.querySelector('[data-filter-search]');
+  const options = Array.from(filter.querySelectorAll('[data-filter-option]'));
+  const emptyHint = filter.querySelector('[data-filter-empty]');
+  const selectedPanel = filter.querySelector('[data-filter-selected]');
+  const counter = filter.querySelector('[data-filter-counter]');
+  const checkboxes = options
+    .map((option) => option.querySelector('input[type="checkbox"]'))
+    .filter(Boolean);
+
+  function renderSelected() {
+    const checked = checkboxes.filter((cb) => cb.checked);
+    if (counter) {
+      counter.textContent = checked.length
+        ? `${checked.length} ${checked.length === 1 ? 'выбран' : 'выбрано'}`
+        : 'Города не выбраны';
+    }
+    if (!selectedPanel) {
+      return;
+    }
+    selectedPanel.innerHTML = '';
+    if (!checked.length) {
+      const empty = document.createElement('span');
+      empty.className = 'muted';
+      empty.textContent = 'Города не выбраны';
+      selectedPanel.appendChild(empty);
+      return;
+    }
+    const maxVisible = 4;
+    checked.slice(0, maxVisible).forEach((cb) => {
+      const label = cb.closest('.choice-tile');
+      const titleNode = label ? label.querySelector('.choice-tile__title') : null;
+      const pill = document.createElement('span');
+      pill.className = 'recruiter-city-picker__pill';
+      pill.textContent = titleNode ? titleNode.textContent.trim() : `ID ${cb.value}`;
+      selectedPanel.appendChild(pill);
+    });
+    if (checked.length > maxVisible) {
+      const remainder = document.createElement('span');
+      remainder.className = 'recruiter-city-picker__pill recruiter-city-picker__pill--ghost';
+      remainder.textContent = `+${checked.length - maxVisible}`;
+      selectedPanel.appendChild(remainder);
+    }
+  }
+
+  checkboxes.forEach((cb) => {
+    cb.addEventListener('change', renderSelected);
+  });
+  renderSelected();
+
+  if (search && options.length) {
+    search.addEventListener('input', () => {
+      const term = search.value.trim().toLowerCase();
+      let visible = 0;
+      options.forEach((option) => {
+        const haystack = option.getAttribute('data-filter') || '';
+        const match = !term || haystack.indexOf(term) !== -1;
+        option.hidden = !match;
+        if (match) visible += 1;
+      });
+      if (emptyHint) {
+        emptyHint.hidden = visible !== 0;
+      }
+    });
+  } else if (emptyHint) {
+    emptyHint.hidden = true;
+  }
 })();
 </script>
 {% endif %}

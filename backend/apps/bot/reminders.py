@@ -37,7 +37,8 @@ _ZONE_ALIASES.setdefault(DEFAULT_TZ.lower(), DEFAULT_TZ)
 
 _QUIET_HOURS_START = 22  # 22:00 local time
 _QUIET_HOURS_END = 8     # 08:00 local time
-_QUIET_GRACE = timedelta(minutes=1)
+_QUIET_GRACE = timedelta(minutes=30)
+_MIN_TIME_BEFORE_IMMEDIATE = timedelta(hours=2)  # Не отправлять immediate, если до встречи больше 2 часов
 
 
 class ReminderKind(str, Enum):
@@ -74,7 +75,7 @@ class ReminderService:
 
     async def shutdown(self) -> None:
         if self._scheduler.running:
-            self._scheduler.shutdown(wait=False)
+            self._scheduler.shutdown(wait=True)
 
     async def sync_jobs(self) -> None:
         """Ensure persisted jobs exist in the scheduler."""
@@ -149,12 +150,28 @@ class ReminderService:
 
             candidate_zone = _safe_zone(slot.candidate_tz)
             now_local = datetime.now(candidate_zone)
+            start_local = slot.start_utc.astimezone(candidate_zone)
+            time_until_meeting = start_local - now_local
 
             immediate_map: Dict[str, ReminderPlan] = {}
             future_plans: List[ReminderPlan] = []
 
             for plan in plans:
                 if plan.run_at_local <= now_local:
+                    # Если время напоминания уже прошло, проверяем сколько времени до встречи
+                    # Не отправляем immediate, если до встречи еще достаточно времени
+                    if time_until_meeting > _MIN_TIME_BEFORE_IMMEDIATE:
+                        logger.info(
+                            "reminder.schedule.skip_immediate",
+                            extra={
+                                "slot_id": slot_id,
+                                "kind": plan.kind.value,
+                                "time_until_meeting_minutes": time_until_meeting.total_seconds() / 60,
+                                "reason": "too_far_from_meeting",
+                            },
+                        )
+                        continue
+
                     group = _immediate_group(plan.kind)
                     current = immediate_map.get(group)
                     if current is None or plan.run_at_local > current.run_at_local:
@@ -456,7 +473,15 @@ def get_reminder_service() -> ReminderService:
 
 def create_scheduler(redis_url: Optional[str]) -> AsyncIOScheduler:
     if redis_url:
-        jobstores = {"default": RedisJobStore.from_url(redis_url)}
+        try:
+            if hasattr(RedisJobStore, "from_url"):
+                jobstores = {"default": RedisJobStore.from_url(redis_url)}
+            else:
+                logger.warning("RedisJobStore.from_url is unavailable; falling back to in-memory job store")
+                jobstores = {"default": MemoryJobStore()}
+        except Exception:
+            logger.exception("Failed to create RedisJobStore; falling back to in-memory job store")
+            jobstores = {"default": MemoryJobStore()}
     else:
         jobstores = {"default": MemoryJobStore()}
     return AsyncIOScheduler(jobstores=jobstores, timezone="UTC")

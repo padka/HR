@@ -15,6 +15,7 @@ from backend.core.settings import get_settings
 
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
+from .middleware import InboundChatLoggingMiddleware, TelegramIdentityMiddleware
 from .services import (
     NotificationService,
     StateManager,
@@ -27,6 +28,7 @@ from .reminders import (
 )
 from .notifications.bootstrap import (
     configure_notification_service as bootstrap_notification_service,
+    reset_notification_service as reset_bootstrap_notification_service,
 )
 from .state_store import build_state_manager
 
@@ -60,6 +62,8 @@ def create_bot(token: str | None = None) -> Bot:
 
 def create_dispatcher() -> Dispatcher:
     dispatcher = Dispatcher()
+    dispatcher.update.middleware(TelegramIdentityMiddleware())
+    dispatcher.message.middleware(InboundChatLoggingMiddleware())
     register_routers(dispatcher)
     return dispatcher
 
@@ -130,6 +134,7 @@ async def main() -> None:
     finally:
         await reminder_service.shutdown()
         await notification_service.shutdown()
+        reset_bootstrap_notification_service()
         # Disconnect cache
         try:
             if redis_url:

@@ -23,7 +23,9 @@ from backend.apps.admin_ui.services.candidates import (
     INTERVIEW_FIELD_TYPES,
     INTERVIEW_RECOMMENDATION_VALUES,
     candidate_filter_options,
+    STATUS_DEFINITIONS,
     delete_candidate,
+    delete_all_candidates,
     get_candidate_detail,
     list_candidates,
     save_interview_notes,
@@ -41,13 +43,13 @@ from backend.apps.admin_ui.services.slots import (
     ManualSlotError,
     recruiters_for_slot_form,
 )
-from backend.apps.admin_ui.utils import recruiter_time_to_utc
 from backend.apps.bot.services import approve_slot_and_notify
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.core.sanitizers import sanitize_plain_text
+from backend.core.time_utils import parse_form_datetime
 from backend.domain.candidates.models import User
-from backend.domain.models import Slot, City, Recruiter, SlotStatus
+from backend.domain.models import Slot, City, Recruiter, SlotStatus, OutboxNotification
 from backend.domain.repositories import find_city_by_plain_name
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -326,6 +328,58 @@ async def candidates_list(
     }
     return templates.TemplateResponse(request, "candidates_list.html", context)
 
+@router.get("/detailization", response_class=HTMLResponse)
+async def candidates_detailization(
+    request: Request,
+    status: Optional[str] = Query(default=None, description="hired or not_hired"),
+    q: Optional[str] = Query(default=None, alias="search"),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=100, ge=5, le=200),
+) -> HTMLResponse:
+    status_filter = status if status in {"hired", "not_hired"} else None
+    statuses = [status_filter] if status_filter else ["hired", "not_hired"]
+    result = await list_candidates(
+        page=page,
+        per_page=per_page,
+        search=q,
+        city=None,
+        is_active=None,
+        rating=None,
+        has_tests=None,
+        has_messages=None,
+        stage=None,
+        statuses=statuses,
+        recruiter_id=None,
+        city_ids=None,
+        date_from=None,
+        date_to=None,
+        test1_status=None,
+        test2_status=None,
+        sort=None,
+        sort_dir=None,
+        calendar_mode=None,
+        pipeline="interview",
+    )
+    views = result.get("views")
+    list_groups = {}
+    if views:
+        list_groups = getattr(views, "list", None) or (views.get("list") if isinstance(views, dict) else {}) or {}
+    summary_block = result.get("summary", {}) if result else {}
+    status_totals = summary_block.get("status_totals", {}) if isinstance(summary_block, dict) else {}
+    status_labels = STATUS_DEFINITIONS
+    context = {
+        "request": request,
+        "list_groups": list_groups,
+        "selected_status": status_filter or "all",
+        "search_query": (q or "").strip(),
+        "total": result.get("total", 0) if result else 0,
+        "status_totals": status_totals,
+        "status_labels": status_labels,
+        "page": result.get("page", page),
+        "pages_total": result.get("pages_total", 1),
+    }
+    return templates.TemplateResponse(request, "candidates_detailization.html", context)
+
 
 @router.get("/new", response_class=HTMLResponse)
 async def candidates_new(request: Request) -> HTMLResponse:
@@ -417,7 +471,7 @@ async def candidates_update_status(
     """Update candidate status (HIRED or NOT_HIRED)."""
     _ = csrf_token  # ensure parameter consumed for FastAPI/CSRF validation
     # Only allow manual status changes to HIRED or NOT_HIRED
-    allowed_statuses = ["hired", "not_hired"]
+    allowed_statuses = ["hired", "not_hired", "intro_day_declined_day_of"]
     status_normalized = status.strip().lower()
 
     if status_normalized not in allowed_statuses:
@@ -440,13 +494,16 @@ async def candidates_update_status(
     from backend.domain.candidates.status_service import (
         set_status_hired,
         set_status_not_hired,
+        set_status_intro_day_declined_day_of,
     )
 
     try:
         if status_normalized == "hired":
             success = await set_status_hired(telegram_id, force=True)
-        else:  # not_hired
+        elif status_normalized == "not_hired":
             success = await set_status_not_hired(telegram_id, force=True)
+        else:  # intro_day_declined_day_of
+            success = await set_status_intro_day_declined_day_of(telegram_id, force=True)
 
         if not success:
             return RedirectResponse(
@@ -596,6 +653,15 @@ async def candidates_delete(candidate_id: int):
     return RedirectResponse(url="/candidates", status_code=303)
 
 
+@router.post("/delete-all")
+async def candidates_delete_all():
+    deleted = await delete_all_candidates()
+    return RedirectResponse(
+        url=f"/candidates?bulk_deleted={deleted}",
+        status_code=303,
+    )
+
+
 @router.post("/{candidate_id}/status")
 async def candidates_set_status(
     candidate_id: int,
@@ -722,14 +788,14 @@ async def candidates_schedule_slot_submit(
     if city is None:
         errors.append("Выберите город для собеседования.")
 
-    slot_tz = (
-        (getattr(city, "tz", None) if city else None)
-        or (getattr(recruiter, "tz", None) if recruiter else None)
-        or DEFAULT_TZ
-    )
-    dt_utc = recruiter_time_to_utc(date, time, slot_tz) if not errors else None
-    if not dt_utc:
-        errors.append("Укажите корректные дату и время.")
+    app_timezone = get_settings().timezone or DEFAULT_TZ
+    slot_tz = (getattr(city, "tz", None) if city else None) or app_timezone
+    dt_utc = None
+    if not errors:
+        try:
+            dt_utc = parse_form_datetime(f"{date}T{time}", slot_tz)
+        except ValueError:
+            errors.append("Укажите корректные дату и время.")
 
     if errors:
         context = {
@@ -827,6 +893,7 @@ async def candidates_schedule_intro_day_form(
         city_tz = getattr(recruiter, "tz", None)
     city_tz = city_tz or DEFAULT_TZ
     tz_label = tz_display(city_tz)
+    cities_list = await _list_active_cities()
 
     context = {
         "request": request,
@@ -837,8 +904,51 @@ async def candidates_schedule_intro_day_form(
         "city_missing": city_record is None,
         "recruiter_missing": city_record is not None and recruiter is None,
         "errors": [],
+        "cities": cities_list,
     }
     return templates.TemplateResponse(request, "schedule_intro_day.html", context)
+
+
+@router.post("/{candidate_id}/assign-city", response_class=HTMLResponse)
+async def candidates_assign_city(
+    request: Request,
+    candidate_id: int,
+    city_id: int = Form(...),
+) -> HTMLResponse:
+    """Assign city to candidate inline to continue intro day scheduling."""
+
+    detail = await get_candidate_detail(candidate_id)
+    if not detail:
+        return RedirectResponse(url="/candidates", status_code=303)
+
+    user = detail["user"]
+    cities_list = await _list_active_cities()
+
+    async with async_session() as session:
+        city = await session.get(City, city_id)
+        if city is None:
+            context = {
+                "request": request,
+                "candidate": user,
+                "city": None,
+                "city_timezone": DEFAULT_TZ,
+                "city_timezone_label": tz_display(DEFAULT_TZ),
+                "city_missing": True,
+                "recruiter_missing": False,
+                "errors": ["Город не найден. Попробуйте выбрать другой."],
+                "cities": cities_list,
+            }
+            return templates.TemplateResponse(request, "schedule_intro_day.html", context, status_code=400)
+
+        await update_candidate(
+            user.id,
+            telegram_id=user.telegram_id,
+            fio=user.fio,
+            city=getattr(city, "name_plain", None) or city.name,
+            is_active=user.is_active,
+        )
+
+    return RedirectResponse(url=f"/candidates/{candidate_id}/schedule-intro-day", status_code=303)
 
 
 @router.post("/{candidate_id}/schedule-intro-day")
@@ -860,6 +970,7 @@ async def candidates_schedule_intro_day_submit(
 
     user = detail["user"]
     errors = []
+    cities_list = await _list_active_cities()
 
     city_record = await _load_city_with_recruiters(user.city)
     recruiter = _select_primary_recruiter(city_record)
@@ -893,6 +1004,7 @@ async def candidates_schedule_intro_day_submit(
             "city_missing": city_record is None,
             "recruiter_missing": city_record is not None and recruiter is None,
             "errors": errors,
+            "cities": cities_list,
         }
         return templates.TemplateResponse(request, "schedule_intro_day.html", context, status_code=400)
 
@@ -923,6 +1035,7 @@ async def candidates_schedule_intro_day_submit(
                 "city_missing": False,
                 "recruiter_missing": False,
                 "errors": errors,
+                "cities": cities_list,
             }
             return templates.TemplateResponse(request, "schedule_intro_day.html", context, status_code=400)
 
@@ -944,6 +1057,16 @@ async def candidates_schedule_intro_day_submit(
         session.add(slot)
         await session.commit()
         await session.refresh(slot)
+
+        # Mark candidate as приглашён на ОД даже если предыдущие этапы не были сохранены
+        try:
+            from backend.domain.candidates.status_service import set_status_intro_day_scheduled
+            await set_status_intro_day_scheduled(user.telegram_id, force=True)
+        except Exception:
+            logger.exception(
+                "Failed to update candidate status to intro_day_scheduled",
+                extra={"candidate_id": candidate_id, "telegram_id": user.telegram_id},
+            )
 
         # Send invitation notification
         # First, mark any old intro_day_invitation notifications as stale (to avoid idempotency issues)

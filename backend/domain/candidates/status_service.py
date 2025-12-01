@@ -182,7 +182,7 @@ async def set_status_test2_completed(telegram_id: int) -> bool:
     """Set status when candidate completes Test 2."""
     try:
         return await update_candidate_status(
-            telegram_id, CandidateStatus.TEST2_COMPLETED
+            telegram_id, CandidateStatus.TEST2_COMPLETED, force=True
         )
     except StatusTransitionError as e:
         logger.error(f"Failed to set TEST2_COMPLETED: {e}")
@@ -200,22 +200,22 @@ async def set_status_test2_failed(telegram_id: int) -> bool:
         return False
 
 
-async def set_status_intro_day_scheduled(telegram_id: int) -> bool:
+async def set_status_intro_day_scheduled(telegram_id: int, *, force: bool = False) -> bool:
     """Set status when intro day is scheduled."""
     try:
         return await update_candidate_status(
-            telegram_id, CandidateStatus.INTRO_DAY_SCHEDULED
+            telegram_id, CandidateStatus.INTRO_DAY_SCHEDULED, force=force
         )
     except StatusTransitionError as e:
         logger.error(f"Failed to set INTRO_DAY_SCHEDULED: {e}")
         return False
 
 
-async def set_status_intro_day_confirmed_preliminary(telegram_id: int) -> bool:
+async def set_status_intro_day_confirmed_preliminary(telegram_id: int, *, force: bool = False) -> bool:
     """Set status when candidate confirms intro day attendance (preliminary)."""
     try:
         return await update_candidate_status(
-            telegram_id, CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY
+            telegram_id, CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY, force=force
         )
     except StatusTransitionError as e:
         logger.error(f"Failed to set INTRO_DAY_CONFIRMED_PRELIMINARY: {e}")
@@ -233,11 +233,11 @@ async def set_status_intro_day_declined_invitation(telegram_id: int) -> bool:
         return False
 
 
-async def set_status_intro_day_confirmed_day_of(telegram_id: int) -> bool:
+async def set_status_intro_day_confirmed_day_of(telegram_id: int, *, force: bool = False) -> bool:
     """Set status when candidate confirms attendance on intro day (2h before)."""
     try:
         return await update_candidate_status(
-            telegram_id, CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF
+            telegram_id, CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF, force=force
         )
     except StatusTransitionError as e:
         logger.error(f"Failed to set INTRO_DAY_CONFIRMED_DAY_OF: {e}")

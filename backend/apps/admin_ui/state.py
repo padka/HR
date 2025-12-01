@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -34,6 +35,7 @@ from backend.apps.bot.services import (
 )
 from backend.apps.bot.notifications.bootstrap import (
     configure_notification_service as bootstrap_notification_service,
+    reset_notification_service as reset_bootstrap_notification_service,
 )
 from backend.apps.bot.state_store import build_state_manager
 from backend.core.settings import get_settings
@@ -167,6 +169,8 @@ class BotIntegration:
             await self.notification_service.shutdown()
         except Exception:  # pragma: no cover - cleanup issues
             logger.exception("Failed to shutdown notification service cleanly")
+        finally:
+            reset_bootstrap_notification_service()
         if self.notification_watch_task is not None:
             self.notification_watch_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -236,6 +240,14 @@ def _should_autostart_bot(settings) -> bool:
 
 async def _run_bot_polling(bot: Bot, dispatcher: Dispatcher, stop_event: asyncio.Event) -> None:
     backoff_seconds = 3
+    loop = asyncio.get_running_loop()
+    registered_signals: list[int] = []
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+            registered_signals.append(sig)
+        except (NotImplementedError, RuntimeError):
+            continue
     while not stop_event.is_set():
         try:
             await bot.delete_webhook(drop_pending_updates=True)
@@ -258,28 +270,32 @@ async def _run_bot_polling(bot: Bot, dispatcher: Dispatcher, stop_event: asyncio
             await asyncio.sleep(backoff_seconds)
     with suppress(Exception):
         await dispatcher.stop_polling()
+    for sig in registered_signals:
+        with suppress((RuntimeError, ValueError)):
+            loop.remove_signal_handler(sig)
 
 
 async def setup_bot_state(app: FastAPI) -> BotIntegration:
     """Initialise the bot state manager for the admin application."""
 
     settings = get_settings()
+    redis_url = getattr(settings, "redis_url", None) or ""
+    force_memory = settings.environment == "test" or not redis_url or getattr(settings, "notification_broker", "memory") != "redis"
     state_manager = build_state_manager(
-        redis_url=getattr(settings, "redis_url", None),
+        redis_url=None if force_memory else redis_url,
         ttl_seconds=getattr(settings, "state_ttl_seconds", 604800),
     )
     bot, configured = _build_bot(settings)
 
     switch = IntegrationSwitch(initial=settings.bot_integration_enabled)
-    scheduler = create_scheduler(getattr(settings, "redis_url", None))
+    scheduler = create_scheduler(None if force_memory else redis_url)
 
-    redis_url = getattr(settings, "redis_url", None)
     broker_choice = (getattr(settings, "notification_broker", "memory") or "memory").strip().lower()
     broker_instance: Optional[object] = None
 
     app.state.notification_broker_status = "disabled"
 
-    if redis_url and Redis is not None and broker_choice != "memory":
+    if not force_memory and redis_url and Redis is not None and broker_choice != "memory":
         broker_instance = await _initialize_redis_broker_with_retry(redis_url)
         if broker_instance is not None:
             logger.info("Redis notification broker initialized (environment: %s)", settings.environment)
@@ -289,15 +305,15 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
                 "Redis notification broker could not be initialized; starting in degraded mode."
             )
             app.state.notification_broker_status = "degraded"
-    elif redis_url and Redis is None:
+    elif not force_memory and redis_url and Redis is None:
         logger.error("Redis client library is missing; notification broker degraded.")
         app.state.notification_broker_status = "degraded"
-    elif not redis_url and settings.environment == "production":
+    elif not force_memory and not redis_url and settings.environment == "production":
         logger.warning("REDIS_URL is required in production; notification broker degraded.")
         app.state.notification_broker_status = "degraded"
 
     if broker_instance is None:
-        if settings.environment != "production" and broker_choice != "redis":
+        if settings.environment != "production" and (force_memory or broker_choice != "redis"):
             logger.warning(
                 "Using InMemoryNotificationBroker (environment: %s). This is only suitable for development/testing.",
                 settings.environment,

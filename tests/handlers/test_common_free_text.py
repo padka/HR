@@ -34,17 +34,18 @@ class DummyStateManager:
 
 
 @pytest.mark.asyncio
-async def test_free_text_sends_welcome_when_state_missing(monkeypatch):
+async def test_free_text_ignores_when_state_missing(monkeypatch):
     manager = DummyStateManager(state=None)
     monkeypatch.setattr(common.services, "get_state_manager", lambda: manager)
 
-    called = {}
-
-    async def fake_send_welcome(user_id: int) -> None:
-        called["user_id"] = user_id
-
     async def fake_handle_test1(message):  # pragma: no cover - defensive
         raise AssertionError("handle_test1_answer should not be called")
+
+    send_called = False
+
+    async def fake_send_welcome(user_id: int) -> None:  # pragma: no cover
+        nonlocal send_called
+        send_called = True
 
     monkeypatch.setattr(common.services, "send_welcome", fake_send_welcome)
     monkeypatch.setattr(common.services, "handle_test1_answer", fake_handle_test1)
@@ -54,7 +55,7 @@ async def test_free_text_sends_welcome_when_state_missing(monkeypatch):
     await common.free_text(message)
 
     assert manager.calls == 1
-    assert called["user_id"] == 42
+    assert send_called is False
 
 
 @pytest.mark.asyncio
@@ -87,15 +88,11 @@ async def test_free_text_delegates_to_test1_handler(monkeypatch):
     manager = DummyStateManager(state={"flow": "interview", "t1_idx": 0})
     monkeypatch.setattr(common.services, "get_state_manager", lambda: manager)
 
-    async def fake_send_welcome(user_id: int) -> None:  # pragma: no cover - defensive
-        raise AssertionError("send_welcome should not be called")
-
     async def fake_handle(message):
         fake_handle.called = True
 
     fake_handle.called = False
 
-    monkeypatch.setattr(common.services, "send_welcome", fake_send_welcome)
     monkeypatch.setattr(common.services, "handle_test1_answer", fake_handle)
 
     message = DummyMessage(user_id=7)
@@ -113,11 +110,14 @@ async def test_free_text_handles_state_errors(monkeypatch):
 
     called = {}
 
-    async def fake_send_welcome(user_id: int) -> None:
-        called["user_id"] = user_id
-
     async def fake_handle_test1(message):  # pragma: no cover - defensive
         raise AssertionError("handle_test1_answer should not be called")
+
+    send_called = False
+
+    async def fake_send_welcome(user_id: int) -> None:  # pragma: no cover
+        nonlocal send_called
+        send_called = True
 
     monkeypatch.setattr(common.services, "send_welcome", fake_send_welcome)
     monkeypatch.setattr(common.services, "handle_test1_answer", fake_handle_test1)
@@ -127,4 +127,4 @@ async def test_free_text_handles_state_errors(monkeypatch):
     await common.free_text(message)
 
     assert manager.calls == 1
-    assert called["user_id"] == 5
+    assert send_called is False

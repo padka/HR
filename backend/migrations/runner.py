@@ -149,7 +149,11 @@ def upgrade_to_head(engine_or_url: Engine | str | None = None) -> None:
                 upgrade = getattr(migration.module, "upgrade", None)
                 if upgrade is None:
                     raise RuntimeError(f"Migration {migration.revision} is missing upgrade()")
-                upgrade(conn)
+                # Support legacy migrations that define upgrade() with no parameters
+                if getattr(upgrade, "__code__", None) and upgrade.__code__.co_argcount == 0:
+                    upgrade()
+                else:
+                    upgrade(conn)
                 _set_current_revision(conn, migration.revision)
     finally:
         if should_dispose:

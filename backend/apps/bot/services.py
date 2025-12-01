@@ -12,7 +12,7 @@ import random
 import time
 import uuid
 from types import SimpleNamespace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, time as datetime_time
 from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
@@ -40,6 +40,8 @@ from pydantic import ValidationError
 
 from backend.core.settings import get_settings
 from backend.domain.candidates import services as candidate_services
+from backend.domain.candidates.status import CandidateStatus
+from backend.domain.candidates.status_service import set_status_waiting_slot
 from backend.domain.models import SlotStatus, Slot
 from backend.apps.bot.events import InterviewSuccessEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -62,7 +64,6 @@ from backend.domain.repositories import (
     get_outbox_queue_depth,
     get_recruiter,
     get_slot,
-    get_message_template,
     city_has_available_slots,
     find_city_by_plain_name,
     notification_log_exists,
@@ -76,6 +77,7 @@ from backend.domain.repositories import (
     update_outbox_entry,
 )
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 
 if TYPE_CHECKING:
     from aiogram import Dispatcher
@@ -161,12 +163,8 @@ def _intro_detail(
 
 
 async def _resolve_intro_day_template_key(city_name: Optional[str]) -> str:
-    base_key = "intro_day_invitation"
-    if not city_name:
-        return base_key
-    city_key = f"intro_day_invitation_{city_name.lower()}"
-    template = await get_message_template(city_key)
-    return city_key if template else base_key
+    # City-specific variations are now resolved by city_id instead of key suffixes.
+    return "intro_day_invitation"
 
 
 async def _send_with_retry(bot: Bot, method: SendMessage, correlation_id: str) -> Any:
@@ -339,10 +337,12 @@ class NotificationService:
         self._poll_gate = asyncio.Semaphore(self._worker_concurrency)
         self._task: Optional[asyncio.Task] = None
         self._poll_tasks: set[asyncio.Task] = set()
+        self._scheduler_jobs: set[asyncio.Task] = set()
         self._claim_idle_ms = 60000
         self._current_message: Optional[BrokerMessage] = None
         self._skipped_runs: int = 0
         self._started: bool = False
+        self._shutting_down: bool = False
         self._loop_enabled: bool = False
         self._watchdog_task: Optional[asyncio.Task] = None
         self._watchdog_interval = max(self._poll_interval * 2, 10.0)
@@ -350,6 +350,7 @@ class NotificationService:
         self._last_poll_ts: float = 0.0
 
     def start(self, *, allow_poll_loop: bool = False) -> None:
+        self._shutting_down = False
         if self._started:
             return
 
@@ -384,6 +385,8 @@ class NotificationService:
         self._ensure_watchdog()
 
     def _enable_poll_loop(self) -> None:
+        if self._shutting_down:
+            return
         self._loop_enabled = True
         try:
             loop = asyncio.get_running_loop()
@@ -411,11 +414,17 @@ class NotificationService:
             pass
         self._watchdog_task = None
 
+    async def _await_scheduler_jobs(self) -> None:
+        if not self._scheduler_jobs:
+            return
+        await asyncio.gather(*list(self._scheduler_jobs), return_exceptions=True)
+        self._scheduler_jobs.clear()
+
     async def _watchdog_loop(self) -> None:
         try:
             while True:
                 await asyncio.sleep(self._watchdog_interval)
-                if not self._started:
+                if not self._started or self._shutting_down:
                     return
                 if self._scheduler is not None:
                     job = self._scheduler.get_job(self._job_id)
@@ -455,6 +464,7 @@ class NotificationService:
             logger.exception("notification.worker.watchdog_failed")
 
     async def shutdown(self) -> None:
+        self._shutting_down = True
         self._started = False
         self._loop_enabled = False
         await self._stop_watchdog()
@@ -463,6 +473,7 @@ class NotificationService:
                 self._scheduler.remove_job(self._job_id)
             except Exception:
                 pass
+        await self._await_scheduler_jobs()
         if self._task is not None:
             self._task.cancel()
             try:
@@ -484,6 +495,7 @@ class NotificationService:
                 logger.exception("Failed to close notification broker")
         self._skipped_runs = 0
         self._last_poll_ts = 0.0
+        self._shutting_down = False
 
     def _ensure_scheduler_job(self) -> None:
         if self._scheduler is None:
@@ -814,20 +826,31 @@ class NotificationService:
             raise
 
     async def _scheduled_poll(self) -> None:
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._scheduler_jobs.add(current_task)
         self._poll_tasks = {task for task in self._poll_tasks if not task.done()}
-        if len(self._poll_tasks) >= self._worker_concurrency:
-            await self._handle_poll_skipped(reason="inflight")
-            return
         try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            logger.warning("notification.worker.loop_unavailable")
-            await self._handle_poll_skipped(reason="no_loop")
-            return
+            if not self._started or self._shutting_down:
+                return
+            if len(self._poll_tasks) >= self._worker_concurrency:
+                await self._handle_poll_skipped(reason="inflight")
+                return
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                logger.warning("notification.worker.loop_unavailable")
+                await self._handle_poll_skipped(reason="no_loop")
+                return
 
-        task = loop.create_task(self._poll_once())
-        self._poll_tasks.add(task)
-        task.add_done_callback(self._on_poll_task_done)
+            if self._shutting_down:
+                return
+            task = loop.create_task(self._poll_once())
+            self._poll_tasks.add(task)
+            task.add_done_callback(self._on_poll_task_done)
+        finally:
+            if current_task is not None:
+                self._scheduler_jobs.discard(current_task)
 
     def _on_poll_task_done(self, task: asyncio.Task) -> None:
         self._poll_tasks.discard(task)
@@ -1306,7 +1329,9 @@ class NotificationService:
             "join_link": "",
         }
         rendered = await self._template_provider.render(
-            "candidate_reschedule_prompt", context
+            "candidate_reschedule_prompt",
+            context,
+            city_id=snapshot.candidate_city_id,
         )
         if rendered is None:
             await self._mark_failed(
@@ -1401,7 +1426,9 @@ class NotificationService:
             "join_link": "",
         }
         rendered = await self._template_provider.render(
-            "candidate_rejection", context
+            "candidate_rejection",
+            context,
+            city_id=snapshot.candidate_city_id,
         )
         if rendered is None:
             await self._mark_failed(
@@ -1556,7 +1583,9 @@ class NotificationService:
             "join_link": getattr(recruiter, "telemost_url", "") or "",
         }
         rendered = await self._template_provider.render(
-            "recruiter_candidate_confirmed_notice", context
+            "recruiter_candidate_confirmed_notice",
+            context,
+            city_id=getattr(slot, "city_id", None),
         )
         if rendered is None:
             await self._mark_failed(
@@ -1758,7 +1787,9 @@ class NotificationService:
             )
             return
 
-        rendered = await self._template_provider.render(template_key, context)
+        rendered = await self._template_provider.render(
+            template_key, context, city_id=getattr(slot, "candidate_city_id", None)
+        )
         if rendered is None:
             await self._mark_failed(
                 item,
@@ -1940,11 +1971,15 @@ class NotificationService:
         # Try to render a city-specific template only when it actually exists to avoid
         # silently downgrading to the generic status message.
         template_key = await _resolve_intro_day_template_key(city_name)
-        rendered = await self._template_provider.render(template_key, context)
+        rendered = await self._template_provider.render(
+            template_key, context, city_id=slot.candidate_city_id
+        )
 
         # If a city-specific template failed to render, fall back to the generic one.
         if rendered is None and template_key != "intro_day_invitation":
-            rendered = await self._template_provider.render("intro_day_invitation", context)
+            rendered = await self._template_provider.render(
+                "intro_day_invitation", context, city_id=slot.candidate_city_id
+            )
 
         if rendered is None:
             # Fallback to old template system (city-specific templates)
@@ -2069,7 +2104,7 @@ class NotificationService:
         # Update candidate status to INTRO_DAY_SCHEDULED after successful send
         try:
             from backend.domain.candidates.status_service import set_status_intro_day_scheduled
-            await set_status_intro_day_scheduled(candidate_id)
+            await set_status_intro_day_scheduled(candidate_id, force=True)
         except Exception:
             logger.exception("Failed to update candidate status to INTRO_DAY_SCHEDULED for candidate %s", candidate_id)
 
@@ -2499,6 +2534,12 @@ def get_notification_service() -> NotificationService:
     if _notification_service is None:
         raise NotificationNotConfigured("Notification service is not configured")
     return _notification_service
+
+
+def reset_notification_service() -> None:
+    """Forget the cached notification service (used between app restarts)."""
+    global _notification_service
+    _notification_service = None
 
 
 @dataclass
@@ -3234,6 +3275,10 @@ async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city
 async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
     state_manager = get_state_manager()
     bot = get_bot()
+    try:
+        await candidate_services.set_conversation_mode(user_id, "flow")
+    except Exception:  # pragma: no cover - best effort
+        logger.debug("Failed to reset conversation mode for %s", user_id, exc_info=True)
     await state_manager.set(
         user_id,
         State(
@@ -3253,6 +3298,7 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
             picked_slot_id=None,
             test1_payload={},
             username=username or "",  # Save username for later use
+            t1_last_hint_sent=False,
         ),
     )
     intro = await templates.tpl(None, "t1_intro")
@@ -3400,6 +3446,7 @@ async def send_test1_question(user_id: int) -> None:
         state["t1_last_question_text"] = base_text
         state["t1_current_idx"] = idx
         state["t1_requires_free_text"] = requires_free_text
+        state["t1_last_hint_sent"] = False
         return state, None
 
     await state_manager.atomic_update(user_id, _store_prompt)
@@ -3650,6 +3697,16 @@ async def handle_test1_answer(message: Message) -> None:
     if not state or state.get("flow") != "interview":
         return
 
+    try:
+        if await candidate_services.is_chat_mode_active(user_id):
+            logger.info(
+                "Chat mode active; skipping questionnaire response",
+                extra={"user_id": user_id},
+            )
+            return
+    except Exception:  # pragma: no cover - conversation mode failures shouldn't break flow
+        logger.debug("Failed to check conversation mode for %s", user_id, exc_info=True)
+
     # Update username if available (for existing users)
     username = getattr(message.from_user, "username", None)
     if username and state.get("username") != username:
@@ -3671,18 +3728,18 @@ async def handle_test1_answer(message: Message) -> None:
         )
         return
 
-    prompt_id = state.get("t1_last_prompt_id")
-    if prompt_id:
-        reply = message.reply_to_message
-        if not reply or reply.message_id != prompt_id:
-            await message.reply(
-                "Нажмите «Ответить» на сообщение с вопросом, чтобы зафиксировать ответ."
-            )
-            return
-
-    answer_text = (message.text or "").strip()
+    answer_text = (message.text or message.caption or "").strip()
     if not answer_text:
-        await message.reply("Ответ не распознан. Напишите текст или выберите вариант.")
+        if not state.get("t1_last_hint_sent"):
+            await message.reply(
+                "Нажмите «Ответить» на сообщение с вопросом или напишите текст, чтобы зафиксировать ответ."
+            )
+
+            def _mark_hint_sent(st: State) -> Tuple[State, None]:
+                st["t1_last_hint_sent"] = True
+                return st, None
+
+            await state_manager.atomic_update(user_id, _mark_hint_sent)
         return
 
     result = await save_test1_answer(user_id, question, answer_text)
@@ -3825,7 +3882,7 @@ async def finalize_test1(user_id: int) -> None:
     lines = [
         "📋 Анкета кандидата (Тест 1)",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Дата: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
         f"TG ID: {user_id}",
         f"ФИО: {state.get('fio') or '—'}",
         f"Город: {state.get('city_name') or '—'}",
@@ -3933,6 +3990,13 @@ async def finalize_test1(user_id: int) -> None:
                                 "Failed to notify recruiters about waiting_slot for candidate %s",
                                 candidate.telegram_id
                             )
+                        try:
+                            await send_manual_scheduling_prompt(candidate.telegram_id)
+                        except Exception:
+                            logger.exception(
+                                "Failed to prompt candidate %s for manual schedule window",
+                                candidate.telegram_id,
+                            )
         except Exception:
             logger.exception("Failed to update candidate Test1/slot status for user %s", candidate.telegram_id)
 
@@ -3993,7 +4057,7 @@ async def send_test2_question(user_id: int, q_index: int) -> None:
         attempt = attempts.setdefault(
             q_index, {"answers": [], "is_correct": False, "start_time": None}
         )
-        attempt["start_time"] = datetime.now()
+        attempt["start_time"] = datetime.now(timezone.utc)
         return state, None
 
     await state_manager.atomic_update(user_id, _mark_start)
@@ -4026,7 +4090,7 @@ async def handle_test2_answer(callback: CallbackQuery) -> None:
 
     question = TEST2_QUESTIONS[q_index]
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     correct_answer = question.get("correct")
 
     def _apply(state: State) -> Tuple[State, Dict[str, Any]]:
@@ -4145,7 +4209,7 @@ async def finalize_test2(user_id: int) -> None:
     report_lines = [
         "📋 Отчёт по Тесту 2",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Дата: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
         f"TG ID: {user_id}",
         f"ФИО: {fio}",
         f"Город: {city_name or '—'}",
@@ -4253,7 +4317,7 @@ async def finalize_test2(user_id: int) -> None:
     # Update candidate status to TEST2_COMPLETED
     try:
         from backend.domain.candidates.status_service import set_status_test2_completed
-        await set_status_test2_completed(user_id)
+        await set_status_test2_completed(user_id, force=True)
     except Exception:
         logger.exception("Failed to update candidate status to TEST2_COMPLETED for user %s", user_id)
 
@@ -4273,6 +4337,103 @@ async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> 
 async def handle_home_start(callback: CallbackQuery) -> None:
     await callback.answer()
     await begin_interview(callback.from_user.id)
+
+
+_AVAILABILITY_RANGE_RE = re.compile(
+    r"(?P<from_h>\d{1,2})(?:[:.](?P<from_m>\d{2}))?\s*[-–—]\s*(?P<to_h>\d{1,2})(?:[:.](?P<to_m>\d{2}))?"
+)
+_AVAILABILITY_DATE_RE = re.compile(
+    r"(?P<day>\d{1,2})[./](?P<month>\d{1,2})(?:[./](?P<year>\d{2,4}))?"
+)
+_KEYWORD_DATE_OFFSETS = {
+    "послезавтра": 2,
+    "завтра": 1,
+    "сегодня": 0,
+}
+
+
+def _clamp(value: int, *, low: int, high: int) -> int:
+    return max(low, min(value, high))
+
+
+def _parse_manual_availability_window(
+    text: str,
+    tz_label: Optional[str],
+) -> Tuple[Optional[datetime], Optional[datetime]]:
+    """Attempt to parse candidate-provided availability window."""
+
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None, None
+
+    range_match = _AVAILABILITY_RANGE_RE.search(cleaned)
+    if not range_match:
+        return None, None
+
+    try:
+        start_hour = _clamp(int(range_match.group("from_h")), low=0, high=23)
+    except (TypeError, ValueError):
+        start_hour = 0
+    try:
+        start_min = _clamp(int(range_match.group("from_m") or 0), low=0, high=59)
+    except (TypeError, ValueError):
+        start_min = 0
+    try:
+        end_hour = _clamp(int(range_match.group("to_h")), low=0, high=23)
+    except (TypeError, ValueError):
+        end_hour = 0
+    try:
+        end_min = _clamp(int(range_match.group("to_m") or 0), low=0, high=59)
+    except (TypeError, ValueError):
+        end_min = 0
+
+    tzinfo = _safe_zone(tz_label or DEFAULT_TZ)
+    now_local = datetime.now(tzinfo)
+    target_date = None
+
+    date_match = _AVAILABILITY_DATE_RE.search(cleaned)
+    if date_match:
+        try:
+            day = int(date_match.group("day"))
+            month = int(date_match.group("month"))
+            year_raw = date_match.group("year")
+            if year_raw:
+                year = int(year_raw)
+                if year < 100:
+                    year += 2000
+            else:
+                year = now_local.year
+            candidate_date = date(year, month, day)
+            if not year_raw and candidate_date < now_local.date():
+                candidate_date = date(year + 1, month, day)
+            target_date = candidate_date
+        except ValueError:
+            target_date = None
+
+    if target_date is None:
+        lowered = cleaned.lower()
+        for keyword, offset in _KEYWORD_DATE_OFFSETS.items():
+            if keyword in lowered:
+                target_date = (now_local + timedelta(days=offset)).date()
+                break
+
+    if target_date is None:
+        target_date = now_local.date()
+        candidate_start = datetime.combine(target_date, time(start_hour, start_min), tzinfo=tzinfo)
+        if candidate_start <= now_local - timedelta(minutes=30):
+            target_date = target_date + timedelta(days=1)
+
+    start_dt = datetime.combine(target_date, datetime_time(start_hour, start_min), tzinfo=tzinfo)
+    end_date = target_date
+    end_dt = datetime.combine(end_date, datetime_time(end_hour, end_min), tzinfo=tzinfo)
+    if end_dt <= start_dt:
+        end_dt = datetime.combine(
+            target_date + timedelta(days=1),
+            datetime_time(end_hour, end_min),
+            tzinfo=tzinfo,
+        )
+
+    return start_dt, end_dt
 
 
 async def send_manual_scheduling_prompt(user_id: int) -> bool:
@@ -4301,51 +4462,104 @@ async def send_manual_scheduling_prompt(user_id: int) -> bool:
     message = await templates.tpl(city_id, "manual_schedule_prompt")
     if not message:
         message = (
-            "Свободных слотов сейчас нет. Напишите, пожалуйста, когда вам удобно, "
-            "и мы подберём время вручную."
+            "Свободных слотов в вашем городе сейчас нет.\n"
+            "Напишите, пожалуйста, когда вам удобно, и мы постараемся выделить время.\n"
+            "Чтобы ускорить назначение, укажите диапазон времени: например, 25.07 12:00-16:00 "
+            "или завтра 10:00-13:00."
         )
 
-    reply_markup: Optional[InlineKeyboardMarkup] = None
-    recruiter_label: Optional[str] = None
-
-    if city_id is not None:
-        try:
-            city = await get_city(city_id)
-        except Exception:
-            city = None
-
-        recruiter = None
-        if city is not None:
-            recruiters = list(getattr(city, "recruiters", []) or [])
-            for candidate in recruiters:
-                if candidate is None:
-                    continue
-                if getattr(candidate, "active", True):
-                    recruiter = candidate
-                    break
-
-        if recruiter and recruiter.tg_chat_id and recruiter.tg_chat_id > 0:
-            recruiter_label = recruiter.name.strip() or "рекрутёром"
-            button = InlineKeyboardButton(
-                text=f"Написать {recruiter_label}",
-                url=f"tg://user?id={int(recruiter.tg_chat_id)}",
-            )
-            reply_markup = InlineKeyboardMarkup(inline_keyboard=[[button]])
-
-    if recruiter_label:
-        safe_label = html.escape(recruiter_label)
-        message = (
-            f"{message}\n\nНажмите кнопку ниже, чтобы написать {safe_label}."
-        )
-
-    await bot.send_message(user_id, message, reply_markup=reply_markup)
+    await bot.send_message(
+        user_id,
+        message,
+        reply_markup=ForceReply(selective=True, input_field_placeholder="25.07 12:00-16:00"),
+    )
 
     def _mark_prompt_sent(st: State) -> Tuple[State, None]:
         st["manual_contact_prompt_sent"] = True
+        st["manual_availability_expected"] = True
         return st, None
 
     await state_manager.atomic_update(user_id, _mark_prompt_sent)
 
+    return True
+
+
+def _format_manual_window_label(
+    start_dt: Optional[datetime],
+    end_dt: Optional[datetime],
+    tz_label: Optional[str],
+) -> Optional[str]:
+    if not start_dt or not end_dt:
+        return None
+    tzinfo = _safe_zone(tz_label or DEFAULT_TZ)
+    start_local = start_dt.astimezone(tzinfo)
+    end_local = end_dt.astimezone(tzinfo)
+    if start_local.date() == end_local.date():
+        date_part = start_local.strftime("%d.%m")
+        return f"{date_part} {start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')}"
+    return f"{start_local.strftime('%d.%m %H:%M')} – {end_local.strftime('%d.%m %H:%M')}"
+
+
+async def record_manual_availability_response(user_id: int, text: str) -> bool:
+    """Persist candidate-provided availability window from manual prompt."""
+    payload = (text or "").strip()
+    if not payload:
+        return False
+
+    state_manager = get_state_manager()
+    try:
+        state = await state_manager.get(user_id)
+    except Exception:
+        state = None
+    if not isinstance(state, dict):
+        state = {}
+
+    tz_label = state.get("candidate_tz") or DEFAULT_TZ
+    start_local, end_local = _parse_manual_availability_window(payload, tz_label)
+    start_utc = start_local.astimezone(timezone.utc) if start_local else None
+    end_utc = end_local.astimezone(timezone.utc) if end_local else None
+
+    db_user = await candidate_services.save_manual_slot_response(
+        telegram_id=user_id,
+        window_start=start_utc,
+        window_end=end_utc,
+        note=payload[:1000],
+        timezone_label=tz_label,
+    )
+
+    if db_user and db_user.candidate_status not in {
+        CandidateStatus.WAITING_SLOT,
+        CandidateStatus.STALLED_WAITING_SLOT,
+    }:
+        try:
+            await set_status_waiting_slot(user_id)
+        except Exception:
+            logger.exception("Failed to mark candidate %s as waiting_slot", user_id)
+
+    window_label = _format_manual_window_label(start_local, end_local, tz_label)
+    safe_window = html.escape(window_label) if window_label else None
+    safe_payload = html.escape(payload)
+    if safe_window:
+        ack = (
+            f"✅ Спасибо! Зафиксировали диапазон <b>{safe_window}</b>.\n"
+            "Рекрутёр свяжется, как только появится свободное окно."
+        )
+    else:
+        ack = (
+            "✅ Спасибо! Мы передали ваши пожелания рекрутёрам.\n"
+            f"<code>{safe_payload}</code>"
+        )
+
+    bot = get_bot()
+    await bot.send_message(user_id, ack)
+
+    def _clear_prompt(st: State) -> Tuple[State, None]:
+        st["manual_availability_expected"] = False
+        st["manual_contact_prompt_sent"] = True
+        st["manual_availability_last_note"] = payload
+        return st, None
+
+    await state_manager.atomic_update(user_id, _clear_prompt)
     return True
 
 
@@ -4670,6 +4884,7 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
         context,
         locale="ru",
         channel="tg",
+        city_id=getattr(slot, "candidate_city_id", None),
     )
     if rendered is not None:
         return rendered.text, tz, city_name, rendered.key, rendered.version
@@ -5085,11 +5300,12 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
 
     if result.status == "confirmed":
         try:
-            await _send_with_retry(
-                bot,
-                SendMessage(chat_id=slot.candidate_tg_id, text=link_text),
-                correlation_id=f"attendance:{slot.id}:{uuid.uuid4().hex}",
-            )
+            if getattr(slot, "purpose", "interview") != "intro_day":
+                await _send_with_retry(
+                    bot,
+                    SendMessage(chat_id=slot.candidate_tg_id, text=link_text),
+                    correlation_id=f"attendance:{slot.id}:{uuid.uuid4().hex}",
+                )
         except Exception:
             logger.exception("Failed to send attendance confirmation to candidate")
             await callback.answer("Не удалось отправить ссылку.", show_alert=True)
@@ -5120,10 +5336,10 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
 
                 if current_status == CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY:
                     # This is a day-of confirmation (responding to 3H reminder)
-                    await set_status_intro_day_confirmed_day_of(slot.candidate_tg_id)
+                    await set_status_intro_day_confirmed_day_of(slot.candidate_tg_id, force=True)
                 else:
                     # This is the initial confirmation
-                    await set_status_intro_day_confirmed_preliminary(slot.candidate_tg_id)
+                    await set_status_intro_day_confirmed_preliminary(slot.candidate_tg_id, force=True)
             except Exception:
                 logger.exception("Failed to update intro day confirmation status for candidate %s", slot.candidate_tg_id)
 
@@ -5176,19 +5392,32 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
             pass
 
     st = await get_state_manager().get(callback.from_user.id) or {}
+    prompt = await templates.tpl(
+        getattr(slot, "candidate_city_id", None),
+        "att_declined_reason_prompt",
+    )
+    if not prompt:
+        prompt = (
+            "Понимаю. Напишите, пожалуйста, коротко причину отказа, "
+            "чтобы мы могли предложить другой день."
+        )
+    reason_state = {
+        "slot_id": slot.id,
+        "city_id": getattr(slot, "candidate_city_id", None),
+        "recruiter_id": slot.recruiter_id,
+        "start_local": fmt_dt_local(slot.start_utc, slot.candidate_tz or DEFAULT_TZ),
+        "candidate_fio": slot.candidate_fio or "",
+    }
+    try:
+        state_manager = get_state_manager()
+        await state_manager.update(callback.from_user.id, {"awaiting_intro_decline_reason": reason_state})
+    except Exception:
+        logger.exception("Failed to set intro decline reason state", extra={"candidate": callback.from_user.id})
     await bot.send_message(
         callback.from_user.id,
-        await templates.tpl(getattr(slot, "candidate_city_id", None), "att_declined"),
+        prompt,
+        reply_markup=ForceReply(selective=True),
     )
-    if st.get("flow") == "intro":
-        await show_recruiter_menu(callback.from_user.id)
-    else:
-        kb = await kb_recruiters(st.get("candidate_tz", DEFAULT_TZ))
-        await bot.send_message(
-            callback.from_user.id,
-            await templates.tpl(getattr(slot, "candidate_city_id", None), "choose_recruiter"),
-            reply_markup=kb,
-        )
 
     try:
         await callback.message.edit_text("Вы отказались от участия. Слот освобождён.")
@@ -5200,6 +5429,75 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
         pass
 
     await callback.answer("Отменено")
+
+
+async def capture_intro_decline_reason(message, state) -> bool:
+    """Handle free-text reason when candidate declines intro day."""
+    reason_payload = state.get("awaiting_intro_decline_reason") or {}
+    slot_id = reason_payload.get("slot_id")
+    if not slot_id:
+        return False
+
+    text = (message.text or message.caption or "").strip()
+    if not text:
+        await message.answer("Напишите, пожалуйста, коротко причину отказа.")
+        return True
+
+    # Persist reason on the candidate profile for analytics
+    try:
+        from backend.core.db import async_session
+        from backend.domain.candidates.models import User
+        async with async_session() as session:
+            user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
+            if user:
+                user.intro_decline_reason = text
+                await session.commit()
+    except Exception:
+        logger.exception("Failed to save intro decline reason", extra={"candidate": message.from_user.id})
+
+    slot = await get_slot(slot_id)
+    bot = get_bot()
+    recruiter_note_sent = False
+    try:
+        if slot and slot.recruiter_id:
+            recruiter = await get_recruiter(slot.recruiter_id)
+        else:
+            recruiter = None
+        if recruiter and recruiter.tg_chat_id:
+            dt_label = reason_payload.get("start_local") or (
+                fmt_dt_local(slot.start_utc, recruiter.tz or DEFAULT_TZ) if slot else ""
+            )
+            candidate_label = reason_payload.get("candidate_fio") or getattr(slot, "candidate_fio", "") or str(message.from_user.id)
+            reason_text = (
+                "❌ Кандидат отказался от ознакомительного дня.\n"
+                f"👤 {candidate_label}\n"
+                f"🗓 {dt_label}\n"
+                f"Причина: {text}"
+            )
+            try:
+                await bot.send_message(recruiter.tg_chat_id, reason_text)
+                recruiter_note_sent = True
+            except Exception:
+                logger.exception("Failed to send intro decline reason to recruiter", extra={"slot_id": slot_id})
+    except Exception:
+        logger.exception("Failed to resolve recruiter for intro decline reason", extra={"slot_id": slot_id})
+
+    ack = "Спасибо, передали информацию рекрутеру."
+    if not recruiter_note_sent:
+        ack = "Спасибо, получили ответ."
+    await message.answer(ack)
+
+    try:
+        state_manager = get_state_manager()
+        def _clear(st: State) -> Tuple[State, None]:
+            st = dict(st or {})
+            st.pop("awaiting_intro_decline_reason", None)
+            return st, None
+        await state_manager.atomic_update(message.from_user.id, _clear)
+    except Exception:
+        logger.exception("Failed to clear intro decline reason state", extra={"candidate": message.from_user.id})
+
+    return True
 
 
 def get_rating(score: float) -> str:
@@ -5221,6 +5519,7 @@ __all__ = [
     "NotificationNotConfigured",
     "configure_notification_service",
     "get_notification_service",
+    "reset_notification_service",
     "calculate_score",
     "configure",
     "finalize_test1",
@@ -5244,6 +5543,7 @@ __all__ = [
     "send_test1_question",
     "send_test2_question",
     "send_manual_scheduling_prompt",
+    "record_manual_availability_response",
     "show_recruiter_menu",
     "slot_local_labels",
     "start_introday_flow",
@@ -5261,6 +5561,7 @@ __all__ = [
     "cancel_slot_reminders",
     "notify_reschedule",
     "notify_rejection",
+    "capture_intro_decline_reason",
     "SlotSnapshot",
     "set_pending_test2",
     "dispatch_interview_success",

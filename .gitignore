@@ -1,14 +1,46 @@
-.venv/
+# Python
 __pycache__/
-*.log
-.env*
-!.env.example
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
 
-# Runtime data (databases, reports, uploads)
-data/
-storage/
-*.sqlite3
+# venv
+.venv/
+venv/
+env/
+
+# IDE/OS
+.DS_Store
+.vscode/
+.idea/
+
+# Tests / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.coverage.*
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Databases / runtime data
 *.db
-uploads/
-report_*.txt
-test1_*.txt
+*.sqlite
+*.sqlite3
+data/
+logs/
+
+# Local tools
+.claude-code/
+
+# Node
+node_modules/
+.next/

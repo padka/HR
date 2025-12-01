@@ -10,7 +10,11 @@ from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.repositories import add_outbox_notification, get_outbox_item
 from backend.apps.bot.broker import InMemoryNotificationBroker
-from backend.apps.bot.services import NotificationService, configure_notification_service
+from backend.apps.bot.services import (
+    NotificationService,
+    configure_notification_service,
+    reset_notification_service,
+)
 
 
 @pytest.mark.asyncio
@@ -116,76 +120,80 @@ async def test_notification_service_processes_intro_day():
     )
     configure_notification_service(service)
 
-    # Create test data
-    async with async_session() as session:
-        city = City(name="Test City 2", tz="Europe/Moscow", active=True)
-        session.add(city)
-        await session.flush()
+    try:
+        # Create test data
+        async with async_session() as session:
+            city = City(name="Test City 2", tz="Europe/Moscow", active=True)
+            session.add(city)
+            await session.flush()
 
-        recruiter = Recruiter(
-            name="Test Recruiter 2",
-            tg_chat_id=123456790,
-            tz="Europe/Moscow",
-            active=True,
+            recruiter = Recruiter(
+                name="Test Recruiter 2",
+                tg_chat_id=123456790,
+                tz="Europe/Moscow",
+                active=True,
+            )
+            recruiter.cities.append(city)
+            session.add(recruiter)
+            await session.flush()
+
+            candidate = User(
+                telegram_id=987654322,
+                username="test_candidate_2",
+                fio="Test Candidate 2",
+                city="Test City 2",
+                candidate_status=CandidateStatus.WAITING_SLOT,
+            )
+            session.add(candidate)
+            await session.flush()
+
+            slot_time = datetime.now(timezone.utc) + timedelta(days=1)
+            slot = Slot(
+                recruiter_id=recruiter.id,
+                city_id=city.id,
+                candidate_city_id=city.id,
+                purpose="intro_day",
+                tz_name="Europe/Moscow",
+                start_utc=slot_time,
+                status=SlotStatus.BOOKED,
+                candidate_tg_id=candidate.telegram_id,
+                candidate_fio=candidate.fio,
+                candidate_tz="Europe/Moscow",
+            )
+            session.add(slot)
+            await session.commit()
+            await session.refresh(slot)
+            slot_id = slot.id
+            candidate_tg_id = candidate.telegram_id
+
+        # Add notification to outbox
+        outbox_entry = await add_outbox_notification(
+            notification_type="intro_day_invitation",
+            booking_id=slot_id,
+            candidate_tg_id=candidate_tg_id,
+            payload={},
         )
-        recruiter.cities.append(city)
-        session.add(recruiter)
-        await session.flush()
 
-        candidate = User(
-            telegram_id=987654322,
-            username="test_candidate_2",
-            fio="Test Candidate 2",
-            city="Test City 2",
-            candidate_status=CandidateStatus.WAITING_SLOT,
-        )
-        session.add(candidate)
-        await session.flush()
+        print(f"📬 Outbox entry created: id={outbox_entry.id}")
 
-        slot_time = datetime.now(timezone.utc) + timedelta(days=1)
-        slot = Slot(
-            recruiter_id=recruiter.id,
-            city_id=city.id,
-            candidate_city_id=city.id,
-            purpose="intro_day",
-            tz_name="Europe/Moscow",
-            start_utc=slot_time,
-            status=SlotStatus.BOOKED,
-            candidate_tg_id=candidate.telegram_id,
-            candidate_fio=candidate.fio,
-            candidate_tz="Europe/Moscow",
-        )
-        session.add(slot)
-        await session.commit()
-        await session.refresh(slot)
-        slot_id = slot.id
-        candidate_tg_id = candidate.telegram_id
+        # Check if notification service can claim the outbox entry
+        from backend.domain.repositories import claim_outbox_batch
 
-    # Add notification to outbox
-    outbox_entry = await add_outbox_notification(
-        notification_type="intro_day_invitation",
-        booking_id=slot_id,
-        candidate_tg_id=candidate_tg_id,
-        payload={},
-    )
+        batch = await claim_outbox_batch(batch_size=10)
+        print(f"📥 Claimed batch size: {len(batch)}")
 
-    print(f"📬 Outbox entry created: id={outbox_entry.id}")
+        if batch:
+            for item in batch:
+                print(f"   - Outbox ID: {item.id}, Type: {item.type}, Booking ID: {item.booking_id}")
 
-    # Check if notification service can claim the outbox entry
-    from backend.domain.repositories import claim_outbox_batch
+        # Verify the outbox entry was claimed
+        assert len(batch) > 0
+        assert any(item.id == outbox_entry.id for item in batch)
 
-    batch = await claim_outbox_batch(batch_size=10)
-    print(f"📥 Claimed batch size: {len(batch)}")
-
-    if batch:
-        for item in batch:
-            print(f"   - Outbox ID: {item.id}, Type: {item.type}, Booking ID: {item.booking_id}")
-
-    # Verify the outbox entry was claimed
-    assert len(batch) > 0
-    assert any(item.id == outbox_entry.id for item in batch)
-
-    print(f"✅ NotificationService can claim intro_day notifications")
+        print(f"✅ NotificationService can claim intro_day notifications")
+    finally:
+        await service.shutdown()
+        reset_notification_service()
 
 
 @pytest.mark.asyncio

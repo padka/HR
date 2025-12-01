@@ -10,6 +10,7 @@ from backend.apps.bot.broker import NotificationBrokerProtocol
 from backend.apps.bot.services import (
     NotificationService,
     configure_notification_service as _register_service,
+    reset_notification_service as _reset_service,
 )
 from backend.core.settings import get_settings
 
@@ -42,3 +43,10 @@ def configure_notification_service(
     _register_service(service)
     _bootstrap_instance = service
     return service
+
+
+def reset_notification_service() -> None:
+    """Drop cached notification service instances so next start rebuilds state."""
+    global _bootstrap_instance
+    _bootstrap_instance = None
+    _reset_service()

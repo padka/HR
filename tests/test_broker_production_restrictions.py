@@ -48,9 +48,12 @@ async def test_inmemory_broker_forbidden_in_production():
             app.state = Mock()
             integration = await setup_bot_state(app)
 
-            assert integration.notification_broker is None
-            assert app.state.notification_broker_status == "degraded"
-            assert integration.notification_watch_task is None
+            try:
+                assert integration.notification_broker is None
+                assert app.state.notification_broker_status == "degraded"
+                assert integration.notification_watch_task is None
+            finally:
+                await integration.shutdown()
 
 
 @pytest.mark.asyncio
@@ -93,8 +96,11 @@ async def test_inmemory_broker_allowed_in_development():
 
                     integration = await setup_bot_state(app)
 
-                    # Should successfully create InMemory broker
-                    assert integration is not None
+                    try:
+                        # Should successfully create InMemory broker
+                        assert integration is not None
+                    finally:
+                        await integration.shutdown()
 
 
 @pytest.mark.asyncio
@@ -136,8 +142,11 @@ async def test_redis_required_message_in_production():
             app.state = Mock()
             integration = await setup_bot_state(app)
 
-            assert integration.notification_broker is None
-            assert app.state.notification_broker_status == "degraded"
+            try:
+                assert integration.notification_broker is None
+                assert app.state.notification_broker_status == "degraded"
+            finally:
+                await integration.shutdown()
 
 
 @pytest.mark.asyncio

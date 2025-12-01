@@ -117,6 +117,17 @@ async def test_city_recruiter_lookup_includes_slot_owners():
 
 
 @pytest.mark.asyncio
+async def test_candidate_cities_fallback_returns_active_entries():
+    async with async_session() as session:
+        city = models.City(name="Курск", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+
+    cities = await get_candidate_cities()
+    assert [c.name_plain for c in cities] == ["Курск"]
+
+
+@pytest.mark.asyncio
 
 async def test_slot_workflow_and_templates():
     now = datetime.now(timezone.utc)

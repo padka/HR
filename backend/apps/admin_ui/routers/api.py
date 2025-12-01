@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,13 @@ from backend.apps.admin_ui.utils import parse_optional_int, status_filter
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.admin_ui.services.candidates import api_candidate_detail_payload
 from backend.apps.admin_ui.services.notifications import notification_feed
+from backend.apps.admin_ui.services.chat import (
+    get_chat_templates,
+    list_chat_history,
+    send_chat_message as service_send_chat_message,
+    retry_chat_message,
+)
+from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.core.settings import get_settings
 
 router = APIRouter(prefix="/api", tags=["api"])
@@ -46,6 +54,12 @@ class RecruiterPayload(BaseModel):
 
     def city_values(self) -> List[str]:
         return [str(cid) for cid in self.city_ids if cid is not None]
+
+
+class ChatSendPayload(BaseModel):
+    text: Optional[str] = Field(default=None, max_length=2000)
+    template_key: Optional[str] = None
+    client_request_id: Optional[str] = Field(default=None, max_length=64)
 
 
 @router.get("/health")
@@ -200,6 +214,71 @@ async def api_candidate_detail_view(candidate_id: int):
     if payload is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="candidate_not_found")
     return JSONResponse(payload)
+
+
+@router.get("/candidates/{candidate_id}/chat")
+async def api_candidate_chat_messages(
+    candidate_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    before: Optional[str] = Query(default=None),
+):
+    before_dt: Optional[datetime] = None
+    if before:
+        try:
+            before_dt = datetime.fromisoformat(before)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"message": "Некорректный формат параметра before"},
+            ) from exc
+    payload = await list_chat_history(candidate_id, limit, before_dt)
+    return JSONResponse(payload)
+
+
+@router.post("/candidates/{candidate_id}/chat")
+async def api_candidate_chat_send(
+    candidate_id: int,
+    payload: ChatSendPayload,
+    bot_service: BotService = Depends(provide_bot_service),
+):
+    text_value = (payload.text or "").strip()
+    if payload.template_key:
+        template = next(
+            (tpl for tpl in get_chat_templates() if tpl["key"] == payload.template_key),
+            None,
+        )
+        if template is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"message": "Неизвестный ключ шаблона"},
+            )
+        if not text_value:
+            text_value = template["text"]
+    if not text_value:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Сообщение не может быть пустым"},
+        )
+    settings = get_settings()
+    author_label = settings.admin_username or "admin"
+    result = await service_send_chat_message(
+        candidate_id,
+        text=text_value,
+        client_request_id=payload.client_request_id,
+        author_label=author_label,
+        bot_service=bot_service,
+    )
+    return JSONResponse(result)
+
+
+@router.post("/candidates/{candidate_id}/chat/{message_id}/retry")
+async def api_candidate_chat_retry(
+    candidate_id: int,
+    message_id: int,
+    bot_service: BotService = Depends(provide_bot_service),
+):
+    result = await retry_chat_message(candidate_id, message_id, bot_service=bot_service)
+    return JSONResponse(result)
 
 
 @router.get("/template_keys")

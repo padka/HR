@@ -604,9 +604,12 @@
       </div>
     {% endcall %}
 
-    <div class="preview-panel" id="preview-one" aria-live="polite">
-      <b>Превью</b><br>
-      Укажите рекрутёра, дату и время — покажем UTC.
+    <div class="slot-preview" id="preview-one" aria-live="polite">
+      <div class="slot-preview__title-row">
+        <b>Превью</b>
+        <span class="slot-preview__status slot-preview__status--idle">Ожидает данных</span>
+      </div>
+      <p class="slot-preview__hint">Укажите рекрутёра, дату и время — покажем UTC.</p>
     </div>
     {% call forms.note(id='one_submit_hint') %}Заполните рекрутёра, город, дату и время, чтобы создать слот.{% endcall %}
   {% endcall %}
@@ -720,9 +723,12 @@
       {% call forms.note() %}Изменения сразу применяются к создаваемой серии.{% endcall %}
     </details>
 
-    <div class="preview-panel" id="preview-bulk" aria-live="polite">
-      <b>Превью</b><br>
-      Выберите период — посчитаем примерное количество слотов (только будни).
+    <div class="slot-preview" id="preview-bulk" aria-live="polite">
+      <div class="slot-preview__title-row">
+        <b>Превью</b>
+        <span class="slot-preview__status slot-preview__status--idle">Ожидает данных</span>
+      </div>
+      <p class="slot-preview__hint">Выберите период — посчитаем примерное количество слотов (по будням).</p>
     </div>
     {% call forms.note(id='bulk_submit_hint') %}Заполните рекрутёра, город и период, чтобы создать серию слотов.{% endcall %}
   {% endcall %}
@@ -761,6 +767,11 @@
     try { storage.setItem(key, value); }
     catch { /* ignore */ }
   };
+
+  const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  function escapeHtml(value){
+    return String(value ?? '').replace(/[&<>"']/g, (match) => HTML_ESCAPES[match] || match);
+  }
 
   // Modal management
   const btnOpenOne = $('#btn-open-one');
@@ -1063,22 +1074,37 @@
     }
 
     if (!ready){
-      prevOne.innerHTML = '<b>Превью</b><br>Укажите рекрутёра, дату и время — покажем UTC.';
+      prevOne.innerHTML = `
+        <div class="slot-preview__title-row">
+          <b>Превью</b>
+          <span class="slot-preview__status slot-preview__status--idle">Ожидает данных</span>
+        </div>
+        <p class="slot-preview__hint">Укажите рекрутёра, дату и время — покажем UTC.</p>`;
       return;
     }
     const localIso = `${d}T${t}:00`;
     const info = toUTCInfo(localIso, tz);
     offsetText.textContent = info ? info.offsetLabel : '±0';
     if (!info){
-      prevOne.innerHTML = '<b>Превью</b><br>Не удалось рассчитать UTC — проверьте выбранный часовой пояс.';
+      prevOne.innerHTML = `
+        <div class="slot-preview__title-row">
+          <b>Превью</b>
+          <span class="slot-preview__status slot-preview__status--danger">Ошибка</span>
+        </div>
+        <p class="slot-preview__hint">Не удалось рассчитать UTC — проверьте выбранный часовой пояс.</p>`;
       return;
     }
     const utc = info.utc;
 
-    let note = '';
+    let statusClass = 'slot-preview__status--ok';
+    let statusText = 'Запланирован';
+    let statusNote = 'слот в будущем';
     try {
-      if (utc < new Date()) note = ` · <span class="bad">в прошлом</span>`;
-      else note = ` · <span class="ok">в будущем</span>`;
+      if (utc < new Date()) {
+        statusClass = 'slot-preview__status--danger';
+        statusText = 'В прошлом';
+        statusNote = 'слот в прошлом';
+      }
     } catch {}
 
     const isoZ = toISOZ(utc);
@@ -1087,12 +1113,27 @@
     const sameAsBrowser = !!(browserTZ && tz && browserTZ === tz);
     const displayUtcText = sameAsBrowser ? localText : utcText;
     const utcHint = sameAsBrowser
-      ? `<br><span class="hint">UTC показано как локальное время (смещение ${info.offsetLabel})</span>`
-      : `<br><span class="hint">UTC: ${utcText}</span>`;
+      ? `UTC отображается как локальное время (смещение ${escapeHtml(info.offsetLabel)})`
+      : `UTC абсолютное: ${escapeHtml(utcText)}`;
     prevOne.innerHTML =
-      `<b>Превью</b><br>Локально (${tzLabel}) <span class="hint">IANA: <code>${tz}</code></span>: <span>${localText}</span>${note}
-       <br>UTC: <span class="ok">${displayUtcText}</span>
-       <br><span class="hint">ISO (UTC): <code>${isoZ}</code></span>${utcHint}`;
+      `<div class="slot-preview__title-row">
+         <b>Превью</b>
+         <span class="slot-preview__status ${statusClass}">${statusText}</span>
+       </div>
+       <div class="slot-preview__grid">
+         <div class="slot-preview__metric">
+           <span class="slot-preview__label">Локально (${escapeHtml(tzLabel)})</span>
+           <strong>${escapeHtml(localText)}</strong>
+           <p class="slot-preview__hint">IANA: <code>${escapeHtml(tz)}</code></p>
+         </div>
+         <div class="slot-preview__metric">
+           <span class="slot-preview__label">UTC</span>
+           <strong>${escapeHtml(displayUtcText)}</strong>
+           <p class="slot-preview__hint">ISO: <code>${escapeHtml(isoZ)}</code></p>
+         </div>
+       </div>
+       <p class="slot-preview__note">Смещение ${escapeHtml(info.offsetLabel)} · ${escapeHtml(statusNote)}</p>
+       <p class="slot-preview__hint">${utcHint}</p>`;
 
     storageSet(LS.recOne, selOne.value || '');
     storageSet(LS.date, d);
@@ -1263,7 +1304,12 @@
     const st = hid.start.value, en = hid.end.value, bs = hid.bstart.value, be = hid.bend.value, step = parseInt(hid.step.value||'30',10);
 
     if (!ready){
-      prevBulk.innerHTML = `<b>Превью</b><br>Выберите период — посчитаем примерное количество слотов (только будни).`;
+      prevBulk.innerHTML = `
+        <div class="slot-preview__title-row">
+          <b>Превью</b>
+          <span class="slot-preview__status slot-preview__status--idle">Ожидает данных</span>
+        </div>
+        <p class="slot-preview__hint">Выберите период — посчитаем примерное количество слотов (по будням).</p>`;
       return;
     }
     const d0 = parseISODate(s), d1 = parseISODate(e);
@@ -1276,12 +1322,37 @@
 
     const times = dayTimes(st,en,bs,be,step, !!useBreak.checked);
     const previewTimes = times.slice(0,6).join(', ') + (times.length>6 ? ` … и ещё ${times.length-6}` : '');
-    const warn = total > 300 ? `<span class="warn">Внимание: ${total} слотов — крупная серия.</span>` : '';
+    const warnLarge = total > 300;
+    const statusClassBulk = warnLarge ? 'slot-preview__status--warn' : 'slot-preview__status--ok';
+    const statusTextBulk = warnLarge ? 'Крупная серия' : 'Готово';
+    const noteBulk = warnLarge
+      ? `Внимание: ${escapeHtml(String(total))} слотов — убедитесь, что это ожидаемо.`
+      : `Неделя включает ${includeWeekends.checked ? 'выходные' : 'только будни'}.`;
 
     prevBulk.innerHTML =
-      `<b>Превью</b><br>Дней: <b>${wd}</b> (${includeWeekends.checked ? 'включая выходные' : 'будни'}), слотов в день: <b>${perDay}</b> (шаг ${step} мин)
-       <br>Итого слотов: <b class="${total? 'ok':''}">${total}</b> ${warn ? '· ' + warn : ''}
-       <br><span class="hint">Примеры времени в день: ${previewTimes || '—'}</span>`;
+      `<div class="slot-preview__title-row">
+         <b>Превью</b>
+         <span class="slot-preview__status ${statusClassBulk}">${statusTextBulk}</span>
+       </div>
+       <div class="slot-preview__grid">
+         <div class="slot-preview__metric">
+           <span class="slot-preview__label">Дней</span>
+           <strong>${escapeHtml(String(wd))}</strong>
+           <p class="slot-preview__hint">${includeWeekends.checked ? 'включая выходные' : 'будни'}</p>
+         </div>
+         <div class="slot-preview__metric">
+           <span class="slot-preview__label">Слотов в день</span>
+           <strong>${escapeHtml(String(perDay))}</strong>
+           <p class="slot-preview__hint">Шаг ${escapeHtml(String(step))} мин</p>
+         </div>
+         <div class="slot-preview__metric">
+           <span class="slot-preview__label">Итого</span>
+           <strong>${escapeHtml(String(total))}</strong>
+           <p class="slot-preview__hint">${warnLarge ? 'Очень большая серия' : 'Оптимальный объём'}</p>
+         </div>
+       </div>
+       <p class="slot-preview__note">${noteBulk}</p>
+       <p class="slot-preview__hint">Примеры времени в день: ${escapeHtml(previewTimes || '—')}</p>`;
 
     storageSet(LS.recBulk, selBulk.value||'');
   }

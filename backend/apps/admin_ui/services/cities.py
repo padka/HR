@@ -17,8 +17,11 @@ from .templates import update_templates_for_city
 
 __all__ = [
     "list_cities",
+    "get_city",
     "create_city",
     "update_city_settings",
+    "update_city_owner",
+    "set_city_active",
     "delete_city",
     "api_cities_payload",
     "api_city_owners_payload",
@@ -33,6 +36,16 @@ async def list_cities(order_by_name: bool = True) -> List[City]:
         if order_by_name:
             query = query.order_by(City.name.asc())
         return (await session.scalars(query)).all()
+
+
+async def get_city(city_id: int) -> Optional[City]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(City)
+                .options(selectinload(City.recruiters))
+                .where(City.id == city_id)
+        )
+        return result.scalar_one_or_none()
 
 
 def normalize_city_timezone(value: Optional[str]) -> str:
@@ -124,6 +137,45 @@ async def update_city_settings(
             await session.rollback()
             raise
     return None, city, assigned_recruiter
+
+
+async def update_city_owner(
+    city_id: int, responsible_id: Optional[int]
+) -> Tuple[Optional[str], Optional[City], Optional[Recruiter]]:
+    async with async_session() as session:
+        try:
+            city = await session.get(City, city_id)
+            if not city:
+                return "City not found", None, None
+            recruiter_obj: Optional[Recruiter] = None
+            if responsible_id is not None:
+                recruiter_obj = await session.get(Recruiter, responsible_id)
+                if not recruiter_obj:
+                    return "Recruiter not found", None, None
+                city.recruiters = [recruiter_obj]
+            else:
+                city.recruiters = []
+            await session.commit()
+            await session.refresh(city)
+        except Exception:
+            await session.rollback()
+            raise
+    return None, city, recruiter_obj
+
+
+async def set_city_active(city_id: int, active: bool) -> Tuple[Optional[str], Optional[City]]:
+    async with async_session() as session:
+        try:
+            city = await session.get(City, city_id)
+            if not city:
+                return "City not found", None
+            city.active = bool(active)
+            await session.commit()
+            await session.refresh(city)
+        except Exception:
+            await session.rollback()
+            raise
+    return None, city
 
 
 async def delete_city(city_id: int) -> bool:

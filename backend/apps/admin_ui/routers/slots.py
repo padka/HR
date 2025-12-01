@@ -4,6 +4,8 @@ import hmac
 import json
 from typing import Dict, Optional, List
 
+from datetime import date as date_type
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel
@@ -15,6 +17,7 @@ from backend.apps.admin_ui.services.slots import (
     bulk_create_slots,
     create_slot,
     list_slots,
+    generate_default_day_slots,
     recruiters_for_slot_form,
     delete_slot,
     delete_all_slots,
@@ -24,6 +27,7 @@ from backend.apps.admin_ui.services.slots import (
     reject_slot_booking,
 )
 from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
+from backend.apps.admin_ui.services.cities import list_cities
 from backend.core.settings import get_settings
 from backend.apps.bot.services import NotificationNotConfigured
 
@@ -87,14 +91,34 @@ async def slots_list(
     request: Request,
     recruiter_id: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="Search query"),
+    city: Optional[str] = Query(default=None),
+    date: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
 ):
     recruiter = parse_optional_int(recruiter_id)
     status_norm = status_filter(status)
-    result = await list_slots(recruiter, status_norm, page, per_page)
+    search_query = q.strip() if isinstance(q, str) and q else None
+    city_filter = city.strip() if isinstance(city, str) and city else None
+    date_filter: Optional[date_type] = None
+    if isinstance(date, str) and date:
+        try:
+            date_filter = date_type.fromisoformat(date)
+        except ValueError:
+            date_filter = None
+    result = await list_slots(
+        recruiter,
+        status_norm,
+        page,
+        per_page,
+        search_query,
+        city_filter,
+        date_filter,
+    )
     recruiter_rows = await list_recruiters()
     recruiter_options = [row["rec"] for row in recruiter_rows]
+    city_choices = await list_cities()
     slots = result["items"]
     aggregated = result.get("status_counts") or {}
     status_counts: Dict[str, int] = {
@@ -106,16 +130,28 @@ async def slots_list(
             aggregated.get("CONFIRMED_BY_CANDIDATE", 0)
         ),
     }
+    city_names = sorted(
+        {
+            slot.city.name
+            for slot in slots
+            if getattr(slot.city, "name", None)
+        }
+    )
     flash = _pop_flash(request)
     context = {
         "request": request,
         "slots": slots,
         "filter_recruiter_id": recruiter,
         "filter_status": status_norm,
+        "filter_city": city_filter,
+        "filter_date": date if date_filter else "",
+        "search_query": search_query,
         "page": result["page"],
         "pages_total": result["pages_total"],
         "per_page": per_page,
         "recruiter_options": recruiter_options,
+        "city_choices": city_choices,
+        "city_options": city_names,
         "status_counts": status_counts,
         "flash": flash,
     }
@@ -243,7 +279,16 @@ async def slots_bulk_create(
         use_break=_parse_checkbox(use_break),
     )
 
-    response = RedirectResponse(url="/slots", status_code=303)
+    params = [f"recruiter_id={recruiter_id}", f"date={target_day.isoformat()}"]
+    if city_id:
+        from backend.core.db import async_session
+        from backend.domain.models import City
+        async with async_session() as session:
+            city = await session.get(City, city_id)
+            if city:
+                params.append(f"city={city.name}")
+    query = "&".join(params)
+    response = RedirectResponse(url=f"/slots?{query}", status_code=303)
     if error:
         _set_flash(response, "error", error)
     elif created == 0:
@@ -251,6 +296,38 @@ async def slots_bulk_create(
     else:
         _set_flash(response, "success", f"Создано {created} слот(ов).")
 
+    return response
+
+
+@router.post("/generate-default")
+async def slots_generate_default(
+    recruiter_id: int = Form(...),
+    date: str = Form(...),
+    city_id: Optional[int] = Form(None),
+):
+    try:
+        target_day = date_type.fromisoformat(date)
+    except ValueError:
+        response = RedirectResponse(url="/slots", status_code=303)
+        _set_flash(response, "error", "Некорректная дата для генерации слотов.")
+        return response
+
+    try:
+        created = await generate_default_day_slots(
+            recruiter_id=recruiter_id,
+            day=target_day,
+            city_id=city_id,
+        )
+    except Exception as exc:
+        response = RedirectResponse(url="/slots", status_code=303)
+        _set_flash(response, "error", f"Не удалось создать расписание: {exc}")
+        return response
+
+    response = RedirectResponse(url="/slots", status_code=303)
+    if created == 0:
+        _set_flash(response, "info", "Слоты уже существовали, ничего не создано.")
+    else:
+        _set_flash(response, "success", f"Создано {created} слотов на выбранный день.")
     return response
 
 

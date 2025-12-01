@@ -41,6 +41,8 @@
   ]
 ) %}
   {{ csrf_input(request) }}
+  {% set telegram_user_id = candidate.telegram_user_id or candidate.telegram_id %}
+  {% set telegram_username = candidate.telegram_username or candidate.username %}
   {% call forms.section("Информация о кандидате") %}
     <div class="data-list">
       <div>
@@ -54,10 +56,12 @@
       <div>
         <dt>Telegram</dt>
         <dd>
-          {% if candidate.username %}
-            <a href="https://t.me/{{ candidate.username }}" target="_blank" rel="noopener">@{{ candidate.username }}</a>
+          {% if telegram_username %}
+            <a href="https://t.me/{{ telegram_username }}" target="_blank" rel="noopener">@{{ telegram_username }}</a>
+          {% elif telegram_user_id %}
+            {{ telegram_user_id }}
           {% else %}
-            {{ candidate.telegram_id }}
+            —
           {% endif %}
         </dd>
       </div>

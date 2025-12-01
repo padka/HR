@@ -19,6 +19,11 @@ def _force_ready_bot(monkeypatch) -> None:
     def _fake_build(settings):
         return None, True
 
+    monkeypatch.setenv("BOT_ENABLED", "1")
+    monkeypatch.setenv("BOT_INTEGRATION_ENABLED", "1")
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
     monkeypatch.setattr("backend.apps.admin_ui.state._build_bot", _fake_build)
 
 

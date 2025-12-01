@@ -23,6 +23,8 @@ import shlex
 import signal
 import socket
 import sys
+import time
+from collections import deque
 from pathlib import Path
 from typing import Iterable, Optional, Sequence, Tuple
 
@@ -36,15 +38,55 @@ except ImportError as exc:  # pragma: no cover - dev helper dependency
 
 DEFAULT_CMD = os.environ.get(
     "DEVSERVER_CMD",
-    "uvicorn backend.apps.admin_ui.app:app --host 0.0.0.0 --port 8000",
+    "uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000",
 )
 DEFAULT_WATCH = tuple(
     filter(
         None,
-        os.environ.get("DEVSERVER_WATCH", "backend admin_app admin_server").split(),
+        os.environ.get(
+            "DEVSERVER_WATCH",
+            "backend backend/apps scripts tests docs",
+        ).split(),
     )
 )
 DEFAULT_DELAY = float(os.environ.get("DEVSERVER_RESTART_DELAY", "1.5"))
+RESTART_WINDOW_SECONDS = 10.0
+RESTART_LIMIT = 3
+CONFIG_ERROR_HINTS = {
+    "asyncpg": {
+        "needles": [
+            "database_url uses postgresql+asyncpg but asyncpg is not installed",
+            "asyncpg is not installed",
+        ],
+        "message": (
+            "[devserver] DATABASE_URL uses postgresql+asyncpg but asyncpg is not installed.\n\n"
+            "SQLite fallback:\n"
+            "  DATABASE_URL='' make dev-sqlite\n"
+            "Postgres setup:\n"
+            "  python -m pip install asyncpg\n"
+            "  docker compose up -d postgres\n"
+            "  DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/db make dev\n"
+        ),
+    },
+    "aiosqlite": {
+        "needles": [
+            "database_url uses sqlite+aiosqlite but aiosqlite is not installed",
+            "aiosqlite is not installed",
+        ],
+        "message": (
+            "[devserver] DATABASE_URL uses sqlite+aiosqlite but aiosqlite is not installed.\n\n"
+            "SQLite fallback:\n"
+            "  DATABASE_URL='' make dev-sqlite\n"
+            "Postgres setup:\n"
+            "  python -m pip install asyncpg\n"
+            "  docker compose up -d postgres\n"
+        ),
+    },
+}
+
+
+class DevServerFatalError(RuntimeError):
+    """Raised when the supervisor decides to stop instead of restarting."""
 
 
 class DevServer:
@@ -64,6 +106,8 @@ class DevServer:
         self._restart_requested = False
         self._stop_event = asyncio.Event()
         self._host_port = self._extract_host_port()
+        self._fatal_message: str | None = None
+        self._crash_times: deque[float] = deque()
         if any("--reload" in token for token in self.command):
             print(
                 "[devserver] warning: command already contains --reload. "
@@ -112,20 +156,51 @@ class DevServer:
 
     async def _process_loop(self) -> None:
         while not self._stop:
+            config_error_event = asyncio.Event()
+            self._fatal_message = None
             while not await self._wait_for_port():
                 if self._stop:
                     return
             print(f"[devserver] starting: {' '.join(self.command)}", flush=True)
-            self._process = await asyncio.create_subprocess_exec(*self.command)
+            self._process = await asyncio.create_subprocess_exec(
+                *self.command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_task = asyncio.create_task(
+                self._stream_output(self._process.stdout, is_stderr=False),
+                name="devserver-stdout",
+            )
+            stderr_task = asyncio.create_task(
+                self._stream_output(
+                    self._process.stderr,
+                    is_stderr=True,
+                    config_event=config_error_event,
+                ),
+                name="devserver-stderr",
+            )
             returncode = await self._process.wait()
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
             self._process = None
 
             if self._stop:
                 break
 
+            if config_error_event.is_set():
+                message = self._fatal_message or "[devserver] configuration error detected, aborting."
+                raise DevServerFatalError(message)
+
             if self._restart_requested:
                 self._restart_requested = False
+                self._crash_times.clear()
                 continue
+
+            if returncode == 0:
+                self._crash_times.clear()
+            else:
+                if self._register_crash_and_should_abort():
+                    message = self._fatal_message or self._default_crash_loop_hint()
+                    raise DevServerFatalError(message)
 
             print(
                 f"[devserver] process exited with code {returncode}, "
@@ -222,6 +297,59 @@ class DevServer:
             await asyncio.sleep(self.restart_delay)
             return False
 
+    def _register_crash_and_should_abort(self) -> bool:
+        now = time.monotonic()
+        self._crash_times.append(now)
+        while self._crash_times and now - self._crash_times[0] > RESTART_WINDOW_SECONDS:
+            self._crash_times.popleft()
+        if len(self._crash_times) >= RESTART_LIMIT:
+            if not self._fatal_message:
+                self._fatal_message = self._default_crash_loop_hint()
+            return True
+        return False
+
+    @staticmethod
+    def _default_crash_loop_hint() -> str:
+        return (
+            f"[devserver] child process crashed {RESTART_LIMIT} times within "
+            f"{int(RESTART_WINDOW_SECONDS)}s. Check the traceback above or run "
+            "the safe default via `DATABASE_URL='' make dev-sqlite`."
+        )
+
+    def _detect_config_error_hint(self, text: str) -> Optional[str]:
+        lowered = text.strip().lower()
+        if not lowered:
+            return None
+        for info in CONFIG_ERROR_HINTS.values():
+            if any(needle in lowered for needle in info["needles"]):
+                return info["message"]
+        return None
+
+    async def _stream_output(
+        self,
+        stream: asyncio.StreamReader | None,
+        *,
+        is_stderr: bool,
+        config_event: asyncio.Event | None = None,
+    ) -> None:
+        if stream is None:
+            return
+        target = sys.stderr if is_stderr else sys.stdout
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            text = line.decode(errors="ignore")
+            target.write(text)
+            target.flush()
+            if is_stderr and config_event and not config_event.is_set():
+                hint = self._detect_config_error_hint(text)
+                if hint:
+                    self._fatal_message = hint
+                    config_event.set()
+                    if self._process and self._process.returncode is None:
+                        self._process.terminate()
+
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Resilient dev server with auto-restart")
@@ -259,6 +387,9 @@ async def amain(argv: Sequence[str] | None = None) -> None:
 def main() -> None:
     try:
         asyncio.run(amain())
+    except DevServerFatalError as exc:
+        print(str(exc), flush=True)
+        raise SystemExit(1)
     except KeyboardInterrupt:  # pragma: no cover - interactive helper
         print("\n[devserver] stopped by user", flush=True)
 

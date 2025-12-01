@@ -1,0 +1,434 @@
+{% extends "base.html" %}
+{% import "partials/form_shell.html" as forms with context %}
+{% block title %}Настройки города — {{ city.display_name }}{% endblock %}
+{% block content %}
+{% set form_state = form_state or {} %}
+{% set template_values = form_state.get("templates") or {} %}
+{% set custom_count = namespace(value=0) %}
+{% for key, val in template_values.items() %}
+  {% if val and val.strip() %}
+    {% set custom_count.value = custom_count.value + 1 %}
+  {% endif %}
+{% endfor %}
+{% set recruiter_name = city.recruiters[0].name if city.recruiters and city.recruiters[0] else None %}
+{% set selected_owner_raw = form_state.get('responsible_recruiter_id') or (city.recruiters[0].id if city.recruiters and city.recruiters[0] else '') %}
+{% set owner_lookup = namespace(name=recruiter_name) %}
+{% if selected_owner_raw %}
+  {% for row in recruiter_rows %}
+    {% if selected_owner_raw|string == row.rec.id|string %}
+      {% set owner_lookup.name = row.rec.name %}
+    {% endif %}
+  {% endfor %}
+{% endif %}
+<style>
+  .city-hero {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    padding: 24px;
+    border-radius: 28px;
+    background: linear-gradient(135deg, rgba(59,130,246,0.15), rgba(139,92,246,0.18));
+    border: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 24px;
+  }
+  .city-template-modal {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 1000;
+  }
+  .city-template-modal[aria-hidden="false"] {
+    display: flex;
+  }
+  .city-template-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(8px);
+  }
+  .city-template-modal__dialog {
+    position: relative;
+    max-height: 90vh;
+    overflow-y: auto;
+    width: min(960px, 100%);
+    padding: 24px;
+    border-radius: 24px;
+    background: rgba(2,6,23,0.95);
+    border: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    z-index: 1;
+  }
+  .city-template-modal__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .city-template-modal__grid {
+    max-height: none;
+  }
+  .city-hero__title {
+    font-size: 28px;
+    font-weight: 800;
+    margin: 0;
+  }
+  .city-hero__chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    width: 100%;
+  }
+  .city-chip {
+    border-radius: 18px;
+    padding: 12px 16px;
+    background: rgba(15,23,42,0.55);
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .city-chip span {
+    font-size: 12px;
+    color: var(--muted);
+    display: block;
+  }
+  .city-chip strong {
+    display: block;
+    font-size: 18px;
+    margin-top: 4px;
+  }
+.city-edit-nav {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .city-edit-nav a,
+  .city-edit-nav button {
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.03);
+    font-size: 14px;
+    color: var(--fg);
+    cursor: pointer;
+  }
+  .city-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .city-template-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 18px;
+  }
+  .city-template-card {
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .city-template-card[data-custom="1"] {
+    border-color: rgba(59,130,246,0.5);
+    background: rgba(59,130,246,0.08);
+  }
+  .city-template-card__title {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0;
+  }
+  .city-template-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .city-template-card textarea {
+    min-height: 140px;
+    resize: vertical;
+  }
+  .city-plan-pills {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .city-plan-pills button {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.05);
+    color: var(--fg);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .city-plan-pills button:hover {
+    border-color: rgba(99,102,241,0.6);
+    background: rgba(99,102,241,0.15);
+  }
+  .form-field--minimal .form-field__label {
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .form-field--minimal .form-field__surface {
+    border-radius: 16px;
+  }
+</style>
+{% if success_message %}
+  <div class="surface glass grain alert" data-tone="success" role="status">
+    {{ success_message }}
+  </div>
+{% endif %}
+{% if form_error %}
+  <div class="surface glass grain alert" data-tone="danger" role="alert">
+    {{ form_error }}
+  </div>
+{% endif %}
+<div class="city-hero">
+  <div style="flex:1 1 240px; min-width: 240px;">
+    <p class="muted" style="margin:0 0 4px;">Город</p>
+    <h1 class="city-hero__title">{{ city.display_name }}</h1>
+    <p class="muted">ID #{{ city.id }} · {{ "Активен" if form_state.get("active", city.active) else "В архиве" }}</p>
+  </div>
+  <div class="city-hero__chips">
+    <div class="city-chip">
+      <span>Таймзона</span>
+      <strong>{{ form_state.get('tz', city.tz) }}</strong>
+    </div>
+    <div class="city-chip">
+      <span>Ответственный</span>
+      <strong>{{ owner_lookup.name or "Не назначен" }}</strong>
+    </div>
+    <div class="city-chip">
+      <span>Шаблоны</span>
+      <strong>{{ custom_count.value }} / {{ stage_meta|length }}</strong>
+    </div>
+    <div class="city-chip">
+      <span>Привязанных рекрутёров</span>
+      <strong>{{ city.recruiters|length if city.recruiters else 0 }}</strong>
+    </div>
+  </div>
+</div>
+<div class="city-edit-nav">
+  <a href="#city-general">Основные</a>
+  <button type="button" id="open-city-templates">Шаблоны</button>
+</div>
+{% call forms.shell(
+  title="Настройки города",
+  description="",
+  form_id="citySettingsForm",
+  action="/cities/{{ city.id }}/edit",
+  method="post",
+  back_href="/cities",
+  back_label="К списку городов",
+  actions=[
+    {"type": "submit", "text": "Сохранить", "variant": "primary"},
+    {"href": "/cities", "text": "Отмена", "variant": "ghost"}
+  ],
+  meta=[city.display_name]
+) %}
+  <div id="city-general">
+    {% call forms.section("Основные") %}
+      <div class="city-form-grid">
+        {% call forms.field("Название") %}
+          <input type="text" value="{{ city.display_name }}" disabled>
+        {% endcall %}
+
+        {% call forms.field("Ответственный") %}
+          {% set selected_owner = form_state.get("responsible_recruiter_id") or "" %}
+          <select name="responsible_recruiter_id" id="responsible_recruiter_id">
+            <option value="">Не назначен</option>
+            {% for row in recruiter_rows %}
+              {% set rec = row.rec %}
+              <option value="{{ rec.id }}" {% if selected_owner and selected_owner|string == rec.id|string %}selected{% endif %}>{{ rec.name }}</option>
+            {% endfor %}
+          </select>
+        {% endcall %}
+
+        {% call forms.field("Часовой пояс", required=True) %}
+          <input type="text"
+                 name="tz"
+                 value="{{ form_state.get('tz', city.tz) }}"
+                 list="tz-list"
+                 required
+                 aria-required="true">
+          <datalist id="tz-list">
+            <option value="Europe/Moscow"></option>
+            <option value="Europe/Samara"></option>
+            <option value="Europe/Kaliningrad"></option>
+            <option value="Asia/Yekaterinburg"></option>
+            <option value="Asia/Novosibirsk"></option>
+            <option value="Asia/Krasnoyarsk"></option>
+            <option value="Asia/Irkutsk"></option>
+            <option value="Asia/Vladivostok"></option>
+            <option value="Asia/Almaty"></option>
+            <option value="Europe/Minsk"></option>
+          </datalist>
+        {% endcall %}
+
+        {% call forms.field("Активность", inline=True) %}
+          {% call forms.switch(name="active", value="1", checked=form_state.get("active", city.active)) %}
+            Активен
+          {% endcall %}
+        {% endcall %}
+
+        {% call forms.field("План, неделя") %}
+          <input type="number" name="plan_week" min="0" value="{{ form_state.get('plan_week', '') }}" data-plan-field="plan_week">
+        {% endcall %}
+        <div class="city-plan-pills" data-plan-preset="plan_week">
+          <button type="button" data-value="5">5</button>
+          <button type="button" data-value="10">10</button>
+          <button type="button" data-value="20">20</button>
+        </div>
+
+        {% call forms.field("План, месяц") %}
+          <input type="number" name="plan_month" min="0" value="{{ form_state.get('plan_month', '') }}" data-plan-field="plan_month">
+        {% endcall %}
+        <div class="city-plan-pills" data-plan-preset="plan_month">
+          <button type="button" data-value="30">30</button>
+          <button type="button" data-value="60">60</button>
+          <button type="button" data-value="100">100</button>
+        </div>
+      </div>
+
+      {% call forms.field("Фильтр") %}
+        <textarea name="criteria" rows="3">{{ form_state.get('criteria', '') }}</textarea>
+      {% endcall %}
+
+      {% call forms.field("Контакты") %}
+        <textarea name="experts" rows="3">{{ form_state.get('experts', '') }}</textarea>
+      {% endcall %}
+    {% endcall %}
+  </div>
+
+{% endcall %}
+
+<div class="city-template-modal" id="city-template-modal" hidden aria-hidden="true">
+  <div class="city-template-modal__backdrop" data-modal-dismiss></div>
+  <div class="city-template-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="city-template-modal-title">
+    <header class="city-template-modal__header">
+      <div>
+        <p class="muted" style="margin:0">Город: {{ city.display_name }}</p>
+        <h2 id="city-template-modal-title">Шаблоны сообщений</h2>
+      </div>
+      <button type="button" class="btn btn--ghost" data-modal-dismiss>&times;</button>
+    </header>
+    <div class="city-template-grid city-template-modal__grid">
+      {% for stage in stage_meta %}
+        {% set field_value = template_values.get(stage.key, '') %}
+        {% set global_value = (global_templates.get(stage.key) or stage.default_text) %}
+        {% set is_custom = field_value and field_value.strip() %}
+        <div class="city-template-card" data-custom="{{ '1' if is_custom else '0' }}">
+          <div>
+            <p class="city-template-card__title">{{ stage.title }}</p>
+            <p class="muted" style="margin-top:4px">{{ stage.description }}</p>
+          </div>
+          <textarea id="template_{{ stage.key }}"
+                    name="template_{{ stage.key }}"
+                    rows="6"
+                    data-default="{{ global_value|e }}"
+                    placeholder="">{{ field_value }}</textarea>
+          <div class="city-template-card__actions">
+            <button type="button"
+                    class="btn btn--ghost"
+                    data-template-reset
+                    data-target="template_{{ stage.key }}">Заполнить глобальным</button>
+            <button type="button"
+                    class="btn btn--ghost"
+                    data-template-copy
+                    data-target="template_{{ stage.key }}">Скопировать шаблон</button>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<script type="module">
+(function(){
+  const modal = document.getElementById('city-template-modal');
+  const openBtn = document.getElementById('open-city-templates');
+  if (!modal || !openBtn) return;
+
+  function openModal() {
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  openBtn.addEventListener('click', openModal);
+  const backdrop = modal.querySelector('.city-template-modal__backdrop');
+  modal.querySelectorAll('[data-modal-dismiss]').forEach(btn => {
+    btn.addEventListener('click', closeModal);
+  });
+  modal.addEventListener('click', (event) => {
+    if (event.target === backdrop) {
+      closeModal();
+    }
+  });
+  modal.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeModal();
+    }
+  });
+})();
+
+(function(){
+  const buttons = document.querySelectorAll('[data-template-reset]');
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.getAttribute('data-target');
+      const field = document.getElementById(targetId);
+      if (!field) return;
+      const fallback = field.dataset.default || '';
+      field.value = fallback;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  });
+})();
+
+(function(){
+  const copyButtons = document.querySelectorAll('[data-template-copy]');
+  copyButtons.forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const target = document.getElementById(btn.getAttribute('data-target'));
+      if (!target) return;
+      const text = target.dataset.default || '';
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Скопировано';
+        setTimeout(() => (btn.textContent = 'Скопировать шаблон'), 1500);
+      } catch (err) {
+        console.warn('Clipboard unavailable', err);
+      }
+    });
+  });
+})();
+
+(function(){
+  document.querySelectorAll('[data-plan-preset]').forEach(group => {
+    const targetName = group.getAttribute('data-plan-preset');
+    const field = document.querySelector(`[data-plan-field="${targetName}"]`);
+    if (!field) return;
+    group.querySelectorAll('button[data-value]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        field.value = btn.getAttribute('data-value');
+      });
+    });
+  });
+})();
+</script>
+{% endblock %}

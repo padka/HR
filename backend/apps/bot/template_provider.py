@@ -22,6 +22,7 @@ class TemplateRecord:
     locale: str
     channel: str
     version: int
+    city_id: Optional[int]
     body: str
 
 
@@ -29,7 +30,24 @@ class TemplateRecord:
 class RenderedTemplate:
     key: str
     version: int
+    city_id: Optional[int]
     text: str
+
+
+class TemplateResolutionError(RuntimeError):
+    """Raised when a template cannot be resolved even after fallback attempts."""
+
+    def __init__(self, key: str, *, locale: str, channel: str, city_id: Optional[int]) -> None:
+        self.key = key
+        self.locale = locale
+        self.channel = channel
+        self.city_id = city_id
+        city_part = f" для города #{city_id}" if city_id is not None else ""
+        message = (
+            f"Активный шаблон '{key}'{city_part} не найден для канала '{channel}' (locale={locale}). "
+            "Добавьте городской или общий шаблон в разделе «Шаблоны сообщений»."
+        )
+        super().__init__(message)
 
 
 class TemplateProvider:
@@ -38,7 +56,7 @@ class TemplateProvider:
     def __init__(self, *, cache_ttl: int = 60) -> None:
         self._cache_ttl = timedelta(seconds=max(1, cache_ttl))
         self._cache: Dict[
-            Tuple[str, str, str], Tuple[Optional[TemplateRecord], datetime]
+            Tuple[str, str, str, Optional[int]], Tuple[Optional[TemplateRecord], datetime]
         ] = {}
         self._lock = asyncio.Lock()
 
@@ -48,34 +66,22 @@ class TemplateProvider:
         *,
         locale: str = "ru",
         channel: str = "tg",
+        city_id: Optional[int] = None,
+        strict: bool = False,
     ) -> Optional[TemplateRecord]:
-        cache_key = (key, locale, channel)
+        cache_key = (key, locale, channel, city_id)
         now = datetime.now(timezone.utc)
         async with self._lock:
             cached = self._cache.get(cache_key)
             if cached and cached[1] > now:
                 return cached[0]
 
-        template = await get_message_template(key, locale=locale, channel=channel)
+        template = await get_message_template(key, locale=locale, channel=channel, city_id=city_id)
         if template is None:
             await record_template_fallback(key)
-            record = _fallback_template_record(key, locale, channel)
-            if record is None:
-                logger.warning(
-                    "Template lookup failed for key=%s locale=%s channel=%s (no fallback)",
-                    key,
-                    locale,
-                    channel,
-                )
-                async with self._lock:
-                    self._cache[cache_key] = (None, now + self._cache_ttl)
-                return None
-            logger.warning(
-                "Template lookup failed for key=%s locale=%s channel=%s; using fallback text",
-                key,
-                locale,
-                channel,
-            )
+            record = _fallback_template_record(key, locale, channel, city_id=city_id, strict=strict)
+            if record is None and strict:
+                raise TemplateResolutionError(key, locale=locale, channel=channel, city_id=city_id)
             async with self._lock:
                 self._cache[cache_key] = (record, now + self._cache_ttl)
             return record
@@ -85,6 +91,7 @@ class TemplateProvider:
             locale=template.locale,
             channel=template.channel,
             version=template.version,
+            city_id=getattr(template, "city_id", None),
             body=template.body_md,
         )
         async with self._lock:
@@ -98,8 +105,10 @@ class TemplateProvider:
         *,
         locale: str = "ru",
         channel: str = "tg",
+        city_id: Optional[int] = None,
+        strict: bool = False,
     ) -> Optional[RenderedTemplate]:
-        template = await self.get(key, locale=locale, channel=channel)
+        template = await self.get(key, locale=locale, channel=channel, city_id=city_id, strict=strict)
         if template is None:
             return None
         try:
@@ -107,7 +116,12 @@ class TemplateProvider:
         except Exception:
             logger.exception("Failed to format template %s", key)
             text = template.body
-        return RenderedTemplate(key=template.key, version=template.version, text=text)
+        return RenderedTemplate(
+            key=template.key,
+            version=template.version,
+            city_id=template.city_id,
+            text=text,
+        )
 
     async def invalidate(
         self,
@@ -115,13 +129,21 @@ class TemplateProvider:
         key: Optional[str] = None,
         locale: str = "ru",
         channel: str = "tg",
+        city_id: Optional[int] = None,
     ) -> None:
         async with self._lock:
             if key is None:
                 self._cache.clear()
                 return
-            cache_key = (key, locale, channel)
-            self._cache.pop(cache_key, None)
+            targets = []
+            for cache_key in list(self._cache.keys()):
+                same_key = cache_key[0] == key and cache_key[1] == locale and cache_key[2] == channel
+                if not same_key:
+                    continue
+                if city_id is None or cache_key[3] == city_id:
+                    targets.append(cache_key)
+            for cache_key in targets:
+                self._cache.pop(cache_key, None)
 
     @staticmethod
     def format_local_dt(dt_utc: datetime, tz_name: Optional[str]) -> str:
@@ -155,6 +177,7 @@ __all__ = [
     "TemplateProvider",
     "TemplateRecord",
     "RenderedTemplate",
+    "TemplateResolutionError",
 ]
 
 
@@ -230,7 +253,11 @@ _DEFAULT_FALLBACK_MESSAGES: Dict[Tuple[str, str, str], str] = {
 }
 
 
-def _fallback_template_record(key: str, locale: str, channel: str) -> Optional[TemplateRecord]:
+def _fallback_template_record(
+    key: str, locale: str, channel: str, *, city_id: Optional[int], strict: bool
+) -> Optional[TemplateRecord]:
+    if strict:
+        return None
     candidates = [
         (key, locale, channel),
         (key, "ru", channel),
@@ -240,13 +267,16 @@ def _fallback_template_record(key: str, locale: str, channel: str) -> Optional[T
     for candidate in candidates:
         body = _DEFAULT_FALLBACK_MESSAGES.get(candidate)
         if body:
-            return TemplateRecord(key=key, locale=locale, channel=channel, version=0, body=body)
+            return TemplateRecord(
+                key=key, locale=locale, channel=channel, version=0, city_id=city_id, body=body
+            )
     if channel == "tg":
         return TemplateRecord(
             key=key,
             locale=locale,
             channel=channel,
             version=0,
+            city_id=city_id,
             body=_GENERIC_FALLBACK_TEXT,
         )
     return None

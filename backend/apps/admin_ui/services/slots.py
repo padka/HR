@@ -34,6 +34,8 @@ try:  # pragma: no cover - optional dependency during tests
 except Exception:  # pragma: no cover - safe fallback when bot package unavailable
     get_reminder_service = None  # type: ignore[assignment]
 from backend.apps.admin_ui.utils import (
+    DEFAULT_TZ,
+    fmt_local,
     norm_status,
     paginate,
     recruiter_time_to_utc,
@@ -42,7 +44,9 @@ from backend.apps.admin_ui.utils import (
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, ManualSlotAuditLog, recruiter_city_association
+from backend.domain.candidates.models import User
 from backend.domain.repositories import reject_slot, reserve_slot
+from backend.core.time_utils import ensure_aware_utc
 
 __all__ = [
     "list_slots",
@@ -59,6 +63,7 @@ __all__ = [
     "reschedule_slot_booking",
     "reject_slot_booking",
     "ManualSlotError",
+    "generate_default_day_slots",
 ]
 
 
@@ -66,7 +71,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_COMPANY_NAME = "SMART SERVICE"
-DEFAULT_SLOT_TZ = "Europe/Moscow"
+DEFAULT_SLOT_TZ = DEFAULT_TZ
 REJECTION_TEMPLATE_KEY = "result_fail"
 
 
@@ -116,11 +121,102 @@ def get_state_manager():
     return _get_state_manager()
 
 
+async def generate_default_day_slots(
+    *,
+    recruiter_id: int,
+    day: date_type,
+    city_id: Optional[int] = None,
+    duration_min: int = 20,
+) -> int:
+    """Generate a standard working day of slots: 09:00-12:00 and 13:00-18:00, step 20m, lunch 12-13."""
+    async with async_session() as session:
+        recruiter = await session.get(
+            Recruiter,
+            recruiter_id,
+            options=[selectinload(Recruiter.cities)],
+        )
+        if not recruiter:
+            raise ValueError("Recruiter not found")
+        # Resolve city: explicit choice or first available for recruiter; falls back to None.
+        target_city = None
+        if city_id:
+            target_city = await session.get(City, city_id)
+        if target_city is None:
+            # Prefer the first linked city (ordered by name) if recruiter has any.
+            target_city = next(
+                iter(sorted(recruiter.cities, key=lambda c: (getattr(c, "name_plain", "") or "").lower())),
+                None,
+            )
+
+        tz_name = getattr(target_city, "tz", None) or recruiter.tz or DEFAULT_TZ
+        tz = ZoneInfo(tz_name)
+        resolved_city_id = getattr(target_city, "id", None)
+
+        def _period(start_h: int, end_h: int) -> List[datetime]:
+            times: List[datetime] = []
+            current = datetime.combine(day, time_type(hour=start_h, minute=0), tzinfo=tz)
+            end_dt = datetime.combine(day, time_type(hour=end_h, minute=0), tzinfo=tz)
+            while current < end_dt:
+                times.append(current)
+                current += timedelta(minutes=duration_min)
+            return times
+
+        local_times = _period(9, 12) + _period(13, 18)
+        start_utc_list = [ensure_aware_utc(dt.astimezone(timezone.utc)) for dt in local_times]
+
+        # Filter existing slots by exact UTC window of the requested local day to avoid TZ drift.
+        day_start_local = datetime.combine(day, time_type.min, tzinfo=tz)
+        day_end_local = datetime.combine(day, time_type.max, tzinfo=tz)
+        day_start_utc = ensure_aware_utc(day_start_local.astimezone(timezone.utc))
+        day_end_utc = ensure_aware_utc(day_end_local.astimezone(timezone.utc))
+
+        existing_rows = await session.scalars(
+            select(Slot.start_utc).where(
+                Slot.recruiter_id == recruiter_id,
+                Slot.start_utc >= day_start_utc,
+                Slot.start_utc <= day_end_utc,
+            )
+        )
+        existing = {ensure_aware_utc(dt) for dt in existing_rows if dt is not None}
+
+        created = 0
+        for start_utc in start_utc_list:
+            if start_utc in existing:
+                continue
+            slot = Slot(
+                recruiter_id=recruiter_id,
+                city_id=resolved_city_id,
+                candidate_city_id=resolved_city_id,
+                purpose="interview",
+                tz_name=tz_name,
+                start_utc=start_utc,
+                duration_min=duration_min,
+                status=SlotStatus.FREE,
+            )
+            session.add(slot)
+            created += 1
+        await session.commit()
+        logger.info(
+            "slots.generate_default",
+            extra={
+                "recruiter_id": recruiter_id,
+                "city_id": resolved_city_id,
+                "tz": tz_name,
+                "day": day.isoformat(),
+                "created_slots": created,
+            },
+        )
+        return created
+
+
 async def list_slots(
     recruiter_id: Optional[int],
     status: Optional[str],
     page: int,
     per_page: int,
+    search_query: Optional[str] = None,
+    city_name: Optional[str] = None,
+    day: Optional[date_type] = None,
 ) -> Dict[str, object]:
     async with async_session() as session:
         filtered = select(Slot)
@@ -130,6 +226,33 @@ async def list_slots(
             filtered = filtered.where(Slot.recruiter_id == recruiter_id)
         if status:
             filtered = filtered.where(Slot.status == status_to_db(status))
+        if city_name:
+            filtered = filtered.where(Slot.city.has(City.name == city_name))
+        if day is not None:
+            # Interpret day in default company timezone to align with generator UI.
+            day_tz = ZoneInfo(DEFAULT_TZ)
+            day_start_local = datetime.combine(day, time_type.min, tzinfo=day_tz)
+            day_end_local = datetime.combine(day, time_type.max, tzinfo=day_tz)
+            start_utc = ensure_aware_utc(day_start_local.astimezone(timezone.utc))
+            end_utc = ensure_aware_utc(day_end_local.astimezone(timezone.utc))
+            filtered = filtered.where(Slot.start_utc >= start_utc, Slot.start_utc <= end_utc)
+
+        # Add search functionality
+        if search_query:
+            search_term = f"%{search_query.strip().lower()}%"
+            # Join with recruiter and city tables for search
+            filtered = filtered.outerjoin(Slot.recruiter).outerjoin(Slot.city)
+            # Search in multiple fields
+            from sqlalchemy import or_, cast, String
+            filtered = filtered.where(
+                or_(
+                    func.lower(Slot.candidate_fio).like(search_term),
+                    func.lower(cast(Slot.candidate_tg_id, String)).like(search_term),
+                    func.lower(Recruiter.name).like(search_term),
+                    func.lower(City.name).like(search_term),
+                    func.lower(cast(Slot.status, String)).like(search_term),
+                )
+            )
 
         subquery = filtered.subquery()
         total = await session.scalar(select(func.count()).select_from(subquery)) or 0
@@ -160,10 +283,23 @@ async def list_slots(
         )
         items = (await session.scalars(query)).all()
 
+        candidate_ids = {slot.candidate_tg_id for slot in items if slot.candidate_tg_id}
+        usernames: Dict[int, Optional[str]] = {}
+        if candidate_ids:
+            username_rows = await session.execute(
+                select(User.telegram_id, User.username, User.telegram_username).where(
+                    User.telegram_id.in_(candidate_ids)
+                )
+            )
+            for tg_id, username, telegram_username in username_rows:
+                usernames[int(tg_id)] = username or telegram_username
+
         # Ensure all datetime fields are timezone-aware
         for item in items:
             if item.start_utc:
                 item.start_utc = item.start_utc.replace(tzinfo=timezone.utc) if item.start_utc.tzinfo is None else item.start_utc
+            if item.candidate_tg_id:
+                item.candidate_username = usernames.get(int(item.candidate_tg_id))
 
     return {
         "items": items,
@@ -372,7 +508,8 @@ async def schedule_manual_candidate_slot(
     if candidate.telegram_id is None:
         raise ManualSlotError("Для кандидата не указан Telegram ID.")
 
-    normalized_dt = _as_utc(dt_utc)
+    normalized_dt = ensure_aware_utc(dt_utc)
+    new_slot_end = normalized_dt + timedelta(minutes=duration_min)
 
     async with async_session() as session:
         # Check for exact duplicate
@@ -402,13 +539,12 @@ async def schedule_manual_candidate_slot(
             conflict_times = []
             for conflict_id, conflict_start, conflict_duration in conflicts:
                 # Check if there's actual overlap (not just within ±15 min window)
-                conflict_end = conflict_start + timedelta(minutes=conflict_duration or 60)
-                new_slot_end = normalized_dt + timedelta(minutes=duration_min)
+                conflict_start_utc = ensure_aware_utc(conflict_start)
+                conflict_end = conflict_start_utc + timedelta(minutes=conflict_duration or 60)
 
                 # Overlaps if: (new_start < conflict_end) AND (new_end > conflict_start)
-                if normalized_dt < conflict_end and new_slot_end > conflict_start:
-                    from backend.apps.admin_ui.timezones import fmt_local
-                    conflict_time_str = fmt_local(conflict_start, slot_tz)
+                if normalized_dt < conflict_end and new_slot_end > conflict_start_utc:
+                    conflict_time_str = fmt_local(conflict_start_utc, slot_tz)
                     conflict_times.append(conflict_time_str)
 
             if conflict_times:
@@ -867,9 +1003,7 @@ def _normalize_utc(dt: datetime) -> datetime:
 
 def _as_utc(dt: datetime) -> datetime:
     """Ensure datetime is timezone-aware UTC for database comparisons."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    return ensure_aware_utc(dt)
 
 
 async def bulk_create_slots(

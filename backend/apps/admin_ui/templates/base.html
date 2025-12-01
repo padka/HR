@@ -108,6 +108,13 @@
     --scrollbar-track: rgba(255,255,255,.05);
     --scrollbar-thumb: color-mix(in srgb, var(--accent) 45%, rgba(0,0,0,.45));
 
+    /* z-index scale */
+    --z-base: 0;
+    --z-dropdown: 1000;
+    --z-sticky: 1500;
+    --z-modal: 2000;
+    --z-notification: 3000;
+
     /* form controls */
     --field-bg: rgba(12,14,19,.65);
     --field-border: var(--glass-stroke);
@@ -1031,7 +1038,8 @@ html[data-theme="light"] {
         <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">Рекрутёры</a>
         <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">Города</a>
         <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">Слоты</a>
-        <a href="/candidates" class="{% if request.url.path.startswith('/candidates') %}active{% endif %}">Кандидаты</a>
+        <a href="/candidates" class="{% if request.url.path.startswith('/candidates') and not request.url.path.startswith('/candidates/detailization') %}active{% endif %}">Кандидаты</a>
+        <a href="/candidates/detailization" class="{% if request.url.path.startswith('/candidates/detailization') %}active{% endif %}">Детализация</a>
         <a href="/templates" class="{% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}">Шаблоны</a>
         <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">Вопросы</a>
       </div>
@@ -1052,6 +1060,9 @@ html[data-theme="light"] {
 <script src="/static/js/modules/notifications.js" defer></script>
 <script src="/static/js/modules/form-validation.js" defer></script>
 <script src="/static/js/modules/glass-effects.js" defer></script>
+<script src="/static/js/modules/neural-bg.js" defer></script>
+<script src="/static/js/modules/card-tilt.js" defer></script>
+<script src="/static/js/modules/animated-counter.js" defer></script>
 <script>
   (function(){
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1237,6 +1248,53 @@ html[data-theme="light"] {
         el.addEventListener('mousemove', onMove);
         el.addEventListener('mouseleave', onLeave);
       });
+
+      const copyFeedbackDuration = 1600;
+      const copyValue = async (text) => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text);
+        }
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.top = '-1000px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+          document.execCommand('copy');
+        } finally {
+          document.body.removeChild(textarea);
+        }
+      };
+
+      document.addEventListener('click', (event) => {
+        const trigger = event.target.closest('[data-copy-value]');
+        if (!trigger) {
+          return;
+        }
+        event.preventDefault();
+        const value = trigger.getAttribute('data-copy-value');
+        if (!value) {
+          return;
+        }
+        const original = trigger.getAttribute('data-copy-original') || trigger.textContent.trim();
+        trigger.setAttribute('data-copy-original', original);
+        const successLabel = trigger.getAttribute('data-copy-success') || 'Скопировано';
+        copyValue(value)
+          .then(() => {
+            trigger.textContent = successLabel;
+            trigger.classList.add('is-copied');
+            window.setTimeout(() => {
+              trigger.classList.remove('is-copied');
+              trigger.textContent = trigger.getAttribute('data-copy-original') || original;
+            }, copyFeedbackDuration);
+          })
+          .catch(() => {
+            trigger.classList.add('is-copy-error');
+            window.setTimeout(() => trigger.classList.remove('is-copy-error'), copyFeedbackDuration);
+          });
+      }, { capture: true });
 
       const rippleTargets = document.querySelectorAll('button, .btn');
       rippleTargets.forEach(btn => {

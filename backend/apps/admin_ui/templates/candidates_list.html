@@ -24,16 +24,13 @@
 {% set filter_options = filter_options or {} %}
 {% set candidate_cards = views.candidates if views else [] %}
 {% set list_groups = views.list if views else {} %}
-{% set kanban_columns = views.kanban.columns if views and views.kanban else [] %}
 {% set calendar_view = views.calendar if views else {} %}
-{% set table_rows = views.table.rows if views and views.table else [] %}
 {% set date_from_value = filters.date_from.strftime('%Y-%m-%d') if filters.date_from else '' %}
 {% set date_to_value = filters.date_to.strftime('%Y-%m-%d') if filters.date_to else '' %}
 {% set selected_statuses = filters.statuses or [] %}
 {% set selected_city_ids = filters.city_ids or [] %}
 {% set summary_today = summary.today if summary else {} %}
 {% set summary_totals = summary.status_totals if summary else {} %}
-{% set summary_funnel = summary.funnel if summary else [] %}
 {% set calendar_date_value = date_from_value or date_to_value or '' %}
 {% set summary_upcoming = summary.upcoming if summary and summary.upcoming else [] %}
 {% set status_labels = status_labels or {} %}
@@ -185,67 +182,6 @@
   .filters-modal__body .candidate-toolbar select {
     width: 100%;
   }
-  .pipeline-funnel {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-    gap: 16px;
-    margin: 24px 0;
-  }
-  .funnel-card {
-    position: relative;
-    padding: 16px;
-    border-radius: 18px;
-    background: var(--liquid-glass-bg);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: var(--liquid-glass-shadow);
-    overflow: hidden;
-    transition: transform var(--duration-fast) var(--ease-spring), box-shadow var(--duration-fast) var(--ease-spring);
-  }
-  .funnel-card::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: var(--liquid-glass-highlight);
-    pointer-events: none;
-    opacity: 0.6;
-  }
-  .funnel-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--liquid-glass-shadow-hover);
-  }
-  .funnel-card__header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    color: var(--muted);
-    margin-bottom: 12px;
-  }
-  .funnel-card__count {
-    font-size: 28px;
-    font-weight: 600;
-    color: var(--fg);
-  }
-  .funnel-card__stats {
-    margin-top: 8px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--muted);
-  }
-  .funnel-card__statuses {
-    margin-top: 12px;
-    display: inline-flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .funnel-card__status {
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.08);
-  }
   .breadcrumbs {
     display: inline-flex;
     gap: 8px;
@@ -267,7 +203,7 @@
     display: flex;
     align-items: flex-start;
     justify-content: center;
-    padding: 40px 16px;
+    padding: 110px 16px 40px;
     z-index: 1200;
     opacity: 0;
     pointer-events: none;
@@ -298,12 +234,12 @@
     position: relative;
     width: min(960px, 100%);
     max-width: 960px;
-    background: var(--liquid-glass-bg);
+    background: radial-gradient(circle at 20% 20%, rgba(255,255,255,0.06), transparent 40%), var(--liquid-glass-bg);
     backdrop-filter: var(--liquid-glass-blur-strong) var(--liquid-glass-saturate);
     -webkit-backdrop-filter: var(--liquid-glass-blur-strong) var(--liquid-glass-saturate);
-    border: 1px solid transparent;
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 40px;
-    padding: 40px;
+    padding: 42px;
     box-shadow:
       0 8px 32px -4px rgba(0, 0, 0, 0.20),
       0 24px 64px -8px rgba(0, 0, 0, 0.28),
@@ -312,7 +248,7 @@
     display: flex;
     flex-direction: column;
     gap: 24px;
-    max-height: calc(100vh - 80px);
+    max-height: calc(100vh - 160px);
     overflow: hidden;
     opacity: 0;
     transform: scale(0.9) translateY(40px) rotateX(8deg);
@@ -345,12 +281,7 @@
     inset: -2px;
     border-radius: inherit;
     padding: 2px;
-    background: linear-gradient(
-      135deg,
-      rgba(255, 255, 255, 0.35) 0%,
-      rgba(255, 255, 255, 0.15) 50%,
-      rgba(255, 255, 255, 0.08) 100%
-    );
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(105, 183, 255, 0.5) 60%, rgba(255, 255, 255, 0.18) 100%);
     -webkit-mask:
       linear-gradient(#fff 0 0) content-box,
       linear-gradient(#fff 0 0);
@@ -381,26 +312,31 @@
       padding: 22px;
       border-radius: 20px;
     }
+    .filters-modal {
+      padding: 80px 10px 24px;
+    }
   }
   .filters-modal__header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
   .filters-modal__title {
     margin: 0;
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 700;
-    background: linear-gradient(135deg, var(--fg-strong) 0%, var(--accent) 80%, var(--accent-2) 100%);
+    background: linear-gradient(135deg, #dbeafe 0%, #a5b4fc 35%, #67e8f9 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
     position: relative;
   }
   .filters-modal__close {
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-radius: 50%;
@@ -438,6 +374,11 @@
   .filters-modal__body {
     flex: 1 1 auto;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-right: 6px;
+    padding-bottom: 10px;
   }
   .filters-modal__body .list-toolbar {
     padding: 0;
@@ -459,7 +400,7 @@
     gap: 8px;
     margin: 12px 0 20px;
   }
-  .dashboard-hero {
+  .candidate-control-panel {
     display: flex;
     flex-wrap: wrap;
     gap: clamp(16px, 3vw, 32px);
@@ -475,28 +416,37 @@
     position: relative;
     isolation: isolate;
   }
-  .dashboard-hero::before,
-  .dashboard-hero::after {
+  .candidate-control-panel::before,
+  .candidate-control-panel::after {
     content: "";
     position: absolute;
     inset: 0;
     border-radius: inherit;
     pointer-events: none;
   }
-  .dashboard-hero::before {
+  .candidate-control-panel::before {
     background: radial-gradient(65% 90% at 0% 100%, rgba(255,255,255,.24), transparent 65%);
     opacity: .45;
   }
-  .dashboard-hero::after {
+  .candidate-control-panel::after {
     background: radial-gradient(50% 55% at 90% 0%, color-mix(in srgb, var(--accent) 45%, transparent), transparent 68%);
     opacity: .4;
   }
-  .dashboard-hero__text {
+  .candidate-control-panel__top {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: space-between;
+    width: 100%;
+    position: relative;
+    z-index: 1;
+  }
+  .candidate-control-panel__text {
     max-width: min(560px, 100%);
     position: relative;
     z-index: 1;
   }
-  .dashboard-hero__title {
+  .candidate-control-panel__title {
     font-size: clamp(24px, 4vw, 34px);
     margin: 0 0 6px;
     letter-spacing: -0.02em;
@@ -504,14 +454,14 @@
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }
-  .dashboard-hero__metrics {
+  .candidate-control-panel__metrics {
     display: flex;
     gap: 12px;
     flex-wrap: wrap;
     font-size: 13px;
     opacity: 0.9;
   }
-  .dashboard-hero__metric {
+  .candidate-control-panel__metric {
     display: inline-flex;
     gap: 6px;
     align-items: center;
@@ -521,7 +471,7 @@
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     font-weight: 600;
   }
-  .dashboard-hero__actions {
+  .candidate-control-panel__switches {
     display: flex;
     flex-wrap: wrap;
     gap: 12px;
@@ -529,6 +479,21 @@
     justify-content: flex-end;
     position: relative;
     z-index: 1;
+  }
+  .candidate-control-panel__switches .pipeline-switch,
+  .candidate-control-panel__switches .candidate-view-switch {
+    margin: 0;
+  }
+  .candidate-control-panel__schedule {
+    width: 100%;
+    position: relative;
+    z-index: 1;
+    max-height: clamp(220px, 40vh, 320px);
+    overflow-y: auto;
+    padding-right: 6px;
+  }
+  .candidate-control-panel__filter {
+    white-space: nowrap;
   }
   body.modal-open {
     overflow: hidden;
@@ -551,8 +516,12 @@
   }
   .filters-modal__body .candidate-toolbar .form-actions {
     display: flex;
-    gap: 8px;
-    justify-content: flex-end;
+    gap: 12px;
+    justify-content: space-between;
+    position: sticky;
+    bottom: 0;
+    padding: 12px 0 0;
+    background: linear-gradient(180deg, rgba(10, 12, 22, 0.88) 0%, rgba(10, 12, 22, 1) 70%);
   }
   .summary-schedule {
     display: grid;
@@ -641,11 +610,11 @@
     z-index: 1;
   }
   @media (max-width: 768px) {
-    .dashboard-hero {
+    .candidate-control-panel {
       flex-direction: column;
       gap: 18px;
     }
-    .dashboard-hero__actions {
+    .candidate-control-panel__switches {
       width: 100%;
       justify-content: space-between;
       gap: 10px;
@@ -722,7 +691,7 @@
   }
 
   @media (max-width: 560px) {
-    .dashboard-hero__actions {
+    .candidate-control-panel__switches {
       flex-direction: column;
     }
     .candidate-view-switch a,
@@ -1551,8 +1520,20 @@
     <span>Кандидаты</span>
   </nav>
   <div></div>
-  <div class="page-actions"></div>
+  <div class="page-actions">
+    <form method="post" action="/candidates/delete-all" onsubmit="return confirm('Удалить все профили кандидатов и освободить их слоты? Это действие необратимо.');">
+      {{ csrf_input(request) }}
+      <button class="btn btn-ghost" type="submit">🗑 Удалить всех кандидатов</button>
+    </form>
+  </div>
 </section>
+
+{% set bulk_deleted = request.query_params.get('bulk_deleted') %}
+{% if bulk_deleted is not none %}
+  <div class="surface glass grain alert" data-tone="warning" role="status">
+    Удалено профилей: {{ bulk_deleted }}
+  </div>
+{% endif %}
 
 <div class="filters-modal" data-filter-modal hidden>
   <div class="filters-modal__backdrop" data-filter-close></div>
@@ -1666,89 +1647,75 @@
   </div>
 {% endif %}
 
-{% if pipeline_options and pipeline_options|length > 1 %}
-  <div class="pipeline-switch" role="tablist" aria-label="Представления">
-    {% for option in pipeline_options %}
-      {% set pipeline_url = request.url.include_query_params(pipeline=option.slug, page=1) %}
-      <a class="btn btn-ghost{% if option.slug == selected_pipeline %} is-active{% endif %}"
-         href="{{ pipeline_url }}"
-         role="tab"
-         aria-selected="{{ 'true' if option.slug == selected_pipeline else 'false' }}">
-        {{ option.label }}
-      </a>
-    {% endfor %}
-  </div>
-{% endif %}
-{% if summary_funnel %}
-  <section class="pipeline-funnel" aria-label="Состояние воронки">
-    {% for stage in summary_funnel %}
-      <article class="funnel-card" data-stage="{{ stage.slug }}" data-tone="{{ stage.tone }}">
-        <div class="funnel-card__header">
-          <span>{{ stage.icon }}</span>
-          <span>{{ stage.label }}</span>
-        </div>
-        <div class="funnel-card__count">{{ stage.count }}</div>
-        <div class="funnel-card__stats">
-          <span>{{ stage.share }}% списка</span>
-          {% if stage.conversion is not none %}
-            <span>Конверсия {{ stage.conversion }}%</span>
-          {% endif %}
-        </div>
-        {% if stage.statuses %}
-          <div class="funnel-card__statuses">
-            {% for status_slug in stage.statuses %}
-              <span class="funnel-card__status">
-                {{ status_labels.get(status_slug, status_slug.replace('_', ' ')) }}
-              </span>
-            {% endfor %}
-          </div>
-        {% endif %}
-      </article>
-    {% endfor %}
-  </section>
-{% endif %}
-
-<section class="dashboard-hero" aria-label="Навигация по кандидатам">
-  <div class="dashboard-hero__text">
-    <h1 class="dashboard-hero__title">Управление кандидатами</h1>
-    <p>Управляйте встречами и статусами в одном месте. Выбранные фильтры показывают {{ total }} проф{{ 'иль' if total == 1 else 'иля' if (total % 10 in [2,3,4]) and (total % 100 not in [12,13,14]) else 'илей' }}.</p>
-    <div class="dashboard-hero__metrics">
-      <span class="dashboard-hero__metric">📅 Ближайшие встречи: {{ summary_upcoming|length }}</span>
+<section class="candidate-control-panel" aria-label="Управление представлениями и фильтрами">
+  <div class="candidate-control-panel__top">
+    <div class="candidate-control-panel__text">
+      <h1 class="candidate-control-panel__title">Управление кандидатами</h1>
+      <p>Выбранные фильтры показывают {{ total }} проф{{ 'иль' if total == 1 else 'иля' if (total % 10 in [2,3,4]) and (total % 100 not in [12,13,14]) else 'илей' }}. Следите за встречами и статусами в одном окне.</p>
+      <div class="candidate-control-panel__metrics">
+        <span class="candidate-control-panel__metric">📅 Ближайшие встречи: {{ summary_upcoming|length }}</span>
+      </div>
     </div>
-    <div class="summary-schedule dashboard-hero__schedule">
-      {% if summary_upcoming %}
-        {% for event in summary_upcoming %}
-          <div class="summary-schedule__item" data-tone="{{ event.status.tone }}">
-            <div class="summary-schedule__meta">
-              <span class="summary-schedule__time">{{ fmt_local(event.start, event.slot.candidate_tz or event.slot.tz_name or 'Europe/Moscow') }}</span>
-              <span class="summary-schedule__candidate">{{ event.candidate.fio }}</span>
-              {% if event.candidate.recruiter %}
-                <span class="summary-schedule__recruiter">{{ event.candidate.recruiter.name }}</span>
-              {% endif %}
-            </div>
-            <span class="status-pill" data-tone="{{ event.status.tone }}">
-              {% if event.status.icon %}<span class="status-pill__icon">{{ event.status.icon }}</span>{% endif %}
-              {{ status_labels.get(event.status.slug, event.status.label) }}
-            </span>
-          </div>
+    <div class="candidate-control-panel__switches">
+      {% if pipeline_options and pipeline_options|length > 1 %}
+      <nav class="pipeline-switch" role="tablist" aria-label="Воронки">
+        {% for option in pipeline_options %}
+          {% set pipeline_url = request.url.include_query_params(pipeline=option.slug, page=1) %}
+          <a class="btn btn-ghost{% if option.slug == selected_pipeline %} is-active{% endif %}"
+             href="{{ pipeline_url }}"
+             role="tab"
+             aria-selected="{{ 'true' if option.slug == selected_pipeline else 'false' }}">
+            {{ option.label }}
+          </a>
         {% endfor %}
-      {% else %}
-        <div class="summary-schedule__placeholder">Нет ближайших встреч</div>
+      </nav>
       {% endif %}
+      {% set allowed_views = ['list', 'calendar'] %}
+      {% if selected_view not in allowed_views %}{% set selected_view = 'list' %}{% endif %}
+      {% set view_nav = [
+        {'value': 'list', 'label': 'Список'},
+        {'value': 'calendar', 'label': 'Календарь'},
+      ] %}
+      <nav class="candidate-view-switch" aria-label="Переключение представлений" role="tablist">
+        {% for option in view_nav %}
+          {% set view_url = request.url.include_query_params(view=option.value) %}
+          <a class="btn btn-ghost{% if selected_view == option.value %} is-active{% endif %}"
+             href="{{ view_url }}"
+             data-view-switch
+             data-view-target="{{ option.value }}"
+             role="tab"
+             aria-selected="{{ 'true' if selected_view == option.value else 'false' }}">
+            {{ option.label }}
+          </a>
+        {% endfor %}
+      </nav>
+      <button class="btn btn-ghost candidate-control-panel__filter" type="button" data-filter-open>Фильтры</button>
     </div>
   </div>
-  <div class="dashboard-hero__actions">
-    <button class="btn btn-ghost" type="button" data-filter-open>Фильтры</button>
-    <nav class="candidate-view-switch" aria-label="Переключение представлений">
-      {% for option in filter_options.view_options or [] %}
-        {% set view_url = request.url.include_query_params(view=option.value) %}
-        <a class="btn btn-ghost{% if selected_view == option.value %} is-active{% endif %}" href="{{ view_url }}">{{ option.label }}</a>
+  <div class="summary-schedule candidate-control-panel__schedule">
+    {% if summary_upcoming %}
+      {% for event in summary_upcoming %}
+        <div class="summary-schedule__item" data-tone="{{ event.status.tone }}">
+          <div class="summary-schedule__meta">
+            <span class="summary-schedule__time">{{ fmt_local(event.start, event.slot.candidate_tz or event.slot.tz_name or 'Europe/Moscow') }}</span>
+            <span class="summary-schedule__candidate">{{ event.candidate.fio }}</span>
+            {% if event.candidate.recruiter %}
+              <span class="summary-schedule__recruiter">{{ event.candidate.recruiter.name }}</span>
+            {% endif %}
+          </div>
+          <span class="status-pill" data-tone="{{ event.status.tone }}">
+            {% if event.status.icon %}<span class="status-pill__icon">{{ event.status.icon }}</span>{% endif %}
+            {{ status_labels.get(event.status.slug, event.status.label) }}
+          </span>
+        </div>
       {% endfor %}
-    </nav>
+    {% else %}
+      <div class="summary-schedule__placeholder">Нет ближайших встреч</div>
+    {% endif %}
   </div>
 </section>
 {% if candidate_cards %}
-  <section class="view-panel{% if selected_view == 'list' %} is-active{% endif %}" data-view="list">
+  <section class="view-panel{% if selected_view == 'list' %} is-active{% endif %}" data-view="list" id="view-list">
     <div class="candidate-groups">
       {% for group in list_groups.values() %}
         <div class="candidate-group">
@@ -1801,31 +1768,7 @@
     </div>
   </section>
 
-  <section class="view-panel{% if selected_view == 'kanban' %} is-active{% endif %}" data-view="kanban">
-    <div class="kanban-board" data-kanban-board>
-      {% for column in kanban_columns %}
-        <div class="kanban-column" data-status="{{ column.slug }}" data-tone="{{ column.tone }}" data-droppable="{{ 'true' if column.droppable else 'false' }}">
-          <header class="kanban-column__title">
-            <span>{{ column.icon }} {{ column.label }}</span>
-            <span>{{ column.total }}</span>
-          </header>
-          <div class="kanban-column__body" data-kanban-column>
-            {% for card in column.candidates %}
-              <article class="kanban-card" data-candidate-id="{{ card.id }}" data-status="{{ column.slug }}" draggable="true">
-                <strong>{{ card.fio }}</strong>
-                {% if card.primary_event_at %}
-                  <div class="kanban-card__time">{{ fmt_local(card.primary_event_at, card.upcoming_slot.candidate_tz if card.upcoming_slot else 'Europe/Moscow') }}</div>
-                {% endif %}
-                <div class="kanban-card__meta">{{ card.city or 'Город не указан' }}</div>
-              </article>
-            {% endfor %}
-          </div>
-        </div>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section class="view-panel{% if selected_view == 'calendar' %} is-active{% endif %}" data-view="calendar">
+  <section class="view-panel{% if selected_view == 'calendar' %} is-active{% endif %}" data-view="calendar" id="view-calendar">
     {% set calendar_modes = {'day': 'День'} %}
     {% set calendar_base_url = request.url.remove_query_params('date_from').remove_query_params('date_to').remove_query_params('page') %}
     <div class="calendar-actions">
@@ -1887,6 +1830,8 @@
             <div class="calendar-day__events">
               {% for event in day.events %}
                 <div class="calendar-event" data-status="{{ event.status.slug }}" data-tone="{{ event.status.tone }}">
+                  {% set event_tg_user_id = event.candidate.telegram_user_id or event.candidate.telegram_id %}
+                  {% set event_tg_username = event.candidate.telegram_username %}
                   <div class="calendar-event__header">
                     <div>
                       <div class="calendar-event__title">{{ event.candidate.fio }}</div>
@@ -1909,7 +1854,16 @@
                     {% if event.candidate.recruiter %}
                       <span>👤 {{ event.candidate.recruiter.name }}</span>
                     {% else %}
-                      <span>Telegram: {{ event.candidate.telegram_id }}</span>
+                      <span>
+                        Telegram:
+                        {% if event_tg_username %}
+                          <a href="https://t.me/{{ event_tg_username }}" target="_blank" rel="noopener">@{{ event_tg_username }}</a>
+                        {% elif event_tg_user_id %}
+                          {{ event_tg_user_id }}
+                        {% else %}
+                          —
+                        {% endif %}
+                      </span>
                     {% endif %}
                     <div class="calendar-event__actions">
                       <a class="btn btn-ghost btn--xs" href="/candidates/{{ event.candidate.id }}">Карточка</a>
@@ -1932,126 +1886,7 @@
     </div>
   </section>
 
-  <section class="view-panel{% if selected_view == 'table' %} is-active{% endif %}" data-view="table">
-    <div class="list-table-wrapper">
-      <table class="candidate-table list-table list-table--responsive{% if selected_pipeline == 'intro_day' %} candidate-table--intro{% endif %}">
-        <thead>
-          {% if selected_pipeline == 'intro_day' %}
-            <tr>
-              <th>{{ sort_link('Кандидат', 'name') }}</th>
-              <th>{{ sort_link('Этап ОД', 'status') }}</th>
-              <th>{{ sort_link('Дата и время', 'event') }}</th>
-              <th>Локация</th>
-              <th>Ответственный</th>
-              <th>Действия</th>
-            </tr>
-          {% else %}
-            <tr>
-              <th>{{ sort_link('Кандидат', 'name') }}</th>
-              <th>Город</th>
-              <th>{{ sort_link('Статус', 'status') }}</th>
-              <th>Тесты</th>
-              <th>{{ sort_link('Интервью', 'event') }}</th>
-              <th>Действия</th>
-            </tr>
-          {% endif %}
-        </thead>
-        <tbody>
-          {% for row in table_rows %}
-            {% set card = row.candidate %}
-            {% if selected_pipeline == 'intro_day' %}
-              {% set intro = row.intro_day or {} %}
-              <tr data-candidate-id="{{ card.id }}">
-                <td data-label="Кандидат">
-                  <strong>{{ card.fio }}</strong>
-                  <div class="cell-meta">
-                    <span>🏙️ {{ intro.city or card.city or 'Город не указан' }}</span>
-                    <span>Telegram: {{ card.telegram_id or '—' }}</span>
-                  </div>
-                </td>
-                <td data-label="Этап">
-                  <span class="status-pill" data-tone="{{ card.status.tone }}">
-                    {% if card.status.icon %}<span class="status-pill__icon">{{ card.status.icon }}</span>{% endif %}
-                    {{ status_labels.get(card.status.slug, card.status.label) }}
-                  </span>
-                </td>
-                <td data-label="Дата и время">
-                  {% if intro.slot %}
-                    <div>{{ fmt_local(intro.slot.start_utc, intro.tz_name or 'Europe/Moscow') }}</div>
-                    <div class="cell-meta">
-                      <span>⏱ {{ intro.slot.duration_min or 60 }} мин</span>
-                      <span>Часовой пояс: {{ intro.tz_name }}</span>
-                    </div>
-                  {% else %}
-                    <span class="badge badge--soft">Не назначено</span>
-                  {% endif %}
-                </td>
-                <td data-label="Локация">
-                  <div class="cell-meta">
-                    {% if intro.address %}
-                      <span>📍 {{ intro.address }}</span>
-                    {% else %}
-                      <span>📍 Локация не указана</span>
-                    {% endif %}
-                    {% if intro.contact %}
-                      <span>📞 {{ intro.contact }}</span>
-                    {% endif %}
-                  </div>
-                </td>
-                <td data-label="Ответственный">
-                  {% if intro.recruiter %}
-                    <div class="cell-meta">
-                      <span>👤 {{ intro.recruiter.name }}</span>
-                    </div>
-                  {% else %}
-                    —
-                  {% endif %}
-                </td>
-                <td class="cell-actions" data-label="Действия">
-                  <a class="btn btn-ghost" href="/candidates/{{ card.id }}">Карточка</a>
-                  {% if intro.slot %}
-                    <a class="btn btn-ghost" href="/candidates/{{ card.id }}/schedule-intro-day">Переназначить</a>
-                  {% else %}
-                    <a class="btn btn-primary" href="/candidates/{{ card.id }}/schedule-intro-day">Назначить ОД</a>
-                  {% endif %}
-                </td>
-              </tr>
-            {% else %}
-              <tr data-candidate-id="{{ card.id }}">
-                <td data-label="Кандидат">
-                  <strong>{{ card.fio }}</strong><br>
-                  <small>Telegram: {{ card.telegram_id }}</small>
-                </td>
-                <td data-label="Город">{{ card.city or '—' }}</td>
-                <td data-label="Статус">
-                    <span class="status-pill" data-tone="{{ card.status.tone }}">
-                      {% if card.status.icon %}<span class="status-pill__icon">{{ card.status.icon }}</span>{% endif %}
-                      {{ status_labels.get(card.status.slug, card.status.label) }}
-                    </span>
-                </td>
-                <td data-label="Тесты">{{ card.tests.test1.icon }} / {{ card.tests.test2.icon }}</td>
-                <td data-label="Интервью">
-                  {% if row.upcoming_slot %}
-                    {{ fmt_local(row.upcoming_slot.start_utc, row.upcoming_slot.candidate_tz or 'Europe/Moscow') }}
-                  {% elif row.latest_slot %}
-                    {{ fmt_local(row.latest_slot.start_utc, row.latest_slot.candidate_tz or 'Europe/Moscow') }}
-                  {% else %}
-                    —
-                  {% endif %}
-                </td>
-                <td class="cell-actions" data-label="Действия">
-                  <a class="btn btn-ghost" href="/candidates/{{ card.id }}">Карточка</a>
-                  {% if card.telemost_url %}
-                    <a class="btn btn-ghost" href="{{ card.telemost_url }}" target="_blank" rel="noopener noreferrer">Телемост</a>
-                  {% endif %}
-                </td>
-              </tr>
-            {% endif %}
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
+  
 {% else %}
   <div class="empty-state" role="status">
     <h2>Список пуст</h2>
@@ -2177,6 +2012,67 @@
       form.requestSubmit();
     }
   });
+})();
+
+(function () {
+  const viewSwitches = Array.from(document.querySelectorAll('[data-view-switch]'));
+  const viewPanels = Array.from(document.querySelectorAll('.view-panel[data-view]'));
+  if (!viewSwitches.length || !viewPanels.length) {
+    return;
+  }
+
+  const updateHistory = (target) => {
+    if (!window.history.replaceState) {
+      return;
+    }
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', target);
+      window.history.replaceState({}, '', url);
+    } catch {
+      /* ignore invalid URL */
+    }
+  };
+
+  const activateView = (target, { skipHistory = false } = {}) => {
+    if (!target) {
+      return;
+    }
+    viewPanels.forEach((panel) => {
+      panel.classList.toggle('is-active', panel.dataset.view === target);
+    });
+    viewSwitches.forEach((link) => {
+      const isActive = link.dataset.viewTarget === target;
+      link.classList.toggle('is-active', isActive);
+      link.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    if (!skipHistory) {
+      updateHistory(target);
+    }
+  };
+
+  viewSwitches.forEach((link) => {
+    link.addEventListener('click', (event) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+      const target = link.dataset.viewTarget;
+      if (!target) {
+        return;
+      }
+      event.preventDefault();
+      activateView(target);
+      const panel = document.getElementById(`view-${target}`);
+      if (panel) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  });
+
+  const current = viewSwitches.find((link) => link.classList.contains('is-active'));
+  if (current && current.dataset.viewTarget) {
+    activateView(current.dataset.viewTarget, { skipHistory: true });
+  }
 })();
 </script>
 

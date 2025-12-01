@@ -90,7 +90,7 @@ class MessageTemplateRepository(BaseRepository[MessageTemplate]):
             Result containing list of active templates or error
         """
         try:
-            stmt = select(MessageTemplate).where(MessageTemplate.active.is_(True))
+            stmt = select(MessageTemplate).where(MessageTemplate.is_active.is_(True))
             result = await self.session.execute(stmt)
             templates = result.scalars().all()
 

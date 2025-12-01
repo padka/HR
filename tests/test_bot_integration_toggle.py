@@ -58,8 +58,14 @@ def test_api_integration_toggle(monkeypatch):
 
     app = create_app()
 
+    from backend.core.settings import get_settings
+    settings = get_settings()
+
     with TestClient(app) as client:
-        client.auth = ("admin", "Nafetomn2001")
+        client.auth = (
+            settings.admin_username or "admin",
+            settings.admin_password or "admin",
+        )
 
         status_initial = client.get("/api/bot/integration").json()
         assert status_initial["runtime_enabled"] in {True, False}

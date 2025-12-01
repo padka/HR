@@ -29,11 +29,27 @@
   <div class="surface glass grain alert" role="alert">
     <h2 class="form-shell__section-title">Город не определён</h2>
     <p class="form-shell__section-hint">
-      У кандидата не указан или не найден город. Добавьте город в карточке кандидата, чтобы система могла отправить сообщение по городскому шаблону.
+      У кандидата не указан или не найден город. Выберите город прямо здесь — мы обновим карточку и продолжим назначение.
     </p>
-    <div class="btn-group mt-sm">
-      <a class="btn btn--primary" href="/candidates/{{ candidate.id }}">← Вернуться к кандидату</a>
-    </div>
+    <form method="post" action="/candidates/{{ candidate.id }}/assign-city" class="inline-form">
+      {{ csrf_input(request) }}
+      <div class="form-grid form-grid--two">
+        <label class="form-field">
+          <span>Выбрать город кандидата</span>
+          <select name="city_id" required>
+            <option value="">Выберите город</option>
+            {% for c in cities %}
+              <option value="{{ c.id }}">{{ c.name_plain if c.name_plain is defined else c.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="form-field">
+          <span class="invisible">Save</span>
+          <button class="btn btn--primary" type="submit">Сохранить город</button>
+        </div>
+      </div>
+      <p class="hint mt-xs">После сохранения подставим шаблон для выбранного города.</p>
+    </form>
   </div>
 {% elif recruiter_missing %}
   <div class="surface glass grain alert" role="alert">
@@ -59,6 +75,8 @@
       {"href": "/candidates/" + candidate.id|string, "text": "Отмена", "variant": "ghost"}
     ]
   ) %}
+    {% set telegram_user_id = candidate.telegram_user_id or candidate.telegram_id %}
+    {% set telegram_username = candidate.telegram_username or candidate.username %}
     {% call forms.section("Информация о кандидате") %}
       <div class="data-list">
         <div>
@@ -72,9 +90,9 @@
         <div>
           <dt>Telegram</dt>
           <dd>
-            <span class="candidate-card__code">{{ candidate.telegram_id }}</span>
-            {% if candidate.username %}
-              <a class="btn btn-primary btn-xs" href="https://t.me/{{ candidate.username }}" target="_blank" style="margin-left: 8px;">Открыть чат</a>
+            <span class="candidate-card__code">{{ telegram_user_id or '—' }}</span>
+            {% if telegram_username %}
+              <a class="btn btn-primary btn-xs" href="https://t.me/{{ telegram_username }}" target="_blank" style="margin-left: 8px;">Открыть чат</a>
             {% endif %}
           </dd>
         </div>
@@ -121,7 +139,7 @@
     {% endcall %}
 
     <input type="hidden" name="candidate_id" value="{{ candidate.id }}">
-    <input type="hidden" name="candidate_telegram_id" value="{{ candidate.telegram_id }}">
+    <input type="hidden" name="candidate_telegram_id" value="{{ telegram_user_id or '' }}">
     <input type="hidden" name="candidate_fio" value="{{ candidate.fio }}">
     <input type="hidden" name="candidate_city" value="{{ candidate.city or '' }}">
     <input type="hidden" id="city_tz_value" value="{{ city_timezone }}" data-tz-label="{{ city_timezone_label }}">

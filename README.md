@@ -3,6 +3,17 @@
 [![CI](https://github.com/OWNER/HR/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-85%25+-brightgreen.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 
+## Быстрый старт (dev/test)
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+make install            # ставит dev-зависимости (pytest и пр.)
+make test               # прогоны на SQLite + in-memory broker, без Redis/Postgres
+```
+
+Переменные окружения для тестов выставляются автоматически (ENVIRONMENT=test, DATABASE_URL=sqlite+aiosqlite:///./data/test.db, NOTIFICATION_BROKER=memory, ADMIN_USER/PASSWORD=admin). Брокер уведомлений и бот отключены, используется in-memory state/store.
+
 ## Database Migrations
 
 ⚠️ **Important:** Database migrations must be run **before** starting any application services.
@@ -12,6 +23,9 @@ Migrations are managed using Alembic and should be executed separately to preven
 ```bash
 # Run migrations
 python scripts/run_migrations.py
+
+# Or apply to local SQLite test DB
+make migrate-test
 ```
 
 For detailed migration documentation, Docker/K8s setup, and troubleshooting, see [docs/MIGRATIONS.md](docs/MIGRATIONS.md).
@@ -56,6 +70,20 @@ query‑параметр `pipeline` (и переключатель в UI):
 
 API `GET /candidates` и соответствующие сервисы (`list_candidates`, `candidate_filter_options`) принимают параметр `pipeline`, что позволяет UI/автоматизации получать нужное представление без дополнительных маршрутов.
 
+### Telegram контакты кандидата
+
+- Как только кандидат пишет боту (команда, сообщение или нажатие кнопки), middleware бота сохраняет `telegram_user_id`, `telegram_username` и время связи в профиле кандидата.
+- В карточке кандидата в админке появился блок «Telegram»: кнопки «Открыть чат», «Скопировать username/TG ID» и fallback‑инструкция с `tg://user?id=<id>` если username скрыт.
+- В таблицах, календаре и карточках подсказок выводится та же информация, поэтому рекрутёр всегда видит deeplink и может скопировать идентификатор в один клик.
+- Админка не отправляет сообщения от лица рекрутера — блок лишь помогает открыть чат или скопировать данные для ручного контакта.
+
+### Чат с кандидатом
+
+- На странице кандидата есть раздел «Чат (Telegram)» с последними сообщениями, индикатором статуса доставки и кнопкой «Загрузить ещё».
+- Отправка сообщений выполняется через Telegram Bot API: каждое сообщение сохраняется в `chat_messages` со статусами `queued/sent/failed`, поддерживается повторная отправка.
+- Входящие сообщения логируются ботом как `inbound` и отображаются в карточке после обновления (или через кнопку «Обновить»). Реалтайма нет, но добавлен 5‑секундный поллинг.
+- Для быстрых ответов есть набор шаблонов (Напоминание, Подтвердите время и т.д.), которые подставляют текст одним кликом.
+
 ## Notifications Broker (Redis)
 
 Интеграционные тесты для уведомлений и полноценный NotificationService ожидают работающий
@@ -73,6 +101,60 @@ docker compose up -d redis_notifications
 Тесты с маркером `notifications` используют InMemory broker, если Redis недоступен, но сценарии
 из `tests/integration/test_notification_broker_redis.py` подключаются к указанному `--redis-url` и
 автоматически пропускаются, если сервис не запущен.
+
+## Deployment / Production run
+
+The repository now ships with a minimal docker-compose stack that can be used for
+production-like deployments or staging smoke tests. It creates five services:
+
+| Service            | Port  | Description |
+| ------------------ | ----- | ----------- |
+| `postgres`         | 5432  | Primary application database (AsyncPG access from apps). |
+| `redis_notifications` | 6379 | Notification broker / state store for the bot. |
+| `redis_cache`      | 6380  | Optional cache instance used by the admin UI. |
+| `admin_ui`         | 8000  | FastAPI admin interface (`backend.apps.admin_ui.app`). |
+| `admin_api`        | 8100  | FastAPI admin API/SQLAdmin surface (`backend.apps.admin_api.main`). |
+| `bot`              | n/a   | Telegram worker (`bot.py`) that consumes Redis queues. |
+
+### Prepare configuration
+
+1. Copy `docker-compose.env.example` to `.env` (or pass it via `docker compose --env-file`).
+2. Replace placeholder values:
+   - Generate a real `SESSION_SECRET`.
+   - Set `ADMIN_PASSWORD` and `POSTGRES_PASSWORD` to strong values.
+   - Provide a valid `BOT_TOKEN` from @BotFather (the bot container refuses to start otherwise).
+
+### Run the stack
+
+```bash
+# Build the shared image once
+docker compose build
+
+# Run migrations against the Postgres container
+docker compose run --rm admin_ui python scripts/run_migrations.py
+
+# Start everything (-d for detached)
+docker compose up -d
+
+# Tail logs for specific services
+docker compose logs -f admin_ui
+docker compose logs -f bot
+```
+
+Healthchecks expose `/health` for the UI and `/` for the Admin API, so you can
+verify status quickly:
+
+```bash
+curl -f http://localhost:8000/health
+curl -f http://localhost:8100/
+```
+
+The bot container reports readiness once it connects to Redis and Telegram. If
+you run without a valid token you can temporarily set `BOT_ENABLED=false` to skip
+startup, but for production you must provide credentials.
+
+All containers share the same image defined in `Dockerfile`, so the build result
+is cached and used by the Admin UI, Admin API and the bot service.
 
 ### Load tests
 
@@ -211,26 +293,116 @@ export BOT_TOKEN="your-telegram-bot-token"
 
 All runtime artefacts (SQLite databases, generated reports, uploaded resumes)
 are stored under the directory specified by the `DATA_DIR` environment
-variable. If the variable is not provided, the project falls back to the
-`data/` folder in the repository root. Within this directory the following
-sub-folders are used:
+variable. If the variable is not provided, the project falls back to
+`~/.recruitsmart_admin/data` (outside the repository tree). Within this
+directory the following sub-folders are used:
 
 - `reports/` – generated recruiter reports (`report_*.txt`).
 - `test1/` – interview questionnaires saved as text files (`test1_*.txt`).
 - `uploads/` – user-uploaded files such as resumes.
 
-The directories are created automatically on startup. To keep the repository
-clean, point `DATA_DIR` to a location outside the project checkout when
-running locally, for example:
+The directories are created automatically on startup. If you prefer another
+location, point `DATA_DIR` to it before launching the server. Avoid storing
+`bot.db` inside the project tree when running with `uvicorn --reload`: every
+write operation triggers the file watcher and the dev server restarts. The
+development preset intentionally keeps the SQLite file at `<repo>/data/bot.db`
+so that `make dev` works out of the box even when `asyncpg` is not installed.
+If reload churn becomes annoying, set `DATABASE_URL` to a path outside the
+checkout, for example:
 
 ```bash
 export DATA_DIR="$HOME/hr-bot-data"
 mkdir -p "$DATA_DIR"/reports "$DATA_DIR"/test1 "$DATA_DIR"/uploads
+python -c "from backend.migrations.runner import upgrade_to_head; upgrade_to_head(f'sqlite+aiosqlite:///{'$'}DATA_DIR/bot.db')"
 ```
 
-The bot uses SQLite by default with a database file located inside `DATA_DIR`
-(`bot.db`). You can override the connection string via the `DATABASE_URL`
-environment variable.
+The bot uses SQLite by default:
+
+- `ENVIRONMENT=development` + no `DATABASE_URL` → `sqlite+aiosqlite:///<repo>/data/bot.db`
+  (the bundled `aiosqlite` dependency covers this case).
+- Other environments + no `DATABASE_URL` → `sqlite+aiosqlite:///${DATA_DIR}/bot.db`.
+
+Provide a `DATABASE_URL` to move the SQLite file elsewhere or to switch to
+PostgreSQL/MySQL. The async SQLAlchemy engine expects explicit driver names
+such as `sqlite+aiosqlite` or `postgresql+asyncpg`.
+
+### Database quick start
+
+**SQLite dev (default):**
+
+```bash
+# Comment out DATABASE_URL in .env or override it with an empty value
+DATABASE_URL="" make dev
+```
+
+This resolves to `sqlite+aiosqlite:///./data/bot.db` when the project is run
+from the repository root. `aiosqlite` is part of `requirements-dev.txt`, so no
+extra packages are required.
+
+**PostgreSQL (docker compose / staging):**
+
+```bash
+python -m pip install asyncpg
+docker compose up -d postgres
+DATABASE_URL=postgresql+asyncpg://recruitsmart:recruitsmart@localhost:5432/recruitsmart make dev
+```
+
+The Admin UI logs the active dialect (passwords are masked) and fails fast with
+a short `RuntimeError` if the required async driver (`asyncpg` or `aiosqlite`)
+is missing.
+
+## Self-healing dev server
+
+During day-to-day work you no longer need to restart Uvicorn manually every
+time a file changes or the process crashes. The `scripts/dev_server.py`
+wrapper keeps the admin UI online by supervising the actual Uvicorn command
+and watching the project tree for changes:
+
+```bash
+# installs the watcher dependencies and launches the resilient server
+pip install -r requirements-dev.txt
+make dev-sqlite
+```
+
+`make dev-sqlite` clears `DATABASE_URL` and always uses the bundled SQLite
+database (`sqlite+aiosqlite:///./data/bot.db`). Use `make dev` (or the verbose
+`make dev-postgres` helper) when you want the supervisor to respect the
+`DATABASE_URL` from your shell or `.env` — for example, to connect to a local
+PostgreSQL instance.
+
+The helper does three things for you:
+
+1. Starts the FastAPI admin UI with Uvicorn (default host: `127.0.0.1:8000`).
+2. Restarts the process automatically when Python/HTML/TS files under
+   `backend/`, `scripts/`, `tests/`, or `docs/` change.
+3. Brings the server back up if it exits unexpectedly (for example, because of
+   an exception during startup).
+
+You can customise the command or watch paths without editing the script:
+
+```bash
+# Run on a different port and also watch the frontend bundle directory
+DEVSERVER_CMD="uvicorn backend.apps.admin_ui.app:app --host 0.0.0.0 --port 8100" \
+DEVSERVER_WATCH="backend frontend scripts" \
+make dev
+```
+
+If you prefer to run the supervisor directly, call:
+
+```bash
+ENVIRONMENT=development REDIS_URL="" \
+DEVSERVER_CMD="uvicorn backend.apps.admin_ui.app:app --port 8000" \
+python scripts/dev_server.py --watch backend --watch scripts
+```
+
+Once running, every change to the watched paths or an unexpected crash triggers
+an automatic restart, so you can concentrate on coding rather than retyping
+commands.
+
+If the child process crashes three times within 10 seconds, or if the database
+driver is missing (`asyncpg`/`aiosqlite`), the supervisor prints actionable
+hints (including `DATABASE_URL='' make dev-sqlite`) and exits instead of
+looping endlessly.
 
 ## Running tests
 Project level tests should be executed with the Python module runner to avoid

@@ -124,6 +124,7 @@ class BotSendResult:
     status: str
     message: Optional[str] = None
     error: Optional[str] = None
+    telegram_message_id: Optional[int] = None
 
 
 @dataclass
@@ -364,6 +365,60 @@ class BotService:
             )
 
         return BotSendResult(ok=True, status="sent_rejection")
+
+    async def send_chat_message(
+        self,
+        telegram_id: int,
+        text: str,
+    ) -> BotSendResult:
+        """Send a plain text message to candidate via bot."""
+
+        if not self.integration_switch.is_enabled() or not self.enabled:
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error="Бот недоступен для отправки сообщений.",
+            )
+
+        if not BOT_RUNTIME_AVAILABLE or not self.configured:
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error="Бот не настроен.",
+            )
+
+        try:
+            bot = get_bot()
+        except Exception as exc:  # pragma: no cover - runtime guard
+            logger.exception("Bot runtime unavailable for chat message: %s", exc)
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error="Бот недоступен.",
+            )
+
+        try:
+            response = await bot.send_message(telegram_id, text)
+        except Exception as exc:  # pragma: no cover - network errors
+            if _is_transient_error(exc):
+                logger.exception("Transient error while sending chat message")
+                return BotSendResult(
+                    ok=False,
+                    status="queued_retry",
+                    error=self.transient_message,
+                )
+            logger.exception("Failed to send chat message to %s", telegram_id)
+            return BotSendResult(
+                ok=False,
+                status="failed",
+                error=self.failure_message,
+            )
+
+        return BotSendResult(
+            ok=True,
+            status="sent",
+            telegram_message_id=getattr(response, "message_id", None),
+        )
 
 
 _bot_service: Optional[BotService] = None

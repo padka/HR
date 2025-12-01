@@ -12,6 +12,12 @@ from .services import (  # noqa: F401
     create_notification,
     mark_notification_sent,
     update_candidate_reports,
+    link_telegram_identity,
+    update_chat_message_status,
+    log_inbound_chat_message,
+    list_chat_messages,
+    set_conversation_mode,
+    is_chat_mode_active,
 )
 
 __all__ = [
@@ -25,4 +31,10 @@ __all__ = [
     "create_notification",
     "mark_notification_sent",
     "update_candidate_reports",
+    "link_telegram_identity",
+    "update_chat_message_status",
+    "log_inbound_chat_message",
+    "list_chat_messages",
+    "set_conversation_mode",
+    "is_chat_mode_active",
 ]

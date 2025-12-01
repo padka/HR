@@ -145,6 +145,199 @@
     margin-left: 4px;
   }
 
+  .telegram-panel {
+    margin-top: 20px;
+    padding: 18px 20px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    display: grid;
+    gap: 14px;
+  }
+
+  html[data-theme="light"] .telegram-panel {
+    border-color: rgba(15, 23, 42, 0.12);
+    background: rgba(15, 23, 42, 0.03);
+  }
+
+  .telegram-panel__eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+
+  .telegram-panel__title {
+    font-size: 1.2rem;
+    margin: 0;
+  }
+
+  .telegram-panel__meta {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  .telegram-panel__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+
+  .telegram-panel__item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .telegram-panel__label {
+    font-size: 0.8rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .telegram-panel__value {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+  }
+
+  .telegram-panel__value code {
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  html[data-theme="light"] .telegram-panel__value code {
+    background: rgba(15, 23, 42, 0.08);
+  }
+
+  .telegram-panel__hint {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .telegram-panel__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .telegram-panel__links {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .telegram-panel__links a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .chat-panel {
+    margin-top: 24px;
+    padding: 20px;
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.03);
+    display: grid;
+    gap: 16px;
+  }
+
+  html[data-theme="light"] .chat-panel {
+    border-color: rgba(15, 23, 42, 0.12);
+    background: rgba(15, 23, 42, 0.02);
+  }
+
+  .chat-panel__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .chat-panel__title {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+
+  .chat-panel__log {
+    max-height: 420px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-right: 4px;
+  }
+
+  .chat-message {
+    padding: 12px 16px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.06);
+    max-width: 80%;
+    position: relative;
+  }
+
+  .chat-message--outbound {
+    margin-left: auto;
+    background: rgba(99, 102, 241, 0.15);
+  }
+
+  .chat-message__meta {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 6px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .chat-panel__templates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chat-panel__form textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.2);
+    color: inherit;
+    resize: vertical;
+  }
+
+  html[data-theme="light"] .chat-panel__form textarea {
+    border-color: rgba(15, 23, 42, 0.2);
+    background: rgba(15, 23, 42, 0.03);
+  }
+
+  .chat-panel__form-actions {
+    margin-top: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .chat-panel__status {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .chat-panel__placeholder {
+    padding: 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
   .candidate-hero__status {
     flex: 1 1 260px;
     min-width: 240px;
@@ -207,6 +400,55 @@
     font-size: 1.25rem;
     margin: 0;
     font-weight: 600;
+  }
+
+  .manual-slot-card {
+    margin-top: 24px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+    align-items: center;
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 24px;
+  }
+
+  html[data-theme="light"] .manual-slot-card {
+    border-color: rgba(15, 23, 42, 0.08);
+    background: rgba(15, 23, 42, 0.03);
+  }
+
+  .manual-slot-card__eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin: 0 0 6px;
+  }
+
+  .manual-slot-card__window {
+    font-size: 1.3rem;
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .manual-slot-card__note {
+    margin: 8px 0 0;
+    color: var(--fg);
+  }
+
+  .manual-slot-card__meta {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin: 4px 0 0;
+  }
+
+  .manual-slot-card__actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .candidate-next {
@@ -757,28 +999,44 @@
 {% set interview_sections = interview_form_sections or [] %}
 {% set recommendation_lookup = interview_recommendation_lookup or {} %}
 {% set show_interview_form = request.query_params.get('interview_edit') or (interview_data|length == 0) %}
+{% set telegram_user_id = user.telegram_user_id or user.telegram_id %}
+{% set telegram_username = user.telegram_username or user.username %}
+{% set telegram_linked_at = user.telegram_linked_at %}
+{% set chat_templates = chat_templates or [] %}
 <section class="page-header">
   <div>
     <a class="muted" href="/candidates">← К списку кандидатов</a>
     <h1 class="page-title">{{ user.fio }}</h1>
-    <p class="page-description">Telegram ID {{ user.telegram_id }} · {{ user.city or 'Город не указан' }}</p>
+    <p class="page-description">
+      Telegram ID {{ telegram_user_id or '—' }} · {{ user.city or 'Город не указан' }}
+    </p>
   </div>
   <div class="page-actions">
-    {% if user.username %}
-      <a class="btn btn-soft" href="https://t.me/{{ user.username }}" target="_blank" rel="noopener">Открыть чат</a>
-    {% elif user.telegram_id %}
-      <span class="page-actions__note">Telegram {{ user.telegram_id }} · username не указан</span>
-    {% endif %}
-    {% if not (has_intro_day_slot | default(false)) %}
+    {% set cs = (candidate_status_slug or user.candidate_status or '')|lower %}
+    {% set has_test2_completed = false %}
+    {% for res in tests or [] %}
+      {% if res.rating and res.rating|upper == 'TEST2' %}
+        {% set has_test2_completed = true %}
+      {% endif %}
+    {% endfor %}
+    {% set intro_day_allowed = can_schedule_intro_day or (cs in ['test2_completed', 'intro_day_scheduled', 'intro_day_confirmed_preliminary', 'intro_day_confirmed_day_of'] or has_test2_completed) %}
+    {% if not (has_intro_day_slot | default(false)) and intro_day_allowed %}
       <a href="/candidates/{{ user.id }}/schedule-intro-day" class="btn btn-primary">
         📆 Назначить ознакомительный день
       </a>
     {% endif %}
-    {% if user.candidate_status in ['waiting_slot', 'stalled_waiting_slot', 'test1_completed', 'interview_declined', 'interview_scheduled'] or not has_interview_slot %}
-      <a href="/candidates/{{ user.id }}/schedule-slot" class="btn {% if user.candidate_status in ['waiting_slot', 'stalled_waiting_slot'] %}btn-primary{% else %}btn-secondary{% endif %}">
-        🕒 {% if user.candidate_status in ['waiting_slot', 'stalled_waiting_slot'] %}Предложить время собеседования{% else %}Назначить/перенести собеседование{% endif %}
-      </a>
-    {% endif %}
+    <div class="btn-group">
+      {% if cs in ['waiting_slot', 'stalled_waiting_slot', 'test1_completed', 'interview_declined', 'interview_scheduled'] or not has_interview_slot %}
+        <a href="/candidates/{{ user.id }}/schedule-slot" class="btn {% if cs in ['waiting_slot', 'stalled_waiting_slot'] %}btn-primary{% else %}btn-secondary{% endif %}">
+          🕒 {% if cs in ['waiting_slot', 'stalled_waiting_slot'] %}Предложить время собеседования{% else %}Назначить/перенести собеседование{% endif %}
+        </a>
+      {% endif %}
+      <form method="post" action="/candidates/{{ user.id }}/status" style="display:inline;" onsubmit="return confirm('Отклонить кандидата {{ user.fio }}?');">
+        {{ csrf_input(request) }}
+        <input type="hidden" name="status" value="interview_declined">
+        <button class="btn btn-ghost" type="submit">🚫 Отказ</button>
+      </form>
+    </div>
     {% if pending_slot %}
       <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve" class="approve-form">
         {{ csrf_input(request) }}
@@ -793,7 +1051,7 @@
     {% endif %}
 
     {# Manual status change buttons for HIRED/NOT_HIRED #}
-    {% if user.candidate_status and user.candidate_status in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] %}
+    {% if cs in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] %}
       <form method="post" action="/candidates/{{ user.id }}/status" style="display: inline;">
         {{ csrf_input(request) }}
         <input type="hidden" name="status" value="hired">
@@ -806,6 +1064,13 @@
         <input type="hidden" name="status" value="not_hired">
         <button class="btn btn-ghost" type="submit" onclick="return confirm('Пометить {{ user.fio }} как не закрепленного?');">
           ⚠️ Не закреплен
+        </button>
+      </form>
+      <form method="post" action="/candidates/{{ user.id }}/status" style="display: inline;">
+        {{ csrf_input(request) }}
+        <input type="hidden" name="status" value="intro_day_declined_day_of">
+        <button class="btn btn-soft" type="submit" onclick="return confirm('Отказать кандидату {{ user.fio }} после ОД?');">
+          ⛔️ Отказ
         </button>
       </form>
     {% endif %}
@@ -825,6 +1090,119 @@
       <button class="btn btn-soft" type="submit">Удалить</button>
     </form>
   </div>
+</section>
+
+<section class="telegram-panel" aria-labelledby="telegram-panel-title">
+  <div>
+    <p class="telegram-panel__eyebrow">Telegram</p>
+    <h2 class="telegram-panel__title" id="telegram-panel-title">Контакты кандидата</h2>
+    {% if telegram_linked_at %}
+      <p class="telegram-panel__meta">
+        Связь установлена {{ fmt_local(telegram_linked_at, 'Europe/Moscow') }}
+      </p>
+    {% endif %}
+  </div>
+  <div class="telegram-panel__grid">
+    <div class="telegram-panel__item">
+      <span class="telegram-panel__label">TG ID</span>
+      {% if telegram_user_id %}
+        <div class="telegram-panel__value">
+          <code>{{ telegram_user_id }}</code>
+          <button
+            class="btn btn-ghost btn--xs"
+            type="button"
+            data-copy-value="{{ telegram_user_id }}"
+            data-copy-success="Скопировано">
+            Скопировать TG ID
+          </button>
+        </div>
+      {% else %}
+        <p class="telegram-panel__hint">Бот ещё не получил Telegram ID.</p>
+      {% endif %}
+    </div>
+    <div class="telegram-panel__item">
+      <span class="telegram-panel__label">Username</span>
+      {% if telegram_username %}
+        <div class="telegram-panel__value">
+          <code>@{{ telegram_username }}</code>
+          <button
+            class="btn btn-ghost btn--xs"
+            type="button"
+            data-copy-value="{{ telegram_username }}"
+            data-copy-success="Скопировано">
+            Скопировать username
+          </button>
+        </div>
+      {% else %}
+        <p class="telegram-panel__hint">Кандидат скрывает username — используйте TG ID.</p>
+      {% endif %}
+    </div>
+    <div class="telegram-panel__item">
+      <span class="telegram-panel__label">Действия</span>
+      {% if telegram_username %}
+        <div class="telegram-panel__actions">
+          <a class="btn btn-soft" href="https://t.me/{{ telegram_username }}" target="_blank" rel="noopener">
+            Открыть чат
+          </a>
+        </div>
+        <p class="telegram-panel__hint">Откроется Telegram или Telegram Web.</p>
+      {% elif telegram_user_id %}
+        <div class="telegram-panel__actions">
+          <a class="btn btn-soft" href="tg://user?id={{ telegram_user_id }}">tg://user?id={{ telegram_user_id }}</a>
+        </div>
+        <p class="telegram-panel__hint">
+          Если браузер блокирует tg:// — скопируйте TG ID и найдите кандидата напрямую.
+        </p>
+      {% else %}
+        <p class="telegram-panel__hint">Телеграм ещё не привязан — дождитесь первого сообщения кандидата.</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{% set chat_disabled = 1 if not telegram_user_id else 0 %}
+<section
+  class="chat-panel"
+  data-chat-root
+  data-chat-disabled="{{ chat_disabled }}"
+  data-chat-url="/api/candidates/{{ user.id }}/chat"
+  data-chat-retry-base="/api/candidates/{{ user.id }}/chat"
+>
+  <div class="chat-panel__header">
+    <div>
+      <p class="telegram-panel__eyebrow">Чат (Telegram)</p>
+      <h2 class="chat-panel__title">Общение с кандидатом</h2>
+    </div>
+    <button class="btn btn-ghost btn--xs" type="button" data-chat-refresh>Обновить</button>
+  </div>
+  {% if not telegram_user_id %}
+    <div class="chat-panel__placeholder">
+      <p>Кандидат ещё не писал боту — чат станет доступен после первого сообщения.</p>
+    </div>
+  {% else %}
+    <div class="chat-panel__log" data-chat-list>
+      <p class="chat-panel__placeholder">Сообщения подгружаются…</p>
+    </div>
+    <button class="btn btn-ghost btn--xs" type="button" data-chat-more hidden>Загрузить ещё</button>
+    <div class="chat-panel__templates">
+      {% for template in chat_templates or [] %}
+        <button
+          class="btn btn-ghost btn--xs"
+          type="button"
+          data-chat-template="{{ template.key }}"
+          data-template-text="{{ template.text }}">
+          {{ template.label }}
+        </button>
+      {% endfor %}
+    </div>
+    <form class="chat-panel__form" data-chat-form>
+      <textarea data-chat-input placeholder="Напишите сообщение кандидату…" maxlength="2000"></textarea>
+      <div class="chat-panel__form-actions">
+        <span class="chat-panel__status" data-chat-status></span>
+        <button class="btn btn-primary" type="submit">Отправить</button>
+      </div>
+    </form>
+  {% endif %}
 </section>
 
 {% set avg_score_label = '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' %}
@@ -853,15 +1231,16 @@
       </p>
       <div class="candidate-hero__tags">
         <span class="candidate-hero__tag">{{ user.city or 'Город не указан' }}</span>
-        {% if user.telegram_id %}
-          <span class="candidate-hero__tag">Telegram {{ user.telegram_id }}</span>
+        {% if telegram_user_id %}
+          <span class="candidate-hero__tag">TG {{ telegram_user_id }}</span>
         {% endif %}
-        {% if user.username %}
-          <a class="btn btn-primary btn-xs candidate-hero__chat" href="https://t.me/{{ user.username }}" target="_blank" rel="noopener">
-            Открыть чат
-          </a>
-        {% elif user.telegram_id %}
+        {% if telegram_username %}
+          <span class="candidate-hero__tag">@{{ telegram_username }}</span>
+        {% elif telegram_user_id %}
           <span class="candidate-hero__chat-note">username не указан</span>
+        {% endif %}
+        {% if user.intro_decline_reason %}
+          <span class="candidate-hero__tag" title="{{ user.intro_decline_reason }}">Отказ ОД: {{ user.intro_decline_reason[:40] ~ ('…' if user.intro_decline_reason|length > 40 else '') }}</span>
         {% endif %}
       </div>
     </div>
@@ -894,6 +1273,51 @@
       </dl>
     </div>
   </div>
+
+  {# Определяем, есть ли уже назначенное интервью (не free) #}
+  {% set interview_ns = namespace(has_slot=false) %}
+  {% for slot in slots or [] %}
+    {% set status_raw = (slot.status or '')|lower %}
+    {% if (slot.purpose is not defined or slot.purpose != 'intro_day') and status_raw in ['pending', 'booked', 'confirmed_by_candidate'] %}
+      {% set interview_ns.has_slot = true %}
+    {% endif %}
+  {% endfor %}
+
+  {% set manual_tz = user.manual_slot_timezone or 'Europe/Moscow' %}
+  {% if (user.manual_slot_from or user.manual_slot_comment or user.manual_slot_requested_at) and not interview_ns.has_slot %}
+  <section class="manual-slot-card" id="manual-availability">
+    <div>
+      <p class="manual-slot-card__eyebrow">Кандидат оставил пожелания по времени</p>
+      {% if user.manual_slot_from %}
+        <p class="manual-slot-card__window">
+          {{ fmt_local(user.manual_slot_from, manual_tz) }}
+          {% if user.manual_slot_to %}
+            — {{ fmt_local(user.manual_slot_to, manual_tz) }}
+          {% endif %}
+        </p>
+      {% elif user.manual_slot_comment %}
+        <p class="manual-slot-card__window">{{ user.manual_slot_comment }}</p>
+      {% else %}
+        <p class="manual-slot-card__window">Ожидает ручного согласования</p>
+      {% endif %}
+
+      {% if user.manual_slot_comment and user.manual_slot_from %}
+        <p class="manual-slot-card__note">📝 {{ user.manual_slot_comment }}</p>
+      {% endif %}
+      {% if user.manual_slot_requested_at or user.manual_slot_response_at %}
+        <p class="manual-slot-card__meta">
+          Запрос получен {{ fmt_local(user.manual_slot_requested_at or user.manual_slot_response_at, manual_tz) }}
+        </p>
+      {% endif %}
+    </div>
+    <div class="manual-slot-card__actions">
+      <a class="btn btn-primary" href="/candidates/{{ user.id }}/schedule-slot">Назначить собеседование</a>
+      {% if telegram_user_id %}
+        <a class="btn btn-soft" href="tg://user?id={{ telegram_user_id }}">Написать в TG</a>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
 
   <div class="candidate-next">
     <p class="candidate-next__eyebrow">Ближайшее действие</p>
@@ -1199,6 +1623,233 @@
     {% endfor %}
   </div>
 </section>
+
+<script>
+(function () {
+  const chatRoot = document.querySelector('[data-chat-root]');
+  if (!chatRoot) {
+    return;
+  }
+  if (chatRoot.dataset.chatDisabled === '1') {
+    return;
+  }
+  const chatList = chatRoot.querySelector('[data-chat-list]');
+  const loadMoreBtn = chatRoot.querySelector('[data-chat-more]');
+  const refreshBtn = chatRoot.querySelector('[data-chat-refresh]');
+  const form = chatRoot.querySelector('[data-chat-form]');
+  const input = chatRoot.querySelector('[data-chat-input]');
+  const statusEl = chatRoot.querySelector('[data-chat-status]');
+  const templateButtons = chatRoot.querySelectorAll('[data-chat-template]');
+  const chatUrl = chatRoot.dataset.chatUrl;
+  const retryBase = chatRoot.dataset.chatRetryBase;
+  const csrfToken = window.__CSRF_TOKEN__ || document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+  let pollTimer = null;
+  let state = [];
+
+  const setStatus = (message, tone = 'muted') => {
+    if (!statusEl) return;
+    statusEl.textContent = message || '';
+    statusEl.dataset.tone = tone;
+  };
+
+  const sortMessages = (messages) => {
+    return [...messages].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  };
+
+  const render = () => {
+    if (!chatList) return;
+    chatList.innerHTML = '';
+    if (!state.length) {
+      chatList.innerHTML = '<p class="chat-panel__placeholder">Пока нет сообщений.</p>';
+      return;
+    }
+    state.forEach((msg) => {
+      const row = document.createElement('div');
+      row.className = 'chat-message' + (msg.direction === 'outbound' ? ' chat-message--outbound' : '');
+      const content = document.createElement('div');
+      content.className = 'chat-message__text';
+      content.textContent = msg.text || '';
+      row.appendChild(content);
+      const meta = document.createElement('div');
+      meta.className = 'chat-message__meta';
+      const dt = new Date(msg.created_at);
+      meta.innerHTML = `<span>${dt.toLocaleString('ru-RU')}</span><span>${msg.status}</span>`;
+      row.appendChild(meta);
+      if (msg.error) {
+        const error = document.createElement('div');
+        error.className = 'chat-message__status';
+        error.textContent = msg.error;
+        row.appendChild(error);
+      }
+      if (msg.can_retry) {
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = 'btn btn-ghost btn--xs';
+        retryBtn.dataset.chatRetry = String(msg.id);
+        retryBtn.textContent = 'Повторить';
+        row.appendChild(retryBtn);
+      }
+      chatList.appendChild(row);
+    });
+  };
+
+  const upsertMessages = (messages, { replace = false, prepend = false } = {}) => {
+    if (!messages || !messages.length) {
+      if (replace) {
+        state = [];
+        render();
+      }
+      return;
+    }
+    if (replace) {
+      state = sortMessages(messages);
+    } else if (prepend) {
+      const existingIds = new Set(state.map((msg) => msg.id));
+      const ordered = sortMessages(messages);
+      state = [...ordered.filter((msg) => !existingIds.has(msg.id)), ...state];
+    } else {
+      const map = new Map(state.map((msg) => [msg.id, msg]));
+      messages.forEach((msg) => map.set(msg.id, msg));
+      state = sortMessages(Array.from(map.values()));
+    }
+    render();
+    if (state.length) {
+      state = sortMessages(state);
+    }
+  };
+
+  const fetchJson = async (url, options) => {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const message = payload?.detail?.message || payload?.message || response.statusText;
+      throw new Error(message || 'Не удалось выполнить запрос');
+    }
+    return response.json();
+  };
+
+  const loadLatest = async () => {
+    try {
+      const data = await fetchJson(chatUrl);
+      upsertMessages(data.messages || [], { replace: true });
+      if (loadMoreBtn) {
+        loadMoreBtn.hidden = !data.has_more;
+      }
+    } catch (err) {
+      console.error(err);
+      setStatus(err.message || 'Не удалось загрузить чат', 'danger');
+    }
+  };
+
+  const loadOlder = async () => {
+    if (!state.length) return;
+    const before = state[0]?.created_at;
+    if (!before) return;
+    const url = `${chatUrl}?before=${encodeURIComponent(before)}`;
+    try {
+      const data = await fetchJson(url);
+      upsertMessages(data.messages || [], { prepend: true });
+      if (loadMoreBtn) {
+        loadMoreBtn.hidden = !data.has_more;
+      }
+    } catch (err) {
+      setStatus(err.message || 'Не удалось загрузить сообщения', 'danger');
+    }
+  };
+
+  const sendMessage = async (text) => {
+    const payload = {
+      text,
+      client_request_id: (crypto?.randomUUID && crypto.randomUUID()) || String(Date.now()),
+    };
+    const body = JSON.stringify(payload);
+    setStatus('Отправляем…', 'info');
+    const result = await fetchJson(chatUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken,
+      },
+      body,
+    });
+    if (result?.message) {
+      upsertMessages([result.message]);
+    } else {
+      await loadLatest();
+    }
+    setStatus('');
+  };
+
+  const retryMessage = async (messageId) => {
+    const url = `${retryBase}/${messageId}/retry`;
+    setStatus('Пробуем отправить повторно…', 'info');
+    const data = await fetchJson(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRF-Token': csrfToken,
+      },
+    });
+    if (data?.message) {
+      upsertMessages([data.message]);
+    }
+    setStatus('');
+  };
+
+  loadMoreBtn?.addEventListener('click', () => {
+    loadOlder();
+  });
+
+  refreshBtn?.addEventListener('click', () => {
+    loadLatest();
+  });
+
+  templateButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const text = button.getAttribute('data-template-text') || '';
+      if (input) {
+        input.value = text;
+        input.focus();
+      }
+    });
+  });
+
+  chatList?.addEventListener('click', (event) => {
+    const target = event.target.closest('[data-chat-retry]');
+    if (!target) return;
+    const messageId = target.getAttribute('data-chat-retry');
+    if (messageId) {
+      retryMessage(messageId);
+    }
+  });
+
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!input) return;
+    const text = (input.value || '').trim();
+    if (!text) {
+      setStatus('Введите сообщение', 'warning');
+      return;
+    }
+    try {
+      await sendMessage(text);
+      input.value = '';
+      setStatus('Отправлено', 'success');
+      setTimeout(() => setStatus(''), 1500);
+    } catch (err) {
+      setStatus(err.message || 'Не удалось отправить', 'danger');
+    }
+  });
+
+  loadLatest();
+  pollTimer = window.setInterval(loadLatest, 5000);
+
+  window.addEventListener('beforeunload', () => {
+    if (pollTimer) {
+      window.clearInterval(pollTimer);
+    }
+  });
+})();
+</script>
 
 <script>
 (function(){

@@ -4,7 +4,23 @@
 {% block content %}
 {% set form_state = form_data or {} %}
 {% set errors = field_errors or {} %}
-{% set selected_values = form_state.get('cities', selected_ids) %}
+{% set selected_values = (form_state.get('cities', selected_ids) or []) %}
+{% set selected_string_values = namespace(items=[]) %}
+{% for value in selected_values %}
+  {% set selected_string_values.items = selected_string_values.items + [value|string] %}
+{% endfor %}
+{% set name_value = form_state.get('name', recruiter.name) %}
+{% set tz_value = form_state.get('tz', recruiter.tz or 'Europe/Moscow') %}
+{% set telemost_value = form_state.get('telemost', recruiter.telemost_url or '') %}
+{% set tg_value = form_state.get('tg_chat_id', recruiter.tg_chat_id or '') %}
+{% set assigned_count = selected_values|length if selected_values else 0 %}
+{% set active_flag = form_state.get('active', recruiter.active) %}
+{% set is_active = active_flag if active_flag is not none else False %}
+{% set name_parts = (name_value or '').split() %}
+{% set initials = ((name_parts[0][0] if name_parts else 'R') ~ (name_parts[1][0] if name_parts|length > 1 else ''))[:2].upper() %}
+{% if not initials.strip() %}
+  {% set initials = 'R' %}
+{% endif %}
 {% if form_error %}
   <div class="liquid-glass-card alert" data-tone="danger" role="alert" data-animate-in>
     <span class="liquid-glass-badge liquid-glass-badge--danger">Ошибка</span>
@@ -25,65 +41,130 @@
     {"href": "/recruiters", "text": "Отмена", "variant": "ghost"}
   ]
 ) %}
-  {% call forms.section("Основные данные") %}
-    <div class="form-grid form-grid--two">
-      {% call forms.field("Имя", required=True) %}
-        <input type="text" name="name" value="{{ form_state.get('name', recruiter.name) }}" required aria-required="true">
-      {% endcall %}
-      {% call forms.field("Регион", hint="Определяет локальное время рекрутёра при создании слотов", required=True) %}
-        {% set current_tz = form_state.get('tz', recruiter.tz or 'Europe/Moscow') %}
-        <select name="tz" required aria-required="true">
-          {% for option in tz_options %}
-            <option value="{{ option.value }}" {% if option.value == current_tz %}selected{% endif %}>
-              {{ option.label }}
-            </option>
-          {% endfor %}
-        </select>
-      {% endcall %}
+  <div class="recruiter-edit__summary liquid-glass-card" data-animate-in>
+    <div class="recruiter-edit__summary-main">
+      <div class="recruiter-card__avatar recruiter-edit__avatar" aria-hidden="true">{{ initials }}</div>
+      <div>
+        <p class="recruiter-edit__eyebrow">Редактирование рекрутёра</p>
+        <h2 class="recruiter-edit__title">{{ name_value }}</h2>
+        <div class="recruiter-edit__meta">
+          <span class="recruiter-card__badge">ID #{{ recruiter.id }}</span>
+          <span class="recruiter-card__badge" title="Часовой пояс">{{ tz_display(tz_value) }}</span>
+          <span class="recruiter-card__badge recruiter-card__badge--ghost">{{ telemost_value or 'Телемост не указан' }}</span>
+        </div>
+      </div>
     </div>
-    <div class="form-grid form-grid--two">
-      {% call forms.field("Ссылка на Телемост", hint="Например: https://telemost.yandex.ru/j/XXXXX") %}
-        {% set telemost_value = form_state.get('telemost', recruiter.telemost_url or '') %}
-        <input type="url" name="telemost" value="{{ telemost_value }}"{% if errors.get('telemost') %} class="is-invalid"{% endif %}>
-        {% if errors.get('telemost') %}
-          <p class="form-error" role="alert">{{ errors.get('telemost') }}</p>
-        {% endif %}
-      {% endcall %}
-      {% call forms.field("Telegram chat_id", hint="ID берётся из Telegram, только цифры. Можно оставить пустым, если чат ещё не связан.") %}
-        {% set tg_value = form_state.get('tg_chat_id', recruiter.tg_chat_id or '') %}
-        <input type="number" name="tg_chat_id" value="{{ tg_value }}" min="1" step="1" inputmode="numeric" placeholder="Например: 7588303412"{% if errors.get('tg_chat_id') %} class="is-invalid"{% endif %}>
-        {% if errors.get('tg_chat_id') %}
-          <p class="form-error" role="alert">{{ errors.get('tg_chat_id') }}</p>
-        {% endif %}
-      {% endcall %}
+    <div class="recruiter-edit__chips">
+      <div class="recruiter-edit__chip" data-tone="accent">
+        <span>Города</span>
+        <strong>{{ assigned_count }}</strong>
+      </div>
+      <div class="recruiter-edit__chip" data-tone="info">
+        <span>Telegram</span>
+        <strong>{{ 'Подключен' if tg_value else 'Не указан' }}</strong>
+      </div>
+      <div class="recruiter-edit__chip" data-tone="{{ 'success' if is_active else 'muted' }}">
+        <span>Статус</span>
+        <strong>{{ 'Активен' if is_active else 'Отключен' }}</strong>
+      </div>
     </div>
-  {% endcall %}
+  </div>
 
-  {% call forms.section("Ответственные города", hint="Можно выбрать несколько городов одновременно") %}
-    <div class="multiselect" data-multiselect>
-      <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px;">
-        <input type="search" class="input" placeholder="Поиск города" aria-label="Поиск города" data-multiselect-search style="flex: 1;">
-        <span class="badge" data-cities-counter style="background: var(--accent); color: white; padding: 6px 12px; border-radius: 16px; font-size: 14px; font-weight: 600; min-width: 60px; text-align: center;">0 выбрано</span>
+  <div class="recruiter-edit__grid">
+    <section class="recruiter-edit__card">
+      <header class="recruiter-edit__card-header">
+        <h3>Основные данные</h3>
+        <p>Имя и рабочий регион для расчёта локального времени.</p>
+      </header>
+      <div class="recruiter-edit__card-body">
+        <div class="form-grid form-grid--two form-grid--compact">
+          {% call forms.field("Имя", required=True) %}
+            <input type="text" name="name" value="{{ name_value }}" required aria-required="true" placeholder="Например: Анна Соколова">
+          {% endcall %}
+          {% call forms.field("Регион", hint="Используется как базовая таймзона рекрутёра", required=True) %}
+            <select name="tz" required aria-required="true">
+              {% for option in tz_options %}
+                <option value="{{ option.value }}" {% if option.value == tz_value %}selected{% endif %}>
+                  {{ option.label }}
+                </option>
+              {% endfor %}
+            </select>
+          {% endcall %}
+        </div>
+        <div class="recruiter-edit__status-toggle">
+          {{ forms.switch(name='active', value='1', checked=is_active, label='Активен') }}
+          <p class="form-note">Неактивные рекрутёры скрываются из расписаний и не получают новые назначения.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="recruiter-edit__card">
+      <header class="recruiter-edit__card-header">
+        <h3>Контакты</h3>
+        <p>Укажите ссылку на Телемост и chat_id для интеграции с ботом.</p>
+      </header>
+      <div class="recruiter-edit__card-body">
+        <div class="form-grid form-grid--two form-grid--compact">
+          {% call forms.field("Ссылка на Телемост", hint="Например: https://telemost.yandex.ru/j/XXXXX") %}
+            <input type="url" name="telemost" value="{{ telemost_value }}"{% if errors.get('telemost') %} class="is-invalid"{% endif %} placeholder="https://telemost.yandex.ru/j/XXXXX">
+            {% if errors.get('telemost') %}
+              <p class="form-error" role="alert">{{ errors.get('telemost') }}</p>
+            {% endif %}
+          {% endcall %}
+          {% call forms.field("Telegram chat_id", hint="только цифры; можно оставить пустым") %}
+            <input type="number" name="tg_chat_id" value="{{ tg_value }}" min="1" step="1" inputmode="numeric" placeholder="Например: 7588303412"{% if errors.get('tg_chat_id') %} class="is-invalid"{% endif %}>
+            {% if errors.get('tg_chat_id') %}
+              <p class="form-error" role="alert">{{ errors.get('tg_chat_id') }}</p>
+            {% endif %}
+          {% endcall %}
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section class="recruiter-edit__card recruiter-edit__card--full">
+    <header class="recruiter-edit__card-header">
+      <h3>Ответственные города</h3>
+      <p>Выберите один или несколько городов. Они появятся в карточке рекрутёра и в фильтрах расписания.</p>
+    </header>
+    <div class="recruiter-city-picker" data-multiselect>
+      <div class="recruiter-city-picker__toolbar">
+        <input type="search" class="input recruiter-city-picker__search" placeholder="Поиск города" aria-label="Поиск города" data-multiselect-search>
+        <span class="recruiter-city-picker__counter" data-cities-counter>
+          {{ 'Нет выбранных' if assigned_count == 0 else assigned_count ~ (' выбран' if assigned_count == 1 else ' выбрано') }}
+        </span>
+      </div>
+      <div class="recruiter-city-picker__selected" data-selected-pills>
+        {% if assigned_count %}
+          {% set counter = 0 %}
+          {% for city in cities %}
+            {% if (city.id|string) in selected_string_values.items and counter < 4 %}
+              <span class="recruiter-city-picker__pill">{{ city.display_name }}</span>
+              {% set counter = counter + 1 %}
+            {% endif %}
+          {% endfor %}
+          {% if assigned_count > counter %}
+            <span class="recruiter-city-picker__pill recruiter-city-picker__pill--ghost">+{{ assigned_count - counter }}</span>
+          {% endif %}
+        {% else %}
+          <span class="muted">Города пока не выбраны</span>
+        {% endif %}
       </div>
       <div class="choice-grid" role="group" aria-label="Ответственные города" data-multiselect-options>
         {% for city in cities %}
+          {% set checked = (city.id|string) in selected_string_values.items %}
           <label class="choice-tile" data-filter="{{ city.name_plain|lower }} {{ city.tz|lower }}">
-            {% set checked = city.id in selected_values %}
             <input type="checkbox" name="cities" value="{{ city.id }}" {% if checked %}checked{% endif %} data-city-checkbox>
-            <span class="choice-tile__checkmark" style="position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; border-radius: 4px; border: 2px solid currentColor; display: none; align-items: center; justify-content: center; background: var(--accent); color: white; font-size: 14px; font-weight: bold;">✓</span>
+            <span class="choice-tile__checkmark" aria-hidden="true">✓</span>
             <span class="choice-tile__title">{{ city.display_name }}</span>
             <span class="choice-tile__meta">{{ city.tz }}</span>
           </label>
         {% endfor %}
       </div>
-      <p class="muted" data-multiselect-empty hidden>Совпадений не найдено</p>
-      <p class="form-note" style="margin-top: 12px; color: var(--muted); font-size: 13px;">💡 Совет: Кликните на несколько городов для выбора. Выбранные города будут подсвечены.</p>
+      <p class="muted recruiter-city-picker__empty" data-multiselect-empty hidden>Совпадений не найдено</p>
+      <p class="form-note">💡 Совет: используйте поиск или кликайте по карточкам, чтобы быстро закрепить несколько городов.</p>
     </div>
-  {% endcall %}
-
-  {% call forms.field("Статус") %}
-    {{ forms.switch(name='active', value='1', checked=form_state.get('active', recruiter.active), label='Активен') }}
-  {% endcall %}
+  </section>
 {% endcall %}
 {% endblock %}
 
@@ -103,25 +184,44 @@
     const options = Array.from(widget.querySelectorAll('[data-filter]'));
     const emptyHint = widget.querySelector('[data-multiselect-empty]');
     const counter = widget.querySelector('[data-cities-counter]');
+    const selectedPanel = widget.querySelector('[data-selected-pills]');
     const checkboxes = Array.from(widget.querySelectorAll('[data-city-checkbox]'));
 
-    // Update counter and checkmarks
+    // Update counter and selection preview
     function updateSelection() {
-      const checkedCount = checkboxes.filter(cb => cb.checked).length;
+      const checkedBoxes = checkboxes.filter(cb => cb.checked);
+      const checkedCount = checkedBoxes.length;
       if (counter) {
-        counter.textContent = checkedCount === 0 ? '0 выбрано' :
+        counter.textContent = checkedCount === 0 ? 'Нет выбранных' :
                               checkedCount === 1 ? '1 выбран' :
                               `${checkedCount} выбрано`;
       }
 
-      // Update checkmarks visibility
-      checkboxes.forEach(cb => {
-        const label = cb.closest('.choice-tile');
-        const checkmark = label ? label.querySelector('.choice-tile__checkmark') : null;
-        if (checkmark) {
-          checkmark.style.display = cb.checked ? 'flex' : 'none';
+      if (selectedPanel) {
+        selectedPanel.innerHTML = '';
+        if (!checkedCount) {
+          const empty = document.createElement('span');
+          empty.className = 'muted';
+          empty.textContent = 'Города пока не выбраны';
+          selectedPanel.appendChild(empty);
+          return;
         }
-      });
+        const maxVisible = 4;
+        checkedBoxes.slice(0, maxVisible).forEach((cb) => {
+          const label = cb.closest('.choice-tile');
+          const titleNode = label ? label.querySelector('.choice-tile__title') : null;
+          const pill = document.createElement('span');
+          pill.className = 'recruiter-city-picker__pill';
+          pill.textContent = titleNode ? titleNode.textContent.trim() : `ID ${cb.value}`;
+          selectedPanel.appendChild(pill);
+        });
+        if (checkedCount > maxVisible) {
+          const remainder = document.createElement('span');
+          remainder.className = 'recruiter-city-picker__pill recruiter-city-picker__pill--ghost';
+          remainder.textContent = `+${checkedCount - maxVisible}`;
+          selectedPanel.appendChild(remainder);
+        }
+      }
     }
 
     // Listen to checkbox changes

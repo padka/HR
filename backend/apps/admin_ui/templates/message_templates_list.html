@@ -7,13 +7,82 @@
     <div>
       <h1 id="templates-title" class="page-title">Шаблоны сообщений</h1>
       <p class="page-description">
-        Управляйте текстами, которые бот отправляет кандидатам и рекрутёрам. Активные шаблоны сразу применяются без рестарта.
+        Управляйте городскими и базовыми текстами для бота. Активные шаблоны применяются сразу без рестарта.
       </p>
     </div>
     <div class="page-actions">
       <a class="btn btn-primary" href="/message-templates/new">+ Новый шаблон</a>
     </div>
   </header>
+
+  <form class="surface glass grain filter-bar" method="get">
+    <div class="filter-grid">
+      <label class="filter-field">
+        <span>Город</span>
+        <select name="city">
+          <option value="" {% if filters.city is none or filters.city == '' %}selected{% endif %}>Все</option>
+          <option value="default" {% if filters.city == 'default' %}selected{% endif %}>Общий</option>
+          {% for city in cities if city.id is not none %}
+            <option value="{{ city.id }}" {% if filters.city == city.id %}selected{% endif %}>{{ city.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="filter-field">
+        <span>Тип (template_key)</span>
+        <input type="search" name="key" placeholder="intro_day_invitation" value="{{ filters.key }}">
+      </label>
+      <label class="filter-field">
+        <span>Канал</span>
+        <select name="channel">
+          <option value="">Все</option>
+          {% for ch in allowed_channels %}
+            <option value="{{ ch }}" {% if filters.channel == ch %}selected{% endif %}>{{ ch|upper }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="filter-field">
+        <span>Статус</span>
+        <select name="status">
+          <option value="">Все</option>
+          <option value="active" {% if filters.status == 'active' %}selected{% endif %}>Активные</option>
+          <option value="draft" {% if filters.status == 'draft' %}selected{% endif %}>Черновики</option>
+        </select>
+      </label>
+    </div>
+    <div class="filter-actions">
+      <button type="submit" class="btn btn-primary btn--small">Фильтровать</button>
+      <a class="btn btn--ghost btn--small" href="/message-templates">Сбросить</a>
+    </div>
+  </form>
+
+  {% if coverage %}
+    <div class="surface glass grain mt-md">
+      <div class="split">
+        <div>
+          <h3 class="form-shell__section-title">Покрытие городов</h3>
+          <p class="form-shell__section-hint">Ключи без общего шаблона не смогут отправиться. Создайте общий или городские варианты.</p>
+        </div>
+        <div class="btn-group">
+          <a class="btn btn-primary btn--small" href="/message-templates/new">+ Новый шаблон</a>
+        </div>
+      </div>
+      <ul class="coverage-list">
+        {% for item in coverage %}
+          <li>
+            <div class="coverage-key">
+              <strong>{{ item.key }}</strong>
+              {% if item.missing_default %}<span class="badge badge--soft badge--danger">нет default</span>{% endif %}
+            </div>
+            {% if item.missing_cities %}
+              <div class="coverage-cities">
+                Нет шаблона для: {{ item.missing_cities | map(attribute='name') | join(', ') }}
+              </div>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
 
   {% if missing_required %}
     <div class="surface glass grain alert" data-tone="danger">
@@ -23,16 +92,17 @@
     </div>
   {% endif %}
 
-  <div class="list-table-wrapper">
+  <div class="list-table-wrapper mt-md">
     <table class="list-table list-table--responsive">
       <thead>
         <tr>
           <th scope="col">Ключ</th>
-          <th scope="col">Локаль</th>
+          <th scope="col">Город</th>
           <th scope="col">Канал</th>
           <th scope="col">Версия</th>
           <th scope="col">Статус</th>
-          <th scope="col" class="is-optional">Подсказка</th>
+          <th scope="col">Обновлено</th>
+          <th scope="col" class="is-optional">Изменил</th>
           <th scope="col" class="col-actions">Действия</th>
         </tr>
       </thead>
@@ -42,12 +112,15 @@
             <tr>
               <td data-label="Ключ">
                 <div class="slot-cell-primary">{{ tpl.key }}</div>
+                <div class="text-muted small">{{ tpl.preview }}</div>
               </td>
-              <td data-label="Локаль">
-                <span class="badge badge--soft">{{ tpl.locale }}</span>
+              <td data-label="Город">
+                <span class="badge badge--soft">
+                  {{ tpl.city_name or 'Общий' }}
+                </span>
               </td>
               <td data-label="Канал">
-                <span class="badge badge--soft">{{ tpl.channel }}</span>
+                <span class="badge badge--soft">{{ tpl.channel|upper }}</span>
               </td>
               <td data-label="Версия">
                 v{{ tpl.version or 1 }}
@@ -56,19 +129,25 @@
                 {% if tpl.is_active %}
                   <span class="status-badge" data-tone="success">активен</span>
                 {% else %}
-                  <span class="status-badge" data-tone="warning">выключен</span>
+                  <span class="status-badge" data-tone="warning">черновик</span>
                 {% endif %}
               </td>
-              <td data-label="Подсказка" class="is-optional">
-                {% set hint = known_hints.get(tpl.key) %}
-                {% if hint %}
-                  <span class="badge badge--soft">{{ hint }}</span>
-                {% else %}
-                  <span class="badge badge--soft">—</span>
-                {% endif %}
+              <td data-label="Обновлено">
+                {{ tpl.updated_at.strftime('%d.%m %H:%M') if tpl.updated_at else '—' }}
+              </td>
+              <td data-label="Изменил" class="is-optional">
+                {{ tpl.updated_by or "—" }}
               </td>
               <td data-label="Действия" class="col-actions">
                 <a class="btn btn-soft btn--small" href="/message-templates/{{ tpl.id }}/edit">Редактировать</a>
+                <a class="btn btn--ghost btn--small" href="/message-templates/new?copy_from={{ tpl.id }}">Клонировать</a>
+                <a class="btn btn--ghost btn--small" href="/message-templates/{{ tpl.id }}/edit#history">История</a>
+                {% if not tpl.is_active %}
+                  <form method="post" action="/message-templates/{{ tpl.id }}/activate" class="inline-form">
+                    {{ csrf_input(request) }}
+                    <button type="submit" class="btn btn-primary btn--small">Сделать активным</button>
+                  </form>
+                {% endif %}
                 <form method="post" action="/message-templates/{{ tpl.id }}/delete" class="inline-form" onsubmit="return confirmDelete(this);">
                   {{ csrf_input(request) }}
                   <button type="submit" class="btn btn-danger btn--small">Удалить</button>
@@ -78,7 +157,7 @@
           {% endfor %}
         {% else %}
           <tr>
-            <td colspan="7" class="empty">
+            <td colspan="8" class="empty">
               <p class="page-description">Шаблонов пока нет. Создайте первый, чтобы переопределить текст уведомлений.</p>
             </td>
           </tr>

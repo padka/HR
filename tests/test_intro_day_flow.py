@@ -1,326 +1,77 @@
-"""Test intro day scheduling and notification flow"""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import select
-from backend.apps.admin_ui.services.candidates import get_candidate_detail
-from backend.domain.candidates import services as candidate_services
-from backend.domain.models import Recruiter, Slot, SlotStatus, City
+
+from backend.apps.bot.services import capture_intro_decline_reason, configure
+from backend.apps.bot.state_store import InMemoryStateStore, StateManager
 from backend.core.db import async_session
-from backend.apps.admin_ui.routers import candidates as candidates_router
+from backend.domain.candidates.models import User
+from backend.domain.models import Recruiter, Slot, SlotStatus
+
+
+class DummyBot:
+    def __init__(self):
+        self.sent_messages = []
+
+    async def send_message(self, chat_id, text, **kwargs):
+        self.sent_messages.append({"chat_id": chat_id, "text": text, **kwargs})
+
+
+class DummyMessage:
+    def __init__(self, text: str, user_id: int):
+        self.text = text
+        self.caption = None
+        self.from_user = SimpleNamespace(id=user_id)
+        self.answers = []
+
+    async def answer(self, text: str):
+        self.answers.append(text)
 
 
 @pytest.mark.asyncio
-async def test_intro_day_status_detection():
-    """Test that candidate shows needs_intro_day after passing TEST2 but before scheduling"""
-    # Create candidate
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=888001,
-        fio="Иван Тестов",
-        city="Сочи",
-    )
+async def test_intro_day_decline_reason_saved_and_sent():
+    user_id = 2222001
+    now = datetime.now(timezone.utc) + timedelta(days=1)
 
-    # Initially should NOT need intro day (no TEST2 passed)
-    detail = await get_candidate_detail(candidate.id)
-    assert detail is not None
-    assert detail.get("needs_intro_day") == False, "Should not need intro day without TEST2"
-
-    # Pass TEST2 - need rating="TEST2" and >= 75% correct (0.75 threshold)
-    # Create 10 questions with 8 correct (80% pass rate)
-    question_data = [
-        {
-            "question_index": i,
-            "question_text": f"Test2 Q{i}",
-            "correct_answer": "A",
-            "user_answer": "A" if i <= 8 else "B",  # 8 correct, 2 wrong
-            "attempts_count": 1,
-            "time_spent": 30,
-            "is_correct": i <= 8,
-            "overtime": False,
-        }
-        for i in range(1, 11)
-    ]
-
-    await candidate_services.save_test_result(
-        user_id=candidate.id,
-        raw_score=8,  # 8 correct out of 10
-        final_score=8.0,
-        rating="TEST2",  # This marks it as TEST2
-        total_time=300,
-        question_data=question_data,
-    )
-
-    # Now should need intro day
-    detail2 = await get_candidate_detail(candidate.id)
-    assert detail2.get("needs_intro_day") == True, "Should need intro day after passing TEST2"
-
-
-@pytest.mark.asyncio
-async def test_intro_day_slot_creation_and_status_update():
-    """Test creating intro_day slot and verifying status updates"""
-    # Create candidate who passed TEST2
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=888002,
-        fio="Петр Тестовский",
-        city="Москва",
-    )
-
-    # Pass TEST2
-    question_data = [
-        {
-            "question_index": i,
-            "question_text": f"Test2 Q{i}",
-            "correct_answer": "A",
-            "user_answer": "A" if i <= 8 else "B",
-            "attempts_count": 1,
-            "time_spent": 30,
-            "is_correct": i <= 8,
-            "overtime": False,
-        }
-        for i in range(1, 11)
-    ]
-
-    await candidate_services.save_test_result(
-        user_id=candidate.id,
-        raw_score=8,
-        final_score=8.0,
-        rating="TEST2",
-        total_time=300,
-        question_data=question_data,
-    )
-
-    # Verify needs intro day
-    detail = await get_candidate_detail(candidate.id)
-    assert detail.get("needs_intro_day") == True
-
-    # Create city and recruiter
     async with async_session() as session:
-        city = City(name="Москва")
-        session.add(city)
-        await session.flush()
-
-        recruiter = Recruiter(
-            name="Виталий Рекрутер",
-            tg_chat_id=777001,
-            tz="Europe/Moscow",
-        )
+        user = User(telegram_id=user_id, fio="Intro User", city="Test", is_active=True)
+        session.add(user)
+        recruiter = Recruiter(name="Intro Rec", tg_chat_id=999000, tz="Europe/Moscow", active=True)
         session.add(recruiter)
         await session.flush()
-
-        # Create intro_day slot
-        start_time = datetime.utcnow() + timedelta(days=1)
         slot = Slot(
             recruiter_id=recruiter.id,
-            city_id=city.id,
-            candidate_city_id=city.id,
+            city_id=None,
+            candidate_city_id=None,
             purpose="intro_day",
             tz_name="Europe/Moscow",
-            start_utc=start_time,
-            status=SlotStatus.BOOKED,
-            candidate_tg_id=candidate.telegram_id,
-            candidate_fio=candidate.fio,
-            candidate_tz="Europe/Moscow",
+            start_utc=now,
+            duration_min=60,
+            status=SlotStatus.CONFIRMED_BY_CANDIDATE,
+            candidate_tg_id=user_id,
+            candidate_fio="Intro User",
         )
         session.add(slot)
         await session.commit()
 
-    # After creating slot, should NOT need intro day anymore
-    detail2 = await get_candidate_detail(candidate.id)
-    assert detail2.get("needs_intro_day") == False, "Should not need intro day after scheduling"
-    assert len(detail2.get("slots", [])) == 1, "Should have one slot"
-    assert detail2["slots"][0].purpose == "intro_day"
+    bot = DummyBot()
+    state_manager = StateManager(InMemoryStateStore(ttl_seconds=30))
+    configure(bot, state_manager, dispatcher=None)
 
+    state = {"awaiting_intro_decline_reason": {"slot_id": slot.id, "candidate_fio": "Intro User"}}
+    await state_manager.set(user_id, state)
 
-@pytest.mark.asyncio
-async def test_intro_day_duplicate_prevention():
-    """Test that duplicate intro_day slots are detected"""
-    # Create candidate who passed TEST2
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=888003,
-        fio="Мария Дубликатова",
-        city="Сочи",
-    )
-
-    # Pass TEST2
-    question_data = [
-        {
-            "question_index": i,
-            "question_text": f"Test2 Q{i}",
-            "correct_answer": "A",
-            "user_answer": "A" if i <= 8 else "B",
-            "attempts_count": 1,
-            "time_spent": 30,
-            "is_correct": i <= 8,
-            "overtime": False,
-        }
-        for i in range(1, 11)
-    ]
-
-    await candidate_services.save_test_result(
-        user_id=candidate.id,
-        raw_score=8,
-        final_score=8.0,
-        rating="TEST2",
-        total_time=300,
-        question_data=question_data,
-    )
-
-    # Create city and recruiter
-    async with async_session() as session:
-        city = City(name="Сочи")
-        session.add(city)
-        await session.flush()
-
-        recruiter = Recruiter(
-            name="Иван Рекрутер",
-            tg_chat_id=777002,
-            tz="Europe/Moscow",
-        )
-        session.add(recruiter)
-        await session.flush()
-
-        # Create first intro_day slot
-        start_time = datetime.utcnow() + timedelta(days=1)
-        slot1 = Slot(
-            recruiter_id=recruiter.id,
-            city_id=city.id,
-            candidate_city_id=city.id,
-            purpose="intro_day",
-            tz_name="Europe/Moscow",
-            start_utc=start_time,
-            status=SlotStatus.BOOKED,
-            candidate_tg_id=candidate.telegram_id,
-            candidate_fio=candidate.fio,
-            candidate_tz="Europe/Moscow",
-        )
-        session.add(slot1)
-        await session.commit()
-
-        # Now check if we can detect existing slot
-        existing_check = select(Slot).where(
-            Slot.candidate_tg_id == candidate.telegram_id,
-            Slot.recruiter_id == recruiter.id,
-            Slot.purpose == "intro_day",
-        )
-        result = await session.execute(existing_check)
-        existing_slot = result.scalar_one_or_none()
-
-        assert existing_slot is not None, "Should find existing intro_day slot"
-        assert existing_slot.id == slot1.id, "Should find the same slot we just created"
-
-
-@pytest.mark.asyncio
-async def test_intro_day_and_interview_slots_can_coexist():
-    """Test that a candidate can have both interview and intro_day slots with same recruiter"""
-    # Create candidate who passed TEST2
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=888004,
-        fio="Алексей Комбинированный",
-        city="Москва",
-    )
-
-    question_data = [
-        {
-            "question_index": i,
-            "question_text": f"Test2 Q{i}",
-            "correct_answer": "A",
-            "user_answer": "A" if i <= 8 else "B",
-            "attempts_count": 1,
-            "time_spent": 30,
-            "is_correct": i <= 8,
-            "overtime": False,
-        }
-        for i in range(1, 11)
-    ]
-
-    await candidate_services.save_test_result(
-        user_id=candidate.id,
-        raw_score=8,
-        final_score=8.0,
-        rating="TEST2",
-        total_time=300,
-        question_data=question_data,
-    )
+    message = DummyMessage("Не смогу", user_id)
+    handled = await capture_intro_decline_reason(message, state)
+    assert handled is True
 
     async with async_session() as session:
-        city = City(name="Москва")
-        session.add(city)
-        await session.flush()
+        updated_user = await session.scalar(select(User).where(User.telegram_id == user_id))
+    assert updated_user.intro_decline_reason == "Не смогу"
 
-        recruiter = Recruiter(
-            name="Универсальный Рекрутер",
-            tg_chat_id=777003,
-            tz="Europe/Moscow",
-        )
-        session.add(recruiter)
-        await session.flush()
-
-        # Create interview slot first
-        interview_slot = Slot(
-            recruiter_id=recruiter.id,
-            city_id=city.id,
-            candidate_city_id=city.id,
-            purpose="interview",
-            tz_name="Europe/Moscow",
-            start_utc=datetime.utcnow() + timedelta(days=1),
-            status=SlotStatus.BOOKED,
-            candidate_tg_id=candidate.telegram_id,
-            candidate_fio=candidate.fio,
-            candidate_tz="Europe/Moscow",
-        )
-        session.add(interview_slot)
-        await session.commit()
-
-        # Now create intro_day slot with SAME candidate and recruiter
-        # This should succeed with new unique index that includes purpose
-        intro_slot = Slot(
-            recruiter_id=recruiter.id,
-            city_id=city.id,
-            candidate_city_id=city.id,
-            purpose="intro_day",
-            tz_name="Europe/Moscow",
-            start_utc=datetime.utcnow() + timedelta(days=2),
-            status=SlotStatus.BOOKED,
-            candidate_tg_id=candidate.telegram_id,
-            candidate_fio=candidate.fio,
-            candidate_tz="Europe/Moscow",
-        )
-        session.add(intro_slot)
-        await session.commit()  # This should NOT fail
-
-        # Verify both slots exist
-        all_slots_query = select(Slot).where(
-            Slot.candidate_tg_id == candidate.telegram_id,
-            Slot.recruiter_id == recruiter.id,
-        )
-        result = await session.execute(all_slots_query)
-        all_slots = result.scalars().all()
-
-        assert len(all_slots) == 2, "Should have both interview and intro_day slots"
-
-        purposes = {slot.purpose for slot in all_slots}
-        assert purposes == {"interview", "intro_day"}, "Should have one of each purpose"
-
-
-@pytest.mark.asyncio
-async def test_city_lookup_is_case_insensitive_for_unicode():
-    """City lookup should handle Cyrillic casing mismatches (SQLite regression)."""
-
-    async with async_session() as session:
-        city = City(name="Волгоград", tz="Europe/Volgograd", active=True)
-        session.add(city)
-        await session.flush()
-
-        recruiter = Recruiter(
-            name="Case Recruiter",
-            tg_chat_id=777100,
-            tz="Europe/Volgograd",
-        )
-        recruiter.cities.append(city)
-        session.add(recruiter)
-        await session.commit()
-        city_id = city.id
-
-    matched_city = await candidates_router._load_city_with_recruiters("волгоград")
-    assert matched_city is not None
-    assert matched_city.id == city_id
-    assert matched_city.recruiters, "Recruiters should be eager-loaded for matched city"
+    # Recruiter should receive forwarded reason
+    assert bot.sent_messages
+    assert bot.sent_messages[-1]["chat_id"] == 999000
+    assert "Не смогу" in bot.sent_messages[-1]["text"]

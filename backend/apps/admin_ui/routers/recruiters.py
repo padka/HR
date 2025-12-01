@@ -21,10 +21,30 @@ router = APIRouter(prefix="/recruiters", tags=["recruiters"])
 
 @router.get("", response_class=HTMLResponse)
 async def recruiters_list(request: Request):
+    selected_raw = request.query_params.getlist("city")
+    selected_city_ids: list[int] = []
+    for raw in selected_raw:
+        try:
+            selected_city_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+
     recruiter_rows = await list_recruiters()
+    if selected_city_ids:
+        filtered_rows = []
+        selected_set = set(selected_city_ids)
+        for item in recruiter_rows:
+            city_ids = set(item.get("city_ids", []))
+            if city_ids & selected_set:
+                filtered_rows.append(item)
+        recruiter_rows = filtered_rows
+
+    cities = await list_cities()
     context = {
         "request": request,
         "recruiter_rows": recruiter_rows,
+        "city_filter_options": cities,
+        "selected_city_ids": selected_city_ids,
     }
     return templates.TemplateResponse(request, "recruiters_list.html", context)
 
@@ -48,7 +68,7 @@ async def recruiters_create(
     telemost: str = Form(""),
     tg_chat_id: str = Form(""),
     active: Optional[str] = Form(None),
-    cities: Union[str, List[str], None] = Form(None),
+    cities: List[str] = Form([]),
 ):
     tz_value = (tz or DEFAULT_TZ).strip() or DEFAULT_TZ
     city_values = _normalize_cities_form_value(cities)
@@ -125,7 +145,7 @@ async def recruiters_update(
     telemost: str = Form(""),
     tg_chat_id: str = Form(""),
     active: Optional[str] = Form(None),
-    cities: Union[str, List[str], None] = Form(None),
+    cities: List[str] = Form([]),
 ):
     tz_value = (tz or DEFAULT_TZ).strip() or DEFAULT_TZ
     city_values = _normalize_cities_form_value(cities)

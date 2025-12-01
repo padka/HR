@@ -8,14 +8,11 @@
 {% block content %}
 {% call forms.shell(
   title=title,
-  description="Шаблон используется при отправке уведомлений ботом. Доступные переменные можно вставлять в текст сообщений.",
+  description="Городские шаблоны перекрывают общий. Опубликуйте активный вариант для нужного города — бот подставит его автоматически.",
   form_id="msgTemplateForm",
   action=action,
   autocomplete="off",
-  actions=[
-    {"type": "submit", "text": is_edit and "Сохранить" or "Создать", "variant": "primary"},
-    {"href": "/message-templates", "text": "Отмена", "variant": "ghost"}
-  ]
+  actions=[]
 ) %}
   {% if errors %}
     <div class="alert alert--danger mt-sm">
@@ -28,78 +25,153 @@
   {% endif %}
 
   {% call forms.section("Основные параметры") %}
-    {% call forms.field("Ключ", hint="Например, candidate_rejection или confirm_2h.") %}
-      <input type="text" name="key" id="key" value="{{ form_data.key or '' }}" required {% if is_edit %}readonly{% endif %} class="text-mono">
-      {% if not is_edit %}
-        <p class="hint mt-xs">Используйте один из известных ключей или добавьте новый. См. таблицу на странице списка.</p>
-      {% endif %}
-    {% endcall %}
+    <div class="form-grid form-grid--two">
+      {% call forms.field("Ключ", hint="Например, candidate_rejection или intro_day_invitation.") %}
+        <input type="text" name="key" id="key" value="{{ form_data.key or '' }}" required {% if is_edit %}readonly{% endif %} class="text-mono">
+        <p class="hint mt-xs">Используйте общий ключ: система выберет городскую версию автоматически.</p>
+      {% endcall %}
 
-    {% call forms.field("Локаль") %}
-      <input type="text" name="locale" id="locale" value="{{ form_data.locale or 'ru' }}" required class="text-mono">
-      <p class="hint mt-xs">Стандартная локаль — <code class="text-mono">ru</code>.</p>
-    {% endcall %}
+      {% call forms.field("Город") %}
+        <select id="city_id" name="city_id">
+          <option value="default" {% if form_data.city_id is none %}selected{% endif %}>Общий (Default)</option>
+          {% for city in cities if city.id is not none %}
+            <option value="{{ city.id }}" {% if form_data.city_id == city.id %}selected{% endif %}>{{ city.name }}</option>
+          {% endfor %}
+        </select>
+        <p class="hint mt-xs">Городской шаблон перекрывает общий. Если города нет — будет использован общий текст.</p>
+      {% endcall %}
+    </div>
 
-    {% call forms.field("Канал") %}
-      <select id="channel" name="channel" required>
-        {% for item in allowed_channels %}
-          <option value="{{ item }}" {% if (form_data.channel or 'tg') == item %}selected{% endif %}>{{ item|upper }}</option>
-        {% endfor %}
-      </select>
-      <p class="hint mt-xs">Telegram использует канал <code class="text-mono">tg</code>.</p>
-    {% endcall %}
-
-    <div class="form-row">
+    <div class="form-grid form-grid--three">
+      {% call forms.field("Локаль") %}
+        <input type="text" name="locale" id="locale" value="{{ form_data.locale or 'ru' }}" required class="text-mono">
+      {% endcall %}
+      {% call forms.field("Канал") %}
+        <select id="channel" name="channel" required>
+          {% for item in allowed_channels %}
+            <option value="{{ item }}" {% if (form_data.channel or 'tg') == item %}selected{% endif %}>{{ item|upper }}</option>
+          {% endfor %}
+        </select>
+      {% endcall %}
       <div class="form-column">
         {% if not is_edit %}
           {% call forms.field("Версия") %}
             <input type="number" name="version" id="version" min="1" value="{{ form_data.version or 1 }}">
           {% endcall %}
         {% else %}
-          {% call forms.meta() %}
+          <div class="stack">
             <span class="badge muted">Текущая версия: v{{ form_data.version or 1 }}</span>
-          {% endcall %}
+            <label class="form-switch mt-xs">
+              <input type="checkbox" id="bump_version" name="bump_version" value="1">
+              <span class="form-switch__track" aria-hidden="true"><span class="form-switch__thumb"></span></span>
+              <span class="form-switch__label">Повысить версию</span>
+            </label>
+          </div>
         {% endif %}
       </div>
-      <div class="form-column">
-        {% call forms.meta() %}
-          {{ forms.switch(
-            id='is_active',
-            name='is_active',
-            checked=form_data.is_active is not defined or form_data.is_active,
-            label='Включить шаблон'
-          ) }}
-        {% endcall %}
-      </div>
     </div>
+  {% endcall %}
 
-    {% if is_edit %}
-      <div class="form-row">
-        <div class="form-column">
-          <label class="form-switch">
-            <input type="checkbox" id="bump_version" name="bump_version" value="1">
-            <span class="form-switch__track" aria-hidden="true"><span class="form-switch__thumb"></span></span>
-            <span class="form-switch__label">Повысить версию при сохранении</span>
-          </label>
-          <p class="hint mt-xs">Отметьте, если хотите создать новую версию вместо перезаписи текущей.</p>
+  {% call forms.section("Текст и предпросмотр", span='full') %}
+    <div class="editor-grid">
+      <div class="editor-area">
+        {% call forms.field("Текст сообщения", hint="Разрешены базовые HTML-теги Telegram: b, strong, i, u, s, code, pre, a.") %}
+          <textarea name="body" id="body" rows="16" required class="text-mono">{{ form_data.body or '' }}</textarea>
+          <div class="hint mt-xs" id="var-warning" hidden></div>
+        {% endcall %}
+        <div class="hint mt-xs">
+          Неизвестные переменные блокируют публикацию. Клик по переменной справа вставляет её в курсор.
         </div>
       </div>
-    {% endif %}
+      <aside class="editor-side">
+        <div class="surface glass grain p-sm mb-sm">
+          <h4 class="form-shell__section-title">Доступные переменные</h4>
+          <div class="chips">
+            {% for var in variables %}
+              <button type="button" class="chip chip--action" data-var="{{ var.name }}">{{ var.label }} <span class="text-mono">{"{{"}{{ var.name }}{"}}"}</span></button>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="surface glass grain p-sm">
+          <h4 class="form-shell__section-title">Предпросмотр</h4>
+          <p class="form-shell__section-hint">Используются тестовые данные. В бою подставятся реальные значения.</p>
+          <pre class="preview-block" id="preview-block">{{ form_data.body or '' }}</pre>
+        </div>
+      </aside>
+    </div>
   {% endcall %}
 
-  {% call forms.section("Текст сообщения", span='full') %}
-    {% call forms.field("Текст") %}
-      <textarea name="body" id="body" rows="16" required class="text-mono">{{ form_data.body or '' }}</textarea>
-      <div class="hint mt-xs">
-        {% raw %}
-        Доступные переменные: <code>{{candidate_name}}</code>, <code>{{candidate_fio}}</code>, <code>{{city_name}}</code>,
-        <code>{{dt_local}}</code>, <code>{{slot_date_local}}</code>, <code>{{slot_time_local}}</code>,
-        <code>{{slot_datetime_local}}</code>, <code>{{recruiter_name}}</code>, <code>{{join_link}}</code>.
-        Отсутствующие переменные выводятся как <code>{placeholder}</code>.
-        {% endraw %}
-      </div>
-    {% endcall %}
-  {% endcall %}
+  {% if history %}
+    <div class="surface glass grain mt-md" id="history">
+      <h3 class="form-shell__section-title">История изменений</h3>
+      <ul class="history-list">
+        {% for item in history %}
+          <li>
+            v{{ item.version }} · {{ item.updated_at.strftime('%d.%m %H:%M') if item.updated_at else '—' }} · {{ item.updated_by or '—' }}
+            <div class="text-muted small">{{ item.body_md | replace('\n', ' ') }}</div>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <div class="form-actions mt-md">
+    <div class="btn-group">
+      <button type="submit" class="btn btn--ghost" name="is_active" value="0">Сохранить черновик</button>
+      <button type="submit" class="btn btn-primary" name="is_active" value="1">Опубликовать</button>
+      <a class="btn btn--ghost" href="/message-templates">Отмена</a>
+    </div>
+  </div>
 
 {% endcall %}
+
+<script>
+  const bodyField = document.getElementById('body');
+  const previewBlock = document.getElementById('preview-block');
+  const warningBox = document.getElementById('var-warning');
+  const mockContext = {{ mock_context | tojson | safe }};
+  const allowedVars = new Set({{ variables|map(attribute='name')|list|tojson|safe }});
+
+  function renderPreview() {
+    if (!bodyField || !previewBlock) return;
+    const text = bodyField.value || '';
+    const unknown = new Set();
+    const rendered = text.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, name) => {
+      if (!allowedVars.has(name)) {
+        unknown.add(name);
+      }
+      return mockContext[name] || match;
+    });
+    previewBlock.textContent = rendered;
+    if (warningBox) {
+      if (unknown.size > 0) {
+        warningBox.hidden = false;
+        warningBox.classList.add('alert', 'alert--warning');
+        warningBox.innerText = 'Неизвестные переменные: ' + Array.from(unknown).join(', ');
+      } else {
+        warningBox.hidden = true;
+        warningBox.classList.remove('alert', 'alert--warning');
+        warningBox.innerText = '';
+      }
+    }
+  }
+
+  if (bodyField) {
+    bodyField.addEventListener('input', renderPreview);
+  }
+  document.querySelectorAll('[data-var]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!bodyField) return;
+      const value = '{' + btn.dataset.var + '}';
+      const start = bodyField.selectionStart || 0;
+      const end = bodyField.selectionEnd || 0;
+      const current = bodyField.value;
+      bodyField.value = current.slice(0, start) + value + current.slice(end);
+      bodyField.focus();
+      bodyField.selectionStart = bodyField.selectionEnd = start + value.length;
+      renderPreview();
+    });
+  });
+  renderPreview();
+</script>
 {% endblock %}

@@ -36,6 +36,7 @@ from backend.core.error_handler import (
     resilient_task,
     GracefulShutdown,
 )
+from backend.migrations.runner import upgrade_to_head
 
 configure_logging()
 request_logger = logging.getLogger("tg.admin.requests")
@@ -137,6 +138,18 @@ async def _initialize_cache_with_supervisor(app: FastAPI, settings) -> Optional[
     app.state.cache_watch_task = task
     return task
 
+
+def _auto_upgrade_schema_if_needed(settings) -> bool:
+    """Run lightweight migration step in non-production environments."""
+    if settings.environment == "production":
+        return False
+    try:
+        upgrade_to_head()
+        return True
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.warning("Automatic schema upgrade skipped: %s", exc)
+        return False
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager with graceful startup and shutdown."""
@@ -150,6 +163,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.cache_watch_task = None
     shutdown_manager = GracefulShutdown(timeout=15.0)
+
+    if _auto_upgrade_schema_if_needed(settings):
+        logger.info("Development database migrated to latest revision")
 
     # Initialize cache with retry logic
     cache_task = None

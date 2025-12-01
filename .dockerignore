@@ -1,0 +1,14 @@
+.venv
+.git
+.gitignore
+.pytest_cache
+__pycache__
+data
+*.pyc
+*.pyo
+*.pytest_cache
+node_modules
+dist
+build
+.DS_Store
+*.log

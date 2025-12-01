@@ -3,9 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from backend.apps.admin_ui.services.candidates import (
+    delete_all_candidates,
     get_candidate_detail,
     list_candidates,
     upsert_candidate,
@@ -387,3 +388,63 @@ async def test_update_candidate_status_assigned_sends_notification(monkeypatch):
     assert dispatch is None
     assert calls.get("slot_id") is not None
     assert calls.get("force_notify") is True
+
+
+@pytest.mark.asyncio
+async def test_delete_all_candidates_resets_slots():
+    candidate = await upsert_candidate(
+        telegram_id=50123,
+        fio="Bulk Remove Candidate",
+        city="Москва",
+        is_active=True,
+    )
+
+    async with async_session() as session:
+        city = City(name="Delete City", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Delete Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.flush()
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            candidate_city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=3),
+            duration_min=60,
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        slot_id = slot.id
+
+    deleted = await delete_all_candidates()
+    assert deleted >= 1
+
+    async with async_session() as session:
+        remaining = await session.scalar(select(func.count(candidate_models.User.id)))
+        assert remaining == 0
+        slot = await session.get(Slot, slot_id)
+    assert slot is not None
+    assert slot.status == SlotStatus.FREE
+    assert slot.candidate_tg_id is None
+
+
+@pytest.mark.asyncio
+async def test_update_candidate_status_declined_without_slot():
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=88123,
+        fio="No Slot Candidate",
+        city="Москва",
+    )
+
+    ok, message, stored_status, dispatch = await update_candidate_status(candidate.id, "interview_declined")
+    assert ok is True
+    assert stored_status == "interview_declined"
+    assert dispatch is None
+
+    async with async_session() as session:
+        refreshed = await session.get(candidate_models.User, candidate.id)
+        assert refreshed.candidate_status == CandidateStatus.INTERVIEW_DECLINED

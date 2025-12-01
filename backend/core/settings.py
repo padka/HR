@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import shutil
@@ -9,6 +10,11 @@ from pathlib import Path
 from typing import Optional
 
 from backend.core.env import load_env
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_USER_DATA_DIR = Path.home() / ".recruitsmart_admin" / "data"
+DEFAULT_DEV_DB_PATH = PROJECT_ROOT / "data" / "bot.db"
 
 
 @dataclass(frozen=True)
@@ -88,16 +94,32 @@ def _default_data_dir() -> Path:
     env_dir = os.getenv("DATA_DIR")
     if env_dir and env_dir.strip():
         return Path(env_dir).expanduser()
-    return Path(__file__).resolve().parents[2] / "data"
+    return DEFAULT_USER_DATA_DIR
 
 
 def _maybe_migrate_legacy_database(data_dir: Path) -> None:
-    legacy_path = Path(__file__).resolve().parents[2] / "bot.db"
     target_path = data_dir / "bot.db"
-    if legacy_path.exists() and not target_path.exists():
+    legacy_candidates = [
+        PROJECT_ROOT / "bot.db",
+        PROJECT_ROOT / "data" / "bot.db",
+    ]
+    for legacy in legacy_candidates:
+        if legacy.exists() and not target_path.exists():
+            try:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(legacy), str(target_path))
+            except Exception:
+                pass
+
+    legacy_data_dir = PROJECT_ROOT / "data"
+    if legacy_data_dir.exists() and legacy_data_dir.is_dir():
         try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(legacy_path), str(target_path))
+            for child in legacy_data_dir.iterdir():
+                destination = data_dir / child.name
+                if destination.exists():
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(child), str(destination))
         except Exception:
             pass
 
@@ -126,6 +148,32 @@ def _get_bool_with_fallback(*names: str, default: bool = False) -> bool:
     return default
 
 
+def _warn_sqlite_inside_repo(database_url_sync: str, environment: str) -> None:
+    if environment != "development":
+        return
+    if not database_url_sync.startswith("sqlite"):
+        return
+    path_part = database_url_sync.split("///", 1)[-1]
+    try:
+        db_path = Path(path_part).resolve()
+        default_dev_path = DEFAULT_DEV_DB_PATH.resolve()
+    except Exception:
+        return
+    try:
+        if db_path == default_dev_path:
+            return
+        if PROJECT_ROOT in db_path.parents or db_path == PROJECT_ROOT:
+            logging.warning(
+                "SQLite database %s is located inside the project tree. "
+                "When using --reload every write will restart the server. "
+                "Move the database outside the repo (default: %s) or set DATA_DIR.",
+                db_path,
+                DEFAULT_USER_DATA_DIR,
+            )
+    except Exception:
+        pass
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     # Determine environment (default to development for safety)
@@ -135,10 +183,19 @@ def get_settings() -> Settings:
 
     data_dir = _default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
-    if not os.getenv("DATABASE_URL"):
+    db_url_env = os.getenv("DATABASE_URL")
+    db_url_env = db_url_env.strip() if db_url_env is not None else ""
+    if not db_url_env and environment != "development":
         _maybe_migrate_legacy_database(data_dir)
 
-    raw_db_url = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{data_dir / 'bot.db'}")
+    if db_url_env:
+        raw_db_url = db_url_env
+    else:
+        if environment == "development":
+            DEFAULT_DEV_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            raw_db_url = f"sqlite+aiosqlite:///{DEFAULT_DEV_DB_PATH}"
+        else:
+            raw_db_url = f"sqlite+aiosqlite:///{data_dir / 'bot.db'}"
 
     async_url = raw_db_url
     sync_url = raw_db_url
@@ -233,7 +290,7 @@ def get_settings() -> Settings:
     db_pool_timeout = _get_int("DB_POOL_TIMEOUT", 30, minimum=1)
     db_pool_recycle = _get_int("DB_POOL_RECYCLE", 3600, minimum=60)
 
-    return Settings(
+    settings = Settings(
         environment=environment,
         data_dir=data_dir,
         database_url_async=async_url,
@@ -275,3 +332,7 @@ def get_settings() -> Settings:
         db_pool_timeout=db_pool_timeout,
         db_pool_recycle=db_pool_recycle,
     )
+
+    _warn_sqlite_inside_repo(sync_url, environment)
+
+    return settings

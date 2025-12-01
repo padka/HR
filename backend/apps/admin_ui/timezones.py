@@ -8,7 +8,9 @@ from typing import Dict, Iterable, List, Sequence
 
 from zoneinfo import ZoneInfo
 
-DEFAULT_TZ = "Europe/Moscow"
+from backend.core.settings import get_settings
+
+DEFAULT_TZ = get_settings().timezone or "Europe/Moscow"
 
 
 @dataclass(frozen=True)

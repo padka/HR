@@ -56,6 +56,8 @@ class State(TypedDict, total=False):
     test1_payload: Dict[str, Any]
 
     manual_contact_prompt_sent: bool
+    manual_availability_expected: bool
+    manual_availability_last_note: Optional[str]
 
 
 try:

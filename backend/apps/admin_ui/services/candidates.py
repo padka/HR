@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import String, cast, exists, func, literal, literal_column, or_, select
+from sqlalchemy import String, cast, delete, exists, func, literal, literal_column, or_, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Select, case
 
 from backend.apps.admin_ui.utils import paginate
+from backend.apps.admin_ui.services.chat import get_chat_templates
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.bot.config import PASS_THRESHOLD, TEST2_QUESTIONS
 from backend.apps.bot.services import approve_slot_and_notify
@@ -626,7 +627,9 @@ async def list_candidates(
         pipeline_slug = DEFAULT_PIPELINE
     pipeline_config = PIPELINE_DEFINITIONS[pipeline_slug]
     pipeline_statuses: List[str] = pipeline_config["statuses"]
+    extra_terminal_statuses = {"hired", "not_hired"}
     allowed_statuses_set = set(pipeline_statuses)
+    allowed_with_terminal = allowed_statuses_set | extra_terminal_statuses
     pipeline_stages = pipeline_config["stages"]
     droppable_statuses = set(pipeline_config.get("droppable_statuses", []))
     is_intro_pipeline = pipeline_slug == "intro_day"
@@ -870,7 +873,7 @@ async def list_candidates(
             .scalar_subquery()
         ).label('primary_event_at')
 
-        normalized_statuses = [slug for slug in normalized_statuses if slug in allowed_statuses_set]
+        normalized_statuses = [slug for slug in normalized_statuses if slug in allowed_with_terminal]
         status_filter_values = normalized_statuses or (pipeline_statuses or ["__unreachable__"])
         conditions.append(status_case.in_(status_filter_values))
 
@@ -951,7 +954,7 @@ async def list_candidates(
             .group_by(status_case)
         )
         status_totals = {
-            slug: count for slug, count in totals_rows if slug in allowed_statuses_set
+            slug: count for slug, count in totals_rows if slug in allowed_with_terminal
         }
         stage_totals = {
             stage['slug']: sum(status_totals.get(status, 0) for status in stage['statuses'])
@@ -993,7 +996,7 @@ async def list_candidates(
             )
             .group_by(status_case)
         )
-        today_counts = {slug: count for slug, count in today_rows if slug in allowed_statuses_set}
+        today_counts = {slug: count for slug, count in today_rows if slug in allowed_with_terminal}
 
         order_columns: List[Any] = []
         if sort_key == 'name':
@@ -1193,6 +1196,9 @@ async def list_candidates(
             {
                 'id': user.id,
                 'telegram_id': user.telegram_id,
+                 'telegram_user_id': user.telegram_user_id or user.telegram_id,
+                 'telegram_username': user.telegram_username or user.username,
+                 'telegram_linked_at': user.telegram_linked_at,
                 'fio': user.fio,
                 'city': user.city,
                 'status': {
@@ -1234,8 +1240,8 @@ async def list_candidates(
             }
         )
 
-    candidate_cards = [card for card in candidate_cards if card['status']['slug'] in allowed_statuses_set]
-    items = [row for row in items if row.status_slug in allowed_statuses_set]
+    candidate_cards = [card for card in candidate_cards if card['status']['slug'] in allowed_with_terminal]
+    items = [row for row in items if row.status_slug in allowed_with_terminal]
 
     list_groups: OrderedDict[str, Dict[str, Any]] = OrderedDict()
     for card in sorted(
@@ -1716,6 +1722,15 @@ async def update_candidate_status(
             await session.commit()
             return True, "Статус обновлён", normalized, None
 
+        if normalized in STATUS_DEFINITIONS:
+            try:
+                user.candidate_status = CandidateStatus(normalized)
+            except ValueError:
+                user.candidate_status = None
+            user.status_changed_at = datetime.now(timezone.utc)
+            await session.commit()
+            return True, "Статус обновлён", normalized, None
+
     return False, "Этот статус нельзя установить вручную", None, None
 
 
@@ -1778,8 +1793,13 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
 
         # Use candidate_status field for stage label
         candidate_status = getattr(user, "candidate_status", None)
-        if candidate_status:
-            stage = _status_label(candidate_status)
+        candidate_status_slug = (
+            candidate_status.value
+            if isinstance(candidate_status, CandidateStatus)
+            else (candidate_status or None)
+        )
+        if candidate_status_slug:
+            stage = _status_label(candidate_status_slug)
         else:
             # Fallback to old logic if no candidate_status
             stage = _stage_label(slots[0] if slots else None, now)
@@ -1846,17 +1866,17 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
             test_sections_map["test2"]["report_url"] = (
                 f"/candidates/{user.id}/reports/test2" if getattr(user, "test2_report_url", None) else None
             )
-        test_sections_list = list(test_sections_map.values())
+    test_sections_list = list(test_sections_map.values())
 
-        telemost_url, telemost_source = _resolve_telemost_url(slots)
+    telemost_url, telemost_source = _resolve_telemost_url(slots)
 
-        # Check if candidate needs intro day
-        has_intro_day_slot = any(slot.purpose == "intro_day" for slot in slots)
-        status_requires_intro_day = (
-            candidate_status in STATUSES_PENDING_INTRO_DAY if candidate_status else False
-        )
-        test2_passed = _has_passed_test2(test_results)
-        needs_intro_day = (status_requires_intro_day or test2_passed) and not has_intro_day_slot
+    # Check if candidate needs intro day
+    has_intro_day_slot = any(slot.purpose == "intro_day" for slot in slots)
+    status_requires_intro_day = (
+        candidate_status in STATUSES_PENDING_INTRO_DAY if candidate_status else False
+    )
+    test2_passed = _has_passed_test2(test_results)
+    needs_intro_day = (status_requires_intro_day or test2_passed) and not has_intro_day_slot
 
     return {
         "user": user,
@@ -1871,6 +1891,8 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
         "timeline": timeline,
         "needs_intro_day": needs_intro_day,
         "has_intro_day_slot": has_intro_day_slot,
+        "can_schedule_intro_day": needs_intro_day,
+        "candidate_status_slug": candidate_status_slug,
         "stats": {
             "tests_total": int(tests_total or 0),
             "average_score": float(avg_score) if avg_score is not None else None,
@@ -1881,6 +1903,7 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
         "interview_recommendation_choices": INTERVIEW_RECOMMENDATION_CHOICES,
         "interview_recommendation_lookup": INTERVIEW_RECOMMENDATION_LOOKUP,
         "interview_notes": _serialize_interview_note(interview_note),
+        "chat_templates": get_chat_templates(),
     }
 
 
@@ -2058,6 +2081,31 @@ async def delete_candidate(user_id: int) -> bool:
         return True
 
 
+async def delete_all_candidates() -> int:
+    """Delete all candidate profiles and release assigned slots."""
+    async with async_session() as session:
+        telegram_ids = await session.scalars(
+            select(User.telegram_id).where(User.telegram_id.is_not(None))
+        )
+        tg_list = [value for value in telegram_ids if value]
+        if tg_list:
+            await session.execute(
+                Slot.__table__.update()
+                .where(Slot.candidate_tg_id.in_(tg_list))
+                .values(
+                    candidate_tg_id=None,
+                    candidate_fio=None,
+                    candidate_tz=None,
+                    candidate_city_id=None,
+                    status=SlotStatus.FREE,
+                )
+            )
+
+        delete_result = await session.execute(delete(User))
+        await session.commit()
+        return delete_result.rowcount or 0
+
+
 async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, object]]:
     detail = await get_candidate_detail(candidate_id)
     if not detail:
@@ -2131,6 +2179,7 @@ __all__ = [
     "toggle_candidate_activity",
     "update_candidate",
     "delete_candidate",
+    "delete_all_candidates",
     "api_candidate_detail_payload",
     "PIPELINE_DEFINITIONS",
     "DEFAULT_PIPELINE",

@@ -197,7 +197,7 @@ async def test_quiet_hours_adjustment_and_metrics():
         run_local = confirm_job.next_run_time.astimezone(candidate_zone)
         assert run_local.date() == (start_local.date() - timedelta(days=1))
         assert run_local.hour == 21
-        assert run_local.minute == 59
+        assert run_local.minute == 30
 
         snapshot = await get_reminder_metrics_snapshot()
         assert snapshot.adjusted_total.get(ReminderKind.CONFIRM_2H.value, 0) == 1

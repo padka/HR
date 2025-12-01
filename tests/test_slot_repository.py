@@ -45,7 +45,7 @@ async def test_get_upcoming_for_candidate_uses_correct_field():
             city_id=city.id,
             start_utc=now - timedelta(hours=2),
             duration_min=60,
-            status=SlotStatus.BOOKED,
+            status=SlotStatus.CANCELED,
             candidate_tg_id=candidate_tg_id,
         )
 
@@ -66,6 +66,7 @@ async def test_get_upcoming_for_candidate_uses_correct_field():
             start_utc=now + timedelta(hours=5),
             duration_min=60,
             status=SlotStatus.BOOKED,
+            purpose="intro_day",  # different purpose to satisfy unique constraint
             candidate_tg_id=candidate_tg_id,
         )
 

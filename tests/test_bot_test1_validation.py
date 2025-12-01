@@ -420,3 +420,152 @@ async def test_handle_test1_answer_advances_on_success(bot_context, monkeypatch)
     updated = await manager.get(USER_ID)
     assert updated["t1_idx"] == 1
     assert dummy_bot.edit_message_text.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_test1_answer_accepts_text_without_reply(bot_context, monkeypatch):
+    manager, _ = bot_context
+
+    state = State(
+        flow="interview",
+        t1_idx=0,
+        t1_current_idx=0,
+        test1_answers={},
+        t1_last_prompt_id=123,
+        t1_last_question_text="Вопрос",
+        t1_requires_free_text=True,
+        t1_sequence=[{"id": "fio", "prompt": "Ваше ФИО?"}, {"id": "city", "prompt": "Город?"}],
+        fio="",
+        city_name="",
+        city_id=None,
+        candidate_tz=DEFAULT_TZ,
+        t2_attempts={},
+        picked_recruiter_id=None,
+        picked_slot_id=None,
+        test1_payload={},
+        t1_last_hint_sent=False,
+    )
+    await manager.set(USER_ID, state)
+
+    async def fake_save(*_args, **_kwargs):
+        return BotTest1AnswerResult(status="ok")
+
+    send_mock = AsyncMock()
+    monkeypatch.setattr("backend.apps.bot.services.save_test1_answer", fake_save)
+    monkeypatch.setattr("backend.apps.bot.services.send_test1_question", send_mock)
+    monkeypatch.setattr(
+        "backend.apps.bot.services._resolve_followup_message",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "backend.apps.bot.services.candidate_services.is_chat_mode_active",
+        AsyncMock(return_value=False),
+    )
+
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=USER_ID),
+        text="Просто текст",
+        caption=None,
+        reply_to_message=None,
+    )
+    message.reply = AsyncMock()
+    message.answer = AsyncMock()
+
+    await handle_test1_answer(message)
+
+    assert message.reply.await_count == 0
+    assert send_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_test1_answer_hint_sent_once(bot_context, monkeypatch):
+    manager, _ = bot_context
+
+    state = State(
+        flow="interview",
+        t1_idx=0,
+        t1_current_idx=0,
+        test1_answers={},
+        t1_last_prompt_id=321,
+        t1_last_question_text="Вопрос",
+        t1_requires_free_text=True,
+        t1_sequence=[{"id": "fio", "prompt": "Ваше ФИО?"}],
+        fio="",
+        city_name="",
+        city_id=None,
+        candidate_tz=DEFAULT_TZ,
+        t2_attempts={},
+        picked_recruiter_id=None,
+        picked_slot_id=None,
+        test1_payload={},
+        t1_last_hint_sent=False,
+    )
+    await manager.set(USER_ID, state)
+
+    monkeypatch.setattr(
+        "backend.apps.bot.services.candidate_services.is_chat_mode_active",
+        AsyncMock(return_value=False),
+    )
+
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=USER_ID),
+        text="",
+        caption="",
+        reply_to_message=None,
+    )
+    message.reply = AsyncMock()
+    message.answer = AsyncMock()
+
+    await handle_test1_answer(message)
+    await handle_test1_answer(message)
+
+    assert message.reply.await_count == 1
+    assert message.answer.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_test1_answer_ignored_in_chat_mode(bot_context, monkeypatch):
+    manager, _ = bot_context
+
+    state = State(
+        flow="interview",
+        t1_idx=0,
+        t1_current_idx=0,
+        test1_answers={},
+        t1_last_prompt_id=11,
+        t1_last_question_text="",
+        t1_requires_free_text=True,
+        t1_sequence=[{"id": "fio", "prompt": "Ваше ФИО?"}],
+        fio="",
+        city_name="",
+        city_id=None,
+        candidate_tz=DEFAULT_TZ,
+        t2_attempts={},
+        picked_recruiter_id=None,
+        picked_slot_id=None,
+        test1_payload={},
+    )
+    await manager.set(USER_ID, state)
+
+    async def fake_save(*_args, **_kwargs):  # pragma: no cover - should not run
+        raise AssertionError("save_test1_answer should not be called")
+
+    monkeypatch.setattr("backend.apps.bot.services.save_test1_answer", fake_save)
+    monkeypatch.setattr(
+        "backend.apps.bot.services.candidate_services.is_chat_mode_active",
+        AsyncMock(return_value=True),
+    )
+
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=USER_ID),
+        text="Ответ",
+        caption=None,
+        reply_to_message=None,
+    )
+    message.reply = AsyncMock()
+    message.answer = AsyncMock()
+
+    await handle_test1_answer(message)
+
+    assert message.reply.await_count == 0
+    assert message.answer.await_count == 0

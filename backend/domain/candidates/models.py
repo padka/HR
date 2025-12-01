@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import Enum
 from typing import List, Optional
 
 from sqlalchemy import (
@@ -15,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Enum as SQLEnum,
     JSON,
+    Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -29,8 +31,23 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
     username: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)
+    telegram_user_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, unique=True, index=True, nullable=True
+    )
+    telegram_username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    telegram_linked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    conversation_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="flow"
+    )
+    conversation_mode_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     fio: Mapped[str] = mapped_column(String(160), nullable=False)
     city: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    desired_position: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    resume_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     test1_report_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     test2_report_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -44,6 +61,14 @@ class User(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
 
+    manual_slot_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    manual_slot_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    manual_slot_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    manual_slot_timezone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    manual_slot_requested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    manual_slot_response_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    intro_decline_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     test_results: Mapped[List["TestResult"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -51,6 +76,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    chat_messages: Mapped[List["ChatMessage"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
@@ -163,3 +192,45 @@ class InterviewNote(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<InterviewNote user_id={self.user_id}>"
+
+
+class ChatMessageDirection(str, Enum):
+    INBOUND = "inbound"
+    OUTBOUND = "outbound"
+
+
+class ChatMessageStatus(str, Enum):
+    QUEUED = "queued"
+    SENT = "sent"
+    FAILED = "failed"
+    RECEIVED = "received"
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        Index("ix_chat_messages_candidate_created_at", "candidate_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False, default=ChatMessageDirection.OUTBOUND.value)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram")
+    telegram_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    telegram_message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=ChatMessageStatus.QUEUED.value)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    author_label: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    client_request_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    user: Mapped["User"] = relationship(back_populates="chat_messages")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<ChatMessage {self.id} user={self.candidate_id} dir={self.direction} status={self.status}>"

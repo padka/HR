@@ -6,6 +6,10 @@ import sys
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
+pytestmark = pytest.mark.skip("manual script; not part of pytest collection")
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.core.db import async_session

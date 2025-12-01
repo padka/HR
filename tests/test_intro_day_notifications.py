@@ -11,35 +11,73 @@ from backend.domain.models import MessageTemplate, Slot, SlotStatus
 
 @pytest.mark.asyncio
 async def test_intro_day_template_defaults_without_city_specific():
-    key = await services._resolve_intro_day_template_key("Тверь")
-    assert key == "intro_day_invitation"
+    key = "intro_day_invitation"
+    async with async_session() as session:
+        await session.execute(delete(MessageTemplate).where(MessageTemplate.key == key))
+        session.add(
+            MessageTemplate(
+                key=key,
+                locale="ru",
+                channel="tg",
+                city_id=None,
+                body_md="default-intro",
+                version=1,
+                is_active=True,
+                updated_at=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+
+    provider = services.get_template_provider()
+    rendered = await provider.render(key, {}, city_id=123, strict=True)
+
+    assert rendered is not None
+    assert rendered.text == "default-intro"
+    assert rendered.city_id is None
 
 
 @pytest.mark.asyncio
 async def test_intro_day_template_prefers_city_specific():
-    city_key = "intro_day_invitation_москва"
-    try:
-        async with async_session() as session:
-            await session.execute(delete(MessageTemplate).where(MessageTemplate.key == city_key))
-            session.add(
-                MessageTemplate(
-                    key=city_key,
-                    locale="ru",
-                    channel="tg",
-                    body_md="custom intro day template",
-                    version=1,
-                    is_active=True,
-                    updated_at=datetime.now(timezone.utc),
-                )
+    key = "intro_day_invitation"
+    city_id = 777
+    async with async_session() as session:
+        await session.execute(delete(MessageTemplate).where(MessageTemplate.key == key))
+        now = datetime.now(timezone.utc)
+        session.add(
+            MessageTemplate(
+                key=key,
+                locale="ru",
+                channel="tg",
+                city_id=None,
+                body_md="default-intro",
+                version=1,
+                is_active=True,
+                updated_at=now,
+                created_at=now,
             )
-            await session.commit()
+        )
+        session.add(
+            MessageTemplate(
+                key=key,
+                locale="ru",
+                channel="tg",
+                city_id=city_id,
+                body_md="city-intro",
+                version=1,
+                is_active=True,
+                updated_at=now,
+                created_at=now,
+            )
+        )
+        await session.commit()
 
-        key = await services._resolve_intro_day_template_key("Москва")
-        assert key == city_key
-    finally:
-        async with async_session() as session:
-            await session.execute(delete(MessageTemplate).where(MessageTemplate.key == city_key))
-            await session.commit()
+    provider = services.get_template_provider()
+    rendered = await provider.render(key, {}, city_id=city_id, strict=True)
+
+    assert rendered is not None
+    assert rendered.text == "city-intro"
+    assert rendered.city_id == city_id
 
 
 def _build_slot(*, purpose: str = "intro_day") -> Slot:
@@ -66,7 +104,7 @@ async def test_render_candidate_notification_uses_intro_template(monkeypatch):
     calls = []
 
     class DummyProvider:
-        async def render(self, key, context, locale="ru", channel="tg"):
+        async def render(self, key, context, locale="ru", channel="tg", city_id=None, strict=False):
             calls.append(key)
             return SimpleNamespace(text=f"{key}:{context['candidate_name']}", key=key, version=1)
 
@@ -89,7 +127,7 @@ async def test_render_candidate_notification_for_interview(monkeypatch):
     calls = []
 
     class DummyProvider:
-        async def render(self, key, context, locale="ru", channel="tg"):
+        async def render(self, key, context, locale="ru", channel="tg", city_id=None, strict=False):
             calls.append(key)
             return SimpleNamespace(text=f"{key}:{context['candidate_name']}", key=key, version=2)
 

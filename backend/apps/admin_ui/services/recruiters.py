@@ -116,6 +116,7 @@ async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]
                 "next_free_local": next_local,
                 "next_is_future": next_future,
                 "cities": cities_entries,
+                "city_ids": [city.id for city in sorted_cities],
                 "cities_text": " ".join(
                     (getattr(city, "name_plain", "") or "").lower() for city in sorted_cities
                 ),

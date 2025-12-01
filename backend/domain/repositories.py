@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, selectinload
 from dataclasses import dataclass
 from typing import Literal
@@ -118,7 +119,7 @@ async def get_candidate_cities() -> List[City]:
     slot_owner = aliased(Recruiter)
 
     async with async_session() as session:
-        res = await session.scalars(
+        city_query = (
             select(City)
             .outerjoin(
                 rc,
@@ -153,7 +154,15 @@ async def get_candidate_cities() -> List[City]:
             .group_by(City.id)
             .order_by(City.name.asc())
         )
-        return list(res)
+        result = list(await session.scalars(city_query))
+        if result:
+            return result
+
+        # Fallback: return all active cities to avoid empty bot dropdowns
+        fallback = await session.scalars(
+            select(City).where(City.active.is_(True)).order_by(City.name.asc())
+        )
+        return list(fallback)
 
 
 async def get_recruiter(recruiter_id: int) -> Optional[Recruiter]:
@@ -343,9 +352,10 @@ async def get_message_template(
     *,
     locale: str = "ru",
     channel: str = "tg",
+    city_id: Optional[int] = None,
 ) -> Optional[MessageTemplate]:
     async with async_session() as session:
-        result = await session.scalars(
+        base = (
             select(MessageTemplate)
             .where(
                 MessageTemplate.key == key,
@@ -356,7 +366,18 @@ async def get_message_template(
             .order_by(MessageTemplate.version.desc(), MessageTemplate.updated_at.desc())
             .limit(1)
         )
-        return result.first()
+
+        queries = []
+        if city_id is not None:
+            queries.append(base.where(MessageTemplate.city_id == city_id))
+        queries.append(base.where(MessageTemplate.city_id.is_(None)))
+
+        for query in queries:
+            result = await session.scalars(query)
+            found = result.first()
+            if found:
+                return found
+        return None
 
 
 @dataclass
@@ -516,9 +537,10 @@ async def add_notification_log(
                 stmt = (
                     insert_factory(NotificationLog)
                     .values(**values)
-                    .on_conflict_do_nothing(
-                        index_elements=["type", "booking_id", "candidate_tg_id"]
-                    )
+                    # SQLite enforces unique constraints per-table; on_conflict_do_nothing()
+                    # without index_elements works across all constraints and prevents crashes
+                    # when different backends use different constraint names/columns.
+                    .on_conflict_do_nothing()
                 )
                 result = await session.execute(stmt)
                 inserted = result.rowcount == 1
@@ -844,77 +866,109 @@ async def reset_outbox_entry(outbox_id: int) -> None:
             entry.last_error = None
 async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult:
     async with async_session() as session:
-        async with session.begin():
-            slot = await session.scalar(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-                .where(Slot.id == slot_id)
-                .with_for_update()
-            )
-
-            if slot is None:
-                return CandidateConfirmationResult(status="not_found", slot=None)
-
-            status_value = (slot.status or "").lower()
-            if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
-                slot.start_utc = _to_aware_utc(slot.start_utc)
-                return CandidateConfirmationResult(status="already_confirmed", slot=slot)
-
-            if status_value not in {SlotStatus.BOOKED, SlotStatus.PENDING}:
-                slot.start_utc = _to_aware_utc(slot.start_utc)
-                return CandidateConfirmationResult(status="invalid_status", slot=slot)
-
-            candidate_tg_id = slot.candidate_tg_id
-            existing_log = await session.scalar(
-                select(NotificationLog.id)
-                .where(
-                    NotificationLog.booking_id == slot_id,
-                    NotificationLog.type == "candidate_confirm",
-                    _log_candidate_clause(candidate_tg_id),
+        try:
+            async with session.begin():
+                slot = await session.scalar(
+                    select(Slot)
+                    .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                    .where(Slot.id == slot_id)
+                    .with_for_update()
                 )
-                .with_for_update()
-            )
-            if existing_log:
+
+                if slot is None:
+                    return CandidateConfirmationResult(status="not_found", slot=None)
+
+                status_value = (slot.status or "").lower()
+                if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
+                    slot.start_utc = _to_aware_utc(slot.start_utc)
+                    return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+
+                if status_value not in {SlotStatus.BOOKED, SlotStatus.PENDING}:
+                    slot.start_utc = _to_aware_utc(slot.start_utc)
+                    return CandidateConfirmationResult(status="invalid_status", slot=slot)
+
+                candidate_tg_id = slot.candidate_tg_id
+                existing_log = await session.scalar(
+                    select(NotificationLog.id)
+                    .where(
+                        NotificationLog.booking_id == slot_id,
+                        NotificationLog.type == "candidate_confirm",
+                        _log_candidate_clause(candidate_tg_id),
+                    )
+                    .with_for_update()
+                )
+                if existing_log:
+                    slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
+                    slot.start_utc = _to_aware_utc(slot.start_utc)
+                    return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+
                 slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
-                slot.start_utc = _to_aware_utc(slot.start_utc)
-                return CandidateConfirmationResult(status="already_confirmed", slot=slot)
 
-            slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
+                # Update candidate status depending on slot purpose
+                if candidate_tg_id is not None:
+                    try:
+                        from backend.domain.candidates.status_service import (
+                            set_status_interview_confirmed,
+                            set_status_intro_day_confirmed_preliminary,
+                        )
 
-            # Update candidate status to INTERVIEW_CONFIRMED
-            if candidate_tg_id is not None:
-                try:
-                    from backend.domain.candidates.status_service import set_status_interview_confirmed
-                    await set_status_interview_confirmed(candidate_tg_id)
-                except Exception:
-                    logger.exception("Failed to update candidate status to INTERVIEW_CONFIRMED for candidate %s", candidate_tg_id)
+                        is_intro_day = (slot.purpose or "").lower() == "intro_day"
+                        if is_intro_day:
+                            await set_status_intro_day_confirmed_preliminary(candidate_tg_id, force=True)
+                        else:
+                            await set_status_interview_confirmed(candidate_tg_id)
+                    except Exception:
+                        logger.exception("Failed to update candidate status for candidate %s", candidate_tg_id)
 
-            session.add(
-                NotificationLog(
+                # Add notification log (idempotent - ignore if already exists)
+                # Use no_autoflush to prevent premature flush during subsequent queries
+                with session.no_autoflush:
+                    session.add(
+                        NotificationLog(
+                            booking_id=slot.id,
+                            candidate_tg_id=candidate_tg_id,
+                            type="candidate_confirm",
+                            created_at=datetime.now(timezone.utc),
+                        )
+                    )
+
+                recruiter_tg_id = (
+                    slot.recruiter.tg_chat_id if slot.recruiter and slot.recruiter.tg_chat_id else None
+                )
+                await add_outbox_notification(
+                    notification_type="recruiter_candidate_confirmed_notice",
                     booking_id=slot.id,
                     candidate_tg_id=candidate_tg_id,
-                    type="candidate_confirm",
-                    created_at=datetime.now(timezone.utc),
+                    recruiter_tg_id=recruiter_tg_id,
+                    payload={
+                        "event": "candidate_confirmed",
+                        "slot_id": slot.id,
+                    },
+                    session=session,
                 )
-            )
 
-            recruiter_tg_id = (
-                slot.recruiter.tg_chat_id if slot.recruiter and slot.recruiter.tg_chat_id else None
+            slot.start_utc = _to_aware_utc(slot.start_utc)
+            return CandidateConfirmationResult(status="confirmed", slot=slot)
+        except IntegrityError as e:
+            # IntegrityError on NotificationLog unique constraint = idempotent retry
+            # This means another request already confirmed this slot
+            logger.info(
+                "IntegrityError during confirm_slot_by_candidate for slot %s - treating as idempotent retry: %s",
+                slot_id,
+                str(e)
             )
-            await add_outbox_notification(
-                notification_type="recruiter_candidate_confirmed_notice",
-                booking_id=slot.id,
-                candidate_tg_id=candidate_tg_id,
-                recruiter_tg_id=recruiter_tg_id,
-                payload={
-                    "event": "candidate_confirmed",
-                    "slot_id": slot.id,
-                },
-                session=session,
-            )
-
-        slot.start_utc = _to_aware_utc(slot.start_utc)
-    return CandidateConfirmationResult(status="confirmed", slot=slot)
+            # Re-fetch slot to return current state
+            async with session.begin():
+                slot = await session.scalar(
+                    select(Slot)
+                    .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                    .where(Slot.id == slot_id)
+                )
+                if slot:
+                    slot.start_utc = _to_aware_utc(slot.start_utc)
+                    return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+                else:
+                    return CandidateConfirmationResult(status="not_found", slot=None)
 
 
 async def reserve_slot(

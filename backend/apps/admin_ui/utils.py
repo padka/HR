@@ -7,9 +7,11 @@ from zoneinfo import ZoneInfo
 import math
 
 from backend.domain.models import SlotStatus
+from backend.core.settings import get_settings
+from backend.core.time_utils import local_to_utc
 
 
-DEFAULT_TZ = "Europe/Moscow"
+DEFAULT_TZ = get_settings().timezone or "Europe/Moscow"
 
 
 def safe_zone(tz_str: Optional[str]) -> ZoneInfo:
@@ -98,8 +100,10 @@ def recruiter_time_to_utc(date: str, time: str, recruiter_tz: Optional[str]) -> 
         dt_local = datetime.fromisoformat(f"{date}T{time}")
     except ValueError:
         return None
-    dt_local = dt_local.replace(tzinfo=safe_zone(recruiter_tz))
-    return dt_local.astimezone(timezone.utc)
+    try:
+        return local_to_utc(dt_local, recruiter_tz or DEFAULT_TZ)
+    except ValueError:
+        return None
 
 
 def render_or_empty(value: Optional[Any], placeholder: str = "нет данных") -> str:

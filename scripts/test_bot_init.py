@@ -9,8 +9,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.core.settings import get_settings
 from backend.apps.admin_ui.state import _build_bot
+import pytest
 
 
+@pytest.mark.asyncio
 async def test_bot():
     """Test if bot can be initialized."""
 

@@ -105,11 +105,9 @@ async def free_text(message: Message) -> None:
         logger.exception(
             "failed to load state for free text", extra={"user_id": user_id}
         )
-        await services.send_welcome(user_id)
         return
 
     if not state:
-        await services.send_welcome(user_id)
         return
 
     if not isinstance(state, dict):
@@ -117,8 +115,22 @@ async def free_text(message: Message) -> None:
             "unexpected state payload",
             extra={"user_id": user_id, "type": type(state).__name__},
         )
-        await services.send_welcome(user_id)
         return
+
+    # Capture причины отказа от ознакомительного дня, если ждём ответ
+    if state.get("awaiting_intro_decline_reason"):
+        handled = await services.capture_intro_decline_reason(message, state)
+        if handled:
+            return
+
+    if state.get("manual_availability_expected"):
+        payload_text = (message.text or message.caption or "").strip()
+        if not payload_text:
+            await message.answer("Напишите, пожалуйста, удобный диапазон в формате «25.07 12:00-16:00».")
+            return
+        handled = await services.record_manual_availability_response(user_id, payload_text)
+        if handled:
+            return
 
     if state.get("flow") != "interview":
         return

@@ -1,10 +1,13 @@
 from __future__ import annotations
+
+import asyncio
+import logging
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncIterator, Iterator
 
-import asyncio
-
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -17,6 +20,38 @@ from backend.core.settings import get_settings
 from backend.migrations import upgrade_to_head
 
 _settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+def _preflight_database_backend(url: str) -> None:
+    try:
+        parsed = make_url(url)
+    except ArgumentError as exc:  # pragma: no cover - configuration guard
+        raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
+
+    driver = (parsed.drivername or "").lower()
+    masked_url = parsed.render_as_string(hide_password=True)
+    logger.info("Database dialect: %s (%s)", driver or "unknown", masked_url)
+
+    if driver.startswith("postgresql+asyncpg"):
+        try:
+            import asyncpg  # noqa: F401
+        except ImportError as exc:  # pragma: no cover - depends on local env
+            raise RuntimeError(
+                "DATABASE_URL uses postgresql+asyncpg but asyncpg is not installed. "
+                "Install asyncpg (pip install asyncpg) or switch DATABASE_URL to sqlite+aiosqlite for the default dev setup."
+            ) from exc
+    elif driver.startswith("sqlite+aiosqlite"):
+        try:
+            import aiosqlite  # noqa: F401
+        except ImportError as exc:  # pragma: no cover - depends on local env
+            raise RuntimeError(
+                "DATABASE_URL uses sqlite+aiosqlite but aiosqlite is not installed. "
+                "Install aiosqlite (pip install aiosqlite) or point DATABASE_URL to PostgreSQL."
+            ) from exc
+
+
+_preflight_database_backend(_settings.database_url_async)
 
 # Build engine kwargs with pool settings only for non-SQLite databases
 _async_engine_kwargs = {

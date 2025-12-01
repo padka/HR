@@ -158,6 +158,7 @@ STATUS_TRANSITIONS: Dict[CandidateStatus, List[CandidateStatus]] = {
     CandidateStatus.INTERVIEW_CONFIRMED: [
         CandidateStatus.TEST2_SENT,
         CandidateStatus.INTERVIEW_DECLINED,  # No-show or cancellation
+        CandidateStatus.INTRO_DAY_SCHEDULED,  # Direct to intro day (skip Test 2)
     ],
     CandidateStatus.INTERVIEW_DECLINED: [],  # Terminal state
     CandidateStatus.TEST2_SENT: [

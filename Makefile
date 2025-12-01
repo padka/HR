@@ -1,7 +1,7 @@
-.PHONY: help test test-slot-flow test-all docker-up docker-down docker-logs clean install migrate dev
+.PHONY: help test test-cov migrate migrate-test docker-up docker-down docker-logs clean install dev dev-sqlite dev-postgres ensure-venv
 
-# Python interpreter (use venv if available, otherwise python3)
-PYTHON := $(shell if [ -f .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
+VENV := .venv
+PYTHON := $(VENV)/bin/python
 
 # Default target
 help:
@@ -12,8 +12,8 @@ help:
 	@echo "  make dev              - Start development server"
 	@echo ""
 	@echo "  make test             - Run all tests"
-	@echo "  make test-slot-flow   - Run slot workflow tests (manual assignment, intro day)"
-	@echo "  make test-all         - Run all tests including integration"
+	@echo "  make test-cov         - Run all tests with coverage"
+	@echo "  make migrate-test     - Apply migrations to sqlite test database"
 	@echo ""
 	@echo "  make docker-up        - Start Redis services in background"
 	@echo "  make docker-down      - Stop Redis services"
@@ -21,41 +21,61 @@ help:
 	@echo ""
 	@echo "  make clean            - Remove temporary files and caches"
 
+ensure-venv:
+	@if [ ! -x "$(PYTHON)" ]; then python3 -m venv $(VENV); fi
+
 # Install dependencies
-install:
+install: ensure-venv
 	$(PYTHON) -m pip install --upgrade pip
-	pip install -r requirements-dev.txt
+	$(PYTHON) -m pip install -r requirements-dev.txt
 
 # Run database migrations
 migrate:
 	ENVIRONMENT=development REDIS_URL="" $(PYTHON) scripts/run_migrations.py
 
+migrate-test: ensure-venv
+	ENVIRONMENT=test DATABASE_URL="sqlite:///./data/test.db" REDIS_URL="" $(PYTHON) scripts/run_migrations.py
+
 # Start development server
 dev:
 	ENVIRONMENT=development REDIS_URL="" $(PYTHON) scripts/dev_server.py
 
-# Run all tests (fast)
-test:
-	ENVIRONMENT=development REDIS_URL="" $(PYTHON) -m pytest tests/ -v --tb=short
+dev-sqlite:
+	DATABASE_URL="" ENVIRONMENT=development REDIS_URL="" $(PYTHON) scripts/dev_server.py
 
-# Run slot workflow tests (as specified in ND21.md)
-test-slot-flow:
-	@echo "Running slot flow tests (manual assignment, intro day, repositories)..."
-	ENVIRONMENT=development REDIS_URL="" $(PYTHON) -m pytest \
-		tests/test_domain_repositories.py \
-		tests/test_manual_slot_assignment.py \
-		tests/test_intro_day_flow.py \
-		-v --tb=short
+dev-postgres:
+	@echo "Hint: make sure asyncpg is installed (python -m pip install asyncpg) and Postgres is running (docker compose up -d postgres)."
+	ENVIRONMENT=development REDIS_URL="" $(PYTHON) scripts/dev_server.py
 
-# Run all tests including integration (requires Redis)
-test-all:
-	@echo "Starting Redis services..."
-	docker-compose up -d
-	@echo "Waiting for Redis to be ready..."
-	@sleep 3
-	@echo "Running all tests..."
-	ENVIRONMENT=development REDIS_URL="redis://localhost:6379/0" $(PYTHON) -m pytest tests/ -v --tb=short
-	@echo "Tests complete. Redis services still running (use 'make docker-down' to stop)"
+# Run tests (in-memory Redis, SQLite test DB)
+test: ensure-venv
+	$(PYTHON) -m pip show pytest >/dev/null 2>&1 || $(PYTHON) -m pip install -r requirements-dev.txt
+	DATABASE_URL="sqlite+aiosqlite:///./data/test.db" \
+	ENVIRONMENT=test \
+	REDIS_URL="" \
+	REDIS_NOTIFICATIONS_URL="" \
+	NOTIFICATION_BROKER="memory" \
+	BOT_ENABLED=0 \
+	BOT_INTEGRATION_ENABLED=0 \
+	ADMIN_USER=admin \
+	ADMIN_PASSWORD=admin \
+	SESSION_SECRET="test-session-secret-0123456789abcdef0123456789abcd" \
+	$(PYTHON) -m pytest -q --disable-warnings --maxfail=1
+
+# Run tests with coverage
+test-cov: ensure-venv
+	$(PYTHON) -m pip show pytest >/dev/null 2>&1 || $(PYTHON) -m pip install -r requirements-dev.txt
+	DATABASE_URL="sqlite+aiosqlite:///./data/test.db" \
+	ENVIRONMENT=test \
+	REDIS_URL="" \
+	REDIS_NOTIFICATIONS_URL="" \
+	NOTIFICATION_BROKER="memory" \
+	BOT_ENABLED=0 \
+	BOT_INTEGRATION_ENABLED=0 \
+	ADMIN_USER=admin \
+	ADMIN_PASSWORD=admin \
+	SESSION_SECRET="test-session-secret-0123456789abcdef0123456789abcd" \
+	$(PYTHON) -m pytest --cov=backend --cov-report=term-missing
 
 # Docker management
 docker-up:

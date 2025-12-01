@@ -5,7 +5,12 @@ import functools
 import logging
 import sys
 import traceback
-from typing import Any, Callable, Optional, TypeVar, ParamSpec
+from typing import Any, Callable, Optional, TypeVar
+
+try:  # pragma: no cover - Python <3.10 compatibility
+    from typing import ParamSpec
+except ImportError:  # pragma: no cover - fallback for older runtimes
+    from typing_extensions import ParamSpec  # type: ignore
 
 logger = logging.getLogger(__name__)
 
