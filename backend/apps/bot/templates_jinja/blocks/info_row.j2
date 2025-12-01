@@ -1,0 +1,28 @@
+{# Строка информации с эмодзи-маркером #}
+
+{% macro render(emoji, text) -%}
+{{ emoji }} {{ text }}
+{%- endmacro %}
+
+{# Специализированные версии для частых случаев #}
+
+{% macro date(dt_utc, tz_name='UTC') -%}
+📅 {{ dt_utc|format_datetime(tz_name) }}
+{%- endmacro %}
+
+{% macro location(address) -%}
+📍 {{ address }}
+{%- endmacro %}
+
+{% macro format(format_text) -%}
+💬 {{ format_text }}
+{%- endmacro %}
+
+{% macro link(url, label='Ссылка') -%}
+🔗 <b>{{ label }}:</b>
+{{ url }}
+{%- endmacro %}
+
+{% macro contact(name, phone) -%}
+💼 <b>{{ name }}:</b> {{ phone }}
+{%- endmacro %}

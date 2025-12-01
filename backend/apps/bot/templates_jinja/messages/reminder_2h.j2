@@ -1,0 +1,14 @@
+{# Напоминание за 2 часа + ссылка #}
+{% import 'blocks/header.j2' as header %}
+{% import 'blocks/info_row.j2' as info %}
+{% import 'blocks/footer_hint.j2' as footer %}
+
+{{ header.render('⏰', 'Встреча через 2 часа')|safe }}
+
+{{ info.date(start_utc, tz_name)|safe }}
+
+{% if meet_link %}
+{{ info.link(meet_link, 'Ссылка на встречу')|safe }}
+{% endif %}
+
+{{ footer.render('Если планы изменились — сообщите, и мы подберём другое время.')|safe }}

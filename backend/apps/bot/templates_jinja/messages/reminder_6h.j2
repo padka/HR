@@ -1,0 +1,10 @@
+{# Напоминание за 6 часов до встречи #}
+{% import 'blocks/header.j2' as header %}
+{% import 'blocks/info_row.j2' as info %}
+
+{{ header.render('⏰', 'Встреча сегодня')|safe }}
+
+{{ info.date(start_utc, tz_name)|safe }}
+
+Подтвердите участие, чтобы мы подготовили
+всё необходимое.

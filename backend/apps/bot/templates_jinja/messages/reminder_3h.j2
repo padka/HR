@@ -1,0 +1,12 @@
+{# Напоминание за 3 часа (для intro day) #}
+{% import 'blocks/header.j2' as header %}
+{% import 'blocks/info_row.j2' as info %}
+
+{{ header.render('⏰', 'Ознакомительный день через 3 часа')|safe }}
+
+{{ info.date(start_utc, tz_name)|safe }}
+{% if address %}
+{{ info.location(address)|safe }}
+{% endif %}
+
+Нажмите кнопку, чтобы подтвердить участие.
