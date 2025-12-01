@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from backend.core.db import async_engine
 from backend.apps.admin_api.admin import mount_admin
+from backend.apps.admin_api.webapp.routers import router as webapp_router
 from backend.core.settings import get_settings
 from backend.core.cache import CacheConfig, init_cache, connect_cache, disconnect_cache
 
@@ -56,9 +57,13 @@ def create_app() -> FastAPI:
     app = FastAPI(title="TG Bot Admin API", lifespan=lifespan)
     mount_admin(app, async_engine)
 
+    # Mount WebApp API endpoints for Telegram Mini App
+    app.include_router(webapp_router, prefix="/api/webapp", tags=["webapp"])
+    logger.info("WebApp API router mounted at /api/webapp")
+
     @app.get("/")
     async def root():
-        return {"ok": True, "admin": "/admin"}
+        return {"ok": True, "admin": "/admin", "webapp_api": "/api/webapp"}
 
     return app
 
