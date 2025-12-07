@@ -154,23 +154,53 @@ async def test_environment_setting_validation():
     """Test that environment setting is properly validated."""
     from backend.core.settings import get_settings
     import os
+    import tempfile
 
     # Test valid environments
-    for env in ["development", "production", "staging"]:
+    for env in ["development", "staging"]:
         with patch.dict(os.environ, {"ENVIRONMENT": env}):
             # Clear cache
             get_settings.cache_clear()
             settings = get_settings()
             assert settings.environment == env
 
+    # Test production with all required settings
+    temp_dir = tempfile.mkdtemp(prefix="test_prod_")
+    try:
+        with patch.dict(os.environ, {
+            "ENVIRONMENT": "production",
+            "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost:5432/db",
+            "REDIS_URL": "redis://localhost:6379/0",
+            "NOTIFICATION_BROKER": "redis",
+            "DATA_DIR": temp_dir,
+            "SESSION_SECRET": "test-prod-secret-32chars-long-0123456789abcdef",
+        }):
+            get_settings.cache_clear()
+            settings = get_settings()
+            assert settings.environment == "production"
+    finally:
+        import shutil
+        from pathlib import Path
+        if Path(temp_dir).exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        get_settings.cache_clear()
+
     # Test invalid environment defaults to development
-    with patch.dict(os.environ, {"ENVIRONMENT": "invalid"}):
+    with patch.dict(os.environ, {
+        "ENVIRONMENT": "invalid",
+        "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost:5432/db",
+        "SESSION_SECRET": "test-secret-32chars-long-0123456789abcdef01234",
+    }):
         get_settings.cache_clear()
         settings = get_settings()
         assert settings.environment == "development"
 
     # Test empty environment defaults to development
-    with patch.dict(os.environ, {}, clear=True):
+    with patch.dict(os.environ, {
+        "ENVIRONMENT": "",
+        "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost:5432/db",
+        "SESSION_SECRET": "test-secret-32chars-long-0123456789abcdef01234",
+    }):
         get_settings.cache_clear()
         settings = get_settings()
         assert settings.environment == "development"

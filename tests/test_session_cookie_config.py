@@ -6,11 +6,23 @@ from backend.core import settings as settings_module
 
 def _build_app(env: str, monkeypatch: pytest.MonkeyPatch):
     # Minimal env so get_settings does not raise
+    import tempfile
     monkeypatch.setenv("ENVIRONMENT", env)
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123456789abcd")
     monkeypatch.setenv("ADMIN_USER", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "admin")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./data/test.db")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://rs:pass@localhost:5432/rs_test")
+
+    # Production requires Redis and specific broker settings
+    if env == "production":
+        temp_dir = tempfile.mkdtemp(prefix="test_prod_session_")
+        monkeypatch.setenv("DATA_DIR", temp_dir)
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
+    else:
+        monkeypatch.setenv("REDIS_URL", "")
+        monkeypatch.setenv("NOTIFICATION_BROKER", "memory")
+
     settings_module.get_settings.cache_clear()
     try:
         return create_app()

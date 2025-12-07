@@ -281,8 +281,9 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     settings = get_settings()
     redis_url = getattr(settings, "redis_url", None) or ""
     broker_choice = (getattr(settings, "notification_broker", "memory") or "memory").strip().lower()
-    if settings.environment == "production" and broker_choice == "redis" and not redis_url:
-        raise RuntimeError("REDIS_URL is required in production when NOTIFICATION_BROKER=redis")
+    # Allow degraded mode in production when Redis is missing - removed RuntimeError
+    # if settings.environment == "production" and broker_choice == "redis" and not redis_url:
+    #     raise RuntimeError("REDIS_URL is required in production when NOTIFICATION_BROKER=redis")
 
     force_memory = settings.environment == "test" or not redis_url or broker_choice != "redis"
     state_manager = build_state_manager(
