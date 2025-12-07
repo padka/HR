@@ -29,7 +29,7 @@ def test_prod_rejects_missing_database_url(monkeypatch):
     try:
         with pytest.raises(RuntimeError) as exc_info:
             settings_module.get_settings()
-        assert "DATABASE_URL to be set" in str(exc_info.value)
+        assert "DATABASE_URL environment variable is required" in str(exc_info.value)
     finally:
         settings_module.get_settings.cache_clear()
 
@@ -50,7 +50,7 @@ def test_prod_rejects_sqlite(monkeypatch):
     try:
         with pytest.raises(RuntimeError) as exc_info:
             settings_module.get_settings()
-        assert "sqlite is forbidden" in str(exc_info.value)
+        assert "PostgreSQL with asyncpg driver" in str(exc_info.value)
     finally:
         settings_module.get_settings.cache_clear()
 
@@ -146,20 +146,22 @@ def test_prod_rejects_data_dir_in_repo(monkeypatch):
         settings_module.get_settings.cache_clear()
 
 
-def test_dev_allows_sqlite(monkeypatch):
-    """Development should allow SQLite."""
+def test_dev_requires_postgresql(monkeypatch):
+    """Development now requires PostgreSQL (no SQLite)."""
     from backend.core import settings as settings_module
 
     settings_module.get_settings.cache_clear()
 
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/db")
     monkeypatch.setenv("SESSION_SECRET", "dev-secret-32chars-long-0123456789abcdef01234")
+    monkeypatch.setenv("REDIS_URL", "")
+    monkeypatch.setenv("NOTIFICATION_BROKER", "memory")
 
     try:
         settings = settings_module.get_settings()
         assert settings.environment == "development"
-        assert "sqlite" in settings.database_url_sync
+        assert "postgresql" in settings.database_url_sync
     finally:
         settings_module.get_settings.cache_clear()
 
@@ -264,9 +266,9 @@ def test_validation_skipped_in_development(monkeypatch):
         # Set development environment
         monkeypatch.setenv("ENVIRONMENT", "development")
 
-        # Set invalid production config (SQLite, no Redis, memory broker, etc.)
-        # These would all fail in production but should be fine in development
-        monkeypatch.setenv("DATABASE_URL", "sqlite:///./test.db")
+        # Set config that would fail in production (no Redis, memory broker)
+        # but should be fine in development
+        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/db")
         monkeypatch.delenv("REDIS_URL", raising=False)
         monkeypatch.setenv("NOTIFICATION_BROKER", "memory")
         monkeypatch.setenv("SESSION_SECRET", "dev-secret-32chars-long-0123456789abcdef01234")
@@ -276,7 +278,7 @@ def test_validation_skipped_in_development(monkeypatch):
 
         # Verify we got development settings
         assert settings.environment == "development"
-        assert "sqlite" in settings.database_url_sync
+        assert "postgresql" in settings.database_url_sync
         assert settings.notification_broker == "memory"
     finally:
         settings_module.get_settings.cache_clear()
@@ -292,14 +294,16 @@ def test_validation_skipped_in_staging(monkeypatch):
         # Set staging environment
         monkeypatch.setenv("ENVIRONMENT", "staging")
 
-        # Use SQLite (would fail in production)
-        monkeypatch.setenv("DATABASE_URL", "sqlite:///./test.db")
+        # Use PostgreSQL with relaxed config (no Redis, etc.)
+        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/db")
         monkeypatch.setenv("SESSION_SECRET", "staging-secret-32chars-long-0123456789abcdef")
+        monkeypatch.setenv("REDIS_URL", "")
+        monkeypatch.setenv("NOTIFICATION_BROKER", "memory")
 
         # Should not raise - validation skipped for staging
         settings = settings_module.get_settings()
         assert settings.environment == "staging"
-        assert "sqlite" in settings.database_url_sync
+        assert "postgresql" in settings.database_url_sync
     finally:
         settings_module.get_settings.cache_clear()
 
@@ -325,7 +329,7 @@ def test_validation_case_insensitive(monkeypatch):
             # All casings should trigger validation and raise error
             with pytest.raises(RuntimeError) as exc_info:
                 settings_module.get_settings()
-            assert "PRODUCTION CONFIGURATION ERRORS" in str(exc_info.value)
+            # Error is raised early at DATABASE_URL check, not in validation block
             assert "DATABASE_URL" in str(exc_info.value)
     finally:
         settings_module.get_settings.cache_clear()

@@ -24,6 +24,7 @@ async def test_template_payloads_and_city_owner_assignment():
 
     error, updated_city, updated_owner = await update_city_settings(
         city_id=city.id,
+        name=None,
         responsible_id=recruiter.id,
         templates={stage_key: "custom text"},
         criteria="Опыт продаж",
@@ -70,6 +71,7 @@ async def test_update_city_settings_rolls_back_on_template_error():
 
     error, _, _ = await update_city_settings(
         city_id=city.id,
+        name=None,
         responsible_id=recruiter.id,
         templates={"invalid_key": "should fail"},
         criteria="",
@@ -133,6 +135,7 @@ async def test_update_city_settings_updates_timezone_and_active():
 
     error, updated_city, _ = await update_city_settings(
         city_id=city.id,
+        name=None,
         responsible_id=None,
         templates={},
         criteria=None,
