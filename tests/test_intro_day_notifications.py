@@ -6,7 +6,7 @@ from sqlalchemy import delete
 
 from backend.apps.bot import services
 from backend.core.db import async_session
-from backend.domain.models import MessageTemplate, Slot, SlotStatus
+from backend.domain.models import MessageTemplate, Slot, SlotStatus, City
 
 
 @pytest.mark.asyncio
@@ -40,9 +40,15 @@ async def test_intro_day_template_defaults_without_city_specific():
 @pytest.mark.asyncio
 async def test_intro_day_template_prefers_city_specific():
     key = "intro_day_invitation"
-    city_id = 777
     async with async_session() as session:
         await session.execute(delete(MessageTemplate).where(MessageTemplate.key == key))
+
+        # Create city first (FK dependency)
+        city = City(name="Test City", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.flush()  # Get city.id
+        city_id = city.id
+
         now = datetime.now(timezone.utc)
         session.add(
             MessageTemplate(
