@@ -5,7 +5,7 @@ from sqlalchemy import select
 from backend.domain.repositories import confirm_slot_by_candidate
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
-from backend.domain.models import Slot, SlotStatus
+from backend.domain.models import Slot, SlotStatus, Recruiter
 from backend.core.db import async_session
 
 
@@ -21,10 +21,14 @@ async def test_intro_day_confirmation_updates_status():
             is_active=True,
         )
         session.add(user)
+
+        # Create recruiter for the slot (FK dependency)
+        recruiter = Recruiter(name="Test Recruiter", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
         await session.flush()
 
         slot = Slot(
-            recruiter_id=1,
+            recruiter_id=recruiter.id,
             city_id=None,
             candidate_city_id=None,
             purpose="intro_day",
