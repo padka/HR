@@ -26,11 +26,17 @@ def test_interview_schedule_contains_2h_3h_6h():
 
 def test_quiet_hours_adjustment_moves_to_previous_evening():
     svc = _service()
-    # 06:00 local -> 04:00 reminder (2h) falls into quiet hours (22-08), expect shift to 21:30 previous day
+    # 06:00 local -> All reminders (6h→0:00, 3h→3:00, 2h→4:00) fall into quiet hours (22-08)
+    # All get adjusted to 21:30 previous day, but duplicate prevention keeps only 6h
     start_local = datetime(2025, 1, 2, 6, 0, tzinfo=timezone(timedelta(hours=3)))
     start_utc = start_local.astimezone(timezone.utc)
     plans = svc._build_schedule(start_utc, "Europe/Moscow", "interview")
-    two_hour_plan = next(plan for plan in plans if plan.kind == ReminderKind.CONFIRM_2H)
+
+    # Duplicate prevention: only 6h reminder survives when all collide at 21:30
+    assert len(plans) == 1
+    six_hour_plan = plans[0]
+    assert six_hour_plan.kind == ReminderKind.CONFIRM_6H
     # Quiet hours push to 21:30 previous day (22:00 - 30min grace)
     expected_local = start_local.replace(day=1, hour=21, minute=30)  # previous day
-    assert two_hour_plan.run_at_local == expected_local
+    assert six_hour_plan.run_at_local == expected_local
+    assert six_hour_plan.adjusted_reason == "quiet_hours"

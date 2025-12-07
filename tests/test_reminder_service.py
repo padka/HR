@@ -192,15 +192,18 @@ async def test_quiet_hours_adjustment_and_metrics():
     try:
         await service.schedule_for_slot(slot_id)
         jobs = {job.id: job for job in scheduler.get_jobs()}
-        assert f"slot:{slot_id}:{ReminderKind.CONFIRM_2H.value}" in jobs
-        confirm_job = jobs[f"slot:{slot_id}:{ReminderKind.CONFIRM_2H.value}"]
+
+        # For early morning slots (6:30 AM), all reminders (6h→0:00, 3h→3:00, 2h→4:00)
+        # fall into quiet hours and get adjusted to 21:30 previous day.
+        # Duplicate prevention keeps only the first (6h), skips 3h and 2h.
+        assert f"slot:{slot_id}:{ReminderKind.CONFIRM_6H.value}" in jobs
+        confirm_job = jobs[f"slot:{slot_id}:{ReminderKind.CONFIRM_6H.value}"]
         run_local = confirm_job.next_run_time.astimezone(candidate_zone)
         assert run_local.date() == (start_local.date() - timedelta(days=1))
         assert run_local.hour == 21
         assert run_local.minute == 30
 
         snapshot = await get_reminder_metrics_snapshot()
-        assert snapshot.adjusted_total.get(ReminderKind.CONFIRM_2H.value, 0) == 1
         assert snapshot.scheduled_total.get(ReminderKind.CONFIRM_6H.value, 0) >= 1
     finally:
         await service.shutdown()
