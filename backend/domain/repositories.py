@@ -16,6 +16,7 @@ from typing import Literal
 from backend.core.db import async_session
 from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.candidates.services import create_or_update_user
+from backend.domain.candidates.status import CandidateStatus
 
 _UNSET = object()
 
@@ -1023,7 +1024,8 @@ async def reserve_slot(
             if expected_city_id is not None and slot.city_id != expected_city_id:
                 return ReservationResult(status="slot_taken")
 
-            # P0: do not allow the same candidate to hold multiple active slots.
+            # P0: do not allow the same candidate to hold multiple active slots WITH THE SAME RECRUITER.
+            # Candidate can book different recruiters (e.g., reschedule to another recruiter).
             # If allow_candidate_replace=True, free the existing slot and continue booking.
             if candidate_tg_id is not None:
                 existing_active = await session.scalar(
@@ -1031,6 +1033,7 @@ async def reserve_slot(
                     .options(selectinload(Slot.recruiter), selectinload(Slot.city))
                     .where(
                         Slot.candidate_tg_id == candidate_tg_id,
+                        Slot.recruiter_id == slot.recruiter_id,  # Same recruiter only
                         Slot.id != slot.id,
                         func.lower(Slot.status).in_(
                             [
@@ -1111,11 +1114,15 @@ async def reserve_slot(
 
         slot.start_utc = _to_aware_utc(slot.start_utc)
     try:
+        # For interview slots, new candidates start at TEST1_COMPLETED
+        # (they've already passed Test1 before booking)
+        initial_status = CandidateStatus.TEST1_COMPLETED if purpose == "interview" else None
         await create_or_update_user(
             telegram_id=candidate_tg_id,
             fio=candidate_fio,
             city=city_name or "",
             username=candidate_username,
+            initial_status=initial_status,
         )
     except Exception:
         # Candidate directory sync should not break reservation flow

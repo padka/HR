@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, TYPE_CHECKING
 
 from sqlalchemy import func, select
 
@@ -17,13 +17,23 @@ from .models import (
     ChatMessageStatus,
 )
 
+if TYPE_CHECKING:
+    from .status import CandidateStatus
+
 
 async def create_or_update_user(
     telegram_id: int,
     fio: str,
     city: str,
     username: Optional[str] = None,
+    initial_status: Optional[CandidateStatus] = None,
 ) -> User:
+    """Create or update user. For new users, optionally set initial candidate_status.
+
+    Args:
+        initial_status: Status to set for NEW users only (e.g., TEST1_COMPLETED when booking interview).
+                       Existing users keep their current status.
+    """
     async with async_session() as session:
         result = await session.execute(
             select(User).where(User.telegram_id == telegram_id)
@@ -52,6 +62,7 @@ async def create_or_update_user(
                 fio=fio,
                 city=city,
                 last_activity=now,
+                candidate_status=initial_status,  # Set initial status for new users
             )
             session.add(user)
         await session.commit()
