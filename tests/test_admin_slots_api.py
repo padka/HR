@@ -1,10 +1,8 @@
-import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
-import pytest_asyncio
-from fastapi.testclient import TestClient
+from httpx import AsyncClient, ASGITransport
 
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.services import slots as slot_services
@@ -62,17 +60,14 @@ async def _async_request(
     before_request: Optional[Callable[[Any], None]] = None,
     **kwargs,
 ) -> Any:
-    def _call() -> Any:
-        with TestClient(app) as client:
-            if before_request is not None:
-                before_request(client.app)
-            settings = get_settings()
-            if settings.admin_username and settings.admin_password:
-                client.auth = (settings.admin_username, settings.admin_password)
-            response = client.request(method, path, **kwargs)
-            return response
-
-    return await asyncio.to_thread(_call)
+    if before_request is not None:
+        before_request(app)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        auth=("admin", "admin"),
+    ) as client:
+        return await client.request(method, path, **kwargs)
 
 
 @pytest.fixture
@@ -103,7 +98,7 @@ def admin_slots_app(monkeypatch) -> Any:
         settings_module.get_settings.cache_clear()
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest.fixture(autouse=True)
 async def clear_state_manager():
     try:
         state_manager = slot_services.get_state_manager()
