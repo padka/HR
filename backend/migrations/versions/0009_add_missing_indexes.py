@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Tuple
-
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
+import sqlalchemy as sa
 from sqlalchemy.engine import Connection
+
+from backend.migrations.utils import table_exists, index_exists
 
 
 revision = "0009_add_missing_indexes"
@@ -15,113 +14,30 @@ branch_labels = None
 depends_on = None
 
 
-SLOTS_TABLE = "slots"
-AUTO_MESSAGES_TABLE = "auto_messages"
-SLOTS_INDEX_NAME = "ix_slots_candidate_tg_id"
-AUTO_MESSAGES_INDEX_NAME = "ix_auto_messages_target_chat_id"
-
-
-def _get_operations(conn: Connection) -> Tuple[Operations, MigrationContext, Connection]:
-    engine = getattr(conn, "engine", None)
-    standalone_conn = engine.connect() if engine is not None else conn
-    # SQLite keeps a global database-level write lock per connection.  When the
-    # migration runner already holds a transaction on the provided connection
-    # (as happens in tests), opening an additional connection to run the
-    # autocommit blocks ends up racing with that lock and raises
-    # ``sqlite3.OperationalError: database is locked``.  Re-use the incoming
-    # connection in that case so that the schema change executes within the
-    # existing transaction.  Other engines (PostgreSQL in production) are fine
-    # with the standalone connection and benefit from the concurrent index
-    # creation behaviour.
-    if engine is not None and engine.dialect.name == "sqlite" and standalone_conn is not conn:
-        standalone_conn.close()
-        standalone_conn = conn
-    context = MigrationContext.configure(connection=standalone_conn)
-    return Operations(context), context, standalone_conn
-
-
 def upgrade(conn: Connection) -> None:
-    op, context, standalone_conn = _get_operations(conn)
+    """Add indexes for candidate_tg_id and target_chat_id lookups."""
+    # Создаём индексы только если таблицы существуют
+    if table_exists(conn, "slots"):
+        if not index_exists(conn, "slots", "ix_slots_candidate_tg_id"):
+            conn.execute(sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_slots_candidate_tg_id "
+                "ON slots (candidate_tg_id)"
+            ))
 
-    try:
-        dialect_name = getattr(standalone_conn, "dialect", None)
-        dialect_name = dialect_name.name if dialect_name is not None else ""
-        with context.begin_transaction():
-            if dialect_name == "sqlite":
-                op.create_index(
-                    SLOTS_INDEX_NAME,
-                    SLOTS_TABLE,
-                    ["candidate_tg_id"],
-                    unique=False,
-                    postgresql_concurrently=True,
-                    if_not_exists=True,
-                )
-                op.create_index(
-                    AUTO_MESSAGES_INDEX_NAME,
-                    AUTO_MESSAGES_TABLE,
-                    ["target_chat_id"],
-                    unique=False,
-                    postgresql_concurrently=True,
-                    if_not_exists=True,
-                )
-            else:
-                with context.autocommit_block():
-                    op.create_index(
-                        SLOTS_INDEX_NAME,
-                        SLOTS_TABLE,
-                        ["candidate_tg_id"],
-                        unique=False,
-                        postgresql_concurrently=True,
-                        if_not_exists=True,
-                    )
-
-                with context.autocommit_block():
-                    op.create_index(
-                        AUTO_MESSAGES_INDEX_NAME,
-                        AUTO_MESSAGES_TABLE,
-                        ["target_chat_id"],
-                        unique=False,
-                        postgresql_concurrently=True,
-                        if_not_exists=True,
-                    )
-    finally:
-        if standalone_conn is not conn:
-            standalone_conn.close()
+    if table_exists(conn, "auto_messages"):
+        if not index_exists(conn, "auto_messages", "ix_auto_messages_target_chat_id"):
+            conn.execute(sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_auto_messages_target_chat_id "
+                "ON auto_messages (target_chat_id)"
+            ))
 
 
-def downgrade(conn: Connection) -> None:  # pragma: no cover - symmetry only
-    op, context, standalone_conn = _get_operations(conn)
+def downgrade(conn: Connection) -> None:  # pragma: no cover
+    """Remove the indexes."""
+    if table_exists(conn, "slots"):
+        if index_exists(conn, "slots", "ix_slots_candidate_tg_id"):
+            conn.execute(sa.text("DROP INDEX IF EXISTS ix_slots_candidate_tg_id"))
 
-    try:
-        dialect_name = getattr(standalone_conn, "dialect", None)
-        dialect_name = dialect_name.name if dialect_name is not None else ""
-        with context.begin_transaction():
-            if dialect_name == "sqlite":
-                op.drop_index(
-                    SLOTS_INDEX_NAME,
-                    table_name=SLOTS_TABLE,
-                    postgresql_concurrently=True,
-                )
-                op.drop_index(
-                    AUTO_MESSAGES_INDEX_NAME,
-                    table_name=AUTO_MESSAGES_TABLE,
-                    postgresql_concurrently=True,
-                )
-            else:
-                with context.autocommit_block():
-                    op.drop_index(
-                        SLOTS_INDEX_NAME,
-                        table_name=SLOTS_TABLE,
-                        postgresql_concurrently=True,
-                    )
-
-                with context.autocommit_block():
-                    op.drop_index(
-                        AUTO_MESSAGES_INDEX_NAME,
-                        table_name=AUTO_MESSAGES_TABLE,
-                        postgresql_concurrently=True,
-                    )
-    finally:
-        if standalone_conn is not conn:
-            standalone_conn.close()
-
+    if table_exists(conn, "auto_messages"):
+        if index_exists(conn, "auto_messages", "ix_auto_messages_target_chat_id"):
+            conn.execute(sa.text("DROP INDEX IF EXISTS ix_auto_messages_target_chat_id"))

@@ -5,6 +5,9 @@ from __future__ import annotations
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 
+from backend.migrations.utils import table_exists
+
+
 revision = "0023_add_interview_notes"
 down_revision = "0022_add_candidate_status"
 branch_labels = None
@@ -12,40 +15,23 @@ depends_on = None
 
 
 def upgrade(conn: Connection) -> None:
-    """Create interview_notes table with JSON payload support."""
-    dialect = conn.dialect.name
+    """Create interview_notes table with JSONB payload support."""
 
-    if dialect == "sqlite":
-        id_col = "INTEGER PRIMARY KEY AUTOINCREMENT"
-        json_col = "TEXT"
-        json_default = "DEFAULT ('{}')"
-        ts_col = "TIMESTAMP"
-    elif dialect == "postgresql":
-        id_col = "SERIAL PRIMARY KEY"
-        json_col = "JSONB"
-        json_default = "DEFAULT '{}'::jsonb"
-        ts_col = "TIMESTAMP WITH TIME ZONE"
-    else:
-        id_col = "SERIAL PRIMARY KEY"
-        json_col = "JSON"
-        json_default = "DEFAULT ('{}')"
-        ts_col = "TIMESTAMP WITH TIME ZONE"
+    if table_exists(conn, "interview_notes"):
+        return
 
-    conn.execute(
-        sa.text(
-            f"""
-            CREATE TABLE IF NOT EXISTS interview_notes (
-                id {id_col},
-                user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-                interviewer_name VARCHAR(160),
-                data {json_col} NOT NULL {json_default},
-                created_at {ts_col} NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-                updated_at {ts_col} NOT NULL DEFAULT (CURRENT_TIMESTAMP)
-            )
-            """
+    conn.execute(sa.text("""
+        CREATE TABLE interview_notes (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+            interviewer_name VARCHAR(160),
+            data JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
-    )
+    """))
 
 
-def downgrade(conn: Connection) -> None:  # pragma: no cover - rollback helper
-    conn.execute(sa.text("DROP TABLE IF EXISTS interview_notes"))
+def downgrade(conn: Connection) -> None:  # pragma: no cover
+    """Drop interview_notes table."""
+    conn.execute(sa.text("DROP TABLE IF EXISTS interview_notes CASCADE"))

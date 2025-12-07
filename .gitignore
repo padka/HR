@@ -28,6 +28,8 @@ htmlcov/
 # Env / secrets
 .env
 .env.*
+!.env.example
+!.env.local.example
 *.pem
 *.key
 

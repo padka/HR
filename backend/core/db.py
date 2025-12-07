@@ -33,41 +33,35 @@ def _preflight_database_backend(url: str) -> None:
     masked_url = parsed.render_as_string(hide_password=True)
     logger.info("Database dialect: %s (%s)", driver or "unknown", masked_url)
 
-    if driver.startswith("postgresql+asyncpg"):
-        try:
-            import asyncpg  # noqa: F401
-        except ImportError as exc:  # pragma: no cover - depends on local env
-            raise RuntimeError(
-                "DATABASE_URL uses postgresql+asyncpg but asyncpg is not installed. "
-                "Install asyncpg (pip install asyncpg) or switch DATABASE_URL to sqlite+aiosqlite for the default dev setup."
-            ) from exc
-    elif driver.startswith("sqlite+aiosqlite"):
-        try:
-            import aiosqlite  # noqa: F401
-        except ImportError as exc:  # pragma: no cover - depends on local env
-            raise RuntimeError(
-                "DATABASE_URL uses sqlite+aiosqlite but aiosqlite is not installed. "
-                "Install aiosqlite (pip install aiosqlite) or point DATABASE_URL to PostgreSQL."
-            ) from exc
+    # Only PostgreSQL with asyncpg is supported
+    if not driver.startswith("postgresql+asyncpg"):
+        raise RuntimeError(
+            f"Only PostgreSQL with asyncpg driver is supported. "
+            f"Got: {driver}. "
+            f"Set DATABASE_URL to postgresql+asyncpg://user:pass@host:port/db"
+        )
+
+    try:
+        import asyncpg  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - depends on local env
+        raise RuntimeError(
+            "DATABASE_URL uses postgresql+asyncpg but asyncpg is not installed. "
+            "Install asyncpg: pip install asyncpg"
+        ) from exc
 
 
 _preflight_database_backend(_settings.database_url_async)
 
-# Build engine kwargs with pool settings only for non-SQLite databases
+# Build engine kwargs with PostgreSQL pool settings
 _async_engine_kwargs = {
     "echo": _settings.sql_echo,
     "future": True,
+    "pool_size": _settings.db_pool_size,
+    "max_overflow": _settings.db_max_overflow,
+    "pool_timeout": _settings.db_pool_timeout,
+    "pool_pre_ping": True,
+    "pool_recycle": _settings.db_pool_recycle,
 }
-
-# SQLite uses NullPool and doesn't support pool parameters
-if not _settings.database_url_async.startswith("sqlite"):
-    _async_engine_kwargs.update({
-        "pool_size": _settings.db_pool_size,
-        "max_overflow": _settings.db_max_overflow,
-        "pool_timeout": _settings.db_pool_timeout,
-        "pool_pre_ping": True,
-        "pool_recycle": _settings.db_pool_recycle,
-    })
 
 async_engine: AsyncEngine = create_async_engine(
     _settings.database_url_async,
@@ -82,16 +76,12 @@ _async_session_factory = async_sessionmaker(
 _sync_engine_kwargs = {
     "echo": _settings.sql_echo,
     "future": True,
+    "pool_size": _settings.db_pool_size,
+    "max_overflow": _settings.db_max_overflow,
+    "pool_timeout": _settings.db_pool_timeout,
+    "pool_pre_ping": True,
+    "pool_recycle": _settings.db_pool_recycle,
 }
-
-if not _settings.database_url_sync.startswith("sqlite"):
-    _sync_engine_kwargs.update({
-        "pool_size": _settings.db_pool_size,
-        "max_overflow": _settings.db_max_overflow,
-        "pool_timeout": _settings.db_pool_timeout,
-        "pool_pre_ping": True,
-        "pool_recycle": _settings.db_pool_recycle,
-    })
 
 sync_engine = create_engine(
     _settings.database_url_sync,

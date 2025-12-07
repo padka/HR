@@ -39,7 +39,6 @@ def upgrade(conn: Connection) -> None:
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
-        conn.commit()
 
     # Создаём уникальный индекс на locks
     if not index_exists(conn, LOCKS_TABLE, LOCKS_INDEX):
@@ -47,7 +46,6 @@ def upgrade(conn: Connection) -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS {LOCKS_INDEX}
                 ON {LOCKS_TABLE} (candidate_tg_id, recruiter_id, reservation_date)
         """))
-        conn.commit()
 
     # Создаём уникальный индекс на slots
     if not index_exists(conn, "slots", UNIQUE_INDEX_NAME):
@@ -56,7 +54,6 @@ def upgrade(conn: Connection) -> None:
                 ON slots (candidate_tg_id, recruiter_id)
              WHERE lower(status) IN ('pending', 'booked')
         """))
-        conn.commit()
 
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover
@@ -64,4 +61,3 @@ def downgrade(conn: Connection) -> None:  # pragma: no cover
     conn.execute(sa.text(f"DROP INDEX IF EXISTS {LOCKS_INDEX}"))
     conn.execute(sa.text(f"DROP INDEX IF EXISTS {UNIQUE_INDEX_NAME}"))
     conn.execute(sa.text(f"DROP TABLE IF EXISTS {LOCKS_TABLE} CASCADE"))
-    conn.commit()

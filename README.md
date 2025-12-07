@@ -27,6 +27,24 @@ make test               # прогоны на SQLite + in-memory broker, без 
 
 Переменные окружения для тестов выставляются автоматически (ENVIRONMENT=test, DATABASE_URL=sqlite+aiosqlite:///./data/test.db, NOTIFICATION_BROKER=memory, ADMIN_USER/PASSWORD=admin). Брокер уведомлений и бот отключены, используется in-memory state/store.
 
+## Локальный запуск (Postgres + Redis в Docker)
+
+Подготовка:
+1. Поднимите контейнеры Postgres и Redis (пример: `docker compose up -d postgres redis_notifications` или существующие `rs-postgres`/`rs-redis`).
+2. Скопируйте шаблон: `cp .env.local.example .env.local` и заполните `BOT_TOKEN`, при необходимости обновите `SESSION_SECRET`.
+3. Установите зависимости: `make install`.
+
+Запуск:
+1. `make dev-migrate`
+2. `make dev-admin`  (админка на http://localhost:8000)
+3. `make dev-bot`    (отдельный процесс, polling)
+
+Примечания:
+- Бот — отдельный процесс (`bot.py`). Админка умеет жить с NullBot при пустом токене, но сам бот без валидного `BOT_TOKEN` не стартует.
+- Скрипты `scripts/dev_admin.sh` / `scripts/dev_bot.sh` сами подхватывают `.env.local` (или `.env.local.example`) и предупреждают, если в оболочке висит конфликтный `BOT_TOKEN` (dummy).
+- Проверка токена (без вывода значения):  
+  `python -c "from backend.core.env import load_env; load_env('.env.local'); import os; print('BOT_TOKEN has colon:', ':' in os.getenv('BOT_TOKEN',''))"`
+
 ## Database Migrations
 
 ⚠️ **Important:** Database migrations must be run **before** starting any application services.
@@ -238,6 +256,16 @@ quick start template):
 | `BOT_ENABLED` | `true` | Master switch for the integration. Set to `false` to skip Test 2 dispatches entirely. |
 | `BOT_PROVIDER` | `telegram` | Bot provider identifier. Only the Telegram provider is currently supported. |
 | `BOT_TOKEN` | _(empty)_ | Telegram bot token. Required when `BOT_ENABLED=true`. |
+
+## Troubleshooting (dev)
+- `BOT_TOKEN invalid → NullBot` — админка продолжит работать, но бот не будет принимать обновления. Для реального бота заполните `BOT_TOKEN` в `.env.local` и перезапустите `make dev-bot`.
+- В оболочке лежит `BOT_TOKEN=dummy_token` → скрипты `dev_admin.sh/dev_bot.sh` предупреждают и игнорируют его; иначе вручную `unset BOT_TOKEN`.
+- `password authentication failed for user ...` → проверьте `DATABASE_URL` пользователя/пароль/БД. Для docker rs-postgres: `postgresql+asyncpg://rs:pass@localhost:5432/rs`.
+- Проверка Postgres в контейнере:  
+  `docker exec rs-postgres psql -U rs -d rs -c "\dt"`  
+  `docker exec rs-postgres psql -U rs -d rs -c "select * from alembic_version;"`
+- Быстрый smoke токена (без вывода значения):  
+  `python -c "from backend.core.env import load_env; load_env('.env.local'); import os; print('BOT_TOKEN has colon:', ':' in os.getenv('BOT_TOKEN',''))"`
 | `BOT_API_BASE` | _(empty)_ | Optional override for custom Telegram API endpoints. |
 | `BOT_USE_WEBHOOK` | `false` | Enable webhook mode for the bot (requires `BOT_WEBHOOK_URL`). |
 | `BOT_WEBHOOK_URL` | _(empty)_ | Public webhook endpoint used when `BOT_USE_WEBHOOK=true`. |

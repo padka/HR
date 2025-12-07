@@ -41,10 +41,8 @@ def upgrade(conn: Connection) -> None:
             UNIQUE(job_id)
         )
     """))
-    conn.commit()
 
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover
     """Drop slot_reminder_jobs table."""
     conn.execute(sa.text(f"DROP TABLE IF EXISTS {TABLE_NAME} CASCADE"))
-    conn.commit()

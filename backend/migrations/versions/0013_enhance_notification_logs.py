@@ -1,9 +1,11 @@
-from typing import Tuple
+"""Enhance notification_logs with retry/status tracking fields."""
+
+from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
 from sqlalchemy.engine import Connection
+
+from backend.migrations.utils import table_exists, column_exists
 
 
 revision = "0013_enhance_notification_logs"
@@ -19,57 +21,57 @@ LAST_ERROR_COLUMN = "last_error"
 NEXT_RETRY_COLUMN = "next_retry_at"
 
 
-def _get_operations(conn: Connection) -> Tuple[Operations, MigrationContext, Connection]:
-    engine = getattr(conn, "engine", None)
-    standalone_conn = engine.connect() if engine is not None else conn
-    if engine is not None and engine.dialect.name == "sqlite" and standalone_conn is not conn:
-        standalone_conn.close()
-        standalone_conn = conn
-    context = MigrationContext.configure(connection=standalone_conn)
-    return Operations(context), context, standalone_conn
-
-
 def upgrade(conn: Connection) -> None:
-    op, context, standalone_conn = _get_operations(conn)
-    try:
-        dialect = getattr(standalone_conn, "dialect", None)
-        dialect_name = dialect.name if dialect is not None else ""
+    """Add retry and status tracking columns to notification_logs."""
 
-        with context.begin_transaction():
-            op.add_column(
-                TABLE_NAME,
-                sa.Column(STATUS_COLUMN, sa.String(length=20), nullable=False, server_default="sent"),
-            )
-            op.add_column(
-                TABLE_NAME,
-                sa.Column(ATTEMPTS_COLUMN, sa.Integer(), nullable=False, server_default="1"),
-            )
-            op.add_column(
-                TABLE_NAME,
-                sa.Column(LAST_ERROR_COLUMN, sa.Text(), nullable=True),
-            )
-            op.add_column(
-                TABLE_NAME,
-                sa.Column(NEXT_RETRY_COLUMN, sa.DateTime(timezone=True), nullable=True),
-            )
+    if not table_exists(conn, TABLE_NAME):
+        return
 
-        if dialect_name != "sqlite":
-            with context.begin_transaction():
-                op.alter_column(TABLE_NAME, STATUS_COLUMN, server_default=None)
-                op.alter_column(TABLE_NAME, ATTEMPTS_COLUMN, server_default=None)
-    finally:
-        if standalone_conn is not conn:
-            standalone_conn.close()
+    # Добавляем колонки, если их нет
+    if not column_exists(conn, TABLE_NAME, STATUS_COLUMN):
+        conn.execute(sa.text(f"""
+            ALTER TABLE {TABLE_NAME}
+            ADD COLUMN {STATUS_COLUMN} VARCHAR(20) NOT NULL DEFAULT 'sent'
+        """))
+
+    if not column_exists(conn, TABLE_NAME, ATTEMPTS_COLUMN):
+        conn.execute(sa.text(f"""
+            ALTER TABLE {TABLE_NAME}
+            ADD COLUMN {ATTEMPTS_COLUMN} INTEGER NOT NULL DEFAULT 1
+        """))
+
+    if not column_exists(conn, TABLE_NAME, LAST_ERROR_COLUMN):
+        conn.execute(sa.text(f"""
+            ALTER TABLE {TABLE_NAME}
+            ADD COLUMN {LAST_ERROR_COLUMN} TEXT
+        """))
+
+    if not column_exists(conn, TABLE_NAME, NEXT_RETRY_COLUMN):
+        conn.execute(sa.text(f"""
+            ALTER TABLE {TABLE_NAME}
+            ADD COLUMN {NEXT_RETRY_COLUMN} TIMESTAMP WITH TIME ZONE
+        """))
+
+    # Убираем server defaults после создания колонок
+    conn.execute(sa.text(f"ALTER TABLE {TABLE_NAME} ALTER COLUMN {STATUS_COLUMN} DROP DEFAULT"))
+    conn.execute(sa.text(f"ALTER TABLE {TABLE_NAME} ALTER COLUMN {ATTEMPTS_COLUMN} DROP DEFAULT"))
 
 
-def downgrade(conn: Connection) -> None:  # pragma: no cover - rollback helper
-    op, context, standalone_conn = _get_operations(conn)
-    try:
-        with context.begin_transaction():
-            op.drop_column(TABLE_NAME, NEXT_RETRY_COLUMN)
-            op.drop_column(TABLE_NAME, LAST_ERROR_COLUMN)
-            op.drop_column(TABLE_NAME, ATTEMPTS_COLUMN)
-            op.drop_column(TABLE_NAME, STATUS_COLUMN)
-    finally:
-        if standalone_conn is not conn:
-            standalone_conn.close()
+def downgrade(conn: Connection) -> None:  # pragma: no cover
+    """Remove retry and status tracking columns."""
+
+    if not table_exists(conn, TABLE_NAME):
+        return
+
+    if column_exists(conn, TABLE_NAME, NEXT_RETRY_COLUMN):
+        conn.execute(sa.text(f"ALTER TABLE {TABLE_NAME} DROP COLUMN {NEXT_RETRY_COLUMN}"))
+
+    if column_exists(conn, TABLE_NAME, LAST_ERROR_COLUMN):
+        conn.execute(sa.text(f"ALTER TABLE {TABLE_NAME} DROP COLUMN {LAST_ERROR_COLUMN}"))
+
+    if column_exists(conn, TABLE_NAME, ATTEMPTS_COLUMN):
+        conn.execute(sa.text(f"ALTER TABLE {TABLE_NAME} DROP COLUMN {ATTEMPTS_COLUMN}"))
+
+    if column_exists(conn, TABLE_NAME, STATUS_COLUMN):
+        conn.execute(sa.text(f"ALTER TABLE {TABLE_NAME} DROP COLUMN {STATUS_COLUMN}"))
+

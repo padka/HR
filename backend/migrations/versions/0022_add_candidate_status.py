@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 
+from backend.migrations.utils import column_exists, index_exists
+
 revision = "0022_add_candidate_status"
 down_revision = "0021_update_slot_unique_index_include_purpose"
 branch_labels = None
@@ -13,9 +15,16 @@ depends_on = None
 
 def upgrade(conn: Connection) -> None:
     """Add candidate status tracking to users table."""
-    dialect = conn.dialect.name
 
-    if dialect == "postgresql":
+    # Check if enum type exists
+    result = conn.execute(sa.text("""
+        SELECT EXISTS (
+            SELECT 1 FROM pg_type WHERE typname = 'candidate_status_enum'
+        )
+    """))
+    enum_exists = result.scalar()
+
+    if not enum_exists:
         # Create enum type for PostgreSQL
         conn.execute(sa.text("""
             CREATE TYPE candidate_status_enum AS ENUM (
@@ -36,28 +45,19 @@ def upgrade(conn: Connection) -> None:
             )
         """))
 
-        # Add columns with enum type
+    # Add columns if they don't exist
+    if not column_exists(conn, "users", "candidate_status"):
         conn.execute(sa.text("""
             ALTER TABLE users ADD COLUMN candidate_status candidate_status_enum
         """))
-    else:
-        # For SQLite, use VARCHAR
+
+    if not column_exists(conn, "users", "status_changed_at"):
         conn.execute(sa.text("""
-            ALTER TABLE users ADD COLUMN candidate_status VARCHAR(50)
+            ALTER TABLE users ADD COLUMN status_changed_at TIMESTAMP WITH TIME ZONE
         """))
 
-    # Add status_changed_at column (works for both SQLite and PostgreSQL)
-    conn.execute(sa.text("""
-        ALTER TABLE users ADD COLUMN status_changed_at TIMESTAMP
-    """))
-
-    # Create index on candidate_status for efficient filtering
-    if dialect == "postgresql":
-        conn.execute(sa.text("""
-            CREATE INDEX ix_users_candidate_status ON users (candidate_status)
-        """))
-    else:
-        # SQLite also supports indexes
+    # Create index if it doesn't exist
+    if not index_exists(conn, "users", "ix_users_candidate_status"):
         conn.execute(sa.text("""
             CREATE INDEX IF NOT EXISTS ix_users_candidate_status ON users (candidate_status)
         """))
@@ -65,19 +65,17 @@ def upgrade(conn: Connection) -> None:
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover - rollback support
     """Remove candidate status tracking."""
-    dialect = conn.dialect.name
-
-    if dialect == "sqlite":
-        # SQLite doesn't support DROP COLUMN easily, would need table recreation
-        return
 
     # Drop index
-    conn.execute(sa.text("DROP INDEX IF EXISTS ix_users_candidate_status"))
+    if index_exists(conn, "users", "ix_users_candidate_status"):
+        conn.execute(sa.text("DROP INDEX IF EXISTS ix_users_candidate_status"))
 
     # Drop columns
-    conn.execute(sa.text("ALTER TABLE users DROP COLUMN status_changed_at"))
-    conn.execute(sa.text("ALTER TABLE users DROP COLUMN candidate_status"))
+    if column_exists(conn, "users", "status_changed_at"):
+        conn.execute(sa.text("ALTER TABLE users DROP COLUMN status_changed_at"))
 
-    # Drop enum type (PostgreSQL only)
-    if dialect == "postgresql":
-        conn.execute(sa.text("DROP TYPE IF EXISTS candidate_status_enum"))
+    if column_exists(conn, "users", "candidate_status"):
+        conn.execute(sa.text("ALTER TABLE users DROP COLUMN candidate_status"))
+
+    # Drop enum type
+    conn.execute(sa.text("DROP TYPE IF EXISTS candidate_status_enum"))

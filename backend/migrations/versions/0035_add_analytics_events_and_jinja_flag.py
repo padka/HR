@@ -3,18 +3,15 @@
 Revision ID: 0035_add_analytics_events_and_jinja_flag
 Revises: 0034_message_templates_city_support
 Create Date: 2025-12-01 15:30:00.000000
-
 """
 
 from __future__ import annotations
 
-from typing import Tuple
-
 import sqlalchemy as sa
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
-from sqlalchemy import text
 from sqlalchemy.engine import Connection
+
+from backend.migrations.utils import table_exists, column_exists, index_exists
+
 
 revision = "0035_add_analytics_events_and_jinja_flag"
 down_revision = "0034_message_templates_city_support"
@@ -22,117 +19,77 @@ branch_labels = None
 depends_on = None
 
 
-def _get_operations(conn: Connection) -> Tuple[Operations, MigrationContext, Connection]:
-    """Get Alembic operations object for this connection."""
-    engine = getattr(conn, "engine", None)
-    standalone_conn = engine.connect() if engine is not None else conn
-    if engine is not None and engine.dialect.name == "sqlite" and standalone_conn is not conn:
-        standalone_conn.close()
-        standalone_conn = conn
-    context = MigrationContext.configure(connection=standalone_conn)
-    return Operations(context), context, standalone_conn
-
-
 def upgrade(conn: Connection) -> None:
     """Apply migration: add analytics_events table and use_jinja flag."""
-    op, context, standalone_conn = _get_operations(conn)
-    dialect = getattr(standalone_conn, "dialect", None)
-    dialect_name = dialect.name if dialect is not None else ""
 
-    try:
-        # Create analytics_events table
-        with context.begin_transaction():
-            # Determine timestamp default based on dialect
-            timestamp_default = (
-                sa.text("CURRENT_TIMESTAMP")
-                if dialect_name == "postgresql"
-                else sa.text("(datetime('now'))")
+    # Создаём таблицу analytics_events
+    if not table_exists(conn, "analytics_events"):
+        conn.execute(sa.text("""
+            CREATE TABLE analytics_events (
+                id SERIAL PRIMARY KEY,
+                event_name VARCHAR(100) NOT NULL,
+                user_id BIGINT,
+                candidate_id INTEGER,
+                city_id INTEGER,
+                slot_id INTEGER,
+                booking_id INTEGER,
+                metadata TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
+        """))
 
-            op.create_table(
-                "analytics_events",
-                sa.Column("id", sa.Integer(), primary_key=True),
-                sa.Column("event_name", sa.String(length=100), nullable=False),
-                sa.Column("user_id", sa.BigInteger(), nullable=True),
-                sa.Column("candidate_id", sa.Integer(), nullable=True),
-                sa.Column("city_id", sa.Integer(), nullable=True),
-                sa.Column("slot_id", sa.Integer(), nullable=True),
-                sa.Column("booking_id", sa.Integer(), nullable=True),
-                sa.Column(
-                    "metadata",
-                    sa.Text(),  # Store JSON as text for cross-DB compatibility
-                    nullable=True,
-                ),
-                sa.Column(
-                    "created_at",
-                    sa.DateTime(timezone=True),
-                    server_default=timestamp_default,
-                    nullable=False,
-                ),
-            )
+    # Создаём индексы для эффективного поиска
+    if not index_exists(conn, "analytics_events", "idx_analytics_events_event_name"):
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_analytics_events_event_name
+                ON analytics_events (event_name)
+        """))
 
-        # Create indexes for efficient querying
-        with context.begin_transaction():
-            op.create_index(
-                "idx_analytics_events_event_name",
-                "analytics_events",
-                ["event_name"],
-            )
-            op.create_index(
-                "idx_analytics_events_candidate_id",
-                "analytics_events",
-                ["candidate_id"],
-            )
-            op.create_index(
-                "idx_analytics_events_created_at",
-                "analytics_events",
-                ["created_at"],
-            )
-            op.create_index(
-                "idx_analytics_events_user_id",
-                "analytics_events",
-                ["user_id"],
-            )
+    if not index_exists(conn, "analytics_events", "idx_analytics_events_candidate_id"):
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_analytics_events_candidate_id
+                ON analytics_events (candidate_id)
+        """))
 
-        # Add use_jinja flag to message_templates
-        # This allows gradual migration from .format() to Jinja2
-        with context.begin_transaction():
-            # Determine boolean default based on dialect
-            bool_default = sa.text("false") if dialect_name == "postgresql" else sa.text("0")
+    if not index_exists(conn, "analytics_events", "idx_analytics_events_created_at"):
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at
+                ON analytics_events (created_at)
+        """))
 
-            op.add_column(
-                "message_templates",
-                sa.Column(
-                    "use_jinja",
-                    sa.Boolean(),
-                    nullable=False,
-                    server_default=bool_default,
-                ),
-            )
-    finally:
-        if standalone_conn is not conn:
-            standalone_conn.close()
+    if not index_exists(conn, "analytics_events", "idx_analytics_events_user_id"):
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_analytics_events_user_id
+                ON analytics_events (user_id)
+        """))
+
+    # Добавляем флаг use_jinja в message_templates
+    if table_exists(conn, "message_templates") and not column_exists(conn, "message_templates", "use_jinja"):
+        conn.execute(sa.text("""
+            ALTER TABLE message_templates
+            ADD COLUMN use_jinja BOOLEAN NOT NULL DEFAULT false
+        """))
 
 
-def downgrade(conn: Connection) -> None:  # pragma: no cover - rollback helper
+def downgrade(conn: Connection) -> None:  # pragma: no cover
     """Revert migration: drop analytics_events table and use_jinja flag."""
-    op, context, standalone_conn = _get_operations(conn)
 
-    try:
-        # Drop indexes first
-        with context.begin_transaction():
-            op.drop_index("idx_analytics_events_user_id", table_name="analytics_events")
-            op.drop_index("idx_analytics_events_created_at", table_name="analytics_events")
-            op.drop_index("idx_analytics_events_candidate_id", table_name="analytics_events")
-            op.drop_index("idx_analytics_events_event_name", table_name="analytics_events")
+    # Удаляем индексы
+    if index_exists(conn, "analytics_events", "idx_analytics_events_user_id"):
+        conn.execute(sa.text("DROP INDEX IF EXISTS idx_analytics_events_user_id"))
 
-        # Drop analytics_events table
-        with context.begin_transaction():
-            op.drop_table("analytics_events")
+    if index_exists(conn, "analytics_events", "idx_analytics_events_created_at"):
+        conn.execute(sa.text("DROP INDEX IF EXISTS idx_analytics_events_created_at"))
 
-        # Remove use_jinja column from message_templates
-        with context.begin_transaction():
-            op.drop_column("message_templates", "use_jinja")
-    finally:
-        if standalone_conn is not conn:
-            standalone_conn.close()
+    if index_exists(conn, "analytics_events", "idx_analytics_events_candidate_id"):
+        conn.execute(sa.text("DROP INDEX IF EXISTS idx_analytics_events_candidate_id"))
+
+    if index_exists(conn, "analytics_events", "idx_analytics_events_event_name"):
+        conn.execute(sa.text("DROP INDEX IF EXISTS idx_analytics_events_event_name"))
+
+    # Удаляем таблицу
+    conn.execute(sa.text("DROP TABLE IF EXISTS analytics_events CASCADE"))
+
+    # Удаляем колонку use_jinja
+    if table_exists(conn, "message_templates") and column_exists(conn, "message_templates", "use_jinja"):
+        conn.execute(sa.text("ALTER TABLE message_templates DROP COLUMN use_jinja"))

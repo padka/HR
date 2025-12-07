@@ -68,20 +68,6 @@ CONFIG_ERROR_HINTS = {
             "  DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/db make dev\n"
         ),
     },
-    "aiosqlite": {
-        "needles": [
-            "database_url uses sqlite+aiosqlite but aiosqlite is not installed",
-            "aiosqlite is not installed",
-        ],
-        "message": (
-            "[devserver] DATABASE_URL uses sqlite+aiosqlite but aiosqlite is not installed.\n\n"
-            "SQLite fallback:\n"
-            "  DATABASE_URL='' make dev-sqlite\n"
-            "Postgres setup:\n"
-            "  python -m pip install asyncpg\n"
-            "  docker compose up -d postgres\n"
-        ),
-    },
 }
 
 

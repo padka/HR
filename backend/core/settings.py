@@ -15,7 +15,6 @@ from backend.core.env import load_env
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_USER_DATA_DIR = Path.home() / ".recruitsmart_admin" / "data"
-DEFAULT_DEV_DB_PATH = PROJECT_ROOT / "data" / "bot.db"
 
 
 @dataclass(frozen=True)
@@ -98,41 +97,6 @@ def _default_data_dir() -> Path:
     return DEFAULT_USER_DATA_DIR
 
 
-def _maybe_migrate_legacy_database(data_dir: Path) -> None:
-    target_path = data_dir / "bot.db"
-    legacy_candidates = [
-        PROJECT_ROOT / "bot.db",
-        PROJECT_ROOT / "data" / "bot.db",
-    ]
-    for legacy in legacy_candidates:
-        if legacy.exists() and not target_path.exists():
-            try:
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(legacy), str(target_path))
-            except Exception:
-                pass
-
-    legacy_data_dir = PROJECT_ROOT / "data"
-    if legacy_data_dir.exists() and legacy_data_dir.is_dir():
-        try:
-            for child in legacy_data_dir.iterdir():
-                destination = data_dir / child.name
-                if destination.exists():
-                    continue
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(child), str(destination))
-        except Exception:
-            pass
-
-
-def _normalize_sqlite_url(url: str, *, async_driver: bool) -> str:
-    if not url:
-        return url
-    prefix = "sqlite+aiosqlite" if async_driver else "sqlite"
-    if url.startswith("sqlite+aiosqlite") or url.startswith("sqlite"):
-        path = url.split("///", maxsplit=1)[-1]
-        return f"{prefix}:///{path}"
-    return url
 
 
 def _get_bool(name: str, default: bool = False) -> bool:
@@ -149,30 +113,6 @@ def _get_bool_with_fallback(*names: str, default: bool = False) -> bool:
     return default
 
 
-def _warn_sqlite_inside_repo(database_url_sync: str, environment: str) -> None:
-    if environment != "development":
-        return
-    if not database_url_sync.startswith("sqlite"):
-        return
-    path_part = database_url_sync.split("///", 1)[-1]
-    try:
-        db_path = Path(path_part).resolve()
-        default_dev_path = DEFAULT_DEV_DB_PATH.resolve()
-    except Exception:
-        return
-    try:
-        if db_path == default_dev_path:
-            return
-        if PROJECT_ROOT in db_path.parents or db_path == PROJECT_ROOT:
-            logging.warning(
-                "SQLite database %s is located inside the project tree. "
-                "When using --reload every write will restart the server. "
-                "Move the database outside the repo (default: %s) or set DATA_DIR.",
-                db_path,
-                DEFAULT_USER_DATA_DIR,
-            )
-    except Exception:
-        pass
 
 
 def _get_repo_root() -> Path:
@@ -222,27 +162,13 @@ def _validate_production_settings(settings: Settings) -> None:
             "Generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
         )
 
-    # 2. DATABASE_URL must be Postgres (not SQLite)
-    # Check if DATABASE_URL was explicitly set or defaulted to SQLite
-    db_url_env = os.getenv("DATABASE_URL", "").strip()
-    db_url = settings.database_url_sync
+    # 2. DATABASE_URL must be PostgreSQL with asyncpg
+    db_url = settings.database_url_async
 
-    if not db_url_env:
-        # DATABASE_URL was not set, so it defaulted to SQLite
+    if not db_url or not db_url.startswith("postgresql+asyncpg://"):
         errors.append(
-            "Production requires DATABASE_URL to be set. "
-            "Example: DATABASE_URL=postgresql://user:pass@host:5432/dbname"
-        )
-    elif "sqlite" in db_url.lower():
-        errors.append(
-            "Production requires PostgreSQL DATABASE_URL; sqlite is forbidden. "
-            "Example: DATABASE_URL=postgresql://user:pass@host:5432/dbname"
-        )
-    elif not any(marker in db_url.lower() for marker in ["postgres", "postgresql"]):
-        errors.append(
-            "Production DATABASE_URL must be PostgreSQL (should contain 'postgres' or 'postgresql'). "
-            f"Got: {db_url.split('@')[0]}@... "
-            "Example: DATABASE_URL=postgresql://user:pass@host:5432/dbname"
+            "Production requires DATABASE_URL with postgresql+asyncpg driver. "
+            "Example: DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname"
         )
 
     # 3. REDIS_URL must be set
@@ -355,28 +281,37 @@ def get_settings() -> Settings:
 
     data_dir = _default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
+
+    # DATABASE_URL is required in all environments
     db_url_env = os.getenv("DATABASE_URL")
-    db_url_env = db_url_env.strip() if db_url_env is not None else ""
-    if not db_url_env and environment != "development":
-        _maybe_migrate_legacy_database(data_dir)
+    if not db_url_env or not db_url_env.strip():
+        raise RuntimeError(
+            "DATABASE_URL environment variable is required. "
+            "This project requires PostgreSQL in all environments (dev/test/prod). "
+            "Example: DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/dbname"
+        )
 
-    if db_url_env:
-        raw_db_url = db_url_env
-    else:
-        if environment == "development":
-            DEFAULT_DEV_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-            raw_db_url = f"sqlite+aiosqlite:///{DEFAULT_DEV_DB_PATH}"
-        else:
-            raw_db_url = f"sqlite+aiosqlite:///{data_dir / 'bot.db'}"
+    raw_db_url = db_url_env.strip()
 
-    # In dev, allow replacing docker-style hostnames with localhost to avoid DNS errors.
-    if environment == "development" and "postgres" in raw_db_url:
+    # Ensure it's PostgreSQL
+    if not raw_db_url.startswith("postgresql+asyncpg://") and not raw_db_url.startswith("postgresql://"):
+        raise RuntimeError(
+            f"DATABASE_URL must use PostgreSQL with asyncpg driver. Got: {raw_db_url[:30]}... "
+            f"Example: DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/dbname"
+        )
+
+    # Normalize to postgresql+asyncpg if just postgresql://
+    if raw_db_url.startswith("postgresql://") and not raw_db_url.startswith("postgresql+asyncpg://"):
+        raw_db_url = raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    # In dev, allow replacing docker-style hostnames with localhost to avoid DNS errors
+    if environment == "development":
         try:
             from urllib.parse import urlparse, urlunparse
 
             parsed = urlparse(raw_db_url)
             if parsed.hostname == "postgres":
-                # Preserve userinfo/port, replace host with localhost.
+                # Preserve userinfo/port, replace host with localhost
                 userinfo = ""
                 if parsed.username:
                     userinfo = parsed.username
@@ -403,16 +338,8 @@ def get_settings() -> Settings:
             pass
 
     async_url = raw_db_url
-    sync_url = raw_db_url
-
-    if raw_db_url.startswith("sqlite+aiosqlite"):
-        sync_url = _normalize_sqlite_url(raw_db_url, async_driver=False)
-    elif raw_db_url.startswith("postgresql+asyncpg"):
-        sync_url = raw_db_url.replace("+asyncpg", "")
-    elif raw_db_url.startswith("mysql+aiomysql"):
-        sync_url = raw_db_url.replace("+aiomysql", "")
-
-    async_url = _normalize_sqlite_url(raw_db_url, async_driver=True)
+    # Sync URL: remove +asyncpg driver suffix
+    sync_url = raw_db_url.replace("+asyncpg", "")
 
     bot_enabled = _get_bool_with_fallback("BOT_ENABLED", "ENABLE_TEST2_BOT", default=True)
     bot_provider = os.getenv("BOT_PROVIDER", "telegram").strip().lower() or "telegram"
@@ -541,8 +468,6 @@ def get_settings() -> Settings:
         db_pool_timeout=db_pool_timeout,
         db_pool_recycle=db_pool_recycle,
     )
-
-    _warn_sqlite_inside_repo(sync_url, environment)
 
     # Validate production configuration (fails fast with clear error messages)
     _validate_production_settings(settings)
