@@ -52,7 +52,7 @@ class User(Base):
     test2_report_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     candidate_status: Mapped[Optional[CandidateStatus]] = mapped_column(
-        SQLEnum(CandidateStatus, name="candidate_status_enum", create_constraint=True),
+        SQLEnum(CandidateStatus, name="candidate_status_enum", create_constraint=True, values_callable=lambda x: [e.value for e in x]),
         nullable=True,
         index=True,
     )
