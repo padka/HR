@@ -1,7 +1,7 @@
 from typing import Any, Dict
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from sqlalchemy import select
 
 from backend.apps.admin_ui.app import create_app
@@ -40,7 +40,7 @@ def cities_admin_app(monkeypatch) -> Any:
 
 
 async def _async_request(app, method: str, path: str, **kwargs) -> Any:
-    async with AsyncClient(app=app, base_url="http://testserver", auth=("admin", "admin")) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", auth=("admin", "admin")) as client:
         return await client.request(method, path, **kwargs)
 
 

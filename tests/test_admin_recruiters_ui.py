@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -42,7 +42,7 @@ def admin_app(monkeypatch) -> Any:
 
 
 async def _async_request(app, method: str, path: str, **kwargs) -> Any:
-    async with AsyncClient(app=app, base_url="http://testserver", auth=("admin", "admin")) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", auth=("admin", "admin")) as client:
         return await client.request(method, path, **kwargs)
 
 
