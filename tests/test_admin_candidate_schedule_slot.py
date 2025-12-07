@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -70,11 +70,12 @@ async def test_schedule_slot_conflict_returns_validation_error(admin_app) -> Non
         await session.refresh(recruiter)
 
         # Create a BOOKED slot that conflicts with the time we'll try to schedule
+        # Use timezone-aware UTC datetime to ensure proper conflict detection
         conflict_slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime(2024, 7, 5, 9, 0),  # 09:00 UTC = 12:00 Moscow
+            start_utc=datetime(2024, 7, 5, 9, 0, tzinfo=timezone.utc),  # 09:00 UTC = 12:00 Moscow
             duration_min=60,
             status=models.SlotStatus.BOOKED,  # Already booked - creates conflict
             candidate_tg_id=999999,  # Different candidate
