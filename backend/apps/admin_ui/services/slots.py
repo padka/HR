@@ -578,7 +578,7 @@ async def schedule_manual_candidate_slot(
         purpose="interview",
         expected_recruiter_id=recruiter.id,
         expected_city_id=city.id,
-        allow_candidate_replace=True,
+        allow_candidate_replace=False,  # Manual scheduling should fail if candidate already has a slot
     )
 
     if reservation.status != "reserved":

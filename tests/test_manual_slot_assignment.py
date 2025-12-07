@@ -77,6 +77,7 @@ async def _setup_candidate_recruiter(telegram_id: int, city_tz: str = "Europe/Mo
         fio="Тестовый Кандидат",
         city="Москва",
         username=f"candidate_{telegram_id}",
+        initial_status=CandidateStatus.TEST1_COMPLETED,  # Ready for interview scheduling
     )
 
     async with async_session() as session:
@@ -100,7 +101,7 @@ async def test_schedule_manual_slot_handles_naive_conflicts():
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime(2024, 7, 1, 10, 0),  # intentionally naive
+            start_utc=datetime(2024, 7, 1, 10, 0, tzinfo=timezone.utc),  # UTC-aware for deterministic comparison
             duration_min=60,
             status=models.SlotStatus.FREE,
         )
@@ -137,7 +138,7 @@ async def test_schedule_manual_slot_normalizes_naive_input():
         session.add(conflict_slot)
         await session.commit()
 
-    dt_utc = datetime(2024, 7, 2, 12, 30)  # naive input
+    dt_utc = datetime(2024, 7, 2, 12, 30)  # naive input - will be normalized to UTC
 
     with pytest.raises(ManualSlotError) as excinfo:
         await schedule_manual_candidate_slot(
