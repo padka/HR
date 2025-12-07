@@ -164,7 +164,8 @@ class NotificationBroker(NotificationBrokerProtocol):
             next_id = "0"
             reclaimed: List[BrokerMessage] = []
             while len(reclaimed) < count:
-                next_id, entries = await self._redis.xautoclaim(
+                # xautoclaim returns (next_id, entries, deleted_ids) in redis-py >= 4.2.0
+                result = await self._redis.xautoclaim(
                     self._stream_key,
                     self._group,
                     self._consumer,
@@ -172,6 +173,7 @@ class NotificationBroker(NotificationBrokerProtocol):
                     start_id=next_id,
                     count=count - len(reclaimed),
                 )
+                next_id, entries = result[0], result[1]
                 if not entries:
                     break
                 for message_id, fields in entries:
