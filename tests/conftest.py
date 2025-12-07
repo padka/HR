@@ -106,8 +106,12 @@ async def _wipe_db():
 
 
 @pytest.fixture(autouse=True)
-def _clean_database_between_tests(event_loop):
+def _clean_database_between_tests(event_loop, request):
     """Wipe all tables before each test to avoid cross-test pollution."""
+    # Skip database cleanup for tests that don't use the database
+    if "no_db_cleanup" in request.keywords:
+        return
+
     event_loop.run_until_complete(_wipe_db())
     try:
         from backend.apps.bot.services import reset_template_provider

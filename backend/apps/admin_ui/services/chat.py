@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.services.bot_service import BotService
 from backend.core.db import async_session
@@ -15,6 +16,7 @@ from backend.domain.candidates.services import (
     update_chat_message_status,
     set_conversation_mode,
 )
+from backend.domain.models import Slot, Recruiter
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ CHAT_TEMPLATES: List[Dict[str, str]] = [
     {
         "key": "call_link",
         "label": "Ссылка на созвон",
-        "text": "Подключайтесь к встрече по ссылке: <ссылка>. Если возникнут сложности, дайте знать.",
+        "text": "Подключайтесь к встрече по ссылке: {link}. Если возникнут сложности, дайте знать.",
     },
     {
         "key": "reschedule",
@@ -135,6 +137,8 @@ async def send_chat_message(
             "status": "duplicate",
         }
 
+    text = await _fill_dynamic_fields(text, candidate)
+
     async with async_session() as session:
         message = ChatMessage(
             candidate_id=candidate.id,
@@ -179,6 +183,36 @@ async def send_chat_message(
         "message": serialize_chat_message(updated),
         "status": send_result.status if send_result.ok else "failed",
     }
+
+
+async def _resolve_recruiter_link(candidate: User) -> Optional[str]:
+    tg_id = candidate.telegram_user_id or candidate.telegram_id
+    if not tg_id:
+        return None
+    async with async_session() as session:
+        row = (
+            await session.execute(
+                select(Slot, Recruiter)
+                .join(Recruiter, Recruiter.id == Slot.recruiter_id)
+                .options(selectinload(Slot.recruiter))
+                .where(Slot.candidate_tg_id == tg_id)
+                .order_by(Slot.start_utc.desc())
+                .limit(1)
+            )
+        ).first()
+        if not row:
+            return None
+        _, recruiter = row
+        return getattr(recruiter, "telemost_url", None) or None
+
+
+async def _fill_dynamic_fields(text: str, candidate: User) -> str:
+    if "{link}" not in text and "<ссылка>" not in text:
+        return text
+    link = await _resolve_recruiter_link(candidate)
+    if not link:
+        return text.replace("{link}", "").replace("<ссылка>", "").strip()
+    return text.replace("{link}", link).replace("<ссылка>", link)
 
 
 async def _fetch_message_by_id(message_id: int) -> Optional[ChatMessage]:

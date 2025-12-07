@@ -4,6 +4,7 @@ import logging
 import os
 import secrets
 import shutil
+import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -174,6 +175,177 @@ def _warn_sqlite_inside_repo(database_url_sync: str, environment: str) -> None:
         pass
 
 
+def _get_repo_root() -> Path:
+    """
+    Determine repository root robustly.
+    Tries git rev-parse first, falls back to PROJECT_ROOT heuristic.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            return Path(result.stdout.strip()).resolve()
+    except Exception:
+        pass
+    # Fallback to PROJECT_ROOT
+    return PROJECT_ROOT.resolve()
+
+
+def _validate_production_settings(settings: Settings) -> None:
+    """
+    Validate production configuration to prevent common deployment errors.
+
+    Only applies strict validation when ENVIRONMENT=production.
+    Raises RuntimeError with actionable messages if configuration is invalid.
+    """
+    if settings.environment.lower() != "production":
+        return
+
+    errors = []
+    warnings = []
+
+    # 1. SESSION_SECRET must be explicitly set in production
+    session_secret_env = os.getenv("SESSION_SECRET") or os.getenv("SECRET_KEY")
+    if not session_secret_env:
+        errors.append(
+            "Production requires SESSION_SECRET to be explicitly set. "
+            "Generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    elif len(settings.session_secret) < 32:
+        errors.append(
+            f"SESSION_SECRET too short (got {len(settings.session_secret)} chars, need 32+). "
+            "Generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+
+    # 2. DATABASE_URL must be Postgres (not SQLite)
+    # Check if DATABASE_URL was explicitly set or defaulted to SQLite
+    db_url_env = os.getenv("DATABASE_URL", "").strip()
+    db_url = settings.database_url_sync
+
+    if not db_url_env:
+        # DATABASE_URL was not set, so it defaulted to SQLite
+        errors.append(
+            "Production requires DATABASE_URL to be set. "
+            "Example: DATABASE_URL=postgresql://user:pass@host:5432/dbname"
+        )
+    elif "sqlite" in db_url.lower():
+        errors.append(
+            "Production requires PostgreSQL DATABASE_URL; sqlite is forbidden. "
+            "Example: DATABASE_URL=postgresql://user:pass@host:5432/dbname"
+        )
+    elif not any(marker in db_url.lower() for marker in ["postgres", "postgresql"]):
+        errors.append(
+            "Production DATABASE_URL must be PostgreSQL (should contain 'postgres' or 'postgresql'). "
+            f"Got: {db_url.split('@')[0]}@... "
+            "Example: DATABASE_URL=postgresql://user:pass@host:5432/dbname"
+        )
+
+    # 3. REDIS_URL must be set
+    if not settings.redis_url:
+        errors.append(
+            "Production requires REDIS_URL to be set. "
+            "Example: REDIS_URL=redis://localhost:6379/0"
+        )
+
+    # 4. NOTIFICATION_BROKER must be redis
+    if settings.notification_broker != "redis":
+        errors.append(
+            f"Production requires NOTIFICATION_BROKER=redis (got: {settings.notification_broker}). "
+            "Set: NOTIFICATION_BROKER=redis"
+        )
+
+    # 5. DATA_DIR must exist, be outside repo, and be writable
+    data_dir = settings.data_dir.resolve()
+    repo_root = _get_repo_root()
+
+    # Check if DATA_DIR is inside repo
+    try:
+        if data_dir == repo_root or repo_root in data_dir.parents or data_dir in repo_root.parents:
+            # data_dir is inside or equal to repo_root
+            if data_dir.is_relative_to(repo_root):
+                errors.append(
+                    f"Production requires DATA_DIR outside repo. "
+                    f"Current DATA_DIR ({data_dir}) is inside repo ({repo_root}). "
+                    f"Example: DATA_DIR=/var/lib/recruitsmart_admin"
+                )
+    except (ValueError, AttributeError):
+        # Fallback for Python < 3.9 without is_relative_to
+        try:
+            data_dir.relative_to(repo_root)
+            errors.append(
+                f"Production requires DATA_DIR outside repo. "
+                f"Current DATA_DIR ({data_dir}) is inside repo ({repo_root}). "
+                f"Example: DATA_DIR=/var/lib/recruitsmart_admin"
+            )
+        except ValueError:
+            # data_dir is not relative to repo_root, which is good
+            pass
+
+    # Check DATA_DIR is writable
+    if data_dir.exists():
+        if not os.access(data_dir, os.W_OK):
+            errors.append(
+                f"DATA_DIR exists but is not writable: {data_dir}. "
+                f"Fix with: sudo chown $USER:$USER {data_dir}"
+            )
+        else:
+            # Try actually creating a file to verify write permissions
+            test_file = data_dir / ".write_test"
+            try:
+                test_file.write_text("test")
+                test_file.unlink()
+            except Exception as e:
+                errors.append(
+                    f"DATA_DIR permissions check failed: {e}. "
+                    f"Ensure {data_dir} is writable."
+                )
+
+    # 6. Redis connectivity check (warning only - may not be available during config phase)
+    if settings.redis_url:
+        try:
+            import socket
+            from urllib.parse import urlparse
+            parsed = urlparse(settings.redis_url)
+            host = parsed.hostname or "localhost"
+            port = parsed.port or 6379
+
+            # Quick socket connectivity test (2 second timeout)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            try:
+                sock.connect((host, port))
+                sock.close()
+            except (socket.timeout, socket.error, OSError) as e:
+                warnings.append(
+                    f"Could not verify Redis connectivity at {host}:{port}: {e}. "
+                    f"Redis may not be running or may not be accessible."
+                )
+        except Exception:
+            # Don't fail on import or parsing errors
+            pass
+
+    # Print warnings to stderr
+    if warnings:
+        import sys
+        for warning in warnings:
+            print(f"\n⚠ WARNING: {warning}", file=sys.stderr)
+
+    if errors:
+        error_msg = "\n\n".join([f"  ✗ {err}" for err in errors])
+        raise RuntimeError(
+            f"\n\n{'=' * 70}\n"
+            f"PRODUCTION CONFIGURATION ERRORS\n"
+            f"{'=' * 70}\n\n"
+            f"{error_msg}\n\n"
+            f"{'=' * 70}\n"
+        )
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     # Determine environment (default to development for safety)
@@ -197,6 +369,39 @@ def get_settings() -> Settings:
         else:
             raw_db_url = f"sqlite+aiosqlite:///{data_dir / 'bot.db'}"
 
+    # In dev, allow replacing docker-style hostnames with localhost to avoid DNS errors.
+    if environment == "development" and "postgres" in raw_db_url:
+        try:
+            from urllib.parse import urlparse, urlunparse
+
+            parsed = urlparse(raw_db_url)
+            if parsed.hostname == "postgres":
+                # Preserve userinfo/port, replace host with localhost.
+                userinfo = ""
+                if parsed.username:
+                    userinfo = parsed.username
+                    if parsed.password:
+                        userinfo += f":{parsed.password}"
+                    userinfo += "@"
+                hostport = "localhost"
+                if parsed.port:
+                    hostport += f":{parsed.port}"
+                new_netloc = f"{userinfo}{hostport}"
+                rebuilt = urlunparse(
+                    (
+                        parsed.scheme,
+                        new_netloc,
+                        parsed.path,
+                        parsed.params,
+                        parsed.query,
+                        parsed.fragment,
+                    )
+                )
+                if rebuilt:
+                    raw_db_url = rebuilt
+        except Exception:
+            pass
+
     async_url = raw_db_url
     sync_url = raw_db_url
 
@@ -214,6 +419,8 @@ def get_settings() -> Settings:
     bot_token = os.getenv("BOT_TOKEN", "")
     bot_api_base = os.getenv("BOT_API_BASE", "").strip()
     redis_url = os.getenv("REDIS_URL", "").strip()
+    if redis_url.startswith("redis://redis_notifications") and environment != "production":
+        redis_url = redis_url.replace("redis_notifications", "localhost", 1)
     notification_broker = os.getenv("NOTIFICATION_BROKER", "memory").strip().lower() or "memory"
     if notification_broker not in {"memory", "redis"}:
         notification_broker = "memory"
@@ -231,7 +438,7 @@ def get_settings() -> Settings:
         or secrets.token_urlsafe(32)
     )
 
-    # Validate SESSION_SECRET strength
+    # Validate SESSION_SECRET strength (for all environments)
     weak_secrets = {
         "change-me",
         "change-me-session-secret",
@@ -245,16 +452,13 @@ def get_settings() -> Settings:
             f"SESSION_SECRET must be changed from default value '{session_secret}'. "
             "Generate a strong secret with: python -c \"import secrets; print(secrets.token_hex(32))\""
         )
-    if len(session_secret) < 32:
-        raise ValueError(
-            f"SESSION_SECRET must be at least 32 characters (current: {len(session_secret)}). "
-            "Generate a strong secret with: python -c \"import secrets; print(secrets.token_hex(32))\""
-        )
+    # Length validation moved to _validate_production_settings() for production only
 
     admin_username = os.getenv("ADMIN_USER", "").strip()
     admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
     admin_docs_enabled = _get_bool("ADMIN_DOCS_ENABLED", default=False)
-    session_cookie_secure = _get_bool("SESSION_COOKIE_SECURE", default=True)
+    # Keep secure cookies in production, but allow HTTP cookies in dev/test so CSRF/session work locally
+    session_cookie_secure = _get_bool("SESSION_COOKIE_SECURE", default=environment == "production")
     session_cookie_samesite = os.getenv("SESSION_COOKIE_SAMESITE", "strict").strip().lower() or "strict"
     if session_cookie_samesite not in {"strict", "lax", "none"}:
         session_cookie_samesite = "strict"
@@ -281,8 +485,13 @@ def get_settings() -> Settings:
     log_file = os.getenv("LOG_FILE", "").strip()
     if not log_file:
         log_dir = data_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = str(log_dir / "app.log")
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = str(log_dir / "app.log")
+        except (PermissionError, OSError):
+            # If we can't create log dir, defer to production validation
+            # Use a fallback path for now
+            log_file = str(data_dir / "app.log")
 
     # Database connection pool settings
     db_pool_size = _get_int("DB_POOL_SIZE", 20, minimum=1)
@@ -334,5 +543,8 @@ def get_settings() -> Settings:
     )
 
     _warn_sqlite_inside_repo(sync_url, environment)
+
+    # Validate production configuration (fails fast with clear error messages)
+    _validate_production_settings(settings)
 
     return settings

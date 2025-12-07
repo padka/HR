@@ -4,7 +4,9 @@ from fastapi.testclient import TestClient
 
 from backend.apps.admin_ui.app import create_app
 from backend.core import settings as settings_module
+from backend.core.db import async_session
 from backend.domain.candidates import services as candidate_services
+from backend.domain.candidates.models import User, CandidateStatus
 
 
 class _DummyIntegration:
@@ -54,3 +56,45 @@ async def test_candidate_detail_contains_chat_widget(admin_app):
     response = await _async_get(admin_app, f"/candidates/{candidate.id}")
     assert response.status_code == 200
     assert 'data-chat-root' in response.text
+
+
+@pytest.mark.asyncio
+async def test_schedule_slot_button_hidden_after_test2(admin_app):
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=202020,
+        fio="Test2 Done",
+        city="Москва",
+    )
+    # Save Test2 result to mark completion
+    await candidate_services.save_test_result(
+        user_id=candidate.id,
+        raw_score=5,
+        final_score=5.0,
+        rating="TEST2",
+        total_time=120,
+        question_data=[],
+    )
+
+    response = await _async_get(admin_app, f"/candidates/{candidate.id}")
+    assert response.status_code == 200
+    assert "Назначить/перенести собеседование" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_single_decline_button_for_intro_day_states(admin_app):
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=303030,
+        fio="Intro Candidate",
+        city="Москва",
+    )
+    # Set candidate status to intro_day_confirmed_preliminary to trigger intro-day block
+    async with async_session() as session:
+        db_user = await session.get(User, candidate.id)
+        db_user.candidate_status = CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY
+        await session.commit()
+
+    response = await _async_get(admin_app, f"/candidates/{candidate.id}")
+    assert response.status_code == 200
+    # General decline button should be hidden, intro-day decline remains
+    assert "Отклонить кандидата Intro Candidate?" not in response.text
+    assert "Отказать кандидату Intro Candidate после ОД" in response.text

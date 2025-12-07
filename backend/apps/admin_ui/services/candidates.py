@@ -108,6 +108,8 @@ FUNNEL_STAGES: List[Dict[str, Any]] = [
         "icon": "📆",
         "tone": "primary",
         "statuses": [
+            "test2_sent",
+            "test2_completed",
             "intro_day_scheduled",
             "intro_day_confirmed_preliminary",
             "intro_day_confirmed_day_of",
@@ -1893,6 +1895,7 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
         "has_intro_day_slot": has_intro_day_slot,
         "can_schedule_intro_day": needs_intro_day,
         "candidate_status_slug": candidate_status_slug,
+        "test2_passed": test2_passed,
         "stats": {
             "tests_total": int(tests_total or 0),
             "average_score": float(avg_score) if avg_score is not None else None,

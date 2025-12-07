@@ -88,6 +88,7 @@ def _build_city_form_state(
     overrides: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
     state: Dict[str, object] = {
+        "name": city.name_plain,
         "responsible_recruiter_id": str(owner_id) if owner_id is not None else "",
         "criteria": city.criteria or "",
         "experts": city.experts or "",
@@ -189,6 +190,7 @@ async def cities_edit_submit(city_id: int, request: Request):
 
     raw_responsible = (form_data.get("responsible_recruiter_id") or "").strip()
     override_state = {
+        "name": form_data.get("name", ""),
         "responsible_recruiter_id": raw_responsible,
         "criteria": form_data.get("criteria", ""),
         "experts": form_data.get("experts", ""),
@@ -201,6 +203,17 @@ async def cities_edit_submit(city_id: int, request: Request):
             for stage in CITY_TEMPLATE_STAGES
         },
     }
+
+    name_raw = (form_data.get("name") or "").strip()
+    name_clean = sanitize_plain_text(name_raw)
+    if not name_clean:
+        context = await _prepare_city_edit_context(
+            city_id,
+            request,
+            form_state=override_state,
+            form_error="Название города не может быть пустым",
+        )
+        return templates.TemplateResponse(request, "cities_edit.html", context, status_code=400)
 
     if raw_responsible and raw_responsible.lower() != "null":
         try:
@@ -254,6 +267,7 @@ async def cities_edit_submit(city_id: int, request: Request):
 
     error, _, _ = await update_city_settings_service(
         city_id,
+        name=name_clean,
         responsible_id=responsible_id,
         templates=templates_payload,
         criteria=criteria,
@@ -307,6 +321,10 @@ async def cities_create(
 @router.post("/{city_id}/settings")
 async def update_city_settings(city_id: int, request: Request):
     payload = await request.json()
+    name_raw = (payload.get("name") or "").strip()
+    name_clean = sanitize_plain_text(name_raw) if name_raw else None
+    if name_raw and not name_clean:
+        return JSONResponse({"ok": False, "error": {"field": "name", "message": "Название города не может быть пустым"}}, status_code=422)
     recruiter_raw = payload.get("responsible_recruiter_id")
     if recruiter_raw in (None, "", "null"):
         responsible_id: Optional[int] = None
@@ -368,6 +386,7 @@ async def update_city_settings(city_id: int, request: Request):
         plan_month=plan_month,
         tz=tz_normalized,
         active=active_value,
+        name=name_clean,
     )
     if error:
         status = 404 if "not found" in error.lower() else 400

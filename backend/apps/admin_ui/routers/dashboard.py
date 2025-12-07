@@ -37,7 +37,10 @@ async def index(request: Request):
 
     # Get dashboard data
     recent_candidates = await get_recent_candidates(limit=5)
-    upcoming_interviews = await get_upcoming_interviews(limit=3)
+    # Берём больше слотов, чтобы все одобренные брони (в т.ч. свежие) попали в календарь.
+    upcoming_interviews = await get_upcoming_interviews(limit=20)
+    interview_events = [ev for ev in upcoming_interviews if (ev.get("event_kind") or "").lower() != "ознакомительный день"]
+    intro_day_events = [ev for ev in upcoming_interviews if (ev.get("event_kind") or "").lower() == "ознакомительный день"]
     hiring_funnel = await get_hiring_funnel_stats()
     recent_activities = await get_recent_activities(limit=10)
     ai_insights = await get_ai_insights()
@@ -83,6 +86,8 @@ async def index(request: Request):
             "recent_candidates": recent_candidates,
             "incoming_candidates": incoming_candidates,
             "upcoming_interviews": upcoming_interviews,
+            "upcoming_interviews_main": interview_events,
+            "upcoming_intro_days": intro_day_events,
             "hiring_funnel": hiring_funnel,
             "recent_activities": recent_activities,
             "ai_insights": ai_insights,

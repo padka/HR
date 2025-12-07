@@ -238,7 +238,7 @@
     {% call forms.section("Основные") %}
       <div class="city-form-grid">
         {% call forms.field("Название") %}
-          <input type="text" value="{{ city.display_name }}" disabled>
+          <input type="text" name="name" value="{{ form_state.get('name', city.display_name) }}" required aria-required="true">
         {% endcall %}
 
         {% call forms.field("Ответственный") %}

@@ -422,12 +422,18 @@ class ReminderService:
             ]
         plans: List[ReminderPlan] = []
         seen: set[ReminderKind] = set()
+        seen_times: set[datetime] = set()
         for kind, delta in targets:
             if kind in seen:
                 continue
             seen.add(kind)
             local_time = start_local - delta
             adjusted_local, reason = _apply_quiet_hours(local_time)
+            # Избегаем ситуаций, когда тихие часы сдвигают несколько напоминаний в одну и ту же точку (дубли).
+            rounded_local = adjusted_local.replace(second=0, microsecond=0)
+            if rounded_local in seen_times:
+                continue
+            seen_times.add(rounded_local)
             run_at_utc = adjusted_local.astimezone(timezone.utc)
             plans.append(
                 ReminderPlan(

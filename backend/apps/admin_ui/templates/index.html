@@ -953,6 +953,46 @@
     justify-content: center;
   }
 
+  .calendar-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+    margin-top: 16px;
+  }
+
+  .calendar-column {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .calendar-column__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+
+  .calendar-column__title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .calendar-column__eyebrow {
+    margin: 0 0 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .interview-card--intro {
+    border: 1px solid rgba(255, 193, 7, 0.35);
+    box-shadow: 0 8px 30px rgba(255, 193, 7, 0.08);
+  }
+
   .interview-empty {
     text-align: center;
     padding: 80px 20px;
@@ -2204,46 +2244,6 @@
 
 
 <!-- ============================================
-     Hiring speed & conversion
-     ============================================ -->
-<section class="dashboard-metrics">
-  <article class="card glass grain metric-card metric-card--highlight" data-tilt tabindex="0">
-    <span class="metric-card__label">⏱ Скорость найма</span>
-    <div class="metric-card__value">
-      {{ analytics.hire_time_median_days or '—' }}
-      <span class="metric-card__unit">дн.</span>
-    </div>
-    <div class="metric-card__meta">
-      <span class="metric-card__info">Медиана от Тест1 до закрепления</span>
-    </div>
-  </article>
-
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">🔀 Конверсия</span>
-    <div class="metric-card__value">
-      {{ analytics.hire_conversion_pct or '—' }}<span class="metric-card__unit">%</span>
-    </div>
-    <div class="metric-card__meta">
-      <span class="metric-card__info">Доля закреплённых от прошедших Тест1</span>
-    </div>
-  </article>
-
-  <article class="card glass grain metric-card" data-tilt tabindex="0">
-    <span class="metric-card__label">📊 Текущая нагрузка</span>
-    <div class="metric-card__value">
-      {{ counts.slots_booked or 0 }}/{{ counts.slots_total or 0 }}
-    </div>
-    <div class="metric-card__meta">
-      <div class="metric-card__meta-row metric-card__badges">
-        <span class="badge badge--success">🟢 {{ counts.slots_free or 0 }} свободно</span>
-        <span class="badge badge--warning">🟡 {{ counts.slots_pending or 0 }} в ожидании</span>
-      </div>
-      <a class="metric-card__link" href="/slots">Расписание<span aria-hidden="true">→</span></a>
-    </div>
-  </article>
-</section>
-
-<!-- ============================================
      MAIN CONTENT
      ============================================ -->
 <div class="dashboard-main">
@@ -2254,8 +2254,8 @@
     <section class="content-card interview-calendar">
       <div class="section-header">
         <div>
-          <h2 class="section-header__title">📅 Календарь предстоящих интервью</h2>
-          <p class="section-header__subtitle">Ближайшие 48 часов</p>
+          <h2 class="section-header__title">📅 Календарь предстоящих встреч</h2>
+          <p class="section-header__subtitle">Ближайшие 48 часов · собеседования и ознакомительные дни</p>
         </div>
         <div class="section-header__actions">
           <button type="button" class="section-header__action section-header__action--primary" id="activityFeedTrigger">
@@ -2265,76 +2265,151 @@
         </div>
       </div>
 
-      {% if upcoming_interviews %}
-      <div class="interview-list">
-        {% for interview in upcoming_interviews %}
-        <article
-          class="interview-card"
-          data-slot-id="{{ interview.id }}"
-          data-candidate-link="{{ 'true' if interview.candidate_url else 'false' }}"
-          {% if interview.candidate_url %}data-candidate-url="{{ interview.candidate_url }}"{% endif %}
-          {% if interview.candidate_url %}
-            tabindex="0"
-            role="button"
-            aria-label="Открыть профиль {{ interview.candidate_name }}"
-          {% else %}
-            tabindex="-1"
-          {% endif %}
-        >
-          <div class="interview-card__time">
-            <span class="interview-card__date">{{ interview.date_label }}</span>
-            <span class="interview-card__clock">{{ interview.local_time }}</span>
-            <span class="interview-card__countdown">{{ interview.starts_in }}</span>
-          </div>
-          <div class="interview-card__body">
-            <div class="interview-card__candidate-row">
+      {% if upcoming_interviews_main or upcoming_intro_days %}
+      <div class="calendar-columns">
+        <div class="calendar-column">
+          <header class="calendar-column__header">
+            <div>
+              <p class="calendar-column__eyebrow">Собеседования</p>
+              <h3 class="calendar-column__title">Ближайшие слоты</h3>
+            </div>
+            <span class="badge badge--soft">{{ upcoming_interviews_main|length }}</span>
+          </header>
+          {% if upcoming_interviews_main %}
+          <div class="interview-list">
+            {% for interview in upcoming_interviews_main %}
+            <article
+              class="interview-card"
+              data-slot-id="{{ interview.id }}"
+              data-candidate-link="{{ 'true' if interview.candidate_url else 'false' }}"
+              {% if interview.candidate_url %}data-candidate-url="{{ interview.candidate_url }}"{% endif %}
               {% if interview.candidate_url %}
-              <a class="interview-card__candidate-link" href="{{ interview.candidate_url }}">{{ interview.candidate_name }}</a>
+                tabindex="0"
+                role="button"
+                aria-label="Открыть профиль {{ interview.candidate_name }}"
               {% else %}
-              <span class="interview-card__candidate-link interview-card__candidate-link--disabled">{{ interview.candidate_name }}</span>
+                tabindex="-1"
               {% endif %}
-              <span class="interview-card__status">{{ interview.slot_status_label }}</span>
-            </div>
-            <div class="interview-card__position">{{ interview.position }}</div>
-            <div class="interview-card__meta">
-              <span>👤 {{ interview.recruiter_name }}</span>
-              <span>📍 {{ interview.city_name }}</span>
-              <span>🕓 {{ interview.time_range }}</span>
-            </div>
+            >
+              <div class="interview-card__time">
+                <span class="interview-card__date">{{ interview.date_label }}</span>
+                <span class="interview-card__clock">{{ interview.local_time }}</span>
+                <span class="interview-card__countdown">{{ interview.starts_in }}</span>
+              </div>
+              <div class="interview-card__body">
+                <div class="interview-card__candidate-row">
+                  {% if interview.candidate_url %}
+                  <a class="interview-card__candidate-link" href="{{ interview.candidate_url }}">{{ interview.candidate_name }}</a>
+                  {% else %}
+                  <span class="interview-card__candidate-link interview-card__candidate-link--disabled">{{ interview.candidate_name }}</span>
+                  {% endif %}
+                  <span class="badge badge--soft">{{ interview.event_kind }}</span>
+                  <span class="interview-card__status">{{ interview.slot_status_label }}</span>
+                </div>
+                <div class="interview-card__position">{{ interview.position }}</div>
+                <div class="interview-card__meta">
+                  <span>👤 {{ interview.recruiter_name }}</span>
+                  <span>📍 {{ interview.city_name }}</span>
+                  <span>🕓 {{ interview.time_range }}</span>
+                </div>
+              </div>
+              <div class="interview-card__actions">
+                {% if interview.telemost_url %}
+                <a class="btn btn--telemost" href="{{ interview.telemost_url }}" target="_blank" rel="noopener">Телемост</a>
+                {% else %}
+                <button class="btn btn--ghost" type="button" disabled>Телемост не указан</button>
+                {% endif %}
+                {% if interview.candidate_url %}
+                <a class="btn btn--outline" href="{{ interview.candidate_url }}">Профиль</a>
+                {% endif %}
+              </div>
+            </article>
+            {% endfor %}
           </div>
-          <div class="interview-card__actions">
-            {% if interview.telemost_url %}
-            <a class="btn btn--telemost" href="{{ interview.telemost_url }}" target="_blank" rel="noopener">Телемост</a>
-            {% else %}
-            <button class="btn btn--ghost" type="button" disabled>Телемост не указан</button>
-            {% endif %}
-            {% if interview.candidate_url %}
-            <a class="btn btn--outline" href="{{ interview.candidate_url }}">Профиль</a>
-            {% endif %}
+          {% else %}
+          <div class="interview-empty">
+            <span class="interview-empty__icon" aria-hidden="true">📭</span>
+            <div>Нет запланированных интервью</div>
+            <p>Проверьте график или создайте новый слот</p>
           </div>
-        </article>
-        {% endfor %}
+          {% endif %}
+        </div>
+
+        <div class="calendar-column">
+          <header class="calendar-column__header">
+            <div>
+              <p class="calendar-column__eyebrow">Ознакомительные дни</p>
+              <h3 class="calendar-column__title">Приглашения и подтверждения</h3>
+            </div>
+            <span class="badge badge--warning">{{ upcoming_intro_days|length }}</span>
+          </header>
+          {% if upcoming_intro_days %}
+          <div class="interview-list">
+            {% for interview in upcoming_intro_days %}
+            <article
+              class="interview-card interview-card--intro"
+              data-slot-id="{{ interview.id }}"
+              data-candidate-link="{{ 'true' if interview.candidate_url else 'false' }}"
+              {% if interview.candidate_url %}data-candidate-url="{{ interview.candidate_url }}"{% endif %}
+              {% if interview.candidate_url %}
+                tabindex="0"
+                role="button"
+                aria-label="Открыть профиль {{ interview.candidate_name }}"
+              {% else %}
+                tabindex="-1"
+              {% endif %}
+            >
+              <div class="interview-card__time">
+                <span class="interview-card__date">{{ interview.date_label }}</span>
+                <span class="interview-card__clock">{{ interview.local_time }}</span>
+                <span class="interview-card__countdown">{{ interview.starts_in }}</span>
+              </div>
+              <div class="interview-card__body">
+                <div class="interview-card__candidate-row">
+                  {% if interview.candidate_url %}
+                  <a class="interview-card__candidate-link" href="{{ interview.candidate_url }}">{{ interview.candidate_name }}</a>
+                  {% else %}
+                  <span class="interview-card__candidate-link interview-card__candidate-link--disabled">{{ interview.candidate_name }}</span>
+                  {% endif %}
+                  <span class="badge badge--warning">Ознакомительный день</span>
+                  <span class="interview-card__status">{{ interview.slot_status_label }}</span>
+                </div>
+                <div class="interview-card__position">{{ interview.position }}</div>
+                <div class="interview-card__meta">
+                  <span>👤 {{ interview.recruiter_name }}</span>
+                  <span>📍 {{ interview.city_name }}</span>
+                  <span>🕓 {{ interview.time_range }}</span>
+                </div>
+              </div>
+              <div class="interview-card__actions">
+                {% if interview.telemost_url %}
+                <a class="btn btn--telemost" href="{{ interview.telemost_url }}" target="_blank" rel="noopener">Телемост</a>
+                {% else %}
+                <button class="btn btn--ghost" type="button" disabled>Телемост не указан</button>
+                {% endif %}
+                {% if interview.candidate_url %}
+                <a class="btn btn--outline" href="{{ interview.candidate_url }}">Профиль</a>
+                {% endif %}
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="interview-empty">
+            <span class="interview-empty__icon" aria-hidden="true">📭</span>
+            <div>Нет запланированных ознакомительных дней</div>
+            <p>Назначьте приглашения или перенесите текущие встречи</p>
+          </div>
+          {% endif %}
+        </div>
       </div>
       {% else %}
       <div class="interview-empty">
         <span class="interview-empty__icon" aria-hidden="true">📭</span>
-        <div>Нет запланированных интервью</div>
+        <div>Нет запланированных встреч</div>
         <p>Проверьте график или создайте новый слот</p>
       </div>
       {% endif %}
-    </section>
-
-    <!-- Hiring analytics placeholder -->
-    <section class="content-card analytics-card">
-      <div class="section-header">
-        <div>
-          <h2 class="section-header__title">📊 Скорость и конверсия найма</h2>
-          <p class="section-header__subtitle">Раздел будет доработан: фокус на скорости и конверсии</p>
-        </div>
-      </div>
-      <div style="text-align: center; padding: 60px; color: var(--muted); font-size: 16px;">
-        📈 Здесь покажем динамику по этапам, когда добавим расчёт по свежим данным (30 дней).
-      </div>
     </section>
 
   </div>

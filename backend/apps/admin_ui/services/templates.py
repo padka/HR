@@ -88,9 +88,11 @@ async def get_stage_templates(
     return data
 
 
-def stage_payload_for_ui(stored: Dict[str, str]) -> List[Dict[str, object]]:
+def stage_payload_for_ui(stored: Dict[str, str], allowed_keys: Optional[List[str]] = None) -> List[Dict[str, object]]:
     result: List[Dict[str, object]] = []
     for stage in CITY_TEMPLATE_STAGES:
+        if allowed_keys and stage.key not in allowed_keys:
+            continue
         value = stored.get(stage.key, "")
         result.append(
             {
@@ -114,7 +116,7 @@ async def templates_overview() -> Dict[str, object]:
     city_payload = [
         {
             "city": city,
-            "stages": stage_payload_for_ui(raw_map.get(city.id, {})),
+            "stages": stage_payload_for_ui(raw_map.get(city.id, {}), allowed_keys=["stage3_intro_invite"]),
         }
         for city in cities
     ]

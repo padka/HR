@@ -982,6 +982,7 @@ async def reserve_slot(
     purpose: str = "interview",
     expected_recruiter_id: Optional[int] = None,
     expected_city_id: Optional[int] = None,
+    allow_candidate_replace: bool = False,
 ) -> ReservationResult:
     """Attempt to reserve the slot and describe the outcome."""
     now_utc = datetime.now(timezone.utc)
@@ -1022,24 +1023,41 @@ async def reserve_slot(
             if expected_city_id is not None and slot.city_id != expected_city_id:
                 return ReservationResult(status="slot_taken")
 
-            existing_active = await session.scalar(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-                .where(
-                    Slot.recruiter_id == slot.recruiter_id,
-                    Slot.candidate_tg_id == candidate_tg_id,
-                    func.lower(Slot.status).in_(
-                        [
-                            SlotStatus.PENDING,
-                            SlotStatus.BOOKED,
-                            SlotStatus.CONFIRMED_BY_CANDIDATE,
-                        ]
-                    ),
+            # P0: do not allow the same candidate to hold multiple active slots.
+            # If allow_candidate_replace=True, free the existing slot and continue booking.
+            if candidate_tg_id is not None:
+                existing_active = await session.scalar(
+                    select(Slot)
+                    .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                    .where(
+                        Slot.candidate_tg_id == candidate_tg_id,
+                        Slot.id != slot.id,
+                        func.lower(Slot.status).in_(
+                            [
+                                SlotStatus.PENDING,
+                                SlotStatus.BOOKED,
+                                SlotStatus.CONFIRMED_BY_CANDIDATE,
+                            ]
+                        ),
+                    )
                 )
-            )
-            if existing_active:
-                existing_active.start_utc = _to_aware_utc(existing_active.start_utc)
-                return ReservationResult(status="duplicate_candidate", slot=existing_active)
+                if existing_active:
+                    if allow_candidate_replace:
+                        # Clean up the existing booking without changing candidate status.
+                        await session.execute(
+                            delete(SlotReservationLock).where(SlotReservationLock.slot_id == existing_active.id)
+                        )
+                        await session.execute(
+                            delete(NotificationLog).where(NotificationLog.booking_id == existing_active.id)
+                        )
+                        existing_active.status = SlotStatus.FREE
+                        existing_active.candidate_tg_id = None
+                        existing_active.candidate_fio = None
+                        existing_active.candidate_tz = None
+                        existing_active.candidate_city_id = None
+                    else:
+                        existing_active.start_utc = _to_aware_utc(existing_active.start_utc)
+                        return ReservationResult(status="duplicate_candidate", slot=existing_active)
 
             reservation_date = _to_aware_utc(slot.start_utc).date()
 

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Dict, List, Optional, Sequence, Tuple, Iterable, Set
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, update
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.db import async_session
@@ -40,6 +40,10 @@ KNOWN_TEMPLATE_HINTS: Dict[str, str] = {
     "recruiter_candidate_confirmed_notice": "Уведомление рекрутёру, когда кандидат подтвердил участие.",
     "confirm_6h": "Напоминание кандидату за 6 часов до встречи с кнопками подтверждения.",
     "confirm_2h": "Напоминание/подтверждение за 2 часа до встречи.",
+    "interview_invite_details": "Приглашение на собеседование с деталями встречи и подготовкой.",
+    "interview_remind_confirm_2h": "Напоминание за 2 часа до интервью с подтверждением/переносом и ссылкой.",
+    "intro_day_invite_city": "Приглашение на ознакомительный день с адресом офиса для выбранного города.",
+    "intro_day_remind_2h": "Напоминание за 2 часа до ознакомительного дня с подтверждением/переносом.",
 }
 
 AVAILABLE_VARIABLES: Sequence[Dict[str, str]] = (
@@ -97,6 +101,20 @@ class MessageTemplateSummary:
     length: int
     preview: str
     body: str
+    stage: str
+
+
+def _infer_stage(key: str) -> str:
+    lk = (key or "").lower()
+    if "intro" in lk:
+        return "intro"
+    if "interview" in lk:
+        return "interview"
+    if "remind" in lk or "confirm" in lk:
+        return "reminder"
+    if "resched" in lk:
+        return "interview"
+    return "other"
 
 
 def _preview_text(text: str, limit: int = 140) -> str:
@@ -203,6 +221,7 @@ async def list_message_templates(
     summaries: List[MessageTemplateSummary] = []
     active_tg_keys: set[str] = set()
     for item, city_name in rows:
+        stage_code = _infer_stage(item.key)
         summaries.append(
             MessageTemplateSummary(
                 id=item.id,
@@ -219,6 +238,7 @@ async def list_message_templates(
                 length=len(item.body_md or ""),
                 preview=_preview_text(item.body_md or ""),
                 body=item.body_md or "",
+                stage=stage_code,
             )
         )
         if item.channel == DEFAULT_CHANNEL and item.locale == DEFAULT_LOCALE and item.is_active:
@@ -607,6 +627,32 @@ async def _append_history(session, template: MessageTemplate) -> None:
     )
 
 
+async def set_active_state(template_id: int, is_active: bool) -> Tuple[bool, List[str]]:
+    errors: List[str] = []
+    async with async_session() as session:
+        template = await session.get(MessageTemplate, template_id)
+        if template is None:
+            return False, ["Шаблон не найден"]
+
+        if is_active:
+            # выключаем остальные шаблоны с тем же ключом/городом/каналом/локалью
+            await session.execute(
+                update(MessageTemplate)
+                .where(
+                    MessageTemplate.id != template.id,
+                    MessageTemplate.key == template.key,
+                    MessageTemplate.locale == template.locale,
+                    MessageTemplate.channel == template.channel,
+                    MessageTemplate.city_id == template.city_id,
+                )
+                .values(is_active=False)
+            )
+
+        template.is_active = is_active
+        await session.commit()
+    return True, errors
+
+
 __all__ = [
     "ALLOWED_CHANNELS",
     "DEFAULT_CHANNEL",
@@ -621,4 +667,5 @@ __all__ = [
     "get_template_history",
     "list_message_templates",
     "update_message_template",
+    "set_active_state",
 ]

@@ -202,3 +202,34 @@ async def test_city_name_is_sanitized_for_storage_and_api(cities_admin_app) -> N
     sanitized_entry = next((item for item in cities if item["name"] == raw_name), None)
     assert sanitized_entry is not None
     assert sanitized_entry["name_html"] == expected_sanitized
+
+
+@pytest.mark.asyncio
+async def test_city_name_can_be_updated_via_settings(cities_admin_app) -> None:
+    async with async_session() as session:
+        city = models.City(name="Old City", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+        city_id = city.id
+
+    new_name = "<b>New City</b>"
+    response = await _async_request(
+        cities_admin_app,
+        "post",
+        f"/cities/{city_id}/settings",
+        json={"name": new_name, "templates": {}},
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("ok") is True
+    city_data = payload.get("city") or {}
+    assert city_data.get("name") == new_name
+    assert city_data.get("name_html") == sanitize_plain_text(new_name)
+
+    async with async_session() as session:
+        updated = await session.get(models.City, city_id)
+        assert updated is not None
+        assert updated.name == sanitize_plain_text(new_name)

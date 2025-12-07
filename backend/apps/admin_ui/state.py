@@ -280,7 +280,11 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
 
     settings = get_settings()
     redis_url = getattr(settings, "redis_url", None) or ""
-    force_memory = settings.environment == "test" or not redis_url or getattr(settings, "notification_broker", "memory") != "redis"
+    broker_choice = (getattr(settings, "notification_broker", "memory") or "memory").strip().lower()
+    if settings.environment == "production" and broker_choice == "redis" and not redis_url:
+        raise RuntimeError("REDIS_URL is required in production when NOTIFICATION_BROKER=redis")
+
+    force_memory = settings.environment == "test" or not redis_url or broker_choice != "redis"
     state_manager = build_state_manager(
         redis_url=None if force_memory else redis_url,
         ttl_seconds=getattr(settings, "state_ttl_seconds", 604800),
@@ -290,7 +294,6 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     switch = IntegrationSwitch(initial=settings.bot_integration_enabled)
     scheduler = create_scheduler(None if force_memory else redis_url)
 
-    broker_choice = (getattr(settings, "notification_broker", "memory") or "memory").strip().lower()
     broker_instance: Optional[object] = None
 
     app.state.notification_broker_status = "disabled"

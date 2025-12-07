@@ -127,7 +127,7 @@ async def set_status_waiting_slot(telegram_id: int) -> bool:
     """Set status when no free interview slots are available."""
     try:
         return await update_candidate_status(
-            telegram_id, CandidateStatus.WAITING_SLOT
+            telegram_id, CandidateStatus.WAITING_SLOT, force=True
         )
     except StatusTransitionError as e:
         logger.error(f"Failed to set WAITING_SLOT: {e}")

@@ -220,8 +220,6 @@ async def list_slots(
 ) -> Dict[str, object]:
     async with async_session() as session:
         filtered = select(Slot)
-        # Exclude intro_day slots (they are managed separately on candidates page)
-        filtered = filtered.where(Slot.purpose != "intro_day")
         if recruiter_id is not None:
             filtered = filtered.where(Slot.recruiter_id == recruiter_id)
         if status:
@@ -265,41 +263,41 @@ async def list_slots(
             )
         ).all()
 
-        aggregated: Dict[str, int] = {}
-        for raw_status, count in status_rows:
-            aggregated[norm_status(raw_status)] = int(count or 0)
-        aggregated.setdefault("CONFIRMED_BY_CANDIDATE", 0)
+    aggregated: Dict[str, int] = {}
+    for raw_status, count in status_rows:
+        aggregated[norm_status(raw_status)] = int(count or 0)
+    aggregated.setdefault("CONFIRMED_BY_CANDIDATE", 0)
 
-        pages_total, page, offset = paginate(total, page, per_page)
+    pages_total, page, offset = paginate(total, page, per_page)
 
-        query = (
-            filtered.options(
-                selectinload(Slot.recruiter),
-                selectinload(Slot.city),
-            )
-            .order_by(Slot.start_utc.desc())
-            .offset(offset)
-            .limit(per_page)
+    query = (
+        filtered.options(
+            selectinload(Slot.recruiter),
+            selectinload(Slot.city),
         )
-        items = (await session.scalars(query)).all()
+        .order_by(Slot.start_utc.desc())
+        .offset(offset)
+        .limit(per_page)
+    )
+    items = (await session.scalars(query)).all()
 
-        candidate_ids = {slot.candidate_tg_id for slot in items if slot.candidate_tg_id}
-        usernames: Dict[int, Optional[str]] = {}
-        if candidate_ids:
-            username_rows = await session.execute(
-                select(User.telegram_id, User.username, User.telegram_username).where(
-                    User.telegram_id.in_(candidate_ids)
-                )
+    candidate_ids = {slot.candidate_tg_id for slot in items if slot.candidate_tg_id}
+    usernames: Dict[int, Optional[str]] = {}
+    if candidate_ids:
+        username_rows = await session.execute(
+            select(User.telegram_id, User.username, User.telegram_username).where(
+                User.telegram_id.in_(candidate_ids)
             )
-            for tg_id, username, telegram_username in username_rows:
-                usernames[int(tg_id)] = username or telegram_username
+        )
+        for tg_id, username, telegram_username in username_rows:
+            usernames[int(tg_id)] = username or telegram_username
 
-        # Ensure all datetime fields are timezone-aware
-        for item in items:
-            if item.start_utc:
-                item.start_utc = item.start_utc.replace(tzinfo=timezone.utc) if item.start_utc.tzinfo is None else item.start_utc
-            if item.candidate_tg_id:
-                item.candidate_username = usernames.get(int(item.candidate_tg_id))
+    # Ensure all datetime fields are timezone-aware
+    for item in items:
+        if item.start_utc:
+            item.start_utc = item.start_utc.replace(tzinfo=timezone.utc) if item.start_utc.tzinfo is None else item.start_utc
+        if item.candidate_tg_id:
+            item.candidate_username = usernames.get(int(item.candidate_tg_id))
 
     return {
         "items": items,
@@ -580,6 +578,7 @@ async def schedule_manual_candidate_slot(
         purpose="interview",
         expected_recruiter_id=recruiter.id,
         expected_city_id=city.id,
+        allow_candidate_replace=True,
     )
 
     if reservation.status != "reserved":

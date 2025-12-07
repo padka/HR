@@ -26,9 +26,33 @@
 
   {% call forms.section("Основные параметры") %}
     <div class="form-grid form-grid--two">
-      {% call forms.field("Ключ", hint="Например, candidate_rejection или intro_day_invitation.") %}
-        <input type="text" name="key" id="key" value="{{ form_data.key or '' }}" required {% if is_edit %}readonly{% endif %} class="text-mono">
-        <p class="hint mt-xs">Используйте общий ключ: система выберет городскую версию автоматически.</p>
+      {% call forms.field("Событие", hint="Выберите нужный этап — ключ подставится автоматически.") %}
+        {% if is_edit %}
+          <div class="chip chip--muted">Ключ: <code class="text-mono">{{ form_data.key }}</code> (изменить нельзя)</div>
+          <input type="hidden" name="key" id="key" value="{{ form_data.key or '' }}">
+          <p class="hint mt-xs">Для изменения используйте “Создать новый” — ключ фиксируется.</p>
+        {% else %}
+          <select id="key_picker" data-key-select required>
+            <option value="" disabled {% if not form_data.key %}selected{% endif %}>Выберите событие</option>
+            {% for k, hint in known_hints.items() %}
+              {% set lk = k|lower %}
+              {% if 'intro' in lk %}
+                {% set stage_label = 'Ознакомительный день' %}
+              {% elif 'interview' in lk %}
+                {% set stage_label = 'Интервью' %}
+              {% elif 'remind' in lk %}
+                {% set stage_label = 'Напоминания' %}
+              {% else %}
+                {% set stage_label = 'Прочее' %}
+              {% endif %}
+              <option value="{{ k }}" {% if form_data.key == k %}selected{% endif %}>
+                {{ stage_label }} — {{ hint }}
+              </option>
+            {% endfor %}
+          </select>
+          <input type="hidden" name="key" id="key" value="{{ form_data.key or '' }}">
+          <p class="hint mt-xs" id="key_hint">Выберите событие, чтобы увидеть пояснение.</p>
+        {% endif %}
       {% endcall %}
 
       {% call forms.field("Город") %}
@@ -131,6 +155,10 @@
   const warningBox = document.getElementById('var-warning');
   const mockContext = {{ mock_context | tojson | safe }};
   const allowedVars = new Set({{ variables|map(attribute='name')|list|tojson|safe }});
+  const keyHints = {{ known_hints | tojson | safe }};
+  const keyPicker = document.getElementById('key_picker');
+  const keyHidden = document.getElementById('key');
+  const keyHint = document.getElementById('key_hint');
 
   function renderPreview() {
     if (!bodyField || !previewBlock) return;
@@ -173,5 +201,17 @@
     });
   });
   renderPreview();
+
+  if (keyPicker && keyHidden) {
+    const updateKey = () => {
+      const val = keyPicker.value || '';
+      keyHidden.value = val;
+      if (keyHint) {
+        keyHint.innerText = keyHints[val] || 'Выберите событие, чтобы увидеть пояснение.';
+      }
+    };
+    keyPicker.addEventListener('change', updateKey);
+    updateKey();
+  }
 </script>
 {% endblock %}

@@ -60,19 +60,37 @@ class State(TypedDict, total=False):
     manual_availability_last_note: Optional[str]
 
 
-try:
-    _QUESTIONS_BANK = load_all_test_questions()
-except Exception:  # pragma: no cover - fallback for missing DB tables
-    logging.getLogger(__name__).warning(
-        "Falling back to default test questions; database is not available."
-    )
-    _QUESTIONS_BANK = DEFAULT_TEST_QUESTIONS
-TEST2_QUESTIONS: List[Dict[str, Any]] = (
-    _QUESTIONS_BANK.get("test2", DEFAULT_TEST_QUESTIONS.get("test2", [])).copy()
-)
-TEST1_QUESTIONS: List[Dict[str, Any]] = (
-    _QUESTIONS_BANK.get("test1", DEFAULT_TEST_QUESTIONS.get("test1", [])).copy()
-)
+logger = logging.getLogger(__name__)
+
+_QUESTIONS_BANK: Dict[str, List[Dict[str, Any]]] = {}
+TEST1_QUESTIONS: List[Dict[str, Any]] = []
+TEST2_QUESTIONS: List[Dict[str, Any]] = []
+
+
+def refresh_questions_bank(*, include_inactive: bool = False) -> None:
+    """
+    Reload test questions from the database so admin UI changes are visible to the bot
+    without restarting the process.
+    """
+
+    global _QUESTIONS_BANK, TEST1_QUESTIONS, TEST2_QUESTIONS
+
+    try:
+        loaded = load_all_test_questions(include_inactive=include_inactive)
+    except Exception as exc:  # pragma: no cover - fallback for missing DB tables
+        logger.warning(
+            "Falling back to default test questions; database is not available. error=%s",
+            exc,
+        )
+        loaded = DEFAULT_TEST_QUESTIONS
+
+    _QUESTIONS_BANK = loaded
+    TEST1_QUESTIONS = _QUESTIONS_BANK.get("test1", DEFAULT_TEST_QUESTIONS.get("test1", [])).copy()
+    TEST2_QUESTIONS = _QUESTIONS_BANK.get("test2", DEFAULT_TEST_QUESTIONS.get("test2", [])).copy()
+
+
+# Prime question bank at import so existing imports keep working
+refresh_questions_bank()
 
 FOLLOWUP_NOTICE_PERIOD = {
     "id": "notice_period",
@@ -135,6 +153,7 @@ __all__ = [
     "State",
     "TEST1_QUESTIONS",
     "TEST2_QUESTIONS",
+    "refresh_questions_bank",
     "TIME_FMT",
     "TIME_LIMIT",
 ]

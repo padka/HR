@@ -245,10 +245,11 @@ SLOT_STATUS_LABELS = {
 }
 
 
-async def get_upcoming_interviews(limit: int = 5) -> List[Dict[str, object]]:
+async def get_upcoming_interviews(limit: int = 20) -> List[Dict[str, object]]:
     """Get upcoming interviews (booked slots) for dashboard."""
     now = datetime.now(timezone.utc)
-    tomorrow_end = now + timedelta(days=2)  # Get today and tomorrow
+    # Show ближайшую неделю, чтобы одобренные слоты не терялись за пределами 48 часов.
+    window_end = now + timedelta(days=7)
 
     async with async_session() as session:
         stmt = (
@@ -259,11 +260,12 @@ async def get_upcoming_interviews(limit: int = 5) -> List[Dict[str, object]]:
             .where(
                 and_(
                     or_(
+                        Slot.status == SlotStatus.PENDING,
                         Slot.status == SlotStatus.BOOKED,
                         Slot.status == SlotStatus.CONFIRMED_BY_CANDIDATE
                     ),
                     Slot.start_utc >= now,
-                    Slot.start_utc <= tomorrow_end
+                    Slot.start_utc <= window_end
                 )
             )
             .order_by(Slot.start_utc.asc())
@@ -297,8 +299,10 @@ async def get_upcoming_interviews(limit: int = 5) -> List[Dict[str, object]]:
             )
             candidate_name = slot.candidate_fio or (candidate.fio if candidate else "Кандидат")
             candidate_url = f"/candidates/{candidate.id}" if candidate else None
+            purpose = (slot.purpose or "").strip().lower()
             position_label = slot.purpose.title() if slot.purpose else "Interview"
             slot_status = SLOT_STATUS_LABELS.get(slot.status, "В графике")
+            event_kind = "Ознакомительный день" if purpose == "intro_day" else "Собеседование"
 
             interviews.append(
                 {
@@ -316,6 +320,7 @@ async def get_upcoming_interviews(limit: int = 5) -> List[Dict[str, object]]:
                     "slot_status_label": slot_status,
                     "candidate_id": candidate.id if candidate else None,
                     "tz_name": slot_tz,
+                    "event_kind": event_kind,
                 }
             )
 

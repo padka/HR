@@ -1670,25 +1670,7 @@
         {% endfor %}
       </nav>
       {% endif %}
-      {% set allowed_views = ['list', 'calendar'] %}
-      {% if selected_view not in allowed_views %}{% set selected_view = 'list' %}{% endif %}
-      {% set view_nav = [
-        {'value': 'list', 'label': 'Список'},
-        {'value': 'calendar', 'label': 'Календарь'},
-      ] %}
-      <nav class="candidate-view-switch" aria-label="Переключение представлений" role="tablist">
-        {% for option in view_nav %}
-          {% set view_url = request.url.include_query_params(view=option.value) %}
-          <a class="btn btn-ghost{% if selected_view == option.value %} is-active{% endif %}"
-             href="{{ view_url }}"
-             data-view-switch
-             data-view-target="{{ option.value }}"
-             role="tab"
-             aria-selected="{{ 'true' if selected_view == option.value else 'false' }}">
-            {{ option.label }}
-          </a>
-        {% endfor %}
-      </nav>
+      {% set selected_view = 'list' %}
       <button class="btn btn-ghost candidate-control-panel__filter" type="button" data-filter-open>Фильтры</button>
     </div>
   </div>
@@ -1768,123 +1750,7 @@
     </div>
   </section>
 
-  <section class="view-panel{% if selected_view == 'calendar' %} is-active{% endif %}" data-view="calendar" id="view-calendar">
-    {% set calendar_modes = {'day': 'День'} %}
-    {% set calendar_base_url = request.url.remove_query_params('date_from').remove_query_params('date_to').remove_query_params('page') %}
-    <div class="calendar-actions">
-      <div class="calendar-controls" role="group" aria-label="Режим календаря">
-        {% for key, label in calendar_modes.items() %}
-          {% set mode_url = calendar_base_url.include_query_params(view='calendar', calendar_mode=key, page=1) %}
-          <a class="calendar-controls__btn{% if calendar_mode == key %} is-active{% endif %}" href="{{ mode_url }}">{{ label }}</a>
-        {% endfor %}
-      </div>
-      <form class="calendar-date-picker" method="get" data-calendar-date-form>
-        {% for key, value in request.query_params.multi_items() %}
-          {% if key not in ['date_from', 'date_to', 'page', 'view', 'calendar_mode'] %}
-            <input type="hidden" name="{{ key }}" value="{{ value }}">
-          {% endif %}
-        {% endfor %}
-        <input type="hidden" name="view" value="calendar">
-        <input type="hidden" name="calendar_mode" value="{{ calendar_mode }}">
-        <input type="hidden" name="page" value="1">
-        <label>
-          Дата
-          <input type="date" name="date_from" value="{{ calendar_date_value }}" data-calendar-date>
-        </label>
-        <button class="btn btn-ghost btn--xs" type="submit">Показать</button>
-      </form>
-    </div>
-    <div class="calendar-grid" data-calendar-mode="{{ calendar_mode }}">
-      {% for day in calendar_view.days or [] %}
-        <article class="calendar-day">
-          <header class="calendar-day__header">
-            <div>
-              <span class="calendar-day__label">{{ day.label }}</span>
-              {% if day.date %}
-                <small>{{ day.date.strftime("%d.%m.%Y") }}</small>
-              {% endif %}
-            </div>
-            <span class="calendar-day__counter">📅 {{ day.events|length }} встреч</span>
-          </header>
-          <div class="calendar-day__summary">
-            <span>Запланировано: {{ day.events|length }}</span>
-            {% if day.totals %}
-              <div class="calendar-day__chips">
-                {% for slug, count in day.totals.items() %}
-                  {% set label = slug %}
-                  {% set icon = '' %}
-                  {% for option in filter_options.statuses or [] %}
-                    {% if option.slug == slug %}
-                      {% set label = option.label %}
-                      {% set icon = option.icon %}
-                    {% endif %}
-                  {% endfor %}
-                  <span class="calendar-day__chip">
-                    {% if icon %}{{ icon }} {% endif %}{{ label }} — {{ count }}
-                  </span>
-                {% endfor %}
-              </div>
-            {% endif %}
-          </div>
-          {% if day.events %}
-            <div class="calendar-day__events">
-              {% for event in day.events %}
-                <div class="calendar-event" data-status="{{ event.status.slug }}" data-tone="{{ event.status.tone }}">
-                  {% set event_tg_user_id = event.candidate.telegram_user_id or event.candidate.telegram_id %}
-                  {% set event_tg_username = event.candidate.telegram_username %}
-                  <div class="calendar-event__header">
-                    <div>
-                      <div class="calendar-event__title">{{ event.candidate.fio }}</div>
-                      <div class="calendar-event__meta">
-                        <span>🕒 {{ fmt_local(event.start, event.slot.candidate_tz or 'Europe/Moscow') }}</span>
-                        <span>📍 {{ event.candidate.city or 'Город не указан' }}</span>
-                      </div>
-                    </div>
-                    <span class="status-pill" data-tone="{{ event.status.tone }}">
-                      {% if event.status.icon %}<span class="status-pill__icon">{{ event.status.icon }}</span>{% endif %}
-                      {{ status_labels.get(event.status.slug, event.status.label) }}
-                    </span>
-                  </div>
-                  <div class="calendar-event__details">
-                    <span>🎯 {{ (event.slot.purpose or 'slot') | replace('_', ' ') | title }}</span>
-                    <span>🕘 {{ event.slot.tz_name or 'UTC' }}</span>
-                    <span>⏱ {{ event.slot.duration_min or 0 }} мин</span>
-                  </div>
-                  <div class="calendar-event__footer">
-                    {% if event.candidate.recruiter %}
-                      <span>👤 {{ event.candidate.recruiter.name }}</span>
-                    {% else %}
-                      <span>
-                        Telegram:
-                        {% if event_tg_username %}
-                          <a href="https://t.me/{{ event_tg_username }}" target="_blank" rel="noopener">@{{ event_tg_username }}</a>
-                        {% elif event_tg_user_id %}
-                          {{ event_tg_user_id }}
-                        {% else %}
-                          —
-                        {% endif %}
-                      </span>
-                    {% endif %}
-                    <div class="calendar-event__actions">
-                      <a class="btn btn-ghost btn--xs" href="/candidates/{{ event.candidate.id }}">Карточка</a>
-                      {% if event.slot.recruiter and event.slot.recruiter.telemost_url %}
-                        <a class="btn btn-ghost btn--xs" href="{{ event.slot.recruiter.telemost_url }}" target="_blank" rel="noopener noreferrer">Телемост</a>
-                      {% endif %}
-                    </div>
-                  </div>
-                </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <div class="calendar-day__empty">
-              <p>Свободно. Добавьте встречи или напоминания.</p>
-              <a class="btn btn-ghost btn--xs" href="/slots/new">Создать слот</a>
-            </div>
-          {% endif %}
-        </article>
-      {% endfor %}
-    </div>
-  </section>
+  
 
   
 {% else %}
@@ -2002,78 +1868,7 @@
   });
 })();
 
-(function () {
-  const form = document.querySelector('[data-calendar-date-form]');
-  if (!form) return;
-  const dateInput = form.querySelector('[data-calendar-date]');
-  if (!dateInput) return;
-  dateInput.addEventListener('change', () => {
-    if (dateInput.value) {
-      form.requestSubmit();
-    }
-  });
-})();
-
-(function () {
-  const viewSwitches = Array.from(document.querySelectorAll('[data-view-switch]'));
-  const viewPanels = Array.from(document.querySelectorAll('.view-panel[data-view]'));
-  if (!viewSwitches.length || !viewPanels.length) {
-    return;
-  }
-
-  const updateHistory = (target) => {
-    if (!window.history.replaceState) {
-      return;
-    }
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set('view', target);
-      window.history.replaceState({}, '', url);
-    } catch {
-      /* ignore invalid URL */
-    }
-  };
-
-  const activateView = (target, { skipHistory = false } = {}) => {
-    if (!target) {
-      return;
-    }
-    viewPanels.forEach((panel) => {
-      panel.classList.toggle('is-active', panel.dataset.view === target);
-    });
-    viewSwitches.forEach((link) => {
-      const isActive = link.dataset.viewTarget === target;
-      link.classList.toggle('is-active', isActive);
-      link.setAttribute('aria-selected', isActive ? 'true' : 'false');
-    });
-    if (!skipHistory) {
-      updateHistory(target);
-    }
-  };
-
-  viewSwitches.forEach((link) => {
-    link.addEventListener('click', (event) => {
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        return;
-      }
-      const target = link.dataset.viewTarget;
-      if (!target) {
-        return;
-      }
-      event.preventDefault();
-      activateView(target);
-      const panel = document.getElementById(`view-${target}`);
-      if (panel) {
-        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    });
-  });
-
-  const current = viewSwitches.find((link) => link.classList.contains('is-active'));
-  if (current && current.dataset.viewTarget) {
-    activateView(current.dataset.viewTarget, { skipHistory: true });
-  }
-})();
+// Calendar view removed; list only.
 </script>
 
 <script type="module" src="/static/js/modules/candidates-board.js"></script>

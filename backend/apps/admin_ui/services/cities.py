@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from backend.core.cache import CacheKeys, CacheTTL, get_cache
@@ -77,6 +78,7 @@ async def create_city(name: str, tz: str) -> None:
 async def update_city_settings(
     city_id: int,
     *,
+    name: Optional[str],
     responsible_id: Optional[int],
     templates: Dict[str, Optional[str]],
     criteria: Optional[str],
@@ -117,6 +119,13 @@ async def update_city_settings(
             city.plan_week = normalized_week
             city.plan_month = normalized_month
 
+            if name is not None:
+                clean_name = sanitize_plain_text(name)
+                if not clean_name:
+                    await session.rollback()
+                    return "Название города не может быть пустым", None, None
+                city.name = clean_name
+
             if tz is not None:
                 try:
                     city.tz = normalize_city_timezone(tz)
@@ -131,7 +140,14 @@ async def update_city_settings(
                 await session.rollback()
                 return error, None, None
 
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError as exc:
+                await session.rollback()
+                detail = str(getattr(exc, "orig", exc)).lower()
+                if "uq_city_name" in detail or "unique" in detail:
+                    return "Город с таким названием уже существует", None, None
+                raise
             await session.refresh(city)
         except Exception:
             await session.rollback()

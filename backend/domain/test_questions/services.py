@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from typing import Dict, List
+from typing import Dict, List, Set
 
 from sqlalchemy import select
 
@@ -33,16 +33,23 @@ def load_test_questions(test_id: str, *, include_inactive: bool = False) -> List
         query = query.order_by(TestQuestion.question_index.asc())
         rows = session.execute(query).scalars().all()
 
-    if not rows:
+        # Detect if this test id exists in DB at all to decide on fallback.
+        has_any = session.execute(
+            select(TestQuestion.id).where(TestQuestion.test_id == test_id)
+        ).first() is not None
+
+    if not rows and not has_any:
         return deepcopy(DEFAULT_TEST_QUESTIONS.get(test_id, []))
 
     result: List[Dict[str, object]] = []
     for row in rows:
         data = _parse_payload(row.payload)
         if data:
+            data = dict(data)
+            data.setdefault("id", f"{row.test_id}_{row.question_index}")
             result.append(data)
 
-    return result or deepcopy(DEFAULT_TEST_QUESTIONS.get(test_id, []))
+    return result
 
 
 def load_all_test_questions(*, include_inactive: bool = False) -> Dict[str, List[Dict[str, object]]]:
@@ -55,15 +62,23 @@ def load_all_test_questions(*, include_inactive: bool = False) -> Dict[str, List
         query = query.order_by(TestQuestion.test_id.asc(), TestQuestion.question_index.asc())
         rows = session.execute(query).scalars().all()
 
+        # Track which tests exist in DB regardless of active flag.
+        db_test_ids: Set[str] = set(
+            id_row[0] for id_row in session.execute(select(TestQuestion.test_id).distinct()).all()
+        )
+
     grouped: Dict[str, List[Dict[str, object]]] = {}
     for row in rows:
         data = _parse_payload(row.payload)
         if not data:
             continue
+        data = dict(data)
+        data.setdefault("id", f"{row.test_id}_{row.question_index}")
         grouped.setdefault(row.test_id, []).append(data)
 
     for test_id, defaults in DEFAULT_TEST_QUESTIONS.items():
-        if not grouped.get(test_id):
+        # Only fallback to defaults if the test is entirely absent from DB.
+        if test_id not in db_test_ids and not grouped.get(test_id):
             grouped[test_id] = deepcopy(defaults)
 
     return grouped

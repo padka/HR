@@ -15,6 +15,7 @@ from backend.apps.admin_ui.services.message_templates import (
     get_template_history,
     list_message_templates,
     update_message_template,
+    set_active_state,
 )
 
 router = APIRouter(prefix="/message-templates", tags=["message_templates"])
@@ -44,20 +45,20 @@ async def message_templates_list(
     channel: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
 ):
-    payload = await list_message_templates(city=city, key_query=key, channel=channel, status=status)
-    context = {
-        "request": request,
-        "templates": payload["templates"],
-        "missing_required": payload["missing_required"],
-        "known_hints": payload["known_hints"],
-        "cities": payload["cities"],
-        "filters": payload["filters"],
-        "variables": payload["variables"],
-        "mock_context": payload["mock_context"],
-        "coverage": payload["coverage"],
-        "allowed_channels": ALLOWED_CHANNELS,
-    }
-    return jinja_templates.TemplateResponse(request, "message_templates_list.html", context)
+    # Единая страница шаблонов рендерится в /templates.
+    redirect_url = "/templates"
+    params = []
+    if city:
+        params.append(f"city={city}")
+    if key:
+        params.append(f"key={key}")
+    if channel:
+        params.append(f"channel={channel}")
+    if status:
+        params.append(f"status={status}")
+    if params:
+        redirect_url += "?" + "&".join(params)
+    return RedirectResponse(url=redirect_url, status_code=303)
 
 
 @router.get("/new", response_class=HTMLResponse)
@@ -234,47 +235,20 @@ async def message_templates_update(
 
 @router.post("/{template_id}/activate")
 async def message_templates_activate(request: Request, template_id: int):
-    template = await get_message_template(template_id)
-    if template is None:
-        return RedirectResponse(url="/message-templates", status_code=303)
-
-    success, errors = await update_message_template(
-        template_id,
-        key=template.key,
-        locale=template.locale,
-        channel=template.channel,
-        city_id=template.city_id,
-        body=template.body_md,
-        is_active=True,
-        bump_version=False,
-    )
+    success, errors = await set_active_state(template_id, True)
     if success:
         return RedirectResponse(url="/message-templates", status_code=303)
 
-    payload = await list_message_templates()
-    history = await get_template_history(template_id)
-    context = {
-        "request": request,
-        "errors": errors,
-        "template_id": template_id,
-        "form_data": {
-            "key": template.key,
-            "locale": template.locale,
-            "channel": template.channel,
-            "city_id": template.city_id,
-            "body": template.body_md,
-            "is_active": template.is_active,
-            "version": template.version,
-        },
-        "allowed_channels": ALLOWED_CHANNELS,
-        "known_hints": KNOWN_TEMPLATE_HINTS,
-        "is_edit": True,
-        "cities": payload["cities"],
-        "variables": payload["variables"],
-        "mock_context": payload["mock_context"],
-        "history": history,
-    }
-    return jinja_templates.TemplateResponse(request, "message_templates_form.html", context, status_code=400)
+    return RedirectResponse(url="/message-templates", status_code=303)
+
+
+@router.post("/{template_id}/deactivate")
+async def message_templates_deactivate(request: Request, template_id: int):
+    success, errors = await set_active_state(template_id, False)
+    if success:
+        return RedirectResponse(url="/message-templates", status_code=303)
+
+    return RedirectResponse(url="/message-templates", status_code=303)
 
 
 @router.post("/{template_id}/delete")

@@ -855,7 +855,7 @@
         </tbody>
       </table>
       </div>
-      <div class="slot-cards" id="slot_cards" hidden>
+      <div class="slot-cards" id="slot_cards">
         {% for s in slots %}
           {% set st = norm_status(s.status) %}
           {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
@@ -1197,19 +1197,14 @@
   const tbody = $('#slots_tbody');
   const rows = tbody ? $$('.slot-row', tbody) : [];
   const detailMap = new Map();
-  rows.forEach(row => {
-    const next = row.nextElementSibling;
-    if (next && next.dataset.detailsFor === row.dataset.id) {
-      detailMap.set(row.dataset.id, next);
-    }
-  });
   const slotCardsEl = $('#slot_cards');
   const cards = slotCardsEl ? $$('.slot-card', slotCardsEl) : [];
   const cardMap = new Map();
   cards.forEach(card => cardMap.set(card.dataset.id, card));
-  const calendarView = $('#slot_calendar');
-  const calendarItems = calendarView ? $$('.calendar-item', calendarView) : [];
-  const calendarDays = calendarView ? $$('.calendar-day', calendarView) : [];
+  // Calendar and table view are hidden; only cards are shown.
+  const calendarView = null;
+  const calendarItems = [];
+  const calendarDays = [];
   const resolveRowFromAction = (node) => {
     const row = node.closest('.slot-row');
     if (row) return row;
@@ -1252,7 +1247,7 @@
   const applyFiltersBtn = $('#apply_filters');
   const clearButtons = $$('[data-clear-filters]');
   const selectAll = $('#select_all_slots');
-  const slotTableShell = $('#slot_table_shell');
+  const slotTableShell = null;
   const loadingState = $('#slots_loading');
   const emptyState = $('#slots_empty');
   const errorState = $('#slots_error');
@@ -1465,7 +1460,6 @@
   function showLoading() {
     isLoading = true;
     if (loadingState) loadingState.hidden = false;
-    if (slotTableShell) slotTableShell.hidden = true;
     if (emptyState) emptyState.hidden = true;
   }
   function hideLoading() {
@@ -1475,9 +1469,7 @@
 
   function updateEmptyState(visibleCount) {
     const hasRows = visibleCount > 0;
-    if (slotTableShell) slotTableShell.hidden = true;
-    if (slotCardsEl) slotCardsEl.hidden = true;
-    if (calendarView) calendarView.hidden = !hasRows;
+    if (slotCardsEl) slotCardsEl.hidden = !hasRows;
     if (emptyState) emptyState.hidden = hasRows || isLoading;
   }
 
@@ -1486,17 +1478,17 @@
     const desc = errorState.querySelector('.page-description');
     if (desc && message) desc.textContent = message;
     errorState.hidden = false;
-    if (slotTableShell) slotTableShell.hidden = true;
     if (slotCardsEl) slotCardsEl.hidden = true;
     hideLoading();
   }
 
   function updateCounters() {
     let total = 0, free = 0, pending = 0, booked = 0, confirmed = 0;
-    rows.forEach(row => {
-      if (row.hidden) return;
+    const source = cards.length ? cards : rows;
+    source.forEach(el => {
+      if (el.hidden) return;
       total += 1;
-      const st = row.dataset.status;
+      const st = el.dataset.status;
       if (st === 'FREE') free += 1;
       else if (st === 'PENDING') pending += 1;
       else if (st === 'BOOKED') booked += 1;
@@ -1561,8 +1553,6 @@
     });
     sorted.forEach(row => {
       tbody.appendChild(row);
-      const details = detailMap.get(row.dataset.id);
-      if (details) tbody.appendChild(details);
     });
   }
 
@@ -1588,15 +1578,7 @@
       const match = matchesFilters(card);
       card.hidden = !match;
     });
-    calendarItems.forEach(item => {
-      const match = matchesFilters(item);
-      item.hidden = !match;
-    });
-    calendarDays.forEach(day => {
-      const hasVisible = $$('.calendar-item', day).some(it => !it.hidden);
-      day.hidden = !hasVisible;
-    });
-    const visible = rows.filter(r => !r.hidden).length;
+    const visible = (cards.length ? cards : rows).filter(el => !el.hidden).length;
     updateCounters();
     updateRelativeLabels();
     updateEmptyState(visible);

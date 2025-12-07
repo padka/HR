@@ -338,6 +338,15 @@
     background: rgba(255, 255, 255, 0.04);
   }
 
+    .chat-panel__header-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .chat-panel[hidden] {
+      display: none !important;
+    }
+
   .candidate-hero__status {
     flex: 1 1 260px;
     min-width: 240px;
@@ -1003,6 +1012,7 @@
 {% set telegram_username = user.telegram_username or user.username %}
 {% set telegram_linked_at = user.telegram_linked_at %}
 {% set chat_templates = chat_templates or [] %}
+{% set has_test2_completed = test2_passed or false %}
 <section class="page-header">
   <div>
     <a class="muted" href="/candidates">← К списку кандидатов</a>
@@ -1013,12 +1023,6 @@
   </div>
   <div class="page-actions">
     {% set cs = (candidate_status_slug or user.candidate_status or '')|lower %}
-    {% set has_test2_completed = false %}
-    {% for res in tests or [] %}
-      {% if res.rating and res.rating|upper == 'TEST2' %}
-        {% set has_test2_completed = true %}
-      {% endif %}
-    {% endfor %}
     {% set intro_day_allowed = can_schedule_intro_day or (cs in ['test2_completed', 'intro_day_scheduled', 'intro_day_confirmed_preliminary', 'intro_day_confirmed_day_of'] or has_test2_completed) %}
     {% if not (has_intro_day_slot | default(false)) and intro_day_allowed %}
       <a href="/candidates/{{ user.id }}/schedule-intro-day" class="btn btn-primary">
@@ -1026,16 +1030,18 @@
       </a>
     {% endif %}
     <div class="btn-group">
-      {% if cs in ['waiting_slot', 'stalled_waiting_slot', 'test1_completed', 'interview_declined', 'interview_scheduled'] or not has_interview_slot %}
+      {% if cs not in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] and not has_test2_completed and (cs in ['waiting_slot', 'stalled_waiting_slot', 'test1_completed', 'interview_declined', 'interview_scheduled'] or not has_interview_slot) %}
         <a href="/candidates/{{ user.id }}/schedule-slot" class="btn {% if cs in ['waiting_slot', 'stalled_waiting_slot'] %}btn-primary{% else %}btn-secondary{% endif %}">
           🕒 {% if cs in ['waiting_slot', 'stalled_waiting_slot'] %}Предложить время собеседования{% else %}Назначить/перенести собеседование{% endif %}
         </a>
       {% endif %}
-      <form method="post" action="/candidates/{{ user.id }}/status" style="display:inline;" onsubmit="return confirm('Отклонить кандидата {{ user.fio }}?');">
-        {{ csrf_input(request) }}
-        <input type="hidden" name="status" value="interview_declined">
-        <button class="btn btn-ghost" type="submit">🚫 Отказ</button>
-      </form>
+      {% if cs not in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] %}
+        <form method="post" action="/candidates/{{ user.id }}/status" style="display:inline;" onsubmit="return confirm('Отклонить кандидата {{ user.fio }}?');">
+          {{ csrf_input(request) }}
+          <input type="hidden" name="status" value="interview_declined">
+          <button class="btn btn-ghost" type="submit">🚫 Отказ</button>
+        </form>
+      {% endif %}
     </div>
     {% if pending_slot %}
       <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve" class="approve-form">
@@ -1164,6 +1170,7 @@
 <section
   class="chat-panel"
   data-chat-root
+  hidden
   data-chat-disabled="{{ chat_disabled }}"
   data-chat-url="/api/candidates/{{ user.id }}/chat"
   data-chat-retry-base="/api/candidates/{{ user.id }}/chat"
@@ -1173,7 +1180,10 @@
       <p class="telegram-panel__eyebrow">Чат (Telegram)</p>
       <h2 class="chat-panel__title">Общение с кандидатом</h2>
     </div>
-    <button class="btn btn-ghost btn--xs" type="button" data-chat-refresh>Обновить</button>
+    <div class="chat-panel__header-actions">
+      <button class="btn btn-ghost btn--xs" type="button" data-chat-refresh>Обновить</button>
+      <button class="btn btn-ghost btn--xs" type="button" data-chat-close>Скрыть</button>
+    </div>
   </div>
   {% if not telegram_user_id %}
     <div class="chat-panel__placeholder">
@@ -1271,6 +1281,9 @@
           <dd>{{ messages|length }}</dd>
         </div>
       </dl>
+      <div class="candidate-hero__chat">
+        <button class="btn btn-soft btn--xs" type="button" data-chat-toggle>Открыть чат</button>
+      </div>
     </div>
   </div>
 
@@ -1627,6 +1640,8 @@
 <script>
 (function () {
   const chatRoot = document.querySelector('[data-chat-root]');
+  const chatToggle = document.querySelector('[data-chat-toggle]');
+  const chatClose = chatRoot ? chatRoot.querySelector('[data-chat-close]') : null;
   if (!chatRoot) {
     return;
   }
@@ -1645,6 +1660,21 @@
   const csrfToken = window.__CSRF_TOKEN__ || document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
   let pollTimer = null;
   let state = [];
+
+  const openChat = () => {
+    chatRoot.hidden = false;
+    if (chatToggle) chatToggle.hidden = true;
+  };
+  const closeChat = () => {
+    chatRoot.hidden = true;
+    if (chatToggle) chatToggle.hidden = false;
+  };
+  if (chatToggle) {
+    chatToggle.addEventListener('click', openChat);
+  }
+  if (chatClose) {
+    chatClose.addEventListener('click', closeChat);
+  }
 
   const setStatus = (message, tone = 'muted') => {
     if (!statusEl) return;

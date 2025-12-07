@@ -3,6 +3,19 @@
 [![CI](https://github.com/OWNER/HR/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-85%25+-brightgreen.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 
+## Локальная разработка (без PostgreSQL/Redis)
+
+Для локальной разработки создайте файл `.env.local` для переопределения настроек production:
+
+```bash
+# Копируем пример конфигурации для разработки
+cp .env.development.example .env.local
+```
+
+Файл `.env.local` автоматически загружается после `.env` и может переопределять настройки. Он не коммитится в git.
+
+**Важно:** Файл `.env` содержит настройки production (`ENVIRONMENT=production`), что требует PostgreSQL и Redis. Файл `.env.local` переопределяет это на `ENVIRONMENT=development`, что позволяет использовать SQLite и memory broker.
+
 ## Быстрый старт (dev/test)
 
 ```bash
@@ -51,6 +64,7 @@ python scripts/dev_server.py
 # customize command or watch paths via flags:
 python scripts/dev_server.py --cmd "uvicorn backend.apps.admin_ui.app:app --port 8100" --watch backend --watch admin_app
 ```
+- Порты ниже 1024 требуют root. Используйте 8000/8100 (по умолчанию) вместо 800, чтобы избежать проблем с CSRF/сессией в dev.
 
 ### Кандидаты: представления по воронкам
 

@@ -79,6 +79,8 @@ from backend.domain.repositories import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 
+from backend.apps.bot.utils.text import escape_html
+
 if TYPE_CHECKING:
     from aiogram import Dispatcher
 
@@ -96,6 +98,7 @@ from .config import (
     TEST2_QUESTIONS,
     TIME_FMT,
     TIME_LIMIT,
+    refresh_questions_bank,
 )
 from .keyboards import (
     create_keyboard,
@@ -137,9 +140,7 @@ from .template_provider import TemplateProvider, RenderedTemplate
 logger = logging.getLogger(__name__)
 
 def _sanitize_text(value: Optional[str]) -> str:
-    if not value:
-        return ""
-    return html.escape(str(value), quote=True)
+    return escape_html(value)
 
 
 def _strip_markup(value: Optional[str]) -> str:
@@ -147,6 +148,21 @@ def _strip_markup(value: Optional[str]) -> str:
         return ""
     text = re.sub(r"<[^>]+>", "", str(value))
     return html.unescape(text)
+
+
+def _format_recruiter_slot_caption(
+    *,
+    candidate_label: str,
+    city_label: str,
+    dt_label: str,
+    purpose: str,
+) -> str:
+    return (
+        f"📥 <b>Новый кандидат на {escape_html(purpose)}</b>\n"
+        f"👤 {escape_html(candidate_label)}\n"
+        f"📍 {escape_html(city_label)}\n"
+        f"🗓 {dt_label}\n"
+    )
 
 
 def _intro_detail(
@@ -162,8 +178,10 @@ def _intro_detail(
     return _sanitize_text(raw), raw
 
 
-async def _resolve_intro_day_template_key(city_name: Optional[str]) -> str:
-    # City-specific variations are now resolved by city_id instead of key suffixes.
+async def _resolve_intro_day_template_key(city_id: Optional[int]) -> str:
+    # Используем отдельный ключ для городских шаблонов, чтобы не смешивать с глобальным.
+    if city_id is not None:
+        return "intro_day_invite_city"
     return "intro_day_invitation"
 
 
@@ -1970,7 +1988,7 @@ class NotificationService:
 
         # Try to render a city-specific template only when it actually exists to avoid
         # silently downgrading to the generic status message.
-        template_key = await _resolve_intro_day_template_key(city_name)
+        template_key = await _resolve_intro_day_template_key(slot.candidate_city_id)
         rendered = await self._template_provider.render(
             template_key, context, city_id=slot.candidate_city_id
         )
@@ -3161,8 +3179,8 @@ async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Pa
         return False
 
     bot = get_bot()
-    candidate_name = state.get("fio") or str(user_id)
-    city_name = state.get("city_name") or "—"
+    candidate_name = escape_html(state.get("fio") or str(user_id))
+    city_name = escape_html(state.get("city_name") or "—")
     caption = (
         "📋 <b>Кандидат прошел Тест 1, но не выбрал время собеседования</b>\n"
         f"👤 {candidate_name}\n"
@@ -3246,8 +3264,8 @@ async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city
     bot = get_bot()
     message = (
         "⏳ <b>Кандидат ждёт назначения слота</b>\n\n"
-        f"👤 {candidate_name}\n"
-        f"📍 {city_name}\n"
+        f"👤 {escape_html(candidate_name)}\n"
+        f"📍 {escape_html(city_name)}\n"
         f"TG: <code>{user_id}</code>\n\n"
         "⚠️ <b>Нет доступных автоматических слотов</b>\n"
         "Требуется ручное назначение времени собеседования через админ-панель."
@@ -3273,6 +3291,9 @@ async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city
 
 
 async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
+    # Ensure we use the freshest question set after admin edits.
+    refresh_questions_bank()
+
     state_manager = get_state_manager()
     bot = get_bot()
     try:
@@ -3374,6 +3395,19 @@ def _format_prompt(prompt: Any) -> str:
     return str(prompt)
 
 
+def _ensure_question_id(question: Dict[str, Any], idx: int) -> str:
+    """
+    Guarantee that a question dict has an 'id' field.
+    If absent, derive a stable fallback based on position.
+    """
+
+    qid = question.get("id")
+    if not qid:
+        qid = question.get("question_id") or f"q{idx + 1}"
+        question["id"] = qid
+    return str(qid)
+
+
 async def send_test1_question(user_id: int) -> None:
     bot = get_bot()
     state_manager = get_state_manager()
@@ -3387,6 +3421,7 @@ async def send_test1_question(user_id: int) -> None:
             return working, {"done": True}
         question = dict(sequence[idx])
         sequence[idx] = question
+        _ensure_question_id(question, idx)
         return working, {
             "done": False,
             "idx": idx,
@@ -3552,7 +3587,8 @@ async def save_test1_answer(
 ) -> Test1AnswerResult:
     state_manager = get_state_manager()
     state = await state_manager.get(user_id) or {}
-    qid = str(question.get("id") or "")
+    current_idx = int(state.get("t1_current_idx", state.get("t1_idx", 0)) or 0)
+    qid = _ensure_question_id(question, current_idx)
     meta = metadata or {}
     payload_data: Dict[str, Any] = dict(state.get("test1_payload") or {})
     answer_clean = answer.strip()
@@ -3602,13 +3638,12 @@ async def save_test1_answer(
     if qid == FOLLOWUP_STUDY_SCHEDULE["id"]:
         should_insert_flex = _should_insert_study_flex(validated_model, answer)
 
-    current_idx = int(state.get("t1_current_idx", state.get("t1_idx", 0)) or 0)
-
     def _apply(state: State) -> Tuple[State, Dict[str, Any]]:
         working = state
         answers = working.setdefault("test1_answers", {})
         sequence = list(working.get("t1_sequence") or TEST1_QUESTIONS)
         working["t1_sequence"] = sequence
+        _ensure_question_id(question, current_idx)
 
         if qid == "fio":
             working["fio"] = validated_model.fio or answer
@@ -3722,11 +3757,13 @@ async def handle_test1_answer(message: Message) -> None:
         return
 
     question = sequence[idx]
+    _ensure_question_id(question, idx)
     if not state.get("t1_requires_free_text", True):
-        await message.reply(
-            "Пожалуйста, выберите вариант ответа с помощью кнопок под вопросом."
-        )
-        return
+        # Разрешаем текстовый ответ даже если ранее ожидались кнопки
+        def _allow_text(st: State) -> Tuple[State, None]:
+            st["t1_requires_free_text"] = True
+            return st, None
+        await state_manager.atomic_update(user_id, _allow_text)
 
     answer_text = (message.text or message.caption or "").strip()
     if not answer_text:
@@ -3889,9 +3926,9 @@ async def finalize_test1(user_id: int) -> None:
         "",
         "Ответы:",
     ]
-    for q in sequence:
-        qid = q["id"]
-        lines.append(f"- {q['prompt']}\n  {answers.get(qid, '—')}")
+    for idx, q in enumerate(sequence):
+        qid = _ensure_question_id(q, idx)
+        lines.append(f"- {q.get('prompt')}\n  {answers.get(qid, '—')}")
 
     report_content = "\n".join(lines)
     fname = TEST1_DIR / f"test1_{(state.get('fio') or user_id)}.txt"
@@ -4026,6 +4063,9 @@ async def finalize_test1(user_id: int) -> None:
 
 
 async def start_test2(user_id: int) -> None:
+    # Refresh questions so admin changes are reflected without restart.
+    refresh_questions_bank()
+
     bot = get_bot()
     state_manager = get_state_manager()
 
@@ -4703,6 +4743,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         purpose="intro_day" if is_intro else "interview",
         expected_recruiter_id=recruiter_id,
         expected_city_id=city_id,
+        allow_candidate_replace=True,
     )
 
     if reservation.status == "slot_taken":
@@ -4741,11 +4782,11 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
     rec = await get_recruiter(slot.recruiter_id)
     purpose = "ознакомительный день" if is_intro else "видео-интервью"
     bot = get_bot()
-    caption = (
-        f"📥 <b>Новый кандидат на {purpose}</b>\n"
-        f"👤 {slot.candidate_fio or user_id}\n"
-        f"📍 {state.get('city_name','—')}\n"
-        f"🗓 {fmt_dt_local(slot.start_utc, (rec.tz if rec else DEFAULT_TZ) or DEFAULT_TZ)}\n"
+    caption = _format_recruiter_slot_caption(
+        candidate_label=slot.candidate_fio or str(user_id),
+        city_label=state.get("city_name", "—"),
+        dt_label=fmt_dt_local(slot.start_utc, (rec.tz if rec else DEFAULT_TZ) or DEFAULT_TZ),
+        purpose=purpose,
     )
 
     attached = False
@@ -4877,7 +4918,10 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
                 "recruiter_contact": intro_contact_safe,
             }
         )
-    template_key = "intro_day_invitation" if is_intro_day else "interview_confirmed_candidate"
+    if is_intro_day:
+        template_key = await _resolve_intro_day_template_key(getattr(slot, "candidate_city_id", None))
+    else:
+        template_key = "interview_confirmed_candidate"
     provider = get_template_provider()
     rendered = await provider.render(
         template_key,
@@ -5383,9 +5427,10 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
     bot = get_bot()
     if rec and rec.tg_chat_id:
         try:
+            candidate_label = escape_html(slot.candidate_fio or str(slot.candidate_tg_id or ""))
             await bot.send_message(
                 rec.tg_chat_id,
-                f"❌ Кандидат {slot.candidate_fio or slot.candidate_tg_id} отказался от слота "
+                f"❌ Кандидат {candidate_label} отказался от слота "
                 f"{fmt_dt_local(slot.start_utc, rec.tz or DEFAULT_TZ)}. Слот освобождён.",
             )
         except Exception:
@@ -5470,9 +5515,9 @@ async def capture_intro_decline_reason(message, state) -> bool:
             candidate_label = reason_payload.get("candidate_fio") or getattr(slot, "candidate_fio", "") or str(message.from_user.id)
             reason_text = (
                 "❌ Кандидат отказался от ознакомительного дня.\n"
-                f"👤 {candidate_label}\n"
+                f"👤 {escape_html(candidate_label)}\n"
                 f"🗓 {dt_label}\n"
-                f"Причина: {text}"
+                f"Причина: {escape_html(text)}"
             )
             try:
                 await bot.send_message(recruiter.tg_chat_id, reason_text)
