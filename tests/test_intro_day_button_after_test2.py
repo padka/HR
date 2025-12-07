@@ -7,7 +7,7 @@ from backend.apps.admin_ui.app import create_app
 from backend.core.db import async_session
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.models import User
-from backend.domain.models import Slot, SlotStatus
+from backend.domain.models import Slot, SlotStatus, Recruiter
 
 
 @pytest.mark.asyncio
@@ -22,12 +22,17 @@ async def test_intro_day_button_visible_after_test2_completion():
             is_active=True,
         )
         session.add(user)
+
+        # Create recruiter for the slot
+        recruiter = Recruiter(name="Test Recruiter", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
         await session.commit()
         await session.refresh(user)
+        await session.refresh(recruiter)
 
         # Create an intro_day slot to ensure availability
         slot = Slot(
-            recruiter_id=1,
+            recruiter_id=recruiter.id,
             city_id=None,
             purpose="intro_day",
             tz_name="Europe/Moscow",
@@ -63,12 +68,17 @@ async def test_intro_day_button_hidden_when_already_has_intro_slot():
             is_active=True,
         )
         session.add(user)
+
+        # Create recruiter for the slot
+        recruiter = Recruiter(name="Test Recruiter 2", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
         await session.commit()
         await session.refresh(user)
+        await session.refresh(recruiter)
 
         # Existing intro_day slot for this candidate
         slot = Slot(
-            recruiter_id=1,
+            recruiter_id=recruiter.id,
             city_id=None,
             purpose="intro_day",
             tz_name="Europe/Moscow",

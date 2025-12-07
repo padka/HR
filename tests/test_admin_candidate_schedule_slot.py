@@ -9,6 +9,7 @@ from backend.apps.admin_ui.app import create_app
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.candidates import services as candidate_services
+from backend.domain.candidates.status import CandidateStatus
 
 
 class _DummyIntegration:
@@ -56,6 +57,7 @@ async def test_schedule_slot_conflict_returns_validation_error(admin_app) -> Non
         fio="API Кандидат",
         city="Москва",
         username="api_candidate",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
     )
 
     async with async_session() as session:
@@ -67,13 +69,17 @@ async def test_schedule_slot_conflict_returns_validation_error(admin_app) -> Non
         await session.refresh(city)
         await session.refresh(recruiter)
 
+        # Create a BOOKED slot that conflicts with the time we'll try to schedule
         conflict_slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime(2024, 7, 5, 9, 0),  # stored as naive UTC
+            start_utc=datetime(2024, 7, 5, 9, 0),  # 09:00 UTC = 12:00 Moscow
             duration_min=60,
-            status=models.SlotStatus.FREE,
+            status=models.SlotStatus.BOOKED,  # Already booked - creates conflict
+            candidate_tg_id=999999,  # Different candidate
+            candidate_fio="Другой кандидат",
+            candidate_tz="Europe/Moscow",
         )
         session.add(conflict_slot)
         await session.commit()
