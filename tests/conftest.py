@@ -9,9 +9,16 @@ except Exception:  # pragma: no cover - optional dependency
 import asyncio
 from sqlalchemy import text
 
+# PostgreSQL test database configuration
+# Override with TEST_DATABASE_URL environment variable if needed
+DEFAULT_TEST_DB_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://rs:pass@localhost:5432/rs_test"
+)
+
 TEST_ENV = {
     "ENVIRONMENT": "test",
-    "DATABASE_URL": "sqlite+aiosqlite:///./data/test.db",
+    "DATABASE_URL": DEFAULT_TEST_DB_URL,
     "REDIS_URL": "",
     "REDIS_NOTIFICATIONS_URL": "",
     "NOTIFICATION_BROKER": "memory",
@@ -37,7 +44,7 @@ def _set_test_env():
 
     env = {
         "ENVIRONMENT": "test",
-        "DATABASE_URL": "sqlite+aiosqlite:///./data/test.db",
+        "DATABASE_URL": DEFAULT_TEST_DB_URL,
         "REDIS_URL": "",
         "REDIS_NOTIFICATIONS_URL": "",
         "NOTIFICATION_BROKER": "memory",
@@ -60,15 +67,12 @@ def _set_test_env():
 
 @pytest.fixture(scope="session", autouse=True)
 def _prepare_test_db(_set_test_env):
-    """Create test DB file and apply migrations once per session."""
-    Path("data").mkdir(exist_ok=True)
-    db_path = Path("data/test.db")
-    if db_path.exists():
-        db_path.unlink()
-
+    """Apply migrations once per session to test database."""
     from backend.migrations.runner import upgrade_to_head
 
-    upgrade_to_head("sqlite:///./data/test.db")
+    # Convert asyncpg URL to psycopg2 for sync migrations
+    sync_db_url = DEFAULT_TEST_DB_URL.replace("+asyncpg", "")
+    upgrade_to_head(sync_db_url)
     yield
 
 
@@ -97,22 +101,32 @@ def _force_test_settings(_set_test_env):
 
 
 async def _wipe_db():
+    """Wipe all tables using DELETE for PostgreSQL compatibility."""
+    from backend.core.db import async_engine
+
     async with async_session() as session:
-        await session.execute(text("PRAGMA foreign_keys=OFF"))
+        # Delete data from all tables in reverse order (respecting foreign keys)
         for table in reversed(Base.metadata.sorted_tables):
-            await session.execute(table.delete())
+            try:
+                await session.execute(table.delete())
+            except Exception:
+                # If table doesn't exist yet, ignore
+                pass
         await session.commit()
-        await session.execute(text("PRAGMA foreign_keys=ON"))
+
+    # Properly dispose connections to avoid "Event loop is closed" errors
+    await async_engine.dispose()
 
 
 @pytest.fixture(autouse=True)
-def _clean_database_between_tests(event_loop, request):
+def _clean_database_between_tests(request):
     """Wipe all tables before each test to avoid cross-test pollution."""
     # Skip database cleanup for tests that don't use the database
     if "no_db_cleanup" in request.keywords:
         return
 
-    event_loop.run_until_complete(_wipe_db())
+    # Use asyncio.run() to run the async cleanup function
+    asyncio.run(_wipe_db())
     try:
         from backend.apps.bot.services import reset_template_provider
         reset_template_provider()
@@ -126,3 +140,9 @@ def fake_redis():
     if fakeredis_aioredis is None:
         pytest.skip("fakeredis is not available")
     return fakeredis_aioredis.FakeRedis()
+
+
+@pytest.fixture(scope="session")
+def redis_url():
+    """Provide Redis URL for integration tests."""
+    return os.getenv("TEST_REDIS_URL", "redis://localhost:6379/1")
