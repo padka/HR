@@ -1,9 +1,8 @@
-import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -43,12 +42,8 @@ def admin_app(monkeypatch) -> Any:
 
 
 async def _async_request(app, method: str, path: str, **kwargs) -> Any:
-    def _call() -> Any:
-        with TestClient(app) as client:
-            client.auth = ("admin", "admin")
-            return client.request(method, path, **kwargs)
-
-    return await asyncio.to_thread(_call)
+    async with AsyncClient(app=app, base_url="http://testserver", auth=("admin", "admin")) as client:
+        return await client.request(method, path, **kwargs)
 
 
 @pytest.mark.asyncio
