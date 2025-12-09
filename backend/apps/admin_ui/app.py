@@ -167,28 +167,38 @@ async def lifespan(app: FastAPI):
     if _auto_upgrade_schema_if_needed(settings):
         logger.info("Development database migrated to latest revision")
 
+    # Detect test mode
+    import os
+    is_test_mode = bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("ENVIRONMENT") == "test"
+
     # Initialize cache with retry logic
     cache_task = None
-    try:
-        cache_task = await _initialize_cache_with_supervisor(app, settings)
-        if cache_task:
-            shutdown_manager.add_task(cache_task)
-            logger.info("Cache supervisor started")
-    except Exception as exc:
-        logger.error("Cache supervisor failed to start: %s", exc, exc_info=True)
+    if not is_test_mode:
+        try:
+            cache_task = await _initialize_cache_with_supervisor(app, settings)
+            if cache_task:
+                shutdown_manager.add_task(cache_task)
+                logger.info("Cache supervisor started")
+        except Exception as exc:
+            logger.error("Cache supervisor failed to start: %s", exc, exc_info=True)
+    else:
+        logger.info("Test mode: skipping cache supervisor")
 
     # Start background task for stalled candidate checker (runs hourly)
     stalled_checker_task = None
-    try:
-        stalled_checker_task = asyncio.create_task(
-            periodic_stalled_candidate_checker(interval_hours=1),
-            name="stalled_candidate_checker",
-        )
-        app.state.stalled_checker_task = stalled_checker_task
-        shutdown_manager.add_task(stalled_checker_task)
-        logger.info("Stalled candidate checker started")
-    except Exception as exc:
-        logger.error("Failed to start stalled candidate checker: %s", exc, exc_info=True)
+    if not is_test_mode:
+        try:
+            stalled_checker_task = asyncio.create_task(
+                periodic_stalled_candidate_checker(interval_hours=1),
+                name="stalled_candidate_checker",
+            )
+            app.state.stalled_checker_task = stalled_checker_task
+            shutdown_manager.add_task(stalled_checker_task)
+            logger.info("Stalled candidate checker started")
+        except Exception as exc:
+            logger.error("Failed to start stalled candidate checker: %s", exc, exc_info=True)
+    else:
+        logger.info("Test mode: skipping stalled candidate checker")
 
     # Initialize templates and bot integration
     try:

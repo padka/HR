@@ -352,6 +352,24 @@ async def create_message_template(
                 errors.append("Указанный город не найден.")
                 return False, errors, None
 
+        # Prevent silent integrity errors: check versions for this combination in advance
+        existing_versions = await session.scalars(
+            select(MessageTemplate.version).where(
+                MessageTemplate.key == key_value,
+                MessageTemplate.locale == locale_value,
+                MessageTemplate.channel == channel_value,
+                MessageTemplate.city_id.is_(city_value) if city_value is None else MessageTemplate.city_id == city_value,
+            )
+        )
+        versions_list = [v for v in existing_versions if v is not None]
+        if version_value in versions_list:
+            next_ver = (max(versions_list) + 1) if versions_list else version_value + 1
+            errors.append(
+                f"Версия v{version_value} уже существует для выбранного города/канала. "
+                f"Свободная следующая версия: v{next_ver}."
+            )
+            return False, errors, None
+
         if is_active:
             existing_active = await session.scalar(
                 select(MessageTemplate.id).where(

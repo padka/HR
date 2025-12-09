@@ -87,9 +87,11 @@ def _build_city_form_state(
     city_templates: Dict[str, str],
     overrides: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
+    recruiter_ids = [rec.id for rec in (city.recruiters or [])]
     state: Dict[str, object] = {
         "name": city.name_plain,
         "responsible_recruiter_id": str(owner_id) if owner_id is not None else "",
+        "recruiter_ids": recruiter_ids,
         "criteria": city.criteria or "",
         "experts": city.experts or "",
         "plan_week": "" if city.plan_week is None else str(city.plan_week),
@@ -123,6 +125,8 @@ async def _prepare_city_edit_context(
     recruiter_rows = await list_recruiters()
     owner_id = _primary_recruiter_id(city)
     city_templates = stage_map.get(city.id, {})
+    rec_map = {row["rec"].id: row["rec"] for row in recruiter_rows if row.get("rec")}
+    owner_lookup = rec_map.get(owner_id)
 
     context = {
         "request": request,
@@ -133,6 +137,7 @@ async def _prepare_city_edit_context(
         "stage_meta": CITY_TEMPLATE_STAGES,
         "global_templates": stage_map.get(None, {}),
         "recruiter_rows": recruiter_rows,
+        "owner_lookup": owner_lookup,
     }
     return context
 
@@ -188,10 +193,16 @@ async def cities_edit_submit(city_id: int, request: Request):
     form = await request.form()
     form_data = dict(form)
 
-    raw_responsible = (form_data.get("responsible_recruiter_id") or "").strip()
+    recruiter_ids_raw = form.getlist("recruiter_ids") if hasattr(form, "getlist") else []
+    recruiter_ids: List[int] = []
+    for raw_id in recruiter_ids_raw:
+        try:
+            recruiter_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            continue
     override_state = {
         "name": form_data.get("name", ""),
-        "responsible_recruiter_id": raw_responsible,
+        "recruiter_ids": recruiter_ids,
         "criteria": form_data.get("criteria", ""),
         "experts": form_data.get("experts", ""),
         "plan_week": form_data.get("plan_week", ""),
@@ -214,20 +225,6 @@ async def cities_edit_submit(city_id: int, request: Request):
             form_error="Название города не может быть пустым",
         )
         return templates.TemplateResponse(request, "cities_edit.html", context, status_code=400)
-
-    if raw_responsible and raw_responsible.lower() != "null":
-        try:
-            responsible_id: Optional[int] = int(raw_responsible)
-        except ValueError:
-            context = await _prepare_city_edit_context(
-                city_id,
-                request,
-                form_state=override_state,
-                form_error="Укажите корректного рекрутёра",
-            )
-            return templates.TemplateResponse(request, "cities_edit.html", context, status_code=400)
-    else:
-        responsible_id = None
 
     try:
         plan_week = _parse_plan_value(form_data.get("plan_week"))
@@ -268,7 +265,7 @@ async def cities_edit_submit(city_id: int, request: Request):
     error, _, _ = await update_city_settings_service(
         city_id,
         name=name_clean,
-        responsible_id=responsible_id,
+        recruiter_ids=recruiter_ids,
         templates=templates_payload,
         criteria=criteria,
         experts=experts,
@@ -325,14 +322,23 @@ async def update_city_settings(city_id: int, request: Request):
     name_clean = sanitize_plain_text(name_raw) if name_raw else None
     if name_raw and not name_clean:
         return JSONResponse({"ok": False, "error": {"field": "name", "message": "Название города не может быть пустым"}}, status_code=422)
-    recruiter_raw = payload.get("responsible_recruiter_id")
-    if recruiter_raw in (None, "", "null"):
-        responsible_id: Optional[int] = None
+    recruiter_ids_payload = payload.get("recruiter_ids")
+    recruiter_ids: List[int] = []
+    if recruiter_ids_payload is None:
+        recruiter_raw = payload.get("responsible_recruiter_id")
+        if recruiter_raw not in (None, "", "null"):
+            try:
+                recruiter_ids = [int(recruiter_raw)]
+            except (TypeError, ValueError):
+                return JSONResponse({"ok": False, "error": "invalid_recruiter"}, status_code=400)
     else:
-        try:
-            responsible_id = int(recruiter_raw)
-        except (TypeError, ValueError):
-            return JSONResponse({"ok": False, "error": "invalid_recruiter"}, status_code=400)
+        if not isinstance(recruiter_ids_payload, list):
+            return JSONResponse({"ok": False, "error": "invalid_recruiter_ids"}, status_code=400)
+        for raw in recruiter_ids_payload:
+            try:
+                recruiter_ids.append(int(raw))
+            except (TypeError, ValueError):
+                continue
 
     templates_payload = payload.get("templates") or {}
     if not isinstance(templates_payload, dict):
@@ -378,7 +384,7 @@ async def update_city_settings(city_id: int, request: Request):
 
     error, city, owner = await update_city_settings_service(
         city_id,
-        responsible_id=responsible_id,
+        recruiter_ids=recruiter_ids,
         templates=templates_payload,
         criteria=criteria,
         experts=experts,
@@ -393,6 +399,7 @@ async def update_city_settings(city_id: int, request: Request):
         return JSONResponse({"ok": False, "error": error}, status_code=status)
     effective_owner = owner or (_primary_recruiter(city) if city else None)
     owner_id = effective_owner.id if effective_owner else None
+    recruiter_ids_resp = [rec.id for rec in getattr(city, "recruiters", [])] if city else []
     city_payload: Dict[str, object] = {
         "id": city.id if city else city_id,
         "name": city.name_plain if city else "",
@@ -403,6 +410,7 @@ async def update_city_settings(city_id: int, request: Request):
         "experts": getattr(city, "experts", None) if city else None,
         "plan_week": getattr(city, "plan_week", None) if city else None,
         "plan_month": getattr(city, "plan_month", None) if city else None,
+        "recruiter_ids": recruiter_ids_resp,
         "responsible_recruiter_id": owner_id,
     }
     if effective_owner:
@@ -478,8 +486,13 @@ async def update_city_status_api(city_id: int, request: Request):
 
 
 @router.post("/{city_id}/delete")
-async def cities_delete(city_id: int):
+async def cities_delete(city_id: int, request: Request):
     ok = await delete_city(city_id)
+    wants_json = "application/json" in (request.headers.get("accept") or "").lower()
     if not ok:
-        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
-    return JSONResponse({"ok": True})
+        if wants_json:
+            return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+        return RedirectResponse(url="/cities?deleted=0", status_code=303)
+    if wants_json:
+        return JSONResponse({"ok": True})
+    return RedirectResponse(url="/cities?deleted=1", status_code=303)

@@ -6,6 +6,11 @@
     <div>
       <h1 id="cities-title" class="page-title">Города</h1>
       <p class="page-description">Каждая карточка — это профиль города со статусом, ответственным и ключевыми настройками.</p>
+      {% if request.query_params.get("deleted") == "1" %}
+        <div class="surface glass grain alert" data-tone="success" role="status" style="margin-top:10px;">Город удалён.</div>
+      {% elif request.query_params.get("deleted") == "0" %}
+        <div class="surface glass grain alert" data-tone="warning" role="status" style="margin-top:10px;">Город не найден или уже удалён.</div>
+      {% endif %}
     </div>
     <div class="page-actions">
       <a class="liquid-glass-btn liquid-glass-btn--primary" href="/cities/new">Добавить город</a>
@@ -165,6 +170,8 @@
       {% for city in cities %}
         {% set owner_id = owners.get(city.id) %}
         {% set owner = rec_map.get(owner_id) if owner_id else None %}
+        {% set city_recruiters = (city.recruiters or []) | unique(attribute='id') | list %}
+        {% set rec_names = city_recruiters | map(attribute='name') | list %}
         {% set tz = city.tz or "Не указан" %}
         {% set stages = city_stages.get(city.id, []) %}
         {% set plan_week = city.plan_week %}
@@ -187,6 +194,16 @@
             <span class="city-pill">👤 <strong>{{ owner.name if owner else "Не назначен" }}</strong></span>
             <span class="city-pill">📅 Нед.: <strong>{{ plan_week if plan_week is not none else "—" }}</strong></span>
             <span class="city-pill">📈 Мес.: <strong>{{ plan_month if plan_month is not none else "—" }}</strong></span>
+          </div>
+
+          <div class="city-profile-card__meta" style="gap: 6px; flex-wrap: wrap;">
+            {% if rec_names %}
+              {% for rec in city_recruiters %}
+                <span class="city-pill" title="{{ rec.name }}">👥 <strong>{{ rec.name }}</strong></span>
+              {% endfor %}
+            {% else %}
+              <span class="city-pill">👥 <strong>Рекрутеры не назначены</strong></span>
+            {% endif %}
           </div>
 
           {% if city.experts %}

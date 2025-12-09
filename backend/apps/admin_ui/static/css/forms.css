@@ -160,7 +160,7 @@
 
 .form-shell__actions .btn {
   min-width: clamp(110px, 12vw, 150px);
-  padding: clamp(8px, 1.4vw, 12px) clamp(14px, 2.4vw, 20px);
+  padding: clamp(10px, 1.6vw, 12px) clamp(16px, 2.4vw, 20px);
   font-size: 13px;
   box-shadow: none;
   border-radius: 999px;
@@ -174,7 +174,7 @@
 
 .form-shell__actions .btn:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, var(--accent)) 35%, transparent);
 }
 
 .form-shell__actions .btn.btn--primary {
@@ -197,6 +197,23 @@
   flex-direction: column;
   gap: clamp(6px, 1.6vw, 10px);
   font-size: 13px;
+}
+
+.form-field :is(input, select, textarea, .btn) {
+  min-height: 42px;
+  line-height: 1.4;
+}
+
+.form-field :is(input, select, textarea):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, var(--accent)) 30%, transparent);
+}
+
+.form-field :is(input, select, textarea):disabled,
+.form-field :is(input, select, textarea)[readonly] {
+  opacity: 0.7;
+  background: color-mix(in srgb, var(--field-bg) 92%, transparent);
+  cursor: not-allowed;
 }
 
 .form-error {
@@ -376,7 +393,7 @@ textarea.is-invalid {
   border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
   border-radius: var(--radius-md);
   padding: clamp(14px, 2.4vw, 20px);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 70%, transparent), rgba(0,0,0,0.08));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 70%, transparent), color-mix(in srgb, var(--on-surface) 8%, transparent));
   font-size: 13px;
   color: var(--muted);
 }
@@ -385,7 +402,7 @@ textarea.is-invalid {
   border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
   border-radius: var(--radius-md);
   padding: clamp(14px, 2.4vw, 20px);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 70%, transparent), rgba(0,0,0,0.08));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 70%, transparent), color-mix(in srgb, var(--on-surface) 8%, transparent));
   margin: 0;
 }
 
@@ -417,7 +434,7 @@ textarea.is-invalid {
   padding: clamp(12px, 2vw, 16px);
   border-radius: var(--radius-md);
   border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 75%, transparent), rgba(0,0,0,0.08));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 75%, transparent), color-mix(in srgb, var(--on-surface) 8%, transparent));
   cursor: pointer;
   transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
@@ -456,7 +473,7 @@ textarea.is-invalid {
   padding: 4px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 70%, transparent), rgba(0,0,0,0.12));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 70%, transparent), color-mix(in srgb, var(--on-surface) 10%, transparent));
 }
 
 .segmented button {
@@ -479,7 +496,7 @@ textarea.is-invalid {
 .segmented button.active {
   color: var(--fg-strong);
   background: color-mix(in srgb, var(--accent) 35%, transparent);
-  box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+  box-shadow: var(--shadow-2, 0 8px 20px rgba(15,31,55,0.12));
 }
 
 .segmented button:focus-visible {
@@ -495,7 +512,7 @@ textarea.is-invalid {
   padding: clamp(8px, 1.6vw, 12px) clamp(12px, 2vw, 16px);
   border-radius: var(--radius-md);
   border: 1px solid color-mix(in srgb, var(--field-border) 75%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--field-bg) 78%, transparent), rgba(0,0,0,0.12));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--field-bg) 78%, transparent), color-mix(in srgb, var(--on-surface) 12%, transparent));
   cursor: pointer;
   transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
 }

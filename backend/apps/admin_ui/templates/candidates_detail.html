@@ -21,6 +21,16 @@
       0 16px 48px 0 rgba(0, 0, 0, 0.35),
       inset 0 1px 2px 0 rgba(255, 255, 255, 0.08);
     --liquid-glass-blur: blur(40px);
+    --detail-surface: var(--layer-panel-strong);
+    --detail-surface-2: var(--layer-panel);
+    --detail-veil: var(--layer-glass-weak);
+    --detail-veil-strong: var(--layer-glass);
+    --detail-border: var(--layer-border);
+    --detail-border-strong: var(--layer-border-strong);
+    --detail-shadow: var(--shadow-xl, 0 35px 60px rgba(15, 23, 42, 0.18));
+    --detail-muted: var(--ink-soft);
+    --detail-muted-strong: var(--ink-softer);
+    --detail-hover: var(--interactive-hover);
   }
 
   html[data-theme="light"] {
@@ -47,17 +57,11 @@
     margin-top: 32px;
     padding: 32px;
     border-radius: 32px;
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(15, 23, 42, 0.55));
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    box-shadow: 0 45px 70px rgba(2, 6, 23, 0.45);
+    background: linear-gradient(135deg, var(--detail-surface), var(--detail-surface-2));
+    border: 1px solid var(--detail-border);
+    box-shadow: var(--detail-shadow);
     display: grid;
     gap: 32px;
-  }
-
-  html[data-theme="light"] .candidate-overview {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 255, 0.9));
-    border-color: rgba(15, 23, 42, 0.12);
-    box-shadow: 0 35px 60px rgba(15, 23, 42, 0.18);
   }
 
   .candidate-hero {
@@ -99,13 +103,8 @@
     text-transform: uppercase;
     padding: 6px 12px;
     border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    background: rgba(255, 255, 255, 0.08);
-  }
-
-  html[data-theme="light"] .candidate-hero__stage-pill {
-    border-color: rgba(15, 23, 42, 0.15);
-    background: rgba(15, 23, 42, 0.05);
+    border: 1px solid var(--detail-border-strong);
+    background: var(--detail-veil-strong);
   }
 
   .candidate-hero__meta {
@@ -123,14 +122,9 @@
   .candidate-hero__tag {
     padding: 6px 14px;
     border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--detail-border);
+    background: var(--detail-veil);
     font-size: 0.85rem;
-  }
-
-  html[data-theme="light"] .candidate-hero__tag {
-    border-color: rgba(15, 23, 42, 0.12);
-    background: rgba(15, 23, 42, 0.05);
   }
 
   .candidate-hero__chat {
@@ -149,15 +143,10 @@
     margin-top: 20px;
     padding: 18px 20px;
     border-radius: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--detail-border);
+    background: var(--detail-veil);
     display: grid;
     gap: 14px;
-  }
-
-  html[data-theme="light"] .telegram-panel {
-    border-color: rgba(15, 23, 42, 0.12);
-    background: rgba(15, 23, 42, 0.03);
   }
 
   .telegram-panel__eyebrow {

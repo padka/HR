@@ -160,7 +160,7 @@ async def set_status_interview_declined(telegram_id: int) -> bool:
     """Set status when candidate declines interview."""
     try:
         return await update_candidate_status(
-            telegram_id, CandidateStatus.INTERVIEW_DECLINED
+            telegram_id, CandidateStatus.INTERVIEW_DECLINED, force=True
         )
     except StatusTransitionError as e:
         logger.error(f"Failed to set INTERVIEW_DECLINED: {e}")

@@ -279,7 +279,13 @@ async def slots_bulk_create(
         use_break=_parse_checkbox(use_break),
     )
 
-    params = [f"recruiter_id={recruiter_id}", f"date={target_day.isoformat()}"]
+    # build redirect params (use start_date as anchor)
+    params = [f"recruiter_id={recruiter_id}"]
+    try:
+        anchor_day = date_type.fromisoformat(start_date)
+        params.append(f"date={anchor_day.isoformat()}")
+    except ValueError:
+        pass
     if city_id:
         from backend.core.db import async_session
         from backend.domain.models import City

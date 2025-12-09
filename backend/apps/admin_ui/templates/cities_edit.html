@@ -10,16 +10,7 @@
     {% set custom_count.value = custom_count.value + 1 %}
   {% endif %}
 {% endfor %}
-{% set recruiter_name = city.recruiters[0].name if city.recruiters and city.recruiters[0] else None %}
-{% set selected_owner_raw = form_state.get('responsible_recruiter_id') or (city.recruiters[0].id if city.recruiters and city.recruiters[0] else '') %}
-{% set owner_lookup = namespace(name=recruiter_name) %}
-{% if selected_owner_raw %}
-  {% for row in recruiter_rows %}
-    {% if selected_owner_raw|string == row.rec.id|string %}
-      {% set owner_lookup.name = row.rec.name %}
-    {% endif %}
-  {% endfor %}
-{% endif %}
+{% set selected_recruiters = form_state.get('recruiter_ids') or city.recruiters | map(attribute='id') | list %}
 <style>
   .city-hero {
     display: flex;
@@ -203,8 +194,10 @@
       <strong>{{ form_state.get('tz', city.tz) }}</strong>
     </div>
     <div class="city-chip">
-      <span>Ответственный</span>
-      <strong>{{ owner_lookup.name or "Не назначен" }}</strong>
+      {% set unique_recs = (city.recruiters or []) | unique(attribute='id') | list %}
+      {% set rec_names = unique_recs | map(attribute='name') | list %}
+      <span>Ответственные</span>
+      <strong>{{ rec_names|join(", ") if rec_names else "Не назначены" }}</strong>
     </div>
     <div class="city-chip">
       <span>Шаблоны</span>
@@ -212,19 +205,23 @@
     </div>
     <div class="city-chip">
       <span>Привязанных рекрутёров</span>
-      <strong>{{ city.recruiters|length if city.recruiters else 0 }}</strong>
+      <strong>{{ unique_recs|length }}</strong>
     </div>
   </div>
 </div>
 <div class="city-edit-nav">
   <a href="#city-general">Основные</a>
   <button type="button" id="open-city-templates">Шаблоны</button>
+  <form action="/cities/{{ city.id }}/delete" method="post" style="margin:0;" onsubmit="return confirm('Удалить город {{ city.display_name }}? Это действие нельзя отменить.');">
+    {{ csrf_input(request) }}
+    <button type="submit" class="btn btn--danger">Удалить город</button>
+  </form>
 </div>
 {% call forms.shell(
   title="Настройки города",
   description="",
   form_id="citySettingsForm",
-  action="/cities/{{ city.id }}/edit",
+  action="/cities/" ~ city.id ~ "/edit",
   method="post",
   back_href="/cities",
   back_label="К списку городов",
@@ -241,15 +238,15 @@
           <input type="text" name="name" value="{{ form_state.get('name', city.display_name) }}" required aria-required="true">
         {% endcall %}
 
-        {% call forms.field("Ответственный") %}
-          {% set selected_owner = form_state.get("responsible_recruiter_id") or "" %}
-          <select name="responsible_recruiter_id" id="responsible_recruiter_id">
-            <option value="">Не назначен</option>
+        {% call forms.field("Ответственные рекрутёры") %}
+          {% set selected_list = selected_recruiters %}
+          <select name="recruiter_ids" id="recruiter_ids" multiple>
             {% for row in recruiter_rows %}
               {% set rec = row.rec %}
-              <option value="{{ rec.id }}" {% if selected_owner and selected_owner|string == rec.id|string %}selected{% endif %}>{{ rec.name }}</option>
+              <option value="{{ rec.id }}" {% if rec.id in selected_list %}selected{% endif %}>{{ rec.name }}</option>
             {% endfor %}
           </select>
+          <p class="muted" style="margin:4px 0 0;">Можно выбрать нескольких.</p>
         {% endcall %}
 
         {% call forms.field("Часовой пояс", required=True) %}

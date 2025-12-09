@@ -336,8 +336,12 @@ async def connect_cache() -> None:
 
 async def disconnect_cache() -> None:
     """Disconnect from Redis cache."""
-    cache = get_cache()
-    await cache.disconnect()
+    try:
+        cache = get_cache()
+        await cache.disconnect()
+    except RuntimeError:
+        # Cache not initialized, nothing to disconnect
+        pass
 
 
 # Cache key builders

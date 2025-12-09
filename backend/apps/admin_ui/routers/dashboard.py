@@ -1,6 +1,7 @@
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Request, File, Form, UploadFile
+from fastapi import APIRouter, Request, File, Form, UploadFile, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from backend.apps.admin_ui.config import templates
@@ -29,7 +30,12 @@ router = APIRouter()
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+async def index(
+    request: Request,
+    recruiter_id: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+):
     counts = await dashboard_counts()
     recruiter_rows = await list_recruiters()
     recruiters = [row["rec"] for row in recruiter_rows]
@@ -38,14 +44,30 @@ async def index(request: Request):
     # Get dashboard data
     recent_candidates = await get_recent_candidates(limit=5)
     # Берём больше слотов, чтобы все одобренные брони (в т.ч. свежие) попали в календарь.
-    upcoming_interviews = await get_upcoming_interviews(limit=20)
+    parsed_date_from = _parse_date(date_from)
+    parsed_date_to = _parse_date(date_to)
+    recruiter_id_int: int | None = None
+    if recruiter_id:
+        try:
+            recruiter_id_int = int(recruiter_id)
+        except ValueError:
+            recruiter_id_int = None
+    upcoming_interviews = await get_upcoming_interviews(
+        limit=20,
+        recruiter_id=recruiter_id_int,
+        date_from=parsed_date_from,
+        date_to=parsed_date_to,
+    )
     interview_events = [ev for ev in upcoming_interviews if (ev.get("event_kind") or "").lower() != "ознакомительный день"]
     intro_day_events = [ev for ev in upcoming_interviews if (ev.get("event_kind") or "").lower() == "ознакомительный день"]
     hiring_funnel = await get_hiring_funnel_stats()
     recent_activities = await get_recent_activities(limit=10)
     ai_insights = await get_ai_insights()
     quick_slots = await get_quick_slots()
-    incoming_candidates = await get_waiting_candidates(limit=6)
+    incoming_candidates_all = await get_waiting_candidates(limit=80)
+    incoming_candidates_top = incoming_candidates_all[:12]
+    incoming_candidates_rest = incoming_candidates_all[12:]
+    incoming_candidates = incoming_candidates_top
     # Placeholder analytics until proper calculations are wired
     analytics = {
         "hire_time_median_days": None,
@@ -85,6 +107,9 @@ async def index(request: Request):
             "cities": cities,
             "recent_candidates": recent_candidates,
             "incoming_candidates": incoming_candidates,
+            "incoming_candidates_top": incoming_candidates_top,
+            "incoming_candidates_rest": incoming_candidates_rest,
+            "incoming_candidates_all": incoming_candidates_all,
             "upcoming_interviews": upcoming_interviews,
             "upcoming_interviews_main": interview_events,
             "upcoming_intro_days": intro_day_events,
@@ -94,8 +119,21 @@ async def index(request: Request):
             "bot_status": bot_status,
             "quick_slots": quick_slots,
             "analytics": analytics,
+            "upcoming_filter_recruiter": recruiter_id_int,
+            "upcoming_filter_date_from": date_from or "",
+            "upcoming_filter_date_to": date_to or "",
         },
     )
+
+
+def _parse_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return dt
 
 
 @router.post("/smart-create")

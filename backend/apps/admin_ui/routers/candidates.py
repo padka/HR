@@ -56,6 +56,15 @@ router = APIRouter(prefix="/candidates", tags=["candidates"])
 logger = logging.getLogger(__name__)
 
 
+# Module-level wrapper for status service (allows monkeypatching in tests)
+async def set_status_interview_declined(tg_id: int) -> bool:
+    """Wrapper for domain status service to set interview declined status."""
+    from backend.domain.candidates.status_service import (
+        set_status_interview_declined as domain_set_status_interview_declined,
+    )
+    return await domain_set_status_interview_declined(tg_id)
+
+
 def _parse_bool(value: Optional[str]) -> Optional[bool]:
     if value is None or value == "":
         return None
@@ -470,8 +479,8 @@ async def candidates_update_status(
 ):
     """Update candidate status (HIRED or NOT_HIRED)."""
     _ = csrf_token  # ensure parameter consumed for FastAPI/CSRF validation
-    # Only allow manual status changes to HIRED or NOT_HIRED
-    allowed_statuses = ["hired", "not_hired", "intro_day_declined_day_of"]
+    # Only allow manual status changes to limited set (includes decline via UI)
+    allowed_statuses = ["hired", "not_hired", "intro_day_declined_day_of", "interview_declined"]
     status_normalized = status.strip().lower()
 
     if status_normalized not in allowed_statuses:
@@ -502,8 +511,11 @@ async def candidates_update_status(
             success = await set_status_hired(telegram_id, force=True)
         elif status_normalized == "not_hired":
             success = await set_status_not_hired(telegram_id, force=True)
-        else:  # intro_day_declined_day_of
+        elif status_normalized == "intro_day_declined_day_of":
             success = await set_status_intro_day_declined_day_of(telegram_id, force=True)
+        else:  # interview_declined
+            # Use module-level wrapper (allows monkeypatching in tests)
+            success = await set_status_interview_declined(telegram_id)
 
         if not success:
             return RedirectResponse(
@@ -525,7 +537,7 @@ async def candidates_update_status(
         )
 
     return RedirectResponse(
-        url=f"/candidates/{candidate_id}?status_updated=1",
+        url=f"/candidates/{candidate_id}?ok=1",
         status_code=303,
     )
 

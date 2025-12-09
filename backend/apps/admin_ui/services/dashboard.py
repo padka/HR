@@ -158,7 +158,7 @@ async def get_recent_candidates(limit: int = 5) -> List[Dict[str, object]]:
 
 
 async def get_waiting_candidates(limit: int = 6) -> List[Dict[str, object]]:
-    """Return candidates waiting for manual slot assignment."""
+    """Return candidates waiting for manual slot assignment (prioritized)."""
     async with async_session() as session:
         status_filter = User.candidate_status.in_([
             CandidateStatus.WAITING_SLOT,
@@ -216,10 +216,26 @@ async def get_waiting_candidates(limit: int = 6) -> List[Dict[str, object]]:
                 "telegram_user_id": user.telegram_user_id or user.telegram_id,
                 "telegram_username": user.telegram_username or user.username,
                 "schedule_url": f"/candidates/{user.id}/schedule-slot",
+                "profile_url": f"/candidates/{user.id}",
+                "priority_score": 0,  # will be updated below
             }
         )
 
-    return waiting_rows
+    def _priority(row: Dict[str, object]) -> tuple:
+        is_stalled = (row.get("status_slug") == CandidateStatus.STALLED_WAITING_SLOT.value)
+        wait_hours = row.get("waiting_hours") or 0
+        wait_since = row.get("waiting_since") or datetime.now(timezone.utc)
+        return (
+            0 if is_stalled else 1,            # stalled first
+            -int(wait_hours),                  # longer waiting first
+            wait_since,                        # older requests first
+        )
+
+    prioritized = sorted(waiting_rows, key=_priority)
+    for idx, row in enumerate(prioritized, start=1):
+        row["priority_score"] = idx
+
+    return prioritized[:limit]
 
 
 def _format_delta(delta: timedelta) -> str:
@@ -245,11 +261,19 @@ SLOT_STATUS_LABELS = {
 }
 
 
-async def get_upcoming_interviews(limit: int = 20) -> List[Dict[str, object]]:
+async def get_upcoming_interviews(
+    limit: int = 20,
+    recruiter_id: int | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> List[Dict[str, object]]:
     """Get upcoming interviews (booked slots) for dashboard."""
     now = datetime.now(timezone.utc)
     # Show ближайшую неделю, чтобы одобренные слоты не терялись за пределами 48 часов.
     window_end = now + timedelta(days=7)
+
+    start_bound = date_from if date_from else now
+    end_bound = date_to if date_to else window_end
 
     async with async_session() as session:
         stmt = (
@@ -264,13 +288,15 @@ async def get_upcoming_interviews(limit: int = 20) -> List[Dict[str, object]]:
                         Slot.status == SlotStatus.BOOKED,
                         Slot.status == SlotStatus.CONFIRMED_BY_CANDIDATE
                     ),
-                    Slot.start_utc >= now,
-                    Slot.start_utc <= window_end
+                    Slot.start_utc >= start_bound,
+                    Slot.start_utc <= end_bound
                 )
             )
             .order_by(Slot.start_utc.asc())
             .limit(limit)
         )
+        if recruiter_id:
+            stmt = stmt.where(Slot.recruiter_id == recruiter_id)
         result = await session.execute(stmt)
         rows = result.all()
 
@@ -283,8 +309,8 @@ async def get_upcoming_interviews(limit: int = 20) -> List[Dict[str, object]]:
             slot_tz = (
                 getattr(slot, "tz_name", None)
                 or (city.tz if city else None)
-                or recruiter.tz
-                or DEFAULT_TZ
+                    or recruiter.tz
+                    or DEFAULT_TZ
             )
             zone = safe_zone(slot_tz)
             local_start = slot_start.astimezone(zone)

@@ -28,7 +28,6 @@ recruiter_city_association = Table(
     Base.metadata,
     Column("recruiter_id", Integer, ForeignKey("recruiters.id", ondelete="CASCADE"), primary_key=True),
     Column("city_id", Integer, ForeignKey("cities.id", ondelete="CASCADE"), primary_key=True),
-    UniqueConstraint("city_id", name="uq_recruiter_city_unique_city"),
 )
 from backend.core.sanitizers import sanitize_plain_text
 

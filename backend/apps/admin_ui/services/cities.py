@@ -79,7 +79,7 @@ async def update_city_settings(
     city_id: int,
     *,
     name: Optional[str],
-    responsible_id: Optional[int],
+    responsible_id: Optional[int] = None,
     templates: Dict[str, Optional[str]],
     criteria: Optional[str],
     experts: Optional[str],
@@ -101,11 +101,10 @@ async def update_city_settings(
 
             assigned_recruiter: Optional[Recruiter] = None
             if responsible_id is not None:
-                recruiter = await session.get(Recruiter, responsible_id)
-                if not recruiter:
+                assigned_recruiter = await session.get(Recruiter, responsible_id)
+                if not assigned_recruiter:
                     return "Recruiter not found", None, None
-                assigned_recruiter = recruiter
-                city.recruiters = [recruiter]
+                city.recruiters = [assigned_recruiter]
             else:
                 city.recruiters = []
 

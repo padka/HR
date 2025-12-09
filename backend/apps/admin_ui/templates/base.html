@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="ru" data-theme="dark">
+<html lang="ru" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Админка{% endblock %} · TG Bot Admin</title>
   <link rel="icon" href="/static/favicon.ico">
+  <link rel="stylesheet" href="/static/css/theme-tokens.css">
   <link rel="stylesheet" href="/static/css/design-system.css">
+  <link rel="stylesheet" href="/static/css/glass-surfaces.css">
   <link rel="stylesheet" href="/static/css/liquid-glass.css">
   <link rel="stylesheet" href="/static/css/liquid-glass-integration.css">
   <link rel="stylesheet" href="/static/css/lists.css">
@@ -24,159 +26,66 @@
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.colorScheme = theme;
       } catch (err) {
-        document.documentElement.dataset.theme = document.documentElement.dataset.theme || "dark";
+        document.documentElement.dataset.theme = document.documentElement.dataset.theme || "light";
         document.documentElement.style.colorScheme = document.documentElement.dataset.theme;
       }
     })();
   </script>
   <style>
   :root {
-    color-scheme: dark;
-    /* base palette */
-    --bg: #0b0e13;
-    --fg: #e9eef6;
-    --fg-strong: #ffffff;
-    --muted: #aab3c2;
-    --font-sans: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+    --bg-gradient: radial-gradient(1200px 820px at 5% 5%, color-mix(in srgb, var(--primary) 8%, transparent), transparent 60%),
+                   radial-gradient(1100px 780px at 100% 100%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 60%),
+                   linear-gradient(180deg, var(--surface), var(--surface-muted));
+    --halo-gradient: radial-gradient(38% 32% at 8% 0%, color-mix(in srgb, var(--primary) 18%, transparent), transparent 65%),
+                     radial-gradient(42% 36% at 88% 80%, color-mix(in srgb, var(--accent-2) 14%, transparent), transparent 68%),
+                     radial-gradient(30% 30% at 62% 28%, color-mix(in srgb, var(--success) 14%, transparent), transparent 72%);
+    --glass-tint: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+    --glass-stroke: color-mix(in srgb, var(--border) 90%, transparent);
+    --glass-inner: color-mix(in srgb, var(--surface) 60%, rgba(0,0,0,0.04));
+    --glass-top: color-mix(in srgb, #fff 92%, transparent);
+    --glass-bottom: color-mix(in srgb, #0d1a33 10%, transparent);
+    --blur: 18px;
+    --sat: 1.15;
+    --bright: 1.02;
+    --btn-bg: linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 96%, transparent), color-mix(in srgb, var(--surface-raised) 82%, transparent));
+    --btn-bg-hover: linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 100%, transparent), color-mix(in srgb, var(--surface-raised) 90%, transparent));
+    --btn-shadow: var(--elevation-1);
+    --badge-bg: color-mix(in srgb, var(--primary) 12%, transparent);
+    --badge-border: color-mix(in srgb, var(--primary) 24%, transparent);
+    --badge-fg: color-mix(in srgb, var(--on-surface) 70%, transparent);
+    --nav-active-bg: color-mix(in srgb, var(--primary) 14%, transparent);
+    --focus-ring: color-mix(in srgb, var(--primary) 40%, transparent);
+    --grid-gap: clamp(18px, 3vw, 32px);
+    --transition-snappy: cubic-bezier(0.22, 0.34, 0.32, 1);
+    --transition-soft: cubic-bezier(0.15, 0.85, 0.25, 1);
+    --scrollbar-track: color-mix(in srgb, var(--surface-muted) 92%, transparent);
+    --scrollbar-thumb: color-mix(in srgb, var(--primary) 35%, rgba(12,32,65,.28));
+    --field-bg: var(--surface-raised);
+    --field-border: color-mix(in srgb, var(--border) 90%, transparent);
+    --field-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
+    --brand-shadow: 0 1px 1px rgba(12, 30, 60, 0.26);
+    --shadow-1: var(--elevation-1);
+    --shadow-2: var(--elevation-2);
+    --shadow-3: var(--elevation-3);
+    --glow-soft: 0 0 120px color-mix(in srgb, var(--primary) 20%, transparent);
+    --glow-strong: 0 40px 140px color-mix(in srgb, var(--primary) 22%, rgba(10,20,40,.35));
+  }
 
-    /* accents */
-    --accent: #69b7ff;
-    --accent-2: #b889ff;
-
-    /* halo + background */
+  html[data-theme="dark"] {
     --bg-gradient: radial-gradient(1200px 800px at 10% 0%, rgba(105,183,255,.10), transparent 60%),
-                    radial-gradient(1200px 900px at 100% 100%, rgba(184,137,255,.10), transparent 60%),
-                    linear-gradient(180deg, #0b0e13 0%, #0d1118 100%);
+                   radial-gradient(1200px 900px at 100% 100%, rgba(184,137,255,.10), transparent 60%),
+                   linear-gradient(180deg, var(--bg), #0d1118);
     --halo-gradient: radial-gradient(40% 40% at 10% 0%, rgba(105,183,255,.16), transparent 60%),
                      radial-gradient(45% 45% at 90% 85%, rgba(184,137,255,.16), transparent 62%),
                      radial-gradient(35% 35% at 65% 35%, rgba(35,209,139,.16), transparent 65%);
-
-    /* glass tokens */
     --glass-tint: rgba(255, 255, 255, 0.06);
     --glass-stroke: rgba(255, 255, 255, 0.14);
     --glass-inner: rgba(0, 0, 0, 0.25);
     --glass-top: rgba(255, 255, 255, 0.22);
     --glass-bottom: rgba(0, 0, 0, 0.18);
-    --specular: rgba(255, 255, 255, 0.55);
-    --edge-light: rgba(255, 255, 255, 0.35);
-    --edge-shadow: rgba(0, 0, 0, 0.45);
-    --surface: color-mix(in srgb, var(--bg) 90%, rgba(255,255,255,.04));
-    --surface-raised: color-mix(in srgb, var(--bg) 75%, rgba(255,255,255,.08));
-    --outline-strong: color-mix(in srgb, var(--glass-stroke) 85%, transparent);
-
-    /* states */
-    --ok: #23d18b;
-    --warn: #ffd166;
-    --bad: #ff6b6b;
-
-    /* elevation */
-    --shadow-1: 0 1px 1px rgba(0,0,0,.25), 0 2px 6px rgba(0,0,0,.22);
-    --shadow-2: 0 8px 20px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.05);
-    --shadow-3: 0 16px 40px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06);
-    --glow-soft: 0 0 120px rgba(105,183,255,.18);
-    --glow-strong: 0 40px 120px rgba(4,12,32,.55);
-
-    /* layout */
-    --radius-lg: 16px;
-    --radius-md: 12px;
-    --radius-sm: 10px;
-    --grid-gap: clamp(20px, 3vw, 32px);
-
-    /* table */
-    --row-sep: rgba(255,255,255,.06);
-    --border: rgba(255,255,255,.12);
-    --table-head-bg: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
-    --table-hover: rgba(255,255,255,.05);
-
-    /* buttons & badges */
-    --btn-bg: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02));
-    --btn-bg-hover: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.04));
-    --btn-shadow: var(--shadow-1), inset 0 1px 0 rgba(255,255,255,.06);
-    --badge-bg: rgba(255,255,255,.08);
-    --badge-border: var(--glass-stroke);
-    --badge-fg: var(--muted);
-    --nav-active-bg: rgba(255,255,255,.08);
-
-    /* optics */
-    --blur: 16px;
-    --sat: 1.35;
-    --bright: 1.02;
-    --focus-ring: color-mix(in oklab, var(--accent) 38%, transparent);
-    --transition-snappy: cubic-bezier(0.4, 0.14, 0.3, 1);
-    --transition-soft: cubic-bezier(0.22, 1, 0.36, 1);
     --scrollbar-track: rgba(255,255,255,.05);
     --scrollbar-thumb: color-mix(in srgb, var(--accent) 45%, rgba(0,0,0,.45));
-
-    /* z-index scale */
-    --z-base: 0;
-    --z-dropdown: 1000;
-    --z-sticky: 1500;
-    --z-modal: 2000;
-    --z-notification: 3000;
-
-    /* form controls */
-    --field-bg: rgba(12,14,19,.65);
-    --field-border: var(--glass-stroke);
-    --field-shadow: inset 0 1px 0 rgba(255,255,255,.05);
-
-    /* typography */
-    --brand-shadow: 0 1px 2px rgba(0,0,0,.35);
-  }
-
-html[data-theme="light"] {
-    color-scheme: light;
-    --bg: #f6f7fb;
-    --fg: #0f1a2a;
-    --fg-strong: #0a1733;
-    --muted: #5b6372;
-    --font-sans: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
-    --accent: #2d7cff;
-    --accent-2: #6a3df5;
-    --bg-gradient: radial-gradient(1200px 840px at 0% 5%, rgba(74,118,255,.18), transparent 60%),
-                    radial-gradient(1000px 780px at 100% 100%, rgba(119,207,255,.22), transparent 55%),
-                    linear-gradient(180deg, #f6f7fb 0%, #e6ecff 100%);
-    --halo-gradient: radial-gradient(40% 40% at 8% 0%, rgba(45,124,255,.22), transparent 62%),
-                     radial-gradient(50% 45% at 92% 88%, rgba(106,61,245,.18), transparent 60%),
-                     radial-gradient(35% 35% at 65% 35%, rgba(35,209,139,.18), transparent 68%);
-    --glass-tint: rgba(255,255,255,.78);
-    --glass-stroke: rgba(12, 25, 55, 0.10);
-    --glass-inner: rgba(255,255,255,.45);
-    --glass-top: rgba(255,255,255,.92);
-    --glass-bottom: rgba(12,30,60,.08);
-    --specular: rgba(255,255,255,.85);
-    --edge-light: rgba(255,255,255,.95);
-    --edge-shadow: rgba(15,35,95,.14);
-    --surface: color-mix(in srgb, #fff 85%, rgba(2,18,47,.02));
-    --surface-raised: color-mix(in srgb, #fff 65%, rgba(45,124,255,.08));
-    --outline-strong: rgba(12,32,65,.16);
-    --shadow-1: 0 1px 1px rgba(15,35,95,.08), 0 10px 30px rgba(15,35,95,.10);
-    --shadow-2: 0 12px 30px rgba(15,35,95,.14), inset 0 1px 0 rgba(255,255,255,.45);
-    --shadow-3: 0 20px 45px rgba(15,35,95,.18), inset 0 1px 0 rgba(255,255,255,.48);
-    --glow-soft: 0 0 120px rgba(45,124,255,.18);
-    --glow-strong: 0 40px 140px rgba(42,63,145,.28);
-    --row-sep: rgba(12,32,65,.10);
-    --border: rgba(12,32,65,.14);
-    --table-head-bg: linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,255,255,.78));
-    --table-hover: rgba(13,41,80,.08);
-    --btn-bg: linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.78));
-    --btn-bg-hover: linear-gradient(180deg, rgba(255,255,255,1), rgba(255,255,255,.86));
-    --btn-shadow: 0 10px 26px rgba(15,35,95,.14), inset 0 1px 0 rgba(255,255,255,.85);
-    --badge-bg: rgba(45,124,255,.12);
-    --badge-border: rgba(45,124,255,.22);
-    --badge-fg: rgba(13,32,65,.76);
-    --nav-active-bg: rgba(45,124,255,.16);
-    --focus-ring: color-mix(in oklab, var(--accent) 45%, transparent);
-    --grid-gap: clamp(18px, 3vw, 32px);
-    --transition-snappy: cubic-bezier(0.22, 0.34, 0.32, 1);
-    --transition-soft: cubic-bezier(0.15, 0.85, 0.25, 1);
-    --scrollbar-track: rgba(13,32,65,.08);
-    --scrollbar-thumb: color-mix(in srgb, var(--accent) 45%, rgba(12,32,65,.35));
-    --field-bg: rgba(255,255,255,.88);
-    --field-border: rgba(12,32,65,.16);
-    --field-shadow: inset 0 1px 0 rgba(255,255,255,.85);
-    --brand-shadow: 0 1px 0 rgba(255,255,255,.85);
+    --btn-shadow: 0 1px 1px rgba(0,0,0,.25), 0 2px 6px rgba(0,0,0,.22);
   }
 
   @media (prefers-color-scheme: light) {
@@ -499,6 +408,10 @@ html[data-theme="light"] {
     background: var(--nav-active-bg);
     box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
     text-decoration: none;
+  }
+
+  .mobile-backdrop {
+    display: none;
   }
 
   .nav__meta {
@@ -861,6 +774,17 @@ html[data-theme="light"] {
       flex-direction: column;
       align-items: stretch;
       gap: 10px;
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      transform: translateY(-8px);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 20;
+      background: var(--surface-3, var(--surface-raised));
+      border: 1px solid var(--border-1, var(--outline-strong));
+      box-shadow: var(--shadow-2, var(--shadow-md));
     }
 
     .nav__top {
@@ -881,22 +805,6 @@ html[data-theme="light"] {
       flex-direction: column;
       gap: 10px;
       transition: max-height .35s ease, opacity .25s ease;
-    }
-
-    .nav[data-mobile-open="false"] .nav__section--primary,
-    .nav[data-mobile-open="false"] .nav__meta {
-      max-height: 0;
-      opacity: 0;
-      pointer-events: none;
-      overflow: hidden;
-      padding-top: 0;
-      margin-top: 0;
-    }
-
-    .nav[data-mobile-open="true"] .nav__section--primary,
-    .nav[data-mobile-open="true"] .nav__meta {
-      max-height: 480px;
-      opacity: 1;
     }
 
     .nav__section--primary a {
@@ -931,6 +839,11 @@ html[data-theme="light"] {
     }
 
     /* Slide-in effect for mobile menu */
+    .nav[data-mobile-open="false"] {
+      opacity: 0;
+      pointer-events: none;
+    }
+
     .nav[data-mobile-open="false"] .nav__section--primary,
     .nav[data-mobile-open="false"] .nav__meta {
       max-height: 0;
@@ -938,6 +851,12 @@ html[data-theme="light"] {
       opacity: 0;
       transform: translateY(-6px);
       transition: max-height 0.25s ease, opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .nav[data-mobile-open="true"] {
+      transform: translateY(0);
+      opacity: 1;
+      pointer-events: auto;
     }
 
     .nav[data-mobile-open="true"] .nav__section--primary,
@@ -1004,6 +923,25 @@ html[data-theme="light"] {
   @media (max-width: 768px) {
     .page {
       padding: 12px;
+    }
+    body[data-mobile-lock="true"] {
+      overflow: hidden;
+      height: 100vh;
+      touch-action: none;
+    }
+    .mobile-backdrop {
+      position: fixed;
+      inset: 0;
+      background: color-mix(in srgb, var(--on-surface) 16%, transparent);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 200ms ease;
+      z-index: 15;
+      display: block;
+    }
+    .mobile-backdrop[data-open="true"] {
+      opacity: 1;
+      pointer-events: auto;
     }
     .page-header,
     .page-header--balanced {
@@ -1164,10 +1102,12 @@ html[data-theme="light"] {
   <a href="#main" class="skip-link">Перейти к содержимому</a>
   <div aria-hidden="true" class="halo"></div>
   <header>
-    <nav class="nav glass grain" role="navigation" data-mobile-nav data-mobile-open="true">
+    <div class="mobile-backdrop" data-mobile-backdrop></div>
+    <nav class="nav glass grain" role="navigation" data-mobile-nav data-mobile-open="false">
+      {% block nav %}
       <div class="nav__top">
         <a class="brand" href="/">TG Bot Admin</a>
-        <button class="nav__menu-toggle" type="button" id="nav-menu-toggle" aria-label="Показать меню" aria-controls="primary-nav" aria-expanded="true">
+        <button class="nav__menu-toggle" type="button" id="nav-menu-toggle" aria-label="Показать меню" aria-controls="primary-nav" aria-expanded="false">
           <span class="nav__menu-icon" aria-hidden="true">
             <span></span>
             <span></span>
@@ -1193,6 +1133,7 @@ html[data-theme="light"] {
         </button>
         <span class="badge nav__env">{{ request.url.hostname or 'localhost' }}</span>
       </div>
+      {% endblock nav %}
     </nav>
   </header>
 
@@ -1265,6 +1206,7 @@ html[data-theme="light"] {
 
     const nav = document.querySelector('[data-mobile-nav]');
     const navToggle = document.getElementById('nav-menu-toggle');
+    const mobileBackdrop = document.querySelector('[data-mobile-backdrop]');
     const mobileMedia = window.matchMedia('(max-width: 960px)');
     let mobileNavInitialized = false;
 
@@ -1287,6 +1229,10 @@ html[data-theme="light"] {
         nav.dataset.mobileOpen = 'true';
         navToggle.setAttribute('aria-expanded', 'true');
         navToggle.setAttribute('aria-label', 'Показать меню');
+        document.body.dataset.mobileLock = 'false';
+        if (mobileBackdrop) {
+          mobileBackdrop.dataset.open = 'false';
+        }
         mobileNavInitialized = false;
         return;
       }
@@ -1297,6 +1243,10 @@ html[data-theme="light"] {
       const isOpen = nav.dataset.mobileOpen === 'true';
       navToggle.setAttribute('aria-expanded', String(isOpen));
       navToggle.setAttribute('aria-label', isOpen ? 'Скрыть меню' : 'Показать меню');
+      if (mobileBackdrop) {
+        mobileBackdrop.dataset.open = String(isOpen);
+      }
+      document.body.dataset.mobileLock = isOpen ? 'true' : 'false';
     }
 
     navToggle?.addEventListener('click', () => {
@@ -1305,6 +1255,19 @@ html[data-theme="light"] {
       nav.dataset.mobileOpen = next ? 'true' : 'false';
       navToggle.setAttribute('aria-expanded', String(next));
       navToggle.setAttribute('aria-label', next ? 'Скрыть меню' : 'Показать меню');
+      if (mobileBackdrop) {
+        mobileBackdrop.dataset.open = String(next);
+      }
+      document.body.dataset.mobileLock = next ? 'true' : 'false';
+    });
+
+    mobileBackdrop?.addEventListener('click', () => {
+      if (!nav || !mobileMedia.matches) { return; }
+      nav.dataset.mobileOpen = 'false';
+      navToggle?.setAttribute('aria-expanded', 'false');
+      navToggle?.setAttribute('aria-label', 'Показать меню');
+      mobileBackdrop.dataset.open = 'false';
+      document.body.dataset.mobileLock = 'false';
     });
 
     if (typeof mobileMedia.addEventListener === 'function') {

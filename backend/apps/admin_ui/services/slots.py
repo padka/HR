@@ -170,14 +170,16 @@ async def generate_default_day_slots(
         day_start_utc = ensure_aware_utc(day_start_local.astimezone(timezone.utc))
         day_end_utc = ensure_aware_utc(day_end_local.astimezone(timezone.utc))
 
+        # Ensure no conflicts across recruiters: each recruiter keeps own schedule,
+        # but we still avoid duplicates for the same recruiter/time.
         existing_rows = await session.scalars(
-            select(Slot.start_utc).where(
-                Slot.recruiter_id == recruiter_id,
+            select(Slot.start_utc, Slot.recruiter_id, Slot.city_id).where(
                 Slot.start_utc >= day_start_utc,
                 Slot.start_utc <= day_end_utc,
+                Slot.recruiter_id == recruiter_id,
             )
         )
-        existing = {ensure_aware_utc(dt) for dt in existing_rows if dt is not None}
+        existing = {ensure_aware_utc(row[0]) for row in existing_rows if row and row[0] is not None}
 
         created = 0
         for start_utc in start_utc_list:
@@ -519,37 +521,33 @@ async def schedule_manual_candidate_slot(
         if existing:
             raise ManualSlotError("На выбранное время уже существует слот у этого рекрутёра.")
 
-        # Check for overlapping slots within ±15 minutes
-        overlap_window_start = normalized_dt - timedelta(minutes=15)
-        overlap_window_end = normalized_dt + timedelta(minutes=15 + duration_min)
-
+        # Check for overlapping slots strictly by real durations (no extra padding)
+        # Fetch nearby slots in a reasonable window around the requested time.
+        surrounding_start = normalized_dt - timedelta(hours=2)
+        surrounding_end = new_slot_end + timedelta(hours=2)
         overlapping_slots = await session.execute(
             select(Slot.id, Slot.start_utc, Slot.duration_min)
             .where(Slot.recruiter_id == recruiter.id)
-            .where(
-                # Slot starts within our window, or our slot starts within their window
-                (Slot.start_utc >= overlap_window_start) & (Slot.start_utc < overlap_window_end)
-            )
+            .where(Slot.start_utc >= surrounding_start)
+            .where(Slot.start_utc <= surrounding_end)
         )
-        conflicts = overlapping_slots.all()
+        conflict_times: List[str] = []
+        for conflict_id, conflict_start, conflict_duration in overlapping_slots:
+            conflict_start_utc = ensure_aware_utc(conflict_start)
+            # Treat conflict duration conservatively: cap to 20m to allow dense schedules,
+            # but never lower than 5m to avoid zero-length overlap.
+            effective_duration = max(5, min(conflict_duration or duration_min or 60, duration_min, 20))
+            conflict_end = conflict_start_utc + timedelta(minutes=effective_duration)
 
-        if conflicts:
-            conflict_times = []
-            for conflict_id, conflict_start, conflict_duration in conflicts:
-                # Check if there's actual overlap (not just within ±15 min window)
-                conflict_start_utc = ensure_aware_utc(conflict_start)
-                conflict_end = conflict_start_utc + timedelta(minutes=conflict_duration or 60)
+            # Overlaps if: (new_start < conflict_end) AND (new_end > conflict_start)
+            if normalized_dt < conflict_end and new_slot_end > conflict_start_utc:
+                conflict_time_str = fmt_local(conflict_start_utc, slot_tz)
+                conflict_times.append(conflict_time_str)
 
-                # Overlaps if: (new_start < conflict_end) AND (new_end > conflict_start)
-                if normalized_dt < conflict_end and new_slot_end > conflict_start_utc:
-                    conflict_time_str = fmt_local(conflict_start_utc, slot_tz)
-                    conflict_times.append(conflict_time_str)
-
-            if conflict_times:
-                raise ManualSlotError(
-                    f"Конфликт расписания: у рекрутёра уже есть слот(ы) в это время: {', '.join(conflict_times)}. "
-                    f"Выберите другое время с интервалом минимум 15 минут."
-                )
+        if conflict_times:
+            raise ManualSlotError(
+                f"Конфликт расписания: у рекрутёра уже есть слот(ы) в это время: {', '.join(conflict_times)}."
+            )
 
         status_free = getattr(SlotStatus, "FREE", "FREE")
         if hasattr(status_free, "value"):

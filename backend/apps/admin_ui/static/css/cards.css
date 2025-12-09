@@ -3,44 +3,44 @@
 /* Liquid Glass Variables - define globally if not already defined */
 :root {
   --liquid-glass-bg: linear-gradient(135deg,
-    rgba(255, 255, 255, 0.05) 0%,
-    rgba(255, 255, 255, 0.02) 100%);
+    color-mix(in srgb, var(--surface-raised) 88%, transparent) 0%,
+    color-mix(in srgb, var(--surface-raised) 72%, transparent) 100%);
   --liquid-glass-bg-hover: linear-gradient(135deg,
-    rgba(255, 255, 255, 0.09) 0%,
-    rgba(255, 255, 255, 0.04) 100%);
-  --liquid-glass-border: rgba(255, 255, 255, 0.08);
+    color-mix(in srgb, var(--surface-raised) 96%, transparent) 0%,
+    color-mix(in srgb, var(--surface-raised) 78%, transparent) 100%);
+  --liquid-glass-border: color-mix(in srgb, var(--border) 90%, transparent);
   --liquid-glass-highlight: linear-gradient(180deg,
-    rgba(255, 255, 255, 0.12) 0%,
-    rgba(255, 255, 255, 0) 50%);
+    color-mix(in srgb, #fff 70%, transparent) 0%,
+    transparent 55%);
   --liquid-glass-shadow:
-    0 8px 32px 0 rgba(0, 0, 0, 0.25),
-    inset 0 1px 2px 0 rgba(255, 255, 255, 0.05);
+    var(--shadow-soft),
+    inset 0 1px 1px rgba(255, 255, 255, 0.28);
   --liquid-glass-shadow-hover:
-    0 16px 48px 0 rgba(0, 0, 0, 0.35),
-    inset 0 1px 2px 0 rgba(255, 255, 255, 0.08);
-  --liquid-glass-blur: blur(40px);
-  --liquid-glass-saturate: saturate(200%);
+    var(--shadow-softer),
+    inset 0 1px 1px rgba(255, 255, 255, 0.36);
+  --liquid-glass-blur: blur(28px);
+  --liquid-glass-saturate: saturate(140%);
 }
 
 html[data-theme="light"] {
   --liquid-glass-bg: linear-gradient(135deg,
-    rgba(255, 255, 255, 0.6) 0%,
-    rgba(255, 255, 255, 0.4) 100%);
+    color-mix(in srgb, var(--surface-raised) 95%, transparent) 0%,
+    color-mix(in srgb, var(--surface-muted) 82%, transparent) 100%);
   --liquid-glass-bg-hover: linear-gradient(135deg,
-    rgba(255, 255, 255, 0.8) 0%,
-    rgba(255, 255, 255, 0.55) 100%);
-  --liquid-glass-border: rgba(255, 255, 255, 0.4);
+    color-mix(in srgb, var(--surface-raised) 100%, transparent) 0%,
+    color-mix(in srgb, var(--surface-muted) 88%, transparent) 100%);
+  --liquid-glass-border: color-mix(in srgb, var(--border) 85%, transparent);
   --liquid-glass-highlight: linear-gradient(180deg,
-    rgba(255, 255, 255, 0.95) 0%,
-    rgba(255, 255, 255, 0) 50%);
+    color-mix(in srgb, #fff 82%, transparent) 0%,
+    transparent 55%);
   --liquid-glass-shadow:
-    0 8px 32px 0 rgba(31, 38, 135, 0.15),
-    inset 0 1px 2px 0 rgba(255, 255, 255, 0.6);
+    var(--shadow-sm),
+    inset 0 1px 1px rgba(255, 255, 255, 0.45);
   --liquid-glass-shadow-hover:
-    0 16px 48px 0 rgba(31, 38, 135, 0.22),
-    inset 0 1px 2px 0 rgba(255, 255, 255, 0.75);
-  --liquid-glass-blur: blur(35px);
-  --liquid-glass-saturate: saturate(180%);
+    var(--shadow-md),
+    inset 0 1px 1px rgba(255, 255, 255, 0.55);
+  --liquid-glass-blur: blur(22px);
+  --liquid-glass-saturate: saturate(130%);
 }
 
 .card-grid {

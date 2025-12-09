@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -22,6 +22,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from backend.domain.base import Base
+
+if TYPE_CHECKING:  # pragma: no cover - imported for typing only
+    pass
 from backend.domain.candidates.status import CandidateStatus
 
 
