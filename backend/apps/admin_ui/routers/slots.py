@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel
 
 from backend.apps.admin_ui.config import templates
+from backend.apps.admin_ui.security import require_csrf_token
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.recruiters import list_recruiters
 from backend.apps.admin_ui.services.slots import (
@@ -196,6 +197,7 @@ async def slots_create(
     city_id: str = Form(""),
     date: str = Form(""),
     time: str = Form(""),
+    csrf_ok: None = Depends(require_csrf_token),
 ):
     city_raw = (city_id or "").strip()
     date_value = (date or "").strip()
@@ -264,6 +266,7 @@ async def slots_bulk_create(
     step_min: int = Form(...),
     include_weekends: Optional[str] = Form(default=None),
     use_break: Optional[str] = Form(default=None),
+    csrf_ok: None = Depends(require_csrf_token),
 ):
     created, error = await bulk_create_slots(
         recruiter_id=recruiter_id,

@@ -738,10 +738,22 @@
 </div>
 
 {% raw %}
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 (function(){
+  console.log('🚀 Script started loading');
+  console.log('  DOM state:', document.readyState);
+
   const $ = (s, r=document)=>r.querySelector(s);
   const $$= (s, r=document)=>Array.from(r.querySelectorAll(s));
+
+  // Test selector function
+  console.log('🔍 Testing selector function:');
+  const testBtn = document.getElementById('btn-open-one');
+  console.log('  getElementById("btn-open-one"):', !!testBtn, testBtn);
+  const testBtnQuery = document.querySelector('#btn-open-one');
+  console.log('  querySelector("#btn-open-one"):', !!testBtnQuery, testBtnQuery);
+  const testBtn$ = $('#btn-open-one');
+  console.log('  $("#btn-open-one"):', !!testBtn$, testBtn$);
 
   const LS = {
     tab: 'slots_new.tab',
@@ -780,13 +792,25 @@
   const modalBulk = $('#modal-bulk');
   const segmentedControl = $('.segmented');
 
+  console.log('🚪 Modal elements:');
+  console.log('  btn-open-one:', !!btnOpenOne, btnOpenOne);
+  console.log('  btn-open-bulk:', !!btnOpenBulk, btnOpenBulk);
+  console.log('  modal-one:', !!modalOne, modalOne);
+  console.log('  modal-bulk:', !!modalBulk, modalBulk);
+  console.log('  segmented control:', !!segmentedControl, segmentedControl);
+
   function openModal(modal, index) {
-    if (!modal) return;
+    console.log('🔓 openModal called:', modal?.id, 'index:', index);
+    if (!modal) {
+      console.log('  ❌ Modal is null!');
+      return;
+    }
     modal.classList.add('is-open');
     modal.setAttribute('aria-hidden', 'false');
     document.body.classList.add('modal-open');
     if (segmentedControl) segmentedControl.setAttribute('data-active', String(index));
     storageSet(LS.tab, index === 0 ? 'one' : 'bulk');
+    console.log('  ✅ Modal opened:', modal.classList.contains('is-open'));
   }
 
   function closeModal(modal) {
@@ -802,27 +826,43 @@
   }
 
   // Open modal on button click
-  btnOpenOne?.addEventListener('click', () => {
-    closeAllModals();
-    openModal(modalOne, 0);
-    btnOpenOne.classList.add('active');
-    btnOpenOne.setAttribute('aria-selected', 'true');
-    if (btnOpenBulk) {
-      btnOpenBulk.classList.remove('active');
-      btnOpenBulk.setAttribute('aria-selected', 'false');
-    }
-  });
+  if (btnOpenOne) {
+    console.log('✅ Adding click handler to btn-open-one');
+    btnOpenOne.addEventListener('click', (e) => {
+      console.log('🖱️ Click on "Один слот" button detected!');
+      e.preventDefault();
+      e.stopPropagation();
+      closeAllModals();
+      openModal(modalOne, 0);
+      btnOpenOne.classList.add('active');
+      btnOpenOne.setAttribute('aria-selected', 'true');
+      if (btnOpenBulk) {
+        btnOpenBulk.classList.remove('active');
+        btnOpenBulk.setAttribute('aria-selected', 'false');
+      }
+    });
+  } else {
+    console.log('❌ btn-open-one not found!');
+  }
 
-  btnOpenBulk?.addEventListener('click', () => {
-    closeAllModals();
-    openModal(modalBulk, 1);
-    btnOpenBulk.classList.add('active');
-    btnOpenBulk.setAttribute('aria-selected', 'true');
-    if (btnOpenOne) {
-      btnOpenOne.classList.remove('active');
-      btnOpenOne.setAttribute('aria-selected', 'false');
-    }
-  });
+  if (btnOpenBulk) {
+    console.log('✅ Adding click handler to btn-open-bulk');
+    btnOpenBulk.addEventListener('click', (e) => {
+      console.log('🖱️ Click on "Серия" button detected!');
+      e.preventDefault();
+      e.stopPropagation();
+      closeAllModals();
+      openModal(modalBulk, 1);
+      btnOpenBulk.classList.add('active');
+      btnOpenBulk.setAttribute('aria-selected', 'true');
+      if (btnOpenOne) {
+        btnOpenOne.classList.remove('active');
+        btnOpenOne.setAttribute('aria-selected', 'false');
+      }
+    });
+  } else {
+    console.log('❌ btn-open-bulk not found!');
+  }
 
   // Close on backdrop or close button click
   $$('[data-modal-close]').forEach(el => {
@@ -965,6 +1005,14 @@
   const offsetText = $('#offset_text');
   let canSubmitOne = false;
 
+  console.log('🎯 Form elements initialized:');
+  console.log('  recruiter select:', !!selOne, selOne);
+  console.log('  city select:', !!cityOne, cityOne);
+  console.log('  date input:', !!dateOne, dateOne);
+  console.log('  time input:', !!timeOne, timeOne);
+  console.log('  submit button:', !!btnOne, btnOne);
+  console.log('  button initially disabled:', btnOne?.disabled);
+
   function currentTZ(selectEl){
     const el = selectEl || selOne;
     const opt = el ? el.selectedOptions[0] : null;
@@ -1054,6 +1102,7 @@
   }
 
   function updateOne(){
+    console.log('🔄 updateOne() called');
     const hasCities = updateCityOptions(selOne, cityOne, cityHintOne);
     // Use city timezone if city is selected, otherwise use recruiter timezone
     const tz = getEffectiveTimezone(cityOne, selOne);
@@ -1067,8 +1116,20 @@
     const cityVal = cityOne ? cityOne.value : '';
     if (cityOne) storageSet(LS.cityOne, cityVal || '');
     const ready = !!(selOne.value && hasCities && cityVal && d && t);
+
+    console.log('  Validation check:');
+    console.log('    recruiter selected:', !!selOne.value, '→', selOne.value);
+    console.log('    hasCities:', hasCities);
+    console.log('    city selected:', !!cityVal, '→', cityVal);
+    console.log('    date filled:', !!d, '→', d);
+    console.log('    time filled:', !!t, '→', t);
+    console.log('    → ready:', ready);
+
     canSubmitOne = ready;
     btnOne.disabled = !ready;
+    console.log('  → canSubmitOne set to:', canSubmitOne);
+    console.log('  → button disabled:', btnOne.disabled);
+
     if (hintSubmitOne){
       hintSubmitOne.hidden = ready;
     }
@@ -1192,18 +1253,27 @@
   });
 
   (function restoreOne(){
+    console.log('🔧 Initializing form from localStorage');
     const r = storageGet(LS.recOne);
+    console.log('  Saved recruiter:', r);
     if (r) selOne.value = r;
     updateCityOptions(selOne, cityOne, cityHintOne);
     const savedCity = storageGet(LS.cityOne);
+    console.log('  Saved city:', savedCity);
     if (savedCity && cityOne){
       const match = cityOne.querySelector(`option[value="${savedCity}"][data-rec="${selOne.value}"]`);
       if (match && !match.disabled){
         cityOne.value = savedCity;
+        console.log('  ✓ City restored:', savedCity);
       }
     }
-    const d = storageGet(LS.date);   if (d) dateOne.value = d;
-    const t = storageGet(LS.time);   if (t) timeOne.value = t;
+    const d = storageGet(LS.date);
+    console.log('  Saved date:', d);
+    if (d) dateOne.value = d;
+    const t = storageGet(LS.time);
+    console.log('  Saved time:', t);
+    if (t) timeOne.value = t;
+    console.log('  Calling updateOne() to validate...');
     updateOne();
   })();
 
@@ -1386,7 +1456,15 @@
   const formOne = document.getElementById('form-one');
   if (formOne){
     formOne.addEventListener('submit', (event)=>{
+      console.log('🔍 Form submit triggered');
+      console.log('  canSubmitOne:', canSubmitOne);
+      console.log('  recruiter:', selOne?.value);
+      console.log('  city:', cityOne?.value);
+      console.log('  date:', dateOne?.value);
+      console.log('  time:', timeOne?.value);
+
       if (!canSubmitOne){
+        console.log('❌ Form submission blocked - canSubmitOne is false');
         event.preventDefault();
         if (hintSubmitOne){
           hintSubmitOne.hidden = false;
@@ -1397,8 +1475,12 @@
           ? selOne
           : (!cityOne?.value ? cityOne : (!dateOne?.value ? dateOne : (!timeOne?.value ? timeOne : null)));
         focusTarget?.focus();
+      } else {
+        console.log('✅ Form submission allowed');
       }
     });
+  } else {
+    console.log('⚠️  Form #form-one not found!');
   }
 
   const formBulk = document.getElementById('form-bulk');
@@ -1420,6 +1502,38 @@
   }
 
   updateNowChip(); setInterval(updateNowChip, 60000);
+
+  // Auto-open modal on page load based on saved tab or default to first tab
+  console.log('🔄 Auto-opening modal on page load');
+  const savedTab = storageGet(LS.tab) || 'one';
+  console.log('  Saved tab:', savedTab);
+  if (savedTab === 'bulk' && modalBulk) {
+    console.log('  → Opening "Серия" modal');
+    openModal(modalBulk, 1);
+    if (btnOpenBulk) {
+      btnOpenBulk.classList.add('active');
+      btnOpenBulk.setAttribute('aria-selected', 'true');
+    }
+    if (btnOpenOne) {
+      btnOpenOne.classList.remove('active');
+      btnOpenOne.setAttribute('aria-selected', 'false');
+    }
+  } else if (modalOne) {
+    console.log('  → Opening "Один слот" modal');
+    openModal(modalOne, 0);
+    if (btnOpenOne) {
+      btnOpenOne.classList.add('active');
+      btnOpenOne.setAttribute('aria-selected', 'true');
+    }
+    if (btnOpenBulk) {
+      btnOpenBulk.classList.remove('active');
+      btnOpenBulk.setAttribute('aria-selected', 'false');
+    }
+  } else {
+    console.log('  ❌ No modals found to auto-open!');
+  }
+
+  console.log('✅ Script initialization complete');
 })();
 </script>
 {% endraw %}
