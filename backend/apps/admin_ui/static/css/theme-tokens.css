@@ -85,6 +85,17 @@
   --shadow-softer: var(--elevation-2);
   --shadow-softest: var(--elevation-3);
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 35%, transparent);
+
+  /* Border radius scale */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+  --radius-full: 999px;
+
+  /* Border width */
+  --border-w: 1px;
 }
 
 html[data-theme="light"] {
@@ -103,6 +114,14 @@ html[data-theme="light"] {
   --shadow-md: 0 12px 30px rgba(13, 31, 55, 0.08);
   --shadow-lg: 0 20px 50px rgba(13, 31, 55, 0.10);
   --shadow-xl: 0 30px 70px rgba(13, 31, 55, 0.12);
+
+  /* Text scale for light theme */
+  --text: var(--on-surface);
+  --text-muted: var(--on-surface-muted);
+
+  /* Accent colors for light theme */
+  --accent-soft: #e6eeff;
+  --accent-contrast: #ffffff;
 }
 
 html[data-theme="dark"] {
@@ -124,6 +143,29 @@ html[data-theme="dark"] {
   --fg: var(--on-surface);
   --fg-strong: #ffffff;
   --muted: var(--on-surface-muted);
+
+  /* Surface scale for dark theme */
+  --surface-1: #0c1017;
+  --surface-2: #141c29;
+  --surface-3: #1a2335;
+
+  /* Text scale for dark theme */
+  --text: var(--on-surface);
+  --text-muted: var(--on-surface-muted);
+
+  /* Semantic colors for dark theme */
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --info: #69b7ff;
+  --info-soft: rgba(105, 183, 255, 0.14);
+
+  /* Accent colors for dark theme */
+  --accent-soft: rgba(105, 183, 255, 0.16);
+  --accent-contrast: #0b0e13;
   --row-sep: rgba(255,255,255,0.08);
   --table-head-bg: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
   --table-hover: rgba(255,255,255,0.06);
