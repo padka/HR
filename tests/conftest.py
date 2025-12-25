@@ -22,6 +22,7 @@ TEST_ENV = {
     "REDIS_URL": "",
     "REDIS_NOTIFICATIONS_URL": "",
     "NOTIFICATION_BROKER": "memory",
+    "RATE_LIMIT_ENABLED": "false",
     "BOT_ENABLED": "0",
     "BOT_INTEGRATION_ENABLED": "0",
     "BOT_AUTOSTART": "0",
@@ -29,6 +30,11 @@ TEST_ENV = {
     "ADMIN_USER": "admin",
     "ADMIN_PASSWORD": "admin",
     "SESSION_SECRET": "test-session-secret-0123456789abcdef0123456789abcd",
+    # Reduce DB pool size for tests to prevent "too many open files"
+    "DB_POOL_SIZE": "5",
+    "DB_MAX_OVERFLOW": "2",
+    "DB_POOL_TIMEOUT": "10",
+    "DB_POOL_RECYCLE": "300",
 }
 
 for key, value in TEST_ENV.items():
@@ -42,21 +48,8 @@ from backend.core.db import async_session
 def _set_test_env():
     """Force deterministic env for tests and reset cached settings."""
 
-    env = {
-        "ENVIRONMENT": "test",
-        "DATABASE_URL": DEFAULT_TEST_DB_URL,
-        "REDIS_URL": "",
-        "REDIS_NOTIFICATIONS_URL": "",
-        "NOTIFICATION_BROKER": "memory",
-        "BOT_ENABLED": "0",
-        "BOT_INTEGRATION_ENABLED": "0",
-        "BOT_AUTOSTART": "0",
-        "BOT_FAILFAST": "0",
-        "ADMIN_USER": "admin",
-        "ADMIN_PASSWORD": "admin",
-        "SESSION_SECRET": "test-session-secret-0123456789abcdef0123456789abcd",
-    }
-    for key, value in env.items():
+    # Use same TEST_ENV dict to avoid duplication
+    for key, value in TEST_ENV.items():
         os.environ[key] = value
 
     from backend.core import settings as settings_module
@@ -102,8 +95,6 @@ def _force_test_settings(_set_test_env):
 
 async def _wipe_db():
     """Wipe all tables using DELETE for PostgreSQL compatibility."""
-    from backend.core.db import async_engine
-
     async with async_session() as session:
         # Delete data from all tables in reverse order (respecting foreign keys)
         for table in reversed(Base.metadata.sorted_tables):
@@ -114,19 +105,16 @@ async def _wipe_db():
                 pass
         await session.commit()
 
-    # Properly dispose connections to avoid "Event loop is closed" errors
-    await async_engine.dispose()
-
 
 @pytest.fixture(autouse=True)
-def _clean_database_between_tests(request):
+async def _clean_database_between_tests(request):
     """Wipe all tables before each test to avoid cross-test pollution."""
     # Skip database cleanup for tests that don't use the database
     if "no_db_cleanup" in request.keywords:
         return
 
-    # Use asyncio.run() to run the async cleanup function
-    asyncio.run(_wipe_db())
+    # Run cleanup as async to stay in the same event loop
+    await _wipe_db()
     try:
         from backend.apps.bot.services import reset_template_provider
         reset_template_provider()

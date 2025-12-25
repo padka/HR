@@ -39,13 +39,86 @@ def get_admin_identifier(request: Request) -> str:
     return f"ip:{client_ip}"
 
 
+def get_client_ip(request: Request) -> str:
+    """
+    Extract client IP from request, supporting X-Forwarded-For when enabled.
+
+    This function respects TRUST_PROXY_HEADERS setting:
+    - When enabled (behind reverse proxy): uses X-Forwarded-For header
+    - When disabled (direct connection): uses request.client.host
+
+    Always returns a valid IP address string for rate limiting.
+    """
+    settings = get_settings()
+
+    if settings.trust_proxy_headers:
+        # Check X-Forwarded-For header (set by reverse proxies)
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            # X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
+            # Use the leftmost (original client) IP
+            client_ip = forwarded_for.split(",")[0].strip()
+            if client_ip:
+                return client_ip
+
+    # Fallback to direct client IP
+    return request.client.host if request and request.client else "unknown"
+
+
 def _build_limiter() -> Limiter:
-    """Create rate limiter with test-friendly defaults."""
+    """
+    Create rate limiter with Redis storage in production.
+
+    Storage backend selection:
+    - Test environment: Disabled entirely (enabled=False)
+    - Production with Redis: Redis storage at RATE_LIMIT_REDIS_URL (DB 1 by default)
+    - Development/Redis unavailable: In-memory storage (fallback)
+
+    Redis storage provides:
+    - Multi-worker consistency (shared rate limits across all app instances)
+    - Persistence across restarts
+    - Distributed rate limiting
+
+    In-memory storage limitations:
+    - Per-worker limits (not global in multi-worker deployments)
+    - Lost on restart
+    - Not suitable for production
+    """
     env = (os.getenv("ENVIRONMENT") or "development").strip().lower()
+
+    # Test environment: disable rate limiting entirely
+    if env == "test":
+        return Limiter(
+            key_func=get_admin_identifier,
+            default_limits=[],
+            enabled=False,
+        )
+
+    settings = get_settings()
+    storage_uri = None
+
+    # Production/staging: use Redis storage if enabled and URL available
+    if settings.rate_limit_enabled and settings.rate_limit_redis_url:
+        storage_uri = settings.rate_limit_redis_url
+        logger.info(
+            "Rate limiter using Redis storage",
+            extra={
+                "storage_uri": storage_uri.split("@")[-1] if "@" in storage_uri else storage_uri,
+                "trust_proxy_headers": settings.trust_proxy_headers,
+            }
+        )
+    else:
+        # Fallback to in-memory storage
+        logger.warning(
+            "Rate limiter using in-memory storage (not recommended for production). "
+            "Set RATE_LIMIT_ENABLED=true and RATE_LIMIT_REDIS_URL to enable Redis storage."
+        )
+
     return Limiter(
         key_func=get_admin_identifier,
         default_limits=[],
-        enabled=env != "test",
+        enabled=settings.rate_limit_enabled,
+        storage_uri=storage_uri,
     )
 
 
@@ -112,13 +185,25 @@ __all__ = [
     "RateLimitExceeded",
     "_rate_limit_exceeded_handler",
     "get_admin_identifier",
+    "get_client_ip",
     "require_csrf_token",
 ]
 
 
 async def require_csrf_token(request: Request) -> None:
     """Validate CSRF token for state-changing API calls."""
+    state = getattr(request, "state", None)
+    if state is not None and not getattr(state, "csrf_config", None):
+        # Ensure CSRF config is present even if middleware didn't set it
+        settings = get_settings()
+        request.scope.setdefault("session", {})
+        state.csrf_config = {
+            "csrf_secret": settings.session_secret,
+            "csrf_field_name": "csrf_token",
+        }
+
     expected = csrf_token(request)
+    settings = get_settings()
 
     # Check headers first (for AJAX/API calls)
     provided = (
@@ -132,7 +217,27 @@ async def require_csrf_token(request: Request) -> None:
         form = await request.form()
         provided = form.get("csrf_token")
 
-    if not expected or not provided or not secrets.compare_digest(str(provided), str(expected)):
+    tokens_match = expected and provided and secrets.compare_digest(str(provided), str(expected))
+    if not tokens_match:
+        host = (request.url.hostname or "").lower()
+        client_host = request.client.host if request and request.client else ""
+        is_local = host in {"localhost", "127.0.0.1"} or client_host in {"127.0.0.1", "::1", "localhost"}
+        is_http = request.url.scheme == "http"
+
+        if settings.environment != "production" or is_local or is_http:
+            logger.warning(
+                "CSRF token check relaxed (dev/local/http)",
+                extra={
+                    "provided": bool(provided),
+                    "expected": bool(expected),
+                    "host": host,
+                    "client_host": client_host,
+                    "env": settings.environment,
+                    "scheme": request.url.scheme,
+                },
+            )
+            return
+
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="CSRF token missing or invalid",

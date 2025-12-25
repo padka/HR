@@ -28,6 +28,7 @@ class Settings:
     bot_provider: str
     bot_token: str
     bot_api_base: str
+    bot_callback_secret: str
     redis_url: str
     notification_broker: str
     bot_use_webhook: bool
@@ -59,6 +60,9 @@ class Settings:
     db_max_overflow: int
     db_pool_timeout: int
     db_pool_recycle: int
+    rate_limit_enabled: bool
+    rate_limit_redis_url: str
+    trust_proxy_headers: bool
 
 
 def _get_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
@@ -161,6 +165,45 @@ def _validate_production_settings(settings: Settings) -> None:
             f"SESSION_SECRET too short (got {len(settings.session_secret)} chars, need 32+). "
             "Generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
         )
+    elif any(token in settings.session_secret.lower() for token in {"changeme", "change_me", "session_secret", "changemesecret"}):
+        errors.append(
+            "SESSION_SECRET contains placeholder/default text. "
+            "Generate a fresh secret with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+
+    callback_secret_env = os.getenv("BOT_CALLBACK_SECRET") or ""
+    if not callback_secret_env:
+        errors.append(
+            "Production requires BOT_CALLBACK_SECRET to be explicitly set (32+ chars). "
+            "Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+    elif len(callback_secret_env.strip()) < 32:
+        errors.append(
+            "BOT_CALLBACK_SECRET too short (min 32 characters). "
+            "Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+    elif callback_secret_env.strip() == settings.session_secret:
+        errors.append("BOT_CALLBACK_SECRET must differ from SESSION_SECRET.")
+
+    admin_password_env = os.getenv("ADMIN_PASSWORD", "")
+    if not admin_password_env:
+        errors.append(
+            "Production requires ADMIN_PASSWORD to be set. "
+            "Generate a strong password (16+ chars, mixed case, numbers, symbols)."
+        )
+    else:
+        normalized_pwd = settings.admin_password.strip()
+        weak_tokens = {"admin", "password", "changeme", "change_me", "qwerty", "123456", "123456789"}
+        if len(normalized_pwd) < 12:
+            errors.append(
+                "ADMIN_PASSWORD too short for production (must be at least 12 characters). "
+                "Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(24))\""
+            )
+        if any(token in normalized_pwd.lower() for token in weak_tokens):
+            errors.append(
+                "ADMIN_PASSWORD contains a common/placeholder value. "
+                "Use a unique, random password instead."
+            )
 
     # 2. DATABASE_URL must be PostgreSQL with asyncpg
     db_url = settings.database_url_async
@@ -254,6 +297,38 @@ def _validate_production_settings(settings: Settings) -> None:
         except Exception:
             # Don't fail on import or parsing errors
             pass
+
+    # 7. Rate limiting Redis validation
+    if settings.rate_limit_enabled:
+        if not settings.rate_limit_redis_url:
+            errors.append(
+                "Production rate limiting requires RATE_LIMIT_REDIS_URL or REDIS_URL to be set. "
+                "Example: RATE_LIMIT_REDIS_URL=redis://localhost:6379/1"
+            )
+        else:
+            # Test connectivity to rate limiting Redis (similar to existing Redis check)
+            try:
+                import socket
+                from urllib.parse import urlparse
+                parsed = urlparse(settings.rate_limit_redis_url)
+                host = parsed.hostname or "localhost"
+                port = parsed.port or 6379
+
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                try:
+                    sock.connect((host, port))
+                    sock.close()
+                except (socket.timeout, socket.error, OSError) as e:
+                    warnings.append(
+                        f"Could not verify rate limiting Redis connectivity at {host}:{port}: {e}. "
+                        f"Rate limiting may not work correctly."
+                    )
+            except Exception:
+                pass
+
+    if settings.session_cookie_secure is False:
+        errors.append("SESSION_COOKIE_SECURE must be enabled in production.")
 
     # Print warnings to stderr
     if warnings:
@@ -364,6 +439,8 @@ def get_settings() -> Settings:
         or os.getenv("SECRET_KEY")
         or secrets.token_urlsafe(32)
     )
+    bot_callback_secret_env = os.getenv("BOT_CALLBACK_SECRET", "").strip()
+    bot_callback_secret = bot_callback_secret_env or secrets.token_urlsafe(32)
 
     # Validate SESSION_SECRET strength (for all environments)
     weak_secrets = {
@@ -426,6 +503,30 @@ def get_settings() -> Settings:
     db_pool_timeout = _get_int("DB_POOL_TIMEOUT", 30, minimum=1)
     db_pool_recycle = _get_int("DB_POOL_RECYCLE", 3600, minimum=60)
 
+    # Rate limiting configuration
+    rate_limit_enabled = _get_bool("RATE_LIMIT_ENABLED", default=environment == "production")
+    rate_limit_redis_url_env = os.getenv("RATE_LIMIT_REDIS_URL", "").strip()
+
+    # Default to REDIS_URL with /1 database if not explicitly set
+    if not rate_limit_redis_url_env and redis_url:
+        # Parse existing redis_url and change DB to 1
+        try:
+            from urllib.parse import urlparse, urlunparse
+            parsed = urlparse(redis_url)
+            # Replace path (database) with /1
+            new_parsed = parsed._replace(path="/1")
+            rate_limit_redis_url = urlunparse(new_parsed)
+        except Exception:
+            rate_limit_redis_url = redis_url  # fallback to same URL
+    else:
+        rate_limit_redis_url = rate_limit_redis_url_env
+
+    # Apply same localhost substitution for dev environment
+    if rate_limit_redis_url and rate_limit_redis_url.startswith("redis://redis_notifications") and environment != "production":
+        rate_limit_redis_url = rate_limit_redis_url.replace("redis_notifications", "localhost", 1)
+
+    trust_proxy_headers = _get_bool("TRUST_PROXY_HEADERS", default=False)
+
     settings = Settings(
         environment=environment,
         data_dir=data_dir,
@@ -436,6 +537,7 @@ def get_settings() -> Settings:
         bot_provider=bot_provider,
         bot_token=bot_token,
         bot_api_base=bot_api_base,
+        bot_callback_secret=bot_callback_secret,
         redis_url=redis_url,
         notification_broker=notification_broker,
         bot_integration_enabled=bot_integration_enabled,
@@ -467,6 +569,9 @@ def get_settings() -> Settings:
         db_max_overflow=db_max_overflow,
         db_pool_timeout=db_pool_timeout,
         db_pool_recycle=db_pool_recycle,
+        rate_limit_enabled=rate_limit_enabled,
+        rate_limit_redis_url=rate_limit_redis_url,
+        trust_proxy_headers=trust_proxy_headers,
     )
 
     # Validate production configuration (fails fast with clear error messages)
