@@ -1,10 +1,11 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Form, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -26,6 +27,7 @@ from backend.apps.admin_ui.services.candidates import (
     STATUS_DEFINITIONS,
     delete_candidate,
     delete_all_candidates,
+    generate_candidate_invite_token,
     get_candidate_detail,
     list_candidates,
     save_interview_notes,
@@ -36,18 +38,28 @@ from backend.apps.admin_ui.services.candidates import (
     PIPELINE_DEFINITIONS,
     DEFAULT_PIPELINE,
 )
+from backend.apps.admin_ui.services.test2_invites import (
+    create_test2_invite,
+    get_latest_test2_invite,
+    revoke_test2_invite,
+    summarize_invite,
+)
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.slots import (
     execute_bot_dispatch,
     schedule_manual_candidate_slot,
+    schedule_manual_candidate_slot_silent,
     ManualSlotError,
     recruiters_for_slot_form,
 )
 from backend.apps.bot.services import approve_slot_and_notify
+from backend.apps.admin_ui.security import require_csrf_token
+from backend.apps.admin_ui.utils import fmt_local
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.core.sanitizers import sanitize_plain_text
 from backend.core.time_utils import parse_form_datetime
+from backend.core.audit import log_audit_action
 from backend.domain.candidates.models import User
 from backend.domain.models import Slot, City, Recruiter, SlotStatus, OutboxNotification
 from backend.domain.repositories import find_city_by_plain_name
@@ -396,31 +408,163 @@ async def candidates_new(request: Request) -> HTMLResponse:
     context = {
         "request": request,
         "cities": options.get("cities", []),
+        "city_choices": options.get("city_choices", []),
+        "recruiters": options.get("recruiters", []),
     }
     return templates.TemplateResponse(request, "candidates_new.html", context)
 
 
 @router.post("/create")
 async def candidates_create(
-    telegram_id: int = Form(...),
+    request: Request,
     fio: str = Form(...),
     city: str = Form(""),
+    city_id: Optional[str] = Form(None),
+    phone: str = Form(""),
+    responsible_recruiter_id: Optional[str] = Form(None),
+    interview_date: Optional[str] = Form(None),
+    interview_time: Optional[str] = Form(None),
     is_active: Optional[str] = Form("on"),
 ):
     active_flag = _parse_bool(is_active)
+    interview_dt = None
+    interview_tz = None
+    interview_city = None
+    interview_recruiter = None
+    recruiter_id_value = _parse_int(responsible_recruiter_id)
+    city_value = _parse_int(city_id)
+    candidate_city = city or None
+    if city_value is not None:
+        async with async_session() as session:
+            interview_city = await session.get(City, city_value)
+        if interview_city is None:
+            return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
+        if hasattr(interview_city, "name_plain"):
+            candidate_city = interview_city.name_plain or candidate_city
+        elif interview_city.name:
+            candidate_city = interview_city.name
+    if city_value is None and not candidate_city:
+        return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
+    if recruiter_id_value is not None:
+        async with async_session() as session:
+            interview_recruiter = await session.get(Recruiter, recruiter_id_value)
+        if interview_recruiter is None:
+            return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
+        if interview_date or interview_time:
+            if hasattr(interview_recruiter, "active") and interview_recruiter.active is False:
+                return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
+    else:
+        return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
+    if not (interview_date and interview_time):
+        return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
+    if recruiter_id_value is None or interview_city is None:
+        return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
+    if interview_recruiter is None:
+        return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
+    app_timezone = get_settings().timezone or DEFAULT_TZ
+    interview_tz = interview_city.tz or interview_recruiter.tz or app_timezone
+    try:
+        interview_dt = parse_form_datetime(f"{interview_date}T{interview_time}", interview_tz)
+    except ValueError:
+        return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
     try:
         user = await upsert_candidate(
-            telegram_id=telegram_id,
+            telegram_id=None,
             fio=fio,
-            city=city or None,
+            city=candidate_city,
+            phone=phone or None,
             is_active=True if active_flag is None else active_flag,
+            responsible_recruiter_id=recruiter_id_value,
+            manual_slot_from=interview_dt,
+            manual_slot_to=interview_dt + timedelta(minutes=60) if interview_dt else None,
+            manual_slot_timezone=interview_tz,
         )
     except ValueError:
         return RedirectResponse(url="/candidates/new?error=validation", status_code=303)
     except IntegrityError:
         return RedirectResponse(url="/candidates/new?error=duplicate", status_code=303)
 
-    return RedirectResponse(url=f"/candidates/{user.id}", status_code=303)
+    admin_username = request.session.get("username", "admin")
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent", None)
+    try:
+        await schedule_manual_candidate_slot_silent(
+            candidate=user,
+            recruiter=interview_recruiter,
+            city=interview_city,
+            dt_utc=interview_dt,
+            slot_tz=interview_tz or DEFAULT_TZ,
+            admin_username=admin_username,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return RedirectResponse(
+            url=f"/candidates/{user.id}?slot_scheduled=scheduled",
+            status_code=303,
+        )
+    except ManualSlotError:
+        await delete_candidate(user.id)
+        return RedirectResponse(
+            url="/candidates/new?error=slot_conflict",
+            status_code=303,
+        )
+
+
+@router.post("/{candidate_id}/invite-token")
+async def candidates_invite_token(candidate_id: int) -> RedirectResponse:
+    token = await generate_candidate_invite_token(candidate_id)
+    if not token:
+        return RedirectResponse(
+            url=f"/candidates/{candidate_id}?error=invite_token",
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/candidates/{candidate_id}?invite_token={quote_plus(token)}",
+        status_code=303,
+    )
+
+
+@router.post("/{candidate_id}/test2/invite", response_class=JSONResponse)
+async def candidates_test2_invite(
+    request: Request,
+    candidate_id: int,
+    csrf_ok: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    _ = csrf_ok
+    admin_username = getattr(request.state, "admin_username", None)
+    result = await create_test2_invite(candidate_id, created_by=admin_username)
+    if not result:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    token, invite = result
+    base_url = str(request.base_url).rstrip("/")
+    link = f"{base_url}/t/test2/{token}"
+    payload = summarize_invite(invite) or {}
+    payload["expires_at_local"] = (
+        fmt_local(invite.expires_at, DEFAULT_TZ) if invite.expires_at else None
+    )
+    response_payload = {"ok": True, "link": link, "invite": payload}
+    return JSONResponse(content=jsonable_encoder(response_payload))
+
+
+@router.post("/{candidate_id}/test2/invite/{invite_id}/revoke", response_class=JSONResponse)
+async def candidates_test2_invite_revoke(
+    request: Request,
+    candidate_id: int,
+    invite_id: int,
+    csrf_ok: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    _ = csrf_ok
+    ok = await revoke_test2_invite(candidate_id, invite_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    invite = await get_latest_test2_invite(candidate_id)
+    payload = summarize_invite(invite) if invite else None
+    if invite and payload is not None:
+        payload["expires_at_local"] = (
+            fmt_local(invite.expires_at, DEFAULT_TZ) if invite.expires_at else None
+        )
+    response_payload = {"ok": True, "invite": payload}
+    return JSONResponse(content=jsonable_encoder(response_payload))
 
 
 @router.get("/{candidate_id}", response_class=HTMLResponse)
@@ -430,6 +574,7 @@ async def candidates_detail(request: Request, candidate_id: int) -> HTMLResponse
         return RedirectResponse(url="/candidates", status_code=303)
     context = {
         "request": request,
+        "invite_token": request.query_params.get("invite_token"),
         **detail,
     }
     return templates.TemplateResponse(request, "candidates_detail.html", context)
@@ -438,18 +583,26 @@ async def candidates_detail(request: Request, candidate_id: int) -> HTMLResponse
 @router.post("/{candidate_id}/update")
 async def candidates_update(
     candidate_id: int,
-    telegram_id: int = Form(...),
+    telegram_id: Optional[str] = Form(None),
     fio: str = Form(...),
     city: str = Form(""),
+    phone: str = Form(""),
     is_active: Optional[str] = Form(None),
 ):
     active_flag = _parse_bool(is_active)
+    telegram_id_value: Optional[int] = None
+    if telegram_id and telegram_id.strip():
+        try:
+            telegram_id_value = int(telegram_id.strip())
+        except ValueError:
+            return RedirectResponse(url=f"/candidates/{candidate_id}?error=update", status_code=303)
     try:
         success = await update_candidate(
             candidate_id,
-            telegram_id=telegram_id,
+            telegram_id=telegram_id_value,
             fio=fio,
             city=city or None,
+            phone=phone or None,
             is_active=True if active_flag is None else active_flag,
         )
     except ValueError:
@@ -471,75 +624,140 @@ async def candidates_toggle(candidate_id: int, active: str = Form("true")):
     return RedirectResponse(url=f"/candidates/{candidate_id}", status_code=303)
 
 
-@router.post("/{candidate_id}/status")
-async def candidates_update_status(
+@router.post("/{candidate_id}/status", response_model=None)
+async def candidates_set_status(
+    request: Request,
     candidate_id: int,
-    status: str = Form(...),
-    csrf_token: str = Form(...),
-):
-    """Update candidate status (HIRED or NOT_HIRED)."""
-    _ = csrf_token  # ensure parameter consumed for FastAPI/CSRF validation
-    # Only allow manual status changes to limited set (includes decline via UI)
-    allowed_statuses = ["hired", "not_hired", "intro_day_declined_day_of", "interview_declined"]
-    status_normalized = status.strip().lower()
+    background_tasks: BackgroundTasks,
+    bot_service: BotService = Depends(provide_bot_service),
+    payload: Optional[CandidateStatusPayload] = Body(None),
+    status: Optional[str] = Form(None),
+    reject_reason: Optional[str] = Form(None),
+    reject_comment: Optional[str] = Form(None),
+    _: None = Depends(require_csrf_token),
+) -> RedirectResponse | JSONResponse:
+    """Update candidate status via UI or AJAX/kanban board."""
+    allowed_form_statuses = {
+        "hired",
+        "not_hired",
+        "intro_day_declined_day_of",
+        "intro_day_declined_invitation",
+        "interview_declined",
+        "test2_failed",
+    }
 
-    if status_normalized not in allowed_statuses:
+    status_slug = None
+    if payload and payload.status:
+        status_slug = payload.status
+    elif status:
+        status_slug = status
+
+    if not status_slug:
+        if payload:
+            return JSONResponse(
+                {"ok": False, "message": "Статус обязателен"}, status_code=400
+            )
         return RedirectResponse(
             url=f"/candidates/{candidate_id}?error=invalid_status",
             status_code=303,
         )
 
-    # Get candidate details to find telegram_id
-    detail = await get_candidate_detail(candidate_id)
-    if not detail or not detail.get("user"):
+    status_slug = status_slug.strip()
+    normalized_slug = status_slug.lower()
+    is_form_submission = payload is None
+
+    if is_form_submission and normalized_slug not in allowed_form_statuses:
         return RedirectResponse(
-            url=f"/candidates/{candidate_id}?error=not_found",
+            url=f"/candidates/{candidate_id}?error=invalid_status",
             status_code=303,
         )
 
-    telegram_id = detail["user"].telegram_id
-
-    # Update status using the status service
-    from backend.domain.candidates.status_service import (
-        set_status_hired,
-        set_status_not_hired,
-        set_status_intro_day_declined_day_of,
+    ok, message, stored_status, dispatch = await update_candidate_status(
+        candidate_id, normalized_slug, bot_service=bot_service
     )
 
-    try:
-        if status_normalized == "hired":
-            success = await set_status_hired(telegram_id, force=True)
-        elif status_normalized == "not_hired":
-            success = await set_status_not_hired(telegram_id, force=True)
-        elif status_normalized == "intro_day_declined_day_of":
-            success = await set_status_intro_day_declined_day_of(telegram_id, force=True)
-        else:  # interview_declined
-            # Use module-level wrapper (allows monkeypatching in tests)
-            success = await set_status_interview_declined(telegram_id)
+    bot_header = "skipped:not_applicable"
+    if dispatch is not None:
+        bot_header = getattr(dispatch, "status", bot_header)
+        plan = getattr(dispatch, "plan", None)
+        if plan is not None and ok:
+            background_tasks.add_task(
+                execute_bot_dispatch, plan, stored_status or "", bot_service
+            )
 
-        if not success:
+    if is_form_submission:
+        if not ok:
+            # Map error messages to specific error codes for better UX
+            error_key = "status_update_failed"
+            msg_lower = (message or "").lower()
+
+            if "не найден" in msg_lower and "кандидат" in msg_lower:
+                error_key = "candidate_not_found"
+            elif "не найден" in msg_lower and "слот" in msg_lower:
+                error_key = "slot_not_found"
+            elif "некорректный статус" in msg_lower:
+                error_key = "invalid_status"
+            elif "telegram" in msg_lower:
+                error_key = "missing_telegram"
+            elif "нельзя установить вручную" in msg_lower:
+                error_key = "status_not_manual"
+            elif "не удалось согласовать" in msg_lower:
+                error_key = "slot_approval_failed"
+
+            # Log the error for diagnostics
+            logger.warning(
+                "Status update failed",
+                extra={
+                    "candidate_id": candidate_id,
+                    "requested_status": status_slug,
+                    "error_key": error_key,
+                    "error_message": message,
+                },
+            )
+
+            # URL-encode the error message to handle special characters
+            encoded_message = quote_plus(message or "")
             return RedirectResponse(
-                url=f"/candidates/{candidate_id}?error=status_update_failed",
+                url=f"/candidates/{candidate_id}?error={error_key}&error_message={encoded_message}",
                 status_code=303,
             )
-    except Exception:
-        logger.exception(
-            "Не удалось обновить статус кандидата",
-            extra={
-                "candidate_id": candidate_id,
-                "status": status_normalized,
-                "telegram_id": telegram_id,
-            },
-        )
-        return RedirectResponse(
-            url=f"/candidates/{candidate_id}?error=exception",
-            status_code=303,
-        )
 
-    return RedirectResponse(
-        url=f"/candidates/{candidate_id}?ok=1",
-        status_code=303,
-    )
+        # Log rejection reason and comment if provided
+        if ok and (reject_reason or reject_comment):
+            rejection_metadata = {}
+            if reject_reason:
+                rejection_metadata["rejection_reason"] = reject_reason
+            if reject_comment:
+                rejection_metadata["rejection_comment"] = reject_comment
+            rejection_metadata["status"] = stored_status or normalized_slug
+
+            await log_audit_action(
+                "candidate_rejection_detailed",
+                "candidate",
+                candidate_id,
+                changes=rejection_metadata,
+            )
+            logger.info(
+                "Candidate rejected with reason",
+                extra={
+                    "candidate_id": candidate_id,
+                    "status": stored_status or normalized_slug,
+                    "reason": reject_reason,
+                    "comment": reject_comment,
+                },
+            )
+
+        return RedirectResponse(url=f"/candidates/{candidate_id}?status_updated=1", status_code=303)
+
+    status_code = 200 if ok else 400
+    payload_response = {
+        "ok": ok,
+        "message": message or "",
+        "status": stored_status,
+    }
+    response = JSONResponse(payload_response, status_code=status_code)
+    response.headers["X-Bot"] = bot_header
+    return response
 
 
 @router.post("/{candidate_id}/interview-notes")

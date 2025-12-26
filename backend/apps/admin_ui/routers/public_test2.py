@@ -41,7 +41,7 @@ def _parse_answers(form: Dict[str, str], total: int) -> Dict[int, int]:
 
 
 @router.get("/{token}", response_class=HTMLResponse)
-@limiter.limit("120/minute", key_func=get_client_ip)
+@limiter.limit("10/minute", key_func=get_client_ip)
 async def test2_public_form(request: Request, token: str) -> HTMLResponse:
     invite = await fetch_test2_invite_by_token(token, with_user=True)
     now = datetime.now(timezone.utc)
@@ -81,7 +81,7 @@ async def test2_public_form(request: Request, token: str) -> HTMLResponse:
 
 
 @router.post("/{token}", response_class=HTMLResponse)
-@limiter.limit("20/minute", key_func=get_client_ip)
+@limiter.limit("5/minute", key_func=get_client_ip)
 async def test2_public_submit(request: Request, token: str) -> HTMLResponse:
     try:
         questions = await _load_test2_questions()
