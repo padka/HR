@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple, Literal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
@@ -55,6 +56,7 @@ from backend.domain.repositories import (
     slot_status_free_clause,
 )
 from backend.domain.slot_service import ensure_slot_not_in_past, SlotValidationError
+from backend.domain.errors import SlotOverlapError
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidate_status_service import CandidateStatusService
 from backend.core.time_utils import ensure_aware_utc
@@ -437,7 +439,22 @@ async def create_slot(
             status=status_free,
         )
         session.add(slot)
-        await session.commit()
+
+        # Commit with proper error handling for exclusion constraint violations
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            # Check if this is a slot overlap exclusion constraint violation
+            error_msg = str(exc.orig) if hasattr(exc, 'orig') else str(exc)
+            if 'slots_no_recruiter_time_overlap_excl' in error_msg or 'overlaps' in error_msg.lower():
+                raise SlotOverlapError(
+                    recruiter_id=recruiter_id,
+                    start_utc=dt_utc,
+                )
+            # Re-raise other integrity errors (e.g., foreign key violations)
+            raise
+
         await log_audit_action(
             "slot_created",
             "slot",
@@ -1470,7 +1487,19 @@ async def bulk_create_slots(
                 for dt in to_insert
             ]
         )
-        await session.commit()
+
+        # Commit with proper error handling for exclusion constraint violations
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            # Check if this is a slot overlap exclusion constraint violation
+            error_msg = str(exc.orig) if hasattr(exc, 'orig') else str(exc)
+            if 'slots_no_recruiter_time_overlap_excl' in error_msg or 'overlaps' in error_msg.lower():
+                return 0, "У рекрутера уже есть слоты в выбранное время. Проверьте расписание и попробуйте другой интервал."
+            # Re-raise other integrity errors
+            raise
+
         await log_audit_action(
             "slots_bulk_created",
             "slot",

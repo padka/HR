@@ -1,10 +1,11 @@
 import base64
+import logging
 import hashlib
 import hmac
 import json
 from typing import Dict, Optional, List
 
-from datetime import date as date_type
+from datetime import date as date_type, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -28,15 +29,18 @@ from backend.apps.admin_ui.services.slots import (
     reject_slot_booking,
 )
 from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
+from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.admin_ui.services.cities import list_cities
 from backend.core.settings import get_settings
 from backend.apps.bot.services import NotificationNotConfigured
+from backend.domain.errors import SlotOverlapError
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
 _FLASH_COOKIE = "admin_flash"
 _SETTINGS = get_settings()
 _SECRET = _SETTINGS.session_secret.encode()
+logger = logging.getLogger(__name__)
 
 
 def _parse_checkbox(value: Optional[str]) -> bool:
@@ -87,6 +91,12 @@ def _ensure_csrf_config(request: Request) -> None:
     }
 
 
+async def _slot_form_cities():
+    cities = await list_cities()
+    active_cities = [city for city in cities if getattr(city, "active", True)]
+    return active_cities or cities
+
+
 @router.get("", response_class=HTMLResponse)
 async def slots_list(
     request: Request,
@@ -95,6 +105,7 @@ async def slots_list(
     q: Optional[str] = Query(default=None, description="Search query"),
     city: Optional[str] = Query(default=None),
     date: Optional[str] = Query(default=None),
+    date_range: Optional[str] = Query(default=None, description="quick range: today/tomorrow/7d"),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
 ):
@@ -102,12 +113,25 @@ async def slots_list(
     status_norm = status_filter(status)
     search_query = q.strip() if isinstance(q, str) and q else None
     city_filter = city.strip() if isinstance(city, str) and city else None
+    date_range_value = date_range.strip().lower() if isinstance(date_range, str) and date_range else ""
     date_filter: Optional[date_type] = None
+    date_range_end: Optional[date_type] = None
     if isinstance(date, str) and date:
         try:
             date_filter = date_type.fromisoformat(date)
         except ValueError:
             date_filter = None
+    elif date_range_value:
+        today = date_type.today()
+        if date_range_value == "today":
+            date_filter = today
+        elif date_range_value == "tomorrow":
+            date_filter = today + timedelta(days=1)
+        elif date_range_value in {"7d", "week"}:
+            date_filter = today
+            date_range_end = today + timedelta(days=6)
+        elif date_range_value == "next":
+            date_filter = today
     result = await list_slots(
         recruiter,
         status_norm,
@@ -116,6 +140,7 @@ async def slots_list(
         search_query,
         city_filter,
         date_filter,
+        date_range_end,
     )
     recruiter_rows = await list_recruiters()
     recruiter_options = [row["rec"] for row in recruiter_rows]
@@ -131,6 +156,8 @@ async def slots_list(
             aggregated.get("CONFIRMED_BY_CANDIDATE", 0)
         ),
     }
+    if "CANCELED" in aggregated:
+        status_counts["CANCELED"] = int(aggregated.get("CANCELED", 0))
     city_names = sorted(
         {
             slot.city.name
@@ -142,10 +169,12 @@ async def slots_list(
     context = {
         "request": request,
         "slots": slots,
+        "calendar_tz": DEFAULT_TZ,
         "filter_recruiter_id": recruiter,
         "filter_status": status_norm,
         "filter_city": city_filter,
         "filter_date": date if date_filter else "",
+        "date_range": date_range_value,
         "search_query": search_query,
         "page": result["page"],
         "pages_total": result["pages_total"],
@@ -172,12 +201,18 @@ async def slots_list(
 @router.get("/new", response_class=HTMLResponse)
 async def slots_new(request: Request):
     recruiters = await recruiters_for_slot_form()
+    cities = await _slot_form_cities()
     flash = _pop_flash(request)
     _ensure_csrf_config(request)
     response = templates.TemplateResponse(
         request,
         "slots_new.html",
-        {"request": request, "recruiters": recruiters, "flash": flash},
+        {
+            "request": request,
+            "recruiters": recruiters,
+            "all_cities": cities,
+            "flash": flash,
+        },
     )
     if flash:
         response.delete_cookie(
@@ -213,6 +248,7 @@ async def slots_create(
 
     if missing_parts:
         recruiters = await recruiters_for_slot_form()
+        cities = await _slot_form_cities()
 
         if len(missing_parts) == 1:
             missing_label = missing_parts[0]
@@ -224,6 +260,7 @@ async def slots_create(
         context = {
             "request": request,
             "recruiters": recruiters,
+            "all_cities": cities,
             "flash": {"status": "error", "message": message},
         }
         return templates.TemplateResponse(request, "slots_new.html", context, status_code=422)
@@ -232,9 +269,11 @@ async def slots_create(
         city_value = int(city_raw)
     except (TypeError, ValueError):
         recruiters = await recruiters_for_slot_form()
+        cities = await _slot_form_cities()
         context = {
             "request": request,
             "recruiters": recruiters,
+            "all_cities": cities,
             "flash": {
                 "status": "error",
                 "message": "Укажите корректный город для слота.",
@@ -242,13 +281,32 @@ async def slots_create(
         }
         return templates.TemplateResponse(request, "slots_new.html", context, status_code=422)
 
-    ok = await create_slot(recruiter_id, date_value, time_value, city_id=city_value)
+    try:
+        ok = await create_slot(recruiter_id, date_value, time_value, city_id=city_value)
+    except SlotOverlapError:
+        # Business-level error: slot overlaps with existing slot
+        # This is an expected scenario, not a system failure
+        response = RedirectResponse(url="/slots/new", status_code=303)
+        _set_flash(
+            response,
+            "error",
+            "Невозможно создать слот: у рекрутёра уже есть занятие в это время.",
+        )
+        return response
+    except Exception as exc:  # defensive against unexpected errors
+        logger.exception("Failed to create slot", exc_info=exc)
+        ok = False
+
     redirect = "/slots" if ok else "/slots/new"
     response = RedirectResponse(url=redirect, status_code=303)
     if ok:
         _set_flash(response, "success", "Слот создан")
     else:
-        _set_flash(response, "error", "Не удалось создать слот. Проверьте город, дату и время.")
+        _set_flash(
+            response,
+            "error",
+            "Не удалось создать слот. Проверьте город, дату и время (нельзя создавать слоты в прошлом).",
+        )
     return response
 
 
@@ -268,19 +326,23 @@ async def slots_bulk_create(
     use_break: Optional[str] = Form(default=None),
     csrf_ok: None = Depends(require_csrf_token),
 ):
-    created, error = await bulk_create_slots(
-        recruiter_id=recruiter_id,
-        city_id=city_id,
-        start_date=start_date,
-        end_date=end_date,
-        start_time=start_time,
-        end_time=end_time,
-        break_start=break_start,
-        break_end=break_end,
-        step_min=step_min,
-        include_weekends=_parse_checkbox(include_weekends),
-        use_break=_parse_checkbox(use_break),
-    )
+    try:
+        created, error = await bulk_create_slots(
+            recruiter_id=recruiter_id,
+            city_id=city_id,
+            start_date=start_date,
+            end_date=end_date,
+            start_time=start_time,
+            end_time=end_time,
+            break_start=break_start,
+            break_end=break_end,
+            step_min=step_min,
+            include_weekends=_parse_checkbox(include_weekends),
+            use_break=_parse_checkbox(use_break),
+        )
+    except Exception as exc:  # defensive against unexpected errors
+        logger.exception("Failed to bulk create slots", exc_info=exc)
+        created, error = 0, "internal_error"
 
     # build redirect params (use start_date as anchor)
     params = [f"recruiter_id={recruiter_id}"]
@@ -372,6 +434,33 @@ class BulkDeletePayload(BaseModel):
 async def slots_delete_all(payload: BulkDeletePayload):
     deleted, remaining = await delete_all_slots(force=bool(payload.force))
     return JSONResponse({"ok": True, "deleted": deleted, "remaining": remaining})
+
+
+class BulkSlotDeletePayload(BaseModel):
+    ids: List[int]
+    force: Optional[bool] = False
+
+
+@router.post("/bulk_delete")
+async def slots_bulk_delete(payload: BulkSlotDeletePayload):
+    """Delete a list of slots in one request to support bulk actions in UI."""
+    deleted = 0
+    errors: List[Dict[str, object]] = []
+    ids = [int(slot_id) for slot_id in payload.ids if slot_id is not None]
+    if not ids:
+        return JSONResponse({"ok": False, "deleted": 0, "errors": ["no_ids"]}, status_code=400)
+
+    for slot_id in ids:
+        ok, error = await delete_slot(slot_id, force=bool(payload.force))
+        if ok:
+            deleted += 1
+            continue
+        errors.append({"id": slot_id, "message": error or "delete_failed"})
+
+    response_payload: Dict[str, object] = {"ok": not errors, "deleted": deleted}
+    if errors:
+        response_payload["errors"] = errors
+    return JSONResponse(response_payload, status_code=200 if not errors else 207)
 
 
 class OutcomePayload(BaseModel):
