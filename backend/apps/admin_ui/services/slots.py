@@ -170,8 +170,11 @@ async def generate_default_day_slots(
                 None,
             )
 
-        tz_name = getattr(target_city, "tz", None) or recruiter.tz or DEFAULT_TZ
-        tz = ZoneInfo(tz_name)
+        # Время генерации слотов в timezone рекрутера (единообразие с create_slot)
+        recruiter_tz = getattr(recruiter, "tz", None) or DEFAULT_TZ
+        candidate_tz = getattr(target_city, "tz", None) or recruiter_tz
+        tz = ZoneInfo(recruiter_tz)
+        tz_name = candidate_tz  # Для сохранения в слоты
         resolved_city_id = getattr(target_city, "id", None)
 
         def _period(start_h: int, end_h: int) -> List[datetime]:
@@ -210,7 +213,7 @@ async def generate_default_day_slots(
             try:
                 ensure_slot_not_in_past(
                     start_utc,
-                    slot_tz=tz_name,
+                    slot_tz=recruiter_tz,
                     allow_past=allow_past,
                 )
             except SlotValidationError:
@@ -413,14 +416,12 @@ async def create_slot(
         dt_utc = recruiter_time_to_utc(date, time, recruiter_tz)
         if not dt_utc:
             return False
-        try:
-            local_dt = datetime.fromisoformat(f"{date}T{time}").replace(tzinfo=ZoneInfo(recruiter_tz))
-        except Exception:
-            return False
+
+        # Проверка, что слот не в прошлом (в UTC).
         test_ctx = os.getenv("PYTEST_CURRENT_TEST", "")
         allow_past = bool(test_ctx and "test_create_slot_rejects_past_time" not in test_ctx)
         try:
-            ensure_slot_not_in_past(local_dt, slot_tz=recruiter_tz, allow_past=allow_past)
+            ensure_slot_not_in_past(dt_utc, slot_tz=recruiter_tz, allow_past=allow_past)
         except SlotValidationError:
             return False
         status_free = getattr(SlotStatus, "FREE", "FREE")
