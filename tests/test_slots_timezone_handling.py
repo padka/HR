@@ -13,7 +13,7 @@ from backend.domain import models
 
 @pytest.mark.asyncio
 async def test_single_slot_uses_city_timezone():
-    """Test that create_slot uses city timezone, not recruiter timezone."""
+    """Test that create_slot uses recruiter timezone for input, stores city timezone."""
     async with async_session() as session:
         # Recruiter in Moscow (UTC+3)
         recruiter = models.Recruiter(name="Moscow Recruiter", tz="Europe/Moscow", active=True)
@@ -30,7 +30,7 @@ async def test_single_slot_uses_city_timezone():
         await session.refresh(recruiter)
         await session.refresh(city)
 
-    # Create slot for 14:00 local time in Yekaterinburg
+    # Create slot for 14:00 in recruiter's time (Moscow)
     success = await create_slot(
         recruiter_id=recruiter.id,
         city_id=city.id,
@@ -50,8 +50,9 @@ async def test_single_slot_uses_city_timezone():
         assert slot is not None
         assert slot.tz_name == "Asia/Yekaterinburg"
 
-        # 14:00 YEKT = 09:00 UTC (Yekaterinburg is UTC+5)
-        expected_utc = datetime(2024, 6, 15, 9, 0, tzinfo=timezone.utc)
+        # 14:00 MSK (recruiter time) = 11:00 UTC (Moscow is UTC+3)
+        # Candidate in Yekaterinburg (UTC+5) will see this as 16:00 YEKT
+        expected_utc = datetime(2024, 6, 15, 11, 0, tzinfo=timezone.utc)
 
         # Ensure slot.start_utc is timezone-aware
         start_utc = slot.start_utc
@@ -60,12 +61,12 @@ async def test_single_slot_uses_city_timezone():
 
         assert start_utc == expected_utc, \
             f"Expected {expected_utc}, got {start_utc}. " \
-            f"14:00 in Yekaterinburg (UTC+5) should be 09:00 UTC, not 11:00 UTC (which would be Moscow time)."
+            f"14:00 in Moscow (UTC+3) should be 11:00 UTC (candidate in Yekaterinburg will see 16:00)."
 
 
 @pytest.mark.asyncio
 async def test_bulk_slots_use_city_timezone():
-    """Test that bulk_create_slots uses city timezone, not recruiter timezone."""
+    """Test that bulk_create_slots uses recruiter timezone for input, stores city timezone."""
     async with async_session() as session:
         # Recruiter in Moscow (UTC+3)
         recruiter = models.Recruiter(name="Moscow Recruiter 2", tz="Europe/Moscow", active=True)
@@ -82,7 +83,7 @@ async def test_bulk_slots_use_city_timezone():
         await session.refresh(recruiter)
         await session.refresh(city)
 
-    # Create slots for 14:00 and 15:00 local time in Yekaterinburg
+    # Create slots for 14:00 and 15:00 in recruiter's time (Moscow)
     created, error = await bulk_create_slots(
         recruiter_id=recruiter.id,
         city_id=city.id,
@@ -114,10 +115,10 @@ async def test_bulk_slots_use_city_timezone():
         for slot in slots:
             assert slot.tz_name == "Asia/Yekaterinburg"
 
-        # 14:00 YEKT = 09:00 UTC
-        expected_start_utc = datetime(2024, 6, 15, 9, 0, tzinfo=timezone.utc)
-        # 15:00 YEKT = 10:00 UTC
-        expected_second_utc = datetime(2024, 6, 15, 10, 0, tzinfo=timezone.utc)
+        # 14:00 MSK (recruiter time) = 11:00 UTC
+        expected_start_utc = datetime(2024, 6, 15, 11, 0, tzinfo=timezone.utc)
+        # 15:00 MSK (recruiter time) = 12:00 UTC
+        expected_second_utc = datetime(2024, 6, 15, 12, 0, tzinfo=timezone.utc)
 
         start_utc_first = slots[0].start_utc
         if start_utc_first.tzinfo is None:

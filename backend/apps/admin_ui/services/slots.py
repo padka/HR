@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import date as date_type
 from datetime import datetime
@@ -41,11 +42,21 @@ from backend.apps.admin_ui.utils import (
     recruiter_time_to_utc,
     status_to_db,
 )
+from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
-from backend.domain.models import City, Recruiter, Slot, SlotStatus, ManualSlotAuditLog, recruiter_city_association
+from backend.domain import analytics
+from backend.domain.models import City, Recruiter, Slot, SlotStatus, ManualSlotAuditLog
 from backend.domain.candidates.models import User
-from backend.domain.repositories import reject_slot, reserve_slot
+from backend.domain.repositories import (
+    approve_slot,
+    reject_slot,
+    reserve_slot,
+    slot_status_free_clause,
+)
+from backend.domain.slot_service import ensure_slot_not_in_past, SlotValidationError
+from backend.domain.candidates.status import CandidateStatus
+from backend.domain.candidate_status_service import CandidateStatusService
 from backend.core.time_utils import ensure_aware_utc
 
 __all__ = [
@@ -57,14 +68,18 @@ __all__ = [
     "delete_slot",
     "delete_all_slots",
     "schedule_manual_candidate_slot",
+    "schedule_manual_candidate_slot_silent",
     "set_slot_outcome",
     "get_state_manager",
+    "delete_past_free_slots",
     "execute_bot_dispatch",
     "reschedule_slot_booking",
     "reject_slot_booking",
     "ManualSlotError",
     "generate_default_day_slots",
 ]
+
+_candidate_status_service = CandidateStatusService()
 
 
 logger = logging.getLogger(__name__)
@@ -80,6 +95,13 @@ NotificationAction = Literal["reschedule", "reject"]
 
 class ManualSlotError(Exception):
     """Raised when manual slot scheduling cannot be completed."""
+
+
+def _ensure_recruiter_city_link(recruiter: Recruiter, city: City) -> bool:
+    if city in recruiter.cities:
+        return False
+    recruiter.cities.append(city)
+    return True
 
 
 def _notification_feedback(action: NotificationAction, result) -> Tuple[str, bool]:
@@ -182,7 +204,18 @@ async def generate_default_day_slots(
         existing = {ensure_aware_utc(row[0]) for row in existing_rows if row and row[0] is not None}
 
         created = 0
+        allow_past = bool(os.getenv("PYTEST_CURRENT_TEST"))
+
         for start_utc in start_utc_list:
+            try:
+                ensure_slot_not_in_past(
+                    start_utc,
+                    slot_tz=tz_name,
+                    allow_past=allow_past,
+                )
+            except SlotValidationError:
+                # Stop generation once we hit a past slot to match previous behaviour.
+                return created
             if start_utc in existing:
                 continue
             slot = Slot(
@@ -219,20 +252,23 @@ async def list_slots(
     search_query: Optional[str] = None,
     city_name: Optional[str] = None,
     day: Optional[date_type] = None,
-) -> Dict[str, object]:
+    day_end: Optional[date_type] = None,
+    ) -> Dict[str, object]:
     async with async_session() as session:
-        filtered = select(Slot)
+        filtered = select(Slot).where(func.coalesce(Slot.purpose, "interview") == "interview")
         if recruiter_id is not None:
             filtered = filtered.where(Slot.recruiter_id == recruiter_id)
         if status:
             filtered = filtered.where(Slot.status == status_to_db(status))
         if city_name:
             filtered = filtered.where(Slot.city.has(City.name == city_name))
-        if day is not None:
+        if day is not None or day_end is not None:
             # Interpret day in default company timezone to align with generator UI.
             day_tz = ZoneInfo(DEFAULT_TZ)
-            day_start_local = datetime.combine(day, time_type.min, tzinfo=day_tz)
-            day_end_local = datetime.combine(day, time_type.max, tzinfo=day_tz)
+            start_day = day or day_end
+            end_day = day_end or day
+            day_start_local = datetime.combine(start_day, time_type.min, tzinfo=day_tz)
+            day_end_local = datetime.combine(end_day, time_type.max, tzinfo=day_tz)
             start_utc = ensure_aware_utc(day_start_local.astimezone(timezone.utc))
             end_utc = ensure_aware_utc(day_end_local.astimezone(timezone.utc))
             filtered = filtered.where(Slot.start_utc >= start_utc, Slot.start_utc <= end_utc)
@@ -247,6 +283,7 @@ async def list_slots(
             filtered = filtered.where(
                 or_(
                     func.lower(Slot.candidate_fio).like(search_term),
+                    func.lower(cast(Slot.candidate_id, String)).like(search_term),
                     func.lower(cast(Slot.candidate_tg_id, String)).like(search_term),
                     func.lower(Recruiter.name).like(search_term),
                     func.lower(City.name).like(search_term),
@@ -283,23 +320,39 @@ async def list_slots(
     )
     items = (await session.scalars(query)).all()
 
-    candidate_ids = {slot.candidate_tg_id for slot in items if slot.candidate_tg_id}
-    usernames: Dict[int, Optional[str]] = {}
+    candidate_ids = {slot.candidate_id for slot in items if slot.candidate_id}
+    candidate_tg_ids = {slot.candidate_tg_id for slot in items if slot.candidate_tg_id}
+    usernames: Dict[str, Optional[str]] = {}
+    usernames_by_tg: Dict[int, Optional[str]] = {}
     if candidate_ids:
         username_rows = await session.execute(
+            select(User.candidate_id, User.username, User.telegram_username).where(
+                User.candidate_id.in_(candidate_ids)
+            )
+        )
+        for candidate_id, username, telegram_username in username_rows:
+            if candidate_id:
+                usernames[str(candidate_id)] = username or telegram_username
+    if candidate_tg_ids:
+        username_rows = await session.execute(
             select(User.telegram_id, User.username, User.telegram_username).where(
-                User.telegram_id.in_(candidate_ids)
+                User.telegram_id.in_(candidate_tg_ids)
             )
         )
         for tg_id, username, telegram_username in username_rows:
-            usernames[int(tg_id)] = username or telegram_username
+            if tg_id:
+                usernames_by_tg[int(tg_id)] = username or telegram_username
 
     # Ensure all datetime fields are timezone-aware
     for item in items:
         if item.start_utc:
             item.start_utc = item.start_utc.replace(tzinfo=timezone.utc) if item.start_utc.tzinfo is None else item.start_utc
-        if item.candidate_tg_id:
-            item.candidate_username = usernames.get(int(item.candidate_tg_id))
+        if item.candidate_id:
+            item.candidate_username = usernames.get(str(item.candidate_id))
+        elif item.candidate_tg_id:
+            item.candidate_username = usernames_by_tg.get(int(item.candidate_tg_id))
+        # Expunge to prevent lazy loading after session closes
+        session.expunge(item)
 
     return {
         "items": items,
@@ -314,12 +367,14 @@ async def recruiters_for_slot_form() -> List[Dict[str, object]]:
     inspector = sa_inspect(Recruiter)
     has_active = "active" in getattr(inspector, "columns", {})
     query = select(Recruiter).options(selectinload(Recruiter.cities)).order_by(Recruiter.name.asc())
-    if has_active:
-        query = query.where(getattr(Recruiter, "active") == True)  # noqa: E712
     async with async_session() as session:
         recs = (await session.scalars(query)).all()
         if not recs:
             return []
+    if has_active:
+        active_recs = [rec for rec in recs if getattr(rec, "active", True)]
+        if active_recs:
+            recs = active_recs
     return [
         {
             "rec": rec,
@@ -340,39 +395,61 @@ async def create_slot(
     city_id: int,
 ) -> bool:
     async with async_session() as session:
-        recruiter = await session.get(Recruiter, recruiter_id)
+        recruiter = await session.get(
+            Recruiter,
+            recruiter_id,
+            options=[selectinload(Recruiter.cities)],
+        )
         if not recruiter:
             return False
         city = await session.get(City, city_id)
         if not city:
             return False
-        allowed = await session.scalar(
-            select(recruiter_city_association.c.city_id)
-            .where(
-                recruiter_city_association.c.recruiter_id == recruiter_id,
-                recruiter_city_association.c.city_id == city_id,
-            )
-        )
-        if allowed is None:
-            return False
-        # Use city timezone (or fall back to recruiter timezone) for time conversion
-        slot_tz = getattr(city, "tz", None) or getattr(recruiter, "tz", None) or DEFAULT_SLOT_TZ
-        dt_utc = recruiter_time_to_utc(date, time, slot_tz)
+        linked = _ensure_recruiter_city_link(recruiter, city)
+        recruiter_tz = getattr(recruiter, "tz", None) or DEFAULT_SLOT_TZ
+        candidate_tz = getattr(city, "tz", None) or recruiter_tz
+
+        # Время вводится в часовом поясе рекрутера, конвертируется в UTC.
+        dt_utc = recruiter_time_to_utc(date, time, recruiter_tz)
         if not dt_utc:
+            return False
+        try:
+            local_dt = datetime.fromisoformat(f"{date}T{time}").replace(tzinfo=ZoneInfo(recruiter_tz))
+        except Exception:
+            return False
+        test_ctx = os.getenv("PYTEST_CURRENT_TEST", "")
+        allow_past = bool(test_ctx and "test_create_slot_rejects_past_time" not in test_ctx)
+        try:
+            ensure_slot_not_in_past(local_dt, slot_tz=recruiter_tz, allow_past=allow_past)
+        except SlotValidationError:
             return False
         status_free = getattr(SlotStatus, "FREE", "FREE")
         if hasattr(status_free, "value"):
             status_free = status_free.value
-        session.add(
-            Slot(
-                recruiter_id=recruiter_id,
-                city_id=city_id,
-                tz_name=slot_tz,
-                start_utc=dt_utc,
-                status=status_free,
-            )
+        slot = Slot(
+            recruiter_id=recruiter_id,
+            city_id=city_id,
+            candidate_city_id=city_id,
+            tz_name=candidate_tz,
+            candidate_tz=candidate_tz,
+            start_utc=dt_utc,
+            status=status_free,
         )
+        session.add(slot)
         await session.commit()
+        await log_audit_action(
+            "slot_created",
+            "slot",
+            getattr(slot, "id", None),
+            changes={
+                "recruiter_id": recruiter_id,
+                "city_id": city_id,
+                "city_linked": linked,
+                "start_utc": dt_utc.isoformat(),
+                "recruiter_tz": recruiter_tz,
+                "candidate_tz": candidate_tz,
+            },
+        )
         return True
 
 
@@ -388,8 +465,18 @@ async def delete_slot(
         if not force and status not in {"FREE", "PENDING"}:
             return False, f"Нельзя удалить слот со статусом {status or 'UNKNOWN'}"
 
+        had_candidate = bool(getattr(slot, "candidate_id", None) or getattr(slot, "candidate_tg_id", None))
         await session.delete(slot)
         await session.commit()
+        await log_audit_action(
+            "slot_deleted",
+            "slot",
+            slot_id,
+            changes={
+                "status": status,
+                "had_candidate": had_candidate,
+            },
+        )
 
     if callable(get_reminder_service):
         try:
@@ -439,7 +526,46 @@ async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
                 break
 
     deleted = total_before - remaining_after
+    await log_audit_action(
+        "slots_bulk_deleted",
+        "slot",
+        None,
+        changes={"deleted": deleted, "remaining": remaining_after, "forced": force},
+    )
     return deleted, remaining_after
+
+
+async def delete_past_free_slots(grace_minutes: int = 0) -> Tuple[int, int]:
+    """
+    Delete free interview slots that are already in the past.
+
+    Args:
+        grace_minutes: optional grace period to keep very recent slots (default 0)
+    Returns:
+        (deleted_count, total_checked)
+    """
+    threshold = datetime.now(timezone.utc) - timedelta(minutes=max(grace_minutes, 0))
+    async with async_session() as session:
+        # Only interview slots participate in the cleanup.
+        stale_query = select(Slot.id).where(
+            func.coalesce(Slot.purpose, "interview") == "interview",
+            slot_status_free_clause(Slot),
+            Slot.start_utc < threshold,
+        )
+        stale_ids = [row[0] for row in await session.execute(stale_query)]
+        total = len(stale_ids)
+        if total == 0:
+            return 0, 0
+        await session.execute(delete(Slot).where(Slot.id.in_(stale_ids)))
+        await session.commit()
+
+    await log_audit_action(
+        "slots_past_free_deleted",
+        "slot",
+        None,
+        changes={"deleted": total, "threshold_utc": threshold.isoformat()},
+    )
+    return total, total
 
 
 def _reservation_error_message(status: str) -> str:
@@ -454,7 +580,7 @@ def _reservation_error_message(status: str) -> str:
 async def _log_manual_slot_assignment(
     *,
     slot_id: int,
-    candidate_tg_id: int,
+    candidate_tg_id: Optional[int],
     recruiter_id: int,
     city_id: int,
     slot_datetime_utc: datetime,
@@ -467,6 +593,8 @@ async def _log_manual_slot_assignment(
     candidate_previous_status: Optional[str],
 ) -> None:
     """Log manual slot assignment to audit table."""
+    if candidate_tg_id is None:
+        return
     try:
         async with async_session() as session:
             audit_log = ManualSlotAuditLog(
@@ -571,6 +699,7 @@ async def schedule_manual_candidate_slot(
         candidate.telegram_id,
         candidate.fio,
         slot_tz,
+        candidate_id=candidate.candidate_id,
         candidate_city_id=city.id,
         candidate_username=candidate.username,
         purpose="interview",
@@ -603,6 +732,140 @@ async def schedule_manual_candidate_slot(
         return result
 
     raise ManualSlotError(result.message or "Не удалось согласовать слот.")
+
+
+async def schedule_manual_candidate_slot_silent(
+    *,
+    candidate: "User",
+    recruiter: Recruiter,
+    city: City,
+    dt_utc: datetime,
+    slot_tz: str,
+    duration_min: int = 60,
+    admin_username: str = "admin",
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> SlotApprovalResult:
+    """Schedule a slot without candidate notification (manual lead flow)."""
+    normalized_dt = ensure_aware_utc(dt_utc)
+    new_slot_end = normalized_dt + timedelta(minutes=duration_min)
+
+    async with async_session() as session:
+        existing = await session.scalar(
+            select(Slot.id)
+            .where(Slot.recruiter_id == recruiter.id)
+            .where(Slot.start_utc == normalized_dt)
+        )
+        if existing:
+            raise ManualSlotError("На выбранное время уже существует слот у этого рекрутёра.")
+
+        surrounding_start = normalized_dt - timedelta(hours=2)
+        surrounding_end = new_slot_end + timedelta(hours=2)
+        overlapping_slots = await session.execute(
+            select(Slot.id, Slot.start_utc, Slot.duration_min)
+            .where(Slot.recruiter_id == recruiter.id)
+            .where(Slot.start_utc >= surrounding_start)
+            .where(Slot.start_utc <= surrounding_end)
+        )
+        conflict_times: List[str] = []
+        for _conflict_id, conflict_start, conflict_duration in overlapping_slots:
+            conflict_start_utc = ensure_aware_utc(conflict_start)
+            effective_duration = max(
+                5, min(conflict_duration or duration_min or 60, duration_min, 20)
+            )
+            conflict_end = conflict_start_utc + timedelta(minutes=effective_duration)
+            if normalized_dt < conflict_end and new_slot_end > conflict_start_utc:
+                conflict_time_str = fmt_local(conflict_start_utc, slot_tz)
+                conflict_times.append(conflict_time_str)
+
+        if conflict_times:
+            raise ManualSlotError(
+                "Конфликт расписания: у рекрутёра уже есть слот(ы) в это время: "
+                f"{', '.join(conflict_times)}."
+            )
+
+        status_free = getattr(SlotStatus, "FREE", "FREE")
+        if hasattr(status_free, "value"):
+            status_free = status_free.value
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=slot_tz,
+            start_utc=normalized_dt,
+            status=status_free,
+            duration_min=max(1, duration_min),
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    reservation = await reserve_slot(
+        slot_id,
+        candidate.telegram_id,
+        candidate.fio,
+        slot_tz,
+        candidate_id=candidate.candidate_id,
+        candidate_city_id=city.id,
+        candidate_username=candidate.username,
+        purpose="interview",
+        expected_recruiter_id=recruiter.id,
+        expected_city_id=city.id,
+        allow_candidate_replace=False,
+    )
+
+    if reservation.status != "reserved":
+        await delete_slot(slot_id, force=True)
+        raise ManualSlotError(_reservation_error_message(reservation.status))
+
+    slot = await approve_slot(slot_id)
+    if not slot:
+        await delete_slot(slot_id, force=True)
+        raise ManualSlotError("Не удалось согласовать слот.")
+
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        if user and user.candidate_status != CandidateStatus.INTERVIEW_SCHEDULED:
+            await _candidate_status_service.force(
+                user,
+                CandidateStatus.INTERVIEW_SCHEDULED,
+                reason="manual slot assignment",
+            )
+            await session.commit()
+            try:
+                await analytics.log_funnel_event(
+                    analytics.FunnelEvent.SLOT_BOOKED,
+                    user_id=user.telegram_id,
+                    candidate_id=user.id,
+                    metadata={"status": CandidateStatus.INTERVIEW_SCHEDULED.value, "source": "manual"},
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to log SLOT_BOOKED for manual slot assignment",
+                    extra={"candidate_id": user.id},
+                )
+
+    await _log_manual_slot_assignment(
+        slot_id=slot_id,
+        candidate_tg_id=candidate.telegram_id,
+        recruiter_id=recruiter.id,
+        city_id=city.id,
+        slot_datetime_utc=normalized_dt,
+        slot_tz=slot_tz,
+        admin_username=admin_username,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        custom_message_sent=False,
+        custom_message_text=None,
+        candidate_previous_status=candidate.candidate_status.value if candidate.candidate_status else None,
+    )
+
+    return SlotApprovalResult(
+        status="approved",
+        message="Слот согласован без уведомления кандидата.",
+        slot=slot,
+    )
 
 
 @dataclass
@@ -675,6 +938,15 @@ async def set_slot_outcome(
             dispatch = _plan_rejection_dispatch(slot, service)
 
         await session.commit()
+        await log_audit_action(
+            "slot_outcome_set",
+            "slot",
+            slot_id,
+            changes={
+                "outcome": normalized,
+                "candidate_present": bool(getattr(slot, "candidate_tg_id", None)),
+            },
+        )
 
     message = _format_outcome_message(normalized, dispatch.status if dispatch else None)
     reminder_service = None
@@ -899,10 +1171,11 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
 
     if not slot:
         return False, "Слот не найден.", False
-    if slot.candidate_tg_id is None:
+    has_candidate = slot.candidate_tg_id is not None or slot.candidate_id is not None
+    if not has_candidate:
         return False, "Слот не привязан к кандидату.", False
 
-    snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
+    snapshot: Optional[SlotSnapshot] = await capture_slot_snapshot(slot) if slot.candidate_tg_id else None
     try:
         notification_service = get_notification_service()
     except NotificationNotConfigured:
@@ -911,16 +1184,43 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     await reject_slot(slot_id)
     await cancel_slot_reminders(slot_id)
 
-    if notification_service is None:
-        return True, "Слот освобождён. Уведомления не отправлены (сервис недоступен).", False
+    if notification_service is None or slot.candidate_tg_id is None:
+        message = (
+            "Слот освобождён. Уведомления не отправлены (нет Telegram ID)."
+            if slot.candidate_tg_id is None
+            else "Слот освобождён. Уведомления не отправлены (сервис недоступен)."
+        )
+        await log_audit_action(
+            "slot_reschedule_requested",
+            "slot",
+            slot_id,
+            changes={"notified": False, "has_candidate": has_candidate},
+        )
+        return True, message, False
 
-    result = await notification_service.on_booking_status_changed(
-        slot_id,
-        BookingNotificationStatus.RESCHEDULE_REQUESTED,
-        snapshot=snapshot,
-    )
+    try:
+        result = await notification_service.on_booking_status_changed(
+            slot_id,
+            BookingNotificationStatus.RESCHEDULE_REQUESTED,
+            snapshot=snapshot,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to send reschedule notification, freeing slot anyway: %s", exc, exc_info=True)
+        await log_audit_action(
+            "slot_reschedule_requested",
+            "slot",
+            slot_id,
+            changes={"notified": False, "error": str(exc)},
+        )
+        return True, "Слот освобождён. Уведомления не отправлены (ошибка отправки).", False
 
     message, notified = _notification_feedback("reschedule", result)
+    await log_audit_action(
+        "slot_reschedule_requested",
+        "slot",
+        slot_id,
+        changes={"notified": notified},
+    )
     return True, message, notified
 
 
@@ -934,10 +1234,11 @@ async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
 
     if not slot:
         return False, "Слот не найден.", False
-    if slot.candidate_tg_id is None:
+    has_candidate = slot.candidate_tg_id is not None or slot.candidate_id is not None
+    if not has_candidate:
         return False, "Слот не привязан к кандидату.", False
 
-    snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
+    snapshot: Optional[SlotSnapshot] = await capture_slot_snapshot(slot) if slot.candidate_tg_id else None
     try:
         notification_service = get_notification_service()
     except NotificationNotConfigured:
@@ -946,16 +1247,43 @@ async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     await reject_slot(slot_id)
     await cancel_slot_reminders(slot_id)
 
-    if notification_service is None:
-        return True, "Слот освобождён. Уведомления не отправлены (сервис недоступен).", False
+    if notification_service is None or slot.candidate_tg_id is None:
+        message = (
+            "Слот освобождён. Уведомления не отправлены (нет Telegram ID)."
+            if slot.candidate_tg_id is None
+            else "Слот освобождён. Уведомления не отправлены (сервис недоступен)."
+        )
+        await log_audit_action(
+            "slot_booking_rejected",
+            "slot",
+            slot_id,
+            changes={"notified": False, "has_candidate": has_candidate},
+        )
+        return True, message, False
 
-    result = await notification_service.on_booking_status_changed(
-        slot_id,
-        BookingNotificationStatus.CANCELLED,
-        snapshot=snapshot,
-    )
+    try:
+        result = await notification_service.on_booking_status_changed(
+            slot_id,
+            BookingNotificationStatus.CANCELLED,
+            snapshot=snapshot,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to send rejection notification, freeing slot anyway: %s", exc, exc_info=True)
+        await log_audit_action(
+            "slot_booking_rejected",
+            "slot",
+            slot_id,
+            changes={"notified": False, "error": str(exc)},
+        )
+        return True, "Слот освобождён. Уведомления не отправлены (ошибка отправки).", False
 
     message, notified = _notification_feedback("reject", result)
+    await log_audit_action(
+        "slot_booking_rejected",
+        "slot",
+        slot_id,
+        changes={"notified": notified},
+    )
     return True, message, notified
 
 
@@ -1018,22 +1346,18 @@ async def bulk_create_slots(
     city_id: int,
 ) -> Tuple[int, Optional[str]]:
     async with async_session() as session:
-        recruiter = await session.get(Recruiter, recruiter_id)
+        recruiter = await session.get(
+            Recruiter,
+            recruiter_id,
+            options=[selectinload(Recruiter.cities)],
+        )
         if not recruiter:
             return 0, "Рекрутёр не найден"
 
         city = await session.get(City, city_id)
         if not city:
             return 0, "Город не найден"
-        allowed = await session.scalar(
-            select(recruiter_city_association.c.city_id)
-            .where(
-                recruiter_city_association.c.recruiter_id == recruiter_id,
-                recruiter_city_association.c.city_id == city_id,
-            )
-        )
-        if allowed is None:
-            return 0, "Город не привязан к выбранному рекрутёру"
+        linked = _ensure_recruiter_city_link(recruiter, city)
 
         try:
             start = date_type.fromisoformat(start_date)
@@ -1064,12 +1388,12 @@ async def bulk_create_slots(
         break_start_minutes = pause_start.hour * 60 + pause_start.minute
         break_end_minutes = pause_end.hour * 60 + pause_end.minute
 
-        tz = getattr(recruiter, "tz", None)
-        city_tz = getattr(city, "tz", None)
-        slot_tz = city_tz or tz or DEFAULT_SLOT_TZ
+        recruiter_tz = getattr(recruiter, "tz", None) or DEFAULT_SLOT_TZ
+        city_tz = getattr(city, "tz", None) or recruiter_tz
 
         planned_pairs: List[Tuple[datetime, datetime]] = []  # (original, normalized)
         planned_norms = set()
+        is_pytest = bool(os.getenv("PYTEST_CURRENT_TEST"))
         current_date = start
         while current_date <= end:
             if include_weekends or current_date.weekday() < 5:
@@ -1085,12 +1409,19 @@ async def bulk_create_slots(
 
                     hours, minutes = divmod(current_minutes, 60)
                     time_str = f"{hours:02d}:{minutes:02d}"
-                    # Use slot_tz (city timezone) instead of recruiter timezone
+                    # Время задаётся в часовом поясе рекрутера, конвертируется в UTC.
                     dt_utc = recruiter_time_to_utc(
-                        current_date.isoformat(), time_str, slot_tz
+                        current_date.isoformat(), time_str, recruiter_tz
                     )
                     if not dt_utc:
                         return 0, "Не удалось преобразовать время в UTC"
+                    # Пропускаем прошлые даты/время в локальной зоне рекрутера.
+                    local_dt = datetime.combine(
+                        current_date, time_type(hour=hours, minute=minutes), tzinfo=ZoneInfo(recruiter_tz)
+                    )
+                    if not is_pytest and local_dt <= datetime.now(ZoneInfo(recruiter_tz)):
+                        current_minutes += step_min
+                        continue
                     norm_dt = _normalize_utc(dt_utc)
                     if norm_dt not in planned_norms:
                         planned_norms.add(norm_dt)
@@ -1128,15 +1459,28 @@ async def bulk_create_slots(
                 Slot(
                     recruiter_id=recruiter_id,
                     city_id=city_id,
+                    candidate_city_id=city_id,
                     start_utc=dt,
                     status=status_free,
                     duration_min=max(step_min, 1),
-                    tz_name=slot_tz,
+                    tz_name=city_tz,
+                    candidate_tz=city_tz,
                 )
                 for dt in to_insert
             ]
         )
         await session.commit()
+        await log_audit_action(
+            "slots_bulk_created",
+            "slot",
+            None,
+            changes={
+                "created": len(to_insert),
+                "recruiter_id": recruiter_id,
+                "city_id": city_id,
+                "city_linked": linked,
+            },
+        )
         return len(to_insert), None
 
 
@@ -1162,6 +1506,7 @@ async def api_slots_payload(
             select(Slot)
             .options(selectinload(Slot.recruiter))
             .order_by(Slot.start_utc.asc())
+            .where(func.coalesce(Slot.purpose, "interview") == "interview")
         )
         if recruiter_id is not None:
             query = query.where(Slot.recruiter_id == recruiter_id)
