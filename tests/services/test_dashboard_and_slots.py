@@ -10,7 +10,7 @@ from backend.apps.admin_ui.config import register_template_globals
 from backend.apps.admin_ui.routers import dashboard
 from backend.apps.admin_ui.routers.slots import slots_list
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
-from backend.apps.admin_ui.services.slots.core import api_slots_payload, create_slot, list_slots
+from backend.apps.admin_ui.services.slots import api_slots_payload, create_slot, list_slots
 from backend.core.db import async_session
 from backend.domain import models
 from backend.apps.bot.metrics import (
