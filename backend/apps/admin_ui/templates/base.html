@@ -268,15 +268,37 @@
     z-index: 40;
     padding: 0;
     background: none;
-    pointer-events: none;
+    pointer-events: auto;
+  }
+
+  .dock-hotspot {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 18px;
+    height: 100vh;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent);
+    opacity: 0.18;
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 39;
+  }
+
+  .dock-hotspot:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+    outline-offset: 4px;
+    opacity: 0.4;
   }
 
   .nav {
     --dock-peek: 18px;
     position: fixed;
     top: 50%;
-    left: clamp(10px, 2vw, 20px);
-    transform: translateY(-50%);
+    left: 0;
+    transform: translateY(-50%) translateX(calc(-100% + var(--dock-peek)));
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -287,25 +309,25 @@
     background: color-mix(in srgb, var(--surface-raised) 90%, rgba(255,255,255,.02));
     box-shadow: var(--shadow-2), var(--glow-soft);
     isolation: isolate;
-    pointer-events: auto;
+    pointer-events: none;
     z-index: 40;
+    opacity: .82;
     transition: transform .35s var(--transition-soft), opacity .35s ease, box-shadow .35s ease, border-color .35s ease;
+  }
+
+  .dock-hotspot:hover + .nav,
+  .dock-hotspot:focus-visible + .nav,
+  .nav:hover,
+  .nav:focus-within,
+  .nav[data-dock-pinned="true"] {
+    transform: translateY(-50%) translateX(0);
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .nav:hover {
     border-color: color-mix(in srgb, var(--accent) 35%, var(--outline-strong));
     box-shadow: var(--shadow-3), var(--glow-strong);
-  }
-
-  .nav[data-dock-hidden="true"] {
-    transform: translateY(-50%) translateX(calc(-100% + var(--dock-peek)));
-    opacity: .82;
-  }
-
-  .nav[data-dock-hidden="true"]:hover,
-  .nav[data-dock-hidden="true"]:focus-within {
-    transform: translateY(-50%) translateX(0);
-    opacity: 1;
   }
 
   @supports ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {
@@ -373,7 +395,7 @@
     transition: transform .25s ease;
   }
 
-  .nav[data-dock-hidden="false"] .nav__dock-toggle-icon {
+  .nav[data-dock-pinned="true"] .nav__dock-toggle-icon {
     transform: rotate(180deg);
   }
 
@@ -867,9 +889,13 @@
       padding: clamp(64px, 18vw, 90px) clamp(14px, 6vw, 22px) clamp(28px, 8vw, 40px);
     }
 
+    .dock-hotspot {
+      width: 14px;
+    }
+
     .nav {
       --dock-peek: 14px;
-      left: 8px;
+      left: 0;
       padding: 12px 10px;
       gap: 10px;
       border-radius: 22px;
@@ -902,9 +928,13 @@
   }
 
   @media (max-width: 720px) {
+    .dock-hotspot {
+      width: 12px;
+    }
+
     .nav {
       --dock-peek: 12px;
-      left: 6px;
+      left: 0;
       padding: 10px 8px;
       gap: 8px;
       border-radius: 20px;
@@ -1173,8 +1203,9 @@
   <a href="#main" class="skip-link">Перейти к содержимому</a>
   <div aria-hidden="true" class="halo"></div>
   <header class="app-header">
-    <nav class="nav nav--dock glass grain" role="navigation" aria-label="Навигация" data-mobile-nav data-dock-hidden="false">
-      <button class="nav__dock-toggle" type="button" id="nav-menu-toggle" aria-label="Скрыть навигацию" aria-pressed="true" aria-controls="primary-nav">
+    <button class="dock-hotspot" type="button" data-dock-hotspot aria-label="Показать навигацию" aria-pressed="false"></button>
+    <nav class="nav nav--dock glass grain" role="navigation" aria-label="Навигация" data-dock-nav data-dock-pinned="false">
+      <button class="nav__dock-toggle" type="button" id="nav-menu-toggle" aria-label="Закрепить навигацию" aria-pressed="false" aria-controls="primary-nav">
         <span class="nav__dock-toggle-icon" aria-hidden="true">&gt;</span>
       </button>
       {% block nav %}
@@ -1282,39 +1313,39 @@
       });
     }
 
-    const nav = document.querySelector('[data-mobile-nav]');
+    const nav = document.querySelector('[data-dock-nav]');
     const navToggle = document.getElementById('nav-menu-toggle');
-    const dockMedia = window.matchMedia('(max-width: 960px)');
-    let dockUserToggled = false;
+    const dockHotspot = document.querySelector('[data-dock-hotspot]');
 
-    function setDockHidden(hidden) {
+    function setDockPinned(pinned) {
       if (!nav) { return; }
-      nav.dataset.dockHidden = hidden ? 'true' : 'false';
+      nav.dataset.dockPinned = pinned ? 'true' : 'false';
       if (navToggle) {
-        navToggle.setAttribute('aria-pressed', String(!hidden));
-        navToggle.setAttribute('aria-label', hidden ? 'Показать навигацию' : 'Скрыть навигацию');
+        navToggle.setAttribute('aria-pressed', String(pinned));
+        navToggle.setAttribute('aria-label', pinned ? 'Открепить навигацию' : 'Закрепить навигацию');
+      }
+      if (dockHotspot) {
+        dockHotspot.setAttribute('aria-pressed', String(pinned));
+        dockHotspot.setAttribute('aria-label', pinned ? 'Скрыть навигацию' : 'Показать навигацию');
       }
     }
 
-    function syncDockForViewport() {
-      if (!nav || dockUserToggled) { return; }
-      setDockHidden(dockMedia.matches);
+    function toggleDockPinned() {
+      if (!nav) { return; }
+      const pinned = nav.dataset.dockPinned === 'true';
+      setDockPinned(!pinned);
     }
 
-    navToggle?.addEventListener('click', () => {
-      if (!nav) { return; }
-      dockUserToggled = true;
-      const hidden = nav.dataset.dockHidden === 'true';
-      setDockHidden(!hidden);
+    navToggle?.addEventListener('click', (event) => {
+      event.preventDefault();
+      toggleDockPinned();
     });
 
-    if (typeof dockMedia.addEventListener === 'function') {
-      dockMedia.addEventListener('change', syncDockForViewport);
-    } else if (typeof dockMedia.addListener === 'function') {
-      dockMedia.addListener(syncDockForViewport);
-    }
+    dockHotspot?.addEventListener('click', () => {
+      toggleDockPinned();
+    });
 
-    syncDockForViewport();
+    setDockPinned(nav?.dataset.dockPinned === 'true');
 
     if (!reduceMotion) {
       const tiltTargets = Array.from(document.querySelectorAll('[data-tilt]'));
