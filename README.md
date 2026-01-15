@@ -45,6 +45,18 @@ make test               # прогоны на SQLite + in-memory broker, без 
 - Фича-флаг для старого эндпоинта статусов: `ENABLE_LEGACY_STATUS_API` (по умолчанию выключен в dev/staging, в prod обязательно выключен; включать только для отладки/тестов).
   - Новый контракт статусов: `GET /candidates/{id}/state` возвращает `status` + `allowed_actions`; действия — `POST /candidates/{id}/actions/{action}` (см. tests/test_workflow_api.py).
 
+## Обновление зависимостей
+
+- Dependabot создаёт PR для Python (pip/pyproject) и Node (npm) по расписанию:
+  - Python: по понедельникам в 06:00 (Europe/Moscow), группировка на prod/dev зависимости.
+  - Node: по понедельникам в 06:30 (Europe/Moscow), группировка всех npm пакетов.
+- PR помечаются лейблом `dependencies`; перед merge прогоняйте CI и проверяйте ключевые сценарии.
+- Security-аудиты:
+  - GitHub Actions workflow `Dependency audit` запускается по изменениям файлов зависимостей и раз в неделю (понедельник 07:00 MSK).
+  - Локально можно запустить:
+    - `pip-audit -r requirements.txt -r requirements-dev.txt`
+    - `npm audit --audit-level=high`
+
 ## Локальный запуск (Postgres + Redis в Docker)
 
 Подготовка:
