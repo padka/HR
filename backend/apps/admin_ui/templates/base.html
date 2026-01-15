@@ -537,7 +537,10 @@
     animation: containerFade .55s var(--transition-soft) both;
   }
 
-  .container > :first-child {
+  /* Сброс возможного "компенсирующего" отступа сверху:
+     первый визуальный блок без маргина, даже если перед ним идут <script>/<style>. */
+  .container > :first-child,
+  .container > *:not(style):not(script):not(link):not(template):first-of-type {
     margin-top: 0;
   }
 
