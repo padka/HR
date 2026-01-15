@@ -265,7 +265,7 @@
     position: fixed;
     top: 0;
     left: 0;
-    z-index: 1200;
+    z-index: 5000;
     padding: 0;
     background: none;
     pointer-events: auto;
@@ -275,7 +275,7 @@
     position: fixed;
     top: 0;
     left: 0;
-    width: 18px;
+    width: 24px;
     height: 100vh;
     border: none;
     padding: 0;
@@ -284,7 +284,7 @@
     opacity: 0.18;
     cursor: pointer;
     pointer-events: auto;
-    z-index: 1210;
+    z-index: 5010;
   }
 
   .dock-hotspot:focus-visible {
@@ -294,11 +294,12 @@
   }
 
   .nav {
-    --dock-peek: 18px;
+    --dock-peek: 30px;
+    --dock-hidden-shift: 68%;
     position: fixed;
     top: 50%;
     left: 0;
-    transform: translateY(-50%) translateX(calc(-100% + var(--dock-peek)));
+    transform: translateY(-50%) translateX(calc(-1 * var(--dock-hidden-shift)));
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -309,10 +310,11 @@
     background: color-mix(in srgb, var(--surface-raised) 90%, rgba(255,255,255,.02));
     box-shadow: var(--shadow-2), var(--glow-soft);
     isolation: isolate;
-    pointer-events: none;
-    z-index: 1220;
+    pointer-events: auto;
+    z-index: 5020;
     opacity: .82;
     transition: transform .35s var(--transition-soft), opacity .35s ease, box-shadow .35s ease, border-color .35s ease;
+    will-change: transform, opacity;
   }
 
   .dock-hotspot:hover + .nav,
@@ -885,6 +887,9 @@
   }
 
   @media (max-width: 960px) {
+    .dock-hotspot {
+      width: 18px;
+    }
     .container {
       padding: clamp(64px, 18vw, 90px) clamp(14px, 6vw, 22px) clamp(28px, 8vw, 40px);
     }
@@ -929,7 +934,7 @@
 
   @media (max-width: 720px) {
     .dock-hotspot {
-      width: 12px;
+      width: 16px;
     }
 
     .nav {
