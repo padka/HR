@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms with context %}
+{% import "partials/form_shell.html" as forms %}
 {% block title %}Новый шаблон{% endblock %}
 {% block content %}
 {% set has_cities = (cities|length) > 0 %}
@@ -43,7 +43,7 @@
         <select id="city_id" name="city_id" {% if not has_cities %}disabled{% else %}required{% endif %}>
           <option value="" {% if not form_data.city_id %}selected{% endif %} disabled>— выберите город —</option>
           {% for c in cities %}
-            <option value="{{ c.id }}" {% if form_data.city_id == c.id %}selected{% endif %}>{{ c.display_name }} ({{ c.tz or "Europe/Moscow" }})</option>
+            <option value="{{ c.id }}" {% if form_data.city_id == c.id %}selected{% endif %}>{{ c.name }} ({{ c.tz or "Europe/Moscow" }})</option>
           {% endfor %}
         </select>
         <input id="city_filter" type="text" placeholder="Поиск по городам…" {% if not has_cities %}disabled{% endif %}>
@@ -56,17 +56,18 @@
     {% call forms.field("Быстрый шаблон", hint="Выберите пресет — текст можно отредактировать") %}
       <select id="preset">
         <option value="">— не выбирать пресет —</option>
-        <option value="invite_interview">Приглашение на интервью</option>
-        <option value="confirm_2h">Подтверждение за 2 часа</option>
-        <option value="after_meeting">После согласования руководителем</option>
-        <option value="day_intro">Напоминание про ознакомительный день</option>
-        <option value="slot_rejected">Слот отклонён (выбрать заново)</option>
-        <option value="city_welcome">Приветствие по городу</option>
+        {% for option in template_key_options %}
+          {% if option.title %}
+            <option value="{{ option.key }}">{{ option.title }} ({{ option.key }})</option>
+          {% else %}
+            <option value="{{ option.key }}">{{ option.key }}</option>
+          {% endif %}
+        {% endfor %}
       </select>
     {% endcall %}
 
-    {% call forms.field("Текст", hint="Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.", required=True) %}
-      <textarea id="text" name="text" rows="14" required aria-required="true" placeholder="Текст сообщения. Поддерживаются переносы строк." class="text-mono">{{ form_data.text or '' }}</textarea>
+    {% call forms.field("Текст", hint="Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.") %}
+      <textarea id="text" name="text" rows="14" required placeholder="Текст сообщения. Поддерживаются переносы строк." class="text-mono">{{ form_data.text or '' }}</textarea>
       {% call forms.note() %}Доступные плейсхолдеры (клик вставит в текст):{% endcall %}
       <div class="btn-group">
         {% raw %}
@@ -77,8 +78,6 @@
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{recruiter_name}}">{{recruiter_name}}</button>
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{recruiter_phone}}">{{recruiter_phone}}</button>
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{address}}">{{address}}</button>
-        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{intro_address}}">{{intro_address}}</button>
-        <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{intro_contact}}">{{intro_contact}}</button>
         <button type="button" class="btn btn--ghost btn--sm" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
         {% endraw %}
       </div>
@@ -121,9 +120,12 @@
   {% endcall %}
 {% endcall %}
 
-<script type="module" nonce="{{ request.state.csp_nonce }}">
+<script type="application/json" id="template-presets-data">{{ template_presets | tojson | safe }}</script>
+<script type="module">
 import { initTemplateEditor } from "/static/js/modules/template-editor.js";
-import { TEMPLATE_PRESETS } from "/static/js/modules/template-presets.js";
+import { getTemplatePresets } from "/static/js/modules/template-presets.js";
+
+const templatePresets = getTemplatePresets();
 
 initTemplateEditor({
   formId: 'tmplForm',
@@ -131,7 +133,7 @@ initTemplateEditor({
   counterId: 'char_count',
   previewId: 'preview',
   placeholderSelector: '[data-role="insert-var"]',
-  presets: TEMPLATE_PRESETS,
+  presets: templatePresets,
   presetSelectId: 'preset',
   isGlobalCheckboxId: 'is_global',
   citySelectId: 'city_id',

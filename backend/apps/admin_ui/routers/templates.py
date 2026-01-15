@@ -11,13 +11,16 @@ from backend.apps.admin_ui.services.templates import (
     create_template,
     delete_template,
     get_template,
+    list_known_template_keys,
     list_templates,
+    known_template_presets,
     notify_templates_changed,
     update_template,
     update_templates_for_city,
 )
 from backend.apps.admin_ui.services.message_templates import list_message_templates
 from backend.apps.admin_ui.utils import parse_optional_int
+from backend.domain.template_stages import CITY_TEMPLATE_STAGES
 
 router = APIRouter(prefix="/templates", tags=["templates"])
 
@@ -43,11 +46,19 @@ async def templates_list(request: Request):
 @router.get("/new", response_class=HTMLResponse)
 async def templates_new(request: Request):
     cities = await list_cities()
+    stage_titles = {stage.key: stage.title for stage in CITY_TEMPLATE_STAGES}
+    template_keys = list_known_template_keys()
+    template_key_options = [
+        {"key": key, "title": stage_titles.get(key)} for key in template_keys
+    ]
     context = {
         "request": request,
         "cities": cities,
         "errors": [],
         "form_data": {},
+        "template_keys": template_keys,
+        "template_key_options": template_key_options,
+        "template_presets": known_template_presets(),
     }
     return jinja_templates.TemplateResponse(request, "templates_new.html", context)
 
@@ -73,6 +84,12 @@ async def templates_create(
     else:
         parsed_city = None
 
+    stage_titles = {stage.key: stage.title for stage in CITY_TEMPLATE_STAGES}
+    template_keys = list_known_template_keys()
+    template_key_options = [
+        {"key": key, "title": stage_titles.get(key)} for key in template_keys
+    ]
+
     if errors:
         cities = await list_cities()
         context = {
@@ -84,6 +101,9 @@ async def templates_create(
                 "city_id": parsed_city,
                 "is_global": global_template,
             },
+            "template_keys": template_keys,
+            "template_key_options": template_key_options,
+            "template_presets": known_template_presets(),
         }
         return jinja_templates.TemplateResponse(request, "templates_new.html", context, status_code=400)
 
@@ -139,6 +159,7 @@ async def templates_edit(request: Request, tmpl_id: int):
         return RedirectResponse(url="/templates", status_code=303)
 
     cities = await list_cities()
+    template_keys = list_known_template_keys()
     payload = _build_template_payload(
         tmpl_id=tmpl.id,
         key=tmpl.key,
@@ -161,6 +182,7 @@ async def templates_edit(request: Request, tmpl_id: int):
         "tmpl": payload,
         "cities": cities,
         "errors": [],
+        "template_keys": template_keys,
     }
     return jinja_templates.TemplateResponse(request, "templates_edit.html", context)
 
@@ -213,12 +235,15 @@ async def templates_update(
             )
         ]
 
+    template_keys = list_known_template_keys()
+
     if errors:
         context = {
             "request": request,
             "tmpl": payload,
             "cities": cities,
             "errors": errors,
+            "template_keys": template_keys,
         }
         return jinja_templates.TemplateResponse(request, "templates_edit.html", context, status_code=400)
 
@@ -236,6 +261,7 @@ async def templates_update(
             "errors": [
                 "Не удалось сохранить шаблон. Проверьте уникальность ключа и попробуйте ещё раз."
             ],
+            "template_keys": template_keys,
         }
         return jinja_templates.TemplateResponse(request, "templates_edit.html", context, status_code=400)
 

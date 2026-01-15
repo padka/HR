@@ -20,6 +20,8 @@ __all__ = [
     "templates_overview",
     "update_templates_for_city",
     "list_templates",
+    "list_known_template_keys",
+    "known_template_presets",
     "notify_templates_changed",
     "generate_template_key",
     "create_template",
@@ -34,6 +36,41 @@ STAGE_KEYS: List[str] = [stage.key for stage in CITY_TEMPLATE_STAGES]
 
 
 KEY_ALPHABET = string.ascii_lowercase + string.digits
+
+
+def list_known_template_keys() -> List[str]:
+    """Return all template keys known to the runtime and admin UI."""
+
+    keys = set(STAGE_KEYS)
+    try:  # pragma: no cover - optional bot runtime
+        from backend.apps.bot import templates as bot_templates
+    except Exception:
+        default_keys = []
+    else:
+        default_keys = bot_templates.DEFAULT_TEMPLATES.keys()
+    keys.update(default_keys)
+    return sorted(keys)
+
+
+def known_template_presets() -> Dict[str, str]:
+    """Return default texts for known template keys."""
+
+    presets: Dict[str, str] = {}
+    try:  # pragma: no cover - optional bot runtime
+        from backend.apps.bot import templates as bot_templates
+    except Exception:
+        pass
+    else:
+        presets.update(bot_templates.DEFAULT_TEMPLATES)
+
+    for stage in CITY_TEMPLATE_STAGES:
+        presets.setdefault(stage.key, stage.default_text)
+
+    ordered: Dict[str, str] = {}
+    for key in list_known_template_keys():
+        if key in presets:
+            ordered[key] = presets[key]
+    return ordered
 
 
 def notify_templates_changed() -> None:
