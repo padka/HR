@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Шаблоны сообщений{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'templates';
+</script>
 <section class="page templates-page">
   <div class="page-header">
     <div>
@@ -665,7 +668,7 @@
 }
 </style>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
   document.addEventListener('DOMContentLoaded', () => {
     const cards = Array.from(document.querySelectorAll('.template-card'));
     const copyButtons = Array.from(document.querySelectorAll('.copy-btn'));

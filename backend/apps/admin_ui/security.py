@@ -12,7 +12,6 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from backend.core.audit import AuditContext, set_audit_context
 from starlette_wtf import csrf_token
@@ -92,6 +91,7 @@ def _build_limiter() -> Limiter:
             key_func=get_admin_identifier,
             default_limits=[],
             enabled=False,
+            key_style="endpoint",
         )
 
     settings = get_settings()
@@ -119,14 +119,14 @@ def _build_limiter() -> Limiter:
         default_limits=[],
         enabled=settings.rate_limit_enabled,
         storage_uri=storage_uri,
+        key_style="endpoint",
     )
 
 
 limiter = _build_limiter()
 
 
-@limiter.limit("60/minute", key_func=get_remote_address)
-@limiter.limit("20/minute")
+@limiter.limit("60/minute", key_func=get_client_ip)
 async def require_admin(
     request: Request, credentials: HTTPBasicCredentials = Depends(_basic)
 ) -> None:

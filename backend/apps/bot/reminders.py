@@ -25,6 +25,7 @@ from backend.apps.bot.metrics import (
     record_reminder_skipped,
 )
 from backend.core.db import async_session
+from backend.core.redis_factory import parse_redis_target
 from backend.domain.models import SlotReminderJob, SlotStatus
 from backend.domain.repositories import add_outbox_notification, get_slot
 
@@ -80,8 +81,12 @@ class ReminderService:
     async def sync_jobs(self) -> None:
         """Ensure persisted jobs exist in the scheduler."""
 
-        async with async_session() as session:
-            result = await session.execute(SlotReminderJob.__table__.select())
+        try:
+            async with async_session() as session:
+                result = await session.execute(SlotReminderJob.__table__.select())
+        except Exception as exc:
+            logger.warning("reminder.sync_jobs.skipped: %s", exc)
+            return
 
         for row in result:
             job_id = row.job_id
@@ -428,7 +433,7 @@ class ReminderService:
                 continue
             seen.add(kind)
             local_time = start_local - delta
-            adjusted_local, reason = _apply_quiet_hours(local_time)
+            adjusted_local, reason = _apply_quiet_hours(local_time, meeting_local=start_local)
             # Избегаем ситуаций, когда тихие часы сдвигают несколько напоминаний в одну и ту же точку (дубли).
             rounded_local = adjusted_local.replace(second=0, microsecond=0)
             if rounded_local in seen_times:
@@ -462,6 +467,25 @@ class ReminderService:
         }
 
 
+class NullReminderService:
+    """No-op reminder service for disabled bot mode."""
+
+    def start(self) -> None:
+        return None
+
+    async def shutdown(self) -> None:
+        return None
+
+    async def sync_jobs(self) -> None:
+        return None
+
+    def stats(self) -> Dict[str, int]:
+        return {"total": 0, "confirm_prompts": 0, "reminders": 0}
+
+    def health_snapshot(self) -> Dict[str, Any]:
+        return {"scheduler_running": False, "job_count": 0}
+
+
 _reminder_service: Optional[ReminderService] = None
 
 
@@ -480,6 +504,7 @@ def get_reminder_service() -> ReminderService:
 def create_scheduler(redis_url: Optional[str]) -> AsyncIOScheduler:
     if redis_url:
         try:
+            parse_redis_target(redis_url, component="jobstore")
             if hasattr(RedisJobStore, "from_url"):
                 jobstores = {"default": RedisJobStore.from_url(redis_url)}
             else:
@@ -495,6 +520,7 @@ def create_scheduler(redis_url: Optional[str]) -> AsyncIOScheduler:
 
 __all__ = [
     "ReminderService",
+    "NullReminderService",
     "ReminderKind",
     "configure_reminder_service",
     "get_reminder_service",
@@ -521,7 +547,7 @@ def _in_quiet_hours(local_dt: datetime) -> bool:
     return minutes >= start_minutes or minutes < end_minutes
 
 
-def _apply_quiet_hours(local_dt: datetime) -> tuple[datetime, Optional[str]]:
+def _apply_quiet_hours(local_dt: datetime, *, meeting_local: Optional[datetime] = None) -> tuple[datetime, Optional[str]]:
     if _QUIET_HOURS_START == _QUIET_HOURS_END:
         return local_dt, None
     if not _in_quiet_hours(local_dt):
@@ -529,7 +555,7 @@ def _apply_quiet_hours(local_dt: datetime) -> tuple[datetime, Optional[str]]:
 
     start_hour = _QUIET_HOURS_START % 24
     end_hour = _QUIET_HOURS_END % 24
-    boundary = local_dt.replace(
+    boundary_before = local_dt.replace(
         hour=start_hour,
         minute=0,
         second=0,
@@ -539,12 +565,33 @@ def _apply_quiet_hours(local_dt: datetime) -> tuple[datetime, Optional[str]]:
         if local_dt.hour > start_hour or (
             local_dt.hour == start_hour and local_dt.minute >= 0
         ):
-            adjusted = boundary - _QUIET_GRACE
+            boundary_after = local_dt.replace(
+                hour=end_hour,
+                minute=0,
+                second=0,
+                microsecond=0,
+            ) + timedelta(days=1)
         else:
-            adjusted = (boundary - timedelta(days=1)) - _QUIET_GRACE
+            boundary_after = local_dt.replace(
+                hour=end_hour,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+            boundary_before = boundary_before - timedelta(days=1)
     else:
-        adjusted = boundary - _QUIET_GRACE
-    return adjusted, "quiet_hours"
+        boundary_after = local_dt.replace(
+            hour=end_hour,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+
+    prev_allowed = boundary_before - _QUIET_GRACE
+    next_allowed = boundary_after + _QUIET_GRACE
+    if meeting_local is not None and meeting_local <= next_allowed:
+        return prev_allowed, "quiet_hours"
+    return next_allowed, "quiet_hours"
 
 
 @lru_cache(maxsize=None)

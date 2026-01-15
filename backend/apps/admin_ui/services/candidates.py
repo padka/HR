@@ -7,19 +7,47 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import String, cast, delete, exists, func, literal, literal_column, or_, select
+from sqlalchemy import String, cast, delete, exists, func, literal, literal_column, or_, select, false, and_
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Select, case
 
 from backend.apps.admin_ui.utils import paginate
+from backend.apps.admin_ui.services.bot_service import get_bot_service
 from backend.apps.admin_ui.services.chat import get_chat_templates
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.bot.config import PASS_THRESHOLD, TEST2_QUESTIONS
-from backend.apps.bot.services import approve_slot_and_notify
+from backend.apps.bot.services import approve_slot_and_notify, cancel_slot_reminders
+from backend.core.audit import log_audit_action
 from backend.core.db import async_session
-from backend.domain.candidates.models import AutoMessage, InterviewNote, QuestionAnswer, TestResult, User
-from backend.domain.candidates.status import CandidateStatus
+from backend.core.settings import get_settings
+from backend.domain import analytics
+from backend.domain.candidates.models import (
+    AutoMessage,
+    InterviewNote,
+    QuestionAnswer,
+    TestResult,
+    User,
+)
+from backend.domain.candidates.workflow import WorkflowStatus
+from backend.domain.candidates.status import (
+    CandidateStatus,
+    STATUS_TRANSITIONS,
+    STATUS_CATEGORIES,
+    STATUS_COLORS,
+    StatusCategory,
+    get_next_statuses,
+    get_status_color,
+    is_terminal_status,
+)
+from backend.domain.candidate_status_service import CandidateStatusService
+from backend.domain.candidates.status_service import FUNNEL_STATUS_EVENTS
+from backend.domain.candidates.services import create_candidate_invite_token
+from backend.domain.candidates.actions import get_candidate_actions
+from backend.domain.candidates.workflow import (
+    CandidateWorkflowService,
+    WorkflowStatus,
+)
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
 
 if TYPE_CHECKING:  # pragma: no cover - used only for typing
@@ -41,10 +69,40 @@ class CandidateRow:
     status_label: str = "Новые"
 
 
+_candidate_status_service = CandidateStatusService()
+_workflow_service = CandidateWorkflowService()
+
+WORKFLOW_STATUS_LABELS: Dict[WorkflowStatus, str] = {
+    WorkflowStatus.WAITING_FOR_SLOT: "Ждёт назначения слота",
+    WorkflowStatus.INTERVIEW_SCHEDULED: "На согласовании",
+    WorkflowStatus.INTERVIEW_CONFIRMED: "Собеседование подтверждено",
+    WorkflowStatus.INTERVIEW_COMPLETED: "Собеседование проведено",
+    WorkflowStatus.TEST_SENT: "Отправлен тест",
+    WorkflowStatus.ONBOARDING_DAY_SCHEDULED: "Назначен ознакомительный день",
+    WorkflowStatus.ONBOARDING_DAY_CONFIRMED: "ОД подтверждён",
+    WorkflowStatus.REJECTED: "Отклонён",
+}
+
+WORKFLOW_STATUS_COLORS: Dict[WorkflowStatus, str] = {
+    WorkflowStatus.WAITING_FOR_SLOT: "warning",
+    WorkflowStatus.INTERVIEW_SCHEDULED: "primary",
+    WorkflowStatus.INTERVIEW_CONFIRMED: "primary",
+    WorkflowStatus.INTERVIEW_COMPLETED: "info",
+    WorkflowStatus.TEST_SENT: "primary",
+    WorkflowStatus.ONBOARDING_DAY_SCHEDULED: "primary",
+    WorkflowStatus.ONBOARDING_DAY_CONFIRMED: "success",
+    WorkflowStatus.REJECTED: "danger",
+}
+
+
 STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
     [
         # Fallback for candidates without статус
         ("new", {"label": "Новые (без статуса)", "icon": "🆕", "tone": "muted"}),
+        # Lead statuses
+        ("lead", {"label": "Лид (новый контакт)", "icon": "📇", "tone": "muted"}),
+        ("contacted", {"label": "Связались (телефон)", "icon": "📞", "tone": "info"}),
+        ("invited", {"label": "Приглашен в бота", "icon": "✉️", "tone": "primary"}),
         # Active statuses
         ("test1_completed", {"label": "Прошел тестирование", "icon": "📝", "tone": "info"}),
         ("waiting_slot", {"label": "Ждет назначения слота", "icon": "⏳", "tone": "warning"}),
@@ -69,6 +127,130 @@ STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
 
 STATUS_ORDER: Dict[str, int] = {slug: idx for idx, slug in enumerate(STATUS_DEFINITIONS.keys())}
 
+CANDIDATE_ACTIONS: Dict[CandidateStatus, List[Dict[str, Any]]] = {
+    CandidateStatus.LEAD: [
+        {"label": "Связаться", "target_status": CandidateStatus.CONTACTED},
+        {"label": "Пригласить в бота", "target_status": CandidateStatus.INVITED},
+        {"label": "Отметить прохождение Тест 1", "target_status": CandidateStatus.TEST1_COMPLETED},
+    ],
+    CandidateStatus.CONTACTED: [
+        {"label": "Пригласить в бота", "target_status": CandidateStatus.INVITED},
+        {"label": "Отметить прохождение Тест 1", "target_status": CandidateStatus.TEST1_COMPLETED},
+    ],
+    CandidateStatus.INVITED: [
+        {"label": "Отметить прохождение Тест 1", "target_status": CandidateStatus.TEST1_COMPLETED},
+    ],
+    CandidateStatus.TEST1_COMPLETED: [
+        {
+            "label": "Поставить в ожидание слота",
+            "target_status": CandidateStatus.WAITING_SLOT,
+        },
+        {
+            "label": "Назначить собеседование",
+            "target_status": CandidateStatus.INTERVIEW_SCHEDULED,
+        },
+    ],
+    CandidateStatus.WAITING_SLOT: [
+        {
+            "label": "Назначить собеседование",
+            "target_status": CandidateStatus.INTERVIEW_SCHEDULED,
+        },
+    ],
+    CandidateStatus.STALLED_WAITING_SLOT: [
+        {
+            "label": "Назначить собеседование",
+            "target_status": CandidateStatus.INTERVIEW_SCHEDULED,
+        },
+    ],
+    CandidateStatus.INTERVIEW_SCHEDULED: [
+        {
+            "label": "Подтвердить участие",
+            "target_status": CandidateStatus.INTERVIEW_CONFIRMED,
+        },
+        {
+            "label": "Отправить Тест 2",
+            "target_status": CandidateStatus.TEST2_SENT,
+        },
+        {
+            "label": "Отклонить кандидата",
+            "target_status": CandidateStatus.INTERVIEW_DECLINED,
+            "danger": True,
+        },
+    ],
+    CandidateStatus.INTERVIEW_CONFIRMED: [
+        {
+            "label": "Прошел собеседование (отправить Тест 2)",
+            "target_status": CandidateStatus.TEST2_SENT,
+            "variant": "primary",
+        },
+        {
+            "label": "Отклонить после собеседования",
+            "target_status": CandidateStatus.INTERVIEW_DECLINED,
+            "danger": True,
+            "confirmation": "Подтвердить отказ после собеседования?",
+        },
+    ],
+    CandidateStatus.TEST2_SENT: [
+        {
+            "label": "Отметить Тест 2 пройден",
+            "target_status": CandidateStatus.TEST2_COMPLETED,
+        },
+        {
+            "label": "Отметить Тест 2 не пройден",
+            "target_status": CandidateStatus.TEST2_FAILED,
+            "danger": True,
+        },
+    ],
+    CandidateStatus.TEST2_COMPLETED: [
+        {
+            "label": "Назначить ознакомительный день",
+            "target_status": CandidateStatus.INTRO_DAY_SCHEDULED,
+        },
+    ],
+    CandidateStatus.INTRO_DAY_SCHEDULED: [
+        {
+            "label": "Предварительно подтвердить",
+            "target_status": CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+        },
+        {
+            "label": "Отказ на этапе ОД",
+            "target_status": CandidateStatus.INTRO_DAY_DECLINED_INVITATION,
+            "danger": True,
+        },
+    ],
+    CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY: [
+        {
+            "label": "Подтвердить в день ОД",
+            "target_status": CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF,
+        },
+        {
+            "label": "Отказ в день ОД",
+            "target_status": CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
+            "danger": True,
+        },
+        {
+            "label": "Закрепить на обучение",
+            "target_status": CandidateStatus.HIRED,
+        },
+        {
+            "label": "Не закреплять",
+            "target_status": CandidateStatus.NOT_HIRED,
+            "danger": True,
+        },
+    ],
+    CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF: [
+        {
+            "label": "Закрепить на обучение",
+            "target_status": CandidateStatus.HIRED,
+        },
+        {
+            "label": "Не закреплять",
+            "target_status": CandidateStatus.NOT_HIRED,
+            "danger": True,
+        },
+    ],
+}
+
 FUNNEL_STAGES: List[Dict[str, Any]] = [
     {
         "slug": "new",
@@ -76,6 +258,14 @@ FUNNEL_STAGES: List[Dict[str, Any]] = [
         "icon": "🆕",
         "tone": "muted",
         "statuses": ["new"],
+        "track_conversion": True,
+    },
+    {
+        "slug": "lead",
+        "label": "Лиды",
+        "icon": "📇",
+        "tone": "muted",
+        "statuses": ["lead", "contacted", "invited"],
         "track_conversion": True,
     },
     {
@@ -190,6 +380,9 @@ INTRO_DAY_FUNNEL_STAGES: List[Dict[str, Any]] = [
 
 INTERVIEW_PIPELINE_STATUSES = [
     "new",
+    "lead",
+    "contacted",
+    "invited",
     "test1_completed",
     "waiting_slot",
     "stalled_waiting_slot",
@@ -208,6 +401,34 @@ INTRO_DAY_PIPELINE_STATUSES = [
     "hired",
     "not_hired",
 ]
+
+
+def get_candidate_actions_for_status(status_slug: Optional[str]) -> List[Dict[str, Any]]:
+    """Return UI actions allowed for the given status, filtered by valid transitions."""
+    if not status_slug:
+        return []
+    try:
+        status = CandidateStatus(status_slug)
+    except ValueError:
+        return []
+
+    allowed_next = set(STATUS_TRANSITIONS.get(status, []))
+    actions: List[Dict[str, Any]] = []
+
+    for action in CANDIDATE_ACTIONS.get(status, []):
+        target = action.get("target_status")
+        if not isinstance(target, CandidateStatus):
+            continue
+        if target not in allowed_next:
+            continue
+        actions.append(
+            {
+                "label": action.get("label", target.value),
+                "target_status": target.value,
+                "danger": bool(action.get("danger")),
+            }
+        )
+    return actions
 
 PIPELINE_DEFINITIONS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict(
     [
@@ -258,6 +479,38 @@ TEST2_MIN_CORRECT: int = (
 )
 STATUSES_PENDING_INTRO_DAY: Set[CandidateStatus] = {
     CandidateStatus.TEST2_COMPLETED,
+}
+STATUSES_RELEASE_INTRO_DAY_SLOTS: Set[CandidateStatus] = {
+    CandidateStatus.TEST2_FAILED,
+    CandidateStatus.INTERVIEW_DECLINED,
+    CandidateStatus.INTRO_DAY_DECLINED_INVITATION,
+    CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
+    CandidateStatus.NOT_HIRED,
+}
+STATUSES_ARCHIVE_ON_DECLINE: Set[CandidateStatus] = {
+    CandidateStatus.INTERVIEW_DECLINED,
+    CandidateStatus.TEST2_FAILED,
+    CandidateStatus.INTRO_DAY_DECLINED_INVITATION,
+    CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
+    CandidateStatus.NOT_HIRED,
+}
+
+# Mapping legacy candidate_status to new workflow statuses
+LEGACY_TO_WORKFLOW: Dict[str, WorkflowStatus] = {
+    CandidateStatus.WAITING_SLOT.value: WorkflowStatus.WAITING_FOR_SLOT,
+    CandidateStatus.STALLED_WAITING_SLOT.value: WorkflowStatus.WAITING_FOR_SLOT,
+    CandidateStatus.INTERVIEW_SCHEDULED.value: WorkflowStatus.INTERVIEW_SCHEDULED,
+    CandidateStatus.INTERVIEW_CONFIRMED.value: WorkflowStatus.INTERVIEW_CONFIRMED,
+    CandidateStatus.INTERVIEW_DECLINED.value: WorkflowStatus.REJECTED,
+    CandidateStatus.TEST2_SENT.value: WorkflowStatus.TEST_SENT,
+    CandidateStatus.TEST2_COMPLETED.value: WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
+    CandidateStatus.TEST2_FAILED.value: WorkflowStatus.REJECTED,
+    CandidateStatus.INTRO_DAY_SCHEDULED.value: WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+    CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY.value: WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+    CandidateStatus.INTRO_DAY_DECLINED_INVITATION.value: WorkflowStatus.REJECTED,
+    CandidateStatus.INTRO_DAY_DECLINED_DAY_OF.value: WorkflowStatus.REJECTED,
+    CandidateStatus.HIRED.value: WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+    CandidateStatus.NOT_HIRED.value: WorkflowStatus.REJECTED,
 }
 
 logger = logging.getLogger(__name__)
@@ -453,6 +706,192 @@ def _status_tone(slug: str) -> str:
     return STATUS_DEFINITIONS.get(slug, {}).get("tone", "info")
 
 
+# Pipeline stage definitions for Status Center UI
+PIPELINE_STAGES = [
+    {
+        "key": "lead",
+        "label": "Лид",
+        "statuses": {StatusCategory.LEAD},
+    },
+    {
+        "key": "test",
+        "label": "Тест",
+        "statuses": {StatusCategory.TESTING},
+    },
+    {
+        "key": "interview",
+        "label": "Собес",
+        "statuses": {StatusCategory.INTERVIEW},
+    },
+    {
+        "key": "intro_day",
+        "label": "Озн. день",
+        "statuses": {StatusCategory.INTRO_DAY},
+    },
+    {
+        "key": "outcome",
+        "label": "Итог",
+        "statuses": {StatusCategory.HIRED, StatusCategory.DECLINED},
+    },
+]
+
+
+def _build_pipeline_stages(
+    current_status: Optional[CandidateStatus],
+) -> List[Dict[str, Any]]:
+    """Build pipeline stages with active/passed/declined state for Status Center UI.
+
+    Pipeline stages map to recruiting funnel:
+    - Lead (0): LEAD, CONTACTED, INVITED
+    - Test (1): TEST1_COMPLETED, WAITING_SLOT, STALLED_WAITING_SLOT, TEST2_SENT, TEST2_COMPLETED
+    - Interview (2): INTERVIEW_SCHEDULED, INTERVIEW_CONFIRMED
+    - Intro Day (3): INTRO_DAY_*
+    - Outcome (4): HIRED, NOT_HIRED
+
+    Note: Test2 happens AFTER interview, so interview should be marked passed for Test2 statuses.
+    """
+    if current_status is None:
+        # No status - all stages pending
+        return [
+            {"key": s["key"], "label": s["label"], "state": "pending"}
+            for s in PIPELINE_STAGES
+        ]
+
+    current_category = STATUS_CATEGORIES.get(current_status, StatusCategory.TESTING)
+    is_declined = current_category == StatusCategory.DECLINED
+
+    # Map each status to its pipeline stage index
+    # This is more accurate than using categories since Test2 is after Interview
+    STATUS_TO_STAGE: Dict[CandidateStatus, int] = {
+        CandidateStatus.LEAD: 0,
+        CandidateStatus.CONTACTED: 0,
+        CandidateStatus.INVITED: 0,
+        CandidateStatus.TEST1_COMPLETED: 1,
+        CandidateStatus.WAITING_SLOT: 1,
+        CandidateStatus.STALLED_WAITING_SLOT: 1,
+        CandidateStatus.INTERVIEW_SCHEDULED: 2,
+        CandidateStatus.INTERVIEW_CONFIRMED: 2,
+        CandidateStatus.INTERVIEW_DECLINED: 2,
+        CandidateStatus.TEST2_SENT: 1,  # Test2 shows at test stage but interview passed
+        CandidateStatus.TEST2_COMPLETED: 1,
+        CandidateStatus.TEST2_FAILED: 1,
+        CandidateStatus.INTRO_DAY_SCHEDULED: 3,
+        CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY: 3,
+        CandidateStatus.INTRO_DAY_DECLINED_INVITATION: 3,
+        CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF: 3,
+        CandidateStatus.INTRO_DAY_DECLINED_DAY_OF: 3,
+        CandidateStatus.HIRED: 4,
+        CandidateStatus.NOT_HIRED: 4,
+    }
+
+    # Statuses that occur AFTER interview (interview should show as passed)
+    POST_INTERVIEW_STATUSES = {
+        CandidateStatus.TEST2_SENT,
+        CandidateStatus.TEST2_COMPLETED,
+        CandidateStatus.TEST2_FAILED,
+        CandidateStatus.INTRO_DAY_SCHEDULED,
+        CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+        CandidateStatus.INTRO_DAY_DECLINED_INVITATION,
+        CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF,
+        CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
+        CandidateStatus.HIRED,
+        CandidateStatus.NOT_HIRED,
+    }
+
+    current_stage_idx = STATUS_TO_STAGE.get(current_status, 0)
+    is_post_interview = current_status in POST_INTERVIEW_STATUSES
+
+    result = []
+    for idx, stage in enumerate(PIPELINE_STAGES):
+        if is_declined:
+            # For declined statuses
+            if is_post_interview and idx == 2:
+                # Interview was passed before decline (e.g., TEST2_FAILED)
+                state = "passed"
+            elif idx < current_stage_idx:
+                state = "passed"
+            elif idx == current_stage_idx:
+                state = "declined"
+            else:
+                state = "pending"
+        elif current_status == CandidateStatus.HIRED:
+            # Hired - all stages passed except outcome which is active
+            state = "passed" if idx < 4 else "active"
+        elif idx == current_stage_idx:
+            state = "active"
+        elif idx < current_stage_idx:
+            state = "passed"
+        elif is_post_interview and idx == 2:
+            # Interview was passed (for Test2/IntroDay statuses)
+            state = "passed"
+        else:
+            state = "pending"
+
+        result.append({
+            "key": stage["key"],
+            "label": stage["label"],
+            "state": state,
+        })
+
+    return result
+
+
+def _map_to_workflow_status(user: User) -> WorkflowStatus:
+    """Derive workflow status from explicit workflow_status or legacy candidate_status."""
+    raw_workflow = getattr(user, "workflow_status", None)
+    if raw_workflow:
+        try:
+            return WorkflowStatus(raw_workflow)
+        except Exception:
+            pass
+    legacy = getattr(user, "candidate_status", None)
+    if isinstance(legacy, CandidateStatus):
+        mapped = LEGACY_TO_WORKFLOW.get(legacy.value)
+        if mapped:
+            return mapped
+    elif isinstance(legacy, str) and legacy:
+        mapped = LEGACY_TO_WORKFLOW.get(legacy.lower())
+        if mapped:
+            return mapped
+    return WorkflowStatus.WAITING_FOR_SLOT
+
+
+def _workflow_actions_ui(candidate_id: int, allowed: List[str]) -> List[Dict[str, Any]]:
+    definitions: Dict[str, Dict[str, str]] = {
+        # Для ожидания слота: ведём сразу на экран назначения
+        "assign-slot": {
+            "label": "Согласовать слот",
+            "variant": "primary",
+            "method": "GET",
+            "url": f"/candidates/{candidate_id}/schedule-slot",
+        },
+        "confirm-interview": {"label": "Согласовать интервью", "variant": "primary"},
+        "complete-interview": {"label": "Завершить интервью", "variant": "secondary"},
+        "send-test": {"label": "Отправить тест", "variant": "primary"},
+        "schedule-onboarding": {"label": "Назначить ОД", "variant": "primary"},
+        "confirm-onboarding": {"label": "Подтвердить ОД", "variant": "secondary"},
+        "reject": {"label": "Отказать", "variant": "danger", "confirmation": "Отклонить кандидата?"},
+    }
+    actions: List[Dict[str, Any]] = []
+    for key in allowed:
+        meta = definitions.get(key, {"label": key, "variant": "secondary"})
+        method = meta.get("method", "POST")
+        url_pattern = meta.get("url") or f"/candidates/{candidate_id}/actions/{key}"
+        actions.append(
+            {
+                "key": key,
+                "label": meta["label"],
+                "url_pattern": url_pattern,
+                "variant": meta.get("variant", "secondary"),
+                "method": method,
+                "danger": meta.get("variant") == "danger",
+                "confirmation": meta.get("confirmation"),
+                "kind": "workflow",
+            }
+        )
+    return actions
+
+
 def _build_test_sections(
     results: Sequence[TestResult],
     answers_by_result: Dict[int, List[QuestionAnswer]],
@@ -483,6 +922,7 @@ def _build_test_sections(
             "status_label": labels.get("not_started"),
             "summary": "Тест ещё не проходил",
             "completed_at": None,
+            "source": None,
             "pending_since": None,
             "details": {
                 "questions": [],
@@ -516,12 +956,14 @@ def _build_test_sections(
                 "final_score": latest.final_score,
                 "total_time": latest.total_time,
             }
+            section["source"] = (latest.source or "bot").lower() if latest.source else "bot"
             section["history"] = [
                 {
                     "id": res.id,
                     "completed_at": _ensure_aware(res.created_at),
                     "raw_score": res.raw_score,
                     "final_score": res.final_score,
+                    "source": (res.source or "bot").lower() if res.source else "bot",
                 }
                 for res in entries
             ]
@@ -635,6 +1077,10 @@ async def list_candidates(
     pipeline_stages = pipeline_config["stages"]
     droppable_statuses = set(pipeline_config.get("droppable_statuses", []))
     is_intro_pipeline = pipeline_slug == "intro_day"
+    terminal_statuses = {"hired", "not_hired"}
+    if is_intro_pipeline:
+        pipeline_statuses = [slug for slug in pipeline_statuses if slug not in terminal_statuses]
+        allowed_with_terminal -= terminal_statuses
 
     now = datetime.now(timezone.utc)
     today = now.date()
@@ -644,6 +1090,9 @@ async def list_candidates(
     user_specified_start = date_from is not None
     user_specified_end = date_to is not None
 
+    calendar_start: Optional[datetime] = None
+    calendar_end: Optional[datetime] = None
+
     range_start_utc: Optional[datetime] = _ensure_aware(date_from)
     range_end_utc: Optional[datetime] = _ensure_aware(date_to)
     if range_start_utc is not None:
@@ -651,12 +1100,19 @@ async def list_candidates(
     if range_end_utc is not None:
         range_end_utc = range_end_utc.replace(hour=23, minute=59, second=59, microsecond=999999)
 
-    if normalized_calendar_mode:
+    # Если пользователь не задавал даты, не ограничиваем выборку по времени,
+    # иначе кандидат с назначенным собеседованием может пропасть.
+    if not user_specified_start and not user_specified_end:
+        normalized_calendar_mode = None
+        range_start_utc = None
+        range_end_utc = None
+    elif normalized_calendar_mode:
         if not user_specified_start or range_start_utc is None:
             range_start_utc = datetime.combine(today, time.min, timezone.utc)
         calendar_start = range_start_utc
         if not user_specified_end or range_end_utc is None:
-            calendar_end = calendar_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+            # По умолчанию показываем ближайшую неделю, чтобы видеть предстоящие встречи.
+            calendar_end = calendar_start + timedelta(days=6, hours=23, minutes=59, seconds=59, microseconds=999999)
             range_end_utc = calendar_end
         else:
             calendar_end = range_end_utc
@@ -677,6 +1133,7 @@ async def list_candidates(
             clauses = [
                 User.fio.ilike(like_value),
                 User.city.ilike(like_value),
+                User.candidate_id.ilike(like_value),
                 cast(User.telegram_id, String).ilike(like_value),
             ]
             try:
@@ -761,7 +1218,7 @@ async def list_candidates(
         test2_sent_expr = exists(
             select(1)
             .where(
-                Slot.candidate_tg_id == User.telegram_id,
+                Slot.candidate_id == User.candidate_id,
                 Slot.test2_sent_at.isnot(None),
             )
             .correlate(User)
@@ -770,7 +1227,7 @@ async def list_candidates(
         success_outcome_expr = exists(
             select(1)
             .where(
-                Slot.candidate_tg_id == User.telegram_id,
+                Slot.candidate_id == User.candidate_id,
                 Slot.interview_outcome == 'success',
             )
             .correlate(User)
@@ -779,7 +1236,7 @@ async def list_candidates(
         reject_outcome_expr = exists(
             select(1)
             .where(
-                Slot.candidate_tg_id == User.telegram_id,
+                Slot.candidate_id == User.candidate_id,
                 Slot.interview_outcome == 'reject',
             )
             .correlate(User)
@@ -788,7 +1245,7 @@ async def list_candidates(
         pending_slot_expr = exists(
             select(1)
             .where(
-                Slot.candidate_tg_id == User.telegram_id,
+                Slot.candidate_id == User.candidate_id,
                 func.lower(Slot.status) == SlotStatus.PENDING,
                 Slot.start_utc >= now,
             )
@@ -798,7 +1255,7 @@ async def list_candidates(
         booked_slot_expr = exists(
             select(1)
             .where(
-                Slot.candidate_tg_id == User.telegram_id,
+                Slot.candidate_id == User.candidate_id,
                 func.lower(Slot.status) == SlotStatus.BOOKED,
                 Slot.start_utc >= now,
             )
@@ -808,7 +1265,7 @@ async def list_candidates(
         confirmed_slot_expr = exists(
             select(1)
             .where(
-                Slot.candidate_tg_id == User.telegram_id,
+                Slot.candidate_id == User.candidate_id,
                 func.lower(Slot.status) == SlotStatus.CONFIRMED_BY_CANDIDATE,
                 Slot.start_utc >= now,
             )
@@ -818,7 +1275,7 @@ async def list_candidates(
         past_slot_expr = exists(
             select(1)
             .where(
-                Slot.candidate_tg_id == User.telegram_id,
+                Slot.candidate_id == User.candidate_id,
                 Slot.start_utc < now,
                 func.lower(Slot.status).in_(
                     [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
@@ -828,16 +1285,25 @@ async def list_candidates(
             .correlate(User)
         )
 
+        slot_pipeline_expr = (
+            Slot.purpose == 'intro_day'
+            if is_intro_pipeline
+            else or_(Slot.purpose.is_(None), Slot.purpose != 'intro_day')
+        )
+
         has_slot_expr = exists(
             select(1)
-            .where(Slot.candidate_tg_id == User.telegram_id)
+            .where(
+                Slot.candidate_id == User.candidate_id,
+                slot_pipeline_expr,
+            )
             .correlate(User)
         )
 
         has_intro_day_slot_expr = exists(
             select(1)
             .where(
-                Slot.candidate_tg_id == User.telegram_id,
+                Slot.candidate_id == User.candidate_id,
                 Slot.purpose == 'intro_day',
             )
             .correlate(User)
@@ -858,16 +1324,10 @@ async def list_candidates(
             else_=len(STATUS_ORDER),
         ).label('status_rank')
 
-        slot_pipeline_expr = (
-            Slot.purpose == 'intro_day'
-            if is_intro_pipeline
-            else or_(Slot.purpose.is_(None), Slot.purpose != 'intro_day')
-        )
-
         primary_event_expr = (
             select(func.min(Slot.start_utc))
             .where(
-                Slot.candidate_tg_id == User.telegram_id,
+                Slot.candidate_id == User.candidate_id,
                 slot_pipeline_expr,
                 Slot.start_utc >= now,
             )
@@ -877,14 +1337,31 @@ async def list_candidates(
 
         normalized_statuses = [slug for slug in normalized_statuses if slug in allowed_with_terminal]
         status_filter_values = normalized_statuses or (pipeline_statuses or ["__unreachable__"])
-        conditions.append(status_case.in_(status_filter_values))
+        upcoming_slot_expr = exists(
+            select(1)
+            .where(
+                Slot.candidate_id == User.candidate_id,
+                slot_pipeline_expr,
+                Slot.start_utc >= now,
+            )
+            .correlate(User)
+        )
+        # Показываем: (а) статусы в воронке, (б) кандидатов с назначенным слотом в текущей воронке,
+        # (в) "новых" кандидатов, у которых уже есть слот.
+        conditions.append(
+            or_(
+                status_case.in_(status_filter_values),
+                upcoming_slot_expr,
+                and_(status_case == literal('new'), has_slot_expr),
+            )
+        )
 
         if recruiter_id is not None:
             conditions.append(
                 exists(
                     select(1)
                     .where(
-                        Slot.candidate_tg_id == User.telegram_id,
+                        Slot.candidate_id == User.candidate_id,
                         Slot.recruiter_id == recruiter_id,
                     )
                     .correlate(User)
@@ -892,7 +1369,7 @@ async def list_candidates(
             )
 
         if range_start_utc or range_end_utc:
-            range_clauses: List[Any] = [Slot.candidate_tg_id == User.telegram_id]
+            range_clauses: List[Any] = [Slot.candidate_id == User.candidate_id]
             if range_start_utc is not None:
                 range_clauses.append(Slot.start_utc >= range_start_utc)
             if range_end_utc is not None:
@@ -921,7 +1398,7 @@ async def list_candidates(
                 exists(
                     select(1)
                     .where(
-                        Slot.candidate_tg_id == User.telegram_id,
+                        Slot.candidate_id == User.candidate_id,
                         func.lower(Slot.status).in_(
                             [
                                 SlotStatus.PENDING,
@@ -1025,7 +1502,7 @@ async def list_candidates(
             order_columns.append(User.id.desc())
 
         list_query: Select = (
-            select(User, status_case, status_rank_expr, primary_event_expr)
+            select(User, status_case, status_rank_expr, primary_event_expr, upcoming_slot_expr)
             .where(*conditions)
             .order_by(*order_columns)
             .offset(offset)
@@ -1037,10 +1514,15 @@ async def list_candidates(
         users = [row[0] for row in records]
         status_by_user = {row[0].id: row[1] for row in records}
         status_rank_by_user = {row[0].id: row[2] for row in records}
+        upcoming_by_user = {row[0].id: bool(row[4]) for row in records}
         primary_event_by_user = {row[0].id: _ensure_aware(row[3]) for row in records}
 
         user_ids = [user.id for user in users]
         telegram_ids = [user.telegram_id for user in users if user.telegram_id]
+        candidate_ids = [user.candidate_id for user in users if user.candidate_id]
+        telegram_to_candidate = {
+            user.telegram_id: user.candidate_id for user in users if user.telegram_id and user.candidate_id
+        }
 
         stats_map: Dict[int, Tuple[int, Optional[float]]] = {}
         if user_ids:
@@ -1083,33 +1565,39 @@ async def list_candidates(
                     continue
                 messages_map.setdefault(message.target_chat_id, []).append(message)
 
-        slots_by_candidate: Dict[int, List[Slot]] = defaultdict(list)
-        upcoming_slot_map: Dict[int, Optional[Slot]] = {}
-        latest_slot_map: Dict[int, Optional[Slot]] = {}
-        stage_map: Dict[int, str] = {}
-        test2_sent_map: Dict[int, bool] = {}
-        if telegram_ids:
+        slots_by_candidate: Dict[str, List[Slot]] = defaultdict(list)
+        upcoming_slot_map: Dict[str, Optional[Slot]] = {}
+        latest_slot_map: Dict[str, Optional[Slot]] = {}
+        stage_map: Dict[str, str] = {}
+        test2_sent_map: Dict[str, bool] = {}
+        if candidate_ids or telegram_ids:
             slot_rows = await session.execute(
                 select(Slot)
                 .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-                .where(Slot.candidate_tg_id.in_(telegram_ids))
+                .where(
+                    or_(
+                        Slot.candidate_id.in_(candidate_ids) if candidate_ids else false(),
+                        Slot.candidate_tg_id.in_(telegram_ids) if telegram_ids else false(),
+                    )
+                )
                 .where(slot_pipeline_expr)
             )
             for slot in slot_rows.scalars():
-                if slot.candidate_tg_id is None:
+                candidate_key = slot.candidate_id or telegram_to_candidate.get(slot.candidate_tg_id)
+                if candidate_key is None:
                     continue
                 slot.start_utc = _ensure_aware(slot.start_utc)
                 slot.test2_sent_at = _ensure_aware(getattr(slot, 'test2_sent_at', None))
-                slots_by_candidate[slot.candidate_tg_id].append(slot)
+                slots_by_candidate[candidate_key].append(slot)
                 if slot.test2_sent_at is not None:
-                    test2_sent_map[slot.candidate_tg_id] = True
-            for tg_id, slot_list in slots_by_candidate.items():
+                    test2_sent_map[candidate_key] = True
+            for candidate_id_key, slot_list in slots_by_candidate.items():
                 slot_list.sort(key=lambda s: (s.start_utc or datetime.min.replace(tzinfo=timezone.utc), s.id or 0))
                 latest_slot = slot_list[-1] if slot_list else None
                 upcoming_slot = next((s for s in slot_list if (s.start_utc or now) >= now), None)
-                latest_slot_map[tg_id] = latest_slot
-                upcoming_slot_map[tg_id] = upcoming_slot
-                stage_map[tg_id] = _stage_label(latest_slot, now)
+                latest_slot_map[candidate_id_key] = latest_slot
+                upcoming_slot_map[candidate_id_key] = upcoming_slot
+                stage_map[candidate_id_key] = _stage_label(latest_slot, now)
 
         ratings = await _distinct_ratings(session)
         cities = await _distinct_cities(session)
@@ -1121,11 +1609,14 @@ async def list_candidates(
     for user in users:
         tests_total, avg_score = stats_map.get(user.id, (0, None))
         candidate_messages = messages_map.get(user.telegram_id, [])
-        latest_slot = latest_slot_map.get(user.telegram_id)
-        upcoming_slot = upcoming_slot_map.get(user.telegram_id)
+        latest_slot = latest_slot_map.get(user.candidate_id)
+        upcoming_slot = upcoming_slot_map.get(user.candidate_id)
         status_slug = status_by_user.get(user.id, 'new')
+        # Если статус вне воронки, но у кандидата есть будущий слот — отображаем как interview_scheduled.
+        if status_slug not in allowed_with_terminal and upcoming_by_user.get(user.id):
+            status_slug = 'interview_scheduled'
         status_label = _status_label(status_slug)
-        stage_value = stage_map.get(user.telegram_id, 'Без интервью')
+        stage_value = stage_map.get(user.candidate_id, 'Без интервью')
         if status_slug and status_slug != 'new':
             stage_value = _status_label(status_slug)
 
@@ -1147,7 +1638,7 @@ async def list_candidates(
 
         test1_result = test_results_map[user.id]['TEST1']
         test2_result = test_results_map[user.id]['TEST2']
-        test2_sent = test2_sent_map.get(user.telegram_id, False)
+        test2_sent = test2_sent_map.get(user.candidate_id, False)
 
         t1_status = 'passed' if test1_result else 'not_started'
 
@@ -1160,7 +1651,7 @@ async def list_candidates(
         else:
             t2_status_value = 'in_progress' if test2_sent else 'not_started'
 
-        telemost_url, telemost_source = _resolve_telemost_url(slots_by_candidate.get(user.telegram_id, []))
+        telemost_url, telemost_source = _resolve_telemost_url(slots_by_candidate.get(user.candidate_id, []))
 
         primary_dt = primary_event_by_user.get(user.id)
         if primary_dt is None and upcoming_slot and upcoming_slot.start_utc:
@@ -1225,7 +1716,10 @@ async def list_candidates(
                 'stage': stage_value,
                 'upcoming_slot': upcoming_slot,
                 'latest_slot': latest_slot,
-                'slots': slots_by_candidate.get(user.telegram_id, []),
+                'slots': slots_by_candidate.get(
+                    user.candidate_id or telegram_to_candidate.get(user.telegram_id),
+                    [],
+                ),
                 'messages_total': len(candidate_messages),
                 'primary_event_at': primary_dt,
                 'group': {
@@ -1284,25 +1778,28 @@ async def list_candidates(
         )
 
     calendar_days: OrderedDict[str, Dict[str, Any]] = OrderedDict()
-    day_count = max(1, (calendar_end.date() - calendar_start.date()).days + 1)
-    for idx in range(day_count):
-        day_date = calendar_start.date() + timedelta(days=idx)
-        if day_date == today:
-            label = 'Сегодня'
-        elif day_date == today + timedelta(days=1):
-            label = 'Завтра'
-        else:
-            label = day_date.strftime('%d.%m.%Y (%a)')
-        calendar_days[day_date.isoformat()] = {
-            'date': day_date,
-            'label': label,
-            'events': [],
-            'totals': defaultdict(int),
-        }
+    if normalized_calendar_mode and calendar_start and calendar_end:
+        day_count = max(1, (calendar_end.date() - calendar_start.date()).days + 1)
+        for idx in range(day_count):
+            day_date = calendar_start.date() + timedelta(days=idx)
+            if day_date == today:
+                label = 'Сегодня'
+            elif day_date == today + timedelta(days=1):
+                label = 'Завтра'
+            else:
+                label = day_date.strftime('%d.%m.%Y (%a)')
+            calendar_days[day_date.isoformat()] = {
+                'date': day_date,
+                'label': label,
+                'events': [],
+                'totals': defaultdict(int),
+            }
 
     for card in candidate_cards:
         for slot in card['slots']:
             if slot.start_utc is None:
+                continue
+            if not (normalized_calendar_mode and calendar_start and calendar_end):
                 continue
             start_dt = _ensure_aware(slot.start_utc)
             if start_dt < calendar_start or start_dt > calendar_end:
@@ -1484,26 +1981,26 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
 
     slot_sub = (
         select(
-            Slot.candidate_tg_id.label("candidate_tg_id"),
+            Slot.candidate_id.label("candidate_id"),
             Slot.start_utc.label("start_utc"),
             Slot.status.label("status"),
             func.row_number()
             .over(
-                partition_by=Slot.candidate_tg_id,
+                partition_by=Slot.candidate_id,
                 order_by=(Slot.start_utc.desc(), Slot.id.desc()),
             )
             .label("rnk"),
         )
-        .where(Slot.candidate_tg_id.isnot(None))
+        .where(Slot.candidate_id.isnot(None))
     ).subquery()
 
     latest_rows = await session.execute(
         select(
-            slot_sub.c.candidate_tg_id,
+            slot_sub.c.candidate_id,
             slot_sub.c.start_utc,
             slot_sub.c.status,
         )
-        .select_from(slot_sub.join(User, User.telegram_id == slot_sub.c.candidate_tg_id))
+        .select_from(slot_sub.join(User, User.candidate_id == slot_sub.c.candidate_id))
         .where(slot_sub.c.rnk == 1)
     )
 
@@ -1514,7 +2011,7 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
     completed_interviews = 0
     canceled_count = 0
 
-    for tg_id, start_utc, status in latest_rows:
+    for _candidate_id, start_utc, status in latest_rows:
         start = _ensure_aware(start_utc) or now
         status_norm = (status or "").lower()
         stage_counts[status_norm] += 1
@@ -1579,25 +2076,24 @@ async def _collect_candidate_analytics(session, now: datetime) -> Dict[str, obje
 async def candidate_filter_options() -> Dict[str, List[str]]:
     async with async_session() as session:
         city_rows = await session.execute(
-            select(City.id, City.name).order_by(City.name.asc())
+            select(City.id, City.name, City.tz).order_by(City.name.asc())
         )
         city_choices = [
-            {"id": city_id, "name": name}
-            for city_id, name in city_rows
+            {"id": city_id, "name": name, "tz": tz}
+            for city_id, name, tz in city_rows
             if name
         ]
         cities = [entry["name"] for entry in city_choices]
         ratings = await _distinct_ratings(session)
         recruiter_rows = await session.execute(
-            select(Recruiter)
-            .where(Recruiter.active.is_(True))
-            .order_by(Recruiter.name.asc())
+            select(Recruiter).order_by(Recruiter.name.asc())
         )
         recruiters = [
             {
                 "id": recruiter.id,
                 "name": recruiter.name,
                 "tz": recruiter.tz,
+                "active": recruiter.active,
             }
             for recruiter in recruiter_rows.scalars()
         ]
@@ -1640,6 +2136,68 @@ async def candidate_filter_options() -> Dict[str, List[str]]:
     }
 
 
+async def _release_intro_day_slots_for_candidate(
+    session,
+    *,
+    candidate_uuid: Optional[str],
+    candidate_tg_id: Optional[int],
+) -> int:
+    """Free any active intro day slots still bound to the candidate."""
+
+    if not candidate_uuid and candidate_tg_id is None:
+        return 0
+
+    active_statuses = {
+        SlotStatus.BOOKED,
+        SlotStatus.PENDING,
+        SlotStatus.CONFIRMED,
+        SlotStatus.CONFIRMED_BY_CANDIDATE,
+    }
+    slots_query = (
+        select(Slot)
+        .where(
+            Slot.purpose == "intro_day",
+            Slot.status.in_(active_statuses),
+            or_(
+                Slot.candidate_id == candidate_uuid,
+                Slot.candidate_tg_id == candidate_tg_id,
+            ),
+        )
+    )
+    slots = (await session.execute(slots_query)).scalars().all()
+    released = 0
+
+    for slot in slots:
+        slot.status = SlotStatus.FREE
+        slot.candidate_id = None
+        slot.candidate_tg_id = None
+        slot.candidate_fio = None
+        slot.candidate_tz = None
+        slot.candidate_city_id = None
+        slot.interview_outcome = None
+        slot.rejection_sent_at = None
+        released += 1
+        try:
+            await cancel_slot_reminders(slot.id)
+        except Exception:
+            logger.warning(
+                "intro_day_slot.cleanup.reminders_failed",
+                extra={"slot_id": slot.id},
+            )
+
+    if released:
+        logger.info(
+            "intro_day_slot.cleanup.completed",
+            extra={
+                "released": released,
+                "candidate_tg_id": candidate_tg_id,
+                "candidate_uuid": candidate_uuid,
+            },
+        )
+
+    return released
+
+
 async def update_candidate_status(
     candidate_id: int,
     status_slug: str,
@@ -1669,13 +2227,20 @@ async def update_candidate_status(
         user = await session.get(User, candidate_id)
         if not user:
             return False, "Кандидат не найден", None, None
-        if user.telegram_id is None:
+        if user.telegram_id is None and normalized not in STATUS_DEFINITIONS:
             return False, "Для кандидата не указан Telegram ID", None, None
+        previous_status = getattr(user, "candidate_status", None)
+        previous_status_slug = getattr(previous_status, "value", None) if previous_status else None
+        if previous_status_slug is None and isinstance(previous_status, str):
+            previous_status_slug = previous_status
 
+        status_slot_filters = [Slot.candidate_id == user.candidate_id]
+        if user.telegram_id is not None:
+            status_slot_filters.append(Slot.candidate_tg_id == user.telegram_id)
         slot_query = (
             select(Slot)
             .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-            .where(Slot.candidate_tg_id == user.telegram_id)
+            .where(or_(*status_slot_filters))
             .order_by(Slot.start_utc.asc(), Slot.id.asc())
         )
         slot_rows = await session.execute(slot_query)
@@ -1703,6 +2268,17 @@ async def update_candidate_status(
                 outcome_map[normalized],
                 bot_service=bot_service,
             )
+            if ok:
+                await log_audit_action(
+                    "candidate_status_updated",
+                    "candidate",
+                    candidate_id,
+                    changes={
+                        "from": previous_status_slug,
+                        "to": normalized,
+                        "slot_id": target_slot.id if target_slot else None,
+                    },
+                )
             return ok, message or "", normalized, dispatch
 
         if normalized in slot_status_map:
@@ -1716,21 +2292,85 @@ async def update_candidate_status(
                 message = result.message or "Не удалось согласовать слот."
                 if not ok:
                     return False, message, normalized, None
+                await log_audit_action(
+                    "candidate_status_updated",
+                    "candidate",
+                    candidate_id,
+                    changes={
+                        "from": previous_status_slug,
+                        "to": normalized,
+                        "slot_id": target_slot.id if target_slot else None,
+                    },
+                )
                 return True, message, normalized, None
 
             target_slot.status = slot_status_map[normalized]
             if normalized != "awaiting_confirmation":
                 target_slot.interview_outcome = None
             await session.commit()
+            await log_audit_action(
+                "candidate_status_updated",
+                "candidate",
+                candidate_id,
+                changes={
+                    "from": previous_status_slug,
+                    "to": normalized,
+                    "slot_id": target_slot.id if target_slot else None,
+                },
+            )
             return True, "Статус обновлён", normalized, None
 
         if normalized in STATUS_DEFINITIONS:
             try:
-                user.candidate_status = CandidateStatus(normalized)
+                target_status = CandidateStatus(normalized)
             except ValueError:
-                user.candidate_status = None
-            user.status_changed_at = datetime.now(timezone.utc)
+                target_status = None
+
+            if target_status == user.candidate_status:
+                user.status_changed_at = datetime.now(timezone.utc)
+                status_changed = False
+            else:
+                status_changed = await _candidate_status_service.force(
+                    user,
+                    target_status,
+                    reason="admin manual status update",
+                )
+
+            if target_status in STATUSES_RELEASE_INTRO_DAY_SLOTS:
+                await _release_intro_day_slots_for_candidate(
+                    session,
+                    candidate_uuid=user.candidate_id,
+                    candidate_tg_id=user.telegram_user_id or user.telegram_id,
+                )
+                user.is_active = False
+            elif target_status in STATUSES_ARCHIVE_ON_DECLINE:
+                user.is_active = False
+
             await session.commit()
+            funnel_event = FUNNEL_STATUS_EVENTS.get(user.candidate_status) if user.candidate_status else None
+            if funnel_event:
+                try:
+                    await analytics.log_funnel_event(
+                        funnel_event,
+                        user_id=user.telegram_id,
+                        candidate_id=user.id,
+                        metadata={"status": user.candidate_status.value, "source": "admin"},
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to log funnel event after manual status change",
+                        extra={"candidate_id": user.id, "status": normalized},
+                    )
+            await log_audit_action(
+                "candidate_status_updated",
+                "candidate",
+                candidate_id,
+                changes={
+                    "from": previous_status_slug,
+                    "to": normalized,
+                    "slot_id": getattr(target_slot, "id", None),
+                },
+            )
             return True, "Статус обновлён", normalized, None
 
     return False, "Этот статус нельзя установить вручную", None, None
@@ -1771,19 +2411,25 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
                     "questions_overtime": sum(1 for item in answer_items if item.overtime),
                 }
 
-        messages = (
-            await session.execute(
-                select(AutoMessage)
-                .where(AutoMessage.target_chat_id == user.telegram_id)
-                .order_by(AutoMessage.created_at.desc(), AutoMessage.id.desc())
-            )
-        ).scalars().all()
+        if user.telegram_id is None:
+            messages = []
+        else:
+            messages = (
+                await session.execute(
+                    select(AutoMessage)
+                    .where(AutoMessage.target_chat_id == user.telegram_id)
+                    .order_by(AutoMessage.created_at.desc(), AutoMessage.id.desc())
+                )
+            ).scalars().all()
 
+        slot_filters = [Slot.candidate_id == user.candidate_id]
+        if user.telegram_id is not None:
+            slot_filters.append(Slot.candidate_tg_id == user.telegram_id)
         slots = (
             await session.execute(
                 select(Slot)
                 .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-                .where(Slot.candidate_tg_id == user.telegram_id)
+                .where(or_(*slot_filters))
                 .order_by(Slot.start_utc.desc(), Slot.id.desc())
             )
         ).scalars().all()
@@ -1805,6 +2451,23 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
         else:
             # Fallback to old logic if no candidate_status
             stage = _stage_label(slots[0] if slots else None, now)
+
+        # Determine has_intro_day_slot and test2_passed early for action calculation
+        active_intro_day_statuses = {
+            SlotStatus.BOOKED,
+            SlotStatus.PENDING,
+            SlotStatus.CONFIRMED,
+            SlotStatus.CONFIRMED_BY_CANDIDATE,
+        }
+        intro_day_cutoff = now - timedelta(hours=1)
+        has_intro_day_slot = any(
+            (slot.purpose or "").lower() == "intro_day"
+            and (slot.status or "").lower() in active_intro_day_statuses
+            and slot.start_utc
+            and slot.start_utc >= intro_day_cutoff
+            for slot in slots
+        )
+        test2_passed_early = _has_passed_test2(test_results)
 
         timeline = []
         for slot in slots:
@@ -1868,17 +2531,112 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
             test_sections_map["test2"]["report_url"] = (
                 f"/candidates/{user.id}/reports/test2" if getattr(user, "test2_report_url", None) else None
             )
-    test_sections_list = list(test_sections_map.values())
+        test2_status = (test_sections_map.get("test2", {}).get("status") or "").lower()
+        has_test2_result = test2_status in {"passed", "failed"}
+        test_sections_list = list(test_sections_map.values())
 
-    telemost_url, telemost_source = _resolve_telemost_url(slots)
+        telemost_url, telemost_source = _resolve_telemost_url(slots)
 
-    # Check if candidate needs intro day
-    has_intro_day_slot = any(slot.purpose == "intro_day" for slot in slots)
-    status_requires_intro_day = (
-        candidate_status in STATUSES_PENDING_INTRO_DAY if candidate_status else False
-    )
-    test2_passed = _has_passed_test2(test_results)
-    needs_intro_day = (status_requires_intro_day or test2_passed) and not has_intro_day_slot
+        responsible_recruiter = None
+        if getattr(user, "responsible_recruiter_id", None):
+            responsible_recruiter = await session.get(Recruiter, user.responsible_recruiter_id)
+
+        # Autofix статус, если реальный результат теста выше, чем зафиксированный статус
+        if test2_status == "passed" and candidate_status in {
+            CandidateStatus.TEST2_FAILED,
+            CandidateStatus.TEST2_SENT,
+            CandidateStatus.INTERVIEW_DECLINED,
+            None,
+        }:
+            try:
+                await _candidate_status_service.force(
+                    user,
+                    CandidateStatus.TEST2_COMPLETED,
+                    reason="autofix:test2_passed",
+                )
+                user.is_active = True
+                candidate_status = user.candidate_status
+                candidate_status_slug = candidate_status.value if candidate_status else None
+                await session.commit()
+                await log_audit_action(
+                    "candidate_status_autofix",
+                    "candidate",
+                    user.id,
+                    changes={
+                        "from": "legacy_or_failed",
+                        "to": CandidateStatus.TEST2_COMPLETED.value,
+                        "source": "test2_result_passed",
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to autofix candidate status after Test2 pass",
+                    extra={"candidate_id": user.id, "status": str(candidate_status)},
+                )
+
+        # Check if candidate needs intro day (reuse variables calculated earlier)
+        status_requires_intro_day = (
+            candidate_status in STATUSES_PENDING_INTRO_DAY if candidate_status else False
+        )
+        test2_passed = test2_passed_early  # Already calculated for actions
+        needs_intro_day = (status_requires_intro_day or test2_passed) and not has_intro_day_slot
+
+        # Decide which status to use for UI actions:
+        # - Prefer explicit candidate_status from DB
+        # - If Test 2 results show passed/failed but status not updated, derive from test outcome
+        action_status = candidate_status
+        if candidate_status is None:
+            if test2_status == "passed":
+                action_status = CandidateStatus.TEST2_COMPLETED
+                test2_passed = True
+            elif test2_status == "failed":
+                action_status = CandidateStatus.TEST2_FAILED
+        elif candidate_status in {
+            CandidateStatus.TEST2_SENT,
+            CandidateStatus.TEST2_COMPLETED,
+        }:
+            # Align pre-OD statuses with actual test outcome, но не затираем более поздние этапы
+            if test2_status == "passed" and candidate_status == CandidateStatus.TEST2_SENT:
+                action_status = CandidateStatus.TEST2_COMPLETED
+                test2_passed = True
+            elif test2_status == "failed":
+                action_status = CandidateStatus.TEST2_FAILED
+
+        candidate_actions = get_candidate_actions(
+            action_status,
+            has_upcoming_slot=upcoming_slot is not None,
+            has_test2_passed=test2_passed,
+            has_intro_day_slot=has_intro_day_slot,
+        )
+
+        effective_workflow_status = _map_to_workflow_status(user)
+        user.workflow_status = effective_workflow_status.value
+        workflow_state = _workflow_service.describe(user)
+        workflow_actions = _workflow_actions_ui(user.id, workflow_state.allowed_actions)
+        workflow_status_label = WORKFLOW_STATUS_LABELS.get(
+            workflow_state.status, workflow_state.status.value
+        )
+        workflow_status_color = WORKFLOW_STATUS_COLORS.get(
+            workflow_state.status, "muted"
+        )
+        # Для отображения статуса в UI используем workflow (единственный источник правды)
+        stage = workflow_status_label
+
+    # Prepare pipeline stages and allowed next statuses for Status Center UI
+    pipeline_stages = _build_pipeline_stages(candidate_status)
+    allowed_next = get_next_statuses(candidate_status) if candidate_status else []
+    allowed_next_statuses = [
+        {
+            "slug": status.value,
+            "label": label,
+            "color": get_status_color(status),
+            "is_terminal": is_terminal_status(status),
+        }
+        for status, label in allowed_next
+    ]
+    status_is_terminal = is_terminal_status(candidate_status) if candidate_status else False
+
+    settings = get_settings()
 
     return {
         "user": user,
@@ -1895,6 +2653,21 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
         "has_intro_day_slot": has_intro_day_slot,
         "can_schedule_intro_day": needs_intro_day,
         "candidate_status_slug": candidate_status_slug,
+        "candidate_status_color": get_status_color(candidate_status) if candidate_status else "muted",
+        "candidate_actions": candidate_actions,
+        "workflow_state": workflow_state,
+        "workflow_actions": workflow_actions,
+        "workflow_status": workflow_state.status.value,
+        "workflow_status_label": workflow_status_label,
+        "workflow_status_color": workflow_status_color,
+        "candidate_status_options": [
+            {"slug": slug, "label": meta.get("label", slug)}
+            for slug, meta in STATUS_DEFINITIONS.items()
+        ],
+        # Status Center data
+        "allowed_next_statuses": allowed_next_statuses,
+        "pipeline_stages": pipeline_stages,
+        "status_is_terminal": status_is_terminal,
         "test2_passed": test2_passed,
         "stats": {
             "tests_total": int(tests_total or 0),
@@ -1902,11 +2675,13 @@ async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
         },
         "telemost_url": telemost_url,
         "telemost_source": telemost_source,
+        "responsible_recruiter": responsible_recruiter,
         "interview_form_sections": INTERVIEW_FORM_SECTIONS,
         "interview_recommendation_choices": INTERVIEW_RECOMMENDATION_CHOICES,
         "interview_recommendation_lookup": INTERVIEW_RECOMMENDATION_LOOKUP,
         "interview_notes": _serialize_interview_note(interview_note),
         "chat_templates": get_chat_templates(),
+        "legacy_status_enabled": settings.enable_legacy_status_api,
     }
 
 
@@ -1986,39 +2761,72 @@ async def _load_interview_note(session, user_id: int) -> Optional[InterviewNote]
 
 async def upsert_candidate(
     *,
-    telegram_id: int,
+    telegram_id: Optional[int],
     fio: str,
     city: Optional[str],
+    phone: Optional[str] = None,
+    responsible_recruiter_id: Optional[int] = None,
+    manual_slot_from: Optional[datetime] = None,
+    manual_slot_to: Optional[datetime] = None,
+    manual_slot_timezone: Optional[str] = None,
     is_active: bool,
     last_activity: Optional[datetime] = None,
+    source: str = "manual_call",
+    initial_status: Optional[CandidateStatus] = CandidateStatus.LEAD,
 ) -> User:
     clean_fio = fio.strip()
     clean_city = city.strip() if city else None
+    clean_phone = phone.strip() if phone else None
     if not clean_fio:
         raise ValueError("Имя кандидата не может быть пустым")
 
     async with async_session() as session:
-        result = await session.execute(
-            select(User).where(User.telegram_id == telegram_id)
-        )
-        user = result.scalar_one_or_none()
+        user = None
+        if telegram_id is not None:
+            result = await session.execute(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+            user = result.scalar_one_or_none()
         now = datetime.now(timezone.utc)
         last_activity_value = last_activity or now
 
         if user:
             user.fio = clean_fio
             user.city = clean_city
+            user.phone = clean_phone
             user.is_active = is_active
             user.last_activity = last_activity_value
+            if responsible_recruiter_id is not None:
+                user.responsible_recruiter_id = responsible_recruiter_id
+            if manual_slot_from is not None:
+                user.manual_slot_from = manual_slot_from
+            if manual_slot_to is not None:
+                user.manual_slot_to = manual_slot_to
+            if manual_slot_timezone is not None:
+                user.manual_slot_timezone = manual_slot_timezone
         else:
             user = User(
                 telegram_id=telegram_id,
                 fio=clean_fio,
                 city=clean_city,
+                phone=clean_phone,
+                responsible_recruiter_id=responsible_recruiter_id,
+                manual_slot_from=manual_slot_from,
+                manual_slot_to=manual_slot_to,
+                manual_slot_timezone=manual_slot_timezone,
                 is_active=is_active,
                 last_activity=last_activity_value,
+                source=source,
             )
             session.add(user)
+            await session.flush()
+            if initial_status:
+                await _candidate_status_service.force(
+                    user,
+                    initial_status,
+                    reason="candidate creation",
+                )
+                user.status_changed_at = last_activity_value
 
         await session.commit()
         await session.refresh(user)
@@ -2038,13 +2846,15 @@ async def toggle_candidate_activity(user_id: int, *, active: bool) -> bool:
 async def update_candidate(
     user_id: int,
     *,
-    telegram_id: int,
+    telegram_id: Optional[int],
     fio: str,
     city: Optional[str],
+    phone: Optional[str] = None,
     is_active: bool,
 ) -> bool:
     clean_fio = fio.strip()
     clean_city = city.strip() if city else None
+    clean_phone = phone.strip() if phone else None
     if not clean_fio:
         raise ValueError("Имя кандидата не может быть пустым")
 
@@ -2053,9 +2863,11 @@ async def update_candidate(
         if not user:
             return False
 
-        user.telegram_id = telegram_id
+        if telegram_id is not None:
+            user.telegram_id = telegram_id
         user.fio = clean_fio
         user.city = clean_city
+        user.phone = clean_phone
         user.is_active = is_active
 
         await session.commit()
@@ -2068,10 +2880,11 @@ async def delete_candidate(user_id: int) -> bool:
         if not user:
             return False
 
-        await session.execute(
+        release_result = await session.execute(
             Slot.__table__.update()
-            .where(Slot.candidate_tg_id == user.telegram_id)
+            .where(Slot.candidate_id == user.candidate_id)
             .values(
+                candidate_id=None,
                 candidate_tg_id=None,
                 candidate_fio=None,
                 candidate_tz=None,
@@ -2079,23 +2892,62 @@ async def delete_candidate(user_id: int) -> bool:
                 status=SlotStatus.FREE,
             )
         )
+        released = release_result.rowcount or 0
         await session.delete(user)
         await session.commit()
+        await log_audit_action(
+            "candidate_deleted",
+            "candidate",
+            user_id,
+            changes={"released_slots": released},
+        )
         return True
+
+
+async def generate_candidate_invite_token(user_id: int) -> Optional[str]:
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            return None
+        invite = await create_candidate_invite_token(user.candidate_id)
+        current_status = user.candidate_status
+        current_slug = (
+            current_status.value if isinstance(current_status, CandidateStatus) else current_status
+        )
+        if current_slug in {None, "lead", "contacted"}:
+            await _candidate_status_service.force(
+                user,
+                CandidateStatus.INVITED,
+                reason="generate candidate invite token",
+            )
+            await session.commit()
+        return invite.token
 
 
 async def delete_all_candidates() -> int:
     """Delete all candidate profiles and release assigned slots."""
     async with async_session() as session:
-        telegram_ids = await session.scalars(
+        candidate_ids = await session.scalars(
+            select(User.candidate_id).where(User.candidate_id.is_not(None))
+        )
+        candidate_list = [value for value in candidate_ids if value]
+        candidate_tg_ids = await session.scalars(
             select(User.telegram_id).where(User.telegram_id.is_not(None))
         )
-        tg_list = [value for value in telegram_ids if value]
+        tg_list = [value for value in candidate_tg_ids if value]
+
+        slot_filters = []
+        if candidate_list:
+            slot_filters.append(Slot.candidate_id.in_(candidate_list))
         if tg_list:
+            slot_filters.append(Slot.candidate_tg_id.in_(tg_list))
+
+        if slot_filters:
             await session.execute(
                 Slot.__table__.update()
-                .where(Slot.candidate_tg_id.in_(tg_list))
+                .where(or_(*slot_filters))
                 .values(
+                    candidate_id=None,
                     candidate_tg_id=None,
                     candidate_fio=None,
                     candidate_tz=None,
@@ -2106,7 +2958,14 @@ async def delete_all_candidates() -> int:
 
         delete_result = await session.execute(delete(User))
         await session.commit()
-        return delete_result.rowcount or 0
+        removed = delete_result.rowcount or 0
+        await log_audit_action(
+            "candidates_bulk_deleted",
+            "candidate",
+            None,
+            changes={"deleted": removed},
+        )
+        return removed
 
 
 async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, object]]:

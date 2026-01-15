@@ -12,58 +12,58 @@
 
 :root {
   /* PRIMARY BRAND COLORS — мягкий синий акцент */
-  --color-primary-50: #e8f1ff;
-  --color-primary-100: #d8e8ff;
-  --color-primary-200: #b9d5ff;
-  --color-primary-300: #8fbaff;
-  --color-primary-400: #5f99ff;
-  --color-primary-500: #0f6fff;
-  --color-primary-600: #0c5cd6;
-  --color-primary-700: #0b4ab0;
-  --color-primary-800: #0a3c8f;
-  --color-primary-900: #072b66;
+  --color-primary-50: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  --color-primary-100: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  --color-primary-200: color-mix(in srgb, var(--accent) 28%, var(--bg));
+  --color-primary-300: color-mix(in srgb, var(--accent) 40%, var(--bg));
+  --color-primary-400: color-mix(in srgb, var(--accent) 55%, var(--bg));
+  --color-primary-500: var(--accent);
+  --color-primary-600: var(--accent-hover);
+  --color-primary-700: var(--accent-pressed);
+  --color-primary-800: color-mix(in srgb, var(--accent-pressed) 80%, var(--text));
+  --color-primary-900: color-mix(in srgb, var(--accent-pressed) 65%, var(--text));
 
   /* SECONDARY ACCENT */
-  --color-secondary-500: #6a3df5;
-  --color-secondary-600: #5a2cd6;
+  --color-secondary-500: var(--accent);
+  --color-secondary-600: var(--accent-hover);
 
   /* NEUTRALS — светлая система */
-  --color-neutral-0: #ffffff;
-  --color-neutral-50: #f8fafc;
-  --color-neutral-100: #f2f4f8;
-  --color-neutral-200: #e6eaf1;
-  --color-neutral-300: #d7dde8;
-  --color-neutral-400: #c5cedd;
-  --color-neutral-500: #9aa4b5;
-  --color-neutral-600: #6b7485;
-  --color-neutral-700: #475069;
-  --color-neutral-800: #252b3a;
-  --color-neutral-900: #0f172a;
+  --color-neutral-0: var(--surface);
+  --color-neutral-50: var(--bg);
+  --color-neutral-100: var(--surface-2);
+  --color-neutral-200: color-mix(in srgb, var(--surface-2) 75%, var(--border));
+  --color-neutral-300: var(--border);
+  --color-neutral-400: color-mix(in srgb, var(--border) 70%, var(--text-muted));
+  --color-neutral-500: var(--text-muted);
+  --color-neutral-600: color-mix(in srgb, var(--text-muted) 85%, var(--text));
+  --color-neutral-700: color-mix(in srgb, var(--text) 80%, var(--text-muted));
+  --color-neutral-800: color-mix(in srgb, var(--text) 90%, var(--text-muted));
+  --color-neutral-900: var(--text);
 
   /* SEMANTIC COLORS */
-  --color-success-50: hsl(155, 70%, 95%);
-  --color-success-100: hsl(155, 70%, 85%);
-  --color-success-500: hsl(155, 70%, 45%);
-  --color-success-700: hsl(155, 70%, 35%);
-  --color-success-900: hsl(155, 70%, 20%);
+  --color-success-50: color-mix(in srgb, var(--success) 18%, var(--surface));
+  --color-success-100: color-mix(in srgb, var(--success) 30%, var(--surface));
+  --color-success-500: var(--success);
+  --color-success-700: color-mix(in srgb, var(--success) 75%, var(--text));
+  --color-success-900: color-mix(in srgb, var(--success) 55%, var(--text));
 
-  --color-warning-50: hsl(42, 100%, 95%);
-  --color-warning-100: hsl(42, 100%, 85%);
-  --color-warning-500: hsl(42, 100%, 62%);
-  --color-warning-700: hsl(42, 90%, 48%);
-  --color-warning-900: hsl(42, 80%, 30%);
+  --color-warning-50: color-mix(in srgb, var(--warning) 18%, var(--surface));
+  --color-warning-100: color-mix(in srgb, var(--warning) 30%, var(--surface));
+  --color-warning-500: var(--warning);
+  --color-warning-700: color-mix(in srgb, var(--warning) 75%, var(--text));
+  --color-warning-900: color-mix(in srgb, var(--warning) 55%, var(--text));
 
-  --color-danger-50: hsl(0, 90%, 95%);
-  --color-danger-100: hsl(0, 90%, 85%);
-  --color-danger-500: hsl(0, 90%, 65%);
-  --color-danger-700: hsl(0, 80%, 50%);
-  --color-danger-900: hsl(0, 70%, 30%);
+  --color-danger-50: color-mix(in srgb, var(--danger) 18%, var(--surface));
+  --color-danger-100: color-mix(in srgb, var(--danger) 30%, var(--surface));
+  --color-danger-500: var(--danger);
+  --color-danger-700: color-mix(in srgb, var(--danger) 75%, var(--text));
+  --color-danger-900: color-mix(in srgb, var(--danger) 55%, var(--text));
 
-  --color-info-50: hsl(200, 85%, 95%);
-  --color-info-100: hsl(200, 85%, 85%);
-  --color-info-500: hsl(200, 85%, 55%);
-  --color-info-700: hsl(200, 75%, 45%);
-  --color-info-900: hsl(200, 65%, 30%);
+  --color-info-50: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  --color-info-100: color-mix(in srgb, var(--accent) 30%, var(--surface));
+  --color-info-500: var(--accent);
+  --color-info-700: color-mix(in srgb, var(--accent) 75%, var(--text));
+  --color-info-900: color-mix(in srgb, var(--accent) 55%, var(--text));
 }
 
 /* ============================================================================
@@ -74,44 +74,39 @@ html[data-theme="dark"] {
   color-scheme: dark;
 
   /* Backgrounds */
-  --bg-canvas: var(--bg, var(--surface));
-  --bg-surface: var(--surface-2, var(--surface-muted));
-  --bg-elevated: var(--surface-3, var(--surface-raised));
-  --bg-overlay: rgba(0, 0, 0, 0.75);
+  --bg-canvas: var(--bg);
+  --bg-surface: var(--surface-2);
+  --bg-elevated: var(--surface-3);
+  --bg-overlay: color-mix(in srgb, var(--bg) 70%, var(--text) 12%);
 
   /* Text */
-  --text-primary: var(--color-neutral-0);
-  --text-secondary: var(--color-neutral-300);
-  --text-tertiary: var(--color-neutral-500);
-  --text-inverse: var(--color-neutral-900);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-muted);
+  --text-tertiary: color-mix(in srgb, var(--text-muted) 70%, transparent);
+  --text-inverse: var(--accent-fg);
 
   /* Borders */
-  --border-default: hsla(0, 0%, 100%, 0.12);
-  --border-strong: hsla(0, 0%, 100%, 0.24);
-  --border-subtle: hsla(0, 0%, 100%, 0.06);
+  --border-default: var(--border);
+  --border-strong: color-mix(in srgb, var(--border) 80%, var(--text-muted));
+  --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
 
   /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.7);
-  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.8);
-
-  /* Glass Morphism */
-  --glass-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-sm: var(--shadow-soft);
+  --shadow-md: var(--shadow-softer);
+  --shadow-lg: var(--shadow-softest);
+  --shadow-xl: var(--shadow-softest);
 
   /* States */
-  --state-hover-bg: rgba(255, 255, 255, 0.05);
-  --state-active-bg: rgba(255, 255, 255, 0.08);
-  --state-disabled-bg: rgba(255, 255, 255, 0.03);
-  --state-disabled-text: var(--color-neutral-600);
+  --state-hover-bg: color-mix(in srgb, var(--surface) 70%, var(--accent) 10%);
+  --state-active-bg: color-mix(in srgb, var(--surface) 60%, var(--accent) 14%);
+  --state-disabled-bg: color-mix(in srgb, var(--border) 35%, transparent);
+  --state-disabled-text: color-mix(in srgb, var(--text-muted) 75%, transparent);
 
   /* Semantic backgrounds */
-  --bg-success: var(--color-success-900);
-  --bg-warning: var(--color-warning-900);
-  --bg-danger: var(--color-danger-900);
-  --bg-info: var(--color-info-900);
+  --bg-success: color-mix(in srgb, var(--success) 16%, transparent);
+  --bg-warning: color-mix(in srgb, var(--warning) 16%, transparent);
+  --bg-danger: color-mix(in srgb, var(--danger) 16%, transparent);
+  --bg-info: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 /* ============================================================================
@@ -125,13 +120,13 @@ html[data-theme="light"] {
   --bg-canvas: var(--surface);
   --bg-surface: var(--surface-muted);
   --bg-elevated: var(--surface-raised);
-  --bg-overlay: rgba(0, 0, 0, 0.5);
+  --bg-overlay: color-mix(in srgb, var(--bg) 70%, var(--text) 12%);
 
   /* Text */
   --text-primary: var(--text-1, var(--on-surface));
   --text-secondary: var(--text-2, var(--on-surface-muted));
   --text-tertiary: var(--text-3, color-mix(in srgb, var(--on-surface) 55%, transparent));
-  --text-inverse: var(--color-neutral-0);
+  --text-inverse: var(--accent-fg);
 
   /* Borders */
   --border-default: var(--border);
@@ -143,11 +138,6 @@ html[data-theme="light"] {
   --shadow-md: 0 12px 30px rgba(13, 31, 55, 0.08);
   --shadow-lg: 0 20px 50px rgba(13, 31, 55, 0.10);
   --shadow-xl: 0 30px 70px rgba(13, 31, 55, 0.12);
-
-  /* Glass Morphism */
-  --glass-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.48));
-  --glass-border: color-mix(in srgb, var(--border) 90%, transparent);
-  --glass-shadow: var(--shadow-md), inset 0 1px 2px rgba(255, 255, 255, 0.4);
 
   /* States */
   --state-hover-bg: color-mix(in srgb, var(--on-surface) 6%, transparent);
@@ -163,7 +153,63 @@ html[data-theme="light"] {
 }
 
 /* ============================================================================
-   4. TYPOGRAPHY SYSTEM
+   4. INTERACTION UTILITIES: LIQUID GLASS MOTION
+   ========================================================================= */
+
+.interactive {
+  transition-property: transform, box-shadow, border-color, background, background-color, color, opacity;
+  transition-duration: var(--dur-sm);
+  transition-timing-function: var(--ease-out);
+  transform: translateZ(0);
+}
+
+.glass-hover:hover {
+  transform: translateY(var(--lift-sm));
+  box-shadow: var(--glass-shadow);
+  border-color: color-mix(in srgb, var(--glass-border) 85%, transparent);
+}
+
+.pressable:active {
+  transform: translateY(var(--press-depth)) scale(0.99);
+}
+
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.modal-enter {
+  animation: glass-enter var(--dur-enter) var(--ease-out) both;
+}
+
+.modal-exit {
+  animation: glass-exit var(--dur-exit) var(--ease-out) both;
+}
+
+@keyframes glass-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes glass-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+/* ============================================================================
+   5. TYPOGRAPHY SYSTEM
    ========================================================================= */
 
 :root {
@@ -298,15 +344,15 @@ html[data-theme="light"] {
 :root {
   /* Durations */
   --duration-instant: 0ms;
-  --duration-fast: 150ms;
-  --duration-base: 250ms;
-  --duration-slow: 350ms;
-  --duration-slower: 500ms;
+  --duration-fast: var(--dur-sm);
+  --duration-base: var(--dur-md);
+  --duration-slow: var(--dur-lg);
+  --duration-slower: var(--dur-xl);
 
   /* Easing functions */
   --ease-linear: linear;
   --ease-in: cubic-bezier(0.4, 0, 1, 1);
-  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-snappy: cubic-bezier(0.4, 0.14, 0.3, 1);
   --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
@@ -314,13 +360,13 @@ html[data-theme="light"] {
 
   /* Transition shorthands */
   --transition-colors:
-    color var(--duration-base) var(--ease-in-out),
-    background-color var(--duration-base) var(--ease-in-out),
-    border-color var(--duration-base) var(--ease-in-out);
+    color var(--dur-md) var(--ease-out),
+    background-color var(--dur-md) var(--ease-out),
+    border-color var(--dur-md) var(--ease-out);
 
-  --transition-transform: transform var(--duration-fast) var(--ease-snappy);
+  --transition-transform: transform var(--dur-sm) var(--ease-out);
 
-  --transition-all: all var(--duration-base) var(--ease-in-out);
+  --transition-all: all var(--dur-md) var(--ease-out);
 }
 
 /* Animation Keyframes */
@@ -440,7 +486,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
-  transition: background-color var(--duration-base) var(--ease-in-out), color var(--duration-base) var(--ease-in-out);
+  transition: background-color var(--dur-md) var(--ease-out), color var(--dur-md) var(--ease-out);
 }
 
 body::-webkit-scrollbar {
@@ -501,7 +547,7 @@ body::-webkit-scrollbar-thumb {
   text-decoration: none;
   z-index: var(--z-notification);
   transform: translateY(-200%);
-  transition: transform var(--duration-base) var(--ease-out);
+  transition: transform var(--dur-md) var(--ease-out);
 }
 
 .skip-link:focus {
@@ -607,7 +653,7 @@ body::-webkit-scrollbar-thumb {
 
 /* Ensure focus is visible */
 *:focus-visible {
-  outline: 2px solid var(--color-primary-500);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -631,7 +677,7 @@ body::-webkit-scrollbar-thumb {
   *::before,
   *::after {
     background: transparent !important;
-    color: #000 !important;
+    color: var(--text) !important;
     box-shadow: none !important;
     text-shadow: none !important;
   }
@@ -651,7 +697,7 @@ body::-webkit-scrollbar-thumb {
 
   pre,
   blockquote {
-    border: 1px solid #999;
+    border: 1px solid var(--border-strong);
     page-break-inside: avoid;
   }
 

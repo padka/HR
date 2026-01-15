@@ -143,12 +143,39 @@ async def _fetch_template(city_id: Optional[int], key: str) -> Optional[str]:
     return result
 
 
+class _SafeDict(dict):
+    """Formatting helper that leaves unknown placeholders untouched."""
+
+    def __missing__(self, key: str) -> str:  # pragma: no cover - defensive fallback
+        return "{" + key + "}"
+
+
+def _normalize_format_context(fmt: Dict[str, Any]) -> Dict[str, Any]:
+    data = dict(fmt)
+    if "candidate_name" not in data and "candidate_fio" in data:
+        data["candidate_name"] = data["candidate_fio"]
+    if "candidate_fio" not in data and "candidate_name" in data:
+        data["candidate_fio"] = data["candidate_name"]
+    if "dt_local" not in data and "slot_datetime_local" in data:
+        data["dt_local"] = data["slot_datetime_local"]
+    if "slot_datetime_local" not in data and "dt_local" in data:
+        data["slot_datetime_local"] = data["dt_local"]
+    if "dt" not in data and "dt_local" in data:
+        data["dt"] = data["dt_local"]
+    if "dt_local" not in data and "dt" in data:
+        data["dt_local"] = data["dt"]
+    if "interview_dt_hint" not in data:
+        data["interview_dt_hint"] = data.get("dt_local") or data.get("slot_datetime_local") or ""
+    return data
+
+
 async def tpl(city_id: Optional[int], key: str, **fmt: Any) -> str:
     text = await _fetch_template(city_id, key) or DEFAULT_TEMPLATES.get(key, "")
     if not fmt:
         return text
+    context = _normalize_format_context(fmt)
     try:
-        return text.format(**fmt)
+        return text.format_map(_SafeDict(context))
     except Exception:
         return text
 

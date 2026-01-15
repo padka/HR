@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Дашборд{% endblock %}
 
-{% block head %}
-<!-- Sora Font -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
-{% endblock %}
+{% block head %}{% endblock %}
 
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  // Mark body for page-scoped styling (full-width layout for dashboard).
+  document.body.dataset.page = 'dashboard';
+</script>
+
 <!-- Neural Network Background Effect -->
 <svg id="neuralNetwork" class="neural-bg" xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -31,12 +31,39 @@
   <g id="connections"></g>
 </svg>
 
+{% if not db_available %}
+<div class="alert alert--danger">
+  База данных недоступна. Данные на дашборде временно не загружаются.
+</div>
+{% endif %}
+
 <style>
   /* ============================================
      Typography Enhancement
      ============================================ */
   :root {
-    --font-heading: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-heading: var(--font-sans);
+    --table-bg: var(--surface);
+    --table-zebra: color-mix(in srgb, var(--surface-2) 70%, transparent);
+    --table-hover: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    --table-border: var(--border);
+    --table-text: var(--text);
+    --table-head: var(--text-muted);
+  }
+
+  /* Design tokens (8pt grid, radius scale, dual-theme surfaces) */
+  :root {
+    --radius-sm: 12px;
+    --radius-md: 16px;
+    --radius-lg: 20px;
+
+    --space-1: 8px;
+    --space-2: 12px;
+    --space-3: 16px;
+    --space-4: 24px;
+    --space-5: 32px;
+
+    --border-w: 1px;
   }
 
   h1, h2, h3, h4, h5, h6,
@@ -58,13 +85,9 @@
     justify-content: space-between;
     padding: 16px clamp(20px, 4vw, 40px);
     margin-bottom: 32px;
-    background: linear-gradient(135deg,
-      rgba(15, 23, 42, 0.95) 0%,
-      rgba(15, 23, 42, 0.92) 100%);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    background: var(--surface, #0f172a);
+    border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
   }
 
   .dashboard-header__logo {
@@ -100,9 +123,9 @@
     width: 100%;
     padding: 12px 16px 12px 44px;
     border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--fg);
+    border: 1px solid var(--field-border, rgba(255, 255, 255, 0.12));
+    background: var(--field-bg, rgba(255, 255, 255, 0.04));
+    color: var(--fg, #0f172a);
     font-size: 14px;
     transition: all 0.2s ease;
   }
@@ -131,6 +154,34 @@
     display: flex;
     align-items: center;
     gap: 12px;
+  }
+
+  html[data-theme="light"] .dashboard-header {
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+  }
+  html[data-theme="light"] .dashboard-header__search-input {
+    background: #f8fafc;
+    border-color: #e5e7eb;
+  }
+  html[data-theme="light"] .dashboard-header__search-input:focus {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  }
+  html[data-theme="dark"] .dashboard-header {
+    background: linear-gradient(135deg,
+      rgba(15, 23, 42, 0.96) 0%,
+      rgba(15, 23, 42, 0.9) 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  }
+  html[data-theme="dark"] .dashboard-header__search-input {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.14);
+    color: var(--fg);
+  }
+  html[data-theme="dark"] .dashboard-header__search-input:focus {
+    box-shadow: 0 0 0 3px rgba(105, 183, 255, 0.25);
   }
 
   .dashboard-header__action-btn {
@@ -306,13 +357,10 @@
     position: relative;
     overflow: hidden;
     padding: 24px;
-    border-radius: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: linear-gradient(135deg,
-      rgba(15, 23, 42, 0.84),
-      rgba(15, 23, 42, 0.52));
-    box-shadow: 0 20px 50px rgba(2, 6, 23, 0.35);
-    backdrop-filter: blur(22px);
+    border-radius: var(--radius-lg);
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-1);
+    box-shadow: var(--shadow-sm);
   }
 
   .content-card::before {
@@ -320,8 +368,8 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.15), transparent 55%);
-    opacity: 0.9;
+    background: radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 55%);
+    opacity: 0.4;
     pointer-events: none;
   }
 
@@ -336,10 +384,14 @@
   .applications-table {
     width: 100%;
     border-collapse: collapse;
+    background: var(--surface-1);
+    border: var(--border-w) solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
   }
 
   .applications-table thead {
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: var(--border-w) solid var(--border);
   }
 
   .applications-table th {
@@ -349,11 +401,12 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--muted);
+    color: var(--text-muted);
+    background: var(--surface-2);
   }
 
   .applications-table tbody tr {
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: var(--border-w) solid var(--border);
     transition: all 0.3s ease;
     cursor: pointer;
   }
@@ -363,15 +416,15 @@
   }
 
   .applications-table tbody tr:hover {
-    background: rgba(105, 183, 255, 0.08);
+    background: var(--surface-2);
     transform: translateX(4px);
-    box-shadow: 0 4px 12px rgba(105, 183, 255, 0.15);
+    box-shadow: var(--shadow-sm);
   }
 
   .applications-table td {
     padding: 14px 16px;
     font-size: 14px;
-    color: var(--fg);
+    color: var(--text);
   }
 
   .candidate-name {
@@ -591,12 +644,12 @@
   }
 
   .incoming-queue {
-    border-radius: 18px;
-    border: 1px solid var(--layer-border);
-    background: var(--layer-panel);
+    border-radius: var(--radius-lg);
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-1);
     overflow: hidden;
     transition: opacity 0.25s ease, transform 0.25s ease;
-    box-shadow: var(--shadow-sm, 0 12px 28px rgba(0,0,0,0.16));
+    box-shadow: var(--shadow-sm);
   }
 
   .incoming-queue__head {
@@ -628,18 +681,60 @@
     padding: 10px 12px;
     font-size: 13px;
     text-align: left;
-    border-bottom: 1px solid var(--layer-border);
-    color: var(--fg);
+    border-bottom: 1px solid var(--table-border);
+    color: var(--table-text);
   }
 
   .incoming-queue__table th {
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-weight: 700;
-    color: var(--muted);
-    background: var(--layer-glass);
+    color: var(--table-head);
+    background: color-mix(in srgb, var(--table-bg) 90%, transparent);
   }
 
+  .incoming-queue__table tbody tr:nth-child(odd) {
+    background: var(--table-zebra);
+  }
+  .incoming-queue__table tbody tr:hover {
+    background: var(--table-hover);
+  }
+
+  /* Theme-aware overrides */
+  @media (prefers-color-scheme: dark) {
+    .incoming-queue__table {
+      background: var(--table-bg);
+      border: 1px solid var(--table-border);
+    }
+    .incoming-queue__table th,
+    .incoming-queue__table td {
+      border-bottom: 1px solid var(--layer-border);
+      color: var(--fg);
+    }
+    .incoming-queue__table th {
+      color: var(--muted);
+      background: var(--layer-glass);
+    }
+    :root {
+      --table-bg: rgba(15, 23, 42, 0.9);
+      --table-zebra: rgba(255, 255, 255, 0.02);
+      --table-hover: rgba(255, 255, 255, 0.04);
+      --table-border: rgba(255, 255, 255, 0.08);
+      --table-text: var(--fg);
+      --table-head: var(--muted);
+    }
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --table-bg: #ffffff;
+      --table-zebra: #f8fafc;
+      --table-hover: #eef2ff;
+      --table-border: #e5e7eb;
+      --table-text: #0f172a;
+      --table-head: #475569;
+    }
+  }
   .incoming-queue__table tr:last-child td {
     border-bottom: none;
   }
@@ -727,243 +822,384 @@
     box-shadow: 0 0 8px currentColor;
   }
 
-  /* ============================================
-     Hiring Funnel - Enhanced with Summary & Effects
-     ============================================ */
-  .funnel-summary {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 24px;
-    margin-bottom: 40px;
-  }
-
-  .funnel-summary__card {
-    padding: 28px;
-    border-radius: 20px;
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    text-align: center;
-    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-    position: relative;
-    overflow: hidden;
-  }
-
-  .funnel-summary__card::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(circle at 50% 0%, rgba(105, 183, 255, 0.15), transparent 70%);
+  /* Generic reveal animation */
+  .reveal {
     opacity: 0;
-    transition: opacity 0.4s ease;
+    transform: translateY(14px);
+    transition: opacity 0.45s ease, transform 0.45s ease;
   }
-
-  .funnel-summary__card:hover {
-    transform: translateY(-8px) scale(1.02);
-    box-shadow: 0 20px 50px rgba(105, 183, 255, 0.3);
-    border-color: rgba(105, 183, 255, 0.4);
-  }
-
-  .funnel-summary__card:hover::before {
+  .reveal.is-visible {
     opacity: 1;
+    transform: translateY(0);
   }
 
-  .funnel-summary__card--highlight {
-    background: linear-gradient(135deg, rgba(105, 183, 255, 0.15), rgba(168, 85, 247, 0.1));
-    border-color: rgba(105, 183, 255, 0.35);
-    box-shadow: 0 12px 40px rgba(105, 183, 255, 0.25);
-  }
-
-  .funnel-summary__card--highlight::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
-    box-shadow: 0 0 20px var(--accent);
-  }
-
-  .funnel-summary__icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-    animation: iconFloat 3s ease-in-out infinite;
-    position: relative;
-    z-index: 1;
-  }
-
-  @keyframes iconFloat {
-    0%, 100% { transform: translateY(0px); }
-    50% { transform: translateY(-8px); }
-  }
-
-  .funnel-summary__value {
-    font-size: 52px;
-    font-weight: 900;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: -0.03em;
-    margin-bottom: 12px;
-    text-shadow: 0 0 30px rgba(105, 183, 255, 0.5);
-    position: relative;
-    z-index: 1;
-    animation: valueGlow 2s ease-in-out infinite;
-  }
-
-  @keyframes valueGlow {
-    0%, 100% { filter: brightness(1); }
-    50% { filter: brightness(1.2); }
-  }
-
-  .funnel-summary__label {
-    font-size: 13px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    font-weight: 800;
-    position: relative;
-    z-index: 1;
-  }
-
-  .funnel-compact {
+  /* ============================================
+     Funnel Analytics
+     ============================================ */
+  .funnel-module {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 18px;
-    margin-top: 28px;
+    gap: 20px;
   }
 
-  .funnel-compact__card {
-    border-radius: 24px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(15, 23, 42, 0.75);
-    padding: 20px 22px;
+  .funnel-toolbar {
     display: flex;
-    flex-direction: column;
-    gap: 12px;
-    box-shadow: 0 18px 40px rgba(2, 6, 23, 0.35);
-  }
-
-  .funnel-compact__head {
-    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
     justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: var(--surface-1);
+    border: var(--border-w) solid var(--border);
+    box-shadow: var(--shadow-sm);
   }
 
-  .funnel-compact__stage {
+  .funnel-toolbar__group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .funnel-range__btn {
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: 0.2s ease;
+  }
+
+  .funnel-range__btn.is-active {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 10px 20px rgba(69, 133, 255, 0.35);
+  }
+
+  .funnel-toolbar__input {
+    padding: 7px 12px;
+    border-radius: 12px;
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  .funnel-toolbar__select {
+    padding: 7px 12px;
+    border-radius: 12px;
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  .funnel-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: var(--border-w) solid var(--border);
+  }
+
+  .funnel-toggle button {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .funnel-toggle button.is-active {
+    background: var(--surface-1);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .funnel-toolbar__meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .funnel-toolbar__refresh {
+    border: none;
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 700;
+  }
+
+  .funnel-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 22px;
+  }
+
+  .funnel-steps {
+    display: grid;
+    gap: 14px;
+  }
+
+  .funnel-step {
+    width: 100%;
+    text-align: left;
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
+    padding: 16px 18px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px 18px;
+    align-items: center;
+    box-shadow: var(--shadow-sm);
+    transition: 0.2s ease;
+    cursor: pointer;
+  }
+
+  .funnel-step:hover {
+    transform: translateY(-3px);
+    border-color: rgba(105, 183, 255, 0.4);
+    box-shadow: 0 18px 40px rgba(23, 60, 102, 0.18);
+  }
+
+  .funnel-step__title {
     font-size: 15px;
     font-weight: 700;
-    color: var(--muted);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    color: var(--fg-strong);
   }
 
-  .funnel-compact__value {
-    font-size: 34px;
+  .funnel-step__meta {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .funnel-step__count {
+    font-size: 30px;
     font-weight: 900;
     color: var(--fg-strong);
-    text-align: right;
   }
 
-  .funnel-compact__conversion {
-    font-size: 13px;
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  .funnel-compact__progress {
-    position: relative;
-    height: 8px;
+  .funnel-step__progress {
+    grid-column: 1 / -1;
+    height: 6px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--surface-3);
     overflow: hidden;
+    position: relative;
   }
 
-  .funnel-compact__progress::after {
+  .funnel-step__progress::after {
     content: "";
     position: absolute;
     inset: 0;
     width: var(--progress, 0%);
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.4s ease;
   }
 
-  .funnel-stage__substatus {
+  .funnel-side {
+    display: grid;
+    gap: 16px;
+  }
+
+  .funnel-chart {
+    border-radius: var(--radius-lg);
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-1);
+    padding: 16px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .funnel-chart__title {
+    font-weight: 700;
+    margin-bottom: 10px;
+    color: var(--fg-strong);
+  }
+
+  .funnel-chart__legend {
     display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 16px;
-    position: relative;
-    z-index: 1;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 10px;
   }
 
-  .funnel-substatus-badge {
-    display: inline-flex;
+  .funnel-chart__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 6px;
+  }
+
+  .funnel-dropoffs {
+    border-radius: var(--radius-lg);
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-1);
+    padding: 16px;
+    box-shadow: var(--shadow-sm);
+    display: grid;
+    gap: 12px;
+  }
+
+  .funnel-dropoff {
+    display: flex;
     align-items: center;
-    padding: 8px 16px;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--surface-2);
+  }
+
+  .funnel-dropoff__label {
     font-size: 13px;
+    color: var(--text);
+  }
+
+  .funnel-dropoff__value {
+    font-size: 20px;
     font-weight: 800;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--muted);
-    border: 2px solid rgba(255, 255, 255, 0.12);
-    transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
-    position: relative;
-    overflow: hidden;
+    color: var(--fg-strong);
   }
 
-  .funnel-substatus-badge::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
-    transform: translateX(-100%);
-    transition: transform 0.6s ease;
+  .funnel-dropoff__action {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
   }
 
-  .funnel-substatus-badge:hover {
-    transform: translateY(-4px) scale(1.05);
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  .funnel-skeleton {
+    display: none;
+    gap: 12px;
   }
 
-  .funnel-substatus-badge:hover::before {
-    transform: translateX(100%);
+  .funnel-skeleton__line {
+    height: 64px;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+    background-size: 200% 100%;
+    animation: shimmer 1.2s ease-in-out infinite;
   }
 
-  .funnel-substatus-badge--success {
-    background: linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.15));
-    color: #22c55e;
-    border-color: rgba(34, 197, 94, 0.5);
-    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.2);
+  .funnel-module.is-loading .funnel-skeleton {
+    display: grid;
   }
 
-  .funnel-substatus-badge--info {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.15));
-    color: #3b82f6;
-    border-color: rgba(59, 130, 246, 0.5);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+  .funnel-module.is-loading .funnel-steps,
+  .funnel-module.is-loading .funnel-side {
+    opacity: 0.35;
+    pointer-events: none;
   }
 
-  .funnel-substatus-badge--primary {
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(168, 85, 247, 0.15));
-    color: #a855f7;
-    border-color: rgba(168, 85, 247, 0.5);
-    box-shadow: 0 4px 12px rgba(168, 85, 247, 0.2);
+  @keyframes shimmer {
+    0% { background-position: 0% 0; }
+    100% { background-position: 200% 0; }
   }
 
-  .funnel-substatus-badge--warning {
-    background: linear-gradient(135deg, rgba(251, 191, 36, 0.2), rgba(251, 191, 36, 0.15));
-    color: #fbbf24;
-    border-color: rgba(251, 191, 36, 0.5);
-    box-shadow: 0 4px 12px rgba(251, 191, 36, 0.2);
+  .funnel-empty {
+    text-align: center;
+    padding: 24px;
+    border-radius: var(--radius-lg);
+    border: var(--border-w) dashed var(--border);
+    color: var(--text-muted);
+    background: var(--surface-2);
   }
 
-  .funnel-substatus-badge--danger {
-    background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.15));
-    color: #ef4444;
-    border-color: rgba(239, 68, 68, 0.5);
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
+  .funnel-drawer {
+    border: none;
+    padding: 0;
+    width: min(440px, 100vw);
+    height: 100vh;
+    margin: 0;
+    border-radius: 18px 0 0 18px;
+    position: fixed;
+    right: 0;
+    top: 0;
+    background: var(--surface-1);
+    color: var(--text);
+    box-shadow: -12px 0 30px rgba(0, 0, 0, 0.25);
+  }
+
+  .funnel-drawer::backdrop {
+    background: rgba(5, 10, 18, 0.55);
+  }
+
+  .funnel-drawer__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 20px;
+    border-bottom: var(--border-w) solid var(--border);
+  }
+
+  .funnel-drawer__title {
+    font-size: 18px;
+    font-weight: 800;
+  }
+
+  .funnel-drawer__close {
+    border: none;
+    background: var(--surface-2);
+    border-radius: 10px;
+    padding: 6px 10px;
+    cursor: pointer;
+    color: var(--text);
+  }
+
+  .funnel-drawer__list {
+    padding: 18px 20px;
+    display: grid;
+    gap: 14px;
+    max-height: calc(100vh - 90px);
+    overflow: auto;
+  }
+
+  .funnel-drawer__item {
+    border-radius: 14px;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    display: grid;
+    gap: 6px;
+  }
+
+  .funnel-drawer__item-title {
+    font-weight: 700;
+  }
+
+  .funnel-drawer__item-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .funnel-drawer__link {
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  @media (max-width: 1100px) {
+    .funnel-layout {
+      grid-template-columns: 1fr;
+    }
   }
 
   /* ============================================
@@ -1928,7 +2164,27 @@
      ============================================ */
   .interview-calendar {
     margin-top: 32px;
+    position: relative;
+    overflow: hidden;
+    background: var(--surface-1);
+    border: var(--border-w, 1px) solid var(--border);
+    border-radius: 24px;
+    box-shadow: var(--shadow-sm, 0 18px 40px rgba(15, 23, 42, 0.08));
   }
+
+  .interview-calendar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(circle at 10% 10%, color-mix(in srgb, var(--success) 10%, transparent), transparent 28%),
+      radial-gradient(circle at 90% 20%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 30%),
+      radial-gradient(circle at 40% 80%, color-mix(in srgb, var(--accent-2, var(--accent)) 10%, transparent), transparent 30%);
+    opacity: 0.45;
+  }
+
+  .interview-calendar > * { position: relative; }
 
   /* ============================================
      Mobile Responsiveness
@@ -2372,6 +2628,159 @@
   }
 </style>
 
+<!-- ============================================
+     FUNNEL & RECRUITERS
+     ============================================ -->
+<section class="content-card funnel-module" id="funnelModule">
+  <div class="section-header">
+    <div>
+      <p class="section-header__subtitle">Воронка</p>
+      <h2 class="section-header__title">Прогресс кандидатов</h2>
+    </div>
+    <div class="section-header__actions">
+      <span class="incoming-section__badge" id="funnelConversionBadge">Конверсия: —</span>
+    </div>
+  </div>
+
+  <div class="funnel-toolbar">
+    <div class="funnel-toolbar__group">
+      <button type="button" class="funnel-range__btn" data-range="7">7 дней</button>
+      <button type="button" class="funnel-range__btn" data-range="14">14 дней</button>
+      <button type="button" class="funnel-range__btn" data-range="30">30 дней</button>
+      <input type="date" class="funnel-toolbar__input" id="funnelFrom">
+      <input type="date" class="funnel-toolbar__input" id="funnelTo">
+    </div>
+    <div class="funnel-toolbar__group">
+      <select class="funnel-toolbar__select" id="funnelCity">
+        <option value="">Все города</option>
+        {% for city in cities %}
+          <option value="{{ city.name_plain }}">{{ city.name_plain }}</option>
+        {% endfor %}
+      </select>
+      <select class="funnel-toolbar__select" id="funnelRecruiter">
+        <option value="">Все рекрутеры</option>
+        {% for rec in recruiters %}
+          <option value="{{ rec.id }}">{{ rec.name }}</option>
+        {% endfor %}
+      </select>
+      <select class="funnel-toolbar__select" id="funnelSource">
+        <option value="">Все источники</option>
+        <option value="bot">Бот</option>
+        <option value="webapp">Веб-апп</option>
+        <option value="invite_link">Приглашение Тест 2</option>
+        <option value="admin">Админ</option>
+      </select>
+    </div>
+    <div class="funnel-toggle" id="funnelCounterToggle">
+      <button type="button" data-counter="unique" class="is-active">Уникальные</button>
+      <button type="button" data-counter="events">События</button>
+    </div>
+    <div class="funnel-toolbar__meta">
+      <span id="funnelRangeLabel">—</span>
+      <span>Обновлено: <span id="funnelUpdatedAt">—</span></span>
+      <button type="button" class="funnel-toolbar__refresh" id="funnelRefresh">↻</button>
+    </div>
+  </div>
+
+  <div class="funnel-layout">
+    <div>
+      <div class="funnel-skeleton" id="funnelSkeleton">
+        <div class="funnel-skeleton__line"></div>
+        <div class="funnel-skeleton__line"></div>
+        <div class="funnel-skeleton__line"></div>
+        <div class="funnel-skeleton__line"></div>
+      </div>
+      <div class="funnel-steps" id="funnelSteps"></div>
+      <div class="funnel-empty" id="funnelEmpty" hidden>
+        На выбранный период нет данных. Попробуйте расширить диапазон или сбросить фильтры.
+      </div>
+    </div>
+    <div class="funnel-side">
+      <div class="funnel-chart" id="funnelChart">
+        <div class="funnel-chart__title">Динамика входа vs завершения Теста 1</div>
+        <div id="funnelChartPlot"></div>
+        <div class="funnel-chart__legend">
+          <span><span class="funnel-chart__dot" style="background: var(--accent);"></span>Зашли в бот</span>
+          <span><span class="funnel-chart__dot" style="background: var(--accent-2);"></span>Тест 1 завершили</span>
+        </div>
+      </div>
+      <div class="funnel-dropoffs" id="funnelDropoffs">
+        <div class="funnel-dropoff">
+          <div class="funnel-dropoff__label">Не дошли до Теста 1</div>
+          <div class="funnel-dropoff__value" id="funnelNoTest1">—</div>
+          <button class="funnel-dropoff__action" data-dropoff="no_test1">Список</button>
+        </div>
+        <div class="funnel-dropoff">
+          <div class="funnel-dropoff__label">Отвалились на Тесте 1</div>
+          <div class="funnel-dropoff__value" id="funnelDropTest1">—</div>
+          <button class="funnel-dropoff__action" data-dropoff="test1_timeout">Список</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<dialog class="funnel-drawer" id="funnelDrawer">
+  <div class="funnel-drawer__header">
+    <div>
+      <div class="funnel-drawer__title" id="funnelDrawerTitle">Список</div>
+    </div>
+    <button type="button" class="funnel-drawer__close" data-funnel-close>✕</button>
+  </div>
+  <div class="funnel-drawer__list" id="funnelDrawerList"></div>
+</dialog>
+
+<section class="content-card">
+  <div class="section-header">
+    <div>
+      <p class="section-header__subtitle">Эффективность рекрутеров (30 дней)</p>
+      <h2 class="section-header__title">Заполнение и подтверждения</h2>
+    </div>
+    <span class="incoming-section__badge">{{ recruiter_performance|length }} рекрутеров</span>
+  </div>
+
+  <div class="incoming-queue__wrap">
+    <table class="incoming-queue__table">
+      <thead>
+        <tr>
+          <th>Рекрутер</th>
+          <th>Слотов</th>
+          <th>Броней</th>
+          <th>Свободно</th>
+          <th>Заполненность</th>
+          <th>Подтв. / брони</th>
+          <th>Предстоящие</th>
+          <th>Ближайший слот</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rec in recruiter_performance %}
+          <tr>
+            <td>{{ rec.name }}</td>
+            <td>{{ rec.total_slots }}</td>
+            <td>{{ rec.booked_slots }}</td>
+            <td>{{ rec.free_slots }}</td>
+            <td>{{ rec.fill_rate }}%</td>
+            <td>{{ rec.recent_confirmed }}/{{ rec.recent_booked }} ({{ rec.confirmation_rate }}%)</td>
+            <td>{{ rec.upcoming }}</td>
+            <td>
+              {% if rec.next_slot %}
+                {{ fmt_local(rec.next_slot, rec.tz or 'Europe/Moscow') }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="8">Нет активных рекрутеров.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
 
 <!-- ============================================
      INCOMING REQUESTS
@@ -2386,11 +2795,10 @@
   </div>
 
   {% set incoming_list = incoming_candidates_top or incoming_candidates or [] %}
+  {% set incoming_all = incoming_candidates_all or incoming_list %}
   <div class="incoming-view-switch" role="tablist" aria-label="Представление входящих">
     <button type="button" data-view="cards" aria-pressed="true" aria-controls="incoming_cards">Карточки</button>
-    {% if incoming_candidates_rest %}
-      <button type="button" data-view="queue" aria-pressed="false" aria-controls="incoming_queue">Очередь</button>
-    {% endif %}
+    <button type="button" data-view="list" aria-pressed="false" aria-controls="incoming_list">Список</button>
   </div>
 
   {% if incoming_list %}
@@ -2449,11 +2857,11 @@
         </article>
       {% endfor %}
     </div>
-    {% if incoming_candidates_rest %}
-      <div class="incoming-queue" id="incoming_queue" data-view-panel="queue" hidden>
+    {% if incoming_all %}
+      <div class="incoming-queue" id="incoming_list" data-view-panel="list" hidden>
         <div class="incoming-queue__head">
-          <h3 class="incoming-queue__title">Очередь ожидания (приоритет)</h3>
-          <span class="incoming-queue__badge">Всего {{ incoming_candidates_all|length }}</span>
+          <h3 class="incoming-queue__title">Список входящих</h3>
+          <span class="incoming-queue__badge">Всего {{ incoming_all|length }}</span>
         </div>
         <div class="incoming-queue__wrap">
           <table class="incoming-queue__table">
@@ -2461,31 +2869,52 @@
               <tr>
                 <th>#</th>
                 <th>Кандидат</th>
-                <th>Статус</th>
                 <th>Город</th>
-                <th>Часов ожидания</th>
-                <th>С</th>
-                <th>Действия</th>
+                <th>Связь</th>
+                <th>Окно</th>
+                <th>Приоритет</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {% for candidate in incoming_candidates_all %}
+              {% for candidate in incoming_all %}
               <tr>
-                <td class="incoming-queue__priority">{{ candidate.priority_score }}</td>
-                <td>{{ candidate.name }}</td>
-                <td>{{ candidate.status_display }}</td>
-                <td>{{ candidate.city }}</td>
-                <td>{{ candidate.waiting_hours or "—" }}</td>
+                <td>{{ loop.index }}</td>
                 <td>
-                  {% if candidate.waiting_since %}
-                    {{ fmt_local(candidate.waiting_since, candidate.tz) }}
-                  {% else %}
-                    —
+                  <div>
+                    <strong>{{ candidate.name }}</strong>
+                    {% if candidate.city %}
+                      <div class="incoming-card__city">{{ candidate.city }}</div>
+                    {% endif %}
+                  </div>
+                </td>
+                <td>{{ candidate.city or '—' }}</td>
+                <td>
+                  {% set tg_username = candidate.telegram_username %}
+                  {% set tg_user_id = candidate.telegram_user_id %}
+                  {% if tg_username %}
+                    <a class="incoming-card__contact" href="https://t.me/{{ tg_username }}" target="_blank" rel="noopener" aria-label="Открыть чат в Telegram">@</a>
+                  {% endif %}
+                  {% if tg_user_id %}
+                    <a class="incoming-card__contact" href="tg://user?id={{ tg_user_id }}" aria-label="Написать кандидату в Telegram">TG</a>
                   {% endif %}
                 </td>
                 <td>
-                  <a class="incoming-card__profile" href="{{ candidate.profile_url }}">Профиль</a>
-                  <a class="incoming-card__assign" href="{{ candidate.schedule_url }}">Назначить</a>
+                  <div class="incoming-card__availability">
+                    {% if candidate.availability_window %}
+                      <p class="incoming-card__window">🕒 {{ candidate.availability_window }}</p>
+                    {% endif %}
+                    {% if candidate.availability_note %}
+                      <p class="incoming-card__note">📝 {{ candidate.availability_note }}</p>
+                    {% endif %}
+                  </div>
+                </td>
+                <td class="incoming-queue__priority">{{ candidate.priority_score }}</td>
+                <td>
+                  <div class="incoming-card__actions">
+                    <a class="incoming-card__profile" href="{{ candidate.profile_url }}">Профиль</a>
+                    <a class="incoming-card__assign" href="{{ candidate.schedule_url }}">Назначить</a>
+                  </div>
                 </td>
               </tr>
               {% endfor %}
@@ -2809,7 +3238,7 @@
 <script src="/static/js/modules/animated-counter.js" defer></script>
 
 <!-- Activity Feed Toggle & Smart Create logic -->
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
   document.addEventListener('DOMContentLoaded', () => {
     // Activity Feed Toggle
     const activityFeed = document.getElementById('activityFeed');
@@ -2929,6 +3358,374 @@
       tableBody.prepend(row);
     };
 
+    const funnelModule = document.getElementById('funnelModule');
+    if (funnelModule) {
+      const rangeButtons = funnelModule.querySelectorAll('[data-range]');
+      const fromInput = document.getElementById('funnelFrom');
+      const toInput = document.getElementById('funnelTo');
+      const citySelect = document.getElementById('funnelCity');
+      const recruiterSelect = document.getElementById('funnelRecruiter');
+      const sourceSelect = document.getElementById('funnelSource');
+      const counterToggle = document.getElementById('funnelCounterToggle');
+      const stepsContainer = document.getElementById('funnelSteps');
+      const skeleton = document.getElementById('funnelSkeleton');
+      const emptyState = document.getElementById('funnelEmpty');
+      const chartPlot = document.getElementById('funnelChartPlot');
+      const conversionBadge = document.getElementById('funnelConversionBadge');
+      const rangeLabel = document.getElementById('funnelRangeLabel');
+      const updatedAt = document.getElementById('funnelUpdatedAt');
+      const refreshBtn = document.getElementById('funnelRefresh');
+      const noTest1El = document.getElementById('funnelNoTest1');
+      const dropTest1El = document.getElementById('funnelDropTest1');
+      const drawer = document.getElementById('funnelDrawer');
+      const drawerList = document.getElementById('funnelDrawerList');
+      const drawerTitle = document.getElementById('funnelDrawerTitle');
+
+      const params = new URLSearchParams(window.location.search);
+      const toIsoDate = (dateObj) => {
+        const year = dateObj.getFullYear();
+        const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const day = String(dateObj.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+      const parseDate = (value) => (value ? new Date(value) : null);
+      const formatDate = (value) => {
+        if (!value) return '—';
+        return new Intl.DateTimeFormat('ru-RU', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        }).format(new Date(value));
+      };
+      const formatDuration = (seconds) => {
+        if (seconds === null || seconds === undefined) return null;
+        const hours = seconds / 3600;
+        if (hours >= 48) {
+          return `${Math.round(hours / 24)} д`;
+        }
+        if (hours >= 1) {
+          return `${Math.round(hours * 10) / 10} ч`;
+        }
+        return `${Math.max(1, Math.round(seconds / 60))} мин`;
+      };
+      const setActiveRange = (days) => {
+        rangeButtons.forEach((btn) => {
+          btn.classList.toggle('is-active', Number(btn.dataset.range) === days);
+        });
+      };
+      const applyRange = (days) => {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - (days - 1));
+        if (fromInput) fromInput.value = toIsoDate(start);
+        if (toInput) toInput.value = toIsoDate(end);
+        setActiveRange(days);
+      };
+      const updateRangeLabel = () => {
+        if (!rangeLabel) return;
+        const fromValue = fromInput ? fromInput.value : '';
+        const toValue = toInput ? toInput.value : '';
+        if (!fromValue || !toValue) {
+          rangeLabel.textContent = '—';
+          return;
+        }
+        const fromDate = parseDate(fromValue);
+        const toDate = parseDate(toValue);
+        if (!fromDate || !toDate) {
+          rangeLabel.textContent = '—';
+          return;
+        }
+        const shortFmt = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' });
+        rangeLabel.textContent = `${shortFmt.format(fromDate)} — ${shortFmt.format(toDate)}`;
+      };
+      const updateUrlParams = (state) => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const setOrDelete = (key, value) => {
+          if (value) {
+            urlParams.set(key, value);
+          } else {
+            urlParams.delete(key);
+          }
+        };
+        setOrDelete('funnel_from', state.from);
+        setOrDelete('funnel_to', state.to);
+        setOrDelete('funnel_city', state.city);
+        setOrDelete('funnel_recruiter', state.recruiter);
+        setOrDelete('funnel_source', state.source);
+        setOrDelete('funnel_counter', state.counter);
+        const nextUrl = `${window.location.pathname}?${urlParams.toString()}`;
+        window.history.replaceState({}, '', nextUrl);
+      };
+      const buildState = () => ({
+        from: fromInput ? fromInput.value : '',
+        to: toInput ? toInput.value : '',
+        city: citySelect ? citySelect.value : '',
+        recruiter: recruiterSelect ? recruiterSelect.value : '',
+        source: sourceSelect ? sourceSelect.value : '',
+        counter: counterToggle?.querySelector('.is-active')?.dataset.counter || 'unique',
+      });
+      const renderChart = (labels = [], entered = [], completed = []) => {
+        if (!chartPlot) return;
+        if (!labels.length) {
+          chartPlot.innerHTML = '<div class="incoming-section__empty">Нет данных</div>';
+          return;
+        }
+        const width = 360;
+        const height = 140;
+        const pad = 16;
+        const maxValue = Math.max(1, ...entered, ...completed);
+        const buildPoints = (values) => {
+          return values.map((value, index) => {
+            const x = pad + (index * (width - pad * 2)) / Math.max(1, values.length - 1);
+            const y = height - pad - (value / maxValue) * (height - pad * 2);
+            return `${x},${y}`;
+          }).join(' ');
+        };
+        const enteredPoints = buildPoints(entered);
+        const completedPoints = buildPoints(completed);
+        chartPlot.innerHTML = `
+          <svg viewBox="0 0 ${width} ${height}" width="100%" height="140" aria-label="Динамика">
+            <polyline points="${enteredPoints}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+            <polyline points="${completedPoints}" fill="none" stroke="var(--accent-2)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        `;
+      };
+      const renderSteps = (data, counter) => {
+        if (!stepsContainer || !data || !data.steps) return;
+        const steps = data.steps;
+        if (!steps.length) {
+          stepsContainer.innerHTML = '';
+          if (emptyState) emptyState.hidden = false;
+          return;
+        }
+        if (emptyState) emptyState.hidden = true;
+        const baseCount = counter === 'events' ? steps[0].events : steps[0].count;
+        stepsContainer.innerHTML = steps.map((step, index) => {
+          const count = counter === 'events' ? step.events : step.count;
+          const conversion = counter === 'events' ? step.conversion_from_prev_events : step.conversion_from_prev;
+          const dropoff = typeof step.dropoff_count === 'number' ? step.dropoff_count : null;
+          const avgTime = formatDuration(step.avg_time_to_step_sec);
+          const progress = baseCount ? Math.round((count / baseCount) * 100) : 0;
+          const metaParts = [];
+          if (index > 0) {
+            metaParts.push(`Конверсия: ${conversion}%`);
+          }
+          if (dropoff !== null && index > 0) {
+            metaParts.push(`Потери: ${dropoff}`);
+          }
+          if (avgTime) {
+            metaParts.push(`Среднее: ${avgTime}`);
+          }
+          return `
+            <button class="funnel-step" data-step="${step.key}" data-title="${step.title}" style="--progress: ${progress}%;">
+              <div>
+                <div class="funnel-step__title">${step.title}</div>
+                <div class="funnel-step__meta">${metaParts.join(' · ') || 'Входной шаг'}</div>
+              </div>
+              <div class="funnel-step__count">${Number(count || 0).toLocaleString('ru-RU')}</div>
+              <div class="funnel-step__progress"></div>
+            </button>
+          `;
+        }).join('');
+      };
+      const renderDropoffs = (dropoffs = {}) => {
+        if (noTest1El) noTest1El.textContent = Number(dropoffs.no_test1 || 0).toLocaleString('ru-RU');
+        if (dropTest1El) dropTest1El.textContent = Number(dropoffs.test1_timeout || 0).toLocaleString('ru-RU');
+      };
+      const renderHeader = (data) => {
+        if (!conversionBadge || !data?.steps?.length) return;
+        const steps = data.steps;
+        const base = steps[0].count || 0;
+        const last = steps[steps.length - 1].count || 0;
+        const conversion = base ? ((last / base) * 100).toFixed(1) : '0.0';
+        conversionBadge.textContent = `Конверсия: ${conversion}%`;
+      };
+      const renderUpdatedAt = () => {
+        if (updatedAt) {
+          updatedAt.textContent = new Date().toLocaleTimeString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+        }
+      };
+      const fetchFunnel = async () => {
+        const state = buildState();
+        updateRangeLabel();
+        updateUrlParams(state);
+        funnelModule.classList.add('is-loading');
+        if (emptyState) emptyState.hidden = true;
+        try {
+          const url = new URL('/dashboard/funnel', window.location.origin);
+          if (state.from) url.searchParams.set('from', state.from);
+          if (state.to) url.searchParams.set('to', state.to);
+          if (state.city) url.searchParams.set('city', state.city);
+          if (state.recruiter) url.searchParams.set('recruiter', state.recruiter);
+          if (state.source) url.searchParams.set('source', state.source);
+          const response = await fetch(url.toString());
+          const data = await response.json();
+          if (data.degraded) {
+            if (emptyState) {
+              emptyState.hidden = false;
+              emptyState.textContent = 'База данных временно недоступна.';
+            }
+            return;
+          }
+          renderSteps(data, state.counter);
+          renderDropoffs(data.dropoffs || {});
+          renderHeader(data);
+          renderChart(
+            data.series?.labels || [],
+            data.series?.entered || [],
+            data.series?.test1_completed || [],
+          );
+          renderUpdatedAt();
+        } catch (err) {
+          if (emptyState) {
+            emptyState.hidden = false;
+            emptyState.textContent = 'Не удалось загрузить данные. Проверьте подключение.';
+          }
+        } finally {
+          funnelModule.classList.remove('is-loading');
+        }
+      };
+      const openDrawer = async (stepKey, title) => {
+        if (!drawer || !drawerList) return;
+        if (drawerTitle) {
+          drawerTitle.textContent = title || 'Список';
+        }
+        drawerList.innerHTML = '<div class="funnel-drawer__item">Загрузка...</div>';
+        drawer.showModal();
+        const state = buildState();
+        const url = new URL('/dashboard/funnel/step', window.location.origin);
+        url.searchParams.set('step', stepKey);
+        if (state.from) url.searchParams.set('from', state.from);
+        if (state.to) url.searchParams.set('to', state.to);
+        if (state.city) url.searchParams.set('city', state.city);
+        if (state.recruiter) url.searchParams.set('recruiter', state.recruiter);
+        if (state.source) url.searchParams.set('source', state.source);
+        try {
+          const response = await fetch(url.toString());
+          const payload = await response.json();
+          const items = payload.items || [];
+          if (!items.length) {
+            drawerList.innerHTML = '<div class="funnel-drawer__item">Нет данных</div>';
+            return;
+          }
+          drawerList.innerHTML = items.map((item) => {
+            const metaParts = [];
+            if (item.username) metaParts.push(`@${item.username}`);
+            if (item.city) metaParts.push(item.city);
+            if (item.recruiter) metaParts.push(item.recruiter);
+            if (item.status_label) {
+              metaParts.push(item.status_label);
+            } else if (item.status) {
+              metaParts.push(item.status);
+            }
+            if (item.last_step && item.elapsed_hours !== null && item.elapsed_hours !== undefined) {
+              metaParts.push(`пауза ${item.elapsed_hours}ч`);
+            }
+            const lastActivity = item.last_activity ? formatDate(item.last_activity) : '—';
+            return `
+              <div class="funnel-drawer__item">
+                <div class="funnel-drawer__item-title">${item.name || 'Без имени'}</div>
+                <div class="funnel-drawer__item-meta">${metaParts.join(' · ') || '—'}</div>
+                <div class="funnel-drawer__item-meta">Последняя активность: ${lastActivity}</div>
+                <a class="funnel-drawer__link" href="${item.candidate_url}">Открыть карточку</a>
+              </div>
+            `;
+          }).join('');
+        } catch (err) {
+          drawerList.innerHTML = '<div class="funnel-drawer__item">Ошибка загрузки</div>';
+        }
+      };
+
+      const initFromParams = () => {
+        if (fromInput && params.get('funnel_from')) {
+          fromInput.value = params.get('funnel_from');
+        }
+        if (toInput && params.get('funnel_to')) {
+          toInput.value = params.get('funnel_to');
+        }
+        if (citySelect && params.get('funnel_city')) {
+          citySelect.value = params.get('funnel_city');
+        }
+        if (recruiterSelect && params.get('funnel_recruiter')) {
+          recruiterSelect.value = params.get('funnel_recruiter');
+        }
+        if (sourceSelect && params.get('funnel_source')) {
+          sourceSelect.value = params.get('funnel_source');
+        }
+        const counter = params.get('funnel_counter');
+        if (counter && counterToggle) {
+          counterToggle.querySelectorAll('button').forEach((btn) => {
+            btn.classList.toggle('is-active', btn.dataset.counter === counter);
+          });
+        }
+        if (!(fromInput?.value && toInput?.value)) {
+          applyRange(7);
+        }
+        updateRangeLabel();
+      };
+
+      initFromParams();
+      fetchFunnel();
+
+      rangeButtons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const days = Number(btn.dataset.range || 7);
+          applyRange(days);
+          fetchFunnel();
+        });
+      });
+      [fromInput, toInput].forEach((input) => {
+        if (!input) return;
+        input.addEventListener('change', () => {
+          rangeButtons.forEach((btn) => btn.classList.remove('is-active'));
+          fetchFunnel();
+        });
+      });
+      [citySelect, recruiterSelect, sourceSelect].forEach((input) => {
+        if (!input) return;
+        input.addEventListener('change', fetchFunnel);
+      });
+      if (counterToggle) {
+        counterToggle.addEventListener('click', (event) => {
+          const btn = event.target.closest('button[data-counter]');
+          if (!btn) return;
+          counterToggle.querySelectorAll('button').forEach((item) => {
+            item.classList.toggle('is-active', item === btn);
+          });
+          fetchFunnel();
+        });
+      }
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', fetchFunnel);
+      }
+      if (stepsContainer) {
+        stepsContainer.addEventListener('click', (event) => {
+          const card = event.target.closest('.funnel-step');
+          if (!card) return;
+          openDrawer(card.dataset.step, card.dataset.title);
+        });
+      }
+      funnelModule.querySelectorAll('[data-dropoff]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.dropoff;
+          openDrawer(key, key === 'no_test1' ? 'Не дошли до Теста 1' : 'Отвалились на Тесте 1');
+        });
+      });
+      if (drawer) {
+        drawer.addEventListener('click', (event) => {
+          if (event.target === drawer) {
+            drawer.close();
+          }
+        });
+      }
+      document.querySelectorAll('[data-funnel-close]').forEach((btn) => {
+        btn.addEventListener('click', () => drawer?.close());
+      });
+    }
+
     // Incoming view switcher (cards / queue)
     const incomingSwitch = document.querySelector('.incoming-view-switch');
     if (incomingSwitch) {
@@ -3029,6 +3826,28 @@
         }
       });
     }
+
+    // Reveal-on-scroll animations
+    const revealTargets = [
+      ...document.querySelectorAll('.funnel-step'),
+      ...document.querySelectorAll('.funnel-dropoff'),
+      ...document.querySelectorAll('.incoming-queue__table tbody tr'),
+      ...document.querySelectorAll('.calendar-item')
+    ];
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.2 });
+
+    revealTargets.forEach(el => {
+      el.classList.add('reveal');
+      observer.observe(el);
+    });
   });
 </script>
 

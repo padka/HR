@@ -19,9 +19,12 @@ async def test_generate_default_day_creates_slots_visible_in_list():
         await session.refresh(city)
         await session.refresh(recruiter)
         rec_id, city_id = recruiter.id, city.id
+        city_name = city.name
+        city_tz = city.tz
+        session.expunge_all()  # Detach all objects before closing session
 
     created = await generate_default_day_slots(recruiter_id=rec_id, day=day, city_id=city_id)
-    assert created == 24
+    assert created == 48
 
     result = await list_slots(
         rec_id,
@@ -29,15 +32,15 @@ async def test_generate_default_day_creates_slots_visible_in_list():
         page=1,
         per_page=100,
         search_query=None,
-        city_name=city.name,
+        city_name=city_name,
         day=day,
     )
-    assert result["total"] == 24
+    assert result["total"] == 48
     slots = result["items"]
     assert all(slot.city_id == city_id for slot in slots)
     assert all(getattr(slot, "purpose") == "interview" for slot in slots)
     assert all((slot.status == SlotStatus.FREE or str(slot.status).lower() == "free") for slot in slots)
-    assert all(slot.tz_name == city.tz for slot in slots)
+    assert all(slot.tz_name == city_tz for slot in slots)
 
 
 @pytest.mark.asyncio
@@ -52,9 +55,12 @@ async def test_generate_default_day_auto_city_uses_first_recruiter_city():
         await session.refresh(city)
         await session.refresh(recruiter)
         rec_id, city_id = recruiter.id, city.id
+        city_name = city.name
+        city_tz = city.tz
+        session.expunge_all()  # Detach all objects before closing session
 
     created = await generate_default_day_slots(recruiter_id=rec_id, day=day, city_id=None)
-    assert created == 24
+    assert created == 48
 
     result = await list_slots(
         rec_id,
@@ -62,10 +68,10 @@ async def test_generate_default_day_auto_city_uses_first_recruiter_city():
         page=1,
         per_page=10,
         search_query=None,
-        city_name=city.name,
+        city_name=city_name,
         day=day,
     )
     slots = result["items"]
     assert slots, "Generated slots should be visible in list"
     assert slots[0].city_id == city_id
-    assert slots[0].tz_name == city.tz
+    assert slots[0].tz_name == city_tz

@@ -20,6 +20,9 @@
 {% endmacro %}
 {% block title %}Кандидаты{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'candidates';
+</script>
 {% set filters = filters or {} %}
 {% set filter_options = filter_options or {} %}
 {% set candidate_cards = views.candidates if views else [] %}
@@ -1521,6 +1524,7 @@
   </nav>
   <div></div>
   <div class="page-actions">
+    <a class="btn btn-primary" href="/candidates/new">+ Новый кандидат</a>
     <form method="post" action="/candidates/delete-all" onsubmit="return confirm('Удалить все профили кандидатов и освободить их слоты? Это действие необратимо.');">
       {{ csrf_input(request) }}
       <button class="btn btn-ghost" type="submit">🗑 Удалить всех кандидатов</button>
@@ -1778,7 +1782,7 @@
     <span class="btn btn-ghost" aria-disabled="true">Последняя »</span>
   {% endif %}
 </div>
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 (function () {
   const modal = document.querySelector('[data-filter-modal]');
   if (!modal) return;

@@ -2,6 +2,9 @@
 {% import "partials/form_shell.html" as forms with context %}
 {% block title %}Назначить ознакомительный день для {{ candidate.fio }}{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'schedule-intro';
+</script>
 <section class="form-shell" data-tilt>
   <header class="form-shell__header">
     <div class="form-shell__heading">
@@ -152,7 +155,7 @@
   {% endcall %}
 {% endif %}
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
   const dateInput = document.getElementById('date');
   const timeInput = document.getElementById('time');
   const preview = document.getElementById('preview');

@@ -22,6 +22,80 @@ from markupsafe import Markup
 
 from .base import Base
 
+# Slot duration constraints and defaults (in minutes)
+DEFAULT_INTERVIEW_DURATION_MIN = 10  # Standard interview length
+DEFAULT_INTRO_DAY_DURATION_MIN = 60  # Intro day slots remain 1 hour by default
+SLOT_MIN_DURATION_MIN = 10  # Minimum 10 minutes
+SLOT_MAX_DURATION_MIN = 240  # Maximum 4 hours
+
+
+_TIMEZONE_ALIASES = {
+    "europe/tomsk": "Asia/Tomsk",
+}
+
+
+def validate_timezone_name(tz_name: Optional[str]) -> str:
+    """Validate and normalize timezone name.
+
+    Args:
+        tz_name: IANA timezone name to validate
+
+    Returns:
+        Validated timezone name
+
+    Raises:
+        ValueError: If timezone is invalid
+    """
+    if tz_name is None:
+        raise ValueError("Timezone cannot be empty")
+    cleaned = tz_name.strip()
+    if not cleaned:
+        raise ValueError("Timezone cannot be empty")
+    alias = _TIMEZONE_ALIASES.get(cleaned.lower())
+    if alias:
+        cleaned = alias
+
+    # Import here to avoid circular dependency
+    from backend.core.timezone_service import TimezoneService
+
+    if not TimezoneService.validate_timezone(cleaned):
+        raise ValueError(f"Invalid timezone: {cleaned}")
+
+    return cleaned
+
+
+def validate_slot_duration(duration_min: Optional[int]) -> int:
+    """Validate slot duration.
+
+    Args:
+        duration_min: Duration in minutes
+
+    Returns:
+        Validated duration
+
+    Raises:
+        ValueError: If duration is out of range
+    """
+    if duration_min is None:
+        raise ValueError("Duration cannot be None")
+
+    if not isinstance(duration_min, int) or duration_min <= 0:
+        raise ValueError(f"Duration must be a positive integer, got: {duration_min}")
+
+    if duration_min < SLOT_MIN_DURATION_MIN:
+        raise ValueError(
+            f"Slot duration too short: {duration_min} minutes. "
+            f"Minimum allowed: {SLOT_MIN_DURATION_MIN} minutes"
+        )
+
+    if duration_min > SLOT_MAX_DURATION_MIN:
+        raise ValueError(
+            f"Slot duration too long: {duration_min} minutes. "
+            f"Maximum allowed: {SLOT_MAX_DURATION_MIN} minutes ({SLOT_MAX_DURATION_MIN // 60} hours)"
+        )
+
+    return duration_min
+
 
 recruiter_city_association = Table(
     "recruiter_cities",
@@ -48,6 +122,10 @@ class Recruiter(Base):
         back_populates="recruiters",
     )
 
+    @validates("tz")
+    def _validate_timezone(self, _key, value: Optional[str]) -> str:
+        return validate_timezone_name(value)
+
     def __repr__(self) -> str:
         return f"<Recruiter {self.id} {self.name}>"
 
@@ -58,7 +136,7 @@ class City(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    tz: Mapped[str] = mapped_column(String(64), default="Europe/Moscow", nullable=False)
+    tz: Mapped[Optional[str]] = mapped_column(String(64), default="Europe/Moscow", nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     criteria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     experts: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -81,6 +159,12 @@ class City(Base):
         if not sanitized:
             raise ValueError("City name cannot be empty")
         return sanitized
+
+    @validates("tz")
+    def _validate_timezone(self, _key, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return validate_timezone_name(value)
 
     @property
     def name_plain(self) -> str:
@@ -117,8 +201,55 @@ class SlotStatus:
     FREE = "free"
     PENDING = "pending"
     BOOKED = "booked"
-    CONFIRMED_BY_CANDIDATE = "confirmed_by_candidate"
+    CONFIRMED = "confirmed"
+    CONFIRMED_BY_CANDIDATE = "confirmed_by_candidate"  # legacy alias
     CANCELED = "canceled"
+    CANCELLED = CANCELED  # spelling alias
+
+
+class SlotStatusTransitionError(ValueError):
+    """Raised when an invalid slot status transition is requested."""
+
+
+def normalize_slot_status(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    raw = value.value if hasattr(value, "value") else value
+    return str(raw).strip().lower()
+
+
+def enforce_slot_transition(current: Optional[str], target: str) -> str:
+    """Validate slot status transition and return normalized target.
+
+    Allowed forward flow: FREE -> PENDING -> BOOKED -> CONFIRMED -> CANCELED.
+    Also allowed: freeing pending/booked/confirmed back to FREE (reschedule/cancel),
+    idempotent transitions to the same status, and cancellation from PENDING/BOOKED/CONFIRMED.
+    """
+    curr = normalize_slot_status(current)
+    tgt = normalize_slot_status(target)
+    if tgt is None:
+        raise SlotStatusTransitionError("Target status is required")
+
+    if curr == tgt:
+        return tgt
+
+    allowed = {
+        SlotStatus.FREE: {SlotStatus.PENDING},
+        SlotStatus.PENDING: {SlotStatus.BOOKED, SlotStatus.FREE, SlotStatus.CANCELED},
+        SlotStatus.BOOKED: {SlotStatus.CONFIRMED, SlotStatus.FREE, SlotStatus.CANCELED},
+        SlotStatus.CONFIRMED: {SlotStatus.CANCELED, SlotStatus.FREE},
+        SlotStatus.CONFIRMED_BY_CANDIDATE: {SlotStatus.CANCELED, SlotStatus.FREE},
+        SlotStatus.CANCELED: set(),  # terminal; must recreate slot to reuse
+    }
+
+    if curr not in allowed:
+        # unknown/legacy status: forbid transition to avoid silent corruption
+        raise SlotStatusTransitionError(f"Unknown current status '{curr}'")
+
+    if tgt not in allowed[curr]:
+        raise SlotStatusTransitionError(f"Invalid slot status transition {curr!r} -> {tgt!r}")
+
+    return tgt
 
 
 class Slot(Base):
@@ -134,10 +265,13 @@ class Slot(Base):
     tz_name: Mapped[str] = mapped_column(String(64), default="Europe/Moscow", nullable=False)
 
     start_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    duration_min: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    duration_min: Mapped[int] = mapped_column(Integer, default=DEFAULT_INTERVIEW_DURATION_MIN, nullable=False)
 
     status: Mapped[str] = mapped_column(String(32), default=SlotStatus.FREE, nullable=False)
 
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.candidate_id", ondelete="SET NULL"), nullable=True
+    )
     candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     candidate_fio: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     candidate_tz: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -172,13 +306,28 @@ class Slot(Base):
         raw_value = value.value if hasattr(value, "value") else value
         return str(raw_value).strip().lower()
 
+    @validates("tz_name")
+    def _validate_slot_timezone(self, _key, value: Optional[str]) -> str:
+        return validate_timezone_name(value)
+
+    @validates("candidate_tz")
+    def _validate_candidate_timezone(self, _key, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return validate_timezone_name(value)
+
+    @validates("duration_min")
+    def _validate_duration(self, _key, value: Optional[int]) -> int:
+        return validate_slot_duration(value)
+
 
 class SlotReservationLock(Base):
     __tablename__ = "slot_reservation_locks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     slot_id: Mapped[int] = mapped_column(ForeignKey("slots.id", ondelete="CASCADE"), nullable=False)
-    candidate_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     recruiter_id: Mapped[int] = mapped_column(ForeignKey("recruiters.id", ondelete="CASCADE"), nullable=False)
     reservation_date: Mapped[date] = mapped_column(Date, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -431,3 +580,27 @@ class ManualSlotAuditLog(Base):
 
     def __repr__(self) -> str:
         return f"<ManualSlotAuditLog slot={self.slot_id} candidate={self.candidate_tg_id} by={self.admin_username}>"
+
+
+class AuditLog(Base):
+    """Generic audit log for admin actions."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+    username: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    entity_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    entity_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    changes: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<AuditLog action={self.action} entity={self.entity_type}:{self.entity_id}>"

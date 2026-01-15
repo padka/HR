@@ -9,6 +9,9 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from .. import services
+from ..services import show_recruiter_dashboard
+from backend.domain import analytics
+from backend.domain.candidates import bind_telegram_to_candidate, get_user_by_telegram_id
 
 router = Router()
 
@@ -37,7 +40,50 @@ async def cmd_start(message: Message) -> None:
             "last_name": getattr(user, "last_name", None),
         }
     )
+    try:
+        candidate = await get_user_by_telegram_id(user_id)
+        await analytics.log_funnel_event(
+            analytics.FunnelEvent.BOT_START,
+            user_id=user_id,
+            candidate_id=candidate.id if candidate else None,
+            metadata={"channel": "telegram"},
+        )
+    except Exception:
+        logger.exception("Failed to log BOT_START event", extra={"user_id": user_id})
     await services.begin_interview(user_id, username=username)
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message) -> None:
+    """Show recruiter dashboard if chat belongs to recruiter."""
+    user = message.from_user
+    if user is None:
+        return
+    await show_recruiter_dashboard(user.id)
+
+
+@router.message(Command("invite"))
+async def cmd_invite(message: Message) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    user_id = getattr(user, "id", None)
+    if user_id is None:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    token = parts[1].strip() if len(parts) > 1 else ""
+    if not token:
+        await message.answer("Отправьте /invite <токен>, чтобы привязать Telegram к анкете.")
+        return
+    bound = await bind_telegram_to_candidate(
+        token=token,
+        telegram_id=user_id,
+        username=getattr(user, "username", None),
+    )
+    if bound:
+        await message.answer("✅ Telegram привязан. Введите /start для продолжения.")
+    else:
+        await message.answer("❌ Токен не найден или уже использован.")
 
 
 @router.message(Command(commands=["intro", "test2"]))

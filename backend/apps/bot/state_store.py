@@ -15,6 +15,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 import redis.asyncio as aioredis
 from redis.exceptions import WatchError
 
+from backend.core.redis_factory import parse_redis_target
+
 from .config import State
 
 T = TypeVar("T")
@@ -199,6 +201,7 @@ class RedisStateStore(StateStore):
         namespace: str = "bot:state",
         **kwargs: Any,
     ) -> "RedisStateStore":
+        parse_redis_target(url, component="state_store")
         client = aioredis.from_url(url, decode_responses=False, **kwargs)
         return cls(client, ttl_seconds, namespace=namespace)
 

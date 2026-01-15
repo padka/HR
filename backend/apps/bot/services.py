@@ -39,6 +39,7 @@ from aiogram.types import (
 from pydantic import ValidationError
 
 from backend.core.settings import get_settings
+from backend.domain import analytics
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.status_service import set_status_waiting_slot
@@ -53,31 +54,35 @@ from backend.domain.repositories import (
     OutboxItem,
     add_notification_log,
     add_outbox_notification,
-    approve_slot,
     claim_outbox_batch,
-    confirm_slot_by_candidate,
     get_active_recruiters_for_city,
     get_city,
-    get_free_slots_by_recruiter,
     get_notification_log,
     get_outbox_item,
     get_outbox_queue_depth,
     get_recruiter,
-    get_slot,
-    city_has_available_slots,
+    get_recruiter_by_chat_id,
+    get_recruiter_agenda_by_chat_id,
     find_city_by_plain_name,
     notification_log_exists,
     register_callback,
-    reject_slot,
-    reserve_slot,
     mark_outbox_notification_sent,
     reset_outbox_entry,
     set_recruiter_chat_id_by_command,
     update_notification_log_fields,
     update_outbox_entry,
 )
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+from backend.domain.slot_service import (
+    reserve_slot,
+    approve_slot,
+    reject_slot,
+    confirm_slot_by_candidate,
+    get_slot,
+    get_free_slots_by_recruiter,
+    city_has_available_slots,
+)
+from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy import select, case, func
 
 from backend.apps.bot.utils.text import escape_html
 
@@ -131,6 +136,7 @@ from .metrics import (
     record_test1_rejection,
     set_outbox_queue_depth,
 )
+from .security import verify_callback_data
 from .state_store import StateManager
 from .test1_validation import Test1Payload, apply_partial_validation, convert_age
 from .reminders import ReminderKind, get_reminder_service
@@ -336,7 +342,8 @@ class NotificationService:
             self._template_provider = template_provider
             global _template_provider
             _template_provider = template_provider
-        self._poll_interval = max(poll_interval, 0.5)
+        self._base_poll_interval = max(poll_interval, 0.5)
+        self._current_poll_interval = self._base_poll_interval
         self._batch_size = max(1, batch_size)
         self._max_attempts = max(1, max_attempts)
         self._retry_base = max(1, retry_base_delay)
@@ -363,9 +370,15 @@ class NotificationService:
         self._shutting_down: bool = False
         self._loop_enabled: bool = False
         self._watchdog_task: Optional[asyncio.Task] = None
-        self._watchdog_interval = max(self._poll_interval * 2, 10.0)
-        self._watchdog_alert_threshold = max(self._poll_interval * 6, 15.0)
+        self._watchdog_interval = max(self._current_poll_interval * 2, 10.0)
+        self._watchdog_alert_threshold = max(self._current_poll_interval * 6, 15.0)
         self._last_poll_ts: float = 0.0
+        self._idle_backoff_steps = self._build_idle_backoff_steps()
+        self._idle_backoff_index = 0
+        self._last_idle_log_ts: float = 0.0
+        self._idle_log_interval = 60.0
+        self._last_db_error_ts: float = 0.0
+        self._db_error_log_interval = 300.0
 
     def start(self, *, allow_poll_loop: bool = False) -> None:
         self._shutting_down = False
@@ -421,6 +434,52 @@ class NotificationService:
             return
         if self._watchdog_task is None or self._watchdog_task.done():
             self._watchdog_task = loop.create_task(self._watchdog_loop())
+
+    def _build_idle_backoff_steps(self) -> list[float]:
+        steps = [self._base_poll_interval, 10.0, 30.0, 60.0]
+        normalized: list[float] = []
+        for step in steps:
+            if step < self._base_poll_interval:
+                continue
+            if step not in normalized:
+                normalized.append(step)
+        return normalized
+
+    def _apply_poll_interval(self, interval: float, *, reason: str) -> None:
+        if interval == self._current_poll_interval:
+            return
+        self._current_poll_interval = interval
+        self._watchdog_interval = max(self._current_poll_interval * 2, 10.0)
+        self._watchdog_alert_threshold = max(self._current_poll_interval * 6, 15.0)
+        if self._scheduler is not None:
+            job = self._scheduler.get_job(self._job_id)
+            if job is not None:
+                job.reschedule("interval", seconds=self._current_poll_interval)
+        logger.info(
+            "notification.worker.poll_interval_updated",
+            extra={"interval": round(self._current_poll_interval, 2), "reason": reason},
+        )
+
+    def _reset_idle_backoff(self) -> None:
+        if self._idle_backoff_index != 0:
+            self._idle_backoff_index = 0
+            self._apply_poll_interval(self._idle_backoff_steps[0], reason="work_found")
+
+    def _advance_idle_backoff(self, reason: str) -> None:
+        if self._idle_backoff_index < len(self._idle_backoff_steps) - 1:
+            self._idle_backoff_index += 1
+        next_interval = self._idle_backoff_steps[self._idle_backoff_index]
+        self._apply_poll_interval(next_interval, reason=reason)
+
+    def _record_db_unavailable(self, exc: Exception, *, context: str) -> None:
+        now = time.monotonic()
+        if now - self._last_db_error_ts < self._db_error_log_interval:
+            return
+        self._last_db_error_ts = now
+        logger.warning(
+            "notification.worker.db_unavailable",
+            extra={"context": context, "error": str(exc)},
+        )
 
     async def _stop_watchdog(self) -> None:
         if self._watchdog_task is None:
@@ -520,12 +579,12 @@ class NotificationService:
             return
 
         job = self._scheduler.get_job(self._job_id)
-        misfire = max(int(self._poll_interval * 2), 1)
+        misfire = max(int(self._current_poll_interval * 2), 1)
         if job is None:
             self._scheduler.add_job(
                 self._scheduled_poll,
                 "interval",
-                seconds=self._poll_interval,
+                seconds=self._current_poll_interval,
                 id=self._job_id,
                 replace_existing=True,
                 coalesce=True,
@@ -535,7 +594,7 @@ class NotificationService:
             )
         else:
             job.modify(max_instances=1, coalesce=True, misfire_grace_time=misfire)
-            job.reschedule("interval", seconds=self._poll_interval)
+            job.reschedule("interval", seconds=self._current_poll_interval)
 
         if not self._scheduler.running:
             try:
@@ -819,12 +878,12 @@ class NotificationService:
         return NotificationResult(status="queued")
 
     async def _poll_loop(self) -> None:
-        delay = self._poll_interval
+        delay = self._current_poll_interval
         try:
             while True:
                 try:
                     await self._poll_once()
-                    delay = self._poll_interval
+                    delay = self._current_poll_interval
                 except asyncio.CancelledError:
                     raise
                 except asyncio.TimeoutError:
@@ -852,7 +911,7 @@ class NotificationService:
             if not self._started or self._shutting_down:
                 return
             if len(self._poll_tasks) >= self._worker_concurrency:
-                await self._handle_poll_skipped(reason="inflight")
+                await self._handle_poll_skipped(reason="lock_busy")
                 return
             try:
                 loop = asyncio.get_running_loop()
@@ -880,9 +939,16 @@ class NotificationService:
 
     async def _handle_poll_skipped(self, *, reason: str) -> None:
         self._skipped_runs += 1
+        duration_ms = None
+        if self._last_poll_ts:
+            duration_ms = int(max(0.0, time.monotonic() - self._last_poll_ts) * 1000)
         logger.info(
             "notification.worker.poll_skipped",
-            extra={"reason": reason, "skipped_total": self._skipped_runs},
+            extra={
+                "reason": reason,
+                "skipped_total": self._skipped_runs,
+                "duration_ms": duration_ms,
+            },
         )
         await record_notification_poll_skipped(reason=reason, skipped_total=self._skipped_runs)
 
@@ -891,6 +957,7 @@ class NotificationService:
         processed = 0
         source = "idle"
         started_at = datetime.now(timezone.utc).isoformat()
+        broker_available = self._broker is not None
 
         logger.info(
             "notification.worker.poll_start",
@@ -921,19 +988,55 @@ class NotificationService:
             if previous_poll_ts:
                 seconds_since_prev = max(0.0, now_ts - previous_poll_ts)
             self._last_poll_ts = now_ts
-            logger.info(
-                "notification.worker.poll_cycle processed=%s source=%s skipped_total=%s",
-                processed,
-                source,
-                self._skipped_runs,
-                extra={
-                    "started_at": started_at,
-                    "duration_ms": int(duration * 1000),
-                    "processed": processed,
-                    "source": source,
-                    "skipped_total": self._skipped_runs,
-                },
-            )
+            if processed == 0 and source in {"broker_idle", "outbox_idle", "db_unavailable"}:
+                now = time.monotonic()
+                if now - self._last_idle_log_ts >= self._idle_log_interval:
+                    self._last_idle_log_ts = now
+                    logger.info(
+                        "notification.worker.poll_cycle processed=%s source=%s skipped_total=%s",
+                        processed,
+                        source,
+                        self._skipped_runs,
+                        extra={
+                            "started_at": started_at,
+                            "duration_ms": int(duration * 1000),
+                            "processed": processed,
+                            "source": source,
+                            "skipped_total": self._skipped_runs,
+                        },
+                    )
+                    if source == "db_unavailable":
+                        idle_reason = "db_unavailable"
+                    else:
+                        idle_reason = "broker_unavailable" if not broker_available else "no_work"
+                    logger.info(
+                        "notification.worker.poll_skipped",
+                        extra={
+                            "reason": idle_reason,
+                            "skipped_total": self._skipped_runs,
+                            "duration_ms": int(duration * 1000),
+                        },
+                    )
+            else:
+                logger.info(
+                    "notification.worker.poll_cycle processed=%s source=%s skipped_total=%s",
+                    processed,
+                    source,
+                    self._skipped_runs,
+                    extra={
+                        "started_at": started_at,
+                        "duration_ms": int(duration * 1000),
+                        "processed": processed,
+                        "source": source,
+                        "skipped_total": self._skipped_runs,
+                    },
+                )
+            if processed > 0:
+                self._reset_idle_backoff()
+            elif source == "broker_idle":
+                self._advance_idle_backoff(reason="broker_idle")
+            elif source == "db_unavailable":
+                self._advance_idle_backoff(reason="db_unavailable")
             await record_notification_poll_cycle(
                 duration=duration,
                 processed=processed,
@@ -1040,7 +1143,7 @@ class NotificationService:
         if self._broker is None:
             return 0, "broker_unavailable"
 
-        block_ms = int(self._poll_interval * 1000)
+        block_ms = int(self._current_poll_interval * 1000)
         messages = await self._broker.read(count=self._batch_size, block_ms=block_ms)
         source = "broker"
 
@@ -1052,7 +1155,11 @@ class NotificationService:
             )
 
         if not messages:
-            enqueued = await self._enqueue_due_outbox_batch()
+            try:
+                enqueued = await self._enqueue_due_outbox_batch()
+            except (OperationalError, ConnectionRefusedError, OSError) as exc:
+                self._record_db_unavailable(exc, context="enqueue_due_outbox_batch")
+                return 0, "db_unavailable"
             if enqueued:
                 source = "broker_bootstrap"
                 messages = await self._broker.read(count=self._batch_size, block_ms=block_ms)
@@ -1067,7 +1174,12 @@ class NotificationService:
                 await set_outbox_queue_depth(0)
             return processed, source
 
-        items = await claim_outbox_batch(batch_size=self._batch_size)
+        try:
+            items = await claim_outbox_batch(batch_size=self._batch_size)
+        except (OperationalError, ConnectionRefusedError, OSError) as exc:
+            self._record_db_unavailable(exc, context="claim_outbox_batch")
+            await set_outbox_queue_depth(0)
+            return 0, "db_unavailable"
         if not items:
             await set_outbox_queue_depth(0)
             return 0, source
@@ -1082,7 +1194,12 @@ class NotificationService:
         return processed, "outbox_fallback"
 
     async def _poll_outbox_queue(self) -> Tuple[int, str]:
-        items = await claim_outbox_batch(batch_size=self._batch_size)
+        try:
+            items = await claim_outbox_batch(batch_size=self._batch_size)
+        except (OperationalError, ConnectionRefusedError, OSError) as exc:
+            self._record_db_unavailable(exc, context="claim_outbox_batch")
+            await set_outbox_queue_depth(0)
+            return 0, "db_unavailable"
         if not items:
             await set_outbox_queue_depth(0)
             return 0, "outbox_idle"
@@ -1105,6 +1222,7 @@ class NotificationService:
             "interview_reminder_2h": self._process_interview_reminder,
             "slot_reminder": self._process_interview_reminder,
             "intro_day_invitation": self._process_intro_day_invitation,
+            "test2_completed": self._process_test2_completed,
         }
         handler = handlers.get(item.type)
         previous_message = self._current_message
@@ -1294,6 +1412,15 @@ class NotificationService:
             reminder_service = None
         if reminder_service is not None and item.booking_id is not None:
             await reminder_service.schedule_for_slot(item.booking_id)
+
+    async def _process_test2_completed(self, item: OutboxItem) -> None:
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=item.attempts,
+            next_retry_at=None,
+            last_error=None,
+        )
 
     async def _process_candidate_reschedule(self, item: OutboxItem) -> None:
         slot = await get_slot(item.booking_id) if item.booking_id is not None else None
@@ -2467,7 +2594,7 @@ class NotificationService:
         return max(1.0, delay * random.uniform(0.85, 1.15))
 
     def _compute_poll_backoff(self, previous: float, *, reason: str) -> float:
-        min_delay = max(1.0, self._poll_interval)
+        min_delay = max(1.0, self._base_poll_interval)
         max_delay = max(min_delay, 5.0)
         base = max(previous, min_delay)
         if reason == "transient":
@@ -2724,6 +2851,16 @@ async def _handle_test1_rejection(user_id: int, result: Test1AnswerResult) -> No
 
     await get_bot().send_message(user_id, message)
     await record_test1_rejection(result.reason or "unknown")
+    try:
+        candidate = await candidate_services.get_user_by_telegram_id(user_id)
+        await analytics.log_funnel_event(
+            analytics.FunnelEvent.TEST1_COMPLETED,
+            user_id=user_id,
+            candidate_id=candidate.id if candidate else None,
+            metadata={"result": "failed", "reason": result.reason or "unknown"},
+        )
+    except Exception:
+        logger.exception("Failed to log TEST1_COMPLETED (failed) for user %s", user_id)
     logger.info(
         "Test1 rejection emitted",
         extra={
@@ -2910,12 +3047,26 @@ def fmt_dt_local(dt_utc: datetime, tz: str) -> str:
     return dt_utc.astimezone(_safe_zone(tz)).strftime(TIME_FMT)
 
 
+_DAY_NAMES_RU = (
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+)
+
+
 def slot_local_labels(dt_utc: datetime, tz: str) -> Dict[str, str]:
     local_dt = dt_utc.astimezone(_safe_zone(tz))
+    slot_datetime = local_dt.strftime("%d.%m %H:%M")
     return {
         "slot_date_local": local_dt.strftime("%d.%m"),
         "slot_time_local": local_dt.strftime("%H:%M"),
-        "slot_datetime_local": local_dt.strftime("%d.%m %H:%M"),
+        "slot_datetime_local": slot_datetime,
+        "slot_day_name_local": _DAY_NAMES_RU[local_dt.weekday()],
+        "dt_local": slot_datetime,
     }
 
 
@@ -3296,6 +3447,39 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
 
     state_manager = get_state_manager()
     bot = get_bot()
+
+    # If this chat belongs to a recruiter, switch to recruiter-facing mode
+    try:
+        recruiter = await get_recruiter_by_chat_id(user_id)
+    except Exception:
+        recruiter = None
+
+    if recruiter is not None:
+        await state_manager.set(
+            user_id,
+            State(
+                flow="recruiter",
+                t1_idx=None,
+                test1_answers={},
+                t1_last_prompt_id=None,
+                t1_last_question_text="",
+                t1_requires_free_text=False,
+                t1_sequence=list(TEST1_QUESTIONS),
+                fio=recruiter.name or "",
+                city_name="",
+                city_id=None,
+                candidate_tz=recruiter.tz or DEFAULT_TZ,
+                t2_attempts={},
+                picked_recruiter_id=None,
+                picked_slot_id=None,
+                test1_payload={},
+                username=username or "",
+                t1_last_hint_sent=False,
+            ),
+        )
+        await show_recruiter_dashboard(user_id, recruiter=recruiter)
+        return
+
     try:
         await candidate_services.set_conversation_mode(user_id, "flow")
     except Exception:  # pragma: no cover - best effort
@@ -3322,9 +3506,64 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
             t1_last_hint_sent=False,
         ),
     )
+    try:
+        candidate = await candidate_services.get_user_by_telegram_id(user_id)
+        await analytics.log_funnel_event(
+            analytics.FunnelEvent.TEST1_STARTED,
+            user_id=user_id,
+            candidate_id=candidate.id if candidate else None,
+            metadata={"channel": "telegram"},
+        )
+    except Exception:
+        logger.exception("Failed to log TEST1_STARTED for user %s", user_id)
     intro = await templates.tpl(None, "t1_intro")
     await bot.send_message(user_id, intro)
     await send_test1_question(user_id)
+
+
+async def show_recruiter_dashboard(user_id: int, recruiter: Optional[Recruiter] = None, horizon_hours: int = 48) -> None:
+    """Send recruiter a compact dashboard of upcoming slots."""
+    bot = get_bot()
+    if recruiter is None:
+        recruiter = await get_recruiter_by_chat_id(user_id)
+    if recruiter is None:
+        await bot.send_message(
+            user_id,
+            "Ваш чат не привязан к рекрутёру. Используйте /iam <Имя из админки>, затем /start.",
+        )
+        return
+
+    now = datetime.now(timezone.utc)
+    end = now + timedelta(hours=horizon_hours)
+    try:
+        slots = await get_recruiter_agenda_by_chat_id(
+            user_id, start_utc=now, end_utc=end, limit=30
+        )
+    except Exception:
+        logger.exception("Failed to load recruiter agenda", extra={"chat_id": user_id})
+        await bot.send_message(user_id, "Не удалось загрузить расписание. Попробуйте позже.")
+        return
+
+    if not slots:
+        await bot.send_message(
+            user_id,
+            f"Ближайшие {horizon_hours} часов у вас нет встреч.\n"
+            "Уведомления о бронированиях и подтверждениях будут приходить сюда. "
+            "Подробные действия — в админке.",
+        )
+        return
+
+    lines: List[str] = []
+    for slot in slots:
+        status = (slot.status or "").lower()
+        purpose = "Ознакомительный день" if (slot.purpose or "").lower() == "intro_day" else "Собеседование"
+        candidate = slot.candidate_fio or ("Свободно" if status == SlotStatus.FREE else "—")
+        tz = slot.tz_name or recruiter.tz or DEFAULT_TZ
+        dt_local = fmt_dt_local(slot.start_utc, tz)
+        lines.append(f"• {dt_local} ({tz}) · {purpose} · {candidate} · {status}")
+
+    header = f"Ваши ближайшие встречи (до {horizon_hours}ч):"
+    await bot.send_message(user_id, "\n".join([header, *lines]))
 
 
 async def send_welcome(user_id: int) -> None:
@@ -3957,6 +4196,7 @@ async def finalize_test1(user_id: int) -> None:
     except Exception:
         logger.exception("Failed to present recruiter menu after Test 1 completion")
 
+    candidate = None
     try:
         fio = state.get("fio") or f"TG {user_id}"
         city_name = state.get("city_name") or ""
@@ -3994,6 +4234,7 @@ async def finalize_test1(user_id: int) -> None:
             rating="TEST1",
             total_time=int(state.get("test1_duration") or 0),
             question_data=question_data,
+            source="bot",
         )
 
         # Update candidate status to TEST1_COMPLETED (and mark waiting if no slots)
@@ -4005,13 +4246,14 @@ async def finalize_test1(user_id: int) -> None:
 
             await set_status_test1_completed(candidate.telegram_id)
 
+            # В любом случае после теста фиксируем статус ожидания слота,
+            # чтобы кандидат попал во «Входящие». Дополнительно, если слотов нет —
+            # шлём уведомление рекрутёрам.
+            status_updated = await set_status_waiting_slot(candidate.telegram_id)
+
             if candidate.city:
                 city_record = await find_city_by_plain_name(candidate.city)
                 if city_record and not await city_has_available_slots(city_record.id):
-                    # Set waiting_slot status
-                    status_updated = await set_status_waiting_slot(candidate.telegram_id)
-
-                    # Notify recruiters that candidate is waiting for manual slot assignment
                     if status_updated:
                         try:
                             candidate_name = state.get("fio") or f"User {candidate.telegram_id}"
@@ -4051,6 +4293,18 @@ async def finalize_test1(user_id: int) -> None:
         logger.exception("Failed to persist candidate profile for Test1")
 
     await record_test1_completion()
+    try:
+        candidate_for_event = candidate
+        if candidate_for_event is None:
+            candidate_for_event = await candidate_services.get_user_by_telegram_id(user_id)
+        await analytics.log_funnel_event(
+            analytics.FunnelEvent.TEST1_COMPLETED,
+            user_id=user_id,
+            candidate_id=candidate_for_event.id if candidate_for_event else None,
+            metadata={"result": "passed"},
+        )
+    except Exception:
+        logger.exception("Failed to log TEST1_COMPLETED for user %s", user_id)
 
     def _reset(st: State) -> Tuple[State, None]:
         st["t1_idx"] = None
@@ -4077,6 +4331,16 @@ async def start_test2(user_id: int) -> None:
         return state, {"city_id": state.get("city_id")}
 
     ctx = await state_manager.atomic_update(user_id, _init_attempts)
+    try:
+        candidate = await candidate_services.get_user_by_telegram_id(user_id)
+        await analytics.log_funnel_event(
+            analytics.FunnelEvent.TEST2_STARTED,
+            user_id=user_id,
+            candidate_id=candidate.id if candidate else None,
+            metadata={"channel": "telegram"},
+        )
+    except Exception:
+        logger.exception("Failed to log TEST2_STARTED for user %s", user_id)
     intro = await templates.tpl(
         ctx.get("city_id"),
         "t2_intro",
@@ -4308,6 +4572,7 @@ async def finalize_test2(user_id: int) -> None:
                 rating="TEST2",
                 total_time=int(state.get("test2_duration") or 0),
                 question_data=question_data,
+                source="bot",
             )
         except Exception:
             logger.exception("Failed to persist Test 2 result for candidate %s", candidate.id)
@@ -4335,6 +4600,21 @@ async def finalize_test2(user_id: int) -> None:
     )
     await bot.send_message(user_id, result_text)
     pct = correct_answers / max(1, len(TEST2_QUESTIONS))
+    try:
+        result_flag = "failed" if pct < PASS_THRESHOLD else "passed"
+        await analytics.log_funnel_event(
+            analytics.FunnelEvent.TEST2_COMPLETED,
+            user_id=user_id,
+            candidate_id=candidate.id if candidate else None,
+            metadata={
+                "result": result_flag,
+                "score": score,
+                "correct": correct_answers,
+                "total": len(TEST2_QUESTIONS),
+            },
+        )
+    except Exception:
+        logger.exception("Failed to log TEST2_COMPLETED for user %s", user_id)
     if pct < PASS_THRESHOLD:
         fail_text = await templates.tpl(state.get("city_id"), "result_fail")
         await bot.send_message(user_id, fail_text)
@@ -4605,7 +4885,15 @@ async def record_manual_availability_response(user_id: int, text: str) -> bool:
 
 async def handle_pick_recruiter(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
-    rid_s = callback.data.split(":", 1)[1]
+    payload = verify_callback_data(callback.data, expected_prefix="pick_rec:")
+    if not payload:
+        await callback.answer("Невалидная ссылка. Откройте меню заново.", show_alert=True)
+        logger.warning(
+            "Invalid pick_rec callback signature",
+            extra={"user_id": user_id, "callback_data": callback.data},
+        )
+        return
+    rid_s = payload.split(":", 1)[1]
 
     state_manager = get_state_manager()
     state = await state_manager.get(user_id)
@@ -4672,7 +4960,15 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
 
 async def handle_refresh_slots(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
-    _, rid_s = callback.data.split(":", 1)
+    payload = verify_callback_data(callback.data, expected_prefix="refresh_slots:")
+    if not payload:
+        await callback.answer("Ссылка устарела, откройте список слотов заново.", show_alert=True)
+        logger.warning(
+            "Invalid refresh_slots callback signature",
+            extra={"user_id": user_id, "callback_data": callback.data},
+        )
+        return
+    _, rid_s = payload.split(":", 1)
     try:
         rid = int(rid_s)
     except ValueError:
@@ -4702,7 +4998,15 @@ async def handle_refresh_slots(callback: CallbackQuery) -> None:
 
 async def handle_pick_slot(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
-    _, rid_s, slot_id_s = callback.data.split(":", 2)
+    payload = verify_callback_data(callback.data, expected_prefix="pick_slot:")
+    if not payload:
+        await callback.answer("Ссылка устарела. Выберите слот из меню.", show_alert=True)
+        logger.warning(
+            "Invalid pick_slot callback signature",
+            extra={"user_id": user_id, "callback_data": callback.data},
+        )
+        return
+    _, rid_s, slot_id_s = payload.split(":", 2)
 
     try:
         recruiter_id = int(rid_s)
@@ -4733,11 +5037,13 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
 
     is_intro = state.get("flow") == "intro"
     city_id = state.get("city_id")
+    candidate = await candidate_services.get_user_by_telegram_id(user_id)
     reservation = await reserve_slot(
         slot_id,
         candidate_tg_id=user_id,
         candidate_fio=state.get("fio", str(user_id)),
         candidate_tz=state.get("candidate_tz", DEFAULT_TZ),
+        candidate_id=candidate.candidate_id if candidate else None,
         candidate_city_id=state.get("city_id"),
         candidate_username=state.get("username"),  # Pass username to reserve_slot
         purpose="intro_day" if is_intro else "interview",

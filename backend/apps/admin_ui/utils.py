@@ -22,11 +22,12 @@ def safe_zone(tz_str: Optional[str]) -> ZoneInfo:
         return ZoneInfo(DEFAULT_TZ)
 
 
-def fmt_local(dt_utc: datetime, tz_str: str) -> str:
+def fmt_local(dt_utc: datetime, tz_str: str, fmt: str = "%d.%m %H:%M") -> str:
+    """Format datetime to local timezone with optional format."""
     if dt_utc.tzinfo is None:
         dt_utc = dt_utc.replace(tzinfo=timezone.utc)
     local = dt_utc.astimezone(safe_zone(tz_str))
-    return local.strftime("%d.%m %H:%M")
+    return local.strftime(fmt)
 
 
 def fmt_utc(dt_utc: datetime) -> str:
@@ -60,14 +61,16 @@ def norm_status(st) -> Optional[str]:
     return str(raw_value).upper()
 
 
-STATUS_FILTERS = {"FREE", "PENDING", "BOOKED", "CONFIRMED_BY_CANDIDATE"}
+STATUS_FILTERS = {"FREE", "PENDING", "BOOKED", "CONFIRMED_BY_CANDIDATE", "CANCELED"}
 
 
 def status_filter(value: Optional[str]) -> Optional[str]:
     candidate = (value or "").strip().upper() or None
-    if candidate in STATUS_FILTERS:
-        return candidate
-    return None
+    if candidate is None:
+        return None
+    if candidate == "CANCELLED":
+        candidate = "CANCELED"
+    return candidate if candidate in STATUS_FILTERS else None
 
 
 def status_to_db(value: str):

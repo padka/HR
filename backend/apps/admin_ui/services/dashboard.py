@@ -1,11 +1,23 @@
 from __future__ import annotations
 
-import random
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import func, select, and_, or_
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    and_,
+    case,
+    func,
+    or_,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
@@ -13,6 +25,7 @@ from backend.apps.admin_ui.utils import fmt_local, safe_zone
 from backend.core.db import async_session
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
 from backend.domain.candidates.models import User
+from backend.domain.analytics import FunnelEvent
 from backend.domain.candidates.status import (
     get_status_label,
     get_status_color,
@@ -21,6 +34,7 @@ from backend.domain.candidates.status import (
     StatusCategory,
     CandidateStatus,
 )
+from backend.domain.candidate_status_service import CandidateStatusService
 from backend.apps.bot.metrics import get_test1_metrics_snapshot
 from backend.domain.repositories import find_city_by_plain_name
 
@@ -29,6 +43,9 @@ __all__ = [
     "get_recent_candidates",
     "get_upcoming_interviews",
     "get_hiring_funnel_stats",
+    "get_bot_funnel_stats",
+    "get_funnel_step_candidates",
+    "get_recruiter_performance",
     "get_recent_activities",
     "get_ai_insights",
     "get_quick_slots",
@@ -38,6 +55,8 @@ __all__ = [
     "SmartCreateError",
 ]
 
+_candidate_status_service = CandidateStatusService()
+
 STATUS_COLOR_TO_CLASS = {
     "success": "new",
     "info": "review",
@@ -46,6 +65,71 @@ STATUS_COLOR_TO_CLASS = {
     "danger": "declined",
     "secondary": "pending",
 }
+
+_ANALYTICS_META = MetaData()
+ANALYTICS_EVENTS = Table(
+    "analytics_events",
+    _ANALYTICS_META,
+    Column("id", Integer),
+    Column("event_name", String),
+    Column("user_id", BigInteger),
+    Column("candidate_id", Integer),
+    Column("city_id", Integer),
+    Column("slot_id", Integer),
+    Column("booking_id", Integer),
+    Column("metadata", Text),
+    Column("created_at", DateTime(timezone=True)),
+)
+
+FUNNEL_STEP_DEFS: List[Dict[str, object]] = [
+    {
+        "key": "entered",
+        "title": "Зашли в бот",
+        "events": [FunnelEvent.BOT_ENTERED.value],
+    },
+    {
+        "key": "test1_started",
+        "title": "Начали Тест 1",
+        "events": [FunnelEvent.TEST1_STARTED.value],
+    },
+    {
+        "key": "test1_completed",
+        "title": "Завершили Тест 1",
+        "events": [FunnelEvent.TEST1_COMPLETED.value],
+    },
+    {
+        "key": "test2_started",
+        "title": "Начали Тест 2",
+        "events": [FunnelEvent.TEST2_STARTED.value],
+    },
+    {
+        "key": "test2_completed",
+        "title": "Завершили Тест 2",
+        "events": [FunnelEvent.TEST2_COMPLETED.value],
+    },
+    {
+        "key": "slot_booked",
+        "title": "Записались на слот",
+        "events": [FunnelEvent.SLOT_BOOKED.value, "slot_booked"],
+    },
+    {
+        "key": "slot_confirmed",
+        "title": "Подтвердили слот",
+        "events": [FunnelEvent.SLOT_CONFIRMED.value],
+    },
+    {
+        "key": "show_up",
+        "title": "Пришли",
+        "events": [FunnelEvent.SHOW_UP.value],
+    },
+    {
+        "key": "offer_accepted",
+        "title": "Закреплены",
+        "events": [FunnelEvent.OFFER_ACCEPTED.value],
+    },
+]
+
+FUNNEL_DROP_TTL_HOURS = 24
 
 
 class SmartCreateError(Exception):
@@ -280,7 +364,13 @@ async def get_upcoming_interviews(
             select(Slot, Recruiter, City, User)
             .join(Recruiter, Slot.recruiter_id == Recruiter.id)
             .outerjoin(City, Slot.city_id == City.id)
-            .outerjoin(User, User.telegram_id == Slot.candidate_tg_id)
+            .outerjoin(
+                User,
+                or_(
+                    User.candidate_id == Slot.candidate_id,
+                    User.telegram_id == Slot.candidate_tg_id,
+                ),
+            )
             .where(
                 and_(
                     or_(
@@ -391,9 +481,16 @@ async def get_quick_slots(window_hours: int = 48) -> List[Dict[str, object]]:
     return options
 
 
-async def get_hiring_funnel_stats() -> List[Dict[str, object]]:
+async def get_hiring_funnel_stats() -> Dict[str, object]:
     """Get hiring funnel statistics for dashboard visualization."""
-    funnel_stages = get_funnel_stages()
+    stage_definitions: List[Tuple[str, List[CandidateStatus]]] = []
+    for name, statuses in get_funnel_stages():
+        if name == "Тестирование":
+            statuses = statuses + [
+                CandidateStatus.WAITING_SLOT,
+                CandidateStatus.STALLED_WAITING_SLOT,
+            ]
+        stage_definitions.append((name, statuses))
 
     async with async_session() as session:
         # Count candidates by status
@@ -403,16 +500,15 @@ async def get_hiring_funnel_stats() -> List[Dict[str, object]]:
         result = await session.execute(stmt)
         status_counts = dict(result.all())
 
-    funnel_data = []
-    for stage_name, statuses in funnel_stages:
-        # Calculate total for this stage
-        stage_total = sum(status_counts.get(status, 0) for status in statuses)
+    funnel_data: List[Dict[str, object]] = []
+    total_candidates = sum(status_counts.values())
 
-        # Calculate sub-statuses breakdown
+    for stage_name, statuses in stage_definitions:
+        stage_total = sum(status_counts.get(status, 0) for status in statuses)
         sub_statuses = []
         for status in statuses:
             count = status_counts.get(status, 0)
-            if count > 0:  # Only include non-zero statuses
+            if count > 0:
                 sub_statuses.append({
                     "label": get_status_label(status),
                     "count": count,
@@ -425,16 +521,674 @@ async def get_hiring_funnel_stats() -> List[Dict[str, object]]:
             "sub_statuses": sub_statuses,
         })
 
-    # Calculate conversion rates
+    # Conversion to next step
     for i in range(len(funnel_data) - 1):
         current = funnel_data[i]["total"]
-        next_stage = funnel_data[i + 1]["total"]
-        if current > 0:
-            funnel_data[i]["conversion"] = round((next_stage / current) * 100, 1)
-        else:
-            funnel_data[i]["conversion"] = 0
+        next_stage_total = funnel_data[i + 1]["total"]
+        funnel_data[i]["conversion"] = round((next_stage_total / current) * 100, 1) if current else 0.0
+    if funnel_data:
+        funnel_data[-1]["conversion"] = funnel_data[-1].get("conversion", 0.0)
 
-    return funnel_data
+    base_total = funnel_data[0]["total"] if funnel_data else total_candidates
+    base_total = base_total or total_candidates
+    for stage in funnel_data:
+        stage["share_of_base"] = round((stage["total"] / base_total) * 100, 1) if base_total else 0.0
+
+    testing_statuses = {
+        CandidateStatus.TEST1_COMPLETED,
+        CandidateStatus.WAITING_SLOT,
+        CandidateStatus.STALLED_WAITING_SLOT,
+        CandidateStatus.TEST2_SENT,
+        CandidateStatus.TEST2_COMPLETED,
+        CandidateStatus.TEST2_FAILED,
+    }
+    interview_statuses = {
+        CandidateStatus.INTERVIEW_SCHEDULED,
+        CandidateStatus.INTERVIEW_CONFIRMED,
+    }
+    intro_statuses = {
+        CandidateStatus.INTRO_DAY_SCHEDULED,
+        CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+        CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF,
+    }
+    declined_statuses = {
+        CandidateStatus.INTERVIEW_DECLINED,
+        CandidateStatus.TEST2_FAILED,
+        CandidateStatus.INTRO_DAY_DECLINED_INVITATION,
+        CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
+        CandidateStatus.NOT_HIRED,
+    }
+
+    summary = {
+        "total": total_candidates,
+        "testing": sum(status_counts.get(status, 0) for status in testing_statuses),
+        "interviewing": sum(status_counts.get(status, 0) for status in interview_statuses),
+        "intro_day": sum(status_counts.get(status, 0) for status in intro_statuses),
+        "hired": status_counts.get(CandidateStatus.HIRED, 0),
+        "declined": sum(status_counts.get(status, 0) for status in declined_statuses),
+    }
+    summary["conversion_to_hired"] = round(
+        (summary["hired"] / summary["total"]) * 100, 1
+    ) if summary["total"] else 0.0
+
+    return {"stages": funnel_data, "summary": summary}
+
+
+def _normalize_funnel_range(
+    date_from: Optional[datetime],
+    date_to: Optional[datetime],
+    *,
+    default_days: int = 7,
+) -> Tuple[datetime, datetime]:
+    now = datetime.now(timezone.utc)
+    end = date_to or now
+    start = date_from or (end - timedelta(days=default_days))
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    if start > end:
+        start, end = end, start
+    return start, end
+
+
+def _clean_filter_value(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _apply_funnel_filters(
+    stmt,
+    *,
+    city: Optional[str],
+    recruiter_id: Optional[int],
+    source: Optional[str],
+):
+    if city:
+        stmt = stmt.where(func.lower(User.city) == city.lower())
+    if recruiter_id is not None:
+        stmt = stmt.where(User.responsible_recruiter_id == recruiter_id)
+    if source:
+        stmt = stmt.where(User.source == source)
+    return stmt
+
+
+def _subject_key(candidate_id: Optional[int], user_id: Optional[int]) -> Optional[int]:
+    if candidate_id is not None:
+        return int(candidate_id)
+    if user_id is not None:
+        return int(user_id)
+    return None
+
+
+async def _fetch_funnel_events(
+    session: AsyncSession,
+    *,
+    event_names: List[str],
+    date_from: datetime,
+    date_to: datetime,
+    city: Optional[str],
+    recruiter_id: Optional[int],
+    source: Optional[str],
+) -> List[Tuple[Optional[int], Optional[int], str, datetime]]:
+    ae = ANALYTICS_EVENTS
+    stmt = select(
+        ae.c.candidate_id,
+        ae.c.user_id,
+        ae.c.event_name,
+        ae.c.created_at,
+    ).select_from(ae)
+    if any([city, recruiter_id is not None, source]):
+        stmt = stmt.join(User, User.id == ae.c.candidate_id)
+        stmt = _apply_funnel_filters(
+            stmt,
+            city=city,
+            recruiter_id=recruiter_id,
+            source=source,
+        )
+    stmt = stmt.where(
+        ae.c.event_name.in_(event_names),
+        ae.c.created_at >= date_from,
+        ae.c.created_at <= date_to,
+    )
+    rows = await session.execute(stmt)
+    return list(rows.all())
+
+
+def _collect_event_stats(
+    rows: List[Tuple[Optional[int], Optional[int], str, datetime]],
+    *,
+    date_from: datetime,
+    date_to: datetime,
+) -> Tuple[Dict[str, int], Dict[str, set], Dict[int, Dict[str, List[datetime]]]]:
+    event_counts: Dict[str, int] = {}
+    subject_sets: Dict[str, set] = {}
+    events_by_subject: Dict[int, Dict[str, List[datetime]]] = {}
+    for candidate_id, user_id, event_name, created_at in rows:
+        subject_id = _subject_key(candidate_id, user_id)
+        if subject_id is None:
+            continue
+        bucket = events_by_subject.setdefault(subject_id, {})
+        bucket.setdefault(event_name, []).append(created_at)
+        if date_from <= created_at <= date_to:
+            event_counts[event_name] = event_counts.get(event_name, 0) + 1
+            subject_sets.setdefault(event_name, set()).add(subject_id)
+    for subject_events in events_by_subject.values():
+        for timestamps in subject_events.values():
+            timestamps.sort()
+    return event_counts, subject_sets, events_by_subject
+
+
+def _avg_time_between(
+    events_by_subject: Dict[int, Dict[str, List[datetime]]],
+    *,
+    start_event: str,
+    end_event: str,
+    date_from: datetime,
+    date_to: datetime,
+) -> Optional[float]:
+    deltas: List[float] = []
+    for events in events_by_subject.values():
+        start_times = [
+            ts for ts in events.get(start_event, []) if date_from <= ts <= date_to
+        ]
+        if not start_times:
+            continue
+        start_time = min(start_times)
+        end_times = [
+            ts for ts in events.get(end_event, []) if start_time <= ts <= date_to
+        ]
+        if not end_times:
+            continue
+        delta = (min(end_times) - start_time).total_seconds()
+        if delta >= 0:
+            deltas.append(delta)
+    if not deltas:
+        return None
+    return sum(deltas) / len(deltas)
+
+
+async def get_bot_funnel_stats(
+    *,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    city: Optional[str] = None,
+    recruiter_id: Optional[int] = None,
+    source: Optional[str] = None,
+    ttl_hours: int = FUNNEL_DROP_TTL_HOURS,
+) -> Dict[str, object]:
+    date_from, date_to = _normalize_funnel_range(date_from, date_to)
+    city = _clean_filter_value(city)
+    source = _clean_filter_value(source)
+    window_end = date_to + timedelta(hours=ttl_hours)
+    all_event_names = sorted(
+        {name for step in FUNNEL_STEP_DEFS for name in step["events"]}
+    )
+    async with async_session() as session:
+        rows = await _fetch_funnel_events(
+            session,
+            event_names=all_event_names,
+            date_from=date_from,
+            date_to=window_end,
+            city=city,
+            recruiter_id=recruiter_id,
+            source=source,
+        )
+    event_counts, subject_sets, events_by_subject = _collect_event_stats(
+        rows,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+    steps: List[Dict[str, object]] = []
+    for step in FUNNEL_STEP_DEFS:
+        event_names = step["events"]
+        subjects = set()
+        total_events = 0
+        for event_name in event_names:
+            subjects |= subject_sets.get(event_name, set())
+            total_events += event_counts.get(event_name, 0)
+        steps.append(
+            {
+                "key": step["key"],
+                "title": step["title"],
+                "count": len(subjects),
+                "events": total_events,
+                "conversion_from_prev": 0.0,
+                "conversion_from_prev_events": 0.0,
+                "dropoff_count": None,
+                "avg_time_to_step_sec": None,
+            }
+        )
+
+    for idx in range(1, len(steps)):
+        prev_unique = steps[idx - 1]["count"] or 0
+        prev_events = steps[idx - 1]["events"] or 0
+        current_unique = steps[idx]["count"] or 0
+        current_events = steps[idx]["events"] or 0
+        steps[idx]["conversion_from_prev"] = (
+            round((current_unique / prev_unique) * 100, 1) if prev_unique else 0.0
+        )
+        steps[idx]["conversion_from_prev_events"] = (
+            round((current_events / prev_events) * 100, 1) if prev_events else 0.0
+        )
+        steps[idx]["dropoff_count"] = max(prev_unique - current_unique, 0)
+
+    entered_subjects = subject_sets.get(FunnelEvent.BOT_ENTERED.value, set())
+    started_subjects = subject_sets.get(FunnelEvent.TEST1_STARTED.value, set())
+    completed_subjects = subject_sets.get(FunnelEvent.TEST1_COMPLETED.value, set())
+
+    no_test1 = len(entered_subjects - started_subjects)
+
+    ttl = timedelta(hours=ttl_hours)
+    test1_timeout = 0
+    for subject_id in started_subjects:
+        start_times = [
+            ts
+            for ts in events_by_subject.get(subject_id, {}).get(
+                FunnelEvent.TEST1_STARTED.value, []
+            )
+            if date_from <= ts <= date_to
+        ]
+        if not start_times:
+            continue
+        start_time = min(start_times)
+        completion_times = events_by_subject.get(subject_id, {}).get(
+            FunnelEvent.TEST1_COMPLETED.value, []
+        )
+        completed_on_time = any(
+            start_time <= ts <= start_time + ttl for ts in completion_times
+        )
+        if not completed_on_time:
+            test1_timeout += 1
+
+    avg_time_map = {
+        "test1_started": _avg_time_between(
+            events_by_subject,
+            start_event=FunnelEvent.BOT_ENTERED.value,
+            end_event=FunnelEvent.TEST1_STARTED.value,
+            date_from=date_from,
+            date_to=date_to,
+        ),
+        "test1_completed": _avg_time_between(
+            events_by_subject,
+            start_event=FunnelEvent.TEST1_STARTED.value,
+            end_event=FunnelEvent.TEST1_COMPLETED.value,
+            date_from=date_from,
+            date_to=date_to,
+        ),
+        "slot_confirmed": _avg_time_between(
+            events_by_subject,
+            start_event=FunnelEvent.SLOT_BOOKED.value,
+            end_event=FunnelEvent.SLOT_CONFIRMED.value,
+            date_from=date_from,
+            date_to=date_to,
+        ),
+        "show_up": _avg_time_between(
+            events_by_subject,
+            start_event=FunnelEvent.SLOT_CONFIRMED.value,
+            end_event=FunnelEvent.SHOW_UP.value,
+            date_from=date_from,
+            date_to=date_to,
+        ),
+    }
+    for step in steps:
+        avg_time = avg_time_map.get(step["key"])
+        if avg_time is not None:
+            step["avg_time_to_step_sec"] = round(avg_time, 1)
+
+    series_labels: List[str] = []
+    series_entered: List[int] = []
+    series_completed: List[int] = []
+    day_cursor = date_from.date()
+    last_day = date_to.date()
+    daily_entered: Dict[date, set] = {}
+    daily_completed: Dict[date, set] = {}
+    for subject_id, events in events_by_subject.items():
+        for name, timestamps in events.items():
+            if name not in {
+                FunnelEvent.BOT_ENTERED.value,
+                FunnelEvent.TEST1_COMPLETED.value,
+            }:
+                continue
+            for ts in timestamps:
+                if not (date_from <= ts <= date_to):
+                    continue
+                key = ts.date()
+                if name == FunnelEvent.BOT_ENTERED.value:
+                    daily_entered.setdefault(key, set()).add(subject_id)
+                else:
+                    daily_completed.setdefault(key, set()).add(subject_id)
+
+    while day_cursor <= last_day:
+        series_labels.append(day_cursor.isoformat())
+        series_entered.append(len(daily_entered.get(day_cursor, set())))
+        series_completed.append(len(daily_completed.get(day_cursor, set())))
+        day_cursor += timedelta(days=1)
+
+    return {
+        "range": {
+            "from": date_from.isoformat(),
+            "to": date_to.isoformat(),
+            "ttl_hours": ttl_hours,
+        },
+        "steps": steps,
+        "dropoffs": {
+            "no_test1": no_test1,
+            "test1_timeout": test1_timeout,
+            "test1_completed": len(completed_subjects),
+        },
+        "series": {
+            "labels": series_labels,
+            "entered": series_entered,
+            "test1_completed": series_completed,
+        },
+        "last_period_comparison": None,
+    }
+
+
+async def get_funnel_step_candidates(
+    *,
+    step_key: str,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    city: Optional[str] = None,
+    recruiter_id: Optional[int] = None,
+    source: Optional[str] = None,
+    ttl_hours: int = FUNNEL_DROP_TTL_HOURS,
+    limit: int = 200,
+) -> List[Dict[str, object]]:
+    date_from, date_to = _normalize_funnel_range(date_from, date_to)
+    city = _clean_filter_value(city)
+    source = _clean_filter_value(source)
+    window_end = date_to + timedelta(hours=ttl_hours)
+
+    step_def = next(
+        (step for step in FUNNEL_STEP_DEFS if step["key"] == step_key),
+        None,
+    )
+    async with async_session() as session:
+        if step_def:
+            ae = ANALYTICS_EVENTS
+            stmt = (
+                select(
+                    User.id,
+                    User.fio,
+                    User.username,
+                    User.telegram_id,
+                    User.telegram_username,
+                    User.city,
+                    User.responsible_recruiter_id,
+                    User.candidate_status,
+                    User.last_activity,
+                    Recruiter.name.label("recruiter_name"),
+                    func.max(ae.c.created_at).label("event_at"),
+                )
+                .select_from(ae)
+                .join(User, User.id == ae.c.candidate_id)
+                .outerjoin(Recruiter, Recruiter.id == User.responsible_recruiter_id)
+                .where(
+                    ae.c.event_name.in_(step_def["events"]),
+                    ae.c.created_at >= date_from,
+                    ae.c.created_at <= date_to,
+                )
+                .group_by(
+                    User.id,
+                    User.fio,
+                    User.username,
+                    User.telegram_id,
+                    User.telegram_username,
+                    User.city,
+                    User.responsible_recruiter_id,
+                    User.candidate_status,
+                    User.last_activity,
+                    Recruiter.name,
+                )
+                .order_by(func.max(ae.c.created_at).desc())
+                .limit(limit)
+            )
+            stmt = _apply_funnel_filters(
+                stmt,
+                city=city,
+                recruiter_id=recruiter_id,
+                source=source,
+            )
+            result = await session.execute(stmt)
+            rows = result.all()
+            payload: List[Dict[str, object]] = []
+            for row in rows:
+                payload.append(
+                    {
+                        "id": row.id,
+                        "name": row.fio,
+                        "username": row.telegram_username or row.username,
+                        "telegram_id": row.telegram_id,
+                        "city": row.city,
+                        "recruiter": row.recruiter_name,
+                        "status": row.candidate_status.value if row.candidate_status else None,
+                        "status_label": get_status_label(row.candidate_status)
+                        if row.candidate_status
+                        else None,
+                        "last_activity": row.last_activity.isoformat()
+                        if row.last_activity
+                        else None,
+                        "event_at": row.event_at.isoformat() if row.event_at else None,
+                        "candidate_url": f"/candidates/{row.id}",
+                    }
+                )
+            return payload
+
+        target = step_key.strip().lower()
+        if target not in {"no_test1", "test1_timeout"}:
+            return []
+
+        rows = await _fetch_funnel_events(
+            session,
+            event_names=[
+                FunnelEvent.BOT_ENTERED.value,
+                FunnelEvent.TEST1_STARTED.value,
+                FunnelEvent.TEST1_COMPLETED.value,
+            ],
+            date_from=date_from,
+            date_to=window_end,
+            city=city,
+            recruiter_id=recruiter_id,
+            source=source,
+        )
+        events_by_candidate: Dict[int, Dict[str, List[datetime]]] = {}
+        for candidate_id, user_id, event_name, created_at in rows:
+            if candidate_id is None:
+                continue
+            bucket = events_by_candidate.setdefault(candidate_id, {})
+            bucket.setdefault(event_name, []).append(created_at)
+        for bucket in events_by_candidate.values():
+            for timestamps in bucket.values():
+                timestamps.sort()
+
+        now = datetime.now(timezone.utc)
+        candidate_ids: List[int] = []
+        extra_by_candidate: Dict[int, Dict[str, object]] = {}
+        ttl = timedelta(hours=ttl_hours)
+        for candidate_id, events in events_by_candidate.items():
+            entered_times = [
+                ts
+                for ts in events.get(FunnelEvent.BOT_ENTERED.value, [])
+                if date_from <= ts <= date_to
+            ]
+            started_times = [
+                ts
+                for ts in events.get(FunnelEvent.TEST1_STARTED.value, [])
+                if date_from <= ts <= date_to
+            ]
+            if target == "no_test1":
+                if entered_times and not started_times:
+                    last_ts = max(entered_times)
+                    candidate_ids.append(candidate_id)
+                    extra_by_candidate[candidate_id] = {
+                        "last_step": FunnelEvent.BOT_ENTERED.value,
+                        "elapsed_hours": int(
+                            (now - last_ts).total_seconds() // 3600
+                        ),
+                    }
+            else:
+                if not started_times:
+                    continue
+                start_ts = min(started_times)
+                completion_times = events.get(FunnelEvent.TEST1_COMPLETED.value, [])
+                completed_on_time = any(
+                    start_ts <= ts <= start_ts + ttl for ts in completion_times
+                )
+                if not completed_on_time:
+                    candidate_ids.append(candidate_id)
+                    extra_by_candidate[candidate_id] = {
+                        "last_step": FunnelEvent.TEST1_STARTED.value,
+                        "elapsed_hours": int(
+                            (now - start_ts).total_seconds() // 3600
+                        ),
+                    }
+
+        if not candidate_ids:
+            return []
+        details_stmt = (
+            select(
+                User.id,
+                User.fio,
+                User.username,
+                User.telegram_id,
+                User.telegram_username,
+                User.city,
+                User.responsible_recruiter_id,
+                User.candidate_status,
+                User.last_activity,
+                Recruiter.name.label("recruiter_name"),
+            )
+            .select_from(User)
+            .outerjoin(Recruiter, Recruiter.id == User.responsible_recruiter_id)
+            .where(User.id.in_(candidate_ids))
+            .limit(limit)
+        )
+        result = await session.execute(details_stmt)
+        rows = result.all()
+        payload = []
+        for row in rows:
+            extra = extra_by_candidate.get(row.id, {})
+            payload.append(
+                {
+                    "id": row.id,
+                    "name": row.fio,
+                    "username": row.telegram_username or row.username,
+                    "telegram_id": row.telegram_id,
+                    "city": row.city,
+                    "recruiter": row.recruiter_name,
+                    "status": row.candidate_status.value if row.candidate_status else None,
+                    "status_label": get_status_label(row.candidate_status)
+                    if row.candidate_status
+                    else None,
+                    "last_activity": row.last_activity.isoformat()
+                    if row.last_activity
+                    else None,
+                    "candidate_url": f"/candidates/{row.id}",
+                    "last_step": extra.get("last_step"),
+                    "elapsed_hours": extra.get("elapsed_hours"),
+                }
+            )
+        return payload
+
+
+async def get_recruiter_performance(window_days: int = 30) -> List[Dict[str, object]]:
+    """Calculate basic efficiency metrics for recruiters."""
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=window_days)
+    async with async_session() as session:
+        status_lower = func.lower(Slot.status)
+        stmt = (
+            select(
+                Recruiter.id,
+                Recruiter.name,
+                Recruiter.tz,
+                func.count(Slot.id).label("total_slots"),
+                func.sum(case((status_lower == SlotStatus.FREE, 1), else_=0)).label("free_slots"),
+                func.sum(case((status_lower == SlotStatus.PENDING, 1), else_=0)).label("pending_slots"),
+                func.sum(
+                    case(
+                        (status_lower.in_([SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]), 1),
+                        else_=0,
+                    )
+                ).label("booked_slots"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                status_lower.in_([SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]),
+                                Slot.start_utc >= window_start,
+                                Slot.start_utc <= now,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("recent_booked"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                status_lower == SlotStatus.CONFIRMED_BY_CANDIDATE,
+                                Slot.start_utc >= window_start,
+                                Slot.start_utc <= now,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("recent_confirmed"),
+                func.sum(case((Slot.start_utc >= now, 1), else_=0)).label("upcoming"),
+                func.min(case((Slot.start_utc >= now, Slot.start_utc), else_=None)).label("next_slot"),
+            )
+            .select_from(Recruiter)
+            .outerjoin(Slot, Slot.recruiter_id == Recruiter.id)
+            .where(Recruiter.active.is_(True))
+            .group_by(Recruiter.id)
+        )
+        rows = (await session.execute(stmt)).all()
+
+    performance: List[Dict[str, object]] = []
+    for row in rows:
+        next_slot = row.next_slot
+        if isinstance(next_slot, datetime) and next_slot.tzinfo is None:
+            next_slot = next_slot.replace(tzinfo=timezone.utc)
+        total_slots = int(row.total_slots or 0)
+        booked_slots = int(row.booked_slots or 0)
+        free_slots = int(row.free_slots or 0)
+        pending_slots = int(row.pending_slots or 0)
+        recent_booked = int(row.recent_booked or 0)
+        recent_confirmed = int(row.recent_confirmed or 0)
+        fill_rate = round((booked_slots / total_slots) * 100, 1) if total_slots else 0.0
+        confirmation_rate = round(
+            (recent_confirmed / recent_booked) * 100, 1
+        ) if recent_booked else 0.0
+
+        performance.append(
+            {
+                "recruiter_id": row.id,
+                "name": row.name,
+                "tz": row.tz,
+                "total_slots": total_slots,
+                "booked_slots": booked_slots,
+                "free_slots": free_slots,
+                "pending_slots": pending_slots,
+                "recent_booked": recent_booked,
+                "recent_confirmed": recent_confirmed,
+                "fill_rate": fill_rate,
+                "confirmation_rate": confirmation_rate,
+                "upcoming": int(row.upcoming or 0),
+                "next_slot": next_slot,
+            }
+        )
+
+    performance.sort(key=lambda r: (r["booked_slots"], r["total_slots"]), reverse=True)
+    return performance
 
 
 async def get_recent_activities(limit: int = 10) -> List[Dict[str, object]]:
@@ -589,22 +1343,10 @@ async def get_ai_insights() -> Dict[str, object]:
 
 
 _STAGE_TO_STATUS: Dict[str, Optional[CandidateStatus]] = {
-    "new": CandidateStatus.TEST1_COMPLETED,
-    "screening": CandidateStatus.WAITING_SLOT,
+    "new": CandidateStatus.LEAD,
+    "screening": CandidateStatus.CONTACTED,
     "interview": CandidateStatus.INTERVIEW_SCHEDULED,
 }
-
-
-async def _generate_virtual_telegram_id(session: AsyncSession) -> int:
-    """Create negative telegram_id for manually added candidates."""
-    for _ in range(10):
-        synthetic_id = -int(time.time() * 1_000_000) - random.randint(1, 10_000)
-        exists = await session.scalar(
-            select(func.count()).where(User.telegram_id == synthetic_id)
-        )
-        if not exists:
-            return synthetic_id
-    raise SmartCreateError("Не удалось выпустить ID кандидата, повторите попытку.")
 
 
 async def smart_create_candidate(
@@ -628,20 +1370,25 @@ async def smart_create_candidate(
 
     async with async_session() as session:
         async with session.begin():
-            telegram_id = await _generate_virtual_telegram_id(session)
             now = datetime.now(timezone.utc)
             user = User(
-                telegram_id=telegram_id,
                 fio=cleaned_name,
                 city=None,
                 desired_position=cleaned_position,
                 resume_filename=resume_filename,
-                candidate_status=target_status,
                 is_active=True,
                 last_activity=now,
+                source="manual_call",
             )
             session.add(user)
             await session.flush()
+            if target_status:
+                await _candidate_status_service.force(
+                    user,
+                    target_status,
+                    reason="smart create candidate",
+                )
+                user.status_changed_at = now
 
             booked_slot_id: Optional[int] = None
             if slot_id is not None:
@@ -656,6 +1403,7 @@ async def smart_create_candidate(
                     raise SmartCreateError("Слот уже забронирован.")
 
                 slot.status = SlotStatus.BOOKED
+                slot.candidate_id = user.candidate_id
                 slot.candidate_tg_id = user.telegram_id
                 slot.candidate_fio = user.fio
                 slot.candidate_tz = slot.tz_name

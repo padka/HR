@@ -16,6 +16,7 @@ from backend.domain.repositories import (
 )
 
 from .config import DEFAULT_TZ
+from .security import sign_callback_data
 
 
 def _safe_zone(tz: Optional[str]) -> ZoneInfo:
@@ -96,7 +97,7 @@ async def kb_recruiters(
         label_suffix = f"{next_local} • {min(total_slots, 99)} сл."
         text = f"👤 {_short_name(recruiter.name)} — {label_suffix}"
         rows.append(
-            [InlineKeyboardButton(text=text, callback_data=f"pick_rec:{recruiter.id}")]
+            [InlineKeyboardButton(text=text, callback_data=sign_callback_data(f"pick_rec:{recruiter.id}"))]
         )
 
     if not rows:
@@ -117,14 +118,14 @@ async def kb_slots_for_recruiter(
     if not slots:
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"refresh_slots:{recruiter_id}")],
-                [InlineKeyboardButton(text="👤 К рекрутёрам", callback_data="pick_rec:__again__")],
+                [InlineKeyboardButton(text="🔄 Обновить", callback_data=sign_callback_data(f"refresh_slots:{recruiter_id}"))],
+                [InlineKeyboardButton(text="👤 К рекрутёрам", callback_data=sign_callback_data("pick_rec:__again__"))],
             ]
         )
     buttons = [
         InlineKeyboardButton(
             text=_slot_button_label(s.start_utc, s.duration_min, candidate_tz),
-            callback_data=f"pick_slot:{recruiter_id}:{s.id}",
+            callback_data=sign_callback_data(f"pick_slot:{recruiter_id}:{s.id}"),
         )
         for s in slots[:12]
     ]
@@ -133,8 +134,8 @@ async def kb_slots_for_recruiter(
         rows.append(buttons[i : i + 2])
     rows.append(
         [
-            InlineKeyboardButton(text="🔄 Обновить", callback_data=f"refresh_slots:{recruiter_id}"),
-            InlineKeyboardButton(text="👤 Другой рекрутёр", callback_data="pick_rec:__again__"),
+            InlineKeyboardButton(text="🔄 Обновить", callback_data=sign_callback_data(f"refresh_slots:{recruiter_id}")),
+            InlineKeyboardButton(text="👤 Другой рекрутёр", callback_data=sign_callback_data("pick_rec:__again__")),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)

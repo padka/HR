@@ -3,2379 +3,2219 @@
 {% block title %}Слоты{% endblock %}
 {% block content %}
 {% set has_slots = slots|length > 0 %}
-{% set summary_query_parts = [] %}
-{% if per_page %}
-  {% set _ = summary_query_parts.append('per_page=' ~ per_page) %}
-{% endif %}
-{% if filter_recruiter_id %}
-  {% set _ = summary_query_parts.append('recruiter_id=' ~ filter_recruiter_id) %}
-{% endif %}
-{% if filter_city %}
-  {% set _ = summary_query_parts.append('city=' ~ filter_city) %}
-{% endif %}
-{% if filter_date %}
-  {% set _ = summary_query_parts.append('date=' ~ filter_date) %}
-{% endif %}
-{% if search_query %}
-  {% set _ = summary_query_parts.append('q=' ~ search_query) %}
-{% endif %}
-{% set summary_tail = '&'.join(summary_query_parts) %}
-<section class="page page--slots" data-page="slots" aria-labelledby="slots-title">
-  <header class="page-header page-header--card">
-    <div>
-      <h1 id="slots-title" class="page-title">Слоты</h1>
+{% set status_counts = status_counts or {} %}
+{% set status_counts = {'total': status_counts.get('total', 0), 'FREE': status_counts.get('FREE', 0), 'PENDING': status_counts.get('PENDING', 0), 'BOOKED': status_counts.get('BOOKED', 0), 'CONFIRMED_BY_CANDIDATE': status_counts.get('CONFIRMED_BY_CANDIDATE', 0), 'CANCELED': status_counts.get('CANCELED', 0)} %}
+{% set total_slots = status_counts.total or 0 %}
+{% set active_filters = [] %}
+{% if filter_status %}{% set _ = active_filters.append('status') %}{% endif %}
+{% if filter_city %}{% set _ = active_filters.append('city') %}{% endif %}
+{% if filter_recruiter_id %}{% set _ = active_filters.append('recruiter') %}{% endif %}
+{% if filter_date %}{% set _ = active_filters.append('date') %}{% endif %}
+{% if date_range %}{% set _ = active_filters.append('date_range') %}{% endif %}
+{% set filters_count = active_filters|length %}
+
+<script nonce="{{ request.state.csp_nonce }}">
+  // Mark body for page-scoped styling (full-width layout for slots only).
+  document.body.dataset.page = 'slots';
+</script>
+
+<style>
+/* ============================================
+   SLOTS PAGE - FULL-SCREEN ENTERPRISE REDESIGN
+   Токенизированная темизация без белых поверхностей в Dark
+   ============================================ */
+
+:root {
+  /* Status-specific tokens */
+  --status-free-bg: color-mix(in srgb, var(--success) 12%, var(--surface-2));
+  --status-free-fg: var(--success);
+  --status-free-border: color-mix(in srgb, var(--success) 30%, var(--border));
+
+  --status-pending-bg: color-mix(in srgb, var(--warning) 12%, var(--surface-2));
+  --status-pending-fg: var(--warning);
+  --status-pending-border: color-mix(in srgb, var(--warning) 30%, var(--border));
+
+  --status-booked-bg: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+  --status-booked-fg: var(--accent);
+  --status-booked-border: color-mix(in srgb, var(--accent) 30%, var(--border));
+
+  --status-confirmed-bg: color-mix(in srgb, var(--success) 14%, var(--surface-2));
+  --status-confirmed-fg: var(--success);
+  --status-confirmed-border: color-mix(in srgb, var(--success) 35%, var(--border));
+
+  --status-cancelled-bg: color-mix(in srgb, var(--danger) 12%, var(--surface-2));
+  --status-cancelled-fg: var(--danger);
+  --status-cancelled-border: color-mix(in srgb, var(--danger) 30%, var(--border));
+}
+
+html[data-theme="dark"] {
+  --status-free-bg: rgba(74, 222, 128, 0.14);
+  --status-free-fg: #4ade80;
+  --status-free-border: rgba(74, 222, 128, 0.28);
+
+  --status-pending-bg: rgba(251, 191, 36, 0.14);
+  --status-pending-fg: #fbbf24;
+  --status-pending-border: rgba(251, 191, 36, 0.28);
+
+  --status-booked-bg: rgba(105, 183, 255, 0.14);
+  --status-booked-fg: #69b7ff;
+  --status-booked-border: rgba(105, 183, 255, 0.28);
+
+  --status-confirmed-bg: rgba(74, 222, 128, 0.16);
+  --status-confirmed-fg: #4ade80;
+  --status-confirmed-border: rgba(74, 222, 128, 0.32);
+
+  --status-cancelled-bg: rgba(248, 113, 113, 0.14);
+  --status-cancelled-fg: #f87171;
+  --status-cancelled-border: rgba(248, 113, 113, 0.28);
+}
+
+/* ========== Full-Screen Page Layout ========== */
+.slots-shell {
+  width: 100%;
+}
+
+.slots-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  min-height: calc(100vh - 80px);
+  padding-top: clamp(12px, 2vw, 18px);
+  width: 100%;
+  max-width: min(1600px, 100%);
+  margin: 0 auto;
+}
+
+/* ========== Sticky Header ========== */
+.slots-header {
+  position: sticky;
+  top: calc(var(--nav-height, 70px) + 12px);
+  z-index: 120;
+  padding: clamp(14px, 2vw, 20px) clamp(18px, 3vw, 32px);
+  background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-1) 85%, transparent 100%);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(12px, 2vw, 20px);
+  flex-wrap: wrap;
+}
+
+.slots-header__title-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.slots-header__title {
+  margin: 0;
+  font-size: clamp(22px, 3vw, 28px);
+  font-weight: 800;
+  color: var(--text, var(--fg));
+  letter-spacing: -0.02em;
+}
+
+.slots-header__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-muted, var(--muted));
+}
+
+.slots-header__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.slots-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.header-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted, var(--muted));
+}
+
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 4px;
+  gap: 4px;
+}
+
+.segmented__btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted, var(--muted));
+  font-weight: 700;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.segmented__btn:hover {
+  color: var(--text, var(--fg));
+  background: var(--surface-3);
+}
+
+.segmented__btn.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+}
+
+/* ========== Status Tabs (Segmented Control) ========== */
+.status-tabs-container {
+  padding: 0 clamp(18px, 3vw, 32px) clamp(12px, 2vw, 16px);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.status-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding: 4px 0;
+}
+
+.status-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.status-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-muted, var(--muted));
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.status-tab:hover {
+  background: var(--surface-3);
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+  color: var(--text, var(--fg));
+}
+
+.status-tab.is-active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.status-tab__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text, var(--fg));
+}
+
+.status-tab.is-active .status-tab__count {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast, #ffffff);
+}
+
+/* ========== Filters Panel ========== */
+.filters-panel {
+  padding: clamp(12px, 2vw, 16px) clamp(18px, 3vw, 32px);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.filter-field__label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, var(--muted));
+}
+
+.filter-field__input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text, var(--fg));
+  font-size: 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.filter-field__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.filter-field__input::placeholder {
+  color: var(--text-muted, var(--muted));
+}
+
+.filter-field__search {
+  position: relative;
+  flex: 1 1 320px;
+}
+
+.filter-field__search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted, var(--muted));
+  pointer-events: none;
+}
+
+.filter-field__search input {
+  padding-left: 42px;
+  padding-right: 70px;
+}
+
+.filters-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.search-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text-muted, var(--muted));
+  border-radius: var(--radius-full);
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.search-clear:hover {
+  background: var(--surface-2);
+  color: var(--text, var(--fg));
+}
+
+.filters-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  color: var(--text-muted, var(--muted));
+  font-size: 12px;
+}
+
+@media (max-width: 960px) {
+  .filters-row {
+    gap: 8px;
+  }
+  .filter-field {
+    min-width: 150px;
+  }
+}
+.filter-presets {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.preset-btn {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted, var(--muted));
+  border-radius: var(--radius-full);
+  padding: 6px 10px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.preset-btn:hover {
+  color: var(--text, var(--fg));
+  background: var(--surface-3);
+  border-color: var(--accent);
+}
+
+.preset-btn.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.filters-summary {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted, var(--muted));
+}
+
+.filter-chip strong {
+  color: var(--text, var(--fg));
+}
+
+.filter-chip__clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted, var(--muted));
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.filter-chip__clear:hover {
+  color: var(--text, var(--fg));
+  background: var(--surface-3);
+  border-color: var(--border);
+}
+
+/* ========== Main Content Area ========== */
+.slots-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: clamp(16px, 2.5vw, 24px) clamp(18px, 3vw, 32px);
+  min-height: 320px;
+}
+
+body[data-page="slots"] main.container {
+  max-width: 100%;
+  width: 100%;
+  padding: clamp(56px, 6vw, 84px) clamp(18px, 3vw, 30px) clamp(28px, 5vw, 48px);
+}
+
+body[data-page="slots"] nav.nav {
+  max-width: min(1400px, 100%);
+  width: 100%;
+}
+
+.slots-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.slots-view [data-view="calendar"] {
+  display: none;
+}
+
+.slots-view[data-mode="calendar"] [data-view="calendar"] {
+  display: block;
+}
+
+.slots-view[data-mode="calendar"] [data-view="table"] {
+  display: none;
+}
+
+/* ========== Slots Table ========== */
+.slots-table-wrapper {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  overflow: visible;
+}
+
+.slots-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.slots-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 80;
+  background: var(--surface-2);
+  border-bottom: 2px solid var(--border);
+}
+
+.slots-table th {
+  padding: 14px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted, var(--muted));
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+
+.slots-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+
+.slots-table tbody tr:hover {
+  background: var(--surface-2);
+}
+
+.slots-table tbody tr.is-selected {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-1));
+}
+
+.slots-table td {
+  padding: 16px;
+  font-size: 14px;
+  color: var(--text, var(--fg));
+  vertical-align: middle;
+}
+
+.slots-page[data-density="compact"] .slots-table td,
+.slots-page[data-density="compact"] .slots-table th {
+  padding: 10px 12px;
+}
+
+.slots-page[data-hide-city="true"] .col-city,
+.slots-page[data-hide-city="true"] td.col-city {
+  display: none;
+}
+
+.slots-page[data-hide-recruiter="true"] .col-recruiter,
+.slots-page[data-hide-recruiter="true"] td.col-recruiter {
+  display: none;
+}
+
+.slots-page[data-hide-candidate="true"] .col-candidate,
+.slots-page[data-hide-candidate="true"] td.col-candidate {
+  display: none;
+}
+
+/* Column widths */
+.col-checkbox { width: 48px; }
+.col-time { width: 180px; }
+.col-recruiter { width: 200px; }
+.col-city { width: 160px; }
+.col-candidate { width: 220px; }
+.col-status { width: 140px; }
+.col-actions { width: 120px; }
+
+/* ========== Cell Content Styling ========== */
+.cell-primary {
+  font-weight: 700;
+  color: var(--text, var(--fg));
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+
+.cell-secondary {
+  font-size: 12px;
+  color: var(--text-muted, var(--muted));
+  line-height: 1.4;
+}
+
+.time-display {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.time-primary {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--text, var(--fg));
+}
+
+.time-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* ========== Status Badge ========== */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.status-badge--free {
+  background: var(--status-free-bg);
+  color: var(--status-free-fg);
+  border: 1px solid var(--status-free-border);
+}
+
+.status-badge--pending {
+  background: var(--status-pending-bg);
+  color: var(--status-pending-fg);
+  border: 1px solid var(--status-pending-border);
+}
+
+.status-badge--booked {
+  background: var(--status-booked-bg);
+  color: var(--status-booked-fg);
+  border: 1px solid var(--status-booked-border);
+}
+
+.status-badge--confirmed {
+  background: var(--status-confirmed-bg);
+  color: var(--status-confirmed-fg);
+  border: 1px solid var(--status-confirmed-border);
+}
+
+.status-badge--cancelled {
+  background: var(--status-cancelled-bg);
+  color: var(--status-cancelled-fg);
+  border: 1px solid var(--status-cancelled-border);
+}
+
+.status-badge--canceled {
+  background: var(--status-cancelled-bg);
+  color: var(--status-cancelled-fg);
+  border: 1px solid var(--status-cancelled-border);
+}
+
+/* ========== Pill Badge ========== */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, var(--muted));
+  white-space: nowrap;
+}
+
+.pill--accent {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  color: var(--accent);
+}
+
+.pill--candidate {
+  background: color-mix(in srgb, var(--info, var(--accent)) 14%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--info, var(--accent)) 26%, var(--border));
+  color: color-mix(in srgb, var(--info, var(--accent)) 80%, var(--text, var(--fg)));
+}
+
+.calendar-view {
+  display: grid;
+  gap: 16px;
+}
+
+.calendar-day {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  padding: 16px;
+  box-shadow: var(--shadow-1);
+}
+
+.calendar-day__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.calendar-day__title {
+  font-weight: 800;
+  color: var(--text, var(--fg));
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.calendar-day__meta {
+  display: flex;
+  gap: 8px;
+  color: var(--text-muted, var(--muted));
+  font-size: 12px;
+  align-items: center;
+}
+
+.calendar-day__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.calendar-slot {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  gap: 16px;
+  transition: transform 0.2s var(--transition-soft), box-shadow 0.2s var(--transition-soft), border-color 0.2s ease, background 0.2s ease;
+}
+
+.calendar-slot[data-open-url] {
+  cursor: pointer;
+}
+
+.calendar-slot:hover {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  box-shadow: var(--shadow-2);
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--surface-2) 85%, var(--surface-3));
+}
+
+.calendar-slot__time {
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text, var(--fg));
+}
+
+.calendar-slot__time-main {
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+.calendar-slot__time-sub {
+  font-size: 11px;
+  color: var(--text-muted, var(--muted));
+}
+
+.calendar-slot__info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.calendar-slot__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.calendar-slot__name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text, var(--fg));
+}
+
+.calendar-slot__meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text-muted, var(--muted));
+  font-size: 12px;
+}
+
+.calendar-slot__right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 120px;
+}
+
+.calendar-slot__actions {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.calendar-slot:hover .calendar-slot__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.calendar-slot__actions .icon-btn {
+  width: 30px;
+  height: 30px;
+}
+
+.calendar-slot__status .status-badge::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 6px;
+  transform: translateY(-1px);
+}
+
+/* ========== Action Buttons ========== */
+.action-group {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text, var(--fg));
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.icon-btn:hover {
+  background: var(--surface-3);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.icon-btn:active {
+  transform: translateY(0);
+}
+
+.icon-btn--danger {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+  color: var(--danger);
+}
+
+.icon-btn--danger:hover {
+  background: color-mix(in srgb, var(--danger) 18%, var(--surface-2));
+  border-color: var(--danger);
+}
+
+/* ========== UI Buttons ========== */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text, var(--fg));
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.ui-btn:hover {
+  background: var(--surface-3);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.ui-btn:active {
+  transform: translateY(0);
+}
+
+.ui-btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast, #ffffff);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.ui-btn--primary:hover {
+  background: color-mix(in srgb, var(--accent) 90%, #000);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16);
+}
+
+.ui-btn--ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-muted, var(--muted));
+}
+
+.ui-btn--ghost:hover {
+  background: var(--surface-2);
+  color: var(--text, var(--fg));
+}
+
+.ui-btn--danger {
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  color: var(--danger);
+}
+
+.ui-btn--danger:hover {
+  background: color-mix(in srgb, var(--danger) 20%, var(--surface-2));
+  border-color: var(--danger);
+}
+
+/* ========== Empty State ========== */
+.empty-state {
+  text-align: center;
+  padding: clamp(40px, 8vw, 80px) 20px;
+  color: var(--text-muted, var(--muted));
+}
+
+.empty-state__icon {
+  font-size: 64px;
+  margin-bottom: 20px;
+  opacity: 0.5;
+}
+
+.empty-state__title {
+  font-size: clamp(20px, 3vw, 26px);
+  font-weight: 700;
+  color: var(--text, var(--fg));
+  margin: 0 0 12px 0;
+}
+
+.empty-state__description {
+  font-size: 15px;
+  margin: 0 0 24px 0;
+  color: var(--text-muted, var(--muted));
+}
+
+.empty-state__actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ========== Loading Skeleton ========== */
+.skeleton-row {
+  display: grid;
+  grid-template-columns: 48px 180px 200px 160px 220px 140px 120px;
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    var(--surface-3) 50%,
+    var(--surface-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.calendar-skeleton {
+  display: none;
+  gap: 12px;
+}
+
+.calendar-skeleton__day {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.calendar-skeleton__row {
+  display: grid;
+  grid-template-columns: 120px 1fr 120px;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.slots-page.is-loading .calendar-day__list,
+.slots-page.is-loading .calendar-day__meta {
+  display: none;
+}
+
+.slots-page.is-loading .calendar-skeleton {
+  display: grid;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ========== Dropdown Menu ========== */
+.dropdown-wrapper {
+  position: relative;
+  z-index: 300;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  padding: 8px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 400;
+  animation: dropdownFadeIn 0.2s ease;
+}
+
+.dropdown-menu[hidden] {
+  display: none;
+}
+
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text, var(--fg));
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.dropdown-menu__item:hover {
+  background: var(--surface-2);
+}
+
+.dropdown-menu__item--danger {
+  color: var(--danger);
+}
+
+.dropdown-menu__item--danger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-2));
+}
+
+.dropdown-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text, var(--fg));
+}
+
+.dropdown-option input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+/* ========== Bulk Actions Bar ========== */
+.bulk-actions-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+  z-index: 500;
+  animation: slideUp 0.3s ease;
+}
+
+.bulk-actions-bar[hidden] {
+  display: none;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.bulk-actions-bar__label {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text, var(--fg));
+}
+
+.bulk-actions-bar__actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ========== Responsive Design ========== */
+@media (max-width: 1200px) {
+  .filters-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .slots-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .slots-header__actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .slots-page {
+    padding-top: calc(var(--nav-height, 70px) + 8px);
+  }
+
+  .slots-header {
+    padding: 12px 16px;
+  }
+
+  .slots-content {
+    padding: 12px 16px;
+  }
+
+  .filters-panel {
+    padding: 12px 16px;
+  }
+
+  .status-tabs-container {
+    padding: 0 16px 12px;
+  }
+
+  /* Mobile: Card view instead of table */
+  .slots-table-wrapper {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .slots-table thead {
+    display: none;
+  }
+
+  .slots-table,
+  .slots-table tbody,
+  .slots-table tr,
+  .slots-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .slots-table tbody tr {
+    margin-bottom: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+    padding: 16px;
+  }
+
+  .slots-table td {
+    padding: 8px 0;
+    border: none;
+  }
+
+  .slots-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted, var(--muted));
+    margin-bottom: 4px;
+  }
+
+  .col-checkbox,
+  .col-actions {
+    display: none;
+  }
+
+  .bulk-actions-bar {
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    transform: none;
+    border-radius: var(--radius-lg);
+  }
+
+  .calendar-day {
+    padding: 12px;
+  }
+
+  .calendar-slot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .calendar-slot__time {
+    min-width: 0;
+  }
+
+  .calendar-slot__right {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .calendar-slot__actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .skeleton-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ========== Accessibility ========== */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.slots-table th button:focus-visible,
+.ui-btn:focus-visible,
+.icon-btn:focus-visible,
+.status-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+</style>
+
+{% set view_mode = request.query_params.get('view', '') %}
+<div class="slots-shell">
+<div class="slots-page">
+  <!-- Sticky Header -->
+  <header class="slots-header">
+    <div class="slots-header__title-group">
+      <h1 class="slots-header__title">Слоты</h1>
+      <div class="slots-header__meta">
+        <span class="slots-header__badge">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+          </svg>
+          <span id="total-count">{{ status_counts.total }}</span> слотов
+        </span>
+        <span class="header-chip" id="filters-counter">
+          Фильтры: {{ filters_count }} активн.
+        </span>
+      </div>
     </div>
-    <div class="page-actions">
-      <a class="ui-btn ui-btn--primary" href="/slots/new">
+    <div class="slots-header__actions">
+      <div class="segmented" id="view-toggle" role="group" aria-label="Режим отображения">
+        <button type="button" class="segmented__btn{% if view_mode != 'calendar' %} is-active{% endif %}" data-view-mode="table" aria-pressed="{{ 'true' if view_mode != 'calendar' else 'false' }}">Таблица</button>
+        <button type="button" class="segmented__btn{% if view_mode == 'calendar' %} is-active{% endif %}" data-view-mode="calendar" aria-pressed="{{ 'true' if view_mode == 'calendar' else 'false' }}">Календарь</button>
+      </div>
+      <span class="header-chip">Действия доступны после выбора слотов</span>
+      <a href="/slots/new" class="ui-btn ui-btn--primary">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <line x1="12" y1="5" x2="12" y2="19"></line>
           <line x1="5" y1="12" x2="19" y2="12"></line>
         </svg>
         Новый слот
       </a>
-      <div class="dropdown-menu-wrapper">
-        <button type="button" class="ui-btn ui-btn--ghost" id="more_actions_btn" aria-expanded="false" aria-haspopup="true">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <circle cx="12" cy="12" r="1"></circle>
-            <circle cx="19" cy="12" r="1"></circle>
-            <circle cx="5" cy="12" r="1"></circle>
-          </svg>
-        </button>
-        <div class="dropdown-menu" id="more_actions_menu" hidden>
-          <button type="button" class="dropdown-menu__item" id="delete_selected_slots">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <polyline points="3 6 5 6 21 6"></polyline>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-            Удалить выбранные
-          </button>
-          <button type="button" class="dropdown-menu__item" id="export_slots">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M12 5v14"></path>
-              <polyline points="19 12 12 19 5 12"></polyline>
-              <rect x="5" y="4" width="14" height="4" rx="1"></rect>
-            </svg>
-            Экспорт CSV
-          </button>
-          <button type="button" class="dropdown-menu__item dropdown-menu__item--danger" id="delete_all_slots">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <polyline points="3 6 5 6 21 6"></polyline>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-            Удалить все слоты
-          </button>
-        </div>
-      </div>
     </div>
   </header>
 
-  <style>
-    .page--slots {
-      --slot-veil: var(--surface-2);
-      --slot-veil-strong: var(--surface-3);
-      --slot-veil-bright: color-mix(in srgb, var(--surface-3) 82%, transparent);
-      --slot-surface: var(--surface-1);
-      --slot-surface-strong: var(--surface-2);
-      --slot-border: var(--border);
-      --slot-border-strong: color-mix(in srgb, var(--border) 70%, transparent);
-      --slot-muted: var(--text-muted, var(--muted));
-      --slot-muted-strong: color-mix(in srgb, var(--text) 88%, transparent);
-      --slot-hover: var(--surface-2);
-      --slot-press: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
-      --slot-raise: var(--shadow-md, 0 12px 30px rgba(0,0,0,0.12));
-      --slot-backdrop: var(--surface-1);
-      --slot-danger-ink: var(--danger);
-      --slot-success-ink: var(--success);
-      background: var(--bg);
-    }
-
-    html[data-theme="dark"] .page--slots {
-      --slot-veil: var(--surface-2);
-      --slot-veil-strong: var(--surface-3);
-      --slot-veil-bright: color-mix(in srgb, var(--surface-3) 82%, transparent);
-      --slot-surface: var(--surface-1);
-      --slot-surface-strong: var(--surface-2);
-      --slot-border: var(--border);
-      --slot-border-strong: color-mix(in srgb, var(--border) 60%, transparent);
-      --slot-muted: var(--text-muted, var(--muted));
-      --slot-muted-strong: color-mix(in srgb, var(--text) 88%, transparent);
-      --slot-hover: var(--surface-2);
-      --slot-press: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
-      --slot-raise: 0 18px 52px rgba(0, 0, 0, 0.5);
-      --slot-backdrop: var(--surface-1);
-      background: var(--bg);
-    }
-
-    .page-header--card {
-      background: var(--surface-1);
-      border: var(--border-w) solid var(--border);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-sm);
-      padding: var(--space-4, 24px);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--space-3, 16px);
-    }
-    .page-header--card .page-title {
-      color: var(--text, var(--fg));
-      font-weight: 700;
-      background: none;
-      -webkit-text-fill-color: unset;
-    }
-
-    .ui-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 10px 16px;
-      border-radius: var(--radius-full);
-      border: var(--border-w) solid var(--border);
-      background: var(--surface-2);
-      color: var(--text, var(--fg));
-      font-weight: 700;
-      text-decoration: none;
-      transition: all 0.2s ease;
-    }
-    .ui-btn:hover { background: var(--surface-1); box-shadow: var(--shadow-sm); }
-    .ui-btn:focus-visible { outline: none; box-shadow: var(--focus-ring, 0 0 0 3px rgba(99,102,241,0.35)); }
-    .ui-btn--primary {
-      background: var(--accent);
-      color: var(--accent-contrast);
-      border-color: transparent;
-      box-shadow: var(--shadow-sm);
-    }
-    .ui-btn--primary:hover { box-shadow: var(--shadow-md, 0 12px 30px rgba(0,0,0,0.15)); transform: translateY(-1px); }
-    .ui-btn--ghost {
-      background: var(--surface-2);
-      color: var(--text, var(--fg));
-      border-color: var(--border);
-    }
-    .ui-btn--ghost:hover { background: var(--surface-1); }
-    .ui-btn--danger {
-      background: var(--danger-soft);
-      color: var(--danger);
-      border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
-    }
-    .ui-btn[disabled] { opacity: 0.55; cursor: not-allowed; }
-    .ui-icon-btn {
-      width: 40px;
-      height: 40px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: var(--radius-md);
-      border: var(--border-w) solid var(--border);
-      background: var(--surface-2);
-      color: var(--text, var(--fg));
-      transition: all 0.2s ease;
-    }
-    .ui-icon-btn:hover { background: var(--surface-1); box-shadow: var(--shadow-sm); }
-    .ui-icon-btn:focus-visible { outline: none; box-shadow: var(--focus-ring, 0 0 0 3px rgba(99,102,241,0.35)); }
-
-    /* Bridge legacy buttons to theme */
-    .liquid-glass-btn {
-      background: var(--surface-2);
-      border: var(--border-w) solid var(--border);
-      color: var(--text, var(--fg));
-      border-radius: var(--radius-full);
-      padding: 10px 16px;
-      font-weight: 700;
-      transition: all 0.2s ease;
-    }
-    .liquid-glass-btn--primary { background: var(--accent); color: var(--accent-contrast); border-color: transparent; box-shadow: var(--shadow-sm); }
-    .liquid-glass-btn--secondary { background: var(--surface-2); color: var(--text, var(--fg)); }
-    .liquid-glass-btn--ghost { background: var(--surface-2); color: var(--text, var(--fg)); border-color: var(--border); }
-    .liquid-glass-btn--danger { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
-    .liquid-glass-btn:hover { background: var(--surface-1); box-shadow: var(--shadow-sm); }
-    .liquid-glass-btn:focus-visible { outline: none; box-shadow: var(--focus-ring, 0 0 0 3px rgba(99,102,241,0.35)); }
-
-    .page-header,
-    .page-actions,
-    .dropdown-menu-wrapper {
-      overflow: visible;
-    }
-
-    .dropdown-menu-wrapper { position: relative; }
-    .dropdown-menu {
-      position: absolute;
-      top: calc(100% + 8px);
-      right: 0;
-      min-width: 220px;
-      padding: 8px;
-      border-radius: var(--radius-md);
-      border: var(--border-w) solid var(--slot-border-strong);
-      background: var(--surface-1);
-      box-shadow: var(--shadow-md);
-      z-index: 400;
-      animation: dropdownFadeIn 0.2s ease;
-    }
-    .dropdown-menu[hidden] { display: none; }
-    .dropdown-menu__item {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 14px;
-      border: none;
-      border-radius: var(--radius-sm);
-      background: transparent;
-      color: var(--fg);
-      font-size: 14px;
-      text-align: left;
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-    .dropdown-menu__item:hover { background: var(--slot-hover); }
-    .dropdown-menu__item--danger { color: var(--slot-danger-ink); }
-    .dropdown-menu__item--danger:hover { background: color-mix(in srgb, var(--danger) 22%, var(--slot-veil)); }
-    @keyframes dropdownFadeIn {
-      from { opacity: 0; transform: translateY(-8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .slot-summary {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin: 10px 0;
-    }
-    .slot-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 16px;
-      border-radius: var(--radius-md);
-      border: var(--border-w) solid var(--border);
-      background: var(--surface-2);
-      color: var(--text, var(--fg));
-      text-decoration: none;
-      transition: all 0.2s ease;
-      min-width: 160px;
-    }
-    .slot-chip__value { font-size: 20px; font-weight: 800; line-height: 1; }
-    .slot-chip__label { font-size: 12px; color: var(--slot-muted); letter-spacing: 0.04em; }
-    .slot-chip__icon { font-size: 18px; }
-    .slot-chip--active {
-      border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-      background: var(--accent-soft);
-      box-shadow: var(--shadow-sm);
-    }
-    .slot-generator {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .slot-generator__row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 12px;
-      align-items: end;
-    }
-    .slot-generator label {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .slot-generator input,
-    .slot-generator select {
-      padding: 10px 12px;
-      border-radius: var(--radius-sm);
-      border: var(--border-w) solid var(--border);
-      background: var(--surface-2);
-      color: var(--text, var(--fg));
-    }
-    .slot-generator__actions {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .slot-generator__hint {
-      margin: 0;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .status-tabs {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 12px 0 4px;
-      padding: 4px;
-      background: var(--surface-1);
-      border: var(--border-w) solid var(--border);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-sm);
-    }
-    .status-tab {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 14px;
-      border-radius: var(--radius-md);
-      border: var(--border-w) solid var(--border);
-      background: var(--surface-2);
-      color: var(--text-muted, var(--muted));
-      cursor: pointer;
-      transition: all 0.2s ease;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-    }
-    .status-tab__count {
-      padding: 4px 8px;
-      border-radius: var(--radius-sm);
-      background: var(--surface-3);
-      border: var(--border-w) solid var(--border);
-      font-size: 12px;
-      color: var(--text, var(--fg));
-    }
-    .status-tab.is-active {
-      border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-      background: var(--accent-soft);
-      box-shadow: var(--shadow-sm);
-      color: var(--text, var(--fg));
-    }
-
-
-    .slot-filters {
-      margin: 14px 0 8px;
-      padding: 16px;
-      border-radius: var(--radius-lg);
-      border: var(--border-w) solid var(--slot-border);
-      background: var(--slot-surface);
-      box-shadow: var(--shadow-sm);
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .slot-filters__row {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      align-items: flex-end;
-    }
-    .slot-filters__group {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      min-width: 180px;
-    }
-    .slot-filters__group--stretch { flex: 1; min-width: 260px; }
-    .slot-filters__group select,
-    .slot-filters__group input[type="date"],
-    .slot-filters__group input[type="search"] {
-      width: 100%;
-      padding: 10px 12px;
-      border-radius: var(--radius-md);
-      border: var(--border-w) solid var(--slot-border-strong);
-      background: var(--surface-2);
-      color: var(--text, var(--fg));
-      font-size: 14px;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    .slot-filters__group input::placeholder,
-    .slot-filters__group select::placeholder { color: var(--text-muted, var(--muted)); }
-    .slot-filters__group select:focus,
-    .slot-filters__group input:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: var(--focus-ring, 0 0 0 3px rgba(99,102,241,0.35));
-    }
-    .slot-filters__label {
-      font-size: 12px;
-      color: var(--slot-muted);
-      letter-spacing: 0.03em;
-      text-transform: uppercase;
-    }
-    .slot-filters__actions {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      margin-left: auto;
-    }
-
-    .search-field { position: relative; display: flex; align-items: center; }
-    .search-field__icon {
-      position: absolute;
-      left: 12px;
-      color: var(--slot-muted-strong);
-      pointer-events: none;
-    }
-    .search-field__input { padding-left: 38px !important; }
-    .search-field__counter {
-      position: absolute;
-      right: 10px;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      color: var(--slot-muted);
-      background: var(--slot-veil-strong);
-      padding: 6px 10px;
-      border-radius: var(--radius-md);
-      border: var(--border-w) solid var(--slot-border);
-    }
-    .search-field__spinner { animation: spin 1s linear infinite; }
-    @keyframes spin { from { transform: rotate(0deg);} to { transform: rotate(360deg);} }
-
-    .chip-group { display: flex; flex-wrap: wrap; gap: 8px; }
-    .chip {
-      border: var(--border-w) solid var(--slot-border-strong);
-      background: var(--surface-2);
-      color: var(--text, var(--fg));
-      padding: 8px 12px;
-      border-radius: var(--radius-md);
-      cursor: pointer;
-      transition: all 0.15s ease;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-    }
-    .chip.is-active {
-      border-color: color-mix(in srgb, var(--accent) 35%, var(--slot-border));
-      background: var(--accent-soft);
-      box-shadow: var(--shadow-sm);
-    }
-
-    .slot-table-region { margin-top: 6px; }
-    .list-table-wrapper {
-      max-height: 72vh;
-      overflow-x: auto;
-      border-radius: var(--radius-lg);
-      background: var(--slot-surface);
-      border: var(--border-w) solid var(--slot-border);
-      box-shadow: var(--shadow-md);
-    }
-    /* Notion/Apple-inspired table: airy, separated rows, soft surfaces */
-    .page--slots .slot-table {
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 0 10px;
-      table-layout: fixed;
-      background: transparent;
-      min-width: 760px;
-    }
-    .page--slots .slot-table thead {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: var(--surface-1);
-      box-shadow: 0 1px 0 var(--slot-border);
-    }
-    .page--slots .slot-table th,
-    .page--slots .slot-table td {
-      padding: 12px 14px;
-      border: none;
-      text-align: left;
-      vertical-align: middle;
-    }
-    .page--slots .slot-table th {
-      font-size: 12px;
-      letter-spacing: 0.01em;
-      text-transform: uppercase;
-      color: var(--text-muted, var(--muted));
-      background: var(--surface-1);
-      font-weight: 700;
-    }
-    .page--slots .slot-row {
-      background: var(--surface-1);
-      border: var(--border-w) solid var(--slot-border);
-      border-radius: var(--radius-md);
-      box-shadow: var(--shadow-sm);
-      transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
-    }
-    .page--slots .slot-row:hover {
-      background: var(--slot-hover);
-      border-color: color-mix(in srgb, var(--accent) 22%, var(--slot-border));
-      box-shadow: var(--shadow-md);
-      transform: translateY(-1px);
-    }
-    .page--slots .slot-row td:first-child { border-top-left-radius: 12px; border-bottom-left-radius: 12px; }
-    .page--slots .slot-row td:last-child { border-top-right-radius: 12px; border-bottom-right-radius: 12px; }
-    .col-actions { display: flex; justify-content: flex-end; gap: 6px; }
-
-    @media (max-width: 980px) {
-      .page-header--card { padding: 16px; flex-direction: column; align-items: flex-start; }
-      .slot-filters { padding: 12px; }
-      .slot-filters__row { flex-direction: column; align-items: stretch; }
-      .slot-filters__actions { margin-left: 0; justify-content: flex-start; }
-      .status-tabs { flex-direction: column; align-items: stretch; }
-      .status-tab { width: 100%; justify-content: space-between; }
-      .slot-table { min-width: 100%; }
-      .slot-table th, .slot-table td { padding: 10px 12px; }
-    }
-
-    @media (max-width: 768px) {
-      .page-actions { width: 100%; justify-content: flex-start; }
-      .slot-summary { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
-      .list-table-wrapper { overflow-x: visible; }
-      .slot-table { border: none; border-radius: var(--radius-md); }
-      .slot-table thead { display: none; }
-      .slot-table tbody, .slot-table tr, .slot-table td { display: block; width: 100%; }
-      .slot-table tr { margin-bottom: 14px; border: var(--border-w) solid var(--slot-border); border-radius: var(--radius-md); overflow: hidden; background: var(--surface-1); box-shadow: var(--shadow-sm); }
-      .slot-table td {
-        padding: 10px 12px;
-        border-bottom: var(--border-w) solid var(--slot-border);
-        background: var(--surface-1);
-      }
-      .slot-table td:last-child { border-bottom: none; }
-      .slot-table td::before {
-        content: attr(data-label);
-        display: block;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.02em;
-        color: var(--text-muted, var(--muted));
-        margin-bottom: 4px;
-      }
-      .col-actions { justify-content: flex-start; }
-      .slot-time__meta { flex-wrap: wrap; }
-    }
-
-    .page--slots .slot-row.is-selected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 52%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--surface-1)); }
-    .page--slots .slot-row.is-expanded { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent); }
-
-    .slot-time { display: flex; flex-direction: column; gap: 6px; }
-    .slot-time__primary { font-size: 16px; font-weight: 800; letter-spacing: 0.02em; }
-    .slot-time__primary { color: var(--text, var(--fg)); }
-    .slot-time__secondary { font-size: 13px; color: var(--text-muted, var(--muted)); display: flex; gap: 6px; align-items: center; }
-    .slot-time__meta { display: flex; gap: 8px; flex-wrap: wrap; color: var(--text-muted, var(--muted)); }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      border-radius: var(--radius-sm);
-      background: var(--surface-2);
-      font-size: 12px;
-      color: var(--text-muted, var(--muted));
-      border: var(--border-w) solid var(--border);
-    }
-    .pill--ghost { background: var(--surface-2); color: var(--text-muted, var(--muted)); }
-    .pill--accent { background: var(--accent-soft); color: var(--text, var(--fg)); border: var(--border-w) solid color-mix(in srgb, var(--accent) 35%, var(--border)); }
-
-    .liquid-glass-badge {
-      background: var(--surface-2);
-      border: var(--border-w) solid var(--border);
-      color: var(--text, var(--fg));
-      box-shadow: none;
-    }
-    .liquid-glass-badge--success { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); }
-    .liquid-glass-badge--warning { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, var(--border)); }
-    .liquid-glass-badge--info { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
-    .liquid-glass-badge--danger { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
-
-    .slot-cell-primary {
-      font-weight: 700;
-      color: var(--text, var(--fg));
-      display: block;
-      margin-bottom: 4px;
-      white-space: normal;
-      line-height: 1.2;
-    }
-    .slot-cell-meta { color: var(--text-muted, var(--muted)); font-size: 12px; line-height: 1.3; }
-
-    .action-group {
-      display: flex;
-      gap: 8px;
-      justify-content: flex-end;
-      flex-wrap: wrap;
-    }
-    .icon-btn {
-      height: 32px;
-      width: 32px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: var(--radius-sm);
-      border: var(--border-w) solid var(--slot-border);
-      background: var(--surface-2);
-      color: var(--text, var(--fg));
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-    .icon-btn:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); background: var(--surface-1); }
-    .icon-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
-    .icon-btn--danger {
-      border-color: color-mix(in srgb, var(--danger) 55%, transparent);
-      background: color-mix(in srgb, var(--danger) 16%, var(--surface-2));
-      color: color-mix(in srgb, var(--danger) 62%, var(--fg));
-    }
-    .icon-btn--danger,
-    .icon-btn[data-action="reject-booking"] {
-      border-color: color-mix(in srgb, var(--danger) 58%, transparent);
-      background: color-mix(in srgb, var(--danger) 18%, var(--surface-2));
-      color: color-mix(in srgb, var(--danger) 68%, var(--fg));
-    }
-    .icon-btn--danger:hover {
-      border-color: color-mix(in srgb, var(--danger) 78%, transparent);
-      box-shadow: var(--shadow-sm);
-      background: color-mix(in srgb, var(--danger) 22%, var(--surface-2));
-    }
-
-    .slot-row-details { background: var(--slot-veil); }
-    .slot-row-details[hidden] { display: none; }
-    .slot-details {
-      padding: 14px 16px;
-      border-radius: var(--radius-md);
-      background: color-mix(in srgb, var(--slot-backdrop) 88%, transparent);
-      border: var(--border-w) solid var(--slot-border);
-    }
-    .slot-details__grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 10px;
-      color: var(--slot-muted-strong);
-    }
-    .slot-details__grid span { color: var(--slot-muted); font-size: 12px; }
-    .slot-details__actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
-
-    .table-state {
-      border-radius: var(--radius-lg);
-      padding: 20px;
-      border: var(--border-w) dashed var(--slot-border);
-      background: var(--slot-surface);
-      text-align: center;
-      color: var(--slot-muted-strong);
-      margin-bottom: 10px;
-    }
-    .table-state[hidden] { display: none; }
-    .table-state--error { border-color: color-mix(in srgb, var(--danger) 55%, transparent); color: color-mix(in srgb, var(--danger) 70%, var(--fg)); }
-    .skeleton-row {
-      display: grid;
-      grid-template-columns: 42px 1.2fr 1fr 1fr 0.7fr 0.7fr;
-      gap: 10px;
-      margin-bottom: 12px;
-    }
-    @media (max-width: 1360px) {
-      .skeleton-row { grid-template-columns: 42px 1.2fr 1fr 0.9fr 0.7fr; }
-    }
-    .skeleton-line {
-      height: 14px;
-      border-radius: var(--radius-sm);
-      background: linear-gradient(90deg, var(--slot-veil), var(--slot-veil-strong), var(--slot-veil));
-      background-size: 200% 100%;
-      animation: shimmer 1.5s infinite;
-    }
-    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-
-    .slot-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; margin-top: 12px; }
-    .slot-card {
-      padding: 16px;
-      border-radius: var(--radius-lg);
-      border: var(--border-w) solid var(--slot-border-strong);
-      background: var(--slot-surface);
-      box-shadow: var(--shadow-md);
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .slot-card__header { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
-    .slot-card__title { font-size: 17px; font-weight: 800; letter-spacing: 0.01em; }
-    .slot-card__status { display: inline-flex; align-items: center; gap: 6px; }
-    .slot-card__meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 10px; color: var(--slot-muted-strong); font-size: 13px; }
-    .slot-card__meta span { color: var(--slot-muted); font-size: 12px; display: block; }
-    .slot-card__footer { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
-    .profile-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--slot-veil-strong); font-size: 12px; }
-
-    .calendar-view { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
-    .calendar-day { border: var(--border-w) solid var(--slot-border); border-radius: var(--radius-md); overflow: hidden; background: color-mix(in srgb, var(--slot-surface-strong) 96%, transparent); box-shadow: var(--shadow-md); }
-    .calendar-day__header { padding: 10px 14px; background: var(--slot-veil-strong); font-weight: 700; letter-spacing: 0.04em; display: flex; justify-content: space-between; color: var(--fg); }
-    .calendar-day__list { display: flex; flex-direction: column; }
-    .calendar-item { padding: 12px 14px; display: grid; grid-template-columns: 120px 1fr 1fr 160px; gap: 10px; align-items: center; border-top: var(--border-w) solid var(--slot-border); background: var(--slot-surface); }
-    .calendar-item:first-child { border-top: none; }
-    .calendar-item__time { font-weight: 800; letter-spacing: 0.01em; }
-    .calendar-item__meta { display: flex; flex-direction: column; gap: 2px; color: var(--slot-muted); }
-    .calendar-item__actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
-    @media (max-width: 1100px) {
-      .calendar-item { grid-template-columns: 1fr; align-items: flex-start; }
-      .calendar-item__actions { justify-content: flex-start; }
-    }
-  </style>
-  <style>
-    /* Use only table view */
-    #slot_cards,
-    #slot_calendar {
-      display: none !important;
-    }
-  </style>
-
-  {% if flash %}
-    {% set tone = {'success': 'success', 'error': 'danger', 'info': 'info'}.get(flash.status, 'info') %}
-    <div class="surface glass grain alert" data-tone="{{ tone }}" role="alert">
-      <p class="page-description">{{ flash.message }}</p>
+  <!-- Status Tabs -->
+  <div class="status-tabs-container">
+    <div class="status-tabs" role="tablist" aria-label="Фильтр по статусу">
+      {% set status_tabs = [
+        {'key': None, 'label': 'Все', 'count': status_counts.total},
+        {'key': 'FREE', 'label': 'Свободные', 'count': status_counts.FREE},
+        {'key': 'PENDING', 'label': 'Ожидают', 'count': status_counts.PENDING},
+        {'key': 'BOOKED', 'label': 'Забронированы', 'count': status_counts.BOOKED},
+        {'key': 'CONFIRMED_BY_CANDIDATE', 'label': 'Подтверждены', 'count': status_counts.CONFIRMED_BY_CANDIDATE},
+        {'key': 'CANCELED', 'label': 'Отменены', 'count': status_counts.CANCELED},
+      ] %}
+      {% for tab in status_tabs %}
+        {% set is_active = filter_status == tab.key or (not filter_status and not tab.key) %}
+        <button type="button"
+                class="status-tab{% if is_active %} is-active{% endif %}"
+                data-status="{{ tab.key or '' }}"
+                role="tab"
+                aria-selected="{{ 'true' if is_active else 'false' }}">
+          <span>{{ tab.label }}</span>
+          <span class="status-tab__count">{{ tab.count }}</span>
+        </button>
+      {% endfor %}
     </div>
-  {% endif %}
-
-  
-  {% set status_cards = [
-    {'key': None, 'label': 'Все слоты', 'icon': '📊', 'count': status_counts.total, 'id': 'cnt-total'},
-    {'key': 'FREE', 'label': 'Свободные', 'icon': '🟢', 'count': status_counts.FREE, 'id': 'cnt-free'},
-    {'key': 'PENDING', 'label': 'Ожидают', 'icon': '⏳', 'count': status_counts.PENDING, 'id': 'cnt-pending'},
-    {'key': 'BOOKED', 'label': 'Забронированы', 'icon': '📅', 'count': status_counts.BOOKED, 'id': 'cnt-booked'},
-    {'key': 'CONFIRMED_BY_CANDIDATE', 'label': 'Подтверждены', 'icon': '✅', 'count': status_counts.CONFIRMED_BY_CANDIDATE, 'id': 'cnt-confirmed'},
-  ] %}
-
-  <div class="status-tabs" role="tablist" aria-label="Фильтр по статусу">
-    {% for tab in status_cards %}
-      {% set is_active = filter_status == tab.key or (not filter_status and not tab.key) %}
-      <button type="button"
-              class="status-tab{% if is_active %} is-active{% endif %}"
-              data-status="{{ tab.key or '' }}"
-              aria-pressed="{{ 'true' if is_active else 'false' }}">
-        <span>{{ tab.label }}</span>
-        <span class="status-tab__count" id="tab-{{ tab.id }}">{{ tab.count }}</span>
-      </button>
-    {% endfor %}
   </div>
 
-  {% if has_slots %}
-    <form class="slot-filters" id="slot_filters_form" method="get" novalidate data-animate-in>
-      <input type="hidden" name="status" id="filter_status" value="{{ filter_status or '' }}">
+  <!-- Filters Panel -->
+  <div class="filters-panel">
+    <form id="filters-form" method="get" novalidate>
+      <input type="hidden" name="status" id="filter-status-input" value="{{ filter_status or '' }}">
       <input type="hidden" name="per_page" value="{{ per_page }}">
       <input type="hidden" name="page" value="{{ page }}">
-      <div class="slot-filters__row">
-        <label class="slot-filters__group slot-filters__group--stretch">
-          <span class="slot-filters__label">Поиск</span>
-          <div class="search-field">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-field__icon" aria-hidden="true">
-              <circle cx="11" cy="11" r="8"></circle>
-              <path d="m21 21-4.35-4.35"></path>
-            </svg>
-            <input type="search"
-                   id="slots_search"
-                   name="q"
-                   class="search-field__input"
-                   placeholder="Поиск по кандидату, TG ID, городу, рекрутеру, статусу..."
-                   aria-label="Поиск слотов"
-                   value="{{ search_query or '' }}"
-                   autocomplete="off">
-            <span class="search-field__counter" id="search_counter" hidden>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-field__spinner" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
-              </svg>
-            </span>
-          </div>
-        </label>
-        <label class="slot-filters__group">
-          <span class="slot-filters__label">Город</span>
-          <select name="city" id="filter_city">
-            <option value="">Все</option>
+      <input type="hidden" name="date_range" id="date-range-input" value="{{ date_range or '' }}">
+      <input type="hidden" name="view" id="view-mode-input" value="{{ view_mode }}">
+
+      <div class="filters-row">
+        <div class="filter-field">
+          <label class="filter-field__label" for="city-filter">Город</label>
+          <select id="city-filter" name="city" class="filter-field__input">
+            <option value="">Все города</option>
             {% for city_name in (city_options or []) %}
               <option value="{{ city_name }}" {% if filter_city == city_name %}selected{% endif %}>
                 {{ city_name }}
               </option>
             {% endfor %}
           </select>
-        </label>
-        <label class="slot-filters__group">
-          <span class="slot-filters__label">Рекрутер</span>
-          <select name="recruiter_id" id="filter_recruiter">
-            <option value="">Все</option>
+        </div>
+
+        <div class="filter-field">
+          <label class="filter-field__label" for="recruiter-filter">Рекрутер</label>
+          <select id="recruiter-filter" name="recruiter_id" class="filter-field__input">
+            <option value="">Все рекрутеры</option>
             {% for rec in recruiter_options %}
               <option value="{{ rec.id }}" {% if filter_recruiter_id == rec.id %}selected{% endif %}>
                 {{ rec.name }}
               </option>
             {% endfor %}
           </select>
-        </label>
-        <div class="slot-filters__group">
-          <span class="slot-filters__label">Дата</span>
-          <div class="chip-group" id="date_shortcuts">
-            <button type="button" class="chip" data-date="today">Сегодня</button>
-            <button type="button" class="chip" data-date="tomorrow">Завтра</button>
-            <button type="button" class="chip" data-date="week">7 дней</button>
-            <button type="button" class="chip" data-date="range">Диапазон</button>
-          </div>
-          <div class="slot-filters__row" id="date_range" hidden>
-            <label class="slot-filters__group">
-              <span class="slot-filters__label">C</span>
-              <input type="date" id="filter_date_from" name="date_from">
-            </label>
-            <label class="slot-filters__group">
-              <span class="slot-filters__label">По</span>
-              <input type="date" id="filter_date_to" name="date_to">
-            </label>
-          </div>
         </div>
-        <div class="slot-filters__actions">
-          <button type="button" class="ui-btn ui-btn--primary" id="apply_filters">Применить</button>
-          <button type="button" class="ui-btn ui-btn--ghost" data-clear-filters>Сбросить</button>
+
+        <div class="filter-field">
+          <label class="filter-field__label" for="date-filter">Дата</label>
+          <input type="date"
+                 id="date-filter"
+                 name="date"
+                 class="filter-field__input"
+                 value="{{ filter_date or '' }}">
+        </div>
+
+        <div class="filters-actions">
+          <button type="submit" class="ui-btn ui-btn--primary">Применить</button>
+          <button type="button" class="ui-btn ui-btn--ghost" id="reset-filters-btn">Сбросить</button>
+        </div>
+      </div>
+
+      <div class="filters-summary">
+        <div class="filter-presets" aria-label="Быстрые диапазоны">
+          <button type="button" class="preset-btn{% if date_range == 'today' %} is-active{% endif %}" data-date-preset="today">Сегодня</button>
+          <button type="button" class="preset-btn{% if date_range == 'tomorrow' %} is-active{% endif %}" data-date-preset="tomorrow">Завтра</button>
+          <button type="button" class="preset-btn{% if date_range in ['7d', 'week'] %} is-active{% endif %}" data-date-preset="week">7 дней</button>
+          <button type="button" class="preset-btn{% if not filter_date and not date_range %} is-active{% endif %}" data-date-preset="clear">Сбросить дату</button>
+        </div>
+        <div class="filters-meta">
+          <span class="pill">Автообновление фильтров</span>
+          {% if filters_count > 0 %}
+            <div class="filter-chip">
+              Активно <strong>{{ filters_count }}</strong>
+            </div>
+            {% if filter_status %}
+              <div class="filter-chip" data-filter-clear="status">
+                Статус: <strong>{{ filter_status }}</strong>
+                <button type="button" class="filter-chip__clear" aria-label="Сбросить фильтр статуса">×</button>
+              </div>
+            {% endif %}
+            {% if filter_city %}
+              <div class="filter-chip" data-filter-clear="city">
+                Город: <strong>{{ filter_city }}</strong>
+                <button type="button" class="filter-chip__clear" aria-label="Сбросить фильтр города">×</button>
+              </div>
+            {% endif %}
+            {% if filter_recruiter_id %}
+              {% set rec_label = (recruiter_options | selectattr('id', 'equalto', filter_recruiter_id) | map(attribute='name') | list | first) %}
+              <div class="filter-chip" data-filter-clear="recruiter">
+                Рекрутер: <strong>{{ rec_label or filter_recruiter_id }}</strong>
+                <button type="button" class="filter-chip__clear" aria-label="Сбросить фильтр рекрутера">×</button>
+              </div>
+            {% endif %}
+            {% if filter_date %}
+              <div class="filter-chip" data-filter-clear="date">
+                Дата: <strong>{{ filter_date }}</strong>
+                <button type="button" class="filter-chip__clear" aria-label="Сбросить фильтр даты">×</button>
+              </div>
+            {% endif %}
+            {% if date_range %}
+              <div class="filter-chip" data-filter-clear="date_range">
+                Диапазон: <strong>{{ date_range }}</strong>
+                <button type="button" class="filter-chip__clear" aria-label="Сбросить диапазон дат">×</button>
+              </div>
+            {% endif %}
+          {% else %}
+            <span>Фильтры не заданы</span>
+          {% endif %}
         </div>
       </div>
     </form>
+  </div>
 
-    <div class="slot-table-region" data-animate-in>
-      <div class="table-state table-state--loading" id="slots_loading" hidden>
-        {% for i in range(4) %}
-        <div class="skeleton-row" aria-hidden="true">
-          <span class="skeleton-line"></span>
-          <span class="skeleton-line"></span>
-          <span class="skeleton-line"></span>
-          <span class="skeleton-line"></span>
-          <span class="skeleton-line"></span>
-          <span class="skeleton-line"></span>
-        </div>
-        {% endfor %}
-      </div>
-      <div class="table-state table-state--error" id="slots_error" hidden>
-        <p class="page-description">Не удалось загрузить список слотов.</p>
-        <button type="button" class="ui-btn ui-btn--ghost" id="reload_slots">Обновить</button>
-      </div>
-      <div class="table-state table-state--empty" id="slots_empty" hidden>
-        <h3 class="section-title">Нет слотов по текущим фильтрам</h3>
-        <p class="page-description">Попробуйте сбросить фильтры или создайте новый слот.</p>
-        <div class="slot-empty-state__actions">
-          <a class="ui-btn ui-btn--primary" href="/slots/new">+ Новый слот</a>
-          <button type="button" class="ui-btn ui-btn--ghost" data-clear-filters>Сбросить фильтры</button>
-        </div>
-      </div>
+  <!-- Main Content -->
+  <div class="slots-content">
+    {% if has_slots %}
+      <div class="slots-view" id="slots-view" data-mode="{{ 'calendar' if view_mode == 'calendar' else 'table' }}">
+        <div class="slots-table-wrapper" data-view="table" data-testid="slots-table-wrapper">
+          <table class="slots-table" id="slots-table" data-testid="slots-table">
+            <thead>
+              <tr>
+                <th class="col-checkbox">
+                  <input type="checkbox" id="select-all-checkbox" aria-label="Выбрать все слоты">
+                </th>
+                <th class="col-time">Время рекрутера</th>
+                <th class="col-recruiter">Рекрутер</th>
+                <th class="col-city">Город</th>
+                <th class="col-candidate">Кандидат</th>
+                <th class="col-status">Статус</th>
+                <th class="col-actions">Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in slots %}
+                {% set st = norm_status(s.status) %}
+                {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
+                {% set slot_tz = s.tz_name or tz_rec %}
+                {% set cand_tz = s.candidate_tz %}
+                {% set cand_local_tz = cand_tz or slot_tz %}
+                <tr data-slot-id="{{ s.id }}" data-status="{{ st or '' }}">
+                  <td class="col-checkbox" data-label="Выбор">
+                    <input type="checkbox" class="slot-checkbox" value="{{ s.id }}" aria-label="Слот {{ s.id }}">
+                  </td>
 
-      <div class="list-table-wrapper" id="slot_table_shell" data-testid="slots-table-wrapper">
-        <table class="list-table slot-table" id="slots_table" data-testid="slots-table">
-        <thead>
-          <tr>
-            <th scope="col" class="col-select">
-              <input type="checkbox" id="select_all_slots" aria-label="Выбрать все слоты">
-            </th>
-            <th scope="col" class="col-recruiter sortable">
-              <button class="sort" type="button" data-key="slot" aria-sort="none">Рекрутер <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col" class="col-time sortable">
-              <button class="sort" type="button" data-key="slot" aria-sort="none">Время рекрутёра <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col" class="col-time sortable">
-              <button class="sort" type="button" data-key="slot" aria-sort="none">Время кандидата <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col" class="col-city sortable">
-              <button class="sort" type="button" data-key="city" aria-sort="none">Город <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col" class="col-candidate sortable">
-              <button class="sort" type="button" data-key="candidate" aria-sort="none">Кандидат <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col" class="col-status sortable">
-              <button class="sort" type="button" data-key="status" aria-sort="none">Статус <span class="arrow" aria-hidden="true"></span></button>
-            </th>
-            <th scope="col" class="col-actions">Действия</th>
-          </tr>
-        </thead>
-        <tbody id="slots_tbody">
-        {% for s in slots %}
-          {% set st = norm_status(s.status) %}
-          {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
-          {% set slot_tz = s.tz_name or tz_rec %}
-          {% set cand_tz = s.candidate_tz %}
-          {% set cand_local_tz = cand_tz or slot_tz %}
-          {% set status_order = 0 if st == 'FREE' else (1 if st == 'PENDING' else (2 if st == 'BOOKED' else (3 if st == 'CONFIRMED_BY_CANDIDATE' else 9))) %}
-          <tr class="slot-row"
-              tabindex="0"
-              data-id="{{ s.id }}"
-              data-status="{{ st or '' }}"
-              data-status-order="{{ status_order }}"
-              data-start-iso="{{ s.start_utc.isoformat() }}"
-              data-city="{{ s.city.name if s.city else '' }}"
-              data-city-tz="{{ s.city.tz if s.city else (slot_tz or '') }}"
-              data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
-              data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
-              data-recruiter-tz="{{ tz_rec }}"
-              data-candidate="{{ s.candidate_fio or '' }}"
-              data-candidate-id="{{ s.candidate_tg_id or '' }}"
-              data-candidate-username="{{ s.candidate_username or '' }}"
-              data-candidate-tz="{{ cand_tz or '' }}"
-              data-outcome="{{ s.interview_outcome or '' }}"
-              data-created="{{ s.created_at.isoformat() if s.created_at else '' }}"
-              data-updated="{{ s.updated_at.isoformat() if s.updated_at else '' }}"
-              data-slot-tz="{{ slot_tz }}"
-              data-can-delete="{{ 1 if st in ['FREE', 'PENDING'] else 0 }}">
-            <td class="col-select" data-label="Выбор">
-              <input type="checkbox" class="row-select" aria-label="Слот {{ s.id }}">
-            </td>
-            <td class="col-recruiter" data-label="Рекрутер" data-testid="slot-recruiter-cell">
-              <div class="slot-cell-primary">{{ s.recruiter.name if s.recruiter else '—' }}</div>
-              <div class="slot-cell-meta">ID {{ s.recruiter.id if s.recruiter else '—' }} · {{ tz_display(tz_rec) }}</div>
-            </td>
-            <td class="col-time" data-label="Время рекрутёра">
-              <div class="slot-time">
-                <div class="slot-time__primary" data-testid="slot-local-time">{{ fmt_local(s.start_utc, tz_rec) }}</div>
-                <div class="slot-time__meta">
-                  <span class="pill pill--ghost">{{ tz_display(tz_rec) }}</span>
-                  <span class="pill pill--accent">UTC {{ fmt_utc(s.start_utc) }}</span>
+                <td class="col-time" data-label="Время рекрутера">
+                  <div class="time-display">
+                    <div class="time-primary" data-testid="slot-local-time">{{ fmt_local(s.start_utc, tz_rec) }}</div>
+                    <div class="time-meta">
+                      <span class="pill" title="Локальное время рекрутера">Рекрутер</span>
+                      {% if cand_local_tz and cand_local_tz != tz_rec %}
+                        <span class="pill pill--candidate" title="Местное время кандидата">
+                          Кандидат {{ fmt_local(s.start_utc, cand_local_tz, "%H:%M") }}
+                        </span>
+                      {% endif %}
+                    </div>
+                  </div>
+                </td>
+
+                  <td class="col-recruiter" data-label="Рекрутер" data-testid="slot-recruiter-cell">
+                    <div class="cell-primary">{{ s.recruiter.name if s.recruiter else '—' }}</div>
+                    <div class="cell-secondary">ID {{ s.recruiter.id if s.recruiter else '—' }}</div>
+                  </td>
+
+                  <td class="col-city" data-label="Город">
+                    {% if s.city %}
+                      <div class="cell-primary">{{ s.city.name }}</div>
+                      <div class="cell-secondary">{{ tz_display(s.city.tz) }}</div>
+                    {% else %}
+                      <div class="cell-primary">—</div>
+                    {% endif %}
+                  </td>
+
+                  <td class="col-candidate" data-label="Кандидат">
+                    {% if s.candidate_fio %}
+                      <div class="cell-primary">{{ s.candidate_fio }}</div>
+                      <div class="cell-secondary">TG: {{ s.candidate_tg_id or "—" }}</div>
+                    {% else %}
+                      <span class="status-badge status-badge--free">FREE</span>
+                    {% endif %}
+                  </td>
+
+                  <td class="col-status" data-label="Статус">
+                    {% if st == "FREE" %}
+                      <span class="status-badge status-badge--free">FREE</span>
+                    {% elif st == "PENDING" %}
+                      <span class="status-badge status-badge--pending">PENDING</span>
+                    {% elif st == "BOOKED" %}
+                      <span class="status-badge status-badge--booked">BOOKED</span>
+                    {% elif st == "CONFIRMED_BY_CANDIDATE" %}
+                      <span class="status-badge status-badge--confirmed">CONFIRMED</span>
+                    {% elif st in ("CANCELED", "CANCELLED") %}
+                      <span class="status-badge status-badge--cancelled">CANCELED</span>
+                    {% else %}
+                      <span class="status-badge">{{ st or "—" }}</span>
+                    {% endif %}
+                  </td>
+
+                  <td class="col-actions" data-label="Действия">
+                    <div class="action-group">
+                      <button type="button" class="icon-btn" data-action="copy-slot" data-slot-id="{{ s.id }}" title="Скопировать ID слота" aria-label="Скопировать ID">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                      </button>
+                      {% if s.candidate_fio %}
+                        <button type="button" class="icon-btn" data-action="release-slot" data-slot-id="{{ s.id }}" title="Освободить слот" aria-label="Освободить слот">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M3 6h18"></path>
+                            <path d="M8 6v-1a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v1"></path>
+                            <path d="M10 11v6"></path>
+                            <path d="M14 11v6"></path>
+                            <path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"></path>
+                            <path d="M9 16l6-6"></path>
+                            <path d="M9 10l6 6"></path>
+                          </svg>
+                        </button>
+                      {% endif %}
+                      {% if s.candidate_user_id %}
+                        <a href="/candidates/{{ s.candidate_user_id }}" class="icon-btn" title="Открыть кандидата" aria-label="Открыть кандидата">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                          </svg>
+                        </a>
+                      {% elif s.candidate_tg_id %}
+                        <a href="/candidates?q={{ s.candidate_tg_id }}" class="icon-btn" title="Открыть кандидата" aria-label="Открыть кандидата">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                          </svg>
+                        </a>
+                      {% endif %}
+                      {% if st == 'FREE' or st == 'PENDING' %}
+                        <button type="button" class="icon-btn icon-btn--danger" data-action="delete-slot" data-slot-id="{{ s.id }}" title="Удалить слот" aria-label="Удалить слот">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                          </svg>
+                        </button>
+                      {% endif %}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="calendar-view" data-view="calendar" id="calendar-view">
+          {% set ru_months = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"] %}
+          {% set ru_weekdays = ["понедельник","вторник","среда","четверг","пятница","суббота","воскресенье"] %}
+          {% set current_day = None %}
+          {% for s in slots|sort(attribute='start_utc') %}
+            {% set st = norm_status(s.status) %}
+            {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
+            {% set slot_tz = s.tz_name or tz_rec %}
+            {% set cand_tz = s.candidate_tz %}
+            {% set cand_local_tz = cand_tz or slot_tz %}
+            {% set day_key = fmt_local(s.start_utc, calendar_tz, "%Y-%m-%d") %}
+            {% set day_num = fmt_local(s.start_utc, calendar_tz, "%d")|int %}
+            {% set month_idx = fmt_local(s.start_utc, calendar_tz, "%m")|int %}
+            {% set year_num = fmt_local(s.start_utc, calendar_tz, "%Y") %}
+            {% set weekday_idx = fmt_local(s.start_utc, calendar_tz, "%u")|int %}
+            {% set day_label = day_num ~ " " ~ ru_months[month_idx - 1] ~ " " ~ year_num %}
+            {% set weekday_label = ru_weekdays[weekday_idx - 1] %}
+            {% if day_key != current_day %}
+              {% if not loop.first %}
                 </div>
               </div>
-            </td>
-            <td class="col-time" data-label="Время кандидата">
-              <div class="slot-time">
-                <div class="slot-time__primary">{{ fmt_local(s.start_utc, cand_local_tz) }}</div>
-                <div class="slot-time__meta">
-                  <span class="pill pill--ghost">{{ tz_display(cand_local_tz) }}</span>
+              {% endif %}
+              <div class="calendar-day">
+                <div class="calendar-day__header">
+                  <div class="calendar-day__title">{{ day_label }}, {{ weekday_label }}</div>
+                  <div class="calendar-day__meta">
+                  </div>
                 </div>
-              </div>
-            </td>
-            <td class="col-city" data-label="Город">
-              {% if s.city %}
-                <div class="slot-cell-primary">{{ s.city.name }}</div>
-                <div class="slot-cell-meta">{{ tz_display(s.city.tz) }}</div>
-              {% else %}
-                <div class="slot-cell-primary">—</div>
-                <div class="slot-cell-meta">{{ tz_display(slot_tz) }}</div>
-              {% endif %}
-            </td>
-            <td class="col-candidate" data-label="Кандидат">
-              {% if s.candidate_fio %}
-                <div class="slot-cell-primary">{{ s.candidate_fio }}</div>
-                <div class="slot-cell-meta">tg: {{ s.candidate_tg_id or "—" }}{% if s.candidate_username %} · @{{ s.candidate_username }}{% endif %}</div>
-              {% else %}
-                <span class="liquid-glass-badge liquid-glass-badge--info">FREE</span>
-              {% endif %}
-            </td>
-            <td class="col-status" data-label="Статус">
-              {% if st == "FREE" %}
-                <span class="liquid-glass-badge liquid-glass-badge--success">FREE</span>
-              {% elif st == "PENDING" %}
-                <span class="liquid-glass-badge liquid-glass-badge--warning">PENDING</span>
-              {% elif st == "BOOKED" %}
-                <span class="liquid-glass-badge liquid-glass-badge--info">BOOKED</span>
-              {% elif st == "CONFIRMED_BY_CANDIDATE" %}
-                <span class="liquid-glass-badge liquid-glass-badge--success">CONFIRMED</span>
-              {% else %}
-                <span class="liquid-glass-badge liquid-glass-badge--neutral">{{ st or "—" }}</span>
-              {% endif %}
-            </td>
-            <td class="col-actions" data-label="Действия">
-              <div class="action-group">
-                {% if s.candidate_tg_id %}
-                  <a href="/candidates?q={{ s.candidate_tg_id }}" class="icon-btn" title="Открыть кандидата" aria-label="Открыть кандидата">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                      <circle cx="12" cy="7" r="4"></circle>
-                    </svg>
-                  </a>
-                {% endif %}
-                {% if st == 'FREE' %}
-                  <button type="button" class="icon-btn" data-action="delete-slot" title="Удалить слот" aria-label="Удалить слот">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <polyline points="3 6 5 6 21 6"></polyline>
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                    </svg>
-                  </button>
-                {% elif st == 'PENDING' %}
-                  <button type="button" class="icon-btn icon-btn--danger" data-action="reject-booking" title="Отменить бронь" aria-label="Отменить бронь">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <line x1="18" y1="6" x2="6" y2="18"></line>
-                      <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                  </button>
-                {% elif st == 'BOOKED' %}
-                  <button type="button" class="icon-btn" data-action="reschedule-booking" title="Освободить для переноса" aria-label="Освободить для переноса">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <polyline points="23 4 23 10 17 10"></polyline>
-                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                    </svg>
-                  </button>
-                {% elif st == 'CONFIRMED_BY_CANDIDATE' %}
-                  <button type="button" class="icon-btn" data-action="set-outcome" data-outcome="attended" title="Отметить явку" aria-label="Отметить явку">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <polyline points="20 6 9 17 4 12"></polyline>
-                    </svg>
-                  </button>
-                  <button type="button" class="icon-btn" data-action="set-outcome" data-outcome="no_show" title="Отметить неявку" aria-label="Отметить неявку">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <line x1="18" y1="6" x2="6" y2="18"></line>
-                      <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                  </button>
-                {% else %}
-                  <button type="button" class="icon-btn" data-action="delete-slot" title="Удалить слот" aria-label="Удалить слот">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <polyline points="3 6 5 6 21 6"></polyline>
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                    </svg>
-                  </button>
+                <div class="calendar-day__list">
+            {% endif %}
+            <div class="calendar-slot" data-slot-id="{{ s.id }}"{% if s.candidate_tg_id %} data-open-url="/candidates?q={{ s.candidate_tg_id }}"{% endif %}>
+              <div class="calendar-slot__time">
+                <span class="calendar-slot__time-main">{{ fmt_local(s.start_utc, tz_rec, "%H:%M") }}</span>
+                <span class="calendar-slot__time-sub">Время рекрутера ({{ tz_display(tz_rec) }})</span>
+                {% if cand_local_tz and cand_local_tz != tz_rec %}
+                  <span class="pill pill--candidate" title="Местное время кандидата">Канд {{ fmt_local(s.start_utc, cand_local_tz, "%H:%M") }}</span>
                 {% endif %}
               </div>
-            </td>
-          </tr>
-          <tr class="slot-row-details" data-details-for="{{ s.id }}" hidden>
-            <td colspan="7">
-              <div class="slot-details">
-                <div class="slot-details__grid">
-                  <div>
-                    <span>Recruiter TZ</span>
-                    <strong>{{ tz_display(tz_rec) }}</strong>
-                  </div>
-                  <div>
-                    <span>Candidate TZ</span>
-                    <strong>{% if cand_tz %}{{ tz_display(cand_tz) }}{% else %}—{% endif %}</strong>
-                  </div>
-                  <div>
-                    <span>TG ID</span>
-                    <strong>{{ s.candidate_tg_id or '—' }}</strong>
-                  </div>
-                  <div>
-                    <span>Username</span>
-                    <strong>{% if s.candidate_username %}@{{ s.candidate_username }}{% else %}—{% endif %}</strong>
-                  </div>
-                  <div>
-                    <span>Создан</span>
-                    <strong>{% if s.created_at %}{{ fmt_local(s.created_at, slot_tz) }}{% else %}—{% endif %}</strong>
-                  </div>
-                  <div>
-                    <span>Обновлен</span>
-                    <strong>{% if s.updated_at %}{{ fmt_local(s.updated_at, slot_tz) }}{% else %}—{% endif %}</strong>
-                  </div>
-                  <div>
-                    <span>UTC</span>
-                    <strong>{{ fmt_utc(s.start_utc) }}</strong>
-                  </div>
-                  <div>
-                    <span>Длительность</span>
-                    <strong>{{ s.duration_min }} мин</strong>
-                  </div>
+              <div class="calendar-slot__info">
+                <div class="calendar-slot__title">
+                  <span class="calendar-slot__name">{{ s.candidate_fio or 'Свободный слот' }}</span>
                 </div>
-                <div class="slot-details__actions">
-                  {% if s.candidate_tg_id %}
-                    <a class="ui-btn ui-btn--ghost" href="/candidates?q={{ s.candidate_tg_id }}">Открыть кандидата</a>
+                <div class="calendar-slot__meta">
+                  <span>Рекрутер: {{ s.recruiter.name if s.recruiter else '—' }}</span>
+                  {% if s.city %}<span>Город: {{ s.city.name }}</span>{% endif %}
+                  <span>ID слота: {{ s.id }}</span>
+                </div>
+              </div>
+              <div class="calendar-slot__right">
+                <div class="calendar-slot__status">
+                  {% if st == "FREE" %}
+                    <span class="status-badge status-badge--free">FREE</span>
+                  {% elif st == "PENDING" %}
+                    <span class="status-badge status-badge--pending">PENDING</span>
+                  {% elif st == "BOOKED" %}
+                    <span class="status-badge status-badge--booked">BOOKED</span>
+                  {% elif st == "CONFIRMED_BY_CANDIDATE" %}
+                    <span class="status-badge status-badge--confirmed">CONFIRMED</span>
+                  {% elif st in ("CANCELED", "CANCELLED") %}
+                    <span class="status-badge status-badge--cancelled">CANCELED</span>
+                  {% else %}
+                    <span class="status-badge">{{ st or "—" }}</span>
                   {% endif %}
-                  {% if s.candidate_username %}
-                    <a class="ui-btn ui-btn--ghost" href="https://t.me/{{ s.candidate_username }}" target="_blank" rel="noreferrer noopener">Открыть чат</a>
+                </div>
+                <div class="calendar-slot__actions">
+                  <button type="button" class="icon-btn" data-action="copy-slot" data-slot-id="{{ s.id }}" title="Скопировать ID слота" aria-label="Скопировать ID">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                  </button>
+                  {% if s.candidate_fio %}
+                    <button type="button" class="icon-btn" data-action="release-slot" data-slot-id="{{ s.id }}" title="Освободить слот" aria-label="Освободить слот">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M3 6h18"></path>
+                        <path d="M8 6v-1a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v1"></path>
+                        <path d="M10 11v6"></path>
+                        <path d="M14 11v6"></path>
+                        <path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"></path>
+                        <path d="M9 16l6-6"></path>
+                        <path d="M9 10l6 6"></path>
+                      </svg>
+                    </button>
                   {% endif %}
-                  <button type="button" class="ui-btn ui-btn--danger" data-action="delete-slot">Удалить слот</button>
+                  {% if s.candidate_user_id %}
+                    <a href="/candidates/{{ s.candidate_user_id }}" class="icon-btn" title="Открыть кандидата" aria-label="Открыть кандидата">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                      </svg>
+                    </a>
+                  {% elif s.candidate_tg_id %}
+                    <a href="/candidates?q={{ s.candidate_tg_id }}" class="icon-btn" title="Открыть кандидата" aria-label="Открыть кандидата">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                      </svg>
+                    </a>
+                  {% endif %}
+                  {% if st == 'FREE' or st == 'PENDING' %}
+                    <button type="button" class="icon-btn icon-btn--danger" data-action="delete-slot" data-slot-id="{{ s.id }}" title="Отменить слот" aria-label="Отменить слот">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                      </svg>
+                    </button>
+                  {% endif %}
                 </div>
               </div>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      </div>
-      <div class="slot-cards" id="slot_cards">
-        {% for s in slots %}
-          {% set st = norm_status(s.status) %}
-          {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
-          {% set slot_tz = s.tz_name or tz_rec %}
-          {% set cand_tz = s.candidate_tz %}
-          {% set cand_local_tz = cand_tz or slot_tz %}
-          <article class="slot-card"
-                   data-id="{{ s.id }}"
-                   data-status="{{ st or '' }}"
-                   data-status-order="{{ 0 if st == 'FREE' else (1 if st == 'PENDING' else (2 if st == 'BOOKED' else (3 if st == 'CONFIRMED_BY_CANDIDATE' else 9))) }}"
-                   data-start-iso="{{ s.start_utc.isoformat() }}"
-                   data-city="{{ s.city.name if s.city else '' }}"
-                   data-city-tz="{{ s.city.tz if s.city else (slot_tz or '') }}"
-                   data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
-                   data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
-                   data-recruiter-tz="{{ tz_rec }}"
-                   data-candidate="{{ s.candidate_fio or '' }}"
-                   data-candidate-id="{{ s.candidate_tg_id or '' }}"
-                   data-candidate-username="{{ s.candidate_username or '' }}"
-                   data-candidate-tz="{{ cand_tz or '' }}"
-                   data-slot-tz="{{ slot_tz }}"
-                   data-created="{{ s.created_at.isoformat() if s.created_at else '' }}"
-                   data-updated="{{ s.updated_at.isoformat() if s.updated_at else '' }}">
-            <div class="slot-card__header">
-              <div>
-                <div class="slot-card__title">Кандидат: {{ fmt_local(s.start_utc, cand_local_tz) }} · {{ tz_display(cand_local_tz) }}</div>
-                <div class="slot-cell-meta">Рекрутер: {{ fmt_local(s.start_utc, tz_rec) }} · {{ tz_display(tz_rec) }} · UTC {{ fmt_utc(s.start_utc) }}</div>
-              </div>
-              <div class="slot-card__status">
-                {% if st == "FREE" %}
-                  <span class="liquid-glass-badge liquid-glass-badge--success">FREE</span>
-                {% elif st == "PENDING" %}
-                  <span class="liquid-glass-badge liquid-glass-badge--warning">PENDING</span>
-                {% elif st == "BOOKED" %}
-                  <span class="liquid-glass-badge liquid-glass-badge--info">BOOKED</span>
-                {% elif st == "CONFIRMED_BY_CANDIDATE" %}
-                  <span class="liquid-glass-badge liquid-glass-badge--success">CONFIRMED</span>
-                {% else %}
-                  <span class="liquid-glass-badge liquid-glass-badge--neutral">{{ st or "—" }}</span>
-                {% endif %}
+            </div>
+            {% set current_day = day_key %}
+            {% if loop.last %}
               </div>
             </div>
-            <div class="slot-card__meta">
-              <div><span>Город</span>{{ s.city.name if s.city else '—' }} · {{ tz_display(s.city.tz) if s.city else tz_display(slot_tz) }}</div>
-              <div><span>Рекрутер</span>{{ s.recruiter.name if s.recruiter else '—' }}</div>
-              <div><span>Кандидат</span>{% if s.candidate_fio %}{{ s.candidate_fio }}{% else %}FREE{% endif %}</div>
-              <div><span>TG</span>{{ s.candidate_tg_id or '—' }}{% if s.candidate_username %} / @{{ s.candidate_username }}{% endif %}</div>
-            </div>
-            <div class="slot-card__footer">
-              {% if s.candidate_tg_id %}
-                <a href="/candidates?q={{ s.candidate_tg_id }}" class="icon-btn" title="Открыть кандидата" aria-label="Открыть кандидата">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                    <circle cx="12" cy="7" r="4"></circle>
-                  </svg>
-                </a>
-              {% endif %}
-              {% if st == 'FREE' %}
-                <button type="button" class="icon-btn" data-action="delete-slot" title="Удалить слот" aria-label="Удалить слот">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <polyline points="3 6 5 6 21 6"></polyline>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                  </svg>
-                </button>
-              {% elif st == 'PENDING' %}
-                <button type="button" class="icon-btn icon-btn--danger" data-action="reject-booking" title="Отменить бронь" aria-label="Отменить бронь">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              {% elif st == 'BOOKED' %}
-                <button type="button" class="icon-btn" data-action="reschedule-booking" title="Освободить для переноса" aria-label="Освободить для переноса">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <polyline points="23 4 23 10 17 10"></polyline>
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                  </svg>
-                </button>
-              {% elif st == 'CONFIRMED_BY_CANDIDATE' %}
-                <button type="button" class="icon-btn" data-action="set-outcome" data-outcome="attended" title="Отметить явку" aria-label="Отметить явку">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                </button>
-                <button type="button" class="icon-btn" data-action="set-outcome" data-outcome="no_show" title="Отметить неявку" aria-label="Отметить неявку">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              {% else %}
-                <button type="button" class="icon-btn" data-action="delete-slot" title="Удалить слот" aria-label="Удалить слот">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <polyline points="3 6 5 6 21 6"></polyline>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                  </svg>
-                </button>
-              {% endif %}
-            </div>
-          </article>
-        {% endfor %}
-      </div>
-      <div class="calendar-view" id="slot_calendar">
-        {% set last_date = None %}
-        {% for s in slots %}
-          {% set st = norm_status(s.status) %}
-          {% set tz_rec = s.recruiter.tz if s.recruiter and s.recruiter.tz else "Europe/Moscow" %}
-          {% set slot_tz = s.tz_name or tz_rec %}
-          {% set cand_tz = s.candidate_tz %}
-          {% set cand_local_tz = cand_tz or slot_tz %}
-          {% set date_key = s.start_utc.date() %}
-          {% if date_key != last_date %}
-            {% if not loop.first %}</div></div>{% endif %}
-            <div class="calendar-day" data-date="{{ date_key.isoformat() }}">
-              <div class="calendar-day__header">
-                <span>{{ date_key.strftime('%d.%m.%Y') }}</span>
-                <span class="slot-cell-meta">{{ tz_display(slot_tz) }}</span>
+            {% endif %}
+          {% endfor %}
+          <div class="calendar-skeleton" aria-hidden="true">
+            <div class="calendar-skeleton__day">
+              <div class="skeleton-line" style="width: 240px; height: 18px;"></div>
+              <div class="calendar-skeleton__row">
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
               </div>
-              <div class="calendar-day__list">
-          {% endif %}
-          <div class="calendar-item"
-               data-id="{{ s.id }}"
-               data-status="{{ st or '' }}"
-               data-status-order="{{ 0 if st == 'FREE' else (1 if st == 'PENDING' else (2 if st == 'BOOKED' else (3 if st == 'CONFIRMED_BY_CANDIDATE' else 9))) }}"
-               data-start-iso="{{ s.start_utc.isoformat() }}"
-               data-city="{{ s.city.name if s.city else '' }}"
-               data-city-tz="{{ s.city.tz if s.city else (slot_tz or '') }}"
-               data-recruiter="{{ s.recruiter.name if s.recruiter else '' }}"
-               data-recruiter-id="{{ s.recruiter.id if s.recruiter else '' }}"
-               data-recruiter-tz="{{ tz_rec }}"
-               data-candidate="{{ s.candidate_fio or '' }}"
-               data-candidate-id="{{ s.candidate_tg_id or '' }}"
-               data-candidate-username="{{ s.candidate_username or '' }}"
-               data-candidate-tz="{{ cand_tz or '' }}"
-               data-slot-tz="{{ slot_tz }}"
-               data-created="{{ s.created_at.isoformat() if s.created_at else '' }}"
-               data-updated="{{ s.updated_at.isoformat() if s.updated_at else '' }}">
-            <div class="calendar-item__time">Кандидат: {{ fmt_local(s.start_utc, cand_local_tz) }}</div>
-            <div class="calendar-item__meta">
-              <strong>Рекрутер</strong>
-              <span>{{ fmt_local(s.start_utc, tz_rec) }} · {{ tz_display(tz_rec) }}</span>
+              <div class="calendar-skeleton__row">
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+              </div>
             </div>
-            <div class="calendar-item__meta">
-              <strong>{{ s.recruiter.name if s.recruiter else '—' }}</strong>
-              <span>{{ tz_display(cand_local_tz) }} / {{ tz_display(tz_rec) }}</span>
-            </div>
-            <div class="calendar-item__meta">
-              <strong>{{ s.city.name if s.city else '—' }}</strong>
-              <span>{% if s.city %}{{ tz_display(s.city.tz) }}{% else %}{{ tz_display(slot_tz) }}{% endif %}</span>
-              <strong>{% if s.candidate_fio %}{{ s.candidate_fio }}{% else %}FREE{% endif %}</strong>
-            </div>
-            <div class="calendar-item__actions">
-              {% if s.candidate_tg_id %}
-                <a href="/candidates?q={{ s.candidate_tg_id }}" class="icon-btn" title="Открыть кандидата" aria-label="Открыть кандидата">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                    <circle cx="12" cy="7" r="4"></circle>
-                  </svg>
-                </a>
-              {% endif %}
-              {% if st == 'FREE' %}
-                <button type="button" class="icon-btn" data-action="delete-slot" title="Удалить слот" aria-label="Удалить слот">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <polyline points="3 6 5 6 21 6"></polyline>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                  </svg>
-                </button>
-              {% elif st == 'PENDING' %}
-                <button type="button" class="icon-btn icon-btn--danger" data-action="reject-booking" title="Отменить бронь" aria-label="Отменить бронь">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              {% elif st == 'BOOKED' %}
-                <button type="button" class="icon-btn" data-action="reschedule-booking" title="Освободить для переноса" aria-label="Освободить для переноса">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <polyline points="23 4 23 10 17 10"></polyline>
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                  </svg>
-                </button>
-              {% elif st == 'CONFIRMED_BY_CANDIDATE' %}
-                <button type="button" class="icon-btn" data-action="set-outcome" data-outcome="attended" title="Отметить явку" aria-label="Отметить явку">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                </button>
-                <button type="button" class="icon-btn" data-action="set-outcome" data-outcome="no_show" title="Отметить неявку" aria-label="Отметить неявку">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
-              {% else %}
-                <button type="button" class="icon-btn" data-action="delete-slot" title="Удалить слот" aria-label="Удалить слот">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <polyline points="3 6 5 6 21 6"></polyline>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                  </svg>
-                </button>
-              {% endif %}
+            <div class="calendar-skeleton__day">
+              <div class="skeleton-line" style="width: 200px; height: 18px;"></div>
+              <div class="calendar-skeleton__row">
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+              </div>
+              <div class="calendar-skeleton__row">
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+              </div>
             </div>
           </div>
-          {% set last_date = date_key %}
-          {% if loop.last %}</div></div>{% endif %}
-        {% endfor %}
+        </div>
       </div>
+      <div class="empty-state" id="js-empty-state" hidden>
+        <div class="empty-state__icon">📅</div>
+        <h2 class="empty-state__title">Слотов больше нет</h2>
+        <p class="empty-state__description">
+          Все слоты были удалены. Создайте новые или измените фильтры.
+        </p>
+        <div class="empty-state__actions">
+          <a href="/slots/new" class="ui-btn ui-btn--primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Создать слот
+          </a>
+          <button type="button" class="ui-btn ui-btn--ghost" id="empty-reset-btn">Сбросить фильтры</button>
+        </div>
+      </div>
+      {% if total_slots == 0 %}
+        <div class="empty-state">
+          <div class="empty-state__icon">📅</div>
+          <h2 class="empty-state__title">Слотов не найдено</h2>
+          <p class="empty-state__description">
+            {% if filter_status or search_query or filter_city or filter_recruiter_id or filter_date %}
+              Попробуйте изменить фильтры или создайте новый слот
+            {% else %}
+              Создайте первый слот для начала работы
+            {% endif %}
+          </p>
+          <div class="empty-state__actions">
+            <a href="/slots/new" class="ui-btn ui-btn--primary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Создать слот
+            </a>
+            <button type="button" class="ui-btn ui-btn--ghost" id="empty-reset-btn">Сбросить фильтры</button>
+          </div>
+        </div>
+      {% endif %}
+    {% else %}
+      <div class="empty-state">
+        <div class="empty-state__icon">📅</div>
+        <h2 class="empty-state__title">Слотов не найдено</h2>
+        <p class="empty-state__description">
+          {% if filter_status or search_query or filter_city or filter_recruiter_id or filter_date %}
+            Попробуйте изменить фильтры или создайте новый слот
+          {% else %}
+            Создайте первый слот для начала работы
+          {% endif %}
+        </p>
+        <div class="empty-state__actions">
+          <a href="/slots/new" class="ui-btn ui-btn--primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Создать слот
+          </a>
+          {% if filter_status or search_query or filter_city or filter_recruiter_id or filter_date %}
+            <button type="button" class="ui-btn ui-btn--ghost" id="reset-filters-from-empty">Сбросить фильтры</button>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Bulk Actions Bar -->
+  <div class="bulk-actions-bar" id="bulk-actions-bar" hidden>
+    <span class="bulk-actions-bar__label">
+      Выбрано: <strong id="selected-count">0</strong>
+    </span>
+    <div class="bulk-actions-bar__actions">
+      <button type="button" class="ui-btn ui-btn--ghost" id="bulk-deselect">Отменить</button>
+      <button type="button" class="ui-btn ui-btn--danger" id="bulk-delete">Удалить выбранные</button>
     </div>
-
-  {% else %}
-    <div class="liquid-glass-card slot-empty-state" role="status" data-animate-in>
-      <h3 class="section-title">Пока пусто</h3>
-      <p class="page-description">Создайте первый слот или измените фильтры, чтобы увидеть расписание.</p>
-      <div class="slot-empty-state__actions">
-        <a class="liquid-glass-btn liquid-glass-btn--primary" href="/slots/new">+ Новый слот</a>
-      </div>
-    </div>
-  {% endif %}
-
-  <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
-
-  <!-- Delete All Confirmation Modal -->
-  <dialog id="delete_all_modal" class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 class="modal-title">Подтверждение удаления</h3>
-        <button type="button" class="modal-close" id="modal_close" aria-label="Закрыть">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </div>
-      <div class="modal-body">
-        <p id="delete_all_message" class="modal-message">Это удалит <strong id="slots_count">N</strong> слотов. Действие нельзя отменить.</p>
-        <p class="modal-warning">⚠️ Будут удалены только свободные и ожидающие слоты. Забронированные останутся.</p>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="liquid-glass-btn liquid-glass-btn--secondary" id="modal_cancel">
-          Отмена
-        </button>
-        <button type="button" class="liquid-glass-btn liquid-glass-btn--danger" id="modal_confirm">
-          Удалить все слоты
-        </button>
-      </div>
-    </div>
-  </dialog>
-
-  <style>
-    /* Modal Dialog */
-    .modal-dialog {
-      border: none;
-      border-radius: 20px;
-      padding: 0;
-      background: transparent;
-      max-width: 500px;
-      width: 90%;
-    }
-
-    .modal-dialog::backdrop {
-      background: color-mix(in srgb, var(--slot-backdrop) 90%, transparent);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-    }
-
-    .modal-content {
-      background: color-mix(in srgb, var(--slot-backdrop) 92%, transparent);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
-      border: 1px solid var(--slot-border);
-      border-radius: 20px;
-      padding: 24px;
-      box-shadow: var(--slot-raise);
-    }
-
-    .modal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-    }
-
-    .modal-title {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 700;
-      color: var(--fg);
-    }
-
-    .modal-close {
-      background: transparent;
-      border: none;
-      color: var(--slot-muted);
-      cursor: pointer;
-      padding: 4px;
-      transition: color 0.2s ease;
-    }
-
-    .modal-close:hover {
-      color: var(--fg);
-    }
-
-    .modal-body {
-      margin-bottom: 24px;
-    }
-
-    .modal-message {
-      margin: 0 0 12px 0;
-      font-size: 15px;
-      color: var(--slot-muted-strong);
-      line-height: 1.5;
-    }
-
-    .modal-message strong {
-      color: var(--slot-danger-ink);
-      font-weight: 700;
-    }
-
-    .modal-warning {
-      margin: 0;
-      padding: 12px;
-      border-radius: 12px;
-      background: color-mix(in srgb, var(--warning) 18%, var(--slot-veil));
-      border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--slot-border));
-      color: color-mix(in srgb, var(--warning) 50%, var(--fg));
-      font-size: 13px;
-      line-height: 1.4;
-    }
-
-    .modal-footer {
-      display: flex;
-      gap: 12px;
-      justify-content: flex-end;
-    }
-  </style>
-</section>
+  </div>
+</div>
+</div>
 
 <script nonce="{{ request.state.csp_nonce }}">
-(function(){
-  const $ = (selector, root=document) => root.querySelector(selector);
-  const $$ = (selector, root=document) => Array.from(root.querySelectorAll(selector));
-  const on = (el, event, cb, opts) => el && el.addEventListener(event, cb, opts);
+(function() {
+  'use strict';
 
-  const table = $('#slots_table');
-  const tbody = $('#slots_tbody');
-  const rows = tbody ? $$('.slot-row', tbody) : [];
-  const detailMap = new Map();
-  const slotCardsEl = null;
-  const cards = [];
-  const cardMap = new Map();
-  const calendarView = null;
-  const calendarItems = [];
-  const calendarDays = [];
-  const resolveRowFromAction = (node) => {
-    const row = node.closest('.slot-row');
-    if (row) return row;
-    const detail = node.closest('.slot-row-details');
-    if (detail && detail.dataset.detailsFor) {
-      return tbody?.querySelector(`.slot-row[data-id=\"${detail.dataset.detailsFor}\"]`) || null;
-    }
-    const card = node.closest('.slot-card');
-    if (card && card.dataset.id) {
-      return tbody?.querySelector(`.slot-row[data-id=\"${card.dataset.id}\"]`) || null;
-    }
-    const calItem = node.closest('.calendar-item');
-    if (calItem && calItem.dataset.id) {
-      return tbody?.querySelector(`.slot-row[data-id=\"${calItem.dataset.id}\"]`) || null;
-    }
-    return null;
+  const $ = (sel, ctx = document) => ctx.querySelector(sel);
+  const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
+  const debounce = (fn, wait = 350) => {
+    let t;
+    return (...args) => {
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(null, args), wait);
+    };
   };
 
-  const deleteAllBtn = $('#delete_all_slots');
-  const deleteSelectedBtn = $('#delete_selected_slots');
-  const exportBtn = $('#export_slots');
-  const moreActionsBtn = $('#more_actions_btn');
-  const moreActionsMenu = $('#more_actions_menu');
-  const deleteAllModal = $('#delete_all_modal');
-  const modalClose = $('#modal_close');
-  const modalCancel = $('#modal_cancel');
-  const modalConfirm = $('#modal_confirm');
-  const slotsCountEl = $('#slots_count');
+  const root = $('.slots-page');
+  const slotsView = $('#slots-view');
+  const filtersForm = $('#filters-form');
+  const filterStatusInput = $('#filter-status-input');
+  const dateRangeInput = $('#date-range-input');
+  const dateInput = $('#date-filter');
+  const totalCountEl = $('#total-count');
+  const jsEmptyState = $('#js-empty-state');
+  const tableWrapper = $('#slots-table')?.closest('.slots-table-wrapper');
+  const calendarView = $('#calendar-view');
+  const viewModeInput = $('#view-mode-input');
+  const csrf = window.__CSRF_TOKEN__ || '';
 
-  const searchInput = $('#slots_search');
-  const searchCounter = $('#search_counter');
-  const filterStatusInput = $('#filter_status');
-  const filterCity = $('#filter_city');
-  const filterRecruiter = $('#filter_recruiter');
-  const dateFrom = $('#filter_date_from');
-  const dateTo = $('#filter_date_to');
-  const dateShortcuts = $$('#date_shortcuts .chip');
   const statusTabs = $$('.status-tab');
-  const summaryChips = $$('.slot-chip');
-  const applyFiltersBtn = $('#apply_filters');
-  const clearButtons = $$('[data-clear-filters]');
-  const selectAll = $('#select_all_slots');
-  const slotTableShell = $('#slot_table_shell');
-  const loadingState = $('#slots_loading');
-  const emptyState = $('#slots_empty');
-  const errorState = $('#slots_error');
-  const reloadBtn = $('#reload_slots');
+  const presetButtons = $$('[data-date-preset]');
+  const searchInput = null;
+  const cityFilter = $('#city-filter');
+  const recruiterFilter = $('#recruiter-filter');
+  const resetBtn = $('#reset-filters-btn');
+  const resetFromEmpty = $('#reset-filters-from-empty');
+  const emptyResetBtn = $('#empty-reset-btn');
+  const clearSearchBtn = null;
 
-  const chipTotal = $('#cnt-total');
-  const chipFree = $('#cnt-free');
-  const chipPending = $('#cnt-pending');
-  const chipBookedEl = $('#cnt-booked');
-  const chipConfirmed = $('#cnt-confirmed');
-  const tabTotal = $('#tab-cnt-total');
-  const tabFree = $('#tab-cnt-free');
-  const tabPending = $('#tab-cnt-pending');
-  const tabBooked = $('#tab-cnt-booked');
-  const tabConfirmed = $('#tab-cnt-confirmed');
 
-  const toastStack = $('#toasts');
-  const notificationFeedKey = 'slots.notifications.lastId';
-  let notificationFeedTimer = null;
+  const selectAllCheckbox = $('#select-all-checkbox');
+  const bulkActionsBar = $('#bulk-actions-bar');
+  const selectedCountSpan = $('#selected-count');
+  const bulkDeselectBtn = $('#bulk-deselect');
+  const bulkDeleteBtn = $('#bulk-delete');
 
-  let sortState = { key: 'slot', dir: 'asc' };
-  let relTimer = null;
-  let filterTimer = null;
-  let isLoading = false;
+  const viewToggleButtons = $$('#view-toggle .segmented__btn');
+  const densityButtons = [];
+  const columnCheckboxes = [];
 
-  const storage = window.localStorage;
-  const csrfToken = window.__CSRF_TOKEN__ || '';
-
-  const filters = {
-    status: (filterStatusInput?.value || '').toUpperCase(),
-    city: filterCity?.value || '',
-    recruiter: filterRecruiter?.value || '',
-    search: (searchInput?.value || '').trim().toLowerCase(),
-    datePreset: null,
-    from: '',
-    to: '',
-  };
-  const selectedIds = new Set();
-  if (filterStatusInput) filterStatusInput.value = filters.status;
-
-  function toast(text, kind='info') {
-    if (!toastStack) return;
-    const el = document.createElement('div');
-    el.className = 'toast';
-    el.dataset.kind = kind;
-    el.textContent = text;
-    toastStack.appendChild(el);
-    requestAnimationFrame(() => el.classList.add('toast--show'));
-    setTimeout(() => el.classList.add('toast--hide'), 1800);
-    setTimeout(() => el.remove(), 2200);
-  }
-
-  const notificationLabels = {
-    interview_confirmed_candidate: 'Подтверждение слота',
-    candidate_reschedule_prompt: 'Перенос слота',
-    candidate_rejection: 'Отказ кандидату',
-    intro_day_invitation: 'Ознакомительный день',
-  };
-  const reminderLabels = {
-    confirm_6h: 'Подтверждение за 6 часов',
-    confirm_3h: 'Подтверждение за 3 часа',
-    confirm_2h: 'Подтверждение за 2 часа',
-    intro_remind_3h: 'Ознакомительный день через 3 часа',
-  };
-
-  function labelForNotification(item) {
-    if (!item) return 'Уведомление';
-    const direct = notificationLabels[item.type];
-    if (direct) return direct;
-    if (item.type && item.type.startsWith('slot_reminder:')) {
-      const [, kind] = item.type.split(':', 2);
-      return reminderLabels[kind] || 'Напоминание о встрече';
-    }
-    return item.type || 'Уведомление';
-  }
-  function shouldDisplayNotification(item) {
-    const status = (item?.status || '').toLowerCase();
-    return status === 'failed' || status === 'pending';
-  }
-  function toastKindForStatus(status) {
-    if (status === 'failed') return 'error';
-    if (status === 'pending') return 'info';
-    return 'info';
-  }
-  function formatNotificationMessage(item) {
-    const label = labelForNotification(item);
-    const status = (item?.status || '').toLowerCase();
-    if (status === 'failed') {
-      return `${label}: ${item?.last_error || 'ошибка доставки'}`;
-    }
-    if (status === 'pending') {
-      return `${label}: ожидает подтверждения`;
-    }
-    return `${label}: статус обновлён`;
-  }
-  async function fetchNotificationFeed() {
-    const lastId = storage.getItem(notificationFeedKey);
-    const query = lastId ? `?after_id=${encodeURIComponent(lastId)}` : '';
-    try {
-      const res = await fetch(`/api/notifications/feed${query}`);
-      if (!res.ok) return;
-      const payload = await res.json();
-      const items = payload.items || [];
-      const latestId = payload.latest_id || (items.length ? items[items.length - 1].id : null);
-      if (!lastId) {
-        if (latestId) storage.setItem(notificationFeedKey, latestId);
-        return;
-      }
-      items.forEach(item => {
-        if (!shouldDisplayNotification(item)) return;
-        const status = (item.status || '').toLowerCase();
-        toast(formatNotificationMessage(item), toastKindForStatus(status));
-      });
-      if (latestId) storage.setItem(notificationFeedKey, latestId);
-    } catch (err) {
-      console.warn('notification feed error', err);
-    }
-  }
-  function startNotificationFeed() {
-    if (notificationFeedTimer) {
-      clearInterval(notificationFeedTimer);
-    }
-    fetchNotificationFeed();
-    notificationFeedTimer = setInterval(fetchNotificationFeed, 30000);
-  }
-
-  function parseTime(row) {
-    const iso = row?.dataset.startIso;
-    if (!iso) return NaN;
-    const value = Date.parse(iso);
-    return Number.isNaN(value) ? NaN : value;
-  }
-  function relativeState(diffMin) {
-    if (!Number.isFinite(diffMin)) return 'distant';
-    if (diffMin < -5) return 'past';
-    if (diffMin <= 15) return 'now';
-    if (diffMin <= 120) return 'soon';
-    return 'distant';
-  }
-  function formatRelative(ts) {
-    if (!Number.isFinite(ts)) return '—';
-    const diffMin = Math.round((ts - Date.now()) / 60000);
-    const abs = Math.abs(diffMin);
-    if (abs < 1) return diffMin >= 0 ? 'через несколько секунд' : 'только что';
-    if (abs < 60) return `${diffMin >= 0 ? 'через' : ''} ${abs} мин`;
-    const hours = Math.round(abs / 60);
-    return `${diffMin >= 0 ? 'через' : ''} ${hours} ч`;
-  }
-
-  function parseDate(value) {
-    if (!value) return null;
-    const ts = Date.parse(value);
-    return Number.isNaN(ts) ? null : new Date(ts);
-  }
-  function matchesDate(row) {
-    const ts = parseTime(row);
-    if (!Number.isFinite(ts)) return false;
-    const date = new Date(ts);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const start = filters.from ? parseDate(filters.from) : null;
-    const end = filters.to ? parseDate(filters.to) : null;
-    switch (filters.datePreset) {
-      case 'today':
-        return date.toDateString() === today.toDateString();
-      case 'tomorrow': {
-        const tmr = new Date(today);
-        tmr.setDate(tmr.getDate() + 1);
-        return date.toDateString() === tmr.toDateString();
-      }
-      case 'week': {
-        const week = new Date(today);
-        week.setDate(week.getDate() + 7);
-        return date >= today && date <= week;
-      }
-      case 'range':
-        if (start && date < start) return false;
-        if (end) {
-          const endCopy = new Date(end);
-          endCopy.setHours(23, 59, 59, 999);
-          if (date > endCopy) return false;
-        }
-        return true;
-      default:
-        return true;
-    }
-  }
-  function matchesSearch(row) {
-    if (!filters.search) return true;
-    const haystack = [
-      row.dataset.candidate,
-      row.dataset.candidateId,
-      row.dataset.candidateUsername,
-      row.dataset.city,
-      row.dataset.recruiter,
-      row.dataset.status,
-    ].join(' ').toLowerCase();
-    return haystack.includes(filters.search);
-  }
-  function matchesFilters(row) {
-    const status = (row.dataset.status || '').toUpperCase();
-    if (filters.status && status !== filters.status) return false;
-    if (filters.city && (row.dataset.city || '') !== filters.city) return false;
-    if (filters.recruiter && (row.dataset.recruiterId || '') !== filters.recruiter) return false;
-    if (!matchesDate(row)) return false;
-    if (!matchesSearch(row)) return false;
-    return true;
-  }
-
-  function showLoading() {
-    isLoading = true;
-    if (loadingState) loadingState.hidden = false;
-    if (emptyState) emptyState.hidden = true;
-  }
-  function hideLoading() {
-    isLoading = false;
-    if (loadingState) loadingState.hidden = true;
-  }
-
-  function updateEmptyState(visibleCount) {
-    const hasRows = visibleCount > 0;
-    if (slotCardsEl) slotCardsEl.hidden = !hasRows;
-    if (emptyState) emptyState.hidden = hasRows || isLoading;
-  }
-
-  function setError(message) {
-    if (!errorState) return;
-    const desc = errorState.querySelector('.page-description');
-    if (desc && message) desc.textContent = message;
-    errorState.hidden = false;
-    if (slotCardsEl) slotCardsEl.hidden = true;
-    hideLoading();
-  }
-
-  function updateCounters() {
-    let total = 0, free = 0, pending = 0, booked = 0, confirmed = 0;
-    const source = cards.length ? cards : rows;
-    source.forEach(el => {
-      if (el.hidden) return;
-      total += 1;
-      const st = el.dataset.status;
-      if (st === 'FREE') free += 1;
-      else if (st === 'PENDING') pending += 1;
-      else if (st === 'BOOKED') booked += 1;
-      else if (st === 'CONFIRMED_BY_CANDIDATE') confirmed += 1;
-    });
-    const assign = (el, val) => { if (el) el.textContent = val; };
-    assign(chipTotal, total);
-    assign(chipFree, free);
-    assign(chipPending, pending);
-    assign(chipBookedEl, booked);
-    assign(chipConfirmed, confirmed);
-    assign(tabTotal, total);
-    assign(tabFree, free);
-    assign(tabPending, pending);
-    assign(tabBooked, booked);
-    assign(tabConfirmed, confirmed);
-  }
-
-  function updateRelativeLabels() {
-    const now = Date.now();
-    rows.forEach(row => {
-      const relEl = row.querySelector('[data-role="relative"]');
-      const ts = parseTime(row);
-      if (!relEl || !Number.isFinite(ts)) return;
-      const diffMin = Math.round((ts - now) / 60000);
-      const state = relativeState(diffMin);
-      relEl.textContent = formatRelative(ts);
-      relEl.dataset.state = state;
-      row.classList.toggle('is-past', state === 'past');
-      row.classList.toggle('is-now', state === 'now');
-      row.classList.toggle('is-soon', state === 'soon');
-      row.classList.toggle('is-distant', state === 'distant');
-    });
-  }
-
-  function getSortValue(row, key) {
-    switch(key) {
-      case 'slot':
-      case 'utc':
-        return parseTime(row);
-      case 'recruiter':
-        return (row.dataset.recruiter || '').toLowerCase();
-      case 'city':
-        return (row.dataset.city || '').toLowerCase();
-      case 'candidate':
-        return ((row.dataset.candidate || '') + (row.dataset.candidateUsername || '')).toLowerCase();
-      case 'status':
-        return parseInt(row.dataset.statusOrder || '9', 10);
-      default:
-        return 0;
-    }
-  }
-
-  function applySort() {
-    if (!tbody) return;
-    const sorted = rows.slice().sort((a, b) => {
-      const av = getSortValue(a, sortState.key);
-      const bv = getSortValue(b, sortState.key);
-      if (av < bv) return sortState.dir === 'asc' ? -1 : 1;
-      if (av > bv) return sortState.dir === 'asc' ? 1 : -1;
-      return 0;
-    });
-    sorted.forEach(row => {
-      tbody.appendChild(row);
-    });
-  }
-
-  function applySortIndicator() {
-    if (!table) return;
-    $$('.sort', table).forEach(btn => {
-      const key = btn.dataset.key;
-      const active = key === sortState.key;
-      btn.classList.toggle('is-active', active);
-      btn.setAttribute('aria-sort', active ? (sortState.dir === 'asc' ? 'ascending' : 'descending') : 'none');
-    });
-  }
-
-  function applyFilters() {
-    rows.forEach(row => {
-      const match = matchesFilters(row);
-      row.hidden = !match;
-      const detail = detailMap.get(row.dataset.id);
-      if (detail) detail.hidden = true;
-      if (!match) selectedIds.delete(row.dataset.id);
-    });
-    cards.forEach(card => {
-      const match = matchesFilters(card);
-      card.hidden = !match;
-    });
-    const visible = (cards.length ? cards : rows).filter(el => !el.hidden).length;
-    updateCounters();
-    updateRelativeLabels();
-    updateEmptyState(visible);
-    updateSelectionUI();
-    hideLoading();
-  }
-
-  function scheduleFilter() {
-    if (searchCounter) searchCounter.hidden = false;
-    showLoading();
-    clearTimeout(filterTimer);
-    filterTimer = setTimeout(() => {
-      applySort();
-      applyFilters();
-      if (searchCounter) searchCounter.hidden = true;
-    }, 200);
-  }
+  const getSlotCheckboxes = () => $$('.slot-checkbox');
 
   function resetFilters() {
-    filters.status = '';
-    filters.city = '';
-    filters.recruiter = '';
-    filters.search = '';
-    filters.datePreset = null;
-    filters.from = '';
-    filters.to = '';
-    if (filterStatusInput) filterStatusInput.value = '';
-    if (filterCity) filterCity.value = '';
-    if (filterRecruiter) filterRecruiter.value = '';
-    if (searchInput) searchInput.value = '';
-    if (dateFrom) dateFrom.value = '';
-    if (dateTo) dateTo.value = '';
-    dateShortcuts.forEach(btn => btn.classList.remove('is-active'));
-    statusTabs.forEach(btn => btn.classList.remove('is-active'));
-    if (statusTabs.length) statusTabs[0].classList.add('is-active');
-    summaryChips.forEach(ch => ch.classList.toggle('slot-chip--active', !ch.dataset.status));
-    scheduleFilter();
+    const viewMode = viewModeInput?.value ? `?view=${viewModeInput.value}` : '';
+    window.location.href = `/slots${viewMode}`;
   }
 
-  function toggleDropdown() {
-    if (!moreActionsMenu || !moreActionsBtn) return;
-    const isOpen = !moreActionsMenu.hidden;
-    moreActionsMenu.hidden = isOpen;
-    moreActionsBtn.setAttribute('aria-expanded', (!isOpen).toString());
-  }
-  function closeDropdown() {
-    if (!moreActionsMenu || !moreActionsBtn) return;
-    moreActionsMenu.hidden = true;
-    moreActionsBtn.setAttribute('aria-expanded', 'false');
-  }
-
-  function removeRow(row) {
-    if (!row) return;
-    const id = row.dataset.id;
-    const idx = rows.indexOf(row);
-    if (idx !== -1) {
-      rows.splice(idx, 1);
-    }
-    const detail = detailMap.get(id);
-    if (detail) detail.remove();
-    detailMap.delete(id);
-    row.remove();
-    selectedIds.delete(id);
-    updateCounters();
-    updateRelativeLabels();
-    updateEmptyState(rows.filter(r => !r.hidden).length);
-  }
-
-  async function performDelete(row, options = {}) {
-    if (!row) return;
-    const { force = false, skipConfirm = false } = options;
-    const id = row.dataset.id;
-    if (!id) return;
-
-    const canDelete = row.dataset.canDelete === '1';
-    const status = row.dataset.status || '';
-    const recruiterName = row.dataset.recruiter ? ` (${row.dataset.recruiter})` : '';
-
-    if (!force && !canDelete) {
-      const confirmForce = window.confirm(
-        status
-          ? `Слот #${id}${recruiterName} имеет статус ${status}. Удалить принудительно?`
-          : `Удалить слот #${id}${recruiterName} принудительно?`
-      );
-      if (!confirmForce) return;
-      return await performDelete(row, { force: true, skipConfirm: true });
-    }
-
-    const confirmationText = force
-      ? `Удалить слот #${id}${recruiterName}? Это принудительное удаление.`
-      : `Удалить слот #${id}${recruiterName}? Действие нельзя отменить.`;
-
-    if (!skipConfirm && !window.confirm(confirmationText)) return;
-
-    try {
-      const response = await fetch(`/slots/${id}?force=${force ? 1 : 0}`, {
-        method: 'DELETE',
-        headers: {
-          'Accept': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok || !payload || payload.ok !== true) {
-        const message = payload && payload.message ? payload.message : 'Не удалось удалить слот.';
-        if (!force && payload && payload.code === 'requires_force') {
-          const askForce = window.confirm(`${message} Выполнить принудительное удаление?`);
-          if (askForce) {
-            return await performDelete(row, { force: true, skipConfirm: true });
-          }
-        }
-        toast(message, 'error');
-        return;
-      }
-
-      toast(payload.message || 'Слот удалён', 'success');
-      removeRow(row);
-      applyFilters();
-    } catch (err) {
-      console.error(err);
-      toast('Не удалось удалить слот.', 'error');
-      setError('Не удалось удалить слот.');
-    }
-  }
-
-  async function performReschedule(row) {
-    if (!row) return;
-    const id = row.dataset.id;
-    if (!id) return;
-
-    const recruiterName = row.dataset.recruiter ? ` (${row.dataset.recruiter})` : '';
-    if (!window.confirm(`Освободить слот #${id}${recruiterName} для переноса? Кандидату будет отправлено уведомление.`)) return;
-
-    try {
-      const response = await fetch(`/slots/${id}/reschedule`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok || !payload || payload.ok !== true) {
-        const message = payload && payload.message ? payload.message : 'Не удалось перенести слот.';
-        toast(message, 'error');
-        return;
-      }
-
-      toast(payload.message || 'Слот освобождён для переноса', 'success');
-      window.location.reload();
-    } catch (err) {
-      console.error(err);
-      toast('Не удалось перенести слот.', 'error');
-      setError('Не удалось перенести слот.');
-    }
-  }
-
-  async function performReject(row) {
-    if (!row) return;
-    const id = row.dataset.id;
-    if (!id) return;
-
-    const recruiterName = row.dataset.recruiter ? ` (${row.dataset.recruiter})` : '';
-    if (!window.confirm(`Отменить бронь слота #${id}${recruiterName}? Кандидату будет отправлено уведомление.`)) return;
-
-    try {
-      const response = await fetch(`/slots/${id}/reject_booking`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok || !payload || payload.ok !== true) {
-        const message = payload && payload.message ? payload.message : 'Не удалось отменить бронь.';
-        toast(message, 'error');
-        return;
-      }
-
-      toast(payload.message || 'Бронь отменена', 'success');
-      window.location.reload();
-    } catch (err) {
-      console.error(err);
-      toast('Не удалось отменить бронь.', 'error');
-      setError('Не удалось отменить бронь.');
-    }
-  }
-
-  async function performSetOutcome(row, outcome) {
-    if (!row || !outcome) return;
-    const id = row.dataset.id;
-    if (!id) return;
-
-    const recruiterName = row.dataset.recruiter ? ` (${row.dataset.recruiter})` : '';
-    const outcomeLabel = outcome === 'attended' ? 'явку' : 'неявку';
-    if (!window.confirm(`Отметить ${outcomeLabel} для слота #${id}${recruiterName}?`)) return;
-
-    try {
-      const response = await fetch(`/slots/${id}/outcome`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        body: JSON.stringify({ outcome }),
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok || !payload || payload.ok !== true) {
-        const message = payload && payload.message ? payload.message : 'Не удалось обновить результат.';
-        toast(message, 'error');
-        return;
-      }
-
-      toast(payload.message || 'Результат обновлён', 'success');
-      window.location.reload();
-    } catch (err) {
-      console.error(err);
-      toast('Не удалось обновить результат.', 'error');
-      setError('Не удалось обновить результат.');
-    }
-  }
-
-  function showDeleteAllModal() {
-    if (!deleteAllModal) return;
-    const deletableCount = rows.filter(row => {
-      const status = row.dataset.status;
-      return !row.hidden && (status === 'FREE' || status === 'PENDING');
-    }).length;
-    if (slotsCountEl) slotsCountEl.textContent = deletableCount;
-    deleteAllModal.showModal();
-  }
-  function closeDeleteAllModal() {
-    if (deleteAllModal) deleteAllModal.close();
-  }
-
-  async function deleteAllSlots(force = false) {
-    closeDeleteAllModal();
-    if (deleteAllBtn) deleteAllBtn.disabled = true;
-    try {
-      const response = await fetch('/slots/delete_all', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        body: JSON.stringify({ force })
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok || !payload || payload.ok !== true) {
-        const message = payload && payload.error ? payload.error : 'Не удалось удалить слоты.';
-        if (!force && payload && typeof payload.remaining === 'number' && payload.remaining > 0) {
-          const askForce = window.confirm(`${message} Удалить оставшиеся слоты принудительно?`);
-          if (askForce) {
-            return await deleteAllSlots(true);
-          }
-        }
-        toast(message, 'error');
-        return;
-      }
-
-      const deletedCount = Number(payload.deleted || 0);
-      const remaining = Number(payload.remaining || 0);
-
-      if (!force && remaining > 0) {
-        toast(`Удалено ${deletedCount} слот(ов). Осталось ${remaining}.`, 'info');
-        const askForce = window.confirm('Некоторые слоты остались. Удалить их принудительно?');
-        if (askForce) {
-          return await deleteAllSlots(true);
-        }
-        return;
-      }
-
-      toast(`Удалено ${deletedCount} слот(ов).`, 'success');
-      window.location.reload();
-    } catch (err) {
-      console.error(err);
-      toast('Не удалось удалить слоты.', 'error');
-      setError('Не удалось удалить слоты.');
-    } finally {
-      if (deleteAllBtn) deleteAllBtn.disabled = false;
-    }
-  }
-
-  function toggleDetails(row) {
-    const details = detailMap.get(row.dataset.id);
-    if (!details) return;
-    const expanded = !details.hidden;
-    details.hidden = expanded;
-    row.classList.toggle('is-expanded', !expanded);
-  }
-
-  function updateSelectionUI() {
-    rows.forEach(row => {
-      const checked = selectedIds.has(row.dataset.id);
-      row.classList.toggle('is-selected', checked);
-      const checkbox = row.querySelector('.row-select');
-      if (checkbox) checkbox.checked = checked;
+  // ================= Filters & tabs =================
+  statusTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      if (!filterStatusInput || !filtersForm) return;
+      filterStatusInput.value = tab.dataset.status || '';
+      filtersForm.submit();
     });
-    if (selectAll) {
-      const visibleRows = rows.filter(r => !r.hidden);
-      const allSelected = visibleRows.length && visibleRows.every(r => selectedIds.has(r.dataset.id));
-      selectAll.indeterminate = selectedIds.size > 0 && !allSelected;
-      selectAll.checked = allSelected;
-    }
-    if (deleteSelectedBtn) {
-      deleteSelectedBtn.disabled = selectedIds.size === 0;
-      deleteSelectedBtn.textContent = selectedIds.size ? `Удалить выбранные (${selectedIds.size})` : 'Удалить выбранные';
-    }
-    if (exportBtn) {
-      exportBtn.textContent = selectedIds.size ? `Экспорт (${selectedIds.size})` : 'Экспорт';
-    }
-  }
+  });
 
-  function handleSelection(row, checked) {
-    if (!row || !row.dataset.id) return;
-    if (checked) {
-      selectedIds.add(row.dataset.id);
-    } else {
-      selectedIds.delete(row.dataset.id);
-    }
-    updateSelectionUI();
-  }
+  filtersForm?.addEventListener('submit', () => {
+    root?.classList.add('is-loading');
+  });
 
-  async function deleteSelected() {
-    if (!selectedIds.size) return;
-    const confirmText = selectedIds.size === 1
-      ? 'Удалить выбранный слот?'
-      : `Удалить ${selectedIds.size} выбранных слота?`;
-    if (!window.confirm(confirmText)) return;
-    for (const id of Array.from(selectedIds)) {
-      const row = rows.find(r => r.dataset.id === id);
-      if (row) {
-        // Force delete only for non deletable rows if user confirms inside performDelete.
-        await performDelete(row, { skipConfirm: true });
-      }
-    }
-    updateSelectionUI();
-  }
-
-  function exportSlots() {
-    const sourceRows = selectedIds.size ? rows.filter(r => selectedIds.has(r.dataset.id)) : rows.filter(r => !r.hidden);
-    if (!sourceRows.length) {
-      toast('Нет строк для экспорта', 'info');
-      return;
-    }
-    const headers = ['id','slot_time','city','city_tz','recruiter','candidate','status','tg_id','username'];
-    const lines = [headers.join(',')];
-    sourceRows.forEach(row => {
-      const data = [
-        row.dataset.id,
-        row.querySelector('.slot-time__primary')?.textContent?.trim() || '',
-        row.dataset.city || '',
-        row.dataset.cityTz || '',
-        row.dataset.recruiter || '',
-        row.dataset.candidate || 'FREE',
-        row.dataset.status || '',
-        row.dataset.candidateId || '',
-        row.dataset.candidateUsername || '',
-      ];
-      lines.push(data.map(val => `"${String(val || '').replace(/"/g, '""')}"`).join(','));
+  [resetBtn, resetFromEmpty, emptyResetBtn].forEach(btn => {
+    btn?.addEventListener('click', (e) => {
+      e.preventDefault();
+      resetFilters();
     });
-    const blob = new Blob([lines.join('\\n')], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const date = new Date().toISOString().split('T')[0];
-    link.download = `slots_${date}.csv`;
-    link.href = URL.createObjectURL(blob);
-    link.click();
-    URL.revokeObjectURL(link.href);
+  });
+
+  [cityFilter, recruiterFilter, dateInput].forEach(el => {
+    el?.addEventListener('change', () => {
+      if (dateRangeInput && el === dateInput) {
+        dateRangeInput.value = '';
+      }
+      filtersForm?.submit();
+    });
+  });
+
+  // поиск отключён по требованию — слот фильтруется только по выбранным полям
+
+  function markPresetActive(presetKey) {
+    presetButtons.forEach(btn => {
+      const isActive = btn.dataset.datePreset === presetKey || (!presetKey && btn.dataset.datePreset === 'clear');
+      btn.classList.toggle('is-active', isActive);
+    });
   }
 
-  function setStatusFilter(status) {
-    filters.status = (status || '').toUpperCase();
-    if (filterStatusInput) filterStatusInput.value = filters.status;
-    statusTabs.forEach(btn => {
-      const active = (btn.dataset.status || '').toUpperCase() === filters.status || (!filters.status && !btn.dataset.status);
+  function applyPreset(preset) {
+    if (!filtersForm || !dateRangeInput || !dateInput) return;
+    dateRangeInput.value = '';
+    dateInput.value = '';
+    let rangeValue = '';
+    if (preset === 'today') rangeValue = 'today';
+    if (preset === 'tomorrow') rangeValue = 'tomorrow';
+    if (preset === 'week') rangeValue = '7d';
+    if (preset === 'clear') rangeValue = '';
+    dateRangeInput.value = rangeValue;
+    markPresetActive(preset);
+    filtersForm.submit();
+  }
+
+  presetButtons.forEach(btn => {
+    btn.addEventListener('click', () => applyPreset(btn.dataset.datePreset));
+  });
+
+  $$('.filter-chip[data-filter-clear]').forEach(chip => {
+    const clearBtn = chip.querySelector('.filter-chip__clear');
+    clearBtn?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const key = chip.dataset.filterClear;
+      if (!filtersForm) return;
+      if (key === 'status' && filterStatusInput) filterStatusInput.value = '';
+      if (key === 'city' && cityFilter) cityFilter.value = '';
+      if (key === 'recruiter' && recruiterFilter) recruiterFilter.value = '';
+      if (key === 'date' && dateInput) dateInput.value = '';
+      if (key === 'date_range' && dateRangeInput) dateRangeInput.value = '';
+      filtersForm.submit();
+    });
+  });
+
+  // ================= Dropdowns =================
+  function setupDropdown(trigger, menu) {
+    if (!trigger || !menu) return;
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isHidden = menu.hidden;
+      menu.hidden = !isHidden;
+      trigger.setAttribute('aria-expanded', String(!isHidden));
+    });
+    document.addEventListener('click', (e) => {
+      if (menu.hidden) return;
+      if (!menu.contains(e.target) && e.target !== trigger) {
+        menu.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+
+  // no dropdowns in header — actions доступны через выбор слотов
+
+  function updateViewUrl(mode) {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', mode);
+      window.history.replaceState({}, '', url.toString());
+    } catch (err) {
+      /* noop */
+    }
+  }
+
+  // ================= View & density =================
+  function setView(mode, persist = true) {
+    const normalized = mode === 'calendar' ? 'calendar' : 'table';
+    slotsView?.setAttribute('data-mode', normalized);
+    viewToggleButtons.forEach(btn => {
+      const active = btn.dataset.viewMode === normalized;
       btn.classList.toggle('is-active', active);
-      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      btn.setAttribute('aria-pressed', String(active));
     });
-    summaryChips.forEach(ch => {
-      const active = (ch.dataset.status || '').toUpperCase() === filters.status || (!filters.status && !ch.dataset.status);
-      ch.classList.toggle('slot-chip--active', active);
-    });
-    scheduleFilter();
-  }
-
-  function setDatePreset(preset) {
-    filters.datePreset = preset;
-    dateShortcuts.forEach(btn => {
-      const active = btn.dataset.date === preset;
-      btn.classList.toggle('is-active', active);
-    });
-    if (preset === 'range') {
-      if (dateRange) dateRange.hidden = false;
-    } else {
-      if (dateRange) dateRange.hidden = true;
-      filters.from = '';
-      filters.to = '';
-      if (dateFrom) dateFrom.value = '';
-      if (dateTo) dateTo.value = '';
+    if (viewModeInput) {
+      viewModeInput.value = normalized;
+    }
+    updateViewUrl(normalized);
+    if (persist) {
+      try { window.localStorage.setItem('slots:view', normalized); } catch (err) { /* noop */ }
     }
   }
 
-  const dateRange = $('#date_range');
-
-  if (!table || !tbody) return;
-
-  applySort();
-  applySortIndicator();
-  applyFilters();
-  updateSelectionUI();
-  if (relTimer) clearInterval(relTimer);
-  relTimer = window.setInterval(updateRelativeLabels, 60000);
-
-  on(tbody, 'click', e => {
-    const deleteBtn = e.target.closest('[data-action="delete-slot"]');
-    if (deleteBtn) {
-      e.preventDefault();
-      const row = resolveRowFromAction(deleteBtn);
-      performDelete(row);
-      return;
-    }
-    const rescheduleBtn = e.target.closest('[data-action="reschedule-booking"]');
-    if (rescheduleBtn) {
-      e.preventDefault();
-      const row = resolveRowFromAction(rescheduleBtn);
-      performReschedule(row);
-      return;
-    }
-    const rejectBtn = e.target.closest('[data-action="reject-booking"]');
-    if (rejectBtn) {
-      e.preventDefault();
-      const row = resolveRowFromAction(rejectBtn);
-      performReject(row);
-      return;
-    }
-    const outcomeBtn = e.target.closest('[data-action="set-outcome"]');
-    if (outcomeBtn) {
-      e.preventDefault();
-      const row = resolveRowFromAction(outcomeBtn);
-      performSetOutcome(row, outcomeBtn.dataset.outcome);
-      return;
-    }
-    const row = e.target.closest('.slot-row');
-    const isControl = e.target.closest('button, a, input, label');
-    if (row && !isControl) {
-      toggleDetails(row);
-    }
+  viewToggleButtons.forEach(btn => {
+    btn.addEventListener('click', () => setView(btn.dataset.viewMode));
   });
 
-  on(calendarView, 'click', e => {
-    const deleteBtn = e.target.closest('[data-action="delete-slot"]');
-    if (deleteBtn) {
-      e.preventDefault();
-      const row = resolveRowFromAction(deleteBtn);
-      performDelete(row);
-      return;
-    }
-    const rescheduleBtn = e.target.closest('[data-action="reschedule-booking"]');
-    if (rescheduleBtn) {
-      e.preventDefault();
-      const row = resolveRowFromAction(rescheduleBtn);
-      performReschedule(row);
-      return;
-    }
-    const rejectBtn = e.target.closest('[data-action="reject-booking"]');
-    if (rejectBtn) {
-      e.preventDefault();
-      const row = resolveRowFromAction(rejectBtn);
-      performReject(row);
-      return;
-    }
-    const outcomeBtn = e.target.closest('[data-action="set-outcome"]');
-    if (outcomeBtn) {
-      e.preventDefault();
-      const row = resolveRowFromAction(outcomeBtn);
-      performSetOutcome(row, outcomeBtn.dataset.outcome);
-      return;
-    }
-  });
-
-  on(tbody, 'change', e => {
-    const checkbox = e.target.closest('.row-select');
-    if (checkbox) {
-      const row = checkbox.closest('.slot-row');
-      handleSelection(row, checkbox.checked);
-    }
-  });
-
-  on(table, 'click', e => {
-    const sortButton = e.target.closest('.sort');
-    if (!sortButton) return;
-    const key = sortButton.dataset.key;
-    if (!key) return;
-    if (sortState.key === key) {
-      sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+  // Restore preferences
+  try {
+    const urlView = new URLSearchParams(window.location.search).get('view');
+    if (urlView) {
+      setView(urlView, false);
     } else {
-      sortState.key = key;
-      sortState.dir = 'asc';
+      const storedView = window.localStorage.getItem('slots:view');
+      if (storedView) setView(storedView, false);
     }
-    applySort();
-    applySortIndicator();
-    applyFilters();
+  } catch (err) {
+    setView('table', false);
+  }
+
+  // Column visibility & density toggles убраны — отображаем все важные колонки всегда
+
+  // ================= Bulk selection & actions =================
+  function updateBulkActionsBar() {
+    const checkboxes = getSlotCheckboxes();
+    const selected = checkboxes.filter(cb => cb.checked);
+    const count = selected.length;
+    if (bulkActionsBar) {
+      bulkActionsBar.hidden = count === 0;
+    }
+    if (selectedCountSpan) {
+      selectedCountSpan.textContent = count;
+    }
+    if (selectAllCheckbox) {
+      selectAllCheckbox.checked = count > 0 && count === checkboxes.length;
+      selectAllCheckbox.indeterminate = count > 0 && count < checkboxes.length;
+    }
+  }
+
+  selectAllCheckbox?.addEventListener('change', () => {
+    const checked = selectAllCheckbox.checked;
+    getSlotCheckboxes().forEach(cb => { cb.checked = checked; });
+    updateBulkActionsBar();
   });
 
-  on(searchInput, 'input', e => {
-    filters.search = (e.target.value || '').trim().toLowerCase();
-    scheduleFilter();
-  });
-  on(filterCity, 'change', e => {
-    filters.city = e.target.value;
-    scheduleFilter();
-  });
-  on(filterRecruiter, 'change', e => {
-    filters.recruiter = e.target.value;
-    scheduleFilter();
-  });
-  on(dateFrom, 'change', e => {
-    filters.from = e.target.value;
-    filters.datePreset = 'range';
-    setDatePreset('range');
-    scheduleFilter();
-  });
-  on(dateTo, 'change', e => {
-    filters.to = e.target.value;
-    filters.datePreset = 'range';
-    setDatePreset('range');
-    scheduleFilter();
+  getSlotCheckboxes().forEach(cb => cb.addEventListener('change', updateBulkActionsBar));
+  bulkDeselectBtn?.addEventListener('click', () => {
+    getSlotCheckboxes().forEach(cb => { cb.checked = false; });
+    updateBulkActionsBar();
   });
 
-  dateShortcuts.forEach(btn => {
-    on(btn, 'click', () => {
-      setDatePreset(btn.dataset.date);
-      filters.datePreset = btn.dataset.date;
-      scheduleFilter();
-    });
-  });
+  function updateEmptyStateIfNeeded() {
+    const rowsLeft = document.querySelectorAll('#slots-table tbody tr').length;
+    if (rowsLeft === 0) {
+      tableWrapper?.setAttribute('hidden', 'true');
+      calendarView?.setAttribute('hidden', 'true');
+      jsEmptyState?.removeAttribute('hidden');
+    } else {
+      tableWrapper?.removeAttribute('hidden');
+      calendarView?.removeAttribute('hidden');
+      jsEmptyState?.setAttribute('hidden', 'true');
+    }
+  }
 
-  statusTabs.forEach(btn => {
-    on(btn, 'click', () => setStatusFilter(btn.dataset.status));
-  });
-  summaryChips.forEach(chip => {
-    on(chip, 'click', (e) => {
-      e.preventDefault();
-      setStatusFilter(chip.dataset.status || '');
-    });
-  });
+  function decrementTotalCount(amount = 1) {
+    if (!totalCountEl) return;
+    const current = parseInt(totalCountEl.textContent || '0', 10) || 0;
+    totalCountEl.textContent = Math.max(0, current - amount);
+  }
 
-  on(applyFiltersBtn, 'click', () => scheduleFilter());
-  clearButtons.forEach(btn => on(btn, 'click', () => resetFilters()));
+  function removeSlotFromDom(slotId) {
+    const row = document.querySelector(`tr[data-slot-id="${slotId}"]`);
+    if (row && row.parentElement) {
+      row.parentElement.removeChild(row);
+    }
+    const card = calendarView?.querySelector(`.calendar-slot[data-slot-id="${slotId}"]`);
+    if (card) {
+      const dayContainer = card.closest('.calendar-day');
+      card.remove();
+      if (dayContainer && dayContainer.querySelectorAll('.calendar-slot').length === 0) {
+        dayContainer.remove();
+      }
+    }
+    decrementTotalCount();
+    updateBulkActionsBar();
+    updateEmptyStateIfNeeded();
+  }
 
-  on(selectAll, 'change', e => {
-    const checked = e.target.checked;
-    rows.forEach(row => {
-      if (row.hidden) return;
-      if (checked) selectedIds.add(row.dataset.id);
-      else selectedIds.delete(row.dataset.id);
-    });
-    updateSelectionUI();
-  });
-
-  on(moreActionsBtn, 'click', e => {
-    e.stopPropagation();
-    toggleDropdown();
-  });
-  on(document, 'click', e => {
-    if (!moreActionsMenu || moreActionsMenu.hidden) return;
-    if (!e.target.closest('.dropdown-menu-wrapper')) {
-      closeDropdown();
+  calendarView?.addEventListener('click', (event) => {
+    const actions = event.target.closest('.calendar-slot__actions');
+    if (actions) return;
+    const card = event.target.closest('.calendar-slot');
+    if (!card) return;
+    const url = card.dataset.openUrl;
+    if (url) {
+      window.location.href = url;
     }
   });
 
-  on(deleteAllBtn, 'click', () => {
-    closeDropdown();
-    showDeleteAllModal();
-  });
-  on(deleteSelectedBtn, 'click', () => {
-    closeDropdown();
-    deleteSelected();
-  });
-  on(exportBtn, 'click', () => {
-    closeDropdown();
-    exportSlots();
+  async function deleteSlot(slotId) {
+    const response = await fetch(`/slots/${slotId}`, {
+      method: 'DELETE',
+      headers: { 'X-CSRF-Token': csrf }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      const message = data.message || 'Не удалось удалить слот';
+      throw new Error(message);
+    }
+    removeSlotFromDom(slotId);
+  }
+
+  async function releaseSlot(slotId) {
+    const response = await fetch(`/slots/${slotId}/reject_booking`, {
+      method: 'POST',
+      headers: {
+        'X-CSRF-Token': csrf,
+        'Accept': 'application/json'
+      }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      const message = data.message || 'Не удалось освободить слот';
+      throw new Error(message);
+    }
+    return data;
+  }
+
+  $$('[data-action="delete-slot"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const slotId = btn.dataset.slotId;
+      if (!slotId) return;
+      if (!confirm('Удалить этот слот?')) return;
+      try {
+        await deleteSlot(slotId);
+      } catch (err) {
+        alert(err.message || 'Не удалось удалить слот');
+      }
+    });
   });
 
-  on(modalClose, 'click', closeDeleteAllModal);
-  on(modalCancel, 'click', closeDeleteAllModal);
-  on(modalConfirm, 'click', () => deleteAllSlots(false));
-  on(reloadBtn, 'click', () => window.location.reload());
+  $$('[data-action="release-slot"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const slotId = btn.dataset.slotId;
+      if (!slotId) return;
+      if (!confirm('Освободить слот и снять бронь кандидата?')) return;
+      try {
+        await releaseSlot(slotId);
+        window.location.reload();
+      } catch (err) {
+        alert(err.message || 'Не удалось освободить слот');
+      }
+    });
+  });
 
-  startNotificationFeed();
+  async function performBulkDelete(ids) {
+    if (!ids.length) return;
+    const response = await fetch('/slots/bulk_delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrf
+      },
+      body: JSON.stringify({ ids })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok && payload.ok !== true) {
+      throw new Error(payload.message || 'Не удалось выполнить массовое удаление');
+    }
+    ids.forEach(removeSlotFromDom);
+    const errors = payload.errors || [];
+    if (errors.length) {
+      alert(`Некоторые слоты не удалены: ${errors.length}`);
+    }
+  }
+
+  bulkDeleteBtn?.addEventListener('click', async () => {
+    const ids = getSlotCheckboxes().filter(cb => cb.checked).map(cb => parseInt(cb.value, 10)).filter(Boolean);
+    if (!ids.length) return;
+    if (!confirm(`Удалить ${ids.length} слотов?`)) return;
+    try {
+      await performBulkDelete(ids);
+    } catch (err) {
+      alert(err.message || 'Ошибка при массовом удалении');
+    }
+  });
+
+  // действия привязаны к выделению слотов (bulk bar)
+
+  $$('[data-action="copy-slot"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const slotId = btn.dataset.slotId;
+      if (!slotId) return;
+      try {
+        await navigator.clipboard.writeText(slotId);
+      } catch (err) {
+        console.warn('Clipboard not available', err);
+        const tmp = document.createElement('textarea');
+        tmp.value = slotId;
+        document.body.appendChild(tmp);
+        tmp.select();
+        document.execCommand('copy');
+        document.body.removeChild(tmp);
+      }
+    });
+  });
+
+  // Initial state sync
+  updateBulkActionsBar();
+  updateEmptyStateIfNeeded();
 })();
 </script>
 {% endblock %}

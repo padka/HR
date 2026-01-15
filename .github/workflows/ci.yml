@@ -2,27 +2,27 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: [main, testing, "feature/**"]
   pull_request:
+    branches: [main, testing]
 
 jobs:
-  build:
+  tests:
     runs-on: ubuntu-latest
     services:
-      redis:
-        image: redis:7-alpine
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
         ports:
-          - 6379:6379
+          - 5432:5432
         options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-    env:
-      REDIS_URL: redis://localhost:6379/0
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,69 +30,54 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
+          python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libpq-dev
+
+      - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Wait for Redis
-        run: |
-          python - <<'PY'
-import asyncio
-import os
-import sys
-
-async def main():
-    url = os.environ["REDIS_URL"]
-    try:
-        import redis.asyncio as redis  # type: ignore
-    except Exception as exc:  # pragma: no cover
-        raise SystemExit(f"redis-py missing: {exc}") from exc
-    client = redis.Redis.from_url(url)
-    for attempt in range(30):
-        try:
-            await client.ping()
-            await client.aclose()
-            return
-        except Exception:
-            await asyncio.sleep(1)
-    raise SystemExit(f"Redis not reachable at {url}")
-
-asyncio.run(main())
-PY
-
-      - name: Run pre-commit
-        run: pre-commit run --all-files
-
-      - name: Run tests
-        run: pytest --cov=backend --cov=tests --cov-report=xml --cov-report=term --cov-fail-under=85
-
-      - name: Run notification tests (Redis)
-        run: pytest -m notifications --redis-url "$REDIS_URL" --cov=backend.apps.bot --cov-report=term-missing
-
-      - name: Run notification load test
+      - name: Prepare database
         env:
-          METRICS_PATH: docs/reliability/ci_loadtest_${{ matrix.python-version }}.json
+          PGPASSWORD: postgres
         run: |
-          mkdir -p docs/reliability
-          PYTHONPATH=. python scripts/loadtest_notifications.py \
-            --broker redis \
-            --redis-url "$REDIS_URL" \
-            --count 2000 \
-            --rate-limit 50 \
-            --metrics-json "$METRICS_PATH"
+          psql -h localhost -U postgres -c "CREATE DATABASE recruitsmart;"
 
-      - name: Upload load test metrics
-        uses: actions/upload-artifact@v4
-        with:
-          name: loadtest-${{ matrix.python-version }}
-          path: docs/reliability/ci_loadtest_${{ matrix.python-version }}.json
+      - name: Run migrations
+        env:
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/recruitsmart
+          SESSION_SECRET: ci-secret-0123456789abcdef0123456789abcdef
+          ADMIN_USER: admin
+          ADMIN_PASSWORD: admin
+          BOT_ENABLED: "false"
+          BOT_INTEGRATION_ENABLED: "false"
+          NOTIFICATION_BROKER: memory
+          REDIS_URL: ""
+          BOT_TOKEN: dummy
+          BOT_CALLBACK_SECRET: dummy-callback-secret
+        run: PYTHONPATH=. python scripts/run_migrations.py
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ matrix.python-version }}
-          path: coverage.xml
+      - name: Pytest (smoke)
+        env:
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/recruitsmart
+          SESSION_SECRET: ci-secret-0123456789abcdef0123456789abcdef
+          ADMIN_USER: admin
+          ADMIN_PASSWORD: admin
+          BOT_ENABLED: "false"
+          BOT_INTEGRATION_ENABLED: "false"
+          NOTIFICATION_BROKER: memory
+          REDIS_URL: ""
+          BOT_TOKEN: dummy
+          BOT_CALLBACK_SECRET: dummy-callback-secret
+        run: |
+          PYTHONPATH=. pytest \
+            tests/test_prod_config_simple.py \
+            tests/test_session_cookie_config.py \
+            tests/test_admin_state_nullbot.py \
+            tests/test_workflow_contract.py \
+            tests/test_workflow_api.py

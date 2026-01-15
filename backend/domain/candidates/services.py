@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+import secrets
+import uuid
 from typing import List, Optional, Sequence, TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from backend.core.db import async_session
+from backend.domain import analytics
 from .models import (
     AutoMessage,
     Notification,
@@ -15,6 +18,7 @@ from .models import (
     ChatMessage,
     ChatMessageDirection,
     ChatMessageStatus,
+    CandidateInviteToken,
 )
 
 if TYPE_CHECKING:
@@ -27,6 +31,9 @@ async def create_or_update_user(
     city: str,
     username: Optional[str] = None,
     initial_status: Optional[CandidateStatus] = None,
+    *,
+    candidate_id: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> User:
     """Create or update user. For new users, optionally set initial candidate_status.
 
@@ -44,6 +51,8 @@ async def create_or_update_user(
             user.fio = fio
             user.city = city
             user.last_activity = now
+            if not user.candidate_id:
+                user.candidate_id = candidate_id or str(uuid.uuid4())
             if user.telegram_user_id is None:
                 user.telegram_user_id = telegram_id
             if user.telegram_linked_at is None:
@@ -52,18 +61,24 @@ async def create_or_update_user(
             if username is not None:
                 user.username = username
                 user.telegram_username = username
+            if source and not user.source:
+                user.source = source
         else:
-            user = User(
-                telegram_id=telegram_id,
-                username=username,
-                telegram_user_id=telegram_id,
-                telegram_username=username,
-                telegram_linked_at=now,
-                fio=fio,
-                city=city,
-                last_activity=now,
-                candidate_status=initial_status,  # Set initial status for new users
-            )
+            payload = {
+                "telegram_id": telegram_id,
+                "username": username,
+                "telegram_user_id": telegram_id,
+                "telegram_username": username,
+                "telegram_linked_at": now,
+                "fio": fio,
+                "city": city,
+                "last_activity": now,
+                "candidate_status": initial_status,
+                "source": source or "bot",
+            }
+            if candidate_id:
+                payload["candidate_id"] = candidate_id
+            user = User(**payload)
             session.add(user)
         await session.commit()
         await session.refresh(user)
@@ -77,6 +92,8 @@ async def save_test_result(
     rating: str,
     total_time: int,
     question_data: Sequence[dict],
+    *,
+    source: str = "bot",
 ) -> TestResult:
     async with async_session() as session:
         test_result = TestResult(
@@ -84,6 +101,7 @@ async def save_test_result(
             raw_score=raw_score,
             final_score=final_score,
             rating=rating,
+            source=source,
             total_time=total_time,
         )
         session.add(test_result)
@@ -109,17 +127,38 @@ async def save_test_result(
 
 
 async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:
+    if telegram_id is None:
+        return None
     async with async_session() as session:
         result = await session.execute(
             select(User).where(User.telegram_id == telegram_id)
         )
-        return result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+        if user:
+            session.expunge(user)
+        return user
+
+
+async def get_user_by_candidate_id(candidate_id: str) -> Optional[User]:
+    if not candidate_id:
+        return None
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.candidate_id == candidate_id)
+        )
+        user = result.scalar_one_or_none()
+        if user:
+            session.expunge(user)
+        return user
 
 
 async def get_all_active_users() -> List[User]:
     async with async_session() as session:
         result = await session.scalars(select(User).where(User.is_active.is_(True)))
-        return list(result.all())
+        users = list(result.all())
+        for user in users:
+            session.expunge(user)
+        return users
 
 
 async def get_test_statistics() -> dict:
@@ -228,7 +267,8 @@ async def log_inbound_chat_message(
         )
         user = result.scalar_one_or_none()
         now = datetime.now(timezone.utc)
-        if user is None:
+        is_new_user = user is None
+        if is_new_user:
             user = User(
                 telegram_id=telegram_user_id,
                 telegram_user_id=telegram_user_id,
@@ -240,6 +280,13 @@ async def log_inbound_chat_message(
             )
             session.add(user)
             await session.flush()
+            await analytics.log_funnel_event(
+                analytics.FunnelEvent.BOT_ENTERED,
+                user_id=telegram_user_id,
+                candidate_id=user.id,
+                metadata={"channel": "telegram"},
+                session=session,
+            )
         else:
             if username:
                 user.username = username
@@ -261,6 +308,99 @@ async def log_inbound_chat_message(
         return message
 
 
+def _generate_invite_token() -> str:
+    return secrets.token_urlsafe(8).rstrip("=")
+
+
+async def create_candidate_invite_token(candidate_id: str) -> CandidateInviteToken:
+    async with async_session() as session:
+        async with session.begin():
+            token_value = _generate_invite_token()
+            for _ in range(5):
+                exists = await session.scalar(
+                    select(func.count()).where(CandidateInviteToken.token == token_value)
+                )
+                if not exists:
+                    break
+                token_value = _generate_invite_token()
+
+            invite = CandidateInviteToken(
+                candidate_id=candidate_id,
+                token=token_value,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(invite)
+        await session.refresh(invite)
+        return invite
+
+
+async def bind_telegram_to_candidate(
+    *,
+    token: str,
+    telegram_id: int,
+    username: Optional[str] = None,
+) -> Optional[User]:
+    clean_token = (token or "").strip()
+    if not clean_token:
+        return None
+
+    async with async_session() as session:
+        async with session.begin():
+            invite = await session.scalar(
+                select(CandidateInviteToken).where(
+                    CandidateInviteToken.token == clean_token,
+                    CandidateInviteToken.used_at.is_(None),
+                )
+            )
+            if not invite:
+                return None
+
+            candidate = await session.scalar(
+                select(User).where(User.candidate_id == invite.candidate_id)
+            )
+            if not candidate:
+                return None
+
+            if candidate.telegram_id and candidate.telegram_id != telegram_id:
+                return None
+
+            existing = await session.scalar(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+            if existing and existing.id != candidate.id:
+                await session.execute(
+                    update(TestResult)
+                    .where(TestResult.user_id == existing.id)
+                    .values(user_id=candidate.id)
+                )
+                await session.execute(
+                    update(ChatMessage)
+                    .where(ChatMessage.candidate_id == existing.id)
+                    .values(candidate_id=candidate.id)
+                )
+                await session.execute(
+                    update(InterviewNote)
+                    .where(InterviewNote.user_id == existing.id)
+                    .values(user_id=candidate.id)
+                )
+                await session.delete(existing)
+
+            now = datetime.now(timezone.utc)
+            candidate.telegram_id = telegram_id
+            candidate.telegram_user_id = telegram_id
+            candidate.telegram_username = username or candidate.telegram_username
+            candidate.username = username or candidate.username
+            if candidate.telegram_linked_at is None:
+                candidate.telegram_linked_at = now
+            candidate.last_activity = now
+
+            invite.used_at = now
+            invite.used_by_telegram_id = telegram_id
+
+        await session.refresh(candidate)
+        return candidate
+
+
 async def list_chat_messages(
     candidate_id: int,
     *,
@@ -277,7 +417,11 @@ async def list_chat_messages(
         if before is not None:
             stmt = stmt.where(ChatMessage.created_at < before)
         rows = await session.execute(stmt)
-        return list(rows.scalars())
+        messages = list(rows.scalars())
+        # Expunge objects from session to prevent lazy loading after session closes
+        for msg in messages:
+            session.expunge(msg)
+        return messages
 
 
 CONVERSATION_FLOW = "flow"

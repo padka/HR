@@ -1,11 +1,11 @@
 import logging
+import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, Form, HTTPException, Query, Request
-from fastapi.encoders import jsonable_encoder
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -13,8 +13,7 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
 )
-from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -38,12 +37,6 @@ from backend.apps.admin_ui.services.candidates import (
     PIPELINE_DEFINITIONS,
     DEFAULT_PIPELINE,
 )
-from backend.apps.admin_ui.services.test2_invites import (
-    create_test2_invite,
-    get_latest_test2_invite,
-    revoke_test2_invite,
-    summarize_invite,
-)
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.slots import (
     execute_bot_dispatch,
@@ -51,6 +44,7 @@ from backend.apps.admin_ui.services.slots import (
     schedule_manual_candidate_slot_silent,
     ManualSlotError,
     recruiters_for_slot_form,
+    _trigger_test2,
 )
 from backend.apps.bot.services import approve_slot_and_notify
 from backend.apps.admin_ui.security import require_csrf_token
@@ -61,7 +55,14 @@ from backend.core.sanitizers import sanitize_plain_text
 from backend.core.time_utils import parse_form_datetime
 from backend.core.audit import log_audit_action
 from backend.domain.candidates.models import User
-from backend.domain.models import Slot, City, Recruiter, SlotStatus, OutboxNotification
+from backend.domain.models import (
+    Slot,
+    City,
+    Recruiter,
+    SlotStatus,
+    OutboxNotification,
+    DEFAULT_INTRO_DAY_DURATION_MIN,
+)
 from backend.domain.repositories import find_city_by_plain_name
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -110,10 +111,6 @@ def _parse_int(value: Optional[str]) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-class CandidateStatusPayload(BaseModel):
-    status: str
 
 
 async def _load_city_with_recruiters(city_name: Optional[str]) -> Optional[City]:
@@ -524,49 +521,6 @@ async def candidates_invite_token(candidate_id: int) -> RedirectResponse:
     )
 
 
-@router.post("/{candidate_id}/test2/invite", response_class=JSONResponse)
-async def candidates_test2_invite(
-    request: Request,
-    candidate_id: int,
-    csrf_ok: None = Depends(require_csrf_token),
-) -> JSONResponse:
-    _ = csrf_ok
-    admin_username = getattr(request.state, "admin_username", None)
-    result = await create_test2_invite(candidate_id, created_by=admin_username)
-    if not result:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-    token, invite = result
-    base_url = str(request.base_url).rstrip("/")
-    link = f"{base_url}/t/test2/{token}"
-    payload = summarize_invite(invite) or {}
-    payload["expires_at_local"] = (
-        fmt_local(invite.expires_at, DEFAULT_TZ) if invite.expires_at else None
-    )
-    response_payload = {"ok": True, "link": link, "invite": payload}
-    return JSONResponse(content=jsonable_encoder(response_payload))
-
-
-@router.post("/{candidate_id}/test2/invite/{invite_id}/revoke", response_class=JSONResponse)
-async def candidates_test2_invite_revoke(
-    request: Request,
-    candidate_id: int,
-    invite_id: int,
-    csrf_ok: None = Depends(require_csrf_token),
-) -> JSONResponse:
-    _ = csrf_ok
-    ok = await revoke_test2_invite(candidate_id, invite_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Invite not found")
-    invite = await get_latest_test2_invite(candidate_id)
-    payload = summarize_invite(invite) if invite else None
-    if invite and payload is not None:
-        payload["expires_at_local"] = (
-            fmt_local(invite.expires_at, DEFAULT_TZ) if invite.expires_at else None
-        )
-    response_payload = {"ok": True, "invite": payload}
-    return JSONResponse(content=jsonable_encoder(response_payload))
-
-
 @router.get("/{candidate_id}", response_class=HTMLResponse)
 async def candidates_detail(request: Request, candidate_id: int) -> HTMLResponse:
     detail = await get_candidate_detail(candidate_id)
@@ -630,13 +584,15 @@ async def candidates_set_status(
     candidate_id: int,
     background_tasks: BackgroundTasks,
     bot_service: BotService = Depends(provide_bot_service),
-    payload: Optional[CandidateStatusPayload] = Body(None),
-    status: Optional[str] = Form(None),
-    reject_reason: Optional[str] = Form(None),
-    reject_comment: Optional[str] = Form(None),
     _: None = Depends(require_csrf_token),
-) -> RedirectResponse | JSONResponse:
+) -> Response:
     """Update candidate status via UI or AJAX/kanban board."""
+    settings = get_settings()
+    if not settings.enable_legacy_status_api:
+        return JSONResponse(
+            {"ok": False, "message": "Legacy status endpoint disabled in this environment."},
+            status_code=403,
+        )
     allowed_form_statuses = {
         "hired",
         "not_hired",
@@ -646,14 +602,36 @@ async def candidates_set_status(
         "test2_failed",
     }
 
-    status_slug = None
-    if payload and payload.status:
-        status_slug = payload.status
-    elif status:
-        status_slug = status
+    content_type = (request.headers.get("content-type") or "").lower()
+    is_json_request = "application/json" in content_type
+    status_slug: Optional[str] = None
+    reject_reason: Optional[str] = None
+    reject_comment: Optional[str] = None
+    is_form_submission = not is_json_request
+
+    # Prefer JSON payloads (AJAX actions)
+    raw_body = await request.body()
+    if raw_body and is_json_request:
+        try:
+            parsed = json.loads(raw_body)
+            if isinstance(parsed, dict):
+                status_slug = parsed.get("status") or None
+        except json.JSONDecodeError:
+            pass
+        # Make body readable again for later form parsing
+        request._body = raw_body  # type: ignore[attr-defined]
+
+    # Fallback to form submission (HTML forms)
+    if status_slug is None:
+        if not is_json_request:
+            is_form_submission = True
+        form = await request.form()
+        status_slug = form.get("status")
+        reject_reason = form.get("reject_reason")
+        reject_comment = form.get("reject_comment")
 
     if not status_slug:
-        if payload:
+        if not is_form_submission:
             return JSONResponse(
                 {"ok": False, "message": "Статус обязателен"}, status_code=400
             )
@@ -664,13 +642,18 @@ async def candidates_set_status(
 
     status_slug = status_slug.strip()
     normalized_slug = status_slug.lower()
-    is_form_submission = payload is None
 
     if is_form_submission and normalized_slug not in allowed_form_statuses:
         return RedirectResponse(
             url=f"/candidates/{candidate_id}?error=invalid_status",
             status_code=303,
         )
+
+    if normalized_slug == "interview_declined":
+        async with async_session() as session:
+            user = await session.get(User, candidate_id)
+        if user and user.telegram_id is not None:
+            await set_status_interview_declined(user.telegram_id)
 
     ok, message, stored_status, dispatch = await update_candidate_status(
         candidate_id, normalized_slug, bot_service=bot_service
@@ -747,7 +730,7 @@ async def candidates_set_status(
                 },
             )
 
-        return RedirectResponse(url=f"/candidates/{candidate_id}?status_updated=1", status_code=303)
+        return RedirectResponse(url=f"/candidates/{candidate_id}?ok=1", status_code=303)
 
     status_code = 200 if ok else 400
     payload_response = {
@@ -758,6 +741,97 @@ async def candidates_set_status(
     response = JSONResponse(payload_response, status_code=status_code)
     response.headers["X-Bot"] = bot_header
     return response
+
+
+@router.get("/{candidate_id}/resend-test2")
+async def candidates_resend_test2(
+    request: Request,
+    candidate_id: int,
+    bot_service: BotService = Depends(provide_bot_service),
+) -> Response:
+    """Resend Test 2 invite to a candidate via bot."""
+
+    accept_json = "application/json" in (request.headers.get("accept") or "").lower()
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            payload = {"ok": False, "message": "Кандидат не найден"}
+            if accept_json:
+                return JSONResponse(payload, status_code=404)
+            return RedirectResponse(
+                url="/candidates?error=candidate_not_found",
+                status_code=303,
+            )
+
+        telegram_id = user.telegram_user_id or user.telegram_id
+        if not telegram_id:
+            payload = {"ok": False, "message": "У кандидата нет Telegram ID"}
+            if accept_json:
+                return JSONResponse(payload, status_code=400)
+            return RedirectResponse(
+                url=f"/candidates/{candidate_id}?error=missing_telegram",
+                status_code=303,
+            )
+
+        slot = await session.scalar(
+            select(Slot)
+            .where(
+                or_(
+                    Slot.candidate_id == user.candidate_id,
+                    Slot.candidate_tg_id == telegram_id,
+                )
+            )
+            .order_by(Slot.start_utc.desc(), Slot.id.desc())
+        )
+
+        candidate_city_id = (
+            getattr(slot, "candidate_city_id", None)
+            or getattr(slot, "city_id", None)
+            or getattr(user, "city_id", None)
+        )
+        candidate_tz = (
+            getattr(slot, "candidate_tz", None)
+            or getattr(user, "tz_name", None)
+            or DEFAULT_TZ
+        )
+        scheduled_at = datetime.now(timezone.utc)
+        if slot:
+            slot.test2_sent_at = scheduled_at
+            await session.commit()
+
+    result = await _trigger_test2(
+        int(telegram_id),
+        candidate_tz,
+        candidate_city_id,
+        user.fio or getattr(user, "name", "") or "Кандидат",
+        bot_service=bot_service,
+        required=get_settings().test2_required,
+        slot_id=slot.id if slot else None,
+    )
+
+    # Ensure status reflects the resend attempt
+    if result.ok:
+        await update_candidate_status(
+            candidate_id, "test2_sent", bot_service=bot_service
+        )
+
+    payload = {
+        "ok": result.ok,
+        "status": result.status,
+        "message": result.message or result.error or "",
+    }
+    status_code = 200 if result.ok else 400
+
+    if accept_json:
+        return JSONResponse(payload, status_code=status_code)
+
+    query = f"?test2_resend={result.status}"
+    if result.error:
+        query += f"&error_message={quote_plus(result.error)}"
+    return RedirectResponse(
+        url=f"/candidates/{candidate_id}{query}",
+        status_code=303,
+    )
 
 
 @router.post("/{candidate_id}/interview-notes")
@@ -890,41 +964,6 @@ async def candidates_delete_all():
         url=f"/candidates?bulk_deleted={deleted}",
         status_code=303,
     )
-
-
-@router.post("/{candidate_id}/status")
-async def candidates_set_status(
-    candidate_id: int,
-    payload: CandidateStatusPayload,
-    background_tasks: BackgroundTasks,
-    bot_service: BotService = Depends(provide_bot_service),
-):
-    ok, message, stored_status, dispatch = await update_candidate_status(
-        candidate_id,
-        payload.status,
-        bot_service=bot_service,
-    )
-    status_code = 200 if ok else 400
-    if not ok and "не найден" in (message or "").lower():
-        status_code = 404
-
-    bot_header = "skipped:not_applicable"
-    if dispatch is not None:
-        bot_header = getattr(dispatch, "status", "skipped:not_applicable")
-        plan = getattr(dispatch, "plan", None)
-        if ok and plan is not None:
-            background_tasks.add_task(execute_bot_dispatch, plan, stored_status or "", bot_service)
-
-    response = JSONResponse(
-        {
-            "ok": ok,
-            "message": message,
-            "status": stored_status,
-        },
-        status_code=status_code,
-    )
-    response.headers["X-Bot"] = bot_header
-    return response
 
 
 @router.get("/{candidate_id}/reports/{report_key}")
@@ -1277,6 +1316,7 @@ async def candidates_schedule_intro_day_submit(
             purpose="intro_day",
             tz_name=slot_tz,
             start_utc=dt_utc,
+            duration_min=DEFAULT_INTRO_DAY_DURATION_MIN,
             status=SlotStatus.BOOKED,
             candidate_tg_id=user.telegram_id,
             candidate_fio=user.fio,

@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, TYPE_CHECKING
+import uuid
 
+import backend.domain.models  # register shared tables (recruiters, cities, slots) for FK resolution
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -32,7 +34,16 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
+    candidate_id: Mapped[str] = mapped_column(
+        String(36),
+        unique=True,
+        index=True,
+        nullable=False,
+        default=lambda: str(uuid.uuid4()),
+    )
+    telegram_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, unique=True, index=True, nullable=True
+    )
     username: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)
     telegram_user_id: Mapped[Optional[int]] = mapped_column(
         BigInteger, unique=True, index=True, nullable=True
@@ -48,7 +59,11 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
     fio: Mapped[str] = mapped_column(String(160), nullable=False)
+    phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     city: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    responsible_recruiter_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("recruiters.id", ondelete="SET NULL"), nullable=True
+    )
     desired_position: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     resume_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     test1_report_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -63,6 +78,10 @@ class User(Base):
     last_activity: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
+    workflow_status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    rejection_stage: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    rejected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejected_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
     manual_slot_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     manual_slot_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -71,8 +90,12 @@ class User(Base):
     manual_slot_requested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     manual_slot_response_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     intro_decline_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="bot")
 
     test_results: Mapped[List["TestResult"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    test2_invites: Mapped[List["Test2Invite"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
     interview_note: Mapped[Optional["InterviewNote"]] = relationship(
@@ -86,7 +109,7 @@ class User(Base):
     )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
-        return f"<User {self.id} tg={self.telegram_id} status={self.candidate_status}>"
+        return f"<User {self.id} cid={self.candidate_id} tg={self.telegram_id} status={self.candidate_status}>"
 
 
 class TestResult(Base):
@@ -98,6 +121,7 @@ class TestResult(Base):
     raw_score: Mapped[int] = mapped_column(Integer, nullable=False)
     final_score: Mapped[float] = mapped_column(Float, nullable=False)
     rating: Mapped[str] = mapped_column(String(50), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="bot")
     total_time: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -138,6 +162,39 @@ class QuestionAnswer(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<QuestionAnswer result={self.test_result_id} index={self.question_index}>"
+
+
+class Test2InviteStatus(str, Enum):
+    CREATED = "created"
+    OPENED = "opened"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+class Test2Invite(Base):
+    __tablename__ = "test2_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=Test2InviteStatus.CREATED.value)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    opened_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_admin: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="test2_invites")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<Test2Invite {self.id} candidate={self.candidate_id} status={self.status}>"
 
 
 class AutoMessage(Base):
@@ -237,3 +294,23 @@ class ChatMessage(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<ChatMessage {self.id} user={self.candidate_id} dir={self.direction} status={self.status}>"
+
+
+class CandidateInviteToken(Base):
+    __tablename__ = "candidate_invite_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("users.candidate_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    used_by_telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<CandidateInviteToken {self.id} candidate={self.candidate_id} used={bool(self.used_at)}>"

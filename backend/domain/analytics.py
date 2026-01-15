@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Dict, Optional
 
 from sqlalchemy import text
@@ -22,6 +23,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.dependencies import get_async_session
 
 logger = logging.getLogger(__name__)
+
+
+class FunnelEvent(str, Enum):
+    BOT_ENTERED = "BOT_ENTERED"
+    BOT_START = "BOT_START"
+    TEST1_STARTED = "TEST1_STARTED"
+    TEST1_COMPLETED = "TEST1_COMPLETED"
+    TEST2_STARTED = "TEST2_STARTED"
+    TEST2_COMPLETED = "TEST2_COMPLETED"
+    SLOT_BOOKED = "SLOT_BOOKED"
+    SLOT_CONFIRMED = "SLOT_CONFIRMED"
+    SHOW_UP = "SHOW_UP"
+    OFFER_ACCEPTED = "OFFER_ACCEPTED"
 
 
 async def log_event(
@@ -107,6 +121,31 @@ async def log_event(
                 break  # Exit after first iteration
 
 
+async def log_funnel_event(
+    event: FunnelEvent | str,
+    *,
+    user_id: Optional[int] = None,
+    candidate_id: Optional[int] = None,
+    city_id: Optional[int] = None,
+    slot_id: Optional[int] = None,
+    booking_id: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    session: Optional[AsyncSession] = None,
+) -> None:
+    """Log a funnel analytics event with standardized naming."""
+    event_name = event.value if isinstance(event, FunnelEvent) else str(event)
+    await log_event(
+        event_name,
+        user_id=user_id,
+        candidate_id=candidate_id,
+        city_id=city_id,
+        slot_id=slot_id,
+        booking_id=booking_id,
+        metadata=metadata,
+        session=session,
+    )
+
+
 # Convenience functions for common events
 
 
@@ -135,8 +174,8 @@ async def log_slot_booked(
     metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Log when user books a slot."""
-    await log_event(
-        "slot_booked",
+    await log_funnel_event(
+        FunnelEvent.SLOT_BOOKED,
         user_id=user_id,
         candidate_id=candidate_id,
         slot_id=slot_id,
@@ -298,6 +337,8 @@ async def log_map_opened(
 
 
 __all__ = [
+    "FunnelEvent",
+    "log_funnel_event",
     "log_event",
     "log_slot_viewed",
     "log_slot_booked",

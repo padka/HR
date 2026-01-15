@@ -104,6 +104,8 @@ async def _wipe_db():
                 # If table doesn't exist yet, ignore
                 pass
         await session.commit()
+        # Explicitly close session to prevent connection leaks
+        await session.close()
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +117,19 @@ async def _clean_database_between_tests(request):
 
     # Run cleanup as async to stay in the same event loop
     await _wipe_db()
+    try:
+        from backend.apps.bot import services as bot_services
+        from backend.apps.bot.state_store import build_state_manager
+        from backend.core import settings as settings_module
+
+        settings = settings_module.get_settings()
+        bot_services._bot = None
+        bot_services._state_manager = build_state_manager(
+            redis_url=None,
+            ttl_seconds=getattr(settings, "state_ttl_seconds", 604800),
+        )
+    except Exception:
+        pass
     try:
         from backend.apps.bot.services import reset_template_provider
         reset_template_provider()

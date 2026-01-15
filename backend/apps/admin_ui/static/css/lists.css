@@ -19,9 +19,9 @@
   width: 100%;
   overflow-x: auto;
   border-radius: var(--radius-lg, 16px);
-  border: 1px solid var(--border-default, rgba(255,255,255,0.12));
-  background: var(--bg-surface, #0d1118);
-  box-shadow: var(--shadow-sm, var(--shadow-1, 0 6px 18px rgba(13,31,55,0.06)));
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
   max-width: 100%;
 }
 
@@ -34,8 +34,8 @@
 
 /* Table Header */
 .data-table thead {
-  background: color-mix(in srgb, var(--bg-elevated, #1a1f2e) 96%, transparent);
-  border-bottom: 1px solid var(--border-strong, rgba(255,255,255,0.24));
+  background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
+  border-bottom: 1px solid var(--border-strong);
   position: sticky;
   top: 0;
   z-index: 1020;
@@ -46,7 +46,7 @@
   text-align: left;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary, #aab3c2);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.025em;
   white-space: nowrap;
@@ -56,18 +56,18 @@
 .data-table th.sortable {
   cursor: pointer;
   user-select: none;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition: color var(--dur-sm) var(--ease-out), background-color var(--dur-sm) var(--ease-out);
 }
 
 .data-table th.sortable:hover {
-  color: var(--text-primary, #e9eef6);
-  background: rgba(255,255,255,0.05);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--glass-bg) 55%, transparent);
 }
 
 /* Table Body */
 .data-table tbody tr {
-  border-bottom: 1px solid color-mix(in srgb, var(--border-default, rgba(255,255,255,0.12)) 70%, transparent);
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+  transition: background-color var(--dur-sm) var(--ease-out), border-color var(--dur-sm) var(--ease-out);
   background: transparent;
 }
 
@@ -76,21 +76,21 @@
 }
 
 .data-table tbody tr:hover {
-  background: color-mix(in srgb, var(--table-hover, rgba(12,44,90,0.06)) 100%, transparent);
+  background: color-mix(in srgb, var(--table-hover) 100%, transparent);
 }
 
 .data-table tbody tr.selected {
-  background: rgba(105,183,255,0.08);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .data-table tbody tr:nth-child(even) {
-  background: color-mix(in srgb, var(--bg-surface, #0d1118) 96%, rgba(255,255,255,0.04));
+  background: color-mix(in srgb, var(--bg-surface) 96%, var(--glass-highlight));
 }
 
 .data-table td {
   padding: 12px 16px;
   font-size: 14px;
-  color: var(--text-primary, #e9eef6);
+  color: var(--text-primary);
   vertical-align: middle;
   background: transparent;
 }
@@ -113,7 +113,7 @@
 .data-table-empty {
   padding: 64px 32px;
   text-align: center;
-  color: var(--text-tertiary, #5b6372);
+  color: var(--text-tertiary);
 }
 
 .data-table-empty__icon {
@@ -125,13 +125,13 @@
 .data-table-empty__title {
   font-size: 18px;
   font-weight: 600;
-  color: var(--text-secondary, #aab3c2);
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
 .data-table-empty__description {
   font-size: 14px;
-  color: var(--text-tertiary, #5b6372);
+  color: var(--text-tertiary);
   margin-bottom: 24px;
 }
 
@@ -142,7 +142,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--on-surface, #0c1528) 16%, transparent);
+  background: color-mix(in srgb, var(--text) 16%, transparent);
   z-index: 1000;
   backdrop-filter: blur(4px);
 }
@@ -150,10 +150,10 @@
 .data-table-spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid rgba(255,255,255,0.12);
-  border-top-color: #69b7ff;
+  border: 3px solid color-mix(in srgb, var(--glass-border) 55%, transparent);
+  border-top-color: var(--accent);
   border-radius: 50%;
-  animation: spin 0.5s linear infinite;
+  animation: spin var(--dur-xl) linear infinite;
 }
 
 @keyframes spin {
@@ -170,13 +170,13 @@
   justify-content: space-between;
   gap: 16px;
   padding: 16px;
-  border-top: 1px solid var(--border-default, rgba(255,255,255,0.12));
-  background: var(--bg-surface, #0d1118);
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-surface);
 }
 
 .pagination__info {
   font-size: 14px;
-  color: var(--text-secondary, #aab3c2);
+  color: var(--text-secondary);
 }
 
 .pagination__controls {
@@ -194,17 +194,17 @@
   padding: 8px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-primary, #e9eef6);
+  color: var(--text-primary);
   background: transparent;
-  border: 1px solid var(--border-default, rgba(255,255,255,0.12));
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--dur-sm) var(--ease-out);
 }
 
 .pagination__button:hover:not(:disabled) {
-  background: rgba(255,255,255,0.05);
-  border-color: rgba(255,255,255,0.24);
+  background: color-mix(in srgb, var(--glass-bg) 55%, transparent);
+  border-color: color-mix(in srgb, var(--glass-border) 65%, transparent);
 }
 
 .pagination__button:disabled {
@@ -213,9 +213,9 @@
 }
 
 .pagination__button.active {
-  background: #69b7ff;
-  color: #fff;
-  border-color: #69b7ff;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
 }
 
 .pagination__ellipsis {
@@ -224,7 +224,7 @@
   justify-content: center;
   min-width: 36px;
   height: 36px;
-  color: var(--text-tertiary, #5b6372);
+  color: var(--text-tertiary);
 }
 
 /* ============================================================================
@@ -237,11 +237,11 @@
   justify-content: space-between;
   gap: 16px;
   padding: 16px;
-  background: rgba(105,183,255,0.12);
-  border: 1px solid rgba(105,183,255,0.24);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
   border-radius: 16px;
   margin-bottom: 16px;
-  animation: slide-in-down 0.25s cubic-bezier(0.22,1,0.36,1);
+  animation: slide-in-down var(--dur-md) var(--ease-out);
 }
 
 @keyframes slide-in-down {
@@ -262,12 +262,12 @@
 .bulk-actions__info {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-primary, #e9eef6);
+  color: var(--text-primary);
 }
 
 .bulk-actions__count {
   font-weight: 700;
-  color: #69b7ff;
+  color: var(--accent);
 }
 
 .bulk-actions__buttons {
@@ -292,22 +292,22 @@
   align-items: center;
   gap: 16px;
   padding: 16px;
-  background: var(--bg-surface, #0d1118);
-  border: 1px solid var(--border-default, rgba(255,255,255,0.12));
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 16px;
-  transition: all 0.25s ease;
+  transition: all var(--dur-md) var(--ease-out);
   cursor: pointer;
 }
 
 .list-item:hover {
-  border-color: rgba(255,255,255,0.24);
-  box-shadow: var(--shadow-1, 0 6px 18px rgba(13,31,55,0.06));
-  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--glass-border) 65%, transparent);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(var(--lift-sm));
 }
 
 .list-item.selected {
-  background: rgba(105,183,255,0.08);
-  border-color: #69b7ff;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: var(--accent);
 }
 
 .list-item__checkbox {
@@ -322,7 +322,7 @@
 .list-item__title {
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-primary, #e9eef6);
+  color: var(--text-primary);
   margin: 0 0 4px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -334,7 +334,7 @@
   flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
-  color: var(--text-tertiary, #5b6372);
+  color: var(--text-tertiary);
 }
 
 .list-item__meta-item {
@@ -372,10 +372,10 @@
 
   .data-table tbody tr {
     padding: 16px;
-    border: 1px solid var(--border-default, rgba(255,255,255,0.12));
+    border: 1px solid var(--border-default);
     border-radius: 16px;
     margin-bottom: 12px;
-    background: var(--bg-surface, #0d1118);
+    background: var(--bg-surface);
   }
 
   .data-table td {
@@ -388,7 +388,7 @@
     display: block;
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-tertiary, #5b6372);
+    color: var(--text-tertiary);
     text-transform: uppercase;
     margin-bottom: 4px;
   }

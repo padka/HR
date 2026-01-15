@@ -4,8 +4,9 @@ x-app-env: &app-env
   REDIS_URL: ${REDIS_URL:-redis://redis_notifications:6379/0}
   NOTIFICATION_BROKER: redis
   ADMIN_USER: ${ADMIN_USER:-admin}
-  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-CHANGE_ME_PASSWORD}
-  SESSION_SECRET: ${SESSION_SECRET:-CHANGEME_SESSION_SECRET_SHOULD_BE_32_CHARS}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+  SESSION_SECRET: ${SESSION_SECRET}
+  BOT_CALLBACK_SECRET: ${BOT_CALLBACK_SECRET}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 services:
@@ -114,7 +115,8 @@ services:
       <<: *app-env
       BOT_AUTOSTART: "true"
       BOT_ENABLED: ${BOT_ENABLED:-true}
-      BOT_TOKEN: ${BOT_TOKEN:-}
+      BOT_TOKEN: ${BOT_TOKEN}
+      BOT_CALLBACK_SECRET: ${BOT_CALLBACK_SECRET}
     depends_on:
       postgres:
         condition: service_healthy

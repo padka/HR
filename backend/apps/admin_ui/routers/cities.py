@@ -15,11 +15,13 @@ from backend.apps.admin_ui.services.cities import (
     normalize_city_timezone,
 )
 from backend.apps.admin_ui.services.recruiters import list_recruiters
+from backend.apps.admin_ui.services.message_templates import AVAILABLE_VARIABLES, MOCK_CONTEXT
 from backend.apps.admin_ui.services.templates import (
     get_stage_templates,
     stage_payload_for_ui,
 )
 from backend.core.sanitizers import sanitize_plain_text
+from backend.domain.errors import CityAlreadyExistsError
 from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 
 router = APIRouter(prefix="/cities", tags=["cities"])
@@ -40,6 +42,46 @@ def _primary_recruiter(city) -> Optional[object]:
 def _primary_recruiter_id(city) -> Optional[int]:
     recruiter = _primary_recruiter(city)
     return recruiter.id if recruiter else None
+
+
+def _responsible_key(rec) -> Optional[str]:
+    if rec is None:
+        return None
+    rec_id = getattr(rec, "id", None)
+    if rec_id is not None:
+        return f"id:{rec_id}"
+    tg_id = getattr(rec, "tg_chat_id", None)
+    if tg_id is not None:
+        return f"tg:{tg_id}"
+    name = (getattr(rec, "name", "") or "").strip().lower()
+    if name:
+        return f"name:{name}"
+    return None
+
+
+def _dedupe_responsibles(recruiters: list, primary_id: Optional[int]) -> list:
+    result = []
+    seen = set()
+
+    def _push(rec) -> None:
+        key = _responsible_key(rec)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        result.append(rec)
+
+    if primary_id is not None:
+        primary = next(
+            (rec for rec in recruiters if getattr(rec, "id", None) == primary_id),
+            None,
+        )
+        if primary is not None:
+            _push(primary)
+
+    for rec in recruiters:
+        _push(rec)
+
+    return result
 
 
 def _parse_plan_value(raw: object) -> Optional[int]:
@@ -138,6 +180,8 @@ async def _prepare_city_edit_context(
         "global_templates": stage_map.get(None, {}),
         "recruiter_rows": recruiter_rows,
         "owner_lookup": owner_lookup,
+        "template_vars": list(AVAILABLE_VARIABLES),
+        "template_preview_context": dict(MOCK_CONTEXT),
     }
     return context
 
@@ -149,6 +193,10 @@ async def cities_list(request: Request):
     recruiters = [row["rec"] for row in recruiter_rows]
     owners = {city.id: _primary_recruiter_id(city) for city in cities}
     rec_map = {rec.id: rec for rec in recruiters}
+    city_responsibles = {
+        city.id: _dedupe_responsibles(list(city.recruiters or []), owners.get(city.id))
+        for city in cities
+    }
     stage_map = await get_stage_templates(
         city_ids=[c.id for c in cities], include_global=True
     )
@@ -161,6 +209,7 @@ async def cities_list(request: Request):
         "city_count": len(cities),
         "owners": owners,
         "rec_map": rec_map,
+        "city_responsibles": city_responsibles,
         "recruiter_rows": recruiter_rows,
         "recruiters": recruiters,
         "stage_meta": CITY_TEMPLATE_STAGES,
@@ -305,6 +354,13 @@ async def cities_create(
 
     try:
         await create_city(name, normalized_tz)
+    except CityAlreadyExistsError:
+        context = {
+            "request": request,
+            "form_error": "Город с таким названием уже существует",
+            "form_data": {"name": (name or "").strip(), "tz": tz_value or ""},
+        }
+        return templates.TemplateResponse(request, "cities_new.html", context, status_code=409)
     except ValueError as exc:
         context = {
             "request": request,

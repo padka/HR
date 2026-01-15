@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.utils import format_optional_local
+from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
 from backend.core.sanitizers import sanitize_plain_text
@@ -163,6 +164,12 @@ async def create_recruiter(
             await session.rollback()
             return {"ok": False, "error": _integrity_error_payload(exc)}
 
+    await log_audit_action(
+        "recruiter_created",
+        "recruiter",
+        recruiter.id,
+        changes={"city_ids": selected_ids},
+    )
     return {"ok": True, "recruiter_id": recruiter.id}
 
 
@@ -231,6 +238,15 @@ async def update_recruiter(
             await session.rollback()
             return {"ok": False, "error": _integrity_error_payload(exc)}
 
+    await log_audit_action(
+        "recruiter_updated",
+        "recruiter",
+        rec_id,
+        changes={
+            "city_ids": selected_ids,
+            "active": payload.get("active") if isinstance(payload, dict) else None,
+        },
+    )
     return {"ok": True, "recruiter_id": rec_id}
 
 
@@ -246,6 +262,12 @@ async def delete_recruiter(rec_id: int) -> None:
         )
         await session.delete(recruiter)
         await session.commit()
+    await log_audit_action(
+        "recruiter_deleted",
+        "recruiter",
+        rec_id,
+        changes=None,
+    )
 
 
 def build_recruiter_payload(

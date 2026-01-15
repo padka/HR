@@ -1,7 +1,421 @@
 {% extends "base.html" %}
 {% block title %}Кандидат {{ user.fio }}{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'candidates-detail';
+</script>
 <style>
+  /* Candidate profile shell — calm, decision-first */
+  .profile-shell {
+    margin: 28px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .profile-header {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 14px 18px;
+    align-items: center;
+  }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    border: 1px solid var(--layer-border);
+    background: var(--layer-panel);
+    transition: all 0.2s ease;
+  }
+
+  .back-link:hover {
+    color: var(--ink);
+    border-color: color-mix(in srgb, var(--ink) 16%, var(--layer-border));
+  }
+
+  .profile-title h1 {
+    margin: 0;
+    font-size: clamp(22px, 3vw, 28px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .profile-title .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-soft);
+    margin: 0 0 6px;
+    font-size: 12px;
+  }
+
+  .profile-title .subtitle {
+    margin: 4px 0 0;
+    color: var(--ink-soft);
+  }
+
+  .status-chip {
+    justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--layer-border-strong);
+    background: var(--layer-panel-strong);
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 70%, var(--ok));
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+
+  .profile-grid {
+    display: grid;
+    grid-template-columns: 2fr 1.1fr;
+    gap: 16px;
+  }
+
+  .card {
+    border-radius: 20px;
+    border: 1px solid var(--layer-border);
+    background: var(--layer-panel);
+    box-shadow: var(--shadow-lg, 0 18px 50px rgba(15, 23, 42, 0.18));
+    padding: 18px;
+  }
+
+  .card.glass {
+    background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    border-color: color-mix(in srgb, var(--layer-border) 70%, rgba(255,255,255,0.4));
+  }
+
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .card-head h3 {
+    margin: 0;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+  }
+
+  .card .eyebrow {
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+
+  .pill {
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--layer-border);
+    background: var(--layer-panel-strong);
+    font-size: 12px;
+  }
+
+  .identity-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+
+  .identity-item {
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid var(--layer-border);
+    background: color-mix(in srgb, var(--layer-panel) 90%, transparent);
+    display: grid;
+    gap: 6px;
+    min-height: 110px;
+  }
+
+  .identity-label {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-soft);
+    font-size: 12px;
+  }
+
+  .identity-value {
+    font-family: var(--font-mono, 'SFMono-Regular', ui-monospace, monospace);
+    font-size: 15px;
+    word-break: break-word;
+  }
+
+  .inline-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1px solid var(--layer-border);
+    background: var(--layer-panel-strong);
+    color: var(--ink);
+    text-decoration: none;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
+  }
+
+  .action-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+    background: color-mix(in srgb, var(--layer-panel-strong) 80%, var(--accent) 8%);
+  }
+
+  .action-btn--primary {
+    background: color-mix(in srgb, var(--accent) 82%, var(--layer-panel) 18%);
+    color: #0b1223;
+    border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+    box-shadow: 0 12px 32px rgba(37, 99, 235, 0.2);
+  }
+
+  .action-btn--secondary {
+    background: color-mix(in srgb, var(--layer-panel-strong) 92%, var(--accent) 8%);
+  }
+
+  .action-btn--ghost {
+    background: transparent;
+    border-color: var(--layer-border);
+    color: var(--ink-soft);
+  }
+
+  .action-btn--danger {
+    background: color-mix(in srgb, var(--bad) 18%, var(--layer-panel));
+    border-color: color-mix(in srgb, var(--bad) 40%, var(--layer-border));
+    color: color-mix(in srgb, var(--ink) 80%, var(--bad));
+  }
+
+  .status-control {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .status-select {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid var(--layer-border);
+    background: var(--layer-panel-strong);
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+
+  .status-meta {
+    color: var(--ink-soft);
+    margin: 6px 0 0;
+  }
+
+  .action-btn[disabled] {
+    opacity: 0.55;
+    cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .actions-card {
+    display: grid;
+    gap: 10px;
+    align-content: start;
+  }
+
+  .action-grid {
+    display: grid;
+    gap: 8px;
+  }
+
+  .action-grid .action-btn,
+  .action-row .action-btn {
+    width: 100%;
+  }
+
+  .inline-actions .action-btn {
+    width: auto;
+  }
+
+  .action-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .action-error {
+    margin: 0;
+    color: color-mix(in srgb, var(--bad) 80%, var(--ink));
+    font-size: 14px;
+  }
+
+  .profile-states {
+    display: grid;
+    gap: 8px;
+  }
+
+  .state-card {
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px dashed var(--layer-border);
+    background: var(--layer-panel);
+    color: var(--ink);
+  }
+
+  .state-card--error {
+    border-color: color-mix(in srgb, var(--bad) 50%, var(--layer-border));
+    color: color-mix(in srgb, var(--bad) 80%, var(--ink));
+  }
+
+  .state-card--success {
+    border-color: color-mix(in srgb, var(--ok) 50%, var(--layer-border));
+    color: color-mix(in srgb, var(--ok) 80%, var(--ink));
+  }
+
+  .timeline-shell {
+    border-radius: 16px;
+    border: 1px solid var(--layer-border);
+    background: var(--layer-panel);
+    padding: 12px 14px;
+    transition: all 0.2s ease;
+  }
+
+  .timeline-shell summary {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-weight: 600;
+    list-style: none;
+  }
+
+  .timeline-shell[open] {
+    box-shadow: var(--shadow-md, 0 12px 28px rgba(15, 23, 42, 0.16));
+  }
+
+  .timeline-body {
+    margin-top: 12px;
+  }
+
+  .timeline-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 12px;
+  }
+
+  .timeline-item {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--layer-border);
+    background: color-mix(in srgb, var(--layer-panel) 92%, transparent);
+    animation: fadeUp 0.35s ease both;
+  }
+
+  .timeline-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--layer-panel-strong) 90%, var(--accent) 10%);
+    color: var(--ink);
+  }
+
+  .timeline-meta {
+    color: var(--ink-soft);
+    font-size: 13px;
+  }
+
+  .timeline-title {
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .timeline-empty {
+    color: var(--ink-soft);
+    font-size: 14px;
+    padding: 10px;
+    border: 1px dashed var(--layer-border);
+    border-radius: 12px;
+  }
+
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .quiet-link {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  @media (max-width: 1024px) {
+    .profile-header {
+      grid-template-columns: 1fr auto;
+      grid-template-areas:
+        "back status"
+        "title status";
+    }
+    .back-link { grid-area: back; }
+    .profile-title { grid-area: title; }
+    .status-chip { grid-area: status; justify-self: end; }
+    .profile-grid { grid-template-columns: 1fr; }
+    .actions-card .action-btn { width: 100%; }
+  }
+
+  @media (max-width: 640px) {
+    .profile-header {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "back"
+        "title"
+        "status";
+    }
+    .status-chip { justify-self: start; }
+    .timeline-item {
+      grid-template-columns: auto 1fr;
+      grid-template-rows: auto auto;
+    }
+    .timeline-item time { grid-column: 1 / -1; }
+    .actions-card .action-row:nth-child(n+3) {
+      display: none;
+    }
+  }
+
   /* Liquid Glass Variables */
   :root {
     --liquid-glass-bg: linear-gradient(135deg,
@@ -53,6 +467,30 @@
     --liquid-glass-blur: blur(35px);
   }
 
+  .btn-secondary {
+    background: color-mix(in srgb, var(--accent) 12%, var(--detail-veil-strong));
+    border-color: color-mix(in srgb, var(--accent) 38%, var(--detail-border-strong));
+    color: color-mix(in srgb, var(--accent) 85%, var(--fg));
+  }
+
+  .btn-secondary:hover {
+    background: color-mix(in srgb, var(--accent) 18%, var(--detail-veil-strong));
+    border-color: color-mix(in srgb, var(--accent) 48%, var(--detail-border-strong));
+  }
+
+  html[data-theme="light"] .btn-secondary {
+    background: color-mix(in srgb, var(--accent) 12%, #ffffff);
+    border-color: color-mix(in srgb, var(--accent) 45%, rgba(15, 23, 42, 0.15));
+    color: color-mix(in srgb, var(--accent) 90%, #111827);
+    box-shadow: 0 8px 20px rgba(37, 99, 235, 0.12);
+  }
+
+  html[data-theme="light"] .btn-secondary:hover {
+    background: color-mix(in srgb, var(--accent) 18%, #ffffff);
+    border-color: color-mix(in srgb, var(--accent) 55%, rgba(15, 23, 42, 0.18));
+    box-shadow: 0 12px 26px rgba(37, 99, 235, 0.18);
+  }
+
   .candidate-overview {
     margin-top: 32px;
     padding: 32px;
@@ -62,6 +500,98 @@
     box-shadow: var(--detail-shadow);
     display: grid;
     gap: 32px;
+  }
+
+  .candidate-actions {
+    margin-top: 24px;
+  }
+
+  .candidate-actions__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .candidate-actions__hint {
+    margin-top: 12px;
+    color: var(--danger, #dc2626);
+  }
+
+  .candidate-core {
+    margin-top: 24px;
+    padding: 24px;
+    border-radius: 24px;
+    background: linear-gradient(135deg, var(--detail-surface), var(--detail-surface-2));
+    border: 1px solid var(--detail-border);
+    box-shadow: var(--detail-shadow);
+    display: grid;
+    gap: 16px;
+  }
+
+  .candidate-core__header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .candidate-core__eyebrow {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin: 0 0 6px;
+  }
+
+  .candidate-core__title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 700;
+  }
+
+  .candidate-core__stage {
+    margin: 4px 0 0;
+    color: var(--text-muted);
+  }
+
+  .candidate-core__status {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .candidate-core__contacts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+  }
+
+  .candidate-core__contact {
+    padding: 12px;
+    border: 1px solid var(--detail-border);
+    border-radius: 12px;
+    background: var(--detail-veil);
+    display: grid;
+    gap: 6px;
+  }
+
+  .candidate-core__contact label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+  }
+
+  .candidate-core__contact code {
+    font-family: var(--font-mono);
+  }
+
+  .candidate-core__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
   }
 
   .candidate-hero {
@@ -398,6 +928,20 @@
     font-size: 1.25rem;
     margin: 0;
     font-weight: 600;
+  }
+
+  .candidate-outcome {
+    padding: 12px 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    display: grid;
+    gap: 8px;
+  }
+
+  html[data-theme="light"] .candidate-outcome {
+    border-color: rgba(15, 23, 42, 0.12);
+    background: rgba(15, 23, 42, 0.05);
   }
 
   .manual-slot-card {
@@ -921,14 +1465,35 @@
 {% endfor %}
 {% set pending_slot = pending_ns.slot %}
 {% set saved = request.query_params.get('saved') %}
+{% set status_updated = request.query_params.get('status_updated') %}
 {% set error = request.query_params.get('error') %}
+{% set error_message = request.query_params.get('error_message') %}
+
+{# Success messages #}
 {% if saved %}
   <div class="surface glass grain alert" data-tone="success" role="status">
     Данные кандидата обновлены.
   </div>
-{% elif error %}
+{% elif status_updated %}
+  <div class="surface glass grain alert" data-tone="success" role="status">
+    Статус кандидата успешно изменён.
+  </div>
+{% endif %}
+
+{# Error messages with specific codes #}
+{% if error %}
+  {% set error_messages = {
+    'candidate_not_found': 'Кандидат не найден в системе.',
+    'slot_not_found': 'Для кандидата не найден подходящий слот. Создайте слот перед изменением статуса.',
+    'invalid_status': 'Указан некорректный статус. Выберите допустимое значение.',
+    'missing_telegram': 'У кандидата не указан Telegram ID. Свяжите аккаунт Telegram перед изменением статуса.',
+    'status_not_manual': 'Этот статус нельзя установить вручную. Используйте специальные действия.',
+    'slot_approval_failed': 'Не удалось согласовать слот. Попробуйте позже или свяжитесь с администратором.',
+    'status_update_failed': 'Не удалось обновить статус кандидата. Попробуйте ещё раз.'
+  } %}
+  {% set display_message = error_messages.get(error, error_message or 'Не удалось обновить данные кандидата.') %}
   <div class="surface glass grain alert" data-tone="danger" role="alert">
-    Не удалось обновить данные кандидата.
+    <strong>Ошибка:</strong> {{ display_message }}
   </div>
 {% endif %}
 {% set interview_saved = request.query_params.get('interview_saved') %}
@@ -980,12 +1545,16 @@
   {% set slot_tones = {
     'success': 'success',
     'notify_failed': 'warning',
-    'missing_telegram': 'danger'
+    'missing_telegram': 'danger',
+    'scheduled': 'success',
+    'failed': 'danger'
   } %}
   {% set slot_messages = {
     'success': 'Собеседование назначено и кандидат уведомлён.',
     'notify_failed': 'Слот создан, но отправить сообщение кандидату не удалось — свяжитесь вручную.',
-    'missing_telegram': 'Нельзя назначить собеседование — у кандидата отсутствует Telegram ID.'
+    'missing_telegram': 'Нельзя назначить собеседование — у кандидата отсутствует Telegram ID.',
+    'scheduled': 'Собеседование назначено (без уведомления кандидата).',
+    'failed': 'Не удалось назначить собеседование — проверьте дату, время и доступность рекрутёра.'
   } %}
   <div class="surface glass grain alert" data-tone="{{ slot_tones.get(manual_slot_status, 'info') }}" role="status">
     {{ slot_messages.get(manual_slot_status, 'Статус обновлён.') }}
@@ -1001,159 +1570,354 @@
 {% set telegram_username = user.telegram_username or user.username %}
 {% set telegram_linked_at = user.telegram_linked_at %}
 {% set chat_templates = chat_templates or [] %}
-{% set has_test2_completed = test2_passed or false %}
-<section class="page-header">
-  <div>
-    <a class="muted" href="/candidates">← К списку кандидатов</a>
-    <h1 class="page-title">{{ user.fio }}</h1>
-    <p class="page-description">
-      Telegram ID {{ telegram_user_id or '—' }} · {{ user.city or 'Город не указан' }}
-    </p>
-  </div>
-  <div class="page-actions">
-    {% set cs = (candidate_status_slug or user.candidate_status or '')|lower %}
-    {% set intro_day_allowed = can_schedule_intro_day or (cs in ['test2_completed', 'intro_day_scheduled', 'intro_day_confirmed_preliminary', 'intro_day_confirmed_day_of'] or has_test2_completed) %}
-    {% if not (has_intro_day_slot | default(false)) and intro_day_allowed %}
-      <a href="/candidates/{{ user.id }}/schedule-intro-day" class="btn btn-primary">
-        📆 Назначить ознакомительный день
-      </a>
-    {% endif %}
-    <div class="btn-group">
-      {% if cs not in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] and not has_test2_completed and (cs in ['waiting_slot', 'stalled_waiting_slot', 'test1_completed', 'interview_declined', 'interview_scheduled'] or not has_interview_slot) %}
-        <a href="/candidates/{{ user.id }}/schedule-slot" class="btn {% if cs in ['waiting_slot', 'stalled_waiting_slot'] %}btn-primary{% else %}btn-secondary{% endif %}">
-          🕒 {% if cs in ['waiting_slot', 'stalled_waiting_slot'] %}Предложить время собеседования{% else %}Назначить/перенести собеседование{% endif %}
-        </a>
-      {% endif %}
-      {% if cs not in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] %}
-        <form method="post" action="/candidates/{{ user.id }}/status" style="display:inline;" onsubmit="return confirm('Отклонить кандидата {{ user.fio }}?');">
-          {{ csrf_input(request) }}
-          <input type="hidden" name="status" value="interview_declined">
-          <button class="btn btn-ghost" type="submit">🚫 Отказ</button>
-        </form>
-      {% endif %}
-    </div>
-    {% if pending_slot %}
-      <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve" class="approve-form">
-        {{ csrf_input(request) }}
-        <button class="btn btn-primary" type="submit">
-          ✅ Согласовать интервью
-        </button>
-        <span class="approve-form__hint">
-          {{ fmt_local(pending_slot.start_utc, pending_slot.candidate_tz or 'Europe/Moscow') }} ·
-          {% if pending_slot.recruiter %}{{ pending_slot.recruiter.name }}{% else %}Без рекрутёра{% endif %}
-        </span>
-      </form>
-    {% endif %}
+{% set test2_section = test_sections_map.get('test2') if test_sections_map else None %}
+{% set has_test2_result = test2_passed or (test2_section and test2_section.status in ['passed', 'failed']) %}
+{% set has_test2_completed = has_test2_result %}
+{% set status_label = workflow_status_label or stage or 'Статус не указан' %}
+{% set status_color = workflow_status_color or 'muted' %}
+{% set profile_state = 'ready' %}
+{% if error %}
+  {% set profile_state = 'error' %}
+{% elif saved or status_updated or interview_saved %}
+  {% set profile_state = 'success' %}
+{% endif %}
+{% set timeline_items = timeline or [] %}
 
-    {# Manual status change buttons for HIRED/NOT_HIRED #}
-    {% if cs in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] %}
-      <form method="post" action="/candidates/{{ user.id }}/status" style="display: inline;">
-        {{ csrf_input(request) }}
-        <input type="hidden" name="status" value="hired">
-        <button class="btn btn-primary" type="submit" onclick="return confirm('Закрепить {{ user.fio }} на обучение?');">
-          🎉 Закреплен на обучение
-        </button>
-      </form>
-      <form method="post" action="/candidates/{{ user.id }}/status" style="display: inline;">
-        {{ csrf_input(request) }}
-        <input type="hidden" name="status" value="not_hired">
-        <button class="btn btn-ghost" type="submit" onclick="return confirm('Пометить {{ user.fio }} как не закрепленного?');">
-          ⚠️ Не закреплен
-        </button>
-      </form>
-      <form method="post" action="/candidates/{{ user.id }}/status" style="display: inline;">
-        {{ csrf_input(request) }}
-        <input type="hidden" name="status" value="intro_day_declined_day_of">
-        <button class="btn btn-soft" type="submit" onclick="return confirm('Отказать кандидату {{ user.fio }} после ОД?');">
-          ⛔️ Отказ
-        </button>
-      </form>
-    {% endif %}
-
-    <form method="post" action="/candidates/{{ user.id }}/toggle">
-      {{ csrf_input(request) }}
-      {% if user.is_active %}
-        <input type="hidden" name="active" value="false">
-        <button class="btn btn-ghost" type="submit">Отключить</button>
-      {% else %}
-        <input type="hidden" name="active" value="true">
-        <button class="btn btn-primary" type="submit">Активировать</button>
-      {% endif %}
-    </form>
-    <form method="post" action="/candidates/{{ user.id }}/delete" onsubmit="return confirm('Удалить кандидата {{ user.fio }}?');">
-      {{ csrf_input(request) }}
-      <button class="btn btn-soft" type="submit">Удалить</button>
-    </form>
-  </div>
-</section>
-
-<section class="telegram-panel" aria-labelledby="telegram-panel-title">
-  <div>
-    <p class="telegram-panel__eyebrow">Telegram</p>
-    <h2 class="telegram-panel__title" id="telegram-panel-title">Контакты кандидата</h2>
-    {% if telegram_linked_at %}
-      <p class="telegram-panel__meta">
-        Связь установлена {{ fmt_local(telegram_linked_at, 'Europe/Moscow') }}
+<section class="profile-shell" data-profile-state="{{ profile_state }}">
+  <header class="profile-header">
+    <a class="back-link" href="/candidates" aria-label="Вернуться к списку">← Назад</a>
+    <div class="profile-title">
+      <p class="eyebrow">Профиль кандидата</p>
+      <h1>{{ user.fio or telegram_username or 'Кандидат' }}</h1>
+      <p class="subtitle">
+        {{ user.city or 'Город не указан' }}
+        {% if stage %} · {{ stage }}{% endif %}
       </p>
+    </div>
+    <div class="status-chip" aria-label="Текущий статус">
+      <span class="status-dot"></span>
+      <span>{{ status_label }}</span>
+    </div>
+  </header>
+
+  {% if legacy_status_enabled %}
+    <!-- Status Center: главный блок управления статусом (legacy) -->
+    <section class="status-center card glass" data-status-center data-candidate-id="{{ user.id }}">
+      <div class="status-center__header">
+        <div class="status-center__current" data-tone="{{ candidate_status_color or 'muted' }}">
+          <span class="status-center__dot"></span>
+          <span class="status-center__label">{{ status_label }}</span>
+          {% if status_is_terminal %}
+            <span class="status-center__badge status-center__badge--terminal">Финальный</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Pipeline progress -->
+      <div class="status-center__pipeline">
+        {% for stage in pipeline_stages %}
+          <div class="pipeline-stage" data-state="{{ stage.state }}">
+            <div class="pipeline-stage__dot"></div>
+            <span class="pipeline-stage__label">{{ stage.label }}</span>
+          </div>
+          {% if not loop.last %}
+            <div class="pipeline-connector" data-state="{{ stage.state }}"></div>
+          {% endif %}
+        {% endfor %}
+      </div>
+
+      <!-- Quick actions (only allowed transitions) -->
+      {% if allowed_next_statuses %}
+        <div class="status-center__actions">
+          <p class="status-center__actions-label">Следующий статус:</p>
+          <div class="status-center__buttons">
+            {% for next_status in allowed_next_statuses %}
+              <button
+                class="action-btn {% if next_status.is_terminal %}action-btn--danger{% elif loop.first %}action-btn--primary{% else %}action-btn--secondary{% endif %}"
+                type="button"
+                data-status-quick="{{ next_status.slug }}"
+                {% if next_status.is_terminal %}data-action-confirm="Установить статус «{{ next_status.label }}»? Это финальный статус."{% endif %}
+              >
+                {{ next_status.label }}
+              </button>
+            {% endfor %}
+          </div>
+        </div>
+      {% else %}
+        <div class="status-center__actions">
+          <p class="status-center__empty">{% if status_is_terminal %}Финальный статус — дальнейшие переходы недоступны{% else %}Нет доступных переходов{% endif %}</p>
+        </div>
+      {% endif %}
+
+      <!-- Manual override (collapsible) -->
+      <details class="status-center__override">
+        <summary>Ручная коррекция статуса</summary>
+        <div class="status-center__override-content">
+          <select class="status-select" data-status-manual-select aria-label="Выберите статус">
+            {% for option in candidate_status_options %}
+              <option value="{{ option.slug }}" {% if option.slug == candidate_status_slug %}selected{% endif %}>
+                {{ option.label }}
+              </option>
+            {% endfor %}
+          </select>
+          <button type="button" class="action-btn action-btn--secondary" data-status-manual-apply>Применить</button>
+        </div>
+        <p class="status-center__hint">Используйте для ручной коррекции. Некорректные переходы потребуют подтверждения.</p>
+      </details>
+
+      <p class="action-error" data-status-center-error hidden></p>
+    </section>
+  {% endif %}
+
+  <div class="profile-states">
+    <div class="state-card" data-when="loading" hidden>Загружаем профиль…</div>
+    <div class="state-card state-card--error" data-when="error" hidden>Не удалось загрузить профиль. Попробуйте обновить страницу.</div>
+    <div class="state-card state-card--empty" data-when="empty" hidden>Данных по кандидату нет.</div>
+    <div class="state-card state-card--success" data-when="success" hidden>Данные обновлены. Экран готов к работе.</div>
+  </div>
+
+  <div class="profile-grid">
+    <div class="card glass identity-card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Основные данные</p>
+          <h3>Связь и статус</h3>
+        </div>
+        <span class="pill">15 сек на понимание</span>
+      </div>
+      <div class="identity-grid">
+        <div class="identity-item">
+          <span class="identity-label">TG ID</span>
+          {% if telegram_user_id %}
+            <span class="identity-value">{{ telegram_user_id }}</span>
+            <div class="inline-actions">
+              <button class="action-btn action-btn--ghost" type="button" data-copy-value="{{ telegram_user_id }}" data-copy-success="Скопировано">Скопировать</button>
+              <span class="timeline-meta">Связан {{ fmt_local(telegram_linked_at, 'Europe/Moscow') if telegram_linked_at else 'нет отметки' }}</span>
+            </div>
+          {% else %}
+            <div class="inline-actions">
+              <span class="identity-value muted">Нет данных</span>
+              <span class="timeline-meta">Появится после первого контакта</span>
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="identity-item">
+          <span class="identity-label">Username</span>
+          {% if telegram_username %}
+            <span class="identity-value">@{{ telegram_username }}</span>
+            <div class="inline-actions">
+              <button class="action-btn action-btn--ghost" type="button" data-copy-value="{{ telegram_username }}" data-copy-success="Скопировано">Скопировать</button>
+              <a class="quiet-link" href="https://t.me/{{ telegram_username }}" target="_blank" rel="noopener">Открыть в Telegram</a>
+            </div>
+          {% else %}
+            <span class="identity-value muted">Скрыт или не привязан</span>
+          {% endif %}
+        </div>
+
+        <div class="identity-item">
+          <span class="identity-label">Чат</span>
+          <div class="inline-actions">
+            {% if telegram_username %}
+              <a class="action-btn action-btn--secondary" href="https://t.me/{{ telegram_username }}" target="_blank" rel="noopener">
+                💬 Открыть чат
+              </a>
+            {% elif telegram_user_id %}
+              <a class="action-btn action-btn--secondary" href="tg://user?id={{ telegram_user_id }}">💬 Открыть чат</a>
+            {% else %}
+              <button class="action-btn action-btn--ghost" type="button" disabled>Чат станет доступен после первого сообщения</button>
+            {% endif %}
+            <button class="action-btn action-btn--ghost" type="button" data-chat-toggle {% if not telegram_user_id %}disabled{% endif %}>
+              История сообщений
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="card glass actions-card" data-candidate-actions data-candidate-id="{{ user.id }}">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Действия</p>
+          <h3>Следующий шаг</h3>
+        </div>
+        <span class="pill">до 4 вариантов</span>
+      </div>
+      {% set actions = workflow_actions %}
+      <div class="action-grid">
+        {% if actions %}
+          {% set visible_actions = actions[:4] %}
+          {% for action in visible_actions %}
+            {% set href = action.url_pattern.replace('{id}', user.id|string) %}
+            {% set variant = action.variant or 'secondary' %}
+            {% set variant_class = 'action-btn--secondary' %}
+            {% if loop.index == 1 and variant != 'danger' %}
+              {% set variant_class = 'action-btn--primary' %}
+            {% elif variant == 'danger' %}
+              {% set variant_class = 'action-btn--danger' %}
+            {% elif variant == 'ghost' %}
+              {% set variant_class = 'action-btn--ghost' %}
+            {% elif variant == 'primary' %}
+              {% set variant_class = 'action-btn--primary' %}
+            {% endif %}
+            <div class="action-row">
+              {% if action.method == 'GET' %}
+                <a href="{{ href }}" class="action-btn {{ variant_class }}">
+                  {% if action.icon %}<span aria-hidden="true">{{ action.icon }}</span>{% endif %}
+                  <span>{{ action.label }}</span>
+                </a>
+              {% else %}
+                <button
+                  class="action-btn {{ variant_class }}"
+                  type="button"
+                  data-action-target="{{ action.target_status or action.key }}"
+                  {% if action.kind %}data-action-kind="{{ action.kind }}"{% endif %}
+                  {% if action.confirmation %}data-action-confirm="{{ action.confirmation }}"{% endif %}>
+                  {% if action.icon %}<span aria-hidden="true">{{ action.icon }}</span>{% endif %}
+                  <span>{{ action.label }}</span>
+                </button>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="state-card state-card--empty">Нет доступных действий для текущего статуса.</div>
+        {% endif %}
+      </div>
+      {% if actions and (actions|length > 4) %}
+        <p class="timeline-meta">Показаны приоритетные шаги; полная матрица доступна через автоматизацию.</p>
+      {% endif %}
+      <p class="action-error" data-action-error hidden></p>
+    </aside>
+    {% if legacy_status_enabled %}
+      <aside class="card glass actions-card" data-status-switcher data-candidate-id="{{ user.id }}">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow">Статус</p>
+            <h3>Быстрое изменение</h3>
+          </div>
+          <span class="pill">Контроль</span>
+        </div>
+        <div class="status-control">
+          <select class="status-select" data-status-select aria-label="Выберите статус">
+            {% for option in candidate_status_options %}
+              <option value="{{ option.slug }}" {% if option.slug == candidate_status_slug %}selected{% endif %}>
+                {{ option.label }}
+              </option>
+            {% endfor %}
+          </select>
+          <button type="button" class="action-btn action-btn--secondary" data-status-apply>Применить</button>
+        </div>
+        <p class="status-meta">Используйте для ручной коррекции. Опасные статусы требуют подтверждения.</p>
+        <p class="action-error" data-status-error hidden></p>
+      </aside>
     {% endif %}
   </div>
-  <div class="telegram-panel__grid">
-    <div class="telegram-panel__item">
-      <span class="telegram-panel__label">TG ID</span>
-      {% if telegram_user_id %}
-        <div class="telegram-panel__value">
-          <code>{{ telegram_user_id }}</code>
-          <button
-            class="btn btn-ghost btn--xs"
-            type="button"
-            data-copy-value="{{ telegram_user_id }}"
-            data-copy-success="Скопировано">
-            Скопировать TG ID
-          </button>
-        </div>
+
+  <details class="timeline-shell" data-collapsible>
+    <summary>История и сигналы</summary>
+    <div class="timeline-body" data-timeline>
+      {% if timeline_items %}
+        <ul class="timeline-list">
+          {% for item in timeline_items %}
+            {% set ts = item.dt %}
+            {% set timestamp = fmt_local(ts, item.tz or 'Europe/Moscow') if ts else '—' %}
+            {% if item.kind == 'slot' %}
+              {% set label = 'Слот собеседования' %}
+              {% set recruiter_label = ' · ' ~ item.recruiter if item.recruiter else '' %}
+              {% set meta = (item.city or 'Без города') ~ recruiter_label %}
+              {% set tone = 'slot' %}
+              {% set icon = '🗓️' %}
+            {% elif item.kind == 'test' %}
+              {% set label = item.rating or 'Тест' %}
+              {% set meta = item.test_key and item.test_key|upper or '' %}
+              {% set tone = 'test' %}
+              {% set icon = '🧠' %}
+            {% else %}
+              {% set label = 'Сообщение' %}
+              {% set meta = item.text or 'Текст скрыт' %}
+              {% set tone = 'message' %}
+              {% set icon = '💬' %}
+            {% endif %}
+            <li class="timeline-item" data-stagger>
+              <div class="timeline-icon" data-tone="{{ tone }}">{{ icon }}</div>
+              <div>
+                <div class="timeline-title">{{ label }}</div>
+                <div class="timeline-meta">{{ meta }}</div>
+              </div>
+              <time class="timeline-meta">{{ timestamp }}</time>
+            </li>
+          {% endfor %}
+        </ul>
       {% else %}
-        <p class="telegram-panel__hint">Бот ещё не получил Telegram ID.</p>
+        <div class="timeline-empty">Хронология появится после первых действий.</div>
       {% endif %}
     </div>
-    <div class="telegram-panel__item">
-      <span class="telegram-panel__label">Username</span>
-      {% if telegram_username %}
-        <div class="telegram-panel__value">
-          <code>@{{ telegram_username }}</code>
-          <button
-            class="btn btn-ghost btn--xs"
-            type="button"
-            data-copy-value="{{ telegram_username }}"
-            data-copy-success="Скопировано">
-            Скопировать username
-          </button>
-        </div>
-      {% else %}
-        <p class="telegram-panel__hint">Кандидат скрывает username — используйте TG ID.</p>
-      {% endif %}
-    </div>
-    <div class="telegram-panel__item">
-      <span class="telegram-panel__label">Действия</span>
-      {% if telegram_username %}
-        <div class="telegram-panel__actions">
-          <a class="btn btn-soft" href="https://t.me/{{ telegram_username }}" target="_blank" rel="noopener">
-            Открыть чат
-          </a>
-        </div>
-        <p class="telegram-panel__hint">Откроется Telegram или Telegram Web.</p>
-      {% elif telegram_user_id %}
-        <div class="telegram-panel__actions">
-          <a class="btn btn-soft" href="tg://user?id={{ telegram_user_id }}">tg://user?id={{ telegram_user_id }}</a>
-        </div>
-        <p class="telegram-panel__hint">
-          Если браузер блокирует tg:// — скопируйте TG ID и найдите кандидата напрямую.
-        </p>
-      {% else %}
-        <p class="telegram-panel__hint">Телеграм ещё не привязан — дождитесь первого сообщения кандидата.</p>
-      {% endif %}
-    </div>
-  </div>
+  </details>
 </section>
+
+<script nonce="{{ request.state.csp_nonce }}">
+(function() {
+  const shell = document.querySelector('[data-profile-state]');
+  if (!shell) return;
+  const state = shell.dataset.profileState || 'ready';
+  shell.querySelectorAll('[data-when]').forEach((node) => {
+    node.hidden = node.dataset.when !== state;
+  });
+  const timelineItems = shell.querySelectorAll('[data-stagger]');
+  timelineItems.forEach((item, idx) => {
+    item.style.animationDelay = `${idx * 0.04}s`;
+  });
+})();
+</script>
+
+{% if pending_slot %}
+  <section class="candidate-slot-control surface glass grain">
+    <div class="candidate-slot-control__header">
+      <div>
+        <p class="candidate-next__eyebrow">Собеседование ожидает решения</p>
+        <p class="candidate-next__time">
+          {{ fmt_local(pending_slot.start_utc, pending_slot.candidate_tz or user.tz_name or 'Europe/Moscow') }}
+        </p>
+        <p class="candidate-next__meta">
+          {% if pending_slot.city %}{{ pending_slot.city.name }}{% endif %}
+          {% if pending_slot.city and pending_slot.recruiter %}&nbsp;•&nbsp;{% endif %}
+          {% if pending_slot.recruiter %}Рекрутёр: {{ pending_slot.recruiter.name }}{% endif %}
+        </p>
+      </div>
+      <span class="badge badge--warning">Ожидает подтверждения</span>
+    </div>
+    <div class="candidate-slot-panel">
+      <div class="candidate-slot-panel__group">
+        <p class="candidate-slot-panel__label">Выберите исход</p>
+        <div class="candidate-slot-panel__actions">
+          <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <button class="btn btn-primary" type="submit">
+              Согласовать слот
+            </button>
+          </form>
+          <button
+            class="btn btn-ghost"
+            type="button"
+            data-slot-reject
+            data-slot-id="{{ pending_slot.id }}">
+            Отказать / освободить
+          </button>
+          <button
+            class="btn btn-secondary"
+            type="button"
+            data-slot-reschedule
+            data-slot-id="{{ pending_slot.id }}">
+            Запросить перенос
+          </button>
+        </div>
+        <p class="candidate-slot-panel__hint">
+          Слот ожидает подтверждения рекрутёра.
+        </p>
+      </div>
+    </div>
+  </section>
+{% endif %}
 
 {% set chat_disabled = 1 if not telegram_user_id else 0 %}
 <section
@@ -1205,200 +1969,6 @@
 </section>
 
 {% set avg_score_label = '%.1f'|format(stats.average_score) if stats.average_score is not none else '—' %}
-<section class="surface glass grain candidate-overview" id="candidate-overview">
-  <div class="candidate-hero">
-    <div class="candidate-hero__summary">
-      <p class="candidate-hero__eyebrow">Текущая стадия</p>
-      <div class="candidate-hero__stage-wrap">
-        <p class="candidate-hero__stage">{{ stage or 'Без интервью' }}</p>
-        <span class="candidate-hero__stage-pill">
-          {% if upcoming_slot and upcoming_slot.start_utc %}
-            Назначено интервью
-          {% elif stats.tests_total %}
-            Идёт оценка
-          {% else %}
-            Нужно действие
-          {% endif %}
-        </span>
-      </div>
-      <p class="candidate-hero__meta">
-        {% if user.last_activity %}
-          Обновлён {{ fmt_local(user.last_activity, 'Europe/Moscow') }}
-        {% else %}
-          Активность пока не зафиксирована
-        {% endif %}
-      </p>
-      <div class="candidate-hero__tags">
-        <span class="candidate-hero__tag">{{ user.city or 'Город не указан' }}</span>
-        {% if telegram_user_id %}
-          <span class="candidate-hero__tag">TG {{ telegram_user_id }}</span>
-        {% endif %}
-        {% if telegram_username %}
-          <span class="candidate-hero__tag">@{{ telegram_username }}</span>
-        {% elif telegram_user_id %}
-          <span class="candidate-hero__chat-note">username не указан</span>
-        {% endif %}
-        {% if user.intro_decline_reason %}
-          <span class="candidate-hero__tag" title="{{ user.intro_decline_reason }}">Отказ ОД: {{ user.intro_decline_reason[:40] ~ ('…' if user.intro_decline_reason|length > 40 else '') }}</span>
-        {% endif %}
-      </div>
-    </div>
-    <div class="candidate-hero__status">
-      <span class="candidate-hero__status-pill {% if not user.is_active %}is-muted{% endif %}">
-        {% if user.is_active %}Активен{% else %}Отключён{% endif %}
-      </span>
-      <p class="candidate-hero__status-note">
-        {% if upcoming_slot and upcoming_slot.start_utc %}
-          Следующее событие {{ fmt_local(upcoming_slot.start_utc, upcoming_slot.candidate_tz or 'Europe/Moscow') }}
-        {% elif stats.tests_total %}
-          Прошёл {{ stats.tests_total }} тест(а)
-        {% else %}
-          Нет запланированных активностей
-        {% endif %}
-      </p>
-      <dl class="candidate-hero__metrics">
-        <div>
-          <dt>Тестов</dt>
-          <dd>{{ stats.tests_total }}</dd>
-        </div>
-        <div>
-          <dt>Средний балл</dt>
-          <dd>{{ avg_score_label }}</dd>
-        </div>
-        <div>
-          <dt>Сообщений</dt>
-          <dd>{{ messages|length }}</dd>
-        </div>
-      </dl>
-      <div class="candidate-hero__chat">
-        <button class="btn btn-soft btn--xs" type="button" data-chat-toggle>Открыть чат</button>
-      </div>
-    </div>
-  </div>
-
-  {# Определяем, есть ли уже назначенное интервью (не free) #}
-  {% set interview_ns = namespace(has_slot=false) %}
-  {% for slot in slots or [] %}
-    {% set status_raw = (slot.status or '')|lower %}
-    {% if (slot.purpose is not defined or slot.purpose != 'intro_day') and status_raw in ['pending', 'booked', 'confirmed_by_candidate'] %}
-      {% set interview_ns.has_slot = true %}
-    {% endif %}
-  {% endfor %}
-
-  {% set manual_tz = user.manual_slot_timezone or 'Europe/Moscow' %}
-  {% if (user.manual_slot_from or user.manual_slot_comment or user.manual_slot_requested_at) and not interview_ns.has_slot %}
-  <section class="manual-slot-card" id="manual-availability">
-    <div>
-      <p class="manual-slot-card__eyebrow">Кандидат оставил пожелания по времени</p>
-      {% if user.manual_slot_from %}
-        <p class="manual-slot-card__window">
-          {{ fmt_local(user.manual_slot_from, manual_tz) }}
-          {% if user.manual_slot_to %}
-            — {{ fmt_local(user.manual_slot_to, manual_tz) }}
-          {% endif %}
-        </p>
-      {% elif user.manual_slot_comment %}
-        <p class="manual-slot-card__window">{{ user.manual_slot_comment }}</p>
-      {% else %}
-        <p class="manual-slot-card__window">Ожидает ручного согласования</p>
-      {% endif %}
-
-      {% if user.manual_slot_comment and user.manual_slot_from %}
-        <p class="manual-slot-card__note">📝 {{ user.manual_slot_comment }}</p>
-      {% endif %}
-      {% if user.manual_slot_requested_at or user.manual_slot_response_at %}
-        <p class="manual-slot-card__meta">
-          Запрос получен {{ fmt_local(user.manual_slot_requested_at or user.manual_slot_response_at, manual_tz) }}
-        </p>
-      {% endif %}
-    </div>
-    <div class="manual-slot-card__actions">
-      <a class="btn btn-primary" href="/candidates/{{ user.id }}/schedule-slot">Назначить собеседование</a>
-      {% if telegram_user_id %}
-        <a class="btn btn-soft" href="tg://user?id={{ telegram_user_id }}">Написать в TG</a>
-      {% endif %}
-    </div>
-  </section>
-  {% endif %}
-
-  <div class="candidate-next">
-    <p class="candidate-next__eyebrow">Ближайшее действие</p>
-    <div class="candidate-next__timeline">
-      <span class="candidate-next__dot" aria-hidden="true"></span>
-      <div>
-        {% if upcoming_slot and upcoming_slot.start_utc %}
-          <p class="candidate-next__time">{{ fmt_local(upcoming_slot.start_utc, upcoming_slot.candidate_tz or 'Europe/Moscow') }}</p>
-          <p class="candidate-next__meta">
-            {% set slot_city = upcoming_slot.city.name if upcoming_slot.city else (upcoming_slot.candidate_city or user.city or 'Город не указан') %}
-            {{ slot_city }}
-            {% if upcoming_slot.recruiter %}
-              · {{ upcoming_slot.recruiter.name }}
-            {% endif %}
-          </p>
-        {% else %}
-          <p class="candidate-next__time">Нет в календаре</p>
-          <p class="candidate-next__meta">Назначьте интервью или тест, чтобы запланировать следующий шаг.</p>
-        {% endif %}
-      </div>
-    </div>
-    <div class="candidate-next__actions">
-      {% if telemost_url %}
-        <a class="btn btn-soft btn-xs" href="{{ telemost_url }}" target="_blank" rel="noopener noreferrer">Открыть телемост</a>
-        <span class="candidate-next__note">
-          {% if telemost_source == 'upcoming' %}
-            Ссылка для ближайшего интервью
-          {% elif telemost_source == 'recent' %}
-            Ссылка на последний подтверждённый слот
-          {% else %}
-            Постоянная ссылка кандидата
-          {% endif %}
-        </span>
-      {% else %}
-        <span class="candidate-next__note">Ссылка появится после назначения интервью.</span>
-      {% endif %}
-
-      {% if upcoming_slot %}
-        {% set slot_state = (upcoming_slot.status or '')|lower %}
-        <div class="candidate-slot-control"
-             data-slot-controls
-             data-slot-id="{{ upcoming_slot.id }}"
-             data-slot-status="{{ slot_state }}"
-             data-slot-has-candidate="{{ 1 if upcoming_slot.candidate_tg_id else 0 }}">
-          <div class="candidate-slot-control__header">
-            <strong>Слот с {{ fmt_local(upcoming_slot.start_utc, upcoming_slot.candidate_tz or 'Europe/Moscow') }}</strong>
-            <button class="btn btn-ghost btn--small" type="button" data-slot-toggle>Редактировать слот</button>
-          </div>
-          <div class="candidate-slot-panel" data-slot-panel hidden>
-            <div class="candidate-slot-panel__group">
-              <p class="candidate-slot-panel__label">Бронь</p>
-              <div class="candidate-slot-panel__actions">
-                <button class="btn btn-ghost btn--small" type="button" data-slot-action="reschedule">Перенести</button>
-                <button class="btn btn-ghost btn--small" type="button" data-slot-action="cancel">Отменить бронь</button>
-              </div>
-              <p class="candidate-slot-panel__hint" data-slot-message></p>
-            </div>
-            <div class="candidate-slot-panel__group">
-              <p class="candidate-slot-panel__label">Исход интервью</p>
-              <div class="candidate-slot-panel__actions">
-                <button class="btn btn-ghost btn--small" type="button" data-slot-outcome="success">Прошёл</button>
-                <button class="btn btn-ghost btn--small" type="button" data-slot-outcome="reject">Не прошёл</button>
-              </div>
-              <p class="candidate-slot-panel__hint" data-slot-outcome-status>
-                {% if upcoming_slot.interview_outcome == 'success' %}
-                  Отмечен как «Прошёл»
-                {% elif upcoming_slot.interview_outcome == 'reject' %}
-                  Отмечен как «Не прошёл»
-                {% else %}
-                  Исход ещё не выбран
-                {% endif %}
-              </p>
-            </div>
-          </div>
-        </div>
-      {% endif %}
-    </div>
-  </div>
-</section>
 
 <section class="surface glass grain mt-lg interview-section" id="interview-script">
   <header class="section-header">
@@ -1506,6 +2076,11 @@
     {% for section in test_sections %}
       {% set meta = status_meta.get(section.status, status_meta['not_started']) %}
       {% set stats = section.details.stats %}
+      {% set source_labels = {
+        'bot': 'Бот',
+        'invite_link': 'Invite-link',
+        'invite': 'Invite-link'
+      } %}
       <article class="test-result-card">
         <header class="test-result-card__header">
           <div class="test-result-card__meta">
@@ -1538,6 +2113,12 @@
               <dt>Кратко</dt>
               <dd>{{ section.summary }}</dd>
             </div>
+            {% if section.source %}
+              <div>
+                <dt>Источник</dt>
+                <dd>{{ source_labels.get(section.source, section.source) }}</dd>
+              </div>
+            {% endif %}
           </dl>
         </div>
         {% if section.pending_since %}
@@ -1626,7 +2207,112 @@
   </div>
 </section>
 
-<script>
+<style>
+/* Confirm overlay (Apple-style destructive action) */
+  .confirm-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: color-mix(in srgb, var(--ink-soft, #0f172a) 10%, transparent);
+    backdrop-filter: blur(10px);
+    z-index: 9998;
+    padding: 12px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .confirm-overlay[data-open="true"] {
+    display: flex;
+  }
+
+  .confirm-sheet {
+    width: min(440px, 96vw);
+    background: var(--surface-raised);
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-radius: 18px;
+    padding: 20px 18px 16px;
+    box-shadow: 0 16px 50px rgba(0, 0, 0, 0.12);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .confirm-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--ink);
+    margin: 0;
+  }
+
+  .confirm-desc {
+    margin: 0;
+    color: var(--ink-soft);
+    line-height: 1.5;
+  }
+
+  .confirm-error {
+    color: var(--danger);
+    font-size: 14px;
+    margin: 0;
+  }
+
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .confirm-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid color-mix(in srgb, var(--danger) 20%, transparent);
+    border-top-color: var(--danger);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .mini-toast {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--ink) 6%, var(--surface-raised));
+    color: var(--ink);
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.12);
+    z-index: 2100;
+    font-size: 14px;
+  }
+</style>
+</style>
+
+{# Lightweight confirm overlay for destructive actions #}
+<div class="confirm-overlay" data-confirm-overlay data-open="false" aria-hidden="true">
+  <div class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="confirm-copy">
+      <p class="confirm-title" id="confirm-title" data-confirm-title>Отклонить кандидата?</p>
+      <p class="confirm-desc" data-confirm-desc>Кандидат будет переведён в архив. Причину можно указать позже.</p>
+    </div>
+    <p class="confirm-error" data-confirm-error hidden></p>
+    <div class="confirm-actions">
+      <button type="button" class="action-btn action-btn--secondary" data-confirm-cancel>Отмена</button>
+      <button type="button" class="action-btn action-btn--danger" data-confirm-submit>
+        <span data-confirm-submit-label>Отклонить</span>
+        <span class="confirm-spinner" data-confirm-spinner hidden></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script nonce="{{ request.state.csp_nonce }}">
 (function () {
   const chatRoot = document.querySelector('[data-chat-root]');
   const chatToggle = document.querySelector('[data-chat-toggle]');
@@ -1870,22 +2556,22 @@
 })();
 </script>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 (function(){
   const slotControls = document.querySelector('[data-slot-controls]');
-  if (!slotControls) return;
-  const slotId = slotControls.dataset.slotId;
-  if (!slotId) return;
-  const toggleBtn = slotControls.querySelector('[data-slot-toggle]');
-  const panel = slotControls.querySelector('[data-slot-panel]');
-  const messageEl = slotControls.querySelector('[data-slot-message]');
-  const outcomeStatusEl = slotControls.querySelector('[data-slot-outcome-status]');
+  const outcomeRoot = document.querySelector('[data-slot-outcome-root]');
+  if (!slotControls && !outcomeRoot) return;
+  const slotId = (slotControls?.dataset.slotId || outcomeRoot?.dataset.slotId || '').trim();
+  const toggleBtn = slotControls?.querySelector('[data-slot-toggle]');
+  const panel = slotControls?.querySelector('[data-slot-panel]');
+  const messageEl = slotControls?.querySelector('[data-slot-message]');
+  const outcomeStatusEl = (outcomeRoot || slotControls)?.querySelector('[data-slot-outcome-status]');
   const nextTime = document.querySelector('.candidate-next__time');
   const nextMeta = document.querySelector('.candidate-next__meta');
   const emptyMetaText = 'Назначьте интервью или тест, чтобы запланировать следующий шаг.';
   const csrfToken = window.__CSRF_TOKEN__ || document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-  const slotStatus = (slotControls.dataset.slotStatus || '').toLowerCase();
-  const slotHasCandidate = slotControls.dataset.slotHasCandidate !== '0';
+  const slotStatus = (slotControls?.dataset.slotStatus || outcomeRoot?.dataset.slotStatus || '').toLowerCase();
+  const slotHasCandidate = (slotControls?.dataset.slotHasCandidate || outcomeRoot?.dataset.slotHasCandidate || '0') !== '0';
   const actionableStatuses = new Set(['pending', 'booked', 'confirmed_by_candidate']);
   const slotEligible = slotHasCandidate && actionableStatuses.has(slotStatus);
 
@@ -1899,16 +2585,23 @@
     }
   };
 
-  const disableButtons = (selector, disabled) => {
-    slotControls.querySelectorAll(selector).forEach(btn => {
+  const disableButtons = (root, selector, disabled) => {
+    if (!root) return;
+    root.querySelectorAll(selector).forEach(btn => {
       btn.disabled = disabled;
     });
   };
 
+  if (!slotId) {
+    disableButtons(slotControls, '[data-slot-action]', true);
+    disableButtons(outcomeRoot, '[data-slot-outcome]', true);
+    return;
+  }
+
   const closePanel = () => {
     if (!panel) { return; }
     panel.setAttribute('hidden', '');
-    slotControls.classList.remove('is-open');
+    slotControls?.classList.remove('is-open');
     if (toggleBtn) {
       toggleBtn.textContent = 'Редактировать слот';
     }
@@ -1916,9 +2609,8 @@
 
   const lockPanel = (message, tone = 'warning') => {
     closePanel();
-    slotControls.classList.add('is-disabled');
-    disableButtons('[data-slot-action]', true);
-    disableButtons('[data-slot-outcome]', true);
+    slotControls?.classList.add('is-disabled');
+    disableButtons(slotControls, '[data-slot-action]', true);
     if (toggleBtn) {
       toggleBtn.disabled = true;
     }
@@ -1930,7 +2622,7 @@
     const isHidden = panel.hasAttribute('hidden');
     if (isHidden) {
       panel.removeAttribute('hidden');
-      slotControls.classList.add('is-open');
+      slotControls?.classList.add('is-open');
       toggleBtn.textContent = 'Скрыть панель';
     } else {
       closePanel();
@@ -1989,11 +2681,17 @@
     const warningText = slotHasCandidate
       ? 'Слот в этом статусе нельзя редактировать из карточки кандидата.'
       : 'Слот не привязан к кандидату.';
-    lockPanel(warningText, slotHasCandidate ? 'warning' : 'error');
+    if (slotControls) {
+      lockPanel(warningText, slotHasCandidate ? 'warning' : 'error');
+    }
+    if (outcomeRoot) {
+      disableButtons(outcomeRoot, '[data-slot-outcome]', true);
+      setMessage(outcomeStatusEl, warningText, slotHasCandidate ? 'warning' : 'error');
+    }
     return;
   }
 
-  slotControls.addEventListener('click', async (event) => {
+  slotControls?.addEventListener('click', async (event) => {
     const actionBtn = event.target.closest('[data-slot-action]');
     if (!actionBtn || actionBtn.disabled) return;
     const action = actionBtn.dataset.slotAction;
@@ -2014,13 +2712,17 @@
     }
   });
 
-  slotControls.addEventListener('click', async (event) => {
+  outcomeRoot?.addEventListener('click', async (event) => {
     const outcomeBtn = event.target.closest('[data-slot-outcome]');
     if (!outcomeBtn || outcomeBtn.disabled) return;
     const outcome = outcomeBtn.dataset.slotOutcome;
+    const confirmMsg = outcomeBtn.dataset.slotOutcomeConfirm;
     if (!outcome) return;
+    if (confirmMsg && !window.confirm(confirmMsg)) {
+      return;
+    }
     outcomeBtn.disabled = true;
-    disableButtons('[data-slot-outcome]', true);
+    disableButtons(outcomeRoot, '[data-slot-outcome]', true);
     setMessage(outcomeStatusEl, 'Обновляем исход…');
     let unlockOutcomes = true;
     try {
@@ -2035,11 +2737,451 @@
       }
     } finally {
       if (unlockOutcomes) {
-        disableButtons('[data-slot-outcome]', false);
+        disableButtons(outcomeRoot, '[data-slot-outcome]', false);
       }
     }
   });
 })();
 </script>
+
+<script nonce="{{ request.state.csp_nonce }}">
+// Reject pending slot from candidate card (without triggering Test2)
+(function(){
+  const rejectBtn = document.querySelector('[data-slot-reject]');
+  const rescheduleBtn = document.querySelector('[data-slot-reschedule]');
+  if (!rejectBtn) return;
+  const slotId = rejectBtn.dataset.slotId || rescheduleBtn?.dataset.slotId;
+  const csrfToken = window.__CSRF_TOKEN__ || document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+  const statusEl = rejectBtn.closest('.candidate-slot-panel')?.querySelector('.candidate-slot-panel__hint');
+
+  async function slotAction(path, button, confirmationText, successText) {
+    if (!slotId || !button) return;
+    if (confirmationText && !window.confirm(confirmationText)) return;
+    button.disabled = true;
+    try {
+      const response = await fetch(`/slots/${slotId}/${path}`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) {
+        throw new Error(payload?.message || response.statusText);
+      }
+      if (statusEl) {
+        statusEl.dataset.tone = 'success';
+        statusEl.textContent = payload?.message || successText;
+      }
+    } catch (err) {
+      alert(err.message || 'Не удалось изменить слот.');
+      button.disabled = false;
+    }
+  }
+
+  rejectBtn.addEventListener('click', () => {
+    slotAction('reject_booking', rejectBtn, 'Отказать кандидату и освободить слот?', 'Слот освобождён.');
+  });
+
+  rescheduleBtn?.addEventListener('click', () => {
+    slotAction('reschedule', rescheduleBtn, 'Запросить перенос этого слота?', 'Запрос на перенос отправлен.');
+  });
+})();
+</script>
+
+<script nonce="{{ request.state.csp_nonce }}">
+// Candidate actions (status transitions via JSON endpoint)
+(function () {
+  const root = document.querySelector('[data-candidate-actions]');
+  if (!root) return;
+  const candidateId = root.dataset.candidateId;
+  const legacyStatusEnabled = {{ 'true' if legacy_status_enabled else 'false' }};
+  const csrfToken = window.__CSRF_TOKEN__ || document.querySelector('meta[name=\"csrf-token\"]')?.getAttribute('content') || '';
+  const errorEl = root.querySelector('[data-action-error]');
+  const overlay = document.querySelector('[data-confirm-overlay]');
+  const titleEl = document.querySelector('[data-confirm-title]');
+  const descEl = document.querySelector('[data-confirm-desc]');
+  const errorLine = document.querySelector('[data-confirm-error]');
+  const cancelBtn = document.querySelector('[data-confirm-cancel]');
+  const submitBtn = document.querySelector('[data-confirm-submit]');
+  const spinner = document.querySelector('[data-confirm-spinner]');
+  const submitLabel = document.querySelector('[data-confirm-submit-label]');
+  const statusRoot = document.querySelector('[data-status-switcher]');
+  const statusSelect = statusRoot?.querySelector('[data-status-select]');
+  const statusApply = statusRoot?.querySelector('[data-status-apply]');
+  const statusError = statusRoot?.querySelector('[data-status-error]');
+  let pendingAction = null;
+
+  const setError = (text) => {
+    if (!errorEl) return;
+    if (text) {
+      errorEl.hidden = false;
+      errorEl.textContent = text;
+    } else {
+      errorEl.hidden = true;
+      errorEl.textContent = '';
+    }
+  };
+
+  const setStatusError = (text) => {
+    if (!statusError) return;
+    if (text) {
+      statusError.hidden = false;
+      statusError.textContent = text;
+    } else {
+      statusError.hidden = true;
+      statusError.textContent = '';
+    }
+  };
+
+  const resetOverlayState = () => {
+    if (!overlay) return;
+    overlay.dataset.open = 'false';
+    overlay.setAttribute('aria-hidden', 'true');
+    pendingAction = null;
+    if (errorLine) {
+      errorLine.hidden = true;
+      errorLine.textContent = '';
+    }
+    if (submitBtn) {
+      submitBtn.disabled = false;
+    }
+    if (cancelBtn) {
+      cancelBtn.disabled = false;
+    }
+    if (spinner) spinner.hidden = true;
+  };
+
+  const showToast = (text) => {
+    const toast = document.createElement('div');
+    toast.className = 'mini-toast';
+    toast.textContent = text;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(6px)';
+      setTimeout(() => toast.remove(), 220);
+    }, 1800);
+  };
+
+  const openConfirm = ({ title, desc, confirmLabel, onConfirm }) => {
+    if (!overlay || !titleEl || !descEl || !cancelBtn || !submitBtn || !submitLabel) return;
+    titleEl.textContent = title || 'Подтвердите действие';
+    descEl.textContent = desc || '';
+    submitLabel.textContent = confirmLabel || 'Продолжить';
+    pendingAction = onConfirm;
+    overlay.dataset.open = 'true';
+    overlay.setAttribute('aria-hidden', 'false');
+    cancelBtn.focus({ preventScroll: true });
+  };
+
+  const handleConfirm = async () => {
+    if (!pendingAction || !submitBtn || !cancelBtn) return;
+    submitBtn.disabled = true;
+    cancelBtn.disabled = true;
+    if (spinner) spinner.hidden = false;
+    if (errorLine) {
+      errorLine.hidden = true;
+      errorLine.textContent = '';
+    }
+    try {
+      await pendingAction();
+      showToast('Действие выполнено');
+      window.setTimeout(() => window.location.reload(), 650);
+    } catch (err) {
+      submitBtn.disabled = false;
+      cancelBtn.disabled = false;
+      if (spinner) spinner.hidden = true;
+      if (errorLine) {
+        errorLine.hidden = false;
+        errorLine.textContent = err?.message || 'Не удалось выполнить действие';
+      }
+    }
+  };
+
+  cancelBtn?.addEventListener('click', resetOverlayState);
+  submitBtn?.addEventListener('click', handleConfirm);
+
+  overlay?.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      resetOverlayState();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && overlay?.dataset.open === 'true') {
+      resetOverlayState();
+    }
+  });
+
+  const sendStatus = async (targetStatus, btnToDisable, onError) => {
+    if (!targetStatus) return;
+    if (btnToDisable) btnToDisable.disabled = true;
+    try {
+      const response = await fetch(`/candidates/${candidateId}/status`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
+        body: JSON.stringify({ status: targetStatus }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.message || 'Не удалось обновить статус');
+      }
+      return true;
+    } catch (err) {
+      if (onError) onError(err);
+      throw err;
+    } finally {
+      if (btnToDisable) btnToDisable.disabled = false;
+    }
+  };
+
+  const declineStatuses = new Set([
+    'interview_declined',
+    'test2_failed',
+    'intro_day_declined_invitation',
+    'intro_day_declined_day_of',
+    'not_hired',
+  ]);
+
+  root.addEventListener('click', async (event) => {
+    const btn = event.target.closest('[data-action-target]');
+    if (!btn || btn.disabled) return;
+    const targetStatus = btn.dataset.actionTarget;
+    const actionKind = btn.dataset.actionKind || 'legacy';
+    const confirmMsg = btn.dataset.actionConfirm;
+    if (!targetStatus) return;
+    const performAction = async () => {
+      if (actionKind === 'workflow') {
+        btn.disabled = true;
+        try {
+          const response = await fetch(`/candidates/${candidateId}/actions/${targetStatus}`, {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'X-CSRFToken': csrfToken,
+            },
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || payload.ok === false) {
+            throw new Error(payload.detail?.message || payload.message || 'Не удалось выполнить действие');
+          }
+          return true;
+        } finally {
+          btn.disabled = false;
+        }
+      }
+      return sendStatus(targetStatus, btn, (err) => setError(err?.message));
+    };
+
+    if (confirmMsg) {
+      const isDecline = declineStatuses.has(targetStatus);
+      const defaultTitle = isDecline ? 'Отклонить кандидата?' : 'Подтвердить действие?';
+      const defaultDesc = isDecline
+        ? 'Кандидат будет переведён в архив. Причину можно указать позже.'
+        : '';
+      openConfirm({
+        title: defaultTitle,
+        desc: defaultDesc || confirmMsg,
+        confirmLabel: (btn.textContent || '').trim() || 'Продолжить',
+        onConfirm: performAction,
+      });
+      return;
+    }
+
+    try {
+      await performAction();
+      showToast('Действие выполнено');
+      window.setTimeout(() => window.location.reload(), 650);
+    } catch (err) {
+      setError(err?.message || 'Не удалось обновить статус');
+    }
+  });
+
+  if (legacyStatusEnabled) {
+    statusApply?.addEventListener('click', () => {
+      const targetStatus = statusSelect?.value;
+      if (!targetStatus) return;
+      setStatusError('');
+      const isDecline = declineStatuses.has(targetStatus);
+      const doSend = async () => {
+        try {
+          await sendStatus(targetStatus, statusApply, (err) => setStatusError(err?.message));
+          showToast('Статус обновлён');
+          window.setTimeout(() => window.location.reload(), 650);
+        } catch (err) {
+          // Ошибка уже показана
+        }
+      };
+
+      if (isDecline) {
+        openConfirm({
+          title: 'Отклонить кандидата?',
+          desc: 'Кандидат будет переведён в архив. Причину можно указать позже.',
+          confirmLabel: 'Отклонить',
+          onConfirm: doSend,
+        });
+        return;
+      }
+      doSend();
+    });
+  }
+
+  // ===== Status Center handlers (legacy only) =====
+  if (legacyStatusEnabled) {
+    const statusCenter = document.querySelector('[data-status-center]');
+    const statusCenterError = statusCenter?.querySelector('[data-status-center-error]');
+    const manualSelect = statusCenter?.querySelector('[data-status-manual-select]');
+    const manualApply = statusCenter?.querySelector('[data-status-manual-apply]');
+
+    const setStatusCenterError = (text) => {
+      if (!statusCenterError) return;
+      if (text) {
+        statusCenterError.hidden = false;
+        statusCenterError.textContent = text;
+      } else {
+        statusCenterError.hidden = true;
+        statusCenterError.textContent = '';
+      }
+    };
+
+    const sendStatusWithLoading = async (targetStatus, btn) => {
+      if (!targetStatus || !btn) return;
+      const originalContent = btn.innerHTML;
+      btn.setAttribute('data-loading', '');
+      btn.disabled = true;
+      setStatusCenterError('');
+
+      try {
+        const response = await fetch(`/candidates/${candidateId}/status`, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken,
+          },
+          body: JSON.stringify({ status: targetStatus }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.message || 'Не удалось обновить статус');
+        }
+        showToast('Статус обновлён');
+        window.setTimeout(() => window.location.reload(), 650);
+        return true;
+      } catch (err) {
+        setStatusCenterError(err?.message || 'Ошибка при обновлении статуса');
+        btn.removeAttribute('data-loading');
+        btn.disabled = false;
+        btn.innerHTML = originalContent;
+        throw err;
+      }
+    };
+
+    // Quick action buttons in Status Center
+    statusCenter?.addEventListener('click', async (event) => {
+      const quickBtn = event.target.closest('[data-status-quick]');
+      if (!quickBtn || quickBtn.disabled) return;
+
+      const targetStatus = quickBtn.dataset.statusQuick;
+      const confirmMsg = quickBtn.dataset.actionConfirm;
+      if (!targetStatus) return;
+
+      const performAction = () => sendStatusWithLoading(targetStatus, quickBtn);
+
+      if (confirmMsg) {
+        const isDecline = declineStatuses.has(targetStatus);
+        openConfirm({
+          title: isDecline ? 'Отклонить кандидата?' : confirmMsg,
+          desc: isDecline ? 'Кандидат будет переведён в архив.' : '',
+          confirmLabel: (quickBtn.textContent || '').trim() || 'Подтвердить',
+          onConfirm: performAction,
+        });
+        return;
+      }
+
+      try {
+        await performAction();
+      } catch (err) {
+        // Ошибка уже показана
+      }
+    });
+
+    // Manual override in Status Center
+    manualApply?.addEventListener('click', async () => {
+      const targetStatus = manualSelect?.value;
+      if (!targetStatus) return;
+
+      const isDecline = declineStatuses.has(targetStatus);
+      const performAction = () => sendStatusWithLoading(targetStatus, manualApply);
+
+      if (isDecline) {
+        openConfirm({
+          title: 'Отклонить кандидата?',
+          desc: 'Кандидат будет переведён в архив. Причину можно указать позже.',
+          confirmLabel: 'Отклонить',
+          onConfirm: performAction,
+        });
+        return;
+      }
+
+      try {
+        await performAction();
+      } catch (err) {
+        // Ошибка уже показана
+      }
+    });
+  }
+})();
+</script>
+
+<script nonce="{{ request.state.csp_nonce }}">
+// Auto-dismiss alerts and add close buttons
+(function() {
+  'use strict';
+
+  const alerts = document.querySelectorAll('.alert[role="status"], .alert[role="alert"]');
+
+  alerts.forEach(function(alert) {
+    // Add close button to all alerts
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '&times;';
+    closeBtn.className = 'alert-close';
+    closeBtn.setAttribute('aria-label', 'Закрыть');
+    closeBtn.style.cssText = 'position:absolute;top:8px;right:12px;background:none;border:none;color:inherit;opacity:0.6;cursor:pointer;font-size:24px;line-height:1;padding:0;width:24px;height:24px;';
+    closeBtn.addEventListener('click', function() {
+      alert.style.transition = 'opacity 0.3s, transform 0.3s';
+      alert.style.opacity = '0';
+      alert.style.transform = 'translateY(-10px)';
+      setTimeout(function() { alert.remove(); }, 300);
+    });
+
+    // Position alert relatively for close button
+    alert.style.position = 'relative';
+    alert.style.paddingRight = '40px';
+    alert.appendChild(closeBtn);
+
+    // Auto-dismiss success messages after 5 seconds
+    if (alert.getAttribute('data-tone') === 'success') {
+      setTimeout(function() {
+        closeBtn.click();
+      }, 5000);
+    }
+
+    // Scroll to alert on page load
+    if (alert.getAttribute('data-tone') === 'danger') {
+      setTimeout(function() {
+        alert.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 100);
+    }
+  });
+})();
+</script>
+
 {# Сообщения кандидату и хронология скрыты по запросу #}
 {% endblock %}

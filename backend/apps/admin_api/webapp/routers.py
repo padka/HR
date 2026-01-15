@@ -16,16 +16,28 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.apps.admin_api.webapp.auth import TelegramUser, get_telegram_webapp_auth
 from backend.domain import analytics
+from backend.domain.models import (
+    SlotStatus,
+    SlotStatusTransitionError,
+    enforce_slot_transition,
+    DEFAULT_INTERVIEW_DURATION_MIN,
+)
+from backend.domain.repositories import slot_status_free_sql
 from backend.core.dependencies import get_async_session
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/webapp", tags=["webapp"])
+
+
+def _safe_text(sql: str, params: tuple[str, ...]):
+    """Return a bound text clause to avoid accidental string interpolation."""
+    return text(sql).bindparams(*(bindparam(name) for name in params))
 
 
 # ============================================================================
@@ -126,7 +138,7 @@ async def get_me(
         CandidateInfo with user details and candidate status
     """
     # Query candidate info from database
-    query = text(
+    query = _safe_text(
         """
         SELECT
             c.id as candidate_id,
@@ -137,7 +149,8 @@ async def get_me(
         LEFT JOIN cities ci ON c.city_id = ci.id
         WHERE c.telegram_id = :telegram_id
         LIMIT 1
-        """
+        """,
+        ("telegram_id",),
     )
 
     result = await session.execute(query, {"telegram_id": user.user_id})
@@ -196,7 +209,7 @@ async def get_available_slots(
     )
 
     # Query available slots
-    query = text(
+    query = _safe_text(
         """
         SELECT
             s.id as slot_id,
@@ -205,17 +218,20 @@ async def get_available_slots(
             s.start_utc,
             s.end_utc,
             s.duration_minutes,
-            s.is_booked,
             s.city_id
         FROM slots s
         INNER JOIN recruiters r ON s.recruiter_id = r.id
-        WHERE s.is_booked = false
+        WHERE """
+        + slot_status_free_sql("s")
+        + """
+            AND (s.candidate_id IS NULL AND s.candidate_tg_id IS NULL)
             AND s.start_utc >= :from_date
             AND s.start_utc <= :to_date
             AND (:city_id IS NULL OR s.city_id = :city_id)
         ORDER BY s.start_utc ASC
         LIMIT 100
-        """
+        """,
+        ("city_id", "from_date", "to_date"),
     )
 
     result = await session.execute(
@@ -225,7 +241,7 @@ async def get_available_slots(
 
     slots = []
     for row in result:
-        slot_id, recruiter_id, recruiter_name, start_utc, end_utc, duration_minutes, is_booked, slot_city_id = row
+        slot_id, recruiter_id, recruiter_name, start_utc, end_utc, duration_minutes, slot_city_id = row
         slots.append(
             SlotInfo(
                 slot_id=slot_id,
@@ -233,8 +249,8 @@ async def get_available_slots(
                 recruiter_name=recruiter_name,
                 start_utc=start_utc,
                 end_utc=end_utc,
-                duration_minutes=duration_minutes or 20,
-                is_available=not is_booked,
+                duration_minutes=duration_minutes or DEFAULT_INTERVIEW_DURATION_MIN,
+                is_available=True,
                 city_id=slot_city_id,
             )
         )
@@ -262,7 +278,10 @@ async def create_booking(
         HTTPException: If slot is not available or user not found
     """
     # Get candidate_id from telegram_id
-    candidate_query = text("SELECT id, city_id FROM candidates WHERE telegram_id = :telegram_id LIMIT 1")
+    candidate_query = _safe_text(
+        "SELECT id, city_id FROM candidates WHERE telegram_id = :telegram_id LIMIT 1",
+        ("telegram_id",),
+    )
     candidate_result = await session.execute(candidate_query, {"telegram_id": user.user_id})
     candidate_row = candidate_result.fetchone()
 
@@ -275,14 +294,15 @@ async def create_booking(
     candidate_id, candidate_city_id = candidate_row
 
     # Check if slot is available
-    slot_query = text(
+    slot_query = _safe_text(
         """
-        SELECT s.id, s.recruiter_id, r.name, s.start_utc, s.end_utc, s.is_booked, s.city_id
+        SELECT s.id, s.recruiter_id, r.name, s.start_utc, s.end_utc, s.status, s.city_id
         FROM slots s
         INNER JOIN recruiters r ON s.recruiter_id = r.id
         WHERE s.id = :slot_id
         FOR UPDATE
-        """
+        """,
+        ("slot_id",),
     )
     slot_result = await session.execute(slot_query, {"slot_id": request.slot_id})
     slot_row = slot_result.fetchone()
@@ -293,21 +313,31 @@ async def create_booking(
             detail="Slot not found",
         )
 
-    slot_id, recruiter_id, recruiter_name, start_utc, end_utc, is_booked, slot_city_id = slot_row
+    slot_id, recruiter_id, recruiter_name, start_utc, end_utc, slot_status, slot_city_id = slot_row
 
-    if is_booked:
+    status_lower = (slot_status or "").lower()
+    if status_lower != SlotStatus.FREE:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Slot is already booked. Please choose another slot.",
         )
 
+    now_utc = datetime.now(timezone.utc)
+
+    # Validate transition to pending
+    try:
+        next_status = enforce_slot_transition(status_lower, SlotStatus.PENDING)
+    except SlotStatusTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
     # Create booking
-    booking_query = text(
+    booking_query = _safe_text(
         """
         INSERT INTO bookings (candidate_id, slot_id, recruiter_id, status, created_at)
         VALUES (:candidate_id, :slot_id, :recruiter_id, 'pending', :created_at)
         RETURNING id
-        """
+        """,
+        ("candidate_id", "slot_id", "recruiter_id", "created_at"),
     )
 
     booking_result = await session.execute(
@@ -316,14 +346,36 @@ async def create_booking(
             "candidate_id": candidate_id,
             "slot_id": slot_id,
             "recruiter_id": recruiter_id,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": now_utc,
         },
     )
     booking_id = booking_result.fetchone()[0]
 
-    # Mark slot as booked
-    update_slot_query = text("UPDATE slots SET is_booked = true WHERE id = :slot_id")
-    await session.execute(update_slot_query, {"slot_id": slot_id})
+    # Mark slot as booked (status-based) and attach candidate info
+    update_slot_query = _safe_text(
+        """
+        UPDATE slots
+        SET status = :status_pending,
+            candidate_tg_id = :candidate_tg_id,
+            candidate_city_id = :candidate_city_id,
+            candidate_fio = :candidate_fio,
+            purpose = 'interview',
+            updated_at = :updated_at
+        WHERE id = :slot_id
+        """,
+        ("status_pending", "candidate_tg_id", "candidate_city_id", "candidate_fio", "updated_at", "slot_id"),
+    )
+    await session.execute(
+        update_slot_query,
+        {
+            "slot_id": slot_id,
+            "status_pending": next_status,
+            "candidate_tg_id": user.user_id,
+            "candidate_city_id": candidate_city_id,
+            "candidate_fio": user.full_name,
+            "updated_at": now_utc,
+        },
+    )
 
     await session.commit()
 
@@ -370,22 +422,26 @@ async def reschedule_booking(
         HTTPException: If booking not found or new slot not available
     """
     # Get candidate_id
-    candidate_query = text("SELECT id FROM candidates WHERE telegram_id = :telegram_id LIMIT 1")
+    candidate_query = _safe_text(
+        "SELECT id, city_id FROM candidates WHERE telegram_id = :telegram_id LIMIT 1",
+        ("telegram_id",),
+    )
     candidate_result = await session.execute(candidate_query, {"telegram_id": user.user_id})
     candidate_row = candidate_result.fetchone()
 
     if not candidate_row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
-    candidate_id = candidate_row[0]
+    candidate_id, candidate_city_id = candidate_row
 
     # Check if booking belongs to user
-    booking_query = text(
+    booking_query = _safe_text(
         """
         SELECT id, slot_id FROM bookings
         WHERE id = :booking_id AND candidate_id = :candidate_id
         FOR UPDATE
-        """
+        """,
+        ("booking_id", "candidate_id"),
     )
     booking_result = await session.execute(
         booking_query,
@@ -401,15 +457,29 @@ async def reschedule_booking(
 
     old_slot_id = booking_row[1]
 
-    # Check if new slot is available
-    new_slot_query = text(
+    # Load current status of the old slot to validate transition to FREE
+    old_slot_query = _safe_text(
         """
-        SELECT s.id, s.recruiter_id, r.name, s.start_utc, s.end_utc, s.is_booked
+        SELECT status FROM slots
+        WHERE id = :slot_id
+        FOR UPDATE
+        """,
+        ("slot_id",),
+    )
+    old_slot_result = await session.execute(old_slot_query, {"slot_id": old_slot_id})
+    old_slot_row = old_slot_result.fetchone()
+    old_slot_status = (old_slot_row[0] if old_slot_row else None) if old_slot_row else None
+
+    # Check if new slot is available
+    new_slot_query = _safe_text(
+        """
+        SELECT s.id, s.recruiter_id, r.name, s.start_utc, s.end_utc, s.status, s.city_id
         FROM slots s
         INNER JOIN recruiters r ON s.recruiter_id = r.id
         WHERE s.id = :slot_id
         FOR UPDATE
-        """
+        """,
+        ("slot_id",),
     )
     new_slot_result = await session.execute(new_slot_query, {"slot_id": request.new_slot_id})
     new_slot_row = new_slot_result.fetchone()
@@ -417,21 +487,36 @@ async def reschedule_booking(
     if not new_slot_row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="New slot not found")
 
-    new_slot_id, recruiter_id, recruiter_name, start_utc, end_utc, is_booked = new_slot_row
+    new_slot_id, recruiter_id, recruiter_name, start_utc, end_utc, slot_status, new_slot_city_id = new_slot_row
 
-    if is_booked:
+    status_lower = (slot_status or "").lower()
+    try:
+        new_status = enforce_slot_transition(status_lower, SlotStatus.PENDING)
+    except SlotStatusTransitionError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="New slot is already booked. Please choose another slot.",
-        )
+            detail=str(exc),
+        ) from exc
+
+    # Validate transition for old slot before finalizing updates
+    try:
+        enforce_slot_transition(old_slot_status, SlotStatus.FREE)
+    except SlotStatusTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
     # Update booking
-    update_booking_query = text(
+    now_utc = datetime.now(timezone.utc)
+
+    update_booking_query = _safe_text(
         """
         UPDATE bookings
         SET slot_id = :new_slot_id, recruiter_id = :recruiter_id, updated_at = :updated_at
         WHERE id = :booking_id
-        """
+        """,
+        ("new_slot_id", "recruiter_id", "updated_at", "booking_id"),
     )
     await session.execute(
         update_booking_query,
@@ -439,17 +524,54 @@ async def reschedule_booking(
             "booking_id": request.booking_id,
             "new_slot_id": new_slot_id,
             "recruiter_id": recruiter_id,
-            "updated_at": datetime.now(timezone.utc),
+            "updated_at": now_utc,
         },
     )
 
     # Free old slot
-    free_old_slot_query = text("UPDATE slots SET is_booked = false WHERE id = :slot_id")
-    await session.execute(free_old_slot_query, {"slot_id": old_slot_id})
+    free_old_slot_query = _safe_text(
+        """
+        UPDATE slots
+        SET status = :status_free,
+            candidate_tg_id = NULL,
+            candidate_city_id = NULL,
+            candidate_fio = NULL,
+            purpose = 'interview',
+            updated_at = :updated_at
+        WHERE id = :slot_id
+        """,
+        ("status_free", "updated_at", "slot_id"),
+    )
+    await session.execute(
+        free_old_slot_query,
+        {"slot_id": old_slot_id, "status_free": SlotStatus.FREE, "updated_at": now_utc},
+    )
 
     # Book new slot
-    book_new_slot_query = text("UPDATE slots SET is_booked = true WHERE id = :slot_id")
-    await session.execute(book_new_slot_query, {"slot_id": new_slot_id})
+    book_new_slot_query = _safe_text(
+        """
+        UPDATE slots
+        SET status = :status_pending,
+            candidate_tg_id = :candidate_tg_id,
+            candidate_city_id = :candidate_city_id,
+            candidate_fio = :candidate_fio,
+            purpose = 'interview',
+            updated_at = :updated_at
+        WHERE id = :slot_id
+        """,
+        ("status_pending", "candidate_tg_id", "candidate_city_id", "candidate_fio", "updated_at", "slot_id"),
+    )
+    await session.execute(
+        book_new_slot_query,
+        {
+            "slot_id": new_slot_id,
+            "status_pending": new_status,
+            "candidate_tg_id": user.user_id,
+            "candidate_city_id": candidate_city_id,
+            "candidate_fio": user.full_name,
+            "updated_at": now_utc,
+        },
+    )
 
     await session.commit()
 
@@ -493,7 +615,10 @@ async def cancel_booking(
         HTTPException: If booking not found or doesn't belong to user
     """
     # Get candidate_id
-    candidate_query = text("SELECT id FROM candidates WHERE telegram_id = :telegram_id LIMIT 1")
+    candidate_query = _safe_text(
+        "SELECT id FROM candidates WHERE telegram_id = :telegram_id LIMIT 1",
+        ("telegram_id",),
+    )
     candidate_result = await session.execute(candidate_query, {"telegram_id": user.user_id})
     candidate_row = candidate_result.fetchone()
 
@@ -503,12 +628,13 @@ async def cancel_booking(
     candidate_id = candidate_row[0]
 
     # Check if booking belongs to user
-    booking_query = text(
+    booking_query = _safe_text(
         """
         SELECT id, slot_id FROM bookings
         WHERE id = :booking_id AND candidate_id = :candidate_id
         FOR UPDATE
-        """
+        """,
+        ("booking_id", "candidate_id"),
     )
     booking_result = await session.execute(
         booking_query,
@@ -524,13 +650,35 @@ async def cancel_booking(
 
     slot_id = booking_row[1]
 
+    # Load slot status to validate transition
+    slot_query = _safe_text(
+        """
+        SELECT status FROM slots
+        WHERE id = :slot_id
+        FOR UPDATE
+        """,
+        ("slot_id",),
+    )
+    slot_result = await session.execute(slot_query, {"slot_id": slot_id})
+    slot_row = slot_result.fetchone()
+    slot_status = slot_row[0] if slot_row else None
+
+    try:
+        enforce_slot_transition(slot_status, SlotStatus.FREE)
+    except SlotStatusTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
     # Update booking status
-    update_booking_query = text(
+    update_booking_query = _safe_text(
         """
         UPDATE bookings
         SET status = 'canceled', updated_at = :updated_at
         WHERE id = :booking_id
-        """
+        """,
+        ("updated_at", "booking_id"),
     )
     await session.execute(
         update_booking_query,
@@ -540,9 +688,25 @@ async def cancel_booking(
         },
     )
 
+    now_utc = datetime.now(timezone.utc)
+
     # Free slot
-    free_slot_query = text("UPDATE slots SET is_booked = false WHERE id = :slot_id")
-    await session.execute(free_slot_query, {"slot_id": slot_id})
+    free_slot_query = _safe_text(
+        """
+        UPDATE slots
+        SET status = :status_free,
+            candidate_tg_id = NULL,
+            candidate_city_id = NULL,
+            candidate_fio = NULL,
+            purpose = 'interview',
+            updated_at = :updated_at
+        WHERE id = :slot_id
+        """,
+        ("status_free", "updated_at", "slot_id"),
+    )
+    await session.execute(
+        free_slot_query, {"slot_id": slot_id, "status_free": SlotStatus.FREE, "updated_at": now_utc}
+    )
 
     await session.commit()
 
@@ -576,7 +740,7 @@ async def get_intro_day_info(
     Raises:
         HTTPException: If no upcoming intro day found
     """
-    query = text(
+    query = _safe_text(
         """
         SELECT
             id.id as intro_day_id,
@@ -593,7 +757,8 @@ async def get_intro_day_info(
             AND id.date >= :now
         ORDER BY id.date ASC
         LIMIT 1
-        """
+        """,
+        ("city_id", "now"),
     )
 
     result = await session.execute(query, {"city_id": city_id, "now": datetime.now(timezone.utc)})

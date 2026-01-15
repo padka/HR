@@ -2,6 +2,9 @@
 {% block title %}Шаблоны сообщений{% endblock %}
 
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'message-templates';
+</script>
 <section class="page page--templates" data-page="templates" aria-labelledby="templates-title">
   <header class="page-header">
     <div>
@@ -167,7 +170,7 @@
   </div>
 </section>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
   function confirmDelete(form){
     return window.confirm("Удалить шаблон? Вернуть будет нельзя.");
   }

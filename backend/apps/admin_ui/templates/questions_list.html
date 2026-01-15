@@ -3,6 +3,9 @@
 {% block title %}Вопросы{% endblock %}
 
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'questions';
+</script>
 <section class="page page--questions">
 {% set stats = namespace(total=0, active=0) %}
 {% for test in tests %}
@@ -111,7 +114,7 @@
   {% endif %}
 </section>
 
-<style>
+<style nonce="{{ request.state.csp_nonce }}">
   .page-header--balanced { display:flex; justify-content:space-between; align-items:flex-start; gap:1.5rem; flex-wrap:wrap; }
   .pill-row { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem; }
   .pill { padding:0.45rem 0.75rem; border-radius:999px; background:var(--surface-2, #121826); border:1px solid var(--border, rgba(255,255,255,.08)); font-size:0.9rem; }
@@ -144,7 +147,7 @@
 </style>
 
 {% raw %}
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 (function(){
   const search = document.getElementById('q-search');
   const chips = document.querySelectorAll('#q-chip-group .chip');

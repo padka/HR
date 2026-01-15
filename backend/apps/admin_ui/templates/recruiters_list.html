@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Рекрутёры{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'recruiters';
+</script>
 {% set city_filter_options = city_filter_options if city_filter_options is defined else [] %}
 {% set selected_city_ids = selected_city_ids if selected_city_ids is defined else [] %}
 <section class="page">
@@ -165,7 +168,7 @@
 </section>
 
 {% if recruiter_rows %}
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 (function () {
   const BREAKPOINT = 600;
   const folds = Array.from(document.querySelectorAll('.recruiter-card [data-collapsible]'));

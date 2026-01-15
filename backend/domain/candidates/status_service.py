@@ -3,23 +3,40 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.db import async_session
+from backend.domain import analytics
 from backend.domain.candidates.models import User
-from backend.domain.candidates.status import CandidateStatus, can_transition, is_status_retreat
+from backend.domain.candidates.status import CandidateStatus, is_status_retreat
+from backend.domain.candidate_status_service import (
+    CandidateStatusService,
+    CandidateStatusTransitionError,
+)
 
 logger = logging.getLogger(__name__)
+
+
+FUNNEL_STATUS_EVENTS = {
+    CandidateStatus.INTERVIEW_SCHEDULED: analytics.FunnelEvent.SLOT_BOOKED,
+    CandidateStatus.INTRO_DAY_SCHEDULED: analytics.FunnelEvent.SLOT_BOOKED,
+    CandidateStatus.INTERVIEW_CONFIRMED: analytics.FunnelEvent.SLOT_CONFIRMED,
+    CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY: analytics.FunnelEvent.SLOT_CONFIRMED,
+    CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF: analytics.FunnelEvent.SHOW_UP,
+    CandidateStatus.HIRED: analytics.FunnelEvent.OFFER_ACCEPTED,
+}
 
 
 class StatusTransitionError(Exception):
     """Raised when an invalid status transition is attempted."""
 
     pass
+
+
+_status_service = CandidateStatusService()
 
 
 async def update_candidate_status(
@@ -63,24 +80,53 @@ async def update_candidate_status(
             return True
 
         if old_status and is_status_retreat(old_status, new_status):
+            if not force:
+                logger.info(
+                    "Ignoring retrograde status transition for user %s: %s -> %s",
+                    telegram_id,
+                    old_status,
+                    new_status,
+                )
+                return True
             logger.info(
-                "Ignoring retrograde status transition for user %s: %s -> %s",
+                "Forcing retrograde status transition for user %s: %s -> %s",
                 telegram_id,
                 old_status,
                 new_status,
             )
-            return True
 
-        # Validate transition (unless forced)
-        if not force and not can_transition(old_status, new_status):
+        try:
+            if force:
+                changed = await _status_service.force(
+                    user, new_status, reason="forced status update"
+                )
+            else:
+                changed = await _status_service.advance(user, new_status)
+        except CandidateStatusTransitionError as exc:
             raise StatusTransitionError(
                 f"Invalid status transition for user {telegram_id}: "
                 f"{old_status} -> {new_status}"
-            )
+            ) from exc
 
-        # Update status
-        user.candidate_status = new_status
-        user.status_changed_at = datetime.now(timezone.utc)
+        if not changed:
+            return True
+
+        funnel_event = FUNNEL_STATUS_EVENTS.get(new_status)
+        if funnel_event:
+            try:
+                await analytics.log_funnel_event(
+                    funnel_event,
+                    user_id=telegram_id,
+                    candidate_id=user.id,
+                    metadata={"status": new_status.value},
+                    session=sess,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to log funnel event for user %s status %s",
+                    telegram_id,
+                    new_status,
+                )
 
         logger.info(
             f"Status updated for user {telegram_id}: {old_status} -> {new_status}"
@@ -178,11 +224,11 @@ async def set_status_test2_sent(telegram_id: int) -> bool:
         return False
 
 
-async def set_status_test2_completed(telegram_id: int) -> bool:
+async def set_status_test2_completed(telegram_id: int, *, force: bool = True) -> bool:
     """Set status when candidate completes Test 2."""
     try:
         return await update_candidate_status(
-            telegram_id, CandidateStatus.TEST2_COMPLETED, force=True
+            telegram_id, CandidateStatus.TEST2_COMPLETED, force=force
         )
     except StatusTransitionError as e:
         logger.error(f"Failed to set TEST2_COMPLETED: {e}")

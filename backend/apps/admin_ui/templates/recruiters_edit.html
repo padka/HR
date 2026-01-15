@@ -2,6 +2,9 @@
 {% import "partials/form_shell.html" as forms with context %}
 {% block title %}Редактирование рекрутёра{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'recruiters-edit';
+</script>
 {% set form_state = form_data or {} %}
 {% set errors = field_errors or {} %}
 {% set selected_values = (form_state.get('cities', selected_ids) or []) %}
@@ -168,7 +171,7 @@
 {% endcall %}
 {% endblock %}
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 (function(){
   const form = document.getElementById('recruiter-edit');
   if (!form) return;

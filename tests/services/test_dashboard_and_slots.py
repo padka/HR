@@ -37,19 +37,23 @@ async def test_dashboard_and_slot_listing():
         await session.commit()
         await session.refresh(recruiter)
         await session.refresh(city)
+        recruiter_id = recruiter.id
+        city_id = city.id
+        session.expunge_all()  # Detach all objects before closing session
 
     created = await create_slot(
-        recruiter_id=recruiter.id,
+        recruiter_id=recruiter_id,
         date=str(date.today()),
         time="10:00",
-        city_id=city.id,
+        city_id=city_id,
     )
     assert created is True
     async with async_session() as session:
+        future_time = datetime.now(timezone.utc) + timedelta(hours=3)
         canceled_slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime.now(timezone.utc),
+            start_utc=future_time,
             status=models.SlotStatus.CANCELED,
         )
         session.add(canceled_slot)
@@ -79,7 +83,7 @@ async def test_dashboard_and_slot_listing():
         day=None,
     )
     assert listing["total"] == 1
-    assert listing["items"][0].recruiter_id == recruiter.id
+    assert listing["items"][0].recruiter_id == recruiter_id
     assert listing["status_counts"] == {"FREE": 1, "CONFIRMED_BY_CANDIDATE": 0}
 
 
@@ -107,37 +111,41 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
         await session.commit()
         await session.refresh(recruiter)
         await session.refresh(city)
+        recruiter_id = recruiter.id
+        city_id = city.id
+        city_tz = city.tz
 
         now = datetime.now(timezone.utc)
         session.add_all(
             [
                 models.Slot(
-                    recruiter_id=recruiter.id,
-                    city_id=city.id,
+                    recruiter_id=recruiter_id,
+                    city_id=city_id,
                     start_utc=now,
                     status=models.SlotStatus.FREE,
                 ),
                 models.Slot(
-                    recruiter_id=recruiter.id,
-                    city_id=city.id,
+                    recruiter_id=recruiter_id,
+                    city_id=city_id,
                     start_utc=now + timedelta(hours=1),
                     status=models.SlotStatus.PENDING,
                 ),
                 models.Slot(
-                    recruiter_id=recruiter.id,
-                    city_id=city.id,
+                    recruiter_id=recruiter_id,
+                    city_id=city_id,
                     start_utc=now + timedelta(hours=2),
                     status=models.SlotStatus.BOOKED,
                 ),
                 models.Slot(
-                    recruiter_id=recruiter.id,
-                    city_id=city.id,
+                    recruiter_id=recruiter_id,
+                    city_id=city_id,
                     start_utc=now + timedelta(hours=3),
                     status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
                 ),
             ]
         )
         await session.commit()
+        session.expunge_all()  # Detach all objects before closing session
 
     payload = await api_slots_payload(recruiter_id=None, status=None, limit=10)
     assert {item["status"] for item in payload} == {
@@ -147,7 +155,7 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
         "CONFIRMED_BY_CANDIDATE",
     }
     assert all("local_time" in item for item in payload)
-    assert all(item.get("tz_name") == city.tz for item in payload)
+    assert all(item.get("tz_name") == city_tz for item in payload)
 
     register_template_globals()
     scope = {
@@ -264,6 +272,8 @@ async def test_upcoming_interviews_include_profile_and_telemost():
         session.add(slot)
         await session.commit()
         candidate_id = candidate.id
+        city_name = city.name
+        session.expunge_all()  # Detach all objects before closing session
 
     rows = await get_upcoming_interviews(limit=5)
     assert rows
@@ -274,4 +284,4 @@ async def test_upcoming_interviews_include_profile_and_telemost():
     assert interview["slot_status_label"] == "Подтверждено"
     assert "Europe/Moscow" in interview["time_range"]
     assert interview["starts_in"]
-    assert interview["city_name"] == city.name
+    assert interview["city_name"] == city_name

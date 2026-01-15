@@ -24,7 +24,7 @@ async def test_generate_default_day_stores_utc_times():
         city_id = city.id
 
     created = await generate_default_day_slots(recruiter_id=rec_id, day=target_day, city_id=city_id)
-    assert created == 24
+    assert created == 48
 
     async with async_session() as session:
         slots = (
@@ -69,15 +69,20 @@ async def test_slots_list_date_filter_in_msk_range():
         session.add_all([city, recruiter])
         await session.commit()
         await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+        city_id = city.id
+        city_tz = city.tz
+        city_name = city.name
         slot = Slot(
-            recruiter_id=recruiter.id,
-            city_id=city.id,
-            tz_name=city.tz,
+            recruiter_id=recruiter_id,
+            city_id=city_id,
+            tz_name=city_tz,
             start_utc=start_utc,
             status="free",
         )
         session.add(slot)
         await session.commit()
+        session.expunge_all()  # Detach all objects before closing session
 
     result = await list_slots(
         recruiter_id=None,
@@ -85,7 +90,7 @@ async def test_slots_list_date_filter_in_msk_range():
         page=1,
         per_page=10,
         search_query=None,
-        city_name=city.name,
+        city_name=city_name,
         day=target_day,
     )
     assert result["total"] == 1

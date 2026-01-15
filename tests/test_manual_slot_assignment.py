@@ -108,7 +108,7 @@ async def test_schedule_manual_slot_handles_naive_conflicts():
         session.add(conflict_slot)
         await session.commit()
 
-    dt_utc = datetime(2024, 7, 1, 9, 30, tzinfo=timezone.utc)
+    dt_utc = datetime(2024, 7, 1, 9, 55, tzinfo=timezone.utc)
 
     with pytest.raises(ManualSlotError) as excinfo:
         await schedule_manual_candidate_slot(
@@ -138,7 +138,7 @@ async def test_schedule_manual_slot_normalizes_naive_input():
         session.add(conflict_slot)
         await session.commit()
 
-    dt_utc = datetime(2024, 7, 2, 12, 30)  # naive input - will be normalized to UTC
+    dt_utc = datetime(2024, 7, 2, 12, 40)  # naive input - will be normalized to UTC
 
     with pytest.raises(ManualSlotError) as excinfo:
         await schedule_manual_candidate_slot(

@@ -12,8 +12,16 @@
   border-radius: var(--shell-radius);
   border: 1px solid color-mix(in srgb, var(--glass-stroke) 75%, transparent);
   background:
-    linear-gradient(145deg, color-mix(in srgb, var(--surface) 92%, transparent), rgba(255,255,255,0.02)),
-    linear-gradient(0deg, rgba(255,255,255,0.02), rgba(255,255,255,0.02));
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--surface) 92%, transparent),
+      color-mix(in srgb, var(--glass-highlight) 12%, transparent)
+    ),
+    linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--glass-highlight) 12%, transparent),
+      color-mix(in srgb, var(--glass-highlight) 12%, transparent)
+    );
   box-shadow: var(--shadow-3), var(--glow-strong);
   backdrop-filter: blur(calc(var(--blur) * 1.25)) saturate(calc(var(--sat) * 1.12));
   -webkit-backdrop-filter: blur(calc(var(--blur) * 1.25)) saturate(calc(var(--sat) * 1.12));
@@ -25,7 +33,11 @@
   inset: 1px;
   border-radius: inherit;
   pointer-events: none;
-  background: radial-gradient(90% 120% at 0% 0%, rgba(255,255,255,.18), transparent 65%);
+  background: radial-gradient(
+    90% 120% at 0% 0%,
+    color-mix(in srgb, var(--glass-highlight) 35%, transparent),
+    transparent 65%
+  );
   opacity: .55;
 }
 
@@ -105,8 +117,12 @@
   padding: clamp(16px, 2.6vw, 24px);
   border-radius: var(--radius-md);
   border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
-  background: linear-gradient(160deg, color-mix(in srgb, var(--surface) 96%, transparent), rgba(0,0,0,0.1));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--surface) 96%, transparent),
+    color-mix(in srgb, var(--text) 10%, transparent)
+  );
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 40%, transparent);
 }
 
 .form-shell__section--full {
@@ -145,7 +161,11 @@
   border-top: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg) 60%, transparent) 0%, transparent 85%),
-    linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 65%, transparent), rgba(255,255,255,0.02));
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--glass-tint) 65%, transparent),
+      color-mix(in srgb, var(--glass-highlight) 12%, transparent)
+    );
   backdrop-filter: blur(18px) saturate(1.15);
   -webkit-backdrop-filter: blur(18px) saturate(1.15);
   border-radius: 0 0 var(--shell-radius) var(--shell-radius);
@@ -164,12 +184,20 @@
   font-size: 13px;
   box-shadow: none;
   border-radius: 999px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 65%, transparent), rgba(255,255,255,0.05));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg) 65%, transparent),
+    color-mix(in srgb, var(--glass-highlight) 18%, transparent)
+  );
   border: 1px solid color-mix(in srgb, var(--field-border) 70%, transparent);
 }
 
 .form-shell__actions .btn:hover {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, transparent), rgba(255,255,255,0.08));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg) 55%, transparent),
+    color-mix(in srgb, var(--glass-highlight) 24%, transparent)
+  );
 }
 
 .form-shell__actions .btn:focus-visible {
@@ -179,16 +207,28 @@
 
 .form-shell__actions .btn.btn--primary {
   color: var(--fg-strong);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 35%, transparent), rgba(255,255,255,0.06));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 35%, transparent),
+    color-mix(in srgb, var(--glass-highlight) 20%, transparent)
+  );
   border-color: color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .form-shell__actions .btn.btn--primary:hover {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 45%, transparent), rgba(255,255,255,0.12));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 45%, transparent),
+    color-mix(in srgb, var(--glass-highlight) 30%, transparent)
+  );
 }
 
 .form-shell__actions .btn.btn--ghost {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 72%, transparent), rgba(255,255,255,0.02));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg) 72%, transparent),
+    color-mix(in srgb, var(--glass-highlight) 12%, transparent)
+  );
   border-color: color-mix(in srgb, var(--field-border) 60%, transparent);
 }
 
@@ -286,9 +326,13 @@ textarea.is-invalid {
   border-radius: var(--radius-md);
   border: 1px solid color-mix(in srgb, var(--field-border) 78%, transparent);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--field-bg) 78%, transparent), rgba(0,0,0,0.12));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
-  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--field-bg) 78%, transparent),
+      color-mix(in srgb, var(--text) 12%, transparent)
+    );
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 30%, transparent);
+  transition: border-color var(--dur-md) var(--ease-out), box-shadow var(--dur-md) var(--ease-out), background var(--dur-md) var(--ease-out);
 }
 
 .form-field--inline .form-field__surface {
@@ -297,7 +341,8 @@ textarea.is-invalid {
 
 .form-field:focus-within .form-field__surface {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--field-border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 1px 0 rgba(255,255,255,0.12);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 45%, transparent);
 }
 
 .form-field:focus-within .form-field__label {
@@ -436,11 +481,11 @@ textarea.is-invalid {
   border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
   background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 75%, transparent), color-mix(in srgb, var(--on-surface) 8%, transparent));
   cursor: pointer;
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+  transition: border-color var(--dur-sm) var(--ease-out), background var(--dur-sm) var(--ease-out), transform var(--dur-sm) var(--ease-out);
 }
 
 .choice-tile:hover {
-  transform: translateY(-1px);
+  transform: translateY(var(--lift-sm));
   border-color: color-mix(in srgb, var(--accent) 35%, var(--glass-stroke));
 }
 
@@ -485,7 +530,7 @@ textarea.is-invalid {
   font-weight: 600;
   color: color-mix(in srgb, var(--muted) 85%, var(--fg));
   cursor: pointer;
-  transition: color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+  transition: color var(--dur-sm) var(--ease-out), background var(--dur-sm) var(--ease-out), transform var(--dur-sm) var(--ease-out);
 }
 
 .segmented button:hover {
@@ -496,7 +541,7 @@ textarea.is-invalid {
 .segmented button.active {
   color: var(--fg-strong);
   background: color-mix(in srgb, var(--accent) 35%, transparent);
-  box-shadow: var(--shadow-2, 0 8px 20px rgba(15,31,55,0.12));
+  box-shadow: var(--shadow-md);
 }
 
 .segmented button:focus-visible {
@@ -514,7 +559,7 @@ textarea.is-invalid {
   border: 1px solid color-mix(in srgb, var(--field-border) 75%, transparent);
   background: linear-gradient(180deg, color-mix(in srgb, var(--field-bg) 78%, transparent), color-mix(in srgb, var(--on-surface) 12%, transparent));
   cursor: pointer;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+  transition: border-color var(--dur-md) var(--ease-out), box-shadow var(--dur-md) var(--ease-out), background var(--dur-md) var(--ease-out);
 }
 
 .form-switch input[type="checkbox"] {
@@ -532,7 +577,7 @@ textarea.is-invalid {
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--glass-stroke) 80%, transparent);
   background: color-mix(in srgb, var(--glass-stroke) 35%, transparent);
-  transition: background 0.25s ease, border-color 0.25s ease;
+  transition: background var(--dur-md) var(--ease-out), border-color var(--dur-md) var(--ease-out);
 }
 
 .form-switch__thumb {
@@ -543,8 +588,9 @@ textarea.is-invalid {
   height: 20px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--fg) 95%, transparent);
-  box-shadow: 0 3px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.6);
-  transition: transform 0.25s ease, background 0.25s ease;
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--text) 30%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 65%, transparent);
+  transition: transform var(--dur-md) var(--ease-out), background var(--dur-md) var(--ease-out);
 }
 
 .form-switch__label {

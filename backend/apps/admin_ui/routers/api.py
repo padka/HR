@@ -4,6 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import OperationalError
 
 from backend.apps.admin_ui.services.cities import (
     api_cities_payload,
@@ -32,6 +33,7 @@ from backend.apps.admin_ui.services.chat import (
     retry_chat_message,
 )
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
+from backend.apps.admin_ui.security import require_csrf_token
 from backend.core.settings import get_settings
 
 router = APIRouter(prefix="/api", tags=["api"])
@@ -74,7 +76,9 @@ async def api_recruiters():
 
 
 @router.post("/recruiters", status_code=status.HTTP_201_CREATED)
-async def api_recruiters_create(payload: RecruiterPayload):
+async def api_recruiters_create(
+    payload: RecruiterPayload, csrf_ok: None = Depends(require_csrf_token)
+):
     try:
         recruiter_data = build_recruiter_payload(
             name=payload.name,
@@ -112,7 +116,11 @@ async def api_recruiters_create(payload: RecruiterPayload):
 
 
 @router.put("/recruiters/{recruiter_id}")
-async def api_recruiters_update(recruiter_id: int, payload: RecruiterPayload):
+async def api_recruiters_update(
+    recruiter_id: int,
+    payload: RecruiterPayload,
+    csrf_ok: None = Depends(require_csrf_token),
+):
     try:
         recruiter_data = build_recruiter_payload(
             name=payload.name,
@@ -240,6 +248,7 @@ async def api_candidate_chat_send(
     candidate_id: int,
     payload: ChatSendPayload,
     bot_service: BotService = Depends(provide_bot_service),
+    csrf_ok: None = Depends(require_csrf_token),
 ):
     text_value = (payload.text or "").strip()
     if payload.template_key:
@@ -276,6 +285,7 @@ async def api_candidate_chat_retry(
     candidate_id: int,
     message_id: int,
     bot_service: BotService = Depends(provide_bot_service),
+    csrf_ok: None = Depends(require_csrf_token),
 ):
     result = await retry_chat_message(candidate_id, message_id, bot_service=bot_service)
     return JSONResponse(result)
@@ -299,10 +309,21 @@ async def api_template_keys():
 
 @router.get("/notifications/feed")
 async def api_notifications_feed(
+    request: Request,
     after_id: Optional[int] = Query(default=None, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
 ):
-    items = await notification_feed(after_id, limit)
+    if not getattr(request.app.state, "db_available", True):
+        return JSONResponse(
+            {"items": [], "latest_id": after_id, "degraded": True}
+        )
+    try:
+        items = await notification_feed(after_id, limit)
+    except OperationalError:
+        request.app.state.db_available = False
+        return JSONResponse(
+            {"items": [], "latest_id": after_id, "degraded": True}
+        )
     latest_id = items[-1]["id"] if items else after_id
     return JSONResponse(
         {
@@ -338,7 +359,9 @@ async def api_bot_integration_status(request: Request):
 
 
 @router.post("/bot/integration")
-async def api_bot_integration_update(request: Request):
+async def api_bot_integration_update(
+    request: Request, csrf_ok: None = Depends(require_csrf_token)
+):
     switch = getattr(request.app.state, "bot_integration_switch", None)
     if switch is None:
         return JSONResponse(

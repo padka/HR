@@ -2,6 +2,9 @@
 {% import "partials/form_shell.html" as forms with context %}
 {% block title %}Редактирование вопроса{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'questions-edit';
+</script>
 {% call forms.shell(
   title="Редактирование вопроса",
   description="Измените параметры и текст вопроса.",
@@ -169,7 +172,7 @@
 </style>
 
 {% raw %}
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 (function(){
   const $ = (s, r=document)=>r.querySelector(s);
   const editor = $('#payload-editor');

@@ -121,7 +121,7 @@
   {% endcall %}
 {% endcall %}
 
-<script type="module">
+<script type="module" nonce="{{ request.state.csp_nonce }}">
 import { initTemplateEditor } from "/static/js/modules/template-editor.js";
 import { TEMPLATE_PRESETS } from "/static/js/modules/template-presets.js";
 

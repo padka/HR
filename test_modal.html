@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Modal</title>
+  <style>
+    :root {
+      --ease-fade: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      --ease-modal: cubic-bezier(0.34, 1.26, 0.64, 1);
+    }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      padding: 40px;
+      background: #0f172a;
+      color: white;
+    }
+
+    .segmented {
+      display: inline-flex;
+      gap: 6px;
+      padding: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+    }
+
+    .segmented button {
+      padding: 10px 28px;
+      border: none;
+      background: transparent;
+      border-radius: 12px;
+      color: rgba(255, 255, 255, 0.6);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .segmented button.active {
+      background: rgba(15, 98, 254, 0.25);
+      color: #0f62fe;
+    }
+
+    /* Modal styles */
+    .slot-modal {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s var(--ease-fade);
+    }
+
+    .slot-modal.is-open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .slot-modal__backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(8, 12, 18, 0.80);
+      backdrop-filter: blur(12px);
+      opacity: 0;
+      transition: opacity 0.4s var(--ease-fade);
+    }
+
+    .slot-modal.is-open .slot-modal__backdrop {
+      opacity: 1;
+    }
+
+    .slot-modal__panel {
+      position: relative;
+      width: min(600px, 100%);
+      max-height: calc(100vh - 40px);
+      overflow-y: auto;
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      padding: 40px;
+      opacity: 0;
+      transform: scale(0.95) translateY(20px);
+      transition: all 0.4s var(--ease-modal);
+    }
+
+    .slot-modal.is-open .slot-modal__panel {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+
+    .slot-modal__close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 40px;
+      height: 40px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: transparent;
+      border-radius: 50%;
+      color: white;
+      font-size: 24px;
+      cursor: pointer;
+    }
+
+    .status {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 20px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 12px;
+      max-width: 400px;
+      white-space: pre-wrap;
+    }
+
+    .status-line {
+      margin: 4px 0;
+    }
+
+    .status-line.error {
+      color: #ff4444;
+    }
+
+    .status-line.success {
+      color: #44ff44;
+    }
+
+    .status-line.warning {
+      color: #ffaa44;
+    }
+  </style>
+</head>
+<body>
+  <h1>Тест модальных окон</h1>
+  <p>Проверка работы кнопок и модальных окон</p>
+
+  <div class="segmented" data-active="0">
+    <button id="btn-open-one" type="button">Один слот</button>
+    <button id="btn-open-bulk" type="button">Серия</button>
+  </div>
+
+  <!-- Modal: Один слот -->
+  <div class="slot-modal" id="modal-one">
+    <div class="slot-modal__backdrop" data-modal-close></div>
+    <div class="slot-modal__panel">
+      <button class="slot-modal__close" type="button" data-modal-close>×</button>
+      <h2>Модальное окно: Один слот</h2>
+      <p>Это тестовое модальное окно для проверки работы.</p>
+      <button onclick="alert('Форма работает!')">Тестовая кнопка</button>
+    </div>
+  </div>
+
+  <!-- Modal: Серия -->
+  <div class="slot-modal" id="modal-bulk">
+    <div class="slot-modal__backdrop" data-modal-close></div>
+    <div class="slot-modal__panel">
+      <button class="slot-modal__close" type="button" data-modal-close>×</button>
+      <h2>Модальное окно: Серия</h2>
+      <p>Это тестовое модальное окно для создания серии слотов.</p>
+      <button onclick="alert('Форма работает!')">Тестовая кнопка</button>
+    </div>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <script>
+    console.log('🚀 Test script started');
+
+    const $ = (s, r=document) => r.querySelector(s);
+    const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+    const statusEl = $('#status');
+    const logs = [];
+
+    function log(message, type = 'info') {
+      const timestamp = new Date().toLocaleTimeString();
+      const line = `[${timestamp}] ${message}`;
+      console.log(message);
+      logs.push({ message: line, type });
+      updateStatus();
+    }
+
+    function updateStatus() {
+      statusEl.innerHTML = logs
+        .slice(-10)
+        .map(l => `<div class="status-line ${l.type}">${l.message}</div>`)
+        .join('');
+    }
+
+    // Test selector function
+    log('🔍 Testing selectors...');
+    const testBtn = document.getElementById('btn-open-one');
+    log(`  getElementById: ${!!testBtn}`, testBtn ? 'success' : 'error');
+    const testBtnQuery = document.querySelector('#btn-open-one');
+    log(`  querySelector: ${!!testBtnQuery}`, testBtnQuery ? 'success' : 'error');
+    const testBtn$ = $('#btn-open-one');
+    log(`  $() helper: ${!!testBtn$}`, testBtn$ ? 'success' : 'error');
+
+    // Get elements
+    const btnOpenOne = $('#btn-open-one');
+    const btnOpenBulk = $('#btn-open-bulk');
+    const modalOne = $('#modal-one');
+    const modalBulk = $('#modal-bulk');
+    const segmentedControl = $('.segmented');
+
+    log('🚪 Modal elements:');
+    log(`  btn-open-one: ${!!btnOpenOne}`, btnOpenOne ? 'success' : 'error');
+    log(`  btn-open-bulk: ${!!btnOpenBulk}`, btnOpenBulk ? 'success' : 'error');
+    log(`  modal-one: ${!!modalOne}`, modalOne ? 'success' : 'error');
+    log(`  modal-bulk: ${!!modalBulk}`, modalBulk ? 'success' : 'error');
+
+    function openModal(modal, index) {
+      log(`🔓 Opening modal: ${modal?.id}`, 'success');
+      if (!modal) {
+        log('  ❌ Modal is null!', 'error');
+        return;
+      }
+      modal.classList.add('is-open');
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('modal-open');
+      if (segmentedControl) segmentedControl.setAttribute('data-active', String(index));
+      log(`  ✅ Modal opened, class added: ${modal.classList.contains('is-open')}`, 'success');
+    }
+
+    function closeModal(modal) {
+      if (!modal) return;
+      log(`🔒 Closing modal: ${modal.id}`, 'warning');
+      modal.classList.remove('is-open');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('modal-open');
+    }
+
+    function closeAllModals() {
+      closeModal(modalOne);
+      closeModal(modalBulk);
+    }
+
+    // Add click handlers
+    if (btnOpenOne) {
+      log('✅ Adding click handler to btn-open-one', 'success');
+      btnOpenOne.addEventListener('click', (e) => {
+        log('🖱️ Click detected on "Один слот"!', 'success');
+        e.preventDefault();
+        e.stopPropagation();
+        closeAllModals();
+        openModal(modalOne, 0);
+        btnOpenOne.classList.add('active');
+        if (btnOpenBulk) btnOpenBulk.classList.remove('active');
+      });
+    } else {
+      log('❌ btn-open-one not found!', 'error');
+    }
+
+    if (btnOpenBulk) {
+      log('✅ Adding click handler to btn-open-bulk', 'success');
+      btnOpenBulk.addEventListener('click', (e) => {
+        log('🖱️ Click detected on "Серия"!', 'success');
+        e.preventDefault();
+        e.stopPropagation();
+        closeAllModals();
+        openModal(modalBulk, 1);
+        btnOpenBulk.classList.add('active');
+        if (btnOpenOne) btnOpenOne.classList.remove('active');
+      });
+    } else {
+      log('❌ btn-open-bulk not found!', 'error');
+    }
+
+    // Close on backdrop or close button click
+    $$('[data-modal-close]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        log('🖱️ Close button/backdrop clicked', 'warning');
+        const modal = e.target.closest('.slot-modal');
+        if (modal) closeModal(modal);
+      });
+    });
+
+    // Keyboard shortcuts
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        log('⌨️ ESC pressed - closing modals', 'warning');
+        closeAllModals();
+      }
+    });
+
+    // Auto-open first modal
+    log('🔄 Auto-opening first modal...', 'success');
+    if (modalOne) {
+      openModal(modalOne, 0);
+      if (btnOpenOne) btnOpenOne.classList.add('active');
+    }
+
+    log('✅ Script initialization complete', 'success');
+  </script>
+</body>
+</html>

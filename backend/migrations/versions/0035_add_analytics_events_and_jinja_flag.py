@@ -1,3 +1,4 @@
+
 """Add analytics_events table and use_jinja flag to message_templates.
 
 Revision ID: 0035_add_analytics_events_and_jinja_flag

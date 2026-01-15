@@ -22,6 +22,7 @@ class DummySettings:
     bot_autostart: bool = False
     test2_required: bool = False
     bot_integration_enabled: bool = True
+    bot_callback_secret: str = "dev-secret"
     redis_url: str = ""
     state_ttl_seconds: int = 60
     environment: str = "development"
@@ -29,6 +30,7 @@ class DummySettings:
     log_level: str = "INFO"
     log_json: bool = False
     log_file: str = ""
+    session_secret: str = "dev-secret"
 
 
 @pytest.mark.asyncio

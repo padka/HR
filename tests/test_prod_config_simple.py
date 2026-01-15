@@ -13,6 +13,13 @@ import pytest
 pytestmark = pytest.mark.no_db_cleanup
 
 
+def _set_admin_credentials(monkeypatch):
+    monkeypatch.setenv("ADMIN_USER", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "S3cureAdm1nPass!")
+    monkeypatch.setenv("BOT_CALLBACK_SECRET", "prod-callback-secret-0123456789abcdef0123456789abcd")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+
+
 def test_prod_rejects_missing_database_url(monkeypatch):
     """Production must fail if DATABASE_URL is not set."""
     from backend.core import settings as settings_module
@@ -20,6 +27,7 @@ def test_prod_rejects_missing_database_url(monkeypatch):
     settings_module.get_settings.cache_clear()
 
     monkeypatch.setenv("ENVIRONMENT", "production")
+    _set_admin_credentials(monkeypatch)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
@@ -41,6 +49,7 @@ def test_prod_rejects_sqlite(monkeypatch):
     settings_module.get_settings.cache_clear()
 
     monkeypatch.setenv("ENVIRONMENT", "production")
+    _set_admin_credentials(monkeypatch)
     monkeypatch.setenv("DATABASE_URL", "sqlite:///test.db")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
@@ -64,6 +73,7 @@ def test_prod_accepts_postgresql(monkeypatch):
     temp_dir = tempfile.mkdtemp(prefix="test_prod_")
     try:
         monkeypatch.setenv("ENVIRONMENT", "production")
+        _set_admin_credentials(monkeypatch)
         monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
@@ -87,6 +97,7 @@ def test_prod_rejects_missing_redis_url(monkeypatch):
     settings_module.get_settings.cache_clear()
 
     monkeypatch.setenv("ENVIRONMENT", "production")
+    _set_admin_credentials(monkeypatch)
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
     monkeypatch.setenv("REDIS_URL", "")
     monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
@@ -108,6 +119,7 @@ def test_prod_rejects_non_redis_broker(monkeypatch):
     settings_module.get_settings.cache_clear()
 
     monkeypatch.setenv("ENVIRONMENT", "production")
+    _set_admin_credentials(monkeypatch)
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("NOTIFICATION_BROKER", "memory")
@@ -132,6 +144,7 @@ def test_prod_rejects_data_dir_in_repo(monkeypatch):
     repo_data_dir = str(settings_module.PROJECT_ROOT / "data")
 
     monkeypatch.setenv("ENVIRONMENT", "production")
+    _set_admin_credentials(monkeypatch)
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
@@ -179,6 +192,7 @@ def test_prod_rejects_missing_session_secret(monkeypatch):
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
         monkeypatch.setenv("DATA_DIR", temp_dir)
+        _set_admin_credentials(monkeypatch)
         # Explicitly remove SESSION_SECRET and SECRET_KEY
         monkeypatch.delenv("SESSION_SECRET", raising=False)
         monkeypatch.delenv("SECRET_KEY", raising=False)
@@ -206,6 +220,7 @@ def test_prod_rejects_short_session_secret(monkeypatch):
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
         monkeypatch.setenv("DATA_DIR", temp_dir)
+        _set_admin_credentials(monkeypatch)
         monkeypatch.setenv("SESSION_SECRET", "short")  # Only 5 chars
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -324,6 +339,7 @@ def test_validation_case_insensitive(monkeypatch):
             monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
             monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
             monkeypatch.setenv("DATA_DIR", temp_dir)
+            _set_admin_credentials(monkeypatch)
             monkeypatch.setenv("SESSION_SECRET", "test-prod-secret-32chars-long-0123456789abcdef")
 
             # All casings should trigger validation and raise error

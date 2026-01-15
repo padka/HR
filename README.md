@@ -27,6 +27,16 @@ make test               # прогоны на SQLite + in-memory broker, без 
 
 Переменные окружения для тестов выставляются автоматически (ENVIRONMENT=test, DATABASE_URL=sqlite+aiosqlite:///./data/test.db, NOTIFICATION_BROKER=memory, ADMIN_USER/PASSWORD=admin). Брокер уведомлений и бот отключены, используется in-memory state/store.
 
+## Ветки и CI (обязательно)
+
+- Рабочие ветки: `main` (стабильная), `testing` (интеграционная), фичи — `feature/*`.  
+- PR только в `testing`; после стабилизации — PR из `testing` в `main`.  
+- Протекции: no force-push; `main` — обязательные проверки + 1 review; `testing` — обязательные проверки.  
+- CI (см. `.github/workflows/ci.yml`): поднимает Postgres, запускает `scripts/run_migrations.py`, потом smoke‑pytest (`test_prod_config_simple`, `test_session_cookie_config`, `test_admin_state_nullbot`).
+- Обязательные файлы: `.env.example` (шаблон окружения), `CHANGELOG_DEV.md` (фиксировать изменения и проверки).
+- Фича-флаг для старого эндпоинта статусов: `ENABLE_LEGACY_STATUS_API` (по умолчанию выключен в dev/staging, в prod обязательно выключен; включать только для отладки/тестов).
+  - Новый контракт статусов: `GET /candidates/{id}/state` возвращает `status` + `allowed_actions`; действия — `POST /candidates/{id}/actions/{action}` (см. tests/test_workflow_api.py).
+
 ## Локальный запуск (Postgres + Redis в Docker)
 
 Подготовка:
@@ -42,6 +52,7 @@ make test               # прогоны на SQLite + in-memory broker, без 
 Примечания:
 - Бот — отдельный процесс (`bot.py`). Админка умеет жить с NullBot при пустом токене, но сам бот без валидного `BOT_TOKEN` не стартует.
 - Скрипты `scripts/dev_admin.sh` / `scripts/dev_bot.sh` сами подхватывают `.env.local` (или `.env.local.example`) и предупреждают, если в оболочке висит конфликтный `BOT_TOKEN` (dummy).
+- Не запускайте несколько экземпляров бота одновременно: параллельный polling (двойной `getUpdates`) приводит к `TelegramConflictError` в логах.
 - Проверка токена (без вывода значения):  
   `python -c "from backend.core.env import load_env; load_env('.env.local'); import os; print('BOT_TOKEN has colon:', ':' in os.getenv('BOT_TOKEN',''))"`
 

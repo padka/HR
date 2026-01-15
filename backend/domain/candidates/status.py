@@ -13,6 +13,11 @@ from typing import Dict, Optional, List, Tuple
 class CandidateStatus(str, Enum):
     """Candidate status in the recruiting pipeline."""
 
+    # 0. Lead stages (manual creation before Telegram/tests)
+    LEAD = "lead"
+    CONTACTED = "contacted"
+    INVITED = "invited"
+
     # 1. Completed Test1, awaiting slot selection
     TEST1_COMPLETED = "test1_completed"
 
@@ -64,6 +69,9 @@ class CandidateStatus(str, Enum):
 
 # Human-readable status labels (Russian)
 STATUS_LABELS: Dict[CandidateStatus, str] = {
+    CandidateStatus.LEAD: "Лид (новый контакт)",
+    CandidateStatus.CONTACTED: "Связались (телефон)",
+    CandidateStatus.INVITED: "Приглашен в бота",
     CandidateStatus.TEST1_COMPLETED: "Прошел тестирование",
     CandidateStatus.WAITING_SLOT: "Ждет назначения слота",
     CandidateStatus.STALLED_WAITING_SLOT: "Долго ждет слота (>24ч)",
@@ -87,6 +95,7 @@ STATUS_LABELS: Dict[CandidateStatus, str] = {
 class StatusCategory(str, Enum):
     """High-level status categories for analytics."""
 
+    LEAD = "lead"  # Pre-bot lead stages
     TESTING = "testing"  # Test1 and Test2 phases
     INTERVIEW = "interview"  # Interview scheduling and execution
     INTRO_DAY = "intro_day"  # Intro day scheduling and execution
@@ -96,6 +105,9 @@ class StatusCategory(str, Enum):
 
 # Map each status to its category
 STATUS_CATEGORIES: Dict[CandidateStatus, StatusCategory] = {
+    CandidateStatus.LEAD: StatusCategory.LEAD,
+    CandidateStatus.CONTACTED: StatusCategory.LEAD,
+    CandidateStatus.INVITED: StatusCategory.LEAD,
     CandidateStatus.TEST1_COMPLETED: StatusCategory.TESTING,
     CandidateStatus.WAITING_SLOT: StatusCategory.TESTING,
     CandidateStatus.STALLED_WAITING_SLOT: StatusCategory.TESTING,
@@ -117,6 +129,9 @@ STATUS_CATEGORIES: Dict[CandidateStatus, StatusCategory] = {
 
 # Visual colors for UI representation
 STATUS_COLORS: Dict[CandidateStatus, str] = {
+    CandidateStatus.LEAD: "muted",
+    CandidateStatus.CONTACTED: "info",
+    CandidateStatus.INVITED: "primary",
     CandidateStatus.TEST1_COMPLETED: "info",  # Blue
     CandidateStatus.WAITING_SLOT: "warning",  # Amber
     CandidateStatus.STALLED_WAITING_SLOT: "danger",  # Red (needs attention)
@@ -139,6 +154,18 @@ STATUS_COLORS: Dict[CandidateStatus, str] = {
 # Valid status transitions
 # Maps current status to list of allowed next statuses
 STATUS_TRANSITIONS: Dict[CandidateStatus, List[CandidateStatus]] = {
+    CandidateStatus.LEAD: [
+        CandidateStatus.CONTACTED,
+        CandidateStatus.INVITED,
+        CandidateStatus.TEST1_COMPLETED,
+    ],
+    CandidateStatus.CONTACTED: [
+        CandidateStatus.INVITED,
+        CandidateStatus.TEST1_COMPLETED,
+    ],
+    CandidateStatus.INVITED: [
+        CandidateStatus.TEST1_COMPLETED,
+    ],
     CandidateStatus.TEST1_COMPLETED: [
         CandidateStatus.WAITING_SLOT,
         CandidateStatus.INTERVIEW_SCHEDULED,
@@ -190,6 +217,9 @@ STATUS_TRANSITIONS: Dict[CandidateStatus, List[CandidateStatus]] = {
 }
 
 STATUS_PROGRESS_SEQUENCE: List[CandidateStatus] = [
+    CandidateStatus.LEAD,
+    CandidateStatus.CONTACTED,
+    CandidateStatus.INVITED,
     CandidateStatus.TEST1_COMPLETED,
     CandidateStatus.WAITING_SLOT,
     CandidateStatus.STALLED_WAITING_SLOT,
@@ -235,8 +265,8 @@ def get_status_category(status: CandidateStatus) -> StatusCategory:
 def can_transition(from_status: Optional[CandidateStatus], to_status: CandidateStatus) -> bool:
     """Check if status transition is valid."""
     if from_status is None:
-        # New candidate can only start from TEST1_COMPLETED
-        return to_status == CandidateStatus.TEST1_COMPLETED
+        # New candidate can start from LEAD or TEST1_COMPLETED
+        return to_status in {CandidateStatus.LEAD, CandidateStatus.TEST1_COMPLETED}
 
     allowed = STATUS_TRANSITIONS.get(from_status, [])
     return to_status in allowed
@@ -266,6 +296,11 @@ def is_status_retreat(current: Optional[CandidateStatus], target: CandidateStatu
 def get_funnel_stages() -> List[Tuple[str, List[CandidateStatus]]]:
     """Get recruiting funnel stages with their statuses."""
     return [
+        ("Лиды", [
+            CandidateStatus.LEAD,
+            CandidateStatus.CONTACTED,
+            CandidateStatus.INVITED,
+        ]),
         ("Тестирование", [
             CandidateStatus.TEST1_COMPLETED,
             CandidateStatus.TEST2_SENT,

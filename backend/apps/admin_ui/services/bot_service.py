@@ -422,6 +422,33 @@ class BotService:
 
 
 _bot_service: Optional[BotService] = None
+_null_bot_service: Optional[BotService] = None
+
+
+def _create_null_bot_service() -> BotService:
+    """Create a null bot service for test/dev environments where bot is optional."""
+
+    # Create a dummy state manager - use _DummyStateManager as safe fallback
+    if BOT_RUNTIME_AVAILABLE:
+        try:
+            from backend.apps.bot.state_store import InMemoryStateStore
+            store = InMemoryStateStore(ttl_seconds=300)
+            dummy_state_manager = StateManager(store)  # type: ignore
+        except Exception:
+            dummy_state_manager = _DummyStateManager()  # type: ignore
+    else:
+        dummy_state_manager = _DummyStateManager()  # type: ignore
+
+    dummy_switch = IntegrationSwitch(initial=False)
+
+    return BotService(
+        state_manager=dummy_state_manager,
+        enabled=False,
+        configured=False,
+        integration_switch=dummy_switch,
+        required=False,
+        skip_message="Bot service not configured (test/dev mode)",
+    )
 
 
 def configure_bot_service(service: BotService) -> None:
@@ -431,21 +458,41 @@ def configure_bot_service(service: BotService) -> None:
     _bot_service = service
 
 
-def get_bot_service() -> BotService:
-    """Return the globally configured bot service."""
+def get_bot_service(allow_null: bool = True) -> BotService:
+    """Return the globally configured bot service.
+
+    Args:
+        allow_null: If True, return a null bot service in test/dev when not configured.
+                   If False, raise RuntimeError (production behavior).
+    """
 
     if _bot_service is None:
-        raise RuntimeError("Bot service is not configured")
+        if not allow_null:
+            raise RuntimeError("Bot service is not configured")
+
+        # In test/dev mode, return a null bot service that safely no-ops
+        global _null_bot_service
+        if _null_bot_service is None:
+            _null_bot_service = _create_null_bot_service()
+        return _null_bot_service
+
     return _bot_service
 
 
 def provide_bot_service(request: Request) -> BotService:
     """FastAPI dependency provider for the bot service."""
 
+    # First check app.state (set by setup_bot_state or test fixtures)
     service = getattr(request.app.state, "bot_service", None)
     if service is not None:
         return service
-    return get_bot_service()
+
+    # Then check if global bot service was configured
+    if _bot_service is not None:
+        return _bot_service
+
+    # Finally, return null bot service for graceful degradation
+    return get_bot_service(allow_null=True)
 
 
 __all__ = [

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from backend.core.settings import get_settings
 from backend.migrations import upgrade_to_head
@@ -55,6 +56,7 @@ _preflight_database_backend(_settings.database_url_async)
 # Build engine kwargs with PostgreSQL pool settings
 _async_engine_kwargs = {
     "echo": _settings.sql_echo,
+    "echo_pool": _settings.environment == "development",  # Log pool checkouts/checkins in dev
     "future": True,
     "pool_size": _settings.db_pool_size,
     "max_overflow": _settings.db_max_overflow,
@@ -62,6 +64,12 @@ _async_engine_kwargs = {
     "pool_pre_ping": True,
     "pool_recycle": _settings.db_pool_recycle,
 }
+if _settings.environment == "test":
+    _async_engine_kwargs = {
+        "echo": _settings.sql_echo,
+        "future": True,
+        "poolclass": NullPool,
+    }
 
 async_engine: AsyncEngine = create_async_engine(
     _settings.database_url_async,

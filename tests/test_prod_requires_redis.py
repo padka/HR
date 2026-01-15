@@ -24,7 +24,8 @@ def test_prod_without_redis_url_fails_at_settings_level(monkeypatch):
         "DATABASE_URL": "postgresql://user:pass@localhost:5432/testdb",
         "DATA_DIR": "/tmp/recruitsmart_test_data",
         "ADMIN_USER": "admin",
-        "ADMIN_PASSWORD": "admin",
+        "ADMIN_PASSWORD": "S3cureAdm1nPass!",
+        "BOT_CALLBACK_SECRET": "prod-callback-secret-0123456789abcdef0123456789abcd",
         "SESSION_SECRET": "test-session-secret-0123456789abcdef0123456789abcd",
     }
     for key, value in env.items():

@@ -1,13 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Детализация кандидатов{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'candidates-detailization';
+</script>
 <section class="page page--candidates-detail" aria-labelledby="detail-title">
   <header class="page-header">
     <div>
       <h1 id="detail-title" class="page-title">Детализация кандидатов</h1>
       <p class="page-description">Статусы закрепления на обучение: закреплён / не закреплён.</p>
     </div>
-    <a class="liquid-glass-btn liquid-glass-btn--ghost" href="/candidates">← К кандидатам</a>
+    <div class="page-actions">
+      <a class="liquid-glass-btn liquid-glass-btn--primary" href="/candidates/new">+ Новый кандидат</a>
+      <a class="liquid-glass-btn liquid-glass-btn--ghost" href="/candidates">← К кандидатам</a>
+    </div>
   </header>
 
   <section class="detail-controls">

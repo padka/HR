@@ -19,7 +19,7 @@ DEFAULT_USER_DATA_DIR = Path.home() / ".recruitsmart_admin" / "data"
 
 @dataclass(frozen=True)
 class Settings:
-    environment: str  # development, production, staging
+    environment: str  # development, production, staging, test
     data_dir: Path
     database_url_async: str
     database_url_sync: str
@@ -63,6 +63,7 @@ class Settings:
     rate_limit_enabled: bool
     rate_limit_redis_url: str
     trust_proxy_headers: bool
+    enable_legacy_status_api: bool
 
 
 def _get_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
@@ -108,6 +109,13 @@ def _get_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_bool_default_by_env(name: str, *, environment: str, default_non_prod: bool, default_prod: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is not None:
+        return _get_bool(name)
+    return default_prod if environment == "production" else default_non_prod
 
 
 def _get_bool_with_fallback(*names: str, default: bool = False) -> bool:
@@ -351,7 +359,7 @@ def _validate_production_settings(settings: Settings) -> None:
 def get_settings() -> Settings:
     # Determine environment (default to development for safety)
     environment = os.getenv("ENVIRONMENT", "development").strip().lower()
-    if environment not in {"development", "production", "staging"}:
+    if environment not in {"development", "production", "staging", "test"}:
         environment = "development"
 
     data_dir = _default_data_dir()
@@ -526,6 +534,12 @@ def get_settings() -> Settings:
         rate_limit_redis_url = rate_limit_redis_url.replace("redis_notifications", "localhost", 1)
 
     trust_proxy_headers = _get_bool("TRUST_PROXY_HEADERS", default=False)
+    enable_legacy_status_api = _get_bool_default_by_env(
+        "ENABLE_LEGACY_STATUS_API",
+        environment=environment,
+        default_non_prod=False,
+        default_prod=False,
+    )
 
     settings = Settings(
         environment=environment,
@@ -572,6 +586,7 @@ def get_settings() -> Settings:
         rate_limit_enabled=rate_limit_enabled,
         rate_limit_redis_url=rate_limit_redis_url,
         trust_proxy_headers=trust_proxy_headers,
+        enable_legacy_status_api=enable_legacy_status_api,
     )
 
     # Validate production configuration (fails fast with clear error messages)

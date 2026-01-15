@@ -1,6 +1,7 @@
 import html
 import logging
 import re
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -16,6 +17,7 @@ from typing import Literal
 from backend.core.db import async_session
 from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.candidates.services import create_or_update_user
+from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
 
 _UNSET = object()
@@ -36,6 +38,16 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def slot_status_free_clause(slot: Slot):
+    """Return a SQLAlchemy expression matching free slots (shared across UI/API)."""
+    return func.lower(slot.status) == SlotStatus.FREE
+
+
+def slot_status_free_sql(alias: str = "s") -> str:
+    """Return SQL snippet to filter free slots for raw text queries."""
+    return f"lower(coalesce({alias}.status, 'free')) = '{SlotStatus.FREE}'"
 
 def _to_aware_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -87,7 +99,7 @@ async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
                 and_(
                     Slot.recruiter_id == Recruiter.id,
                     Slot.city_id == city_id,
-                    func.lower(Slot.status) == SlotStatus.FREE,
+                    slot_status_free_clause(Slot),
                     Slot.start_utc > now,
                 ),
             )
@@ -137,7 +149,7 @@ async def get_candidate_cities() -> List[City]:
                 slot,
                 and_(
                     slot.city_id == City.id,
-                    func.lower(slot.status) == SlotStatus.FREE,
+                    slot_status_free_clause(slot),
                     slot.start_utc > now,
                 ),
             )
@@ -169,6 +181,48 @@ async def get_candidate_cities() -> List[City]:
 async def get_recruiter(recruiter_id: int) -> Optional[Recruiter]:
     async with async_session() as session:
         return await session.get(Recruiter, recruiter_id)
+
+
+async def get_recruiter_by_chat_id(chat_id: int) -> Optional[Recruiter]:
+    """Return recruiter record by Telegram chat id, if any."""
+    async with async_session() as session:
+        return await session.scalar(
+            select(Recruiter).where(Recruiter.tg_chat_id == chat_id)
+        )
+
+
+async def get_recruiter_agenda_by_chat_id(
+    chat_id: int,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    limit: int = 30,
+) -> List[Slot]:
+    """Return slots for recruiter by tg chat id within time window."""
+    async with async_session() as session:
+        stmt = (
+            select(Slot)
+            .join(Recruiter, Slot.recruiter_id == Recruiter.id)
+            .where(
+                and_(
+                    Recruiter.tg_chat_id == chat_id,
+                    Slot.start_utc >= start_utc,
+                    Slot.start_utc <= end_utc,
+                    Slot.status.in_(
+                        [
+                            SlotStatus.PENDING,
+                            SlotStatus.BOOKED,
+                            SlotStatus.CONFIRMED_BY_CANDIDATE,
+                            SlotStatus.FREE,
+                        ]
+                    ),
+                )
+            )
+            .order_by(Slot.start_utc.asc())
+            .limit(limit)
+        )
+        rows = await session.scalars(stmt)
+        return list(rows.all())
 
 
 async def get_city_by_name(name: str) -> Optional[City]:
@@ -239,6 +293,8 @@ async def city_has_available_slots(city_id: int, *, now_utc: Optional[datetime] 
             .select_from(Slot)
             .where(
                 Slot.city_id == city_id,
+                # Only interview slots count for availability
+                func.coalesce(Slot.purpose, "interview") == "interview",
                 func.lower(Slot.status) == SlotStatus.FREE,
                 Slot.start_utc > now_utc,
             )
@@ -974,10 +1030,11 @@ async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult
 
 async def reserve_slot(
     slot_id: int,
-    candidate_tg_id: int,
+    candidate_tg_id: Optional[int],
     candidate_fio: str,
     candidate_tz: str,
     *,
+    candidate_id: Optional[str] = None,
     candidate_city_id: Optional[int] = None,
     candidate_username: Optional[str] = None,
     purpose: str = "interview",
@@ -989,50 +1046,70 @@ async def reserve_slot(
     now_utc = datetime.now(timezone.utc)
 
     city_name: Optional[str] = None
+    candidate_uuid: Optional[str] = None
+    slot_recruiter_id: Optional[int] = None
+    slot_purpose = purpose or "interview"
 
     async with async_session() as session:
-        async with session.begin():
-            slot = await session.scalar(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-                .where(Slot.id == slot_id)
-                .with_for_update()
-            )
+        try:
+            async with session.begin():
+                candidate_uuid = candidate_id
+                if candidate_uuid is None and candidate_tg_id is not None:
+                    candidate_uuid = await session.scalar(
+                        select(User.candidate_id).where(User.telegram_id == candidate_tg_id)
+                    )
+                if candidate_uuid is None:
+                    candidate_uuid = str(uuid.uuid4())
 
-            if not slot:
-                return ReservationResult(status="slot_taken")
+                slot = await session.scalar(
+                    select(Slot)
+                    .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                    .where(Slot.id == slot_id)
+                    .with_for_update()
+                )
 
-            status_value = (slot.status or "").lower()
+                if not slot:
+                    return ReservationResult(status="slot_taken")
 
-            if status_value != SlotStatus.FREE:
-                if (
-                    slot.candidate_tg_id == candidate_tg_id
-                    and status_value
-                    in (
+                slot_recruiter_id = slot.recruiter_id
+
+                status_value = (slot.status or "").lower()
+                slot_purpose_value = (slot.purpose or "interview").lower()
+                if slot_purpose_value != slot_purpose:
+                    return ReservationResult(status="slot_taken")
+
+                # Не позволяем бронировать слоты, которые уже в прошлом.
+                slot_start = _to_aware_utc(slot.start_utc)
+                if slot_start <= now_utc:
+                    return ReservationResult(status="slot_taken", slot=slot)
+
+                if status_value != SlotStatus.FREE:
+                    if (
+                        slot.candidate_id == candidate_uuid
+                        or (candidate_tg_id is not None and slot.candidate_tg_id == candidate_tg_id)
+                    ) and status_value in (
                         SlotStatus.PENDING,
                         SlotStatus.BOOKED,
                         SlotStatus.CONFIRMED_BY_CANDIDATE,
-                    )
-                ):
-                    slot.start_utc = _to_aware_utc(slot.start_utc)
-                    return ReservationResult(status="already_reserved", slot=slot)
-                return ReservationResult(status="slot_taken", slot=slot)
+                    ):
+                        slot.start_utc = _to_aware_utc(slot.start_utc)
+                        return ReservationResult(status="already_reserved", slot=slot)
+                    return ReservationResult(status="slot_taken", slot=slot)
 
-            if expected_recruiter_id is not None and slot.recruiter_id != expected_recruiter_id:
-                return ReservationResult(status="slot_taken")
+                if expected_recruiter_id is not None and slot.recruiter_id != expected_recruiter_id:
+                    return ReservationResult(status="slot_taken")
 
-            if expected_city_id is not None and slot.city_id != expected_city_id:
-                return ReservationResult(status="slot_taken")
+                if expected_city_id is not None and slot.city_id != expected_city_id:
+                    return ReservationResult(status="slot_taken")
 
-            # P0: do not allow the same candidate to hold multiple active slots WITH THE SAME RECRUITER.
-            # Candidate can book different recruiters (e.g., reschedule to another recruiter).
-            # If allow_candidate_replace=True, free the existing slot and continue booking.
-            if candidate_tg_id is not None:
+                # P0: do not allow the same candidate to hold multiple active slots WITH THE SAME RECRUITER.
+                # Candidate can book different recruiters (e.g., reschedule to another recruiter).
+                # If allow_candidate_replace=True, free the existing slot and continue booking.
                 existing_active = await session.scalar(
                     select(Slot)
                     .options(selectinload(Slot.recruiter), selectinload(Slot.city))
                     .where(
-                        Slot.candidate_tg_id == candidate_tg_id,
+                        Slot.candidate_id == candidate_uuid,
                         Slot.recruiter_id == slot.recruiter_id,  # Same recruiter only
                         Slot.id != slot.id,
                         func.lower(Slot.status).in_(
@@ -1054,6 +1131,7 @@ async def reserve_slot(
                             delete(NotificationLog).where(NotificationLog.booking_id == existing_active.id)
                         )
                         existing_active.status = SlotStatus.FREE
+                        existing_active.candidate_id = None
                         existing_active.candidate_tg_id = None
                         existing_active.candidate_fio = None
                         existing_active.candidate_tz = None
@@ -1062,71 +1140,102 @@ async def reserve_slot(
                         existing_active.start_utc = _to_aware_utc(existing_active.start_utc)
                         return ReservationResult(status="duplicate_candidate", slot=existing_active)
 
-            reservation_date = _to_aware_utc(slot.start_utc).date()
+                reservation_date = _to_aware_utc(slot.start_utc).date()
 
-            await session.execute(
-                delete(SlotReservationLock).where(SlotReservationLock.expires_at <= now_utc)
-            )
-
-            existing_lock = await session.scalar(
-                select(SlotReservationLock)
-                .where(
-                    SlotReservationLock.candidate_tg_id == candidate_tg_id,
-                    SlotReservationLock.recruiter_id == slot.recruiter_id,
-                    SlotReservationLock.reservation_date == reservation_date,
+                await session.execute(
+                    delete(SlotReservationLock).where(SlotReservationLock.expires_at <= now_utc)
                 )
-                .with_for_update()
-            )
 
-            if existing_lock:
-                existing_slot = await session.scalar(
+                existing_lock = await session.scalar(
+                    select(SlotReservationLock)
+                    .where(
+                        SlotReservationLock.candidate_id == candidate_uuid,
+                        SlotReservationLock.recruiter_id == slot.recruiter_id,
+                        SlotReservationLock.reservation_date == reservation_date,
+                    )
+                    .with_for_update()
+                )
+
+                if existing_lock:
+                    existing_slot = await session.scalar(
+                        select(Slot)
+                        .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                        .where(Slot.id == existing_lock.slot_id)
+                    )
+                    if existing_slot:
+                        existing_slot.start_utc = _to_aware_utc(existing_slot.start_utc)
+                        return ReservationResult(status="already_reserved", slot=existing_slot)
+                    await session.delete(existing_lock)
+
+                slot.status = SlotStatus.PENDING
+                slot.candidate_id = candidate_uuid
+                slot.candidate_tg_id = candidate_tg_id
+                slot.candidate_fio = candidate_fio
+                slot.candidate_tz = candidate_tz
+                slot.candidate_city_id = candidate_city_id
+                slot.purpose = slot_purpose
+
+                await session.flush()
+
+                lock = SlotReservationLock(
+                    slot_id=slot.id,
+                    candidate_id=candidate_uuid,
+                    candidate_tg_id=candidate_tg_id,
+                    recruiter_id=slot.recruiter_id,
+                    reservation_date=reservation_date,
+                    expires_at=now_utc + timedelta(minutes=5),
+                )
+                session.add(lock)
+                city_name = slot.city.name_plain if slot.city else None
+                if city_name is None and candidate_city_id is not None:
+                    city = await session.get(City, candidate_city_id)
+                    if city:
+                        city_name = city.name_plain
+        except IntegrityError:
+            await session.rollback()
+            if candidate_tg_id is None or slot_recruiter_id is None:
+                return ReservationResult(status="slot_taken")
+            async with async_session() as check_session:
+                existing_active = await check_session.scalar(
                     select(Slot)
                     .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-                    .where(Slot.id == existing_lock.slot_id)
+                    .where(
+                        Slot.candidate_tg_id == candidate_tg_id,
+                        Slot.recruiter_id == slot_recruiter_id,
+                        Slot.purpose == slot_purpose,
+                        func.lower(Slot.status).in_(
+                            [
+                                SlotStatus.PENDING,
+                                SlotStatus.BOOKED,
+                                SlotStatus.CONFIRMED_BY_CANDIDATE,
+                            ]
+                        ),
+                    )
+                    .order_by(Slot.start_utc.asc())
                 )
-                if existing_slot:
-                    existing_slot.start_utc = _to_aware_utc(existing_slot.start_utc)
-                    return ReservationResult(status="already_reserved", slot=existing_slot)
-                await session.delete(existing_lock)
-
-            slot.status = SlotStatus.PENDING
-            slot.candidate_tg_id = candidate_tg_id
-            slot.candidate_fio = candidate_fio
-            slot.candidate_tz = candidate_tz
-            slot.candidate_city_id = candidate_city_id
-            slot.purpose = purpose or "interview"
-
-            await session.flush()
-
-            lock = SlotReservationLock(
-                slot_id=slot.id,
-                candidate_tg_id=candidate_tg_id,
-                recruiter_id=slot.recruiter_id,
-                reservation_date=reservation_date,
-                expires_at=now_utc + timedelta(minutes=5),
-            )
-            session.add(lock)
-            city_name = slot.city.name_plain if slot.city else None
-            if city_name is None and candidate_city_id is not None:
-                city = await session.get(City, candidate_city_id)
-                if city:
-                    city_name = city.name_plain
+            if existing_active:
+                existing_active.start_utc = _to_aware_utc(existing_active.start_utc)
+                return ReservationResult(status="duplicate_candidate", slot=existing_active)
+            return ReservationResult(status="slot_taken")
 
         slot.start_utc = _to_aware_utc(slot.start_utc)
-    try:
-        # For interview slots, new candidates start at TEST1_COMPLETED
-        # (they've already passed Test1 before booking)
-        initial_status = CandidateStatus.TEST1_COMPLETED if purpose == "interview" else None
-        await create_or_update_user(
-            telegram_id=candidate_tg_id,
-            fio=candidate_fio,
-            city=city_name or "",
-            username=candidate_username,
-            initial_status=initial_status,
-        )
-    except Exception:
-        # Candidate directory sync should not break reservation flow
-        pass
+    if candidate_tg_id is not None:
+        try:
+            # For interview slots, new candidates start at TEST1_COMPLETED
+            # (they've already passed Test1 before booking)
+            initial_status = CandidateStatus.TEST1_COMPLETED if purpose == "interview" else None
+            await create_or_update_user(
+                telegram_id=candidate_tg_id,
+                fio=candidate_fio,
+                city=city_name or "",
+                username=candidate_username,
+                initial_status=initial_status,
+                candidate_id=candidate_uuid,
+                source="bot",
+            )
+        except Exception:
+            # Candidate directory sync should not break reservation flow
+            pass
     return ReservationResult(status="reserved", slot=slot)
 
 
@@ -1189,6 +1298,7 @@ async def reject_slot(
             return None
         reservation_date = _to_aware_utc(slot.start_utc).date()
         candidate_tg_id = slot.candidate_tg_id
+        candidate_id = slot.candidate_id
         recruiter_id = slot.recruiter_id
         await session.execute(
             delete(SlotReservationLock).where(SlotReservationLock.slot_id == slot.id)
@@ -1203,7 +1313,15 @@ async def reject_slot(
             .where(NotificationLog.booking_id == slot.id)
             .where(NotificationLog.candidate_tg_id.is_(None))
         )
-        if candidate_tg_id is not None and recruiter_id is not None:
+        if candidate_id is not None and recruiter_id is not None:
+            await session.execute(
+                delete(SlotReservationLock).where(
+                    SlotReservationLock.candidate_id == candidate_id,
+                    SlotReservationLock.recruiter_id == recruiter_id,
+                    SlotReservationLock.reservation_date == reservation_date,
+                )
+            )
+        elif candidate_tg_id is not None and recruiter_id is not None:
             await session.execute(
                 delete(SlotReservationLock).where(
                     SlotReservationLock.candidate_tg_id == candidate_tg_id,
@@ -1239,6 +1357,7 @@ async def reject_slot(
                 logger.exception("Failed to update candidate status to DECLINED for candidate %s (purpose=%s)", candidate_tg_id, slot_purpose)
 
         slot.status = SlotStatus.FREE
+        slot.candidate_id = None
         slot.candidate_tg_id = None
         slot.candidate_fio = None
         slot.candidate_tz = None

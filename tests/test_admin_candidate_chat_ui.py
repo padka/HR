@@ -1,6 +1,4 @@
-import asyncio
 import pytest
-from fastapi.testclient import TestClient
 
 from backend.apps.admin_ui.app import create_app
 from backend.core import settings as settings_module
@@ -37,12 +35,14 @@ def admin_app(monkeypatch):
 
 
 async def _async_get(app, path: str):
-    def _call():
-        with TestClient(app) as client:
-            client.auth = ("admin", "admin")
-            return client.get(path)
+    from httpx import AsyncClient, ASGITransport
 
-    return await asyncio.to_thread(_call)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        auth=("admin", "admin"),
+    ) as client:
+        return await client.get(path)
 
 
 @pytest.mark.asyncio
@@ -95,6 +95,8 @@ async def test_single_decline_button_for_intro_day_states(admin_app):
 
     response = await _async_get(admin_app, f"/candidates/{candidate.id}")
     assert response.status_code == 200
-    # General decline button should be hidden, intro-day decline remains
-    assert "Отклонить кандидата Intro Candidate?" not in response.text
-    assert "Отказать кандидату Intro Candidate после ОД" in response.text
+    # For INTRO_DAY_CONFIRMED_PRELIMINARY: should have hire/not_hired actions, but NOT decline
+    assert "Закреплен на обучение" in response.text
+    assert "Не закреплен" in response.text
+    # Decline button only appears for INTRO_DAY_CONFIRMED_DAY_OF
+    assert "decline_after_intro" not in response.text

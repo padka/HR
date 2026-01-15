@@ -35,6 +35,7 @@ async def test_inmemory_broker_forbidden_in_production():
     prod_settings.bot_enabled = False
     prod_settings.test2_required = False
     prod_settings.session_secret = "secret"
+    prod_settings.bot_callback_secret = "secret"
     prod_settings.session_cookie_samesite = "lax"
     prod_settings.session_cookie_secure = False
     prod_settings.notification_broker = "redis"
@@ -79,6 +80,7 @@ async def test_inmemory_broker_allowed_in_development():
     dev_settings.notification_retry_max_seconds = 3600
     dev_settings.test2_required = False
     dev_settings.session_secret = "secret"
+    dev_settings.bot_callback_secret = "secret"
     dev_settings.session_cookie_samesite = "lax"
     dev_settings.session_cookie_secure = False
     dev_settings.notification_broker = "memory"
@@ -129,6 +131,7 @@ async def test_redis_required_message_in_production():
     prod_settings.bot_enabled = False
     prod_settings.test2_required = False
     prod_settings.session_secret = "secret"
+    prod_settings.bot_callback_secret = "secret"
     prod_settings.session_cookie_samesite = "lax"
     prod_settings.session_cookie_secure = False
     prod_settings.notification_broker = "redis"
@@ -173,7 +176,11 @@ async def test_environment_setting_validation():
             "REDIS_URL": "redis://localhost:6379/0",
             "NOTIFICATION_BROKER": "redis",
             "DATA_DIR": temp_dir,
+            "ADMIN_USER": "admin",
+            "ADMIN_PASSWORD": "S3cureAdm1nPass!",
+            "BOT_CALLBACK_SECRET": "prod-callback-secret-0123456789abcdef0123456789abcd",
             "SESSION_SECRET": "test-prod-secret-32chars-long-0123456789abcdef",
+            "SESSION_COOKIE_SECURE": "1",
         }):
             get_settings.cache_clear()
             settings = get_settings()

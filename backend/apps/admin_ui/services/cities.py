@@ -12,7 +12,8 @@ from backend.core.cache import CacheKeys, CacheTTL, get_cache
 from backend.core.db import async_session
 from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
-from backend.domain.repositories import city_has_available_slots
+from backend.domain.repositories import city_has_available_slots, slot_status_free_clause
+from backend.domain.errors import CityAlreadyExistsError
 
 from .templates import update_templates_for_city
 
@@ -72,13 +73,18 @@ async def create_city(name: str, tz: str) -> None:
 
     async with async_session() as session:
         session.add(City(name=clean_name, tz=clean_tz))
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise CityAlreadyExistsError(clean_name) from exc
 
 
 async def update_city_settings(
     city_id: int,
     *,
     name: Optional[str],
+    recruiter_ids: Optional[List[int]] = None,
     responsible_id: Optional[int] = None,
     templates: Dict[str, Optional[str]],
     criteria: Optional[str],
@@ -100,11 +106,22 @@ async def update_city_settings(
                 return "City not found", None, None
 
             assigned_recruiter: Optional[Recruiter] = None
+
+            # Support both responsible_id (single, backward compat) and recruiter_ids (list)
+            effective_ids: List[int] = []
             if responsible_id is not None:
-                assigned_recruiter = await session.get(Recruiter, responsible_id)
-                if not assigned_recruiter:
+                effective_ids = [responsible_id]
+            elif recruiter_ids is not None:
+                effective_ids = recruiter_ids
+
+            if effective_ids:
+                recruiters_list = list(
+                    await session.scalars(select(Recruiter).where(Recruiter.id.in_(effective_ids)))
+                )
+                if not recruiters_list:
                     return "Recruiter not found", None, None
-                city.recruiters = [assigned_recruiter]
+                city.recruiters = recruiters_list
+                assigned_recruiter = recruiters_list[0]  # Primary recruiter
             else:
                 city.recruiters = []
 
@@ -299,7 +316,7 @@ async def get_city_capacity(city_id: int) -> Optional[Dict[str, object]]:
             .select_from(Slot)
             .where(
                 Slot.city_id == city_id,
-                func.lower(Slot.status) == SlotStatus.FREE,
+                slot_status_free_clause(Slot),
                 Slot.start_utc > now_utc,
             )
         )

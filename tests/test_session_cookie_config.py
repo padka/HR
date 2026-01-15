@@ -10,8 +10,9 @@ def _build_app(env: str, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ENVIRONMENT", env)
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123456789abcd")
     monkeypatch.setenv("ADMIN_USER", "admin")
-    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "S3cureAdm1nPass!")
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://rs:pass@localhost:5432/rs_test")
+    monkeypatch.setenv("BOT_CALLBACK_SECRET", "prod-callback-secret-0123456789abcdef0123456789abcd")
 
     # Production requires Redis and specific broker settings
     if env == "production":
@@ -19,9 +20,11 @@ def _build_app(env: str, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("DATA_DIR", temp_dir)
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
+        monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
     else:
         monkeypatch.setenv("REDIS_URL", "")
         monkeypatch.setenv("NOTIFICATION_BROKER", "memory")
+        monkeypatch.setenv("SESSION_COOKIE_SECURE", "0")
 
     settings_module.get_settings.cache_clear()
     try:

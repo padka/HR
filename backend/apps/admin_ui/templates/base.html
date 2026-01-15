@@ -3,8 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Админка{% endblock %} · TG Bot Admin</title>
+  <title>{% block title %}Админка{% endblock %}</title>
   <link rel="icon" href="/static/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap&subset=cyrillic" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/theme-tokens.css">
   <link rel="stylesheet" href="/static/css/design-system.css">
   <link rel="stylesheet" href="/static/css/glass-surfaces.css">
@@ -13,10 +16,10 @@
   <link rel="stylesheet" href="/static/css/lists.css">
   <link rel="stylesheet" href="/static/css/forms.css">
   <meta name="csrf-token" content="{{ csrf_token(request) }}">
-  <script>
+  <script nonce="{{ request.state.csp_nonce }}">
     window.__CSRF_TOKEN__ = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
   </script>
-  <script>
+  <script nonce="{{ request.state.csp_nonce }}">
     (function () {
       var storageKey = "tg-admin-theme";
       try {
@@ -31,8 +34,12 @@
       }
     })();
   </script>
-  <style>
+  <style nonce="{{ request.state.csp_nonce }}">
   :root {
+    --font-sans: Inter, system-ui, -apple-system, "SF Pro Display", "SF Pro Text",
+                 "Segoe UI", Roboto, "Noto Sans", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+                 "Liberation Mono", monospace;
     --bg-gradient: radial-gradient(1200px 820px at 5% 5%, color-mix(in srgb, var(--primary) 8%, transparent), transparent 60%),
                    radial-gradient(1100px 780px at 100% 100%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 60%),
                    linear-gradient(180deg, var(--surface), var(--surface-muted));
@@ -54,7 +61,6 @@
     --badge-border: color-mix(in srgb, var(--primary) 24%, transparent);
     --badge-fg: color-mix(in srgb, var(--on-surface) 70%, transparent);
     --nav-active-bg: color-mix(in srgb, var(--primary) 14%, transparent);
-    --focus-ring: color-mix(in srgb, var(--primary) 40%, transparent);
     --grid-gap: clamp(18px, 3vw, 32px);
     --transition-snappy: cubic-bezier(0.22, 0.34, 0.32, 1);
     --transition-soft: cubic-bezier(0.15, 0.85, 0.25, 1);
@@ -95,7 +101,10 @@
   }
 
   * { box-sizing: border-box; }
-  html, body { height: 100%; }
+  html, body {
+    height: 100%;
+    font-family: var(--font-sans);
+  }
 
   [hidden] {
     display: none !important;
@@ -267,7 +276,7 @@
     padding: clamp(10px, 1.6vw, 14px) clamp(16px, 2.8vw, 28px);
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     gap: 12px;
     flex-wrap: wrap;
     border-radius: 999px;
@@ -275,7 +284,26 @@
     background: color-mix(in srgb, var(--surface-raised) 92%, rgba(255,255,255,.02));
     box-shadow: var(--shadow-2), var(--glow-soft);
     isolation: isolate;
-    transition: border-color .35s ease, box-shadow .35s ease, background .35s ease;
+    transition: all .35s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: navSlideIn 0.6s cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+
+  @keyframes navSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-20px);
+      filter: blur(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+      filter: blur(0);
+    }
+  }
+
+  .nav:hover {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--outline-strong));
+    box-shadow: var(--shadow-3), var(--glow-strong);
   }
 
   @supports ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {
@@ -309,12 +337,14 @@
   .nav__top {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 12px;
   }
 
   .nav__section {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 10px;
     flex-wrap: wrap;
   }
@@ -326,9 +356,38 @@
   .nav .brand {
     font-weight: 800;
     letter-spacing: .2px;
-    color: var(--fg-strong);
-    text-shadow: var(--brand-shadow);
-    font-size: 18px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+    font-size: 19px;
+    transition: all .3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    display: inline-block;
+  }
+
+  .nav .brand::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 2px;
+  }
+
+  .nav .brand:hover::after {
+    transform: scaleX(1);
+  }
+
+  .nav .brand:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.15);
   }
 
   .nav__menu-toggle {
@@ -392,22 +451,101 @@
 
   .nav a {
     color: var(--fg);
-    opacity: .9;
-    padding: 6px 10px;
-    border-radius: 8px;
-    transition: background .2s ease, color .2s ease, opacity .2s ease;
+    opacity: .88;
+    padding: 8px 14px;
+    border-radius: 10px;
+    transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    overflow: hidden;
+  }
+
+  .nav a::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transform: translateX(-50%);
+    transition: width .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 2px 2px 0 0;
+  }
+
+  .nav a::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg,
+      color-mix(in srgb, var(--accent) 12%, transparent),
+      color-mix(in srgb, var(--accent-2) 8%, transparent));
+    opacity: 0;
+    transition: opacity .25s ease;
+    border-radius: inherit;
   }
 
   .nav a:hover {
     opacity: 1;
+    color: var(--fg-strong);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  .nav a:hover::before {
+    width: 80%;
+  }
+
+  .nav a:hover::after {
+    opacity: 0.6;
+  }
+
+  .nav a:active {
+    transform: translateY(0) scale(0.98);
+    transition: transform .1s ease;
   }
 
   .nav a.active {
-    color: var(--fg-strong);
+    color: var(--accent);
     font-weight: 600;
-    background: var(--nav-active-bg);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+    background: linear-gradient(135deg,
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      color-mix(in srgb, var(--accent-2) 12%, transparent));
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.12),
+      0 2px 8px color-mix(in srgb, var(--accent) 22%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
     text-decoration: none;
+    position: relative;
+  }
+
+  .nav a.active::before {
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  }
+
+  .nav a.active::after {
+    opacity: 1;
+  }
+
+  .nav__link-icon {
+    font-size: 16px;
+    line-height: 1;
+    opacity: 0.85;
+    transition: opacity .2s ease, transform .2s ease;
+  }
+
+  .nav a:hover .nav__link-icon,
+  .nav a.active .nav__link-icon {
+    opacity: 1;
+    transform: scale(1.08);
   }
 
   .mobile-backdrop {
@@ -419,9 +557,6 @@
     gap: 10px;
   }
 
-  .nav__env {
-    margin-left: 0;
-  }
 
   .container {
     max-width: 1120px;
@@ -691,7 +826,7 @@
   }
 
   .kbd {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     border: 1px solid var(--glass-stroke);
     padding: 1px 6px;
@@ -712,8 +847,12 @@
     box-shadow: var(--shadow-1);
   }
 
-  .text-mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  .text-mono,
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
   }
 
   .mt-sm { margin-top: clamp(8px, 1.6vw, 12px); }
@@ -736,17 +875,55 @@
   .theme-toggle {
     border-radius: 999px;
     font-weight: 600;
-    padding: 8px 14px;
-    background: color-mix(in srgb, var(--bg) 20%, var(--btn-bg) 80%);
+    padding: 10px;
+    min-width: 42px;
+    min-height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg,
+      color-mix(in srgb, var(--surface-raised) 95%, transparent),
+      color-mix(in srgb, var(--surface-raised) 85%, transparent));
+    border: 1px solid color-mix(in srgb, var(--glass-stroke) 75%, transparent);
+    transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .theme-toggle::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg,
+      color-mix(in srgb, var(--accent) 10%, transparent),
+      color-mix(in srgb, var(--accent-2) 8%, transparent));
+    opacity: 0;
+    transition: opacity .25s ease;
+  }
+
+  .theme-toggle:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+
+  .theme-toggle:hover::before {
+    opacity: 1;
+  }
+
+  .theme-toggle:active {
+    transform: translateY(0) scale(0.97);
   }
 
   .theme-toggle__icon {
-    font-size: 16px;
+    font-size: 20px;
     line-height: 1;
+    transition: transform .3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    display: inline-block;
   }
 
-  .theme-toggle__label {
-    font-size: 13px;
+  .theme-toggle:hover .theme-toggle__icon {
+    transform: rotate(20deg) scale(1.1);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -822,10 +999,6 @@
   @media (max-width: 720px) {
     .nav__section--primary {
       gap: 10px;
-    }
-
-    .theme-toggle__label {
-      display: none;
     }
 
     /* make burger visible on mobile */
@@ -1096,6 +1269,22 @@
       max-width: 100%;
     }
   }
+
+  /* ============================================
+     Full-Width Layout for All Pages
+     ============================================ */
+  body[data-page] main.container {
+    max-width: min(1600px, 100%);
+    width: 100%;
+    margin: 0 auto;
+    padding: clamp(40px, 6vw, 84px) clamp(18px, 3vw, 30px) clamp(28px, 5vw, 48px);
+  }
+
+  body[data-page] nav.nav {
+    max-width: min(1600px, 100%);
+    width: 100%;
+    margin: 0 auto;
+  }
   </style>
 </head>
 <body>
@@ -1106,7 +1295,6 @@
     <nav class="nav glass grain" role="navigation" data-mobile-nav data-mobile-open="false">
       {% block nav %}
       <div class="nav__top">
-        <a class="brand" href="/">TG Bot Admin</a>
         <button class="nav__menu-toggle" type="button" id="nav-menu-toggle" aria-label="Показать меню" aria-controls="primary-nav" aria-expanded="false">
           <span class="nav__menu-icon" aria-hidden="true">
             <span></span>
@@ -1117,21 +1305,43 @@
         </button>
       </div>
       <div class="nav__section nav__section--primary" id="primary-nav">
-        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Дашборд</a>
-        <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">Рекрутёры</a>
-        <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">Города</a>
-        <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">Слоты</a>
-        <a href="/candidates" class="{% if request.url.path.startswith('/candidates') and not request.url.path.startswith('/candidates/detailization') %}active{% endif %}">Кандидаты</a>
-        <a href="/candidates/detailization" class="{% if request.url.path.startswith('/candidates/detailization') %}active{% endif %}">Детализация</a>
-        <a href="/templates" class="{% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}">Шаблоны</a>
-        <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">Вопросы</a>
+        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
+          <span class="nav__link-icon" aria-hidden="true">📊</span>
+          <span>Дашборд</span>
+        </a>
+        <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">
+          <span class="nav__link-icon" aria-hidden="true">👥</span>
+          <span>Рекрутёры</span>
+        </a>
+        <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">
+          <span class="nav__link-icon" aria-hidden="true">🌆</span>
+          <span>Города</span>
+        </a>
+        <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">
+          <span class="nav__link-icon" aria-hidden="true">📅</span>
+          <span>Слоты</span>
+        </a>
+        <a href="/candidates" class="{% if request.url.path.startswith('/candidates') and not request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
+          <span class="nav__link-icon" aria-hidden="true">👤</span>
+          <span>Кандидаты</span>
+        </a>
+        <a href="/candidates/detailization" class="{% if request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
+          <span class="nav__link-icon" aria-hidden="true">📋</span>
+          <span>Детализация</span>
+        </a>
+        <a href="/templates" class="{% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}">
+          <span class="nav__link-icon" aria-hidden="true">💬</span>
+          <span>Шаблоны</span>
+        </a>
+        <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">
+          <span class="nav__link-icon" aria-hidden="true">❓</span>
+          <span>Вопросы</span>
+        </a>
       </div>
       <div class="nav__section nav__meta">
         <button id="theme-toggle" class="btn theme-toggle" type="button" aria-label="Переключить тему" aria-pressed="true">
           <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
-          <span class="theme-toggle__label">Тёмная тема</span>
         </button>
-        <span class="badge nav__env">{{ request.url.hostname or 'localhost' }}</span>
       </div>
       {% endblock nav %}
     </nav>
@@ -1147,7 +1357,7 @@
 <script src="/static/js/modules/neural-bg.js" defer></script>
 <script src="/static/js/modules/card-tilt.js" defer></script>
 <script src="/static/js/modules/animated-counter.js" defer></script>
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
   (function(){
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const docEl = document.documentElement;
@@ -1178,10 +1388,9 @@
       toggle.dataset.mode = theme;
       toggle.setAttribute('aria-pressed', theme === 'dark');
       const icon = theme === 'dark' ? '🌙' : '🌞';
-      const label = theme === 'dark' ? 'Тёмная тема' : 'Светлая тема';
       toggle.querySelector('.theme-toggle__icon').textContent = icon;
-      toggle.querySelector('.theme-toggle__label').textContent = label;
       toggle.title = 'Сменить на ' + (theme === 'dark' ? 'светлую' : 'тёмную') + ' тему';
+      toggle.setAttribute('aria-label', theme === 'dark' ? 'Переключить на светлую тему' : 'Переключить на тёмную тему');
     }
 
     const stored = getStoredTheme();
@@ -1425,6 +1634,43 @@
             r.style.opacity = '0';
           });
           setTimeout(() => r.remove(), 620);
+        });
+      });
+
+      // Ripple effect for nav links
+      const navLinks = document.querySelectorAll('.nav a');
+      navLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+          const rect = link.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          const d = Math.max(link.clientWidth, link.clientHeight);
+          const r = document.createElement('span');
+          r.style.position = 'absolute';
+          r.style.width = r.style.height = d + 'px';
+          r.style.left = (x - d/2) + 'px';
+          r.style.top = (y - d/2) + 'px';
+          r.style.borderRadius = '50%';
+          r.style.background = 'radial-gradient(circle, rgba(59,130,246,.35) 0%, rgba(184,137,255,.25) 50%, rgba(59,130,246,0) 70%)';
+          r.style.transform = 'scale(0)';
+          r.style.opacity = '0.8';
+          r.style.pointerEvents = 'none';
+          r.style.transition = 'transform .5s cubic-bezier(0.4, 0, 0.2, 1), opacity .7s ease';
+          r.style.zIndex = '-1';
+          link.appendChild(r);
+          requestAnimationFrame(() => {
+            r.style.transform = 'scale(2.5)';
+            r.style.opacity = '0';
+          });
+          setTimeout(() => r.remove(), 720);
+        });
+      });
+
+      // Add subtle glow on hover for nav links
+      navLinks.forEach(link => {
+        link.addEventListener('mouseenter', () => {
+          if (link.classList.contains('active')) return;
+          link.style.transition = 'all .3s cubic-bezier(0.4, 0, 0.2, 1)';
         });
       });
     }

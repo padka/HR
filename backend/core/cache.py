@@ -82,6 +82,12 @@ class CacheClient:
         )
 
         self._client = Redis(connection_pool=self._pool)
+        try:
+            await self._client.ping()
+        except RedisError as exc:
+            logger.warning("Redis cache ping failed during connect: %s", exc)
+            await self.disconnect()
+            raise
         logger.info("Redis cache connected")
 
     async def disconnect(self) -> None:

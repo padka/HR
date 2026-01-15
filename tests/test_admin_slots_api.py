@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -52,6 +53,33 @@ async def _create_booked_slot() -> Tuple[int, int]:
         return slot.id, int(slot.candidate_tg_id)
 
 
+async def _create_booked_slot_no_telegram() -> int:
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="API", tz="Europe/Moscow", active=True)
+        city = models.City(name="API City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc),
+            status=models.SlotStatus.BOOKED,
+            candidate_id="cand-001",
+            candidate_fio="API Candidate",
+            candidate_city_id=city.id,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        return slot.id
+
+
 async def _async_request(
     app,
     method: str,
@@ -62,12 +90,13 @@ async def _async_request(
 ) -> Any:
     if before_request is not None:
         before_request(app)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://testserver",
-        auth=("admin", "admin"),
-    ) as client:
-        return await client.request(method, path, **kwargs)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+            auth=("admin", "admin"),
+        ) as client:
+            return await client.request(method, path, **kwargs)
 
 
 @pytest.fixture
@@ -248,6 +277,106 @@ async def test_reject_endpoint_falls_back_when_notifications_missing(admin_slots
         assert updated is not None
         assert updated.interview_outcome is None
         assert updated.test2_sent_at is None
+
+
+@pytest.mark.asyncio
+async def test_reject_booking_without_telegram_id_releases_slot(admin_slots_app):
+    slot_id = await _create_booked_slot_no_telegram()
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        f"/slots/{slot_id}/reject_booking",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "Слот освобождён" in payload["message"]
+
+    async with async_session() as session:
+        refreshed = await session.get(models.Slot, slot_id)
+        assert refreshed is not None
+        assert refreshed.status == models.SlotStatus.FREE
+        assert refreshed.candidate_id is None
+        assert refreshed.candidate_tg_id is None
+
+
+@pytest.mark.asyncio
+async def test_reschedule_without_telegram_id_releases_slot(admin_slots_app):
+    slot_id = await _create_booked_slot_no_telegram()
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        f"/slots/{slot_id}/reschedule",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "Слот освобождён" in payload["message"]
+
+    async with async_session() as session:
+        refreshed = await session.get(models.Slot, slot_id)
+        assert refreshed is not None
+        assert refreshed.status == models.SlotStatus.FREE
+        assert refreshed.candidate_id is None
+        assert refreshed.candidate_tg_id is None
+
+
+@pytest.mark.asyncio
+async def test_reject_booking_handles_notification_errors(monkeypatch, admin_slots_app):
+    slot_id, _ = await _create_booked_slot()
+
+    def failing_notification_service():
+        class DummyService:
+            async def on_booking_status_changed(self, *_args, **_kwargs):
+                raise RuntimeError("Bot is not configured")
+        return DummyService()
+
+    monkeypatch.setattr(slot_services, "get_notification_service", failing_notification_service)
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        f"/slots/{slot_id}/reject_booking",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "Слот освобождён" in payload["message"]
+
+    async with async_session() as session:
+        refreshed = await session.get(models.Slot, slot_id)
+        assert refreshed is not None
+        assert refreshed.status == models.SlotStatus.FREE
+
+
+@pytest.mark.asyncio
+async def test_reschedule_handles_notification_errors(monkeypatch, admin_slots_app):
+    slot_id, _ = await _create_booked_slot()
+
+    def failing_notification_service():
+        class DummyService:
+            async def on_booking_status_changed(self, *_args, **_kwargs):
+                raise RuntimeError("Bot is not configured")
+        return DummyService()
+
+    monkeypatch.setattr(slot_services, "get_notification_service", failing_notification_service)
+
+    response = await _async_request(
+        admin_slots_app,
+        "post",
+        f"/slots/{slot_id}/reschedule",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "Слот освобождён" in payload["message"]
+
+    async with async_session() as session:
+        refreshed = await session.get(models.Slot, slot_id)
+        assert refreshed is not None
+        assert refreshed.status == models.SlotStatus.FREE
 
 
 @pytest.mark.asyncio

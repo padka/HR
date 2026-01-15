@@ -47,7 +47,15 @@ from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain import analytics
-from backend.domain.models import City, Recruiter, Slot, SlotStatus, ManualSlotAuditLog
+from backend.domain.models import (
+    City,
+    Recruiter,
+    Slot,
+    SlotStatus,
+    ManualSlotAuditLog,
+    DEFAULT_INTERVIEW_DURATION_MIN,
+    SLOT_MIN_DURATION_MIN,
+)
 from backend.domain.candidates.models import User
 from backend.domain.repositories import (
     approve_slot,
@@ -150,9 +158,9 @@ async def generate_default_day_slots(
     recruiter_id: int,
     day: date_type,
     city_id: Optional[int] = None,
-    duration_min: int = 20,
+    duration_min: int = DEFAULT_INTERVIEW_DURATION_MIN,
 ) -> int:
-    """Generate a standard working day of slots: 09:00-12:00 and 13:00-18:00, step 20m, lunch 12-13."""
+    """Generate a standard working day of slots: 09:00-12:00 and 13:00-18:00, step 10m by default, lunch 12-13."""
     async with async_session() as session:
         recruiter = await session.get(
             Recruiter,
@@ -175,6 +183,7 @@ async def generate_default_day_slots(
         # Время генерации слотов в timezone рекрутера (единообразие с create_slot)
         recruiter_tz = getattr(recruiter, "tz", None) or DEFAULT_TZ
         candidate_tz = getattr(target_city, "tz", None) or recruiter_tz
+        duration_min = max(duration_min, SLOT_MIN_DURATION_MIN)
         tz = ZoneInfo(recruiter_tz)
         tz_name = candidate_tz  # Для сохранения в слоты
         resolved_city_id = getattr(target_city, "id", None)
@@ -329,33 +338,41 @@ async def list_slots(
     candidate_tg_ids = {slot.candidate_tg_id for slot in items if slot.candidate_tg_id}
     usernames: Dict[str, Optional[str]] = {}
     usernames_by_tg: Dict[int, Optional[str]] = {}
+    user_ids_by_candidate: Dict[str, Optional[int]] = {}
+    user_ids_by_tg: Dict[int, Optional[int]] = {}
     if candidate_ids:
         username_rows = await session.execute(
-            select(User.candidate_id, User.username, User.telegram_username).where(
+            select(User.candidate_id, User.id, User.username, User.telegram_username).where(
                 User.candidate_id.in_(candidate_ids)
             )
         )
-        for candidate_id, username, telegram_username in username_rows:
+        for candidate_id, user_id, username, telegram_username in username_rows:
             if candidate_id:
                 usernames[str(candidate_id)] = username or telegram_username
+                user_ids_by_candidate[str(candidate_id)] = user_id
     if candidate_tg_ids:
         username_rows = await session.execute(
-            select(User.telegram_id, User.username, User.telegram_username).where(
+            select(User.telegram_id, User.id, User.username, User.telegram_username).where(
                 User.telegram_id.in_(candidate_tg_ids)
             )
         )
-        for tg_id, username, telegram_username in username_rows:
+        for tg_id, user_id, username, telegram_username in username_rows:
             if tg_id:
                 usernames_by_tg[int(tg_id)] = username or telegram_username
+                user_ids_by_tg[int(tg_id)] = user_id
 
     # Ensure all datetime fields are timezone-aware
     for item in items:
         if item.start_utc:
             item.start_utc = item.start_utc.replace(tzinfo=timezone.utc) if item.start_utc.tzinfo is None else item.start_utc
         if item.candidate_id:
-            item.candidate_username = usernames.get(str(item.candidate_id))
+            cid_key = str(item.candidate_id)
+            item.candidate_username = usernames.get(cid_key)
+            item.candidate_user_id = user_ids_by_candidate.get(cid_key)
         elif item.candidate_tg_id:
-            item.candidate_username = usernames_by_tg.get(int(item.candidate_tg_id))
+            tg_key = int(item.candidate_tg_id)
+            item.candidate_username = usernames_by_tg.get(tg_key)
+            item.candidate_user_id = user_ids_by_tg.get(tg_key)
         # Expunge to prevent lazy loading after session closes
         session.expunge(item)
 
@@ -436,6 +453,7 @@ async def create_slot(
             tz_name=candidate_tz,
             candidate_tz=candidate_tz,
             start_utc=dt_utc,
+            duration_min=DEFAULT_INTERVIEW_DURATION_MIN,
             status=status_free,
         )
         session.add(slot)
@@ -644,7 +662,7 @@ async def schedule_manual_candidate_slot(
     city: City,
     dt_utc: datetime,
     slot_tz: str,
-    duration_min: int = 60,
+    duration_min: int = DEFAULT_INTERVIEW_DURATION_MIN,
     admin_username: str = "admin",
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
@@ -655,7 +673,8 @@ async def schedule_manual_candidate_slot(
         raise ManualSlotError("Для кандидата не указан Telegram ID.")
 
     normalized_dt = ensure_aware_utc(dt_utc)
-    new_slot_end = normalized_dt + timedelta(minutes=duration_min)
+    requested_duration = max(SLOT_MIN_DURATION_MIN, duration_min)
+    new_slot_end = normalized_dt + timedelta(minutes=requested_duration)
 
     async with async_session() as session:
         # Check for exact duplicate
@@ -678,12 +697,9 @@ async def schedule_manual_candidate_slot(
             .where(Slot.start_utc <= surrounding_end)
         )
         conflict_times: List[str] = []
-        for conflict_id, conflict_start, conflict_duration in overlapping_slots:
+        for _conflict_id, conflict_start, conflict_duration in overlapping_slots:
             conflict_start_utc = ensure_aware_utc(conflict_start)
-            # Treat conflict duration conservatively: cap to 20m to allow dense schedules,
-            # but never lower than 5m to avoid zero-length overlap.
-            effective_duration = max(5, min(conflict_duration or duration_min or 60, duration_min, 20))
-            conflict_end = conflict_start_utc + timedelta(minutes=effective_duration)
+            conflict_end = conflict_start_utc + timedelta(minutes=conflict_duration or SLOT_MIN_DURATION_MIN)
 
             # Overlaps if: (new_start < conflict_end) AND (new_end > conflict_start)
             if normalized_dt < conflict_end and new_slot_end > conflict_start_utc:
@@ -705,10 +721,22 @@ async def schedule_manual_candidate_slot(
             tz_name=slot_tz,
             start_utc=normalized_dt,
             status=status_free,
-            duration_min=max(1, duration_min),
+            duration_min=requested_duration,
         )
         session.add(slot)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            error_msg = str(exc.orig) if hasattr(exc, "orig") else str(exc)
+            if (
+                "slots_no_recruiter_time_overlap_excl" in error_msg
+                or "overlaps" in error_msg.lower()
+            ):
+                raise ManualSlotError(
+                    "У рекрутёра уже есть слот в это время. Выберите другое окно."
+                ) from exc
+            raise
         await session.refresh(slot)
         slot_id = slot.id
 
@@ -759,14 +787,15 @@ async def schedule_manual_candidate_slot_silent(
     city: City,
     dt_utc: datetime,
     slot_tz: str,
-    duration_min: int = 60,
+    duration_min: int = DEFAULT_INTERVIEW_DURATION_MIN,
     admin_username: str = "admin",
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
 ) -> SlotApprovalResult:
     """Schedule a slot without candidate notification (manual lead flow)."""
     normalized_dt = ensure_aware_utc(dt_utc)
-    new_slot_end = normalized_dt + timedelta(minutes=duration_min)
+    requested_duration = max(SLOT_MIN_DURATION_MIN, duration_min)
+    overlap_end = normalized_dt + timedelta(minutes=SLOT_MIN_DURATION_MIN)
 
     async with async_session() as session:
         existing = await session.scalar(
@@ -788,11 +817,8 @@ async def schedule_manual_candidate_slot_silent(
         conflict_times: List[str] = []
         for _conflict_id, conflict_start, conflict_duration in overlapping_slots:
             conflict_start_utc = ensure_aware_utc(conflict_start)
-            effective_duration = max(
-                5, min(conflict_duration or duration_min or 60, duration_min, 20)
-            )
-            conflict_end = conflict_start_utc + timedelta(minutes=effective_duration)
-            if normalized_dt < conflict_end and new_slot_end > conflict_start_utc:
+            conflict_end = conflict_start_utc + timedelta(minutes=SLOT_MIN_DURATION_MIN)
+            if normalized_dt < conflict_end and overlap_end > conflict_start_utc:
                 conflict_time_str = fmt_local(conflict_start_utc, slot_tz)
                 conflict_times.append(conflict_time_str)
 
@@ -812,10 +838,22 @@ async def schedule_manual_candidate_slot_silent(
             tz_name=slot_tz,
             start_utc=normalized_dt,
             status=status_free,
-            duration_min=max(1, duration_min),
+            duration_min=requested_duration,
         )
         session.add(slot)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            error_msg = str(exc.orig) if hasattr(exc, "orig") else str(exc)
+            if (
+                "slots_no_recruiter_time_overlap_excl" in error_msg
+                or "overlaps" in error_msg.lower()
+            ):
+                raise ManualSlotError(
+                    "У рекрутёра уже есть слот в это время. Выберите другое окно."
+                ) from exc
+            raise
         await session.refresh(slot)
         slot_id = slot.id
 
@@ -1395,8 +1433,8 @@ async def bulk_create_slots(
 
         if window_end <= window_start:
             return 0, "Время окончания должно быть позже времени начала"
-        if step_min <= 0:
-            return 0, "Шаг должен быть положительным"
+        if step_min < SLOT_MIN_DURATION_MIN:
+            return 0, f"Шаг должен быть не меньше {SLOT_MIN_DURATION_MIN} минут"
 
         if use_break and pause_end <= pause_start:
             return 0, "Время окончания перерыва должно быть позже его начала"
@@ -1480,7 +1518,7 @@ async def bulk_create_slots(
                     candidate_city_id=city_id,
                     start_utc=dt,
                     status=status_free,
-                    duration_min=max(step_min, 1),
+                    duration_min=max(step_min, SLOT_MIN_DURATION_MIN),
                     tz_name=city_tz,
                     candidate_tz=city_tz,
                 )
