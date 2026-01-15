@@ -21,12 +21,10 @@ async def test_set_slot_outcome_triggers_test2(monkeypatch):
     async with async_session() as session:
         recruiter = models.Recruiter(name="Outcome", tz="Europe/Moscow", active=True)
         city = models.City(name="Outcome City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
-        await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
         await session.refresh(city)
         city_id = city.id
 
@@ -106,12 +104,10 @@ async def test_set_slot_outcome_requires_candidate():
     async with async_session() as session:
         recruiter = models.Recruiter(name="Empty", tz="Europe/Moscow", active=True)
         city = models.City(name="No Candidate", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
-        await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
         await session.refresh(city)
         city_id = city.id
 

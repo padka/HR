@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Dict, Optional
 
 from fastapi import Request
+from backend.domain.repositories import get_city
 
 try:  # pragma: no cover - optional dependency handling
     from aiohttp import ClientError as _AioHttpClientError
@@ -16,10 +17,11 @@ except Exception:  # pragma: no cover - optional dependency
     _AioHttpClientError = Exception  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency handling
-    from backend.apps.bot import templates as bot_templates
+    from backend.apps.bot import templates as bot_templates, services
     from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS
     from backend.apps.bot.config import State as BotState
     from backend.apps.bot.services import StateManager, get_bot, start_test2
+    from backend.apps.bot.events import InterviewSuccessEvent
 
     BOT_RUNTIME_AVAILABLE = True
 except Exception:  # pragma: no cover - fallback when bot package is unavailable
@@ -67,6 +69,24 @@ except Exception:  # pragma: no cover - fallback when bot package is unavailable
     def get_bot():  # type: ignore[override]
         raise RuntimeError("Bot runtime is unavailable")
 
+    async def _dummy_async(*_args, **_kwargs):  # pragma: no cover - runtime safety net
+        return None
+
+    services = SimpleNamespace(
+        set_pending_test2=_dummy_async,
+        dispatch_interview_success=_dummy_async,
+    )
+
+    @dataclass
+    class InterviewSuccessEvent:  # pragma: no cover - runtime safety net
+        candidate_id: int
+        candidate_name: str
+        candidate_tz: str
+        city_id: Optional[int]
+        city_name: Optional[str]
+        slot_id: Optional[int] = None
+        required: bool = False
+
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +124,7 @@ class BotSendResult:
     status: str
     message: Optional[str] = None
     error: Optional[str] = None
+    telegram_message_id: Optional[int] = None
 
 
 @dataclass
@@ -170,6 +191,7 @@ class BotService:
         candidate_name: str,
         *,
         required: Optional[bool] = None,
+        slot_id: Optional[int] = None,
     ) -> BotSendResult:
         """Launch Test 2 for a candidate."""
 
@@ -213,53 +235,47 @@ class BotService:
             await self.state_manager.get(candidate_id) or {}
         )
 
-        sequence = previous_state.get("t1_sequence")
-        if sequence:
-            try:
-                sequence = list(sequence)
-            except TypeError:
-                sequence = list(TEST1_QUESTIONS)
-        else:
-            sequence = list(TEST1_QUESTIONS)
+        candidate_tz_value = (
+            candidate_tz or previous_state.get("candidate_tz") or DEFAULT_TZ
+        )
+        city_id_value = previous_state.get("city_id", candidate_city)
+        city_name_value = previous_state.get("city_name")
 
-        new_state: BotState = BotState(
-            flow="intro",
-            t1_idx=None,
-            t1_current_idx=None,
-            test1_answers=previous_state.get("test1_answers", {}),
-            t1_last_prompt_id=None,
-            t1_last_question_text="",
-            t1_requires_free_text=False,
-            t1_sequence=sequence,
-            fio=previous_state.get("fio", candidate_name or ""),
-            city_name=previous_state.get("city_name", ""),
-            city_id=previous_state.get("city_id", candidate_city),
-            candidate_tz=candidate_tz or previous_state.get("candidate_tz", DEFAULT_TZ),
-            t2_attempts={},
-            picked_recruiter_id=None,
-            picked_slot_id=None,
+        if not city_name_value and city_id_value is not None:
+            try:
+                city = await get_city(int(city_id_value))
+            except Exception:
+                city = None
+            if city is not None:
+                city_name_value = getattr(city, "name_plain", None) or getattr(city, "name", "")
+
+        candidate_name_value = previous_state.get("fio", candidate_name or "") or ""
+
+        await services.set_pending_test2(
+            candidate_id,
+            {
+                "candidate_tz": candidate_tz_value,
+                "candidate_city_id": city_id_value,
+                "candidate_name": candidate_name_value,
+                "slot_id": slot_id,
+                "required": must_succeed,
+            },
         )
 
-        await self.state_manager.set(candidate_id, new_state)
+        event = InterviewSuccessEvent(
+            candidate_id=candidate_id,
+            candidate_name=candidate_name_value or "Кандидат",
+            candidate_tz=candidate_tz_value or DEFAULT_TZ,
+            city_id=city_id_value,
+            city_name=city_name_value,
+            slot_id=slot_id,
+            required=must_succeed,
+        )
 
         try:
-            await start_test2(candidate_id)
-        except Exception as exc:  # pragma: no cover - network/environment errors
-            if _is_transient_error(exc):
-                logger.exception("Test 2 dispatch experienced transient error")
-                if must_succeed:
-                    return BotSendResult(
-                        ok=False,
-                        status="queued_retry",
-                        error=self.transient_message,
-                    )
-                return BotSendResult(
-                    ok=True,
-                    status="queued_retry",
-                    message=self.transient_message,
-                )
-
-            logger.exception("Failed to start Test 2 for candidate %s", candidate_id)
+            await services.dispatch_interview_success(event)
+        except Exception:  # pragma: no cover - defensive logging
+            logger.exception("Failed to dispatch interview success event")
             if must_succeed:
                 return BotSendResult(
                     ok=False,
@@ -272,7 +288,7 @@ class BotService:
                 message=self.failure_message,
             )
 
-        return BotSendResult(ok=True, status="sent")
+        return BotSendResult(ok=True, status="sent_test2")
 
     async def send_rejection(
         self,
@@ -351,8 +367,89 @@ class BotService:
 
         return BotSendResult(ok=True, status="sent_rejection")
 
+    async def send_chat_message(
+        self,
+        telegram_id: int,
+        text: str,
+    ) -> BotSendResult:
+        """Send a plain text message to candidate via bot."""
+
+        if not self.integration_switch.is_enabled() or not self.enabled:
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error="Бот недоступен для отправки сообщений.",
+            )
+
+        if not BOT_RUNTIME_AVAILABLE or not self.configured:
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error="Бот не настроен.",
+            )
+
+        try:
+            bot = get_bot()
+        except Exception as exc:  # pragma: no cover - runtime guard
+            logger.exception("Bot runtime unavailable for chat message: %s", exc)
+            return BotSendResult(
+                ok=False,
+                status="skipped:not_configured",
+                error="Бот недоступен.",
+            )
+
+        try:
+            response = await bot.send_message(telegram_id, text)
+        except Exception as exc:  # pragma: no cover - network errors
+            if _is_transient_error(exc):
+                logger.exception("Transient error while sending chat message")
+                return BotSendResult(
+                    ok=False,
+                    status="queued_retry",
+                    error=self.transient_message,
+                )
+            logger.exception("Failed to send chat message to %s", telegram_id)
+            return BotSendResult(
+                ok=False,
+                status="failed",
+                error=self.failure_message,
+            )
+
+        return BotSendResult(
+            ok=True,
+            status="sent",
+            telegram_message_id=getattr(response, "message_id", None),
+        )
+
 
 _bot_service: Optional[BotService] = None
+_null_bot_service: Optional[BotService] = None
+
+
+def _create_null_bot_service() -> BotService:
+    """Create a null bot service for test/dev environments where bot is optional."""
+
+    # Create a dummy state manager - use _DummyStateManager as safe fallback
+    if BOT_RUNTIME_AVAILABLE:
+        try:
+            from backend.apps.bot.state_store import InMemoryStateStore
+            store = InMemoryStateStore(ttl_seconds=300)
+            dummy_state_manager = StateManager(store)  # type: ignore
+        except Exception:
+            dummy_state_manager = _DummyStateManager()  # type: ignore
+    else:
+        dummy_state_manager = _DummyStateManager()  # type: ignore
+
+    dummy_switch = IntegrationSwitch(initial=False)
+
+    return BotService(
+        state_manager=dummy_state_manager,
+        enabled=False,
+        configured=False,
+        integration_switch=dummy_switch,
+        required=False,
+        skip_message="Bot service not configured (test/dev mode)",
+    )
 
 
 def configure_bot_service(service: BotService) -> None:
@@ -362,21 +459,41 @@ def configure_bot_service(service: BotService) -> None:
     _bot_service = service
 
 
-def get_bot_service() -> BotService:
-    """Return the globally configured bot service."""
+def get_bot_service(allow_null: bool = True) -> BotService:
+    """Return the globally configured bot service.
+
+    Args:
+        allow_null: If True, return a null bot service in test/dev when not configured.
+                   If False, raise RuntimeError (production behavior).
+    """
 
     if _bot_service is None:
-        raise RuntimeError("Bot service is not configured")
+        if not allow_null:
+            raise RuntimeError("Bot service is not configured")
+
+        # In test/dev mode, return a null bot service that safely no-ops
+        global _null_bot_service
+        if _null_bot_service is None:
+            _null_bot_service = _create_null_bot_service()
+        return _null_bot_service
+
     return _bot_service
 
 
 def provide_bot_service(request: Request) -> BotService:
     """FastAPI dependency provider for the bot service."""
 
+    # First check app.state (set by setup_bot_state or test fixtures)
     service = getattr(request.app.state, "bot_service", None)
     if service is not None:
         return service
-    return get_bot_service()
+
+    # Then check if global bot service was configured
+    if _bot_service is not None:
+        return _bot_service
+
+    # Finally, return null bot service for graceful degradation
+    return get_bot_service(allow_null=True)
 
 
 __all__ = [

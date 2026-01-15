@@ -1,27 +1,15 @@
 from .dashboard import dashboard_counts
-from .kpis import (
-    get_weekly_kpis,
-    list_weekly_history,
-    get_week_window,
-    compute_weekly_snapshot,
-    store_weekly_snapshot,
-)
 from .candidates import (
     CandidateRow,
     candidate_filter_options,
     get_candidate_detail,
     list_candidates,
     delete_candidate,
-    save_interview_feedback,
-    send_intro_message,
-    send_test2,
-    set_interview_outcome,
-    schedule_intro_day_message,
+    delete_all_candidates,
     toggle_candidate_activity,
     upsert_candidate,
     update_candidate,
-    INTERVIEW_SCRIPT_STEPS,
-    INTRO_DAY_MESSAGE_TEMPLATE,
+    update_candidate_status,
 )
 from .recruiters import (
     api_recruiters_payload,
@@ -35,7 +23,6 @@ from .recruiters import (
 from .cities import (
     api_cities_payload,
     api_city_owners_payload,
-    city_owner_field_name,
     create_city,
     list_cities,
     update_city_settings,
@@ -52,16 +39,13 @@ from .templates import (
     update_template,
     update_templates_for_city,
 )
-try:  # pragma: no cover - optional dependencies during demo/testing
-    from .slots import (
-        api_slots_payload,
-        create_slot,
-        list_slots,
-        recruiters_for_slot_form,
-        set_slot_outcome,
-    )
-except ModuleNotFoundError:  # pragma: no cover - allow partial imports without bot deps
-    api_slots_payload = create_slot = list_slots = recruiters_for_slot_form = set_slot_outcome = None
+from .slots import (
+    api_slots_payload,
+    create_slot,
+    list_slots,
+    recruiters_for_slot_form,
+    set_slot_outcome,
+)
 from .questions import (
     get_test_question_detail,
     list_test_questions,
@@ -70,26 +54,16 @@ from .questions import (
 
 __all__ = [
     "dashboard_counts",
-    "get_weekly_kpis",
-    "list_weekly_history",
-    "get_week_window",
-    "compute_weekly_snapshot",
-    "store_weekly_snapshot",
     "CandidateRow",
     "candidate_filter_options",
     "list_candidates",
     "get_candidate_detail",
-    "save_interview_feedback",
-    "set_interview_outcome",
-    "send_test2",
-    "send_intro_message",
-    "schedule_intro_day_message",
     "upsert_candidate",
     "toggle_candidate_activity",
     "update_candidate",
     "delete_candidate",
-    "INTERVIEW_SCRIPT_STEPS",
-    "INTRO_DAY_MESSAGE_TEMPLATE",
+    "delete_all_candidates",
+    "update_candidate_status",
     "list_recruiters",
     "create_recruiter",
     "get_recruiter_detail",
@@ -99,7 +73,6 @@ __all__ = [
     "list_cities",
     "create_city",
     "update_city_settings",
-    "city_owner_field_name",
     "get_stage_templates",
     "stage_payload_for_ui",
     "templates_overview",

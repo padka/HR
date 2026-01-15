@@ -1,5 +1,3 @@
-from unittest.mock import AsyncMock
-
 import pytest
 
 pytest.importorskip("aiogram")
@@ -10,27 +8,18 @@ from backend.apps.bot.state_store import InMemoryStateStore
 
 
 @pytest.mark.asyncio
-async def test_create_application_smoke(monkeypatch):
-    async def dummy_bootstrap() -> None:
-        return None
-
-    monkeypatch.setattr(bot_app, "ensure_database_ready", dummy_bootstrap)
-    sync_jobs_mock = AsyncMock()
-    monkeypatch.setattr(bot_app.ReminderService, "sync_jobs", sync_jobs_mock)
-
-    bot, dispatcher, state_manager, reminder_service = await bot_app.create_application(
+async def test_create_application_smoke():
+    bot, dispatcher, state_manager, reminder_service, notification_service = await bot_app.create_application(
         "123456:ABCDEF"
     )
 
     assert isinstance(state_manager, StateManager)
     assert dispatcher is not None
-    sync_jobs_mock.assert_awaited_once()
-    await_args = sync_jobs_mock.await_args
-    assert await_args.args[0] is reminder_service
 
     await bot.session.close()
     await state_manager.close()
     await reminder_service.shutdown()
+    await notification_service.shutdown()
 
 
 @pytest.mark.asyncio

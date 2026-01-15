@@ -1,17 +1,17 @@
 """Exports for admin UI routers."""
 
-from . import (  # noqa: F401
+from . import (
     api,
     candidates,
     cities,
     dashboard,
     recruiters,
-    regions,
     slots,
     system,
     templates,
     questions,
-)
+    message_templates,
+)  # noqa: F401
 
 __all__ = [
     "api",
@@ -19,9 +19,9 @@ __all__ = [
     "cities",
     "dashboard",
     "recruiters",
-    "regions",
     "slots",
     "system",
     "templates",
     "questions",
+    "message_templates",
 ]

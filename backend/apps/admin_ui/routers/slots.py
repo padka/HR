@@ -1,58 +1,46 @@
 import base64
+import logging
 import hashlib
 import hmac
 import json
-import re
-from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
-from datetime import date as date_cls, datetime, timedelta, timezone
+from datetime import date as date_type, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel
 
 from backend.apps.admin_ui.config import templates
-from backend.apps.admin_ui.schemas import CityOption, RecruiterOption
+from backend.apps.admin_ui.security import require_csrf_token
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
-from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import list_recruiters
-from backend.apps.admin_ui.services.slots.core import (
-    bulk_assign_slots,
+from backend.apps.admin_ui.services.slots import (
     bulk_create_slots,
-    bulk_delete_slots,
-    bulk_schedule_reminders,
     create_slot,
-    delete_all_slots,
-    delete_slot,
-    execute_bot_dispatch,
     list_slots,
+    generate_default_day_slots,
     recruiters_for_slot_form,
-    reject_slot_booking,
-    reschedule_slot_booking,
-    serialize_slot,
+    delete_slot,
+    delete_all_slots,
     set_slot_outcome,
+    execute_bot_dispatch,
+    reschedule_slot_booking,
+    reject_slot_booking,
 )
-from backend.apps.admin_ui.utils import (
-    ensure_sequence,
-    ensure_utc,
-    local_naive_to_utc,
-    norm_status,
-    parse_optional_int,
-    status_filter,
-    status_filters,
-    utc_to_local_naive,
-    validate_timezone_name,
-)
-from backend.core.db import async_session
+from backend.apps.admin_ui.utils import norm_status, parse_optional_int, status_filter
+from backend.apps.admin_ui.timezones import DEFAULT_TZ
+from backend.apps.admin_ui.services.cities import list_cities
 from backend.core.settings import get_settings
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.apps.bot.services import NotificationNotConfigured
+from backend.domain.errors import SlotOverlapError
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
 _FLASH_COOKIE = "admin_flash"
 _SETTINGS = get_settings()
 _SECRET = _SETTINGS.session_secret.encode()
+logger = logging.getLogger(__name__)
 
 
 def _parse_checkbox(value: Optional[str]) -> bool:
@@ -90,299 +78,115 @@ def _set_flash(response: RedirectResponse, status: str, message: str) -> None:
     )
 
 
-def _slot_payload(slot: Slot, tz_name: Optional[str]) -> Dict[str, object]:
-    starts_at_local: Optional[datetime] = None
-    if tz_name:
-        try:
-            starts_at_local = utc_to_local_naive(slot.start_utc, tz_name)
-        except ValueError:
-            starts_at_local = None
-    return {
-        "id": slot.id,
-        "recruiter_id": slot.recruiter_id,
-        "city_id": slot.city_id,
-        "region_id": slot.city_id,
-        "starts_at_utc": ensure_utc(slot.start_utc),
-        "starts_at_local": starts_at_local,
-        "duration_min": slot.duration_min,
-        "status": norm_status(slot.status),
+def _ensure_csrf_config(request: Request) -> None:
+    state = getattr(request, "state", None)
+    if state is None:
+        return
+    request.scope.setdefault("session", {})
+    if getattr(state, "csrf_config", None):
+        return
+    state.csrf_config = {
+        "csrf_secret": _SETTINGS.session_secret,
+        "csrf_field_name": "csrf_token",
     }
 
 
-class SlotPayloadBase(BaseModel):
-    region_id: Optional[int] = Field(default=None, alias="city_id")
-    starts_at_local: Optional[datetime] = None
-    starts_at_utc: Optional[datetime] = None
-    duration_min: Optional[int] = Field(default=None, ge=1)
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    @field_validator("starts_at_local", mode="before")
-    @classmethod
-    def _parse_local(cls, value: object) -> Optional[datetime]:
-        if value in (None, "", b"", []):
-            return None
-        if isinstance(value, str):
-            try:
-                return datetime.fromisoformat(value)
-            except ValueError as exc:
-                raise ValueError("starts_at_local must be ISO8601 without timezone") from exc
-        if isinstance(value, datetime):
-            return value
-        raise ValueError("starts_at_local must be a datetime string")
-
-    @field_validator("starts_at_local")
-    @classmethod
-    def _ensure_naive(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and value.tzinfo is not None:
-            raise ValueError("starts_at_local must not include timezone information")
-        return value
-
-
-class SlotCreatePayload(SlotPayloadBase):
-    recruiter_id: int
-    region_id: int = Field(..., alias="city_id")
-
-
-class SlotUpdatePayload(SlotPayloadBase):
-    recruiter_id: Optional[int] = None
-    region_id: int = Field(..., alias="city_id")
+async def _slot_form_cities():
+    cities = await list_cities()
+    active_cities = [city for city in cities if getattr(city, "active", True)]
+    return active_cities or cities
 
 
 @router.get("", response_class=HTMLResponse)
 async def slots_list(
     request: Request,
     recruiter_id: Optional[str] = Query(default=None),
-    status: Optional[list[str]] = Query(default=None),
-    city_id: Optional[str] = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=20, ge=1, le=500),
-    date_from: Optional[str] = Query(default=None, alias="date_from"),
-    date_to: Optional[str] = Query(default=None, alias="date_to"),
+    status: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="Search query"),
+    city: Optional[str] = Query(default=None),
     date: Optional[str] = Query(default=None),
-    search: Optional[list[str]] = Query(default=None),
-    purpose: Optional[list[str]] = Query(default=None),
-    future: Optional[str] = Query(default=None),
-    free_only: Optional[str] = Query(default=None, alias="free_only"),
-    view: Optional[str] = Query(default="table"),
-    role: Optional[str] = Query(default="recruiter"),
+    date_range: Optional[str] = Query(default=None, description="quick range: today/tomorrow/7d"),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
 ):
     recruiter = parse_optional_int(recruiter_id)
-    status_inputs = ensure_sequence(status)
-    status_list: list[str] = []
-    ui_status_filters: list[str] = []
-    for raw_status in status_inputs:
-        candidate = (raw_status or "").strip()
-        if not candidate:
-            continue
-        lowered = candidate.lower()
-        if lowered == "free":
-            if "FREE" not in status_list:
-                status_list.append("FREE")
-            if "Free" not in ui_status_filters:
-                ui_status_filters.append("Free")
-            continue
-        if lowered == "booked":
-            for legacy in ("BOOKED", "CONFIRMED_BY_CANDIDATE"):
-                if legacy not in status_list:
-                    status_list.append(legacy)
-            if "Booked" not in ui_status_filters:
-                ui_status_filters.append("Booked")
-            continue
-        if lowered in {"cancelled", "canceled"}:
-            if "CANCELED" not in status_list:
-                status_list.append("CANCELED")
-            if "Cancelled" not in ui_status_filters:
-                ui_status_filters.append("Cancelled")
-            continue
-        if lowered == "expired":
-            if "Expired" not in ui_status_filters:
-                ui_status_filters.append("Expired")
-            continue
-        fallback = status_filter(candidate)
-        if fallback:
-            if fallback not in status_list:
-                status_list.append(fallback)
-            display = fallback.replace("_", " ").title()
-            if display not in ui_status_filters:
-                ui_status_filters.append(display)
-    city_filter = parse_optional_int(city_id)
-    purpose_values = [p.lower() for p in ensure_sequence(purpose)]
-    date_start = None
-    date_end = None
-    if date_from:
+    status_norm = status_filter(status)
+    search_query = q.strip() if isinstance(q, str) and q else None
+    city_filter = city.strip() if isinstance(city, str) and city else None
+    date_range_value = date_range.strip().lower() if isinstance(date_range, str) and date_range else ""
+    date_filter: Optional[date_type] = None
+    date_range_end: Optional[date_type] = None
+    if isinstance(date, str) and date:
         try:
-            date_start = date_cls.fromisoformat(date_from)
+            date_filter = date_type.fromisoformat(date)
         except ValueError:
-            date_start = None
-    if date_to:
-        try:
-            date_end = date_cls.fromisoformat(date_to)
-        except ValueError:
-            date_end = None
-    if not date_start and not date_end and date:
-        try:
-            parsed = date_cls.fromisoformat(date)
-            date_start = parsed
-            date_end = parsed
-        except ValueError:
-            date_start = None
-            date_end = None
-
-    raw_tokens: list[str] = []
-    if search:
-        for chunk in search:
-            if not chunk:
-                continue
-            raw_tokens.extend(re.split(r"[,\s]+", chunk))
-    search_tokens = [token for token in (part.strip() for part in raw_tokens) if token]
-
-    future_only = _parse_checkbox(future)
-    free_only_flag = _parse_checkbox(free_only)
-    view_mode = "cards" if (view or "").lower() == "cards" else "table"
-    role_mode = "candidate" if (role or "").lower() == "candidate" else "recruiter"
-
+            date_filter = None
+    elif date_range_value:
+        today = date_type.today()
+        if date_range_value == "today":
+            date_filter = today
+        elif date_range_value == "tomorrow":
+            date_filter = today + timedelta(days=1)
+        elif date_range_value in {"7d", "week"}:
+            date_filter = today
+            date_range_end = today + timedelta(days=6)
+        elif date_range_value == "next":
+            date_filter = today
     result = await list_slots(
         recruiter,
-        status_list,
+        status_norm,
         page,
         per_page,
-        city_id=city_filter,
-        date_from=date_start,
-        date_to=date_end,
-        purpose=purpose_values,
-        search_tokens=search_tokens,
-        free_only=free_only_flag,
-        future_only=future_only,
+        search_query,
+        city_filter,
+        date_filter,
+        date_range_end,
     )
     recruiter_rows = await list_recruiters()
-    recruiter_options = [
-        RecruiterOption.model_validate(row["rec"]).model_dump()
-        for row in recruiter_rows
-    ]
+    recruiter_options = [row["rec"] for row in recruiter_rows]
+    city_choices = await list_cities()
     slots = result["items"]
-    now_utc = datetime.now(timezone.utc)
-    serialized_slots = [serialize_slot(slot, now=now_utc) for slot in slots]
-    status_totals = {"Free": 0, "Booked": 0, "Cancelled": 0, "Expired": 0}
-    for payload in serialized_slots:
-        status = payload.get("status")
-        if status in status_totals:
-            status_totals[status] += 1
-    table_slots: list[dict[str, object]] = []
-    for slot, payload in zip(slots, serialized_slots):
-        entry: dict[str, object] = {
-            "id": slot.id,
-            "start_at": ensure_utc(slot.start_utc),
-            "end_at": ensure_utc(slot.start_utc)
-            + timedelta(minutes=int(slot.duration_min or 0)),
-            "city": payload.get("city"),
-            "recruiter": payload.get("recruiter"),
-            "candidate": payload.get("candidate"),
-            "status": payload.get("status"),
-            "booking_confirmed": payload.get("booking_confirmed"),
-            "cancelled_at": slot.cancelled_at,
-            "updated_at": ensure_utc(slot.updated_at)
-            if slot.updated_at is not None
-            else None,
-            "api": payload,
-        }
-        table_slots.append(entry)
-
-    if ui_status_filters:
-        allowed = set(ui_status_filters)
-        table_slots = [item for item in table_slots if item.get("status") in allowed]
-
-    status_summary = {
-        "total": len(serialized_slots),
-        "Free": status_totals["Free"],
-        "Booked": status_totals["Booked"],
-        "Cancelled": status_totals["Cancelled"],
-        "Expired": status_totals["Expired"],
+    aggregated = result.get("status_counts") or {}
+    status_counts: Dict[str, int] = {
+        "total": result.get("total", len(slots)),
+        "FREE": int(aggregated.get("FREE", 0)),
+        "PENDING": int(aggregated.get("PENDING", 0)),
+        "BOOKED": int(aggregated.get("BOOKED", 0)),
+        "CONFIRMED_BY_CANDIDATE": int(
+            aggregated.get("CONFIRMED_BY_CANDIDATE", 0)
+        ),
     }
-    status_cards = [
+    if "CANCELED" in aggregated:
+        status_counts["CANCELED"] = int(aggregated.get("CANCELED", 0))
+    city_names = sorted(
         {
-            "key": "total",
-            "label": "Всего",
-            "value": status_summary["total"],
-            "tone": "muted",
-            "hint": "все записи",
-        },
-        {
-            "key": "free",
-            "label": "Свободно",
-            "value": status_summary["Free"],
-            "tone": "neutral",
-            "hint": "готово к бронированию",
-        },
-        {
-            "key": "booked",
-            "label": "Забронировано",
-            "value": status_summary["Booked"],
-            "tone": "info",
-            "hint": "подтверждённые встречи",
-        },
-        {
-            "key": "cancelled",
-            "label": "Отменено",
-            "value": status_summary["Cancelled"],
-            "tone": "danger",
-            "hint": "перенос или отмена",
-        },
-        {
-            "key": "expired",
-            "label": "Прошло",
-            "value": status_summary["Expired"],
-            "tone": "muted",
-            "hint": "время слота прошло",
-        },
-    ]
-    latest_updated = result.get("latest_updated_at")
-    latest_updated_dt = ensure_utc(latest_updated) if latest_updated else None
-    purposes = result.get("purposes") or []
+            slot.city.name
+            for slot in slots
+            if getattr(slot.city, "name", None)
+        }
+    )
     flash = _pop_flash(request)
-    city_options = [
-        CityOption.model_validate(city).model_dump()
-        for city in await list_cities(order_by_name=True)
-    ]
-
     context = {
         "request": request,
         "slots": slots,
+        "calendar_tz": DEFAULT_TZ,
         "filter_recruiter_id": recruiter,
-        "filter_statuses": ui_status_filters,
-        "filter_city_id": city_filter,
-        "filter_purposes": purpose_values,
-        "filter_date_from": date_start.isoformat() if date_start else None,
-        "filter_date_to": date_end.isoformat() if date_end else None,
-        "search_tokens": search_tokens,
-        "search_query": " ".join(search_tokens),
-        "active_view": view_mode,
-        "time_role": role_mode,
-        "only_future": future_only,
-        "only_free": free_only_flag,
+        "filter_status": status_norm,
+        "filter_city": city_filter,
+        "filter_date": date if date_filter else "",
+        "date_range": date_range_value,
+        "search_query": search_query,
         "page": result["page"],
         "pages_total": result["pages_total"],
         "per_page": per_page,
         "recruiter_options": recruiter_options,
-        "city_options": city_options,
-        "purpose_options": purposes,
-        "status_counts": status_summary,
-        "last_updated_at": latest_updated_dt,
+        "city_choices": city_choices,
+        "city_options": city_names,
+        "status_counts": status_counts,
         "flash": flash,
-        "table_slots": table_slots,
-        "slots_payload": serialized_slots,
-        "slots_filters": {
-            "recruiter_id": recruiter,
-            "statuses": ui_status_filters,
-            "city_id": city_filter,
-            "date_from": date_start.isoformat() if date_start else None,
-            "date_to": date_end.isoformat() if date_end else None,
-            "search": search_tokens,
-            "purpose": purpose_values,
-        },
-        "status_cards": status_cards,
     }
-    response = templates.TemplateResponse("slots_list.html", context)
+    _ensure_csrf_config(request)
+    response = templates.TemplateResponse(request, "slots_list.html", context)
     if flash:
         response.delete_cookie(
             _FLASH_COOKIE,
@@ -397,10 +201,18 @@ async def slots_list(
 @router.get("/new", response_class=HTMLResponse)
 async def slots_new(request: Request):
     recruiters = await recruiters_for_slot_form()
+    cities = await _slot_form_cities()
     flash = _pop_flash(request)
+    _ensure_csrf_config(request)
     response = templates.TemplateResponse(
+        request,
         "slots_new.html",
-        {"request": request, "recruiters": recruiters, "flash": flash},
+        {
+            "request": request,
+            "recruiters": recruiters,
+            "all_cities": cities,
+            "flash": flash,
+        },
     )
     if flash:
         response.delete_cookie(
@@ -415,18 +227,86 @@ async def slots_new(request: Request):
 
 @router.post("/create")
 async def slots_create(
+    request: Request,
     recruiter_id: int = Form(...),
-    city_id: int = Form(...),
-    date: str = Form(...),
-    time: str = Form(...),
+    city_id: str = Form(""),
+    date: str = Form(""),
+    time: str = Form(""),
+    csrf_ok: None = Depends(require_csrf_token),
 ):
-    ok, _ = await create_slot(recruiter_id, date, time, city_id=city_id)
+    city_raw = (city_id or "").strip()
+    date_value = (date or "").strip()
+    time_value = (time or "").strip()
+
+    missing_parts: List[str] = []
+    if not city_raw:
+        missing_parts.append("город")
+    if not date_value:
+        missing_parts.append("дату")
+    if not time_value:
+        missing_parts.append("время")
+
+    if missing_parts:
+        recruiters = await recruiters_for_slot_form()
+        cities = await _slot_form_cities()
+
+        if len(missing_parts) == 1:
+            missing_label = missing_parts[0]
+        else:
+            head = ", ".join(missing_parts[:-1]) if len(missing_parts) > 2 else missing_parts[0]
+            missing_label = f"{head} и {missing_parts[-1]}"
+
+        message = f"Укажите {missing_label} перед созданием слота."
+        context = {
+            "request": request,
+            "recruiters": recruiters,
+            "all_cities": cities,
+            "flash": {"status": "error", "message": message},
+        }
+        return templates.TemplateResponse(request, "slots_new.html", context, status_code=422)
+
+    try:
+        city_value = int(city_raw)
+    except (TypeError, ValueError):
+        recruiters = await recruiters_for_slot_form()
+        cities = await _slot_form_cities()
+        context = {
+            "request": request,
+            "recruiters": recruiters,
+            "all_cities": cities,
+            "flash": {
+                "status": "error",
+                "message": "Укажите корректный город для слота.",
+            },
+        }
+        return templates.TemplateResponse(request, "slots_new.html", context, status_code=422)
+
+    try:
+        ok = await create_slot(recruiter_id, date_value, time_value, city_id=city_value)
+    except SlotOverlapError:
+        # Business-level error: slot overlaps with existing slot
+        # This is an expected scenario, not a system failure
+        response = RedirectResponse(url="/slots/new", status_code=303)
+        _set_flash(
+            response,
+            "error",
+            "Невозможно создать слот: у рекрутёра уже есть занятие в это время.",
+        )
+        return response
+    except Exception as exc:  # defensive against unexpected errors
+        logger.exception("Failed to create slot", exc_info=exc)
+        ok = False
+
     redirect = "/slots" if ok else "/slots/new"
     response = RedirectResponse(url=redirect, status_code=303)
     if ok:
         _set_flash(response, "success", "Слот создан")
     else:
-        _set_flash(response, "error", "Не удалось создать слот. Проверьте город, дату и время.")
+        _set_flash(
+            response,
+            "error",
+            "Не удалось создать слот. Проверьте город, дату и время (нельзя создавать слоты в прошлом).",
+        )
     return response
 
 
@@ -444,22 +324,42 @@ async def slots_bulk_create(
     step_min: int = Form(...),
     include_weekends: Optional[str] = Form(default=None),
     use_break: Optional[str] = Form(default=None),
+    csrf_ok: None = Depends(require_csrf_token),
 ):
-    created, error = await bulk_create_slots(
-        recruiter_id=recruiter_id,
-        city_id=city_id,
-        start_date=start_date,
-        end_date=end_date,
-        start_time=start_time,
-        end_time=end_time,
-        break_start=break_start,
-        break_end=break_end,
-        step_min=step_min,
-        include_weekends=_parse_checkbox(include_weekends),
-        use_break=_parse_checkbox(use_break),
-    )
+    try:
+        created, error = await bulk_create_slots(
+            recruiter_id=recruiter_id,
+            city_id=city_id,
+            start_date=start_date,
+            end_date=end_date,
+            start_time=start_time,
+            end_time=end_time,
+            break_start=break_start,
+            break_end=break_end,
+            step_min=step_min,
+            include_weekends=_parse_checkbox(include_weekends),
+            use_break=_parse_checkbox(use_break),
+        )
+    except Exception as exc:  # defensive against unexpected errors
+        logger.exception("Failed to bulk create slots", exc_info=exc)
+        created, error = 0, "internal_error"
 
-    response = RedirectResponse(url="/slots", status_code=303)
+    # build redirect params (use start_date as anchor)
+    params = [f"recruiter_id={recruiter_id}"]
+    try:
+        anchor_day = date_type.fromisoformat(start_date)
+        params.append(f"date={anchor_day.isoformat()}")
+    except ValueError:
+        pass
+    if city_id:
+        from backend.core.db import async_session
+        from backend.domain.models import City
+        async with async_session() as session:
+            city = await session.get(City, city_id)
+            if city:
+                params.append(f"city={city.name}")
+    query = "&".join(params)
+    response = RedirectResponse(url=f"/slots?{query}", status_code=303)
     if error:
         _set_flash(response, "error", error)
     elif created == 0:
@@ -470,132 +370,36 @@ async def slots_bulk_create(
     return response
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
-async def slots_api_create(payload: SlotCreatePayload):
-    async with async_session() as session:
-        recruiter = await session.get(Recruiter, payload.recruiter_id)
-        if recruiter is None:
-            raise HTTPException(status_code=404, detail="Recruiter not found")
+@router.post("/generate-default")
+async def slots_generate_default(
+    recruiter_id: int = Form(...),
+    date: str = Form(...),
+    city_id: Optional[int] = Form(None),
+):
+    try:
+        target_day = date_type.fromisoformat(date)
+    except ValueError:
+        response = RedirectResponse(url="/slots", status_code=303)
+        _set_flash(response, "error", "Некорректная дата для генерации слотов.")
+        return response
 
-        region_id = payload.region_id
-        if region_id is None:
-            raise HTTPException(status_code=422, detail="region_id is required")
-
-        city = await session.get(City, region_id)
-        if city is None:
-            raise HTTPException(status_code=422, detail="Region not found")
-        if city.responsible_recruiter_id != recruiter.id:
-            raise HTTPException(
-                status_code=422,
-                detail="Region is not assigned to the recruiter",
-            )
-
-        try:
-            tz_name = validate_timezone_name(city.tz)
-        except ValueError:
-            raise HTTPException(
-                status_code=422,
-                detail="Region timezone is invalid",
-            )
-
-        if payload.starts_at_local is not None:
-            start_utc = local_naive_to_utc(payload.starts_at_local, tz_name)
-        elif payload.starts_at_utc is not None:
-            start_utc = ensure_utc(payload.starts_at_utc)
-        else:
-            raise HTTPException(
-                status_code=422,
-                detail="starts_at_local is required",
-            )
-
-        slot = Slot(
-            recruiter_id=recruiter.id,
-            city_id=city.id,
-            start_utc=start_utc,
-            status=SlotStatus.FREE,
+    try:
+        created = await generate_default_day_slots(
+            recruiter_id=recruiter_id,
+            day=target_day,
+            city_id=city_id,
         )
-        if payload.duration_min is not None:
-            slot.duration_min = max(int(payload.duration_min), 1)
+    except Exception as exc:
+        response = RedirectResponse(url="/slots", status_code=303)
+        _set_flash(response, "error", f"Не удалось создать расписание: {exc}")
+        return response
 
-        session.add(slot)
-        await session.commit()
-        await session.refresh(slot)
-
-    return _slot_payload(slot, tz_name)
-
-
-@router.put("/{slot_id}")
-async def slots_api_update(slot_id: int, payload: SlotUpdatePayload):
-    async with async_session() as session:
-        slot = await session.get(Slot, slot_id)
-        if slot is None:
-            raise HTTPException(status_code=404, detail="Slot not found")
-
-        recruiter_id = payload.recruiter_id or slot.recruiter_id
-        recruiter = await session.get(Recruiter, recruiter_id)
-        if recruiter is None:
-            raise HTTPException(status_code=404, detail="Recruiter not found")
-
-        region_id = payload.region_id
-        if region_id is None:
-            raise HTTPException(status_code=422, detail="region_id is required")
-
-        city = await session.get(City, region_id)
-        if city is None:
-            raise HTTPException(status_code=422, detail="Region not found")
-        if city.responsible_recruiter_id != recruiter.id:
-            raise HTTPException(
-                status_code=422,
-                detail="Region is not assigned to the recruiter",
-            )
-
-        try:
-            tz_name = validate_timezone_name(city.tz)
-        except ValueError:
-            raise HTTPException(
-                status_code=422,
-                detail="Region timezone is invalid",
-            )
-
-        if payload.starts_at_local is not None:
-            start_utc = local_naive_to_utc(payload.starts_at_local, tz_name)
-        elif payload.starts_at_utc is not None:
-            start_utc = ensure_utc(payload.starts_at_utc)
-        else:
-            raise HTTPException(
-                status_code=422,
-                detail="starts_at_local is required",
-            )
-
-        slot.recruiter_id = recruiter.id
-        slot.city_id = city.id
-        slot.start_utc = start_utc
-        if payload.duration_min is not None:
-            slot.duration_min = max(int(payload.duration_min), 1)
-
-        await session.commit()
-        await session.refresh(slot)
-
-    return _slot_payload(slot, tz_name)
-
-
-@router.get("/{slot_id}")
-async def slots_api_detail(slot_id: int):
-    async with async_session() as session:
-        slot = await session.get(Slot, slot_id)
-        if slot is None:
-            raise HTTPException(status_code=404, detail="Slot not found")
-
-        tz_name: Optional[str] = None
-        if slot.city_id is not None:
-            city = await session.get(City, slot.city_id)
-            if city is not None:
-                try:
-                    tz_name = validate_timezone_name(city.tz)
-                except ValueError:
-                    tz_name = None
-
-    return _slot_payload(slot, tz_name)
+    response = RedirectResponse(url="/slots", status_code=303)
+    if created == 0:
+        _set_flash(response, "info", "Слоты уже существовали, ничего не создано.")
+    else:
+        _set_flash(response, "success", f"Создано {created} слотов на выбранный день.")
+    return response
 
 
 @router.post("/{slot_id}/delete")
@@ -632,71 +436,31 @@ async def slots_delete_all(payload: BulkDeletePayload):
     return JSONResponse({"ok": True, "deleted": deleted, "remaining": remaining})
 
 
-class SlotsBulkAction(str, Enum):
-    ASSIGN = "assign"
-    REMIND = "remind"
-    DELETE = "delete"
-
-
-class SlotsBulkPayload(BaseModel):
-    action: SlotsBulkAction
-    slot_ids: list[int]
-    recruiter_id: Optional[int] = None
+class BulkSlotDeletePayload(BaseModel):
+    ids: List[int]
     force: Optional[bool] = False
 
-    @field_validator("slot_ids", mode="after")
-    @classmethod
-    def _ensure_ids(cls, value: list[int]) -> list[int]:
-        unique = sorted({int(v) for v in value if int(v) > 0})
-        if not unique:
-            raise ValueError("Не переданы идентификаторы слотов")
-        return unique
 
+@router.post("/bulk_delete")
+async def slots_bulk_delete(payload: BulkSlotDeletePayload):
+    """Delete a list of slots in one request to support bulk actions in UI."""
+    deleted = 0
+    errors: List[Dict[str, object]] = []
+    ids = [int(slot_id) for slot_id in payload.ids if slot_id is not None]
+    if not ids:
+        return JSONResponse({"ok": False, "deleted": 0, "errors": ["no_ids"]}, status_code=400)
 
-@router.post("/bulk")
-async def slots_bulk_action(payload: SlotsBulkPayload):
-    try:
-        if payload.action is SlotsBulkAction.ASSIGN:
-            if payload.recruiter_id is None:
-                raise HTTPException(status_code=422, detail="recruiter_id обязателен")
-            updated, missing = await bulk_assign_slots(
-                payload.slot_ids, payload.recruiter_id
-            )
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "updated": updated,
-                    "missing": missing,
-                }
-            )
+    for slot_id in ids:
+        ok, error = await delete_slot(slot_id, force=bool(payload.force))
+        if ok:
+            deleted += 1
+            continue
+        errors.append({"id": slot_id, "message": error or "delete_failed"})
 
-        if payload.action is SlotsBulkAction.REMIND:
-            scheduled, missing = await bulk_schedule_reminders(payload.slot_ids)
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "scheduled": scheduled,
-                    "missing": missing,
-                }
-            )
-
-        if payload.action is SlotsBulkAction.DELETE:
-            deleted, failed = await bulk_delete_slots(
-                payload.slot_ids, force=bool(payload.force)
-            )
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "deleted": deleted,
-                    "failed": failed,
-                }
-            )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    raise HTTPException(status_code=400, detail="Неизвестное действие")
+    response_payload: Dict[str, object] = {"ok": not errors, "deleted": deleted}
+    if errors:
+        response_payload["errors"] = errors
+    return JSONResponse(response_payload, status_code=200 if not errors else 207)
 
 
 class OutcomePayload(BaseModel):
@@ -734,7 +498,13 @@ async def slots_set_outcome(
 
 @router.post("/{slot_id}/reschedule")
 async def slots_reschedule(slot_id: int):
-    ok, message, notified = await reschedule_slot_booking(slot_id)
+    try:
+        ok, message, notified = await reschedule_slot_booking(slot_id)
+    except NotificationNotConfigured:
+        return JSONResponse(
+            {"error": "notifications_unavailable"},
+            status_code=503,
+        )
     status_code = 200 if ok else (404 if "не найден" in message.lower() else 400)
     return JSONResponse(
         {"ok": ok, "message": message, "bot_notified": notified},
@@ -744,7 +514,13 @@ async def slots_reschedule(slot_id: int):
 
 @router.post("/{slot_id}/reject_booking")
 async def slots_reject_booking(slot_id: int):
-    ok, message, notified = await reject_slot_booking(slot_id)
+    try:
+        ok, message, notified = await reject_slot_booking(slot_id)
+    except NotificationNotConfigured:
+        return JSONResponse(
+            {"error": "notifications_unavailable"},
+            status_code=503,
+        )
     status_code = 200 if ok else (404 if "не найден" in message.lower() else 400)
     return JSONResponse(
         {"ok": ok, "message": message, "bot_notified": notified},

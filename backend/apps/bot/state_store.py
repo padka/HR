@@ -12,16 +12,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 
-try:  # pragma: no cover - optional dependency handling
-    import redis.asyncio as aioredis  # type: ignore[import]
-    from redis.exceptions import WatchError  # type: ignore[import]
-except Exception:  # pragma: no cover - fallback when redis is unavailable
-    aioredis = None  # type: ignore[assignment]
+import redis.asyncio as aioredis
+from redis.exceptions import WatchError
 
-    class WatchError(Exception):  # type: ignore[override]
-        """Fallback error raised when optimistic lock fails."""
-
-        pass
+from backend.core.redis_factory import parse_redis_target
 
 from .config import State
 
@@ -207,10 +201,7 @@ class RedisStateStore(StateStore):
         namespace: str = "bot:state",
         **kwargs: Any,
     ) -> "RedisStateStore":
-        if aioredis is None:  # pragma: no cover - guarded by optional dependency
-            raise RuntimeError(
-                "redis-py with asyncio support is not installed."
-            )
+        parse_redis_target(url, component="state_store")
         client = aioredis.from_url(url, decode_responses=False, **kwargs)
         return cls(client, ttl_seconds, namespace=namespace)
 
@@ -358,13 +349,9 @@ def build_state_manager(
 ) -> StateManager:
     """Factory helper producing a state manager based on configuration."""
 
-    if redis_url and aioredis is not None:
+    if redis_url:
         store = RedisStateStore.from_url(redis_url, ttl_seconds, namespace=namespace)
     else:
-        if redis_url and aioredis is None:
-            logging.getLogger(__name__).warning(
-                "redis-py is not installed; falling back to in-memory state store.",
-            )
         store = InMemoryStateStore(ttl_seconds, namespace=namespace)
     return StateManager(store)
 

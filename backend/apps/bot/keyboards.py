@@ -16,6 +16,7 @@ from backend.domain.repositories import (
 )
 
 from .config import DEFAULT_TZ
+from .security import sign_callback_data
 
 
 def _safe_zone(tz: Optional[str]) -> ZoneInfo:
@@ -61,13 +62,6 @@ def _slot_button_label(
     return label
 
 
-def _contact_support_button() -> InlineKeyboardButton:
-    return InlineKeyboardButton(
-        text="Напиши нам, подберем для вас время",
-        callback_data="contact:manual",
-    )
-
-
 async def kb_recruiters(
     candidate_tz: str = DEFAULT_TZ,
     *,
@@ -80,12 +74,7 @@ async def kb_recruiters(
     if not recs:
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Рекрутёры не найдены", callback_data="noop:no_recruiters"
-                    )
-                ],
-                [_contact_support_button()],
+                [InlineKeyboardButton(text="✉️ Связаться вручную", callback_data="contact:manual")]
             ]
         )
 
@@ -108,19 +97,11 @@ async def kb_recruiters(
         label_suffix = f"{next_local} • {min(total_slots, 99)} сл."
         text = f"👤 {_short_name(recruiter.name)} — {label_suffix}"
         rows.append(
-            [InlineKeyboardButton(text=text, callback_data=f"pick_rec:{recruiter.id}")]
+            [InlineKeyboardButton(text=text, callback_data=sign_callback_data(f"pick_rec:{recruiter.id}"))]
         )
 
     if not rows:
-        no_rows = [
-            [
-                InlineKeyboardButton(
-                    text="Временно нет свободных рекрутёров", callback_data="noop:no_slots"
-                )
-            ],
-            [_contact_support_button()],
-        ]
-        return InlineKeyboardMarkup(inline_keyboard=no_rows)
+        return InlineKeyboardMarkup(inline_keyboard=[])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -137,14 +118,14 @@ async def kb_slots_for_recruiter(
     if not slots:
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"refresh_slots:{recruiter_id}")],
-                [InlineKeyboardButton(text="👤 К рекрутёрам", callback_data="pick_rec:__again__")],
+                [InlineKeyboardButton(text="🔄 Обновить", callback_data=sign_callback_data(f"refresh_slots:{recruiter_id}"))],
+                [InlineKeyboardButton(text="👤 К рекрутёрам", callback_data=sign_callback_data("pick_rec:__again__"))],
             ]
         )
     buttons = [
         InlineKeyboardButton(
             text=_slot_button_label(s.start_utc, s.duration_min, candidate_tz),
-            callback_data=f"pick_slot:{recruiter_id}:{s.id}",
+            callback_data=sign_callback_data(f"pick_slot:{recruiter_id}:{s.id}"),
         )
         for s in slots[:12]
     ]
@@ -153,8 +134,8 @@ async def kb_slots_for_recruiter(
         rows.append(buttons[i : i + 2])
     rows.append(
         [
-            InlineKeyboardButton(text="🔄 Обновить", callback_data=f"refresh_slots:{recruiter_id}"),
-            InlineKeyboardButton(text="👤 Другой рекрутёр", callback_data="pick_rec:__again__"),
+            InlineKeyboardButton(text="🔄 Обновить", callback_data=sign_callback_data(f"refresh_slots:{recruiter_id}")),
+            InlineKeyboardButton(text="👤 Другой рекрутёр", callback_data=sign_callback_data("pick_rec:__again__")),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)

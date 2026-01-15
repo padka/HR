@@ -9,6 +9,9 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from .. import services
+from ..services import show_recruiter_dashboard
+from backend.domain import analytics
+from backend.domain.candidates import bind_telegram_to_candidate, get_user_by_telegram_id
 
 router = Router()
 
@@ -27,7 +30,60 @@ async def cmd_start(message: Message) -> None:
         logger.warning("/start command without user", extra={"has_user": True})
         return
 
-    await services.begin_interview(user_id)
+    username = getattr(user, "username", None)
+    logger.info(
+        "User started interview",
+        extra={
+            "user_id": user_id,
+            "username": username,
+            "first_name": getattr(user, "first_name", None),
+            "last_name": getattr(user, "last_name", None),
+        }
+    )
+    try:
+        candidate = await get_user_by_telegram_id(user_id)
+        await analytics.log_funnel_event(
+            analytics.FunnelEvent.BOT_START,
+            user_id=user_id,
+            candidate_id=candidate.id if candidate else None,
+            metadata={"channel": "telegram"},
+        )
+    except Exception:
+        logger.exception("Failed to log BOT_START event", extra={"user_id": user_id})
+    await services.begin_interview(user_id, username=username)
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message) -> None:
+    """Show recruiter dashboard if chat belongs to recruiter."""
+    user = message.from_user
+    if user is None:
+        return
+    await show_recruiter_dashboard(user.id)
+
+
+@router.message(Command("invite"))
+async def cmd_invite(message: Message) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    user_id = getattr(user, "id", None)
+    if user_id is None:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    token = parts[1].strip() if len(parts) > 1 else ""
+    if not token:
+        await message.answer("Отправьте /invite <токен>, чтобы привязать Telegram к анкете.")
+        return
+    bound = await bind_telegram_to_candidate(
+        token=token,
+        telegram_id=user_id,
+        username=getattr(user, "username", None),
+    )
+    if bound:
+        await message.answer("✅ Telegram привязан. Введите /start для продолжения.")
+    else:
+        await message.answer("❌ Токен не найден или уже использован.")
 
 
 @router.message(Command(commands=["intro", "test2"]))
@@ -95,11 +151,9 @@ async def free_text(message: Message) -> None:
         logger.exception(
             "failed to load state for free text", extra={"user_id": user_id}
         )
-        await services.send_welcome(user_id)
         return
 
     if not state:
-        await services.send_welcome(user_id)
         return
 
     if not isinstance(state, dict):
@@ -107,8 +161,22 @@ async def free_text(message: Message) -> None:
             "unexpected state payload",
             extra={"user_id": user_id, "type": type(state).__name__},
         )
-        await services.send_welcome(user_id)
         return
+
+    # Capture причины отказа от ознакомительного дня, если ждём ответ
+    if state.get("awaiting_intro_decline_reason"):
+        handled = await services.capture_intro_decline_reason(message, state)
+        if handled:
+            return
+
+    if state.get("manual_availability_expected"):
+        payload_text = (message.text or message.caption or "").strip()
+        if not payload_text:
+            await message.answer("Напишите, пожалуйста, удобный диапазон в формате «25.07 12:00-16:00».")
+            return
+        handled = await services.record_manual_availability_response(user_id, payload_text)
+        if handled:
+            return
 
     if state.get("flow") != "interview":
         return

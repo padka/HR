@@ -88,9 +88,11 @@ async def get_stage_templates(
     return data
 
 
-def stage_payload_for_ui(stored: Dict[str, str]) -> List[Dict[str, object]]:
+def stage_payload_for_ui(stored: Dict[str, str], allowed_keys: Optional[List[str]] = None) -> List[Dict[str, object]]:
     result: List[Dict[str, object]] = []
     for stage in CITY_TEMPLATE_STAGES:
+        if allowed_keys and stage.key not in allowed_keys:
+            continue
         value = stored.get(stage.key, "")
         result.append(
             {
@@ -114,7 +116,7 @@ async def templates_overview() -> Dict[str, object]:
     city_payload = [
         {
             "city": city,
-            "stages": stage_payload_for_ui(raw_map.get(city.id, {})),
+            "stages": stage_payload_for_ui(raw_map.get(city.id, {}), allowed_keys=["stage3_intro_invite"]),
         }
         for city in cities
     ]
@@ -202,13 +204,16 @@ async def list_templates() -> Dict[str, object]:
         if item.key in STAGE_KEYS:
             continue
         city = getattr(item, "city", None)
+        city_display = getattr(city, "display_name", None) if city else None
+        city_plain = getattr(city, "name_plain", None) if city else None
         preview = _preview_text(item.content)
         custom_templates.append(
             {
                 "id": item.id,
                 "key": item.key,
                 "city_id": item.city_id,
-                "city_name": getattr(city, "name", None),
+                "city_name": city_display,
+                "city_name_plain": city_plain,
                 "city_tz": getattr(city, "tz", None),
                 "is_global": item.city_id is None,
                 "length": len(item.content or ""),

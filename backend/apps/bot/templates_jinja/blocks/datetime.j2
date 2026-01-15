@@ -1,0 +1,21 @@
+{# Макросы для форматирования даты и времени #}
+
+{# Полный формат: Пн, 12 дек • 14:30 (МСК) #}
+{% macro format_datetime(dt_utc, tz_name='UTC') -%}
+{{ dt_utc|format_datetime(tz_name) }}
+{%- endmacro %}
+
+{# Только дата: Пн, 12 дек #}
+{% macro format_date(dt_utc, tz_name='UTC') -%}
+{{ dt_utc|format_date(tz_name) }}
+{%- endmacro %}
+
+{# Только время: 14:30 (МСК) #}
+{% macro format_time(dt_utc, tz_name='UTC') -%}
+{{ dt_utc|format_time(tz_name) }}
+{%- endmacro %}
+
+{# Короткий формат: 12.12 • 14:30 #}
+{% macro format_short(dt_utc, tz_name='UTC') -%}
+{{ dt_utc|format_short(tz_name) }}
+{%- endmacro %}

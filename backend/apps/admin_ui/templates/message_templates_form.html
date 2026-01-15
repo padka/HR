@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% import "partials/form_shell.html" as forms with context %}
+{% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'message-templates-form';
+</script>
+{% set is_edit = is_edit or False %}
+{% set form_data = form_data or {} %}
+{% set action = is_edit and '/message-templates/' ~ template_id ~ '/update' or '/message-templates/create' %}
+{% set title = is_edit and 'Редактирование шаблона' or 'Новый шаблон уведомления' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% call forms.shell(
+  title=title,
+  description="Городские шаблоны перекрывают общий. Опубликуйте активный вариант для нужного города — бот подставит его автоматически.",
+  form_id="msgTemplateForm",
+  action=action,
+  autocomplete="off",
+  actions=[]
+) %}
+  {% if errors %}
+    <div class="alert alert--danger mt-sm">
+      <ul>
+        {% for err in errors %}
+          <li>{{ err }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% call forms.section("Основные параметры") %}
+    <div class="form-grid form-grid--two">
+      {% call forms.field("Событие", hint="Выберите нужный этап — ключ подставится автоматически.") %}
+        {% if is_edit %}
+          <div class="chip chip--muted">Ключ: <code class="text-mono">{{ form_data.key }}</code> (изменить нельзя)</div>
+          <input type="hidden" name="key" id="key" value="{{ form_data.key or '' }}">
+          <p class="hint mt-xs">Для изменения используйте “Создать новый” — ключ фиксируется.</p>
+        {% else %}
+          <select id="key_picker" data-key-select required>
+            <option value="" disabled {% if not form_data.key %}selected{% endif %}>Выберите событие</option>
+            {% for k, hint in known_hints.items() %}
+              {% set lk = k|lower %}
+              {% if 'intro' in lk %}
+                {% set stage_label = 'Ознакомительный день' %}
+              {% elif 'interview' in lk %}
+                {% set stage_label = 'Интервью' %}
+              {% elif 'remind' in lk %}
+                {% set stage_label = 'Напоминания' %}
+              {% else %}
+                {% set stage_label = 'Прочее' %}
+              {% endif %}
+              <option value="{{ k }}" {% if form_data.key == k %}selected{% endif %}>
+                {{ stage_label }} — {{ hint }}
+              </option>
+            {% endfor %}
+          </select>
+          <input type="hidden" name="key" id="key" value="{{ form_data.key or '' }}">
+          <p class="hint mt-xs" id="key_hint">Выберите событие, чтобы увидеть пояснение.</p>
+        {% endif %}
+      {% endcall %}
+
+      {% call forms.field("Город") %}
+        <select id="city_id" name="city_id">
+          <option value="default" {% if form_data.city_id is none %}selected{% endif %}>Общий (Default)</option>
+          {% for city in cities if city.id is not none %}
+            <option value="{{ city.id }}" {% if form_data.city_id == city.id %}selected{% endif %}>{{ city.name }}</option>
+          {% endfor %}
+        </select>
+        <p class="hint mt-xs">Городской шаблон перекрывает общий. Если города нет — будет использован общий текст.</p>
+      {% endcall %}
+    </div>
+
+    <div class="form-grid form-grid--three">
+      {% call forms.field("Локаль") %}
+        <input type="text" name="locale" id="locale" value="{{ form_data.locale or 'ru' }}" required class="text-mono">
+      {% endcall %}
+      {% call forms.field("Канал") %}
+        <select id="channel" name="channel" required>
+          {% for item in allowed_channels %}
+            <option value="{{ item }}" {% if (form_data.channel or 'tg') == item %}selected{% endif %}>{{ item|upper }}</option>
+          {% endfor %}
+        </select>
+      {% endcall %}
+      <div class="form-column">
+        {% if not is_edit %}
+          {% call forms.field("Версия") %}
+            <input type="number" name="version" id="version" min="1" value="{{ form_data.version or 1 }}">
+          {% endcall %}
+        {% else %}
+          <div class="stack">
+            <span class="badge muted">Текущая версия: v{{ form_data.version or 1 }}</span>
+            <label class="form-switch mt-xs">
+              <input type="checkbox" id="bump_version" name="bump_version" value="1">
+              <span class="form-switch__track" aria-hidden="true"><span class="form-switch__thumb"></span></span>
+              <span class="form-switch__label">Повысить версию</span>
+            </label>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  {% endcall %}
+
+  {% call forms.section("Текст и предпросмотр", span='full') %}
+    <div class="editor-grid">
+      <div class="editor-area">
+        {% call forms.field("Текст сообщения", hint="Разрешены базовые HTML-теги Telegram: b, strong, i, u, s, code, pre, a.") %}
+          <textarea name="body" id="body" rows="16" required class="text-mono">{{ form_data.body or '' }}</textarea>
+          <div class="hint mt-xs" id="var-warning" hidden></div>
+        {% endcall %}
+        <div class="hint mt-xs">
+          Неизвестные переменные блокируют публикацию. Клик по переменной справа вставляет её в курсор.
+        </div>
+      </div>
+      <aside class="editor-side">
+        <div class="surface glass grain p-sm mb-sm">
+          <h4 class="form-shell__section-title">Доступные переменные</h4>
+          <div class="chips">
+            {% for var in variables %}
+              <button type="button" class="chip chip--action" data-var="{{ var.name }}">{{ var.label }} <span class="text-mono">{"{{"}{{ var.name }}{"}}"}</span></button>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="surface glass grain p-sm">
+          <h4 class="form-shell__section-title">Предпросмотр</h4>
+          <p class="form-shell__section-hint">Используются тестовые данные. В бою подставятся реальные значения.</p>
+          <pre class="preview-block" id="preview-block">{{ form_data.body or '' }}</pre>
+        </div>
+      </aside>
+    </div>
+  {% endcall %}
+
+  {% if history %}
+    <div class="surface glass grain mt-md" id="history">
+      <h3 class="form-shell__section-title">История изменений</h3>
+      <ul class="history-list">
+        {% for item in history %}
+          <li>
+            v{{ item.version }} · {{ item.updated_at.strftime('%d.%m %H:%M') if item.updated_at else '—' }} · {{ item.updated_by or '—' }}
+            <div class="text-muted small">{{ item.body_md | replace('\n', ' ') }}</div>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <div class="form-actions mt-md">
+    <div class="btn-group">
+      <button type="submit" class="btn btn--ghost" name="is_active" value="0">Сохранить черновик</button>
+      <button type="submit" class="btn btn-primary" name="is_active" value="1">Опубликовать</button>
+      <a class="btn btn--ghost" href="/message-templates">Отмена</a>
+    </div>
+  </div>
+
+{% endcall %}
+
+<script nonce="{{ request.state.csp_nonce }}">
+  const bodyField = document.getElementById('body');
+  const previewBlock = document.getElementById('preview-block');
+  const warningBox = document.getElementById('var-warning');
+  const mockContext = {{ mock_context | tojson | safe }};
+  const allowedVars = new Set({{ variables|map(attribute='name')|list|tojson|safe }});
+  const keyHints = {{ known_hints | tojson | safe }};
+  const keyPicker = document.getElementById('key_picker');
+  const keyHidden = document.getElementById('key');
+  const keyHint = document.getElementById('key_hint');
+
+  function renderPreview() {
+    if (!bodyField || !previewBlock) return;
+    const text = bodyField.value || '';
+    const unknown = new Set();
+    const rendered = text.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, name) => {
+      if (!allowedVars.has(name)) {
+        unknown.add(name);
+      }
+      return mockContext[name] || match;
+    });
+    previewBlock.textContent = rendered;
+    if (warningBox) {
+      if (unknown.size > 0) {
+        warningBox.hidden = false;
+        warningBox.classList.add('alert', 'alert--warning');
+        warningBox.innerText = 'Неизвестные переменные: ' + Array.from(unknown).join(', ');
+      } else {
+        warningBox.hidden = true;
+        warningBox.classList.remove('alert', 'alert--warning');
+        warningBox.innerText = '';
+      }
+    }
+  }
+
+  if (bodyField) {
+    bodyField.addEventListener('input', renderPreview);
+  }
+  document.querySelectorAll('[data-var]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!bodyField) return;
+      const value = '{' + btn.dataset.var + '}';
+      const start = bodyField.selectionStart || 0;
+      const end = bodyField.selectionEnd || 0;
+      const current = bodyField.value;
+      bodyField.value = current.slice(0, start) + value + current.slice(end);
+      bodyField.focus();
+      bodyField.selectionStart = bodyField.selectionEnd = start + value.length;
+      renderPreview();
+    });
+  });
+  renderPreview();
+
+  if (keyPicker && keyHidden) {
+    const updateKey = () => {
+      const val = keyPicker.value || '';
+      keyHidden.value = val;
+      if (keyHint) {
+        keyHint.innerText = keyHints[val] || 'Выберите событие, чтобы увидеть пояснение.';
+      }
+    };
+    keyPicker.addEventListener('change', updateKey);
+    updateKey();
+  }
+</script>
+{% endblock %}

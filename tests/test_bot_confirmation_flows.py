@@ -1,10 +1,15 @@
 import pytest
 from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Tuple
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select, func
 
+from backend.apps.bot import services
+from backend.apps.bot.events import InterviewSuccessEvent
+from backend.apps.bot.handlers import interview
 from backend.apps.bot.services import (
     NotificationService,
     configure,
@@ -22,6 +27,7 @@ from backend.domain.models import (
     OutboxNotification,
     TelegramCallbackLog,
     MessageTemplate,
+    BotMessageLog,
 )
 from backend.domain.repositories import add_notification_log, add_outbox_notification
 
@@ -58,6 +64,90 @@ class DummyApproveCallback:
 
     async def answer(self, text: str, show_alert: bool = False) -> None:
         self._responses.append((text, show_alert))
+
+
+@pytest.mark.asyncio
+async def test_dispatch_interview_success_sends_message_and_logs():
+    store = InMemoryStateStore(ttl_seconds=120)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    dummy_bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=777))
+    configure(dummy_bot, manager)
+
+    event = InterviewSuccessEvent(
+        candidate_id=987654,
+        candidate_name="Иван Тестов",
+        candidate_tz="Europe/Moscow",
+        city_id=123,
+        city_name="Москва",
+        slot_id=555,
+        required=True,
+    )
+
+    await services.dispatch_interview_success(event)
+
+    assert dummy_bot.send_message.await_count == 1
+    args, kwargs = dummy_bot.send_message.await_args
+    assert args[0] == event.candidate_id
+    assert "Поздравляем" in args[1]
+    markup = kwargs.get("reply_markup")
+    assert markup is not None
+    assert markup.inline_keyboard[0][0].callback_data == "test2:start"
+
+    async with async_session() as session:
+        log_entry = await session.scalar(
+            select(BotMessageLog)
+            .where(BotMessageLog.candidate_tg_id == event.candidate_id)
+            .order_by(BotMessageLog.id.desc())
+        )
+        assert log_entry is not None
+        assert log_entry.message_type == "test2_invite"
+        payload = log_entry.payload_json or {}
+        assert payload.get("status") == "sent"
+        assert payload.get("message_id") == 777
+        assert payload.get("city_id") == event.city_id
+
+    await manager.clear()
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_interview_success_logs_and_raises_on_failure():
+    store = InMemoryStateStore(ttl_seconds=120)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    error = TelegramBadRequest(method="sendMessage", message="bad request")
+    dummy_bot.send_message = AsyncMock(side_effect=error)
+    configure(dummy_bot, manager)
+
+    event = InterviewSuccessEvent(
+        candidate_id=24680,
+        candidate_name="Мария Ошибка",
+        candidate_tz="Europe/Moscow",
+        city_id=321,
+        city_name="Санкт-Петербург",
+        slot_id=999,
+        required=False,
+    )
+
+    with pytest.raises(TelegramBadRequest):
+        await services.dispatch_interview_success(event)
+
+    assert dummy_bot.send_message.await_count == 1
+
+    async with async_session() as session:
+        log_entry = await session.scalar(
+            select(BotMessageLog)
+            .where(BotMessageLog.candidate_tg_id == event.candidate_id)
+            .order_by(BotMessageLog.id.desc())
+        )
+        assert log_entry is not None
+        payload = log_entry.payload_json or {}
+        assert payload.get("status") in {"bad_request", "failed"}
+        assert "error" in payload
+
+    await manager.clear()
+    await manager.close()
 
 
 @pytest.mark.asyncio
@@ -212,6 +302,19 @@ async def test_recruiter_approval_message_idempotent(monkeypatch):
 
     monkeypatch.setattr("backend.apps.bot.services._send_with_retry", fake_send)
 
+    reminder_calls = []
+
+    class _FakeReminderService:
+        def __init__(self) -> None:
+            self.schedule_for_slot = AsyncMock(side_effect=lambda slot_id: reminder_calls.append(slot_id))
+
+    fake_reminder_service = _FakeReminderService()
+
+    monkeypatch.setattr(
+        "backend.apps.bot.services.get_reminder_service",
+        lambda: fake_reminder_service,
+    )
+
     responses = []
     message = DummyMessage()
     approve_cb = DummyApproveCallback("ap-1", slot_id, message, responses)
@@ -241,12 +344,14 @@ async def test_recruiter_approval_message_idempotent(monkeypatch):
 
     assert responses[-1] == ("Сообщение отправлено кандидату.", False)
     assert message.edit_reply_markup.await_count == 1
+    assert reminder_calls.count(slot_id) == 1
 
     followup_message = DummyMessage()
     second_cb = DummyApproveCallback("ap-2", slot_id, followup_message, responses)
     await handle_approve_slot(second_cb)
     assert len(send_calls) == 1
     assert responses[-1] == ("Уже согласовано ✔️", False)
+    assert reminder_calls.count(slot_id) == 1
 
     async with async_session() as session:
         logs = (
@@ -305,6 +410,75 @@ async def test_notification_log_unique_constraint():
             )
         )
         assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_notification_log_overwrite_updates_existing_entry():
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Сергей", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=4),
+            status=SlotStatus.PENDING,
+            candidate_tg_id=777,
+            candidate_fio="Дубликат Тестов",
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+        candidate_id = slot.candidate_tg_id
+
+    created = await add_notification_log(
+        "candidate_reminder",
+        slot_id,
+        candidate_tg_id=candidate_id,
+        payload="initial",
+        delivery_status="pending",
+        attempts=1,
+        last_error="fail",
+        next_retry_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    assert created is True
+
+    updated_payload = "updated text"
+    overwrite_result = await add_notification_log(
+        "candidate_reminder",
+        slot_id,
+        candidate_tg_id=candidate_id,
+        payload=updated_payload,
+        delivery_status="sent",
+        attempts=3,
+        last_error=None,
+        next_retry_at=None,
+        overwrite=True,
+        template_key="reminder",
+        template_version=2,
+    )
+    assert overwrite_result is False
+
+    async with async_session() as session:
+        log = await session.scalar(
+            select(models.NotificationLog).where(
+                models.NotificationLog.booking_id == slot_id,
+                models.NotificationLog.type == "candidate_reminder",
+                models.NotificationLog.candidate_tg_id == candidate_id,
+            )
+        )
+        assert log is not None
+        assert log.payload == updated_payload
+        assert log.delivery_status == "sent"
+        assert log.attempts == 3
+        assert log.last_error is None
+        assert log.next_retry_at is None
+        assert log.template_key == "reminder"
+        assert log.template_version == 2
 
 
 @pytest.mark.asyncio
@@ -408,6 +582,85 @@ async def test_no_duplicate_confirm_messages(monkeypatch):
     import backend.apps.bot.services as bot_services
 
     bot_services._notification_service = None
+
+
+@pytest.mark.asyncio
+async def test_handle_pick_slot_sends_local_summary(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace(
+        send_message=AsyncMock(),
+        send_document=AsyncMock(),
+        session=SimpleNamespace(close=AsyncMock()),
+    )
+
+    monkeypatch.setattr(services, "_bot", dummy_bot)
+    monkeypatch.setattr(services, "_state_manager", manager)
+    monkeypatch.setattr(services.templates, "tpl", AsyncMock(return_value="Заявка отправлена"))
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Рекрутёр",
+            tz="Europe/Moscow",
+            active=True,
+            tg_chat_id=777000,
+        )
+        city = models.City(name="Новосибирск", tz="Asia/Novosibirsk", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime(2030, 1, 1, 6, 0, tzinfo=timezone.utc),
+            status=models.SlotStatus.FREE,
+            tz_name=city.tz,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    candidate_id = 987123
+    await manager.set(
+        candidate_id,
+        {
+            "flow": "interview",
+            "city_id": city.id,
+            "city_name": city.name_plain,
+            "candidate_tz": "Europe/Moscow",
+            "fio": "Иван Тест",
+        },
+    )
+
+    responses: list[Tuple[Optional[str], bool]] = []
+    message = DummyMessage()
+
+    class SlotCallback:
+        def __init__(self) -> None:
+            self.data = f"pick_slot:{recruiter.id}:{slot_id}"
+            self.from_user = SimpleNamespace(id=candidate_id)
+            self.message = message
+
+        async def answer(self, text: Optional[str] = None, show_alert: bool = False) -> None:
+            responses.append((text, show_alert))
+
+    callback = SlotCallback()
+
+    await services.handle_pick_slot(callback)
+
+    candidate_calls = [
+        call for call in dummy_bot.send_message.await_args_list if call.args and call.args[0] == candidate_id
+    ]
+    assert candidate_calls, "expected candidate notification"
+    summary_text = candidate_calls[-1].args[1]
+    assert summary_text == "Ваше время: 09:00 (по местному времени города Новосибирск — 13:00)"
+
+    await manager.clear()
+    await manager.close()
 
 
 @pytest.mark.asyncio

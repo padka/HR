@@ -1,92 +1,151 @@
-import asyncio
-import importlib
 import os
-import sys
+from pathlib import Path
 
 import pytest
+try:
+    from fakeredis import aioredis as fakeredis_aioredis
+except Exception:  # pragma: no cover - optional dependency
+    fakeredis_aioredis = None
+import asyncio
+from sqlalchemy import text
 
-try:  # pragma: no cover - exercised implicitly during test collection
-    import uvloop  # type: ignore
-except Exception:  # pragma: no cover - falls back when uvloop is absent
-    uvloop = None  # type: ignore[assignment]
-    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
-else:  # pragma: no cover - executed when uvloop is available
-    uvloop.install()
+# PostgreSQL test database configuration
+# Override with TEST_DATABASE_URL environment variable if needed
+DEFAULT_TEST_DB_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://rs:pass@localhost:5432/rs_test"
+)
 
+TEST_ENV = {
+    "ENVIRONMENT": "test",
+    "DATABASE_URL": DEFAULT_TEST_DB_URL,
+    "REDIS_URL": "",
+    "REDIS_NOTIFICATIONS_URL": "",
+    "NOTIFICATION_BROKER": "memory",
+    "RATE_LIMIT_ENABLED": "false",
+    "BOT_ENABLED": "0",
+    "BOT_INTEGRATION_ENABLED": "0",
+    "BOT_AUTOSTART": "0",
+    "BOT_FAILFAST": "0",
+    "ADMIN_USER": "admin",
+    "ADMIN_PASSWORD": "admin",
+    "SESSION_SECRET": "test-session-secret-0123456789abcdef0123456789abcd",
+    # Reduce DB pool size for tests to prevent "too many open files"
+    "DB_POOL_SIZE": "5",
+    "DB_MAX_OVERFLOW": "2",
+    "DB_POOL_TIMEOUT": "10",
+    "DB_POOL_RECYCLE": "300",
+}
 
-@pytest.fixture(scope="session")
-def event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
-    if uvloop is not None:  # type: ignore[name-defined]
-        return uvloop.EventLoopPolicy()
-    return asyncio.DefaultEventLoopPolicy()
+for key, value in TEST_ENV.items():
+    os.environ[key] = value
+
+from backend.domain.base import Base
+from backend.core.db import async_session
 
 
 @pytest.fixture(scope="session", autouse=True)
-def configure_event_loop_policy(event_loop_policy: asyncio.AbstractEventLoopPolicy):
-    asyncio.set_event_loop_policy(event_loop_policy)
-    loop = event_loop_policy.new_event_loop()
-    event_loop_policy.set_event_loop(loop)
-    try:
-        yield event_loop_policy
-    finally:
-        if not loop.is_closed():
-            loop.close()
-        asyncio.set_event_loop(None)
-        asyncio.set_event_loop_policy(None)
+def _set_test_env():
+    """Force deterministic env for tests and reset cached settings."""
 
-
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def configure_backend(tmp_path_factory):
-    db_dir = tmp_path_factory.mktemp("data")
-    db_path = db_dir / "bot.db"
-    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
-    os.environ["DATA_DIR"] = str(db_dir)
-    os.environ.pop("SQL_ECHO", None)
+    # Use same TEST_ENV dict to avoid duplication
+    for key, value in TEST_ENV.items():
+        os.environ[key] = value
 
     from backend.core import settings as settings_module
-
+    settings_module.get_settings.cache_clear()
+    yield
     settings_module.get_settings.cache_clear()
 
-    db_module = importlib.import_module("backend.core.db")
-    importlib.reload(db_module)
-    bootstrap_module = importlib.import_module("backend.core.bootstrap")
-    importlib.reload(bootstrap_module)
 
-    modules_to_reload = [
-        "backend.domain.repositories",
-        "backend.domain.candidates.services",
-        "backend.apps.admin_ui.services",
-    ]
-    for module_name in modules_to_reload:
-        if module_name in sys.modules:
-            importlib.reload(sys.modules[module_name])
-        else:
-            importlib.import_module(module_name)
+@pytest.fixture(scope="session", autouse=True)
+def _prepare_test_db(_set_test_env):
+    """Apply migrations once per session to test database."""
+    from backend.migrations.runner import upgrade_to_head
 
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(bootstrap_module.ensure_database_ready())
-    loop.close()
-
+    # Convert asyncpg URL to psycopg2 for sync migrations
+    sync_db_url = DEFAULT_TEST_DB_URL.replace("+asyncpg", "")
+    upgrade_to_head(sync_db_url)
     yield
 
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(db_module.async_engine.dispose())
-    loop.close()
-    db_module.sync_engine.dispose()
+
+@pytest.fixture(scope="session", autouse=True)
+def _force_test_settings(_set_test_env):
+    """Reset settings cache and bot state to avoid accidental Redis usage."""
+    from backend.core import settings as settings_module
+    settings_module.get_settings.cache_clear()
+    settings = settings_module.get_settings()
+
+    try:
+        from backend.apps.bot import services as bot_services
+        from backend.apps.bot.state_store import build_state_manager
+        from backend.apps.admin_ui.config import register_template_globals
+
+        bot_services._bot = None
+        bot_services._state_manager = build_state_manager(
+            redis_url=None,
+            ttl_seconds=getattr(settings, "state_ttl_seconds", 604800),
+        )
+        register_template_globals()
+    except Exception:
+        pass
+    yield
+    settings_module.get_settings.cache_clear()
+
+
+async def _wipe_db():
+    """Wipe all tables using DELETE for PostgreSQL compatibility."""
+    async with async_session() as session:
+        # Delete data from all tables in reverse order (respecting foreign keys)
+        for table in reversed(Base.metadata.sorted_tables):
+            try:
+                await session.execute(table.delete())
+            except Exception:
+                # If table doesn't exist yet, ignore
+                pass
+        await session.commit()
+        # Explicitly close session to prevent connection leaks
+        await session.close()
 
 
 @pytest.fixture(autouse=True)
-def clean_database():
-    from backend.domain.base import Base
-    from backend.core.db import sync_engine
+async def _clean_database_between_tests(request):
+    """Wipe all tables before each test to avoid cross-test pollution."""
+    # Skip database cleanup for tests that don't use the database
+    if "no_db_cleanup" in request.keywords:
+        return
 
-    Base.metadata.drop_all(bind=sync_engine)
-    Base.metadata.create_all(bind=sync_engine)
-    yield
+    # Run cleanup as async to stay in the same event loop
+    await _wipe_db()
+    try:
+        from backend.apps.bot import services as bot_services
+        from backend.apps.bot.state_store import build_state_manager
+        from backend.core import settings as settings_module
+
+        settings = settings_module.get_settings()
+        bot_services._bot = None
+        bot_services._state_manager = build_state_manager(
+            redis_url=None,
+            ttl_seconds=getattr(settings, "state_ttl_seconds", 604800),
+        )
+    except Exception:
+        pass
+    try:
+        from backend.apps.bot.services import reset_template_provider
+        reset_template_provider()
+    except Exception:
+        pass
+
+
+@pytest.fixture(scope="session")
+def fake_redis():
+    """Provide a fake Redis client for tests that need it."""
+    if fakeredis_aioredis is None:
+        pytest.skip("fakeredis is not available")
+    return fakeredis_aioredis.FakeRedis()
+
+
+@pytest.fixture(scope="session")
+def redis_url():
+    """Provide Redis URL for integration tests."""
+    return os.getenv("TEST_REDIS_URL", "redis://localhost:6379/1")

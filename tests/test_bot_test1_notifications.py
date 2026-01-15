@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -40,12 +41,11 @@ async def test_finalize_test1_notifies_recruiter():
             tg_chat_id=9999,
         )
         city = models.City(name="Казань", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
         await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
 
     store = InMemoryStateStore(ttl_seconds=60)
     state_manager = StateManager(store)
@@ -85,7 +85,7 @@ async def test_finalize_test1_notifies_recruiter():
 
 
 @pytest.mark.asyncio
-async def test_finalize_test1_deduplicates_by_chat_id():
+async def test_finalize_test1_deduplicates_by_chat_id(monkeypatch):
     templates.clear_cache()
 
     async with async_session() as session:
@@ -100,16 +100,15 @@ async def test_finalize_test1_deduplicates_by_chat_id():
             name="Бэкап",
             tz="Europe/Moscow",
             active=True,
-            tg_chat_id=shared_chat,
+            tg_chat_id=shared_chat + 1,
         )
         city = models.City(name="Уфа", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, backup, city])
         await session.commit()
         await session.refresh(recruiter)
         await session.refresh(backup)
         await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
 
         session.add(
             models.Slot(
@@ -120,6 +119,18 @@ async def test_finalize_test1_deduplicates_by_chat_id():
             )
         )
         await session.commit()
+
+    async def fake_get_active_recruiters(city_id):
+        assert city_id == city.id
+        return [
+            SimpleNamespace(id=recruiter.id, tg_chat_id=shared_chat),
+            SimpleNamespace(id=backup.id, tg_chat_id=shared_chat),
+        ]
+
+    monkeypatch.setattr(
+        "backend.apps.bot.services.get_active_recruiters_for_city",
+        fake_get_active_recruiters,
+    )
 
     store = InMemoryStateStore(ttl_seconds=60)
     state_manager = StateManager(store)
@@ -157,12 +168,11 @@ async def test_finalize_test1_prompts_candidate_to_schedule():
             tg_chat_id=4242,
         )
         city = models.City(name="Ижевск", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
         await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
 
         session.add(
             models.Slot(

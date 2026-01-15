@@ -40,6 +40,9 @@
   {% set mass_actions = mass_actions or [] %}
   <section class="list-toolbar glass-card{% if sticky %} list-toolbar--sticky{% endif %}">
     <form{% if form_id %} id="{{ form_id }}"{% endif %} class="list-toolbar__form" action="{{ form_action }}" method="{{ method }}" {{ form_attrs|safe }}>
+      {% if method and method|lower == 'post' %}
+        {{ csrf_input(request) }}
+      {% endif %}
       <div class="list-toolbar__filters">
         {{ caller() }}
       </div>

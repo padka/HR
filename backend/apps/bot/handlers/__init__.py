@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from aiogram import Dispatcher
 
-from . import attendance, common, recruiter, slots, test1, test2
+from . import attendance, common, recruiter, slots, test1, test2, interview
 
 __all__ = ["register_routers"]
 
@@ -18,3 +18,4 @@ def register_routers(dp: Dispatcher) -> None:
     dp.include_router(slots.router)
     dp.include_router(recruiter.router)
     dp.include_router(attendance.router)
+    dp.include_router(interview.router)

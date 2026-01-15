@@ -1,10 +1,13 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Новый рекрутёр{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'recruiters-new';
+</script>
 {% set form_state = form_data or {} %}
+{% set errors = field_errors or {} %}
 {% set selected_cities = form_state.get('cities', []) %}
-{% set city_threshold = 16 %}
 {% if form_error %}
   <div class="surface glass grain alert" data-tone="danger" role="alert">
     {{ form_error }}
@@ -16,122 +19,136 @@
   form_id="recForm",
   action="/recruiters/create",
   autocomplete="off",
-  back_href="/recruiters",
-  back_label="К списку",
   actions=[
     {"type": "submit", "text": "Сохранить", "variant": "primary"},
     {"href": "/recruiters", "text": "Отмена", "variant": "ghost"}
   ]
 ) %}
-  {% call forms.section("Основные данные", hint="Имя, часовой пояс и контакты") %}
-    <div class="panel-grid">
-      <div class="panel-grid__col">
-        {% call forms.field("Имя") %}
-          <input id="name" type="text" name="name" value="{{ form_state.get('name', '') }}" placeholder="Михаил" required>
-        {% endcall %}
-      </div>
-      <div class="panel-grid__col">
-        {% call forms.field("Часовой пояс", hint="Определяет локальное время слотов") %}
-          {% set current_tz = form_state.get('tz', 'Europe/Moscow') %}
-          <select id="tz" name="tz" required>
-            {% for option in tz_options %}
-              <option value="{{ option.value }}" {% if option.value == current_tz %}selected{% endif %}>
-                {{ option.label }}
-              </option>
-            {% endfor %}
-          </select>
-        {% endcall %}
-      </div>
-      <div class="panel-grid__col">
-        {% call forms.field("Ссылка на телемост", hint="Например: https://telemost.yandex.ru/j/XXXXX") %}
-          <input id="telemost" type="url" name="telemost" value="{{ form_state.get('telemost', '') }}" placeholder="https://">
-        {% endcall %}
-      </div>
-      <div class="panel-grid__col">
-        {% call forms.field("Telegram chat_id", hint="Можно оставить пустым") %}
-          <input id="tg_chat_id" type="number" name="tg_chat_id" value="{{ form_state.get('tg_chat_id', '') }}" min="1" step="1" placeholder="7588303412">
-        {% endcall %}
-      </div>
-      <div class="panel-grid__col panel-grid__col--wide">
-        {% call forms.field("Активность", hint="Можно отключить, чтобы скрыть из выдачи") %}
-          {{ forms.switch(id='active', name='active', value='1', checked=form_state.get('active', True), label='Рекрутёр активен') }}
-        {% endcall %}
-      </div>
+  {% call forms.section("Основные данные") %}
+    <div class="form-grid form-grid--two">
+      {% call forms.field("Имя", required=True) %}
+        <input id="name" type="text" name="name" value="{{ form_state.get('name', '') }}" placeholder="Михаил" required aria-required="true">
+      {% endcall %}
+      {% call forms.field("Регион", hint="Определяет локальное время рекрутёра при создании слотов", required=True) %}
+        {% set current_tz = form_state.get('tz', 'Europe/Moscow') %}
+        <select id="tz" name="tz" required aria-required="true">
+          {% for option in tz_options %}
+            <option value="{{ option.value }}" {% if option.value == current_tz %}selected{% endif %}>
+              {{ option.label }}
+            </option>
+          {% endfor %}
+        </select>
+      {% endcall %}
+    </div>
+    <div class="form-grid form-grid--two">
+      {% call forms.field("Ссылка на Телемост", hint="Например: https://telemost.yandex.ru/j/XXXXX") %}
+        <input id="telemost" type="url" name="telemost" value="{{ form_state.get('telemost', '') }}"{% if errors.get('telemost') %} class="is-invalid"{% endif %}>
+        {% if errors.get('telemost') %}
+          <p class="form-error" role="alert">{{ errors.get('telemost') }}</p>
+        {% endif %}
+      {% endcall %}
+      {% call forms.field("Telegram chat_id", hint="ID берётся из Telegram, только цифры. Можно оставить пустым, если чат ещё не связан.") %}
+        <input id="tg_chat_id" type="number" name="tg_chat_id" value="{{ form_state.get('tg_chat_id', '') }}" min="1" step="1" inputmode="numeric" placeholder="Например: 7588303412"{% if errors.get('tg_chat_id') %} class="is-invalid"{% endif %}>
+        {% if errors.get('tg_chat_id') %}
+          <p class="form-error" role="alert">{{ errors.get('tg_chat_id') }}</p>
+        {% endif %}
+      {% endcall %}
     </div>
   {% endcall %}
 
-  {% call forms.section("Ответственные города", hint="До 16 городов плитками, затем список с поиском") %}
-    <div
-      class="city-selector"
-      data-city-selector
-      data-total="{{ cities|length }}"
-      data-threshold="{{ city_threshold }}"
-      data-mode="{{ 'list' if cities|length > city_threshold else 'tiles' }}"
-    >
-      <div class="city-selector__header">
-        <div class="city-selector__summary">
-          <span class="city-selector__count" data-selected-count>{{ selected_cities|length }}</span>
-          <span class="city-selector__count-label">выбрано</span>
-        </div>
-        <div class="city-selector__actions" role="group" aria-label="Быстрые действия">
-          <button type="button" class="city-selector__action" data-select="all">Выбрать все</button>
-          <button type="button" class="city-selector__action" data-select="none">Снять все</button>
-        </div>
+  {% call forms.section("Ответственные города", hint="Можно выбрать несколько городов одновременно") %}
+    <div class="multiselect" data-multiselect>
+      <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px;">
+        <input type="search" class="input" placeholder="Поиск города" aria-label="Поиск города" data-multiselect-search style="flex: 1;">
+        <span class="badge" data-cities-counter style="background: var(--accent); color: white; padding: 6px 12px; border-radius: 16px; font-size: 14px; font-weight: 600; min-width: 60px; text-align: center;">0 выбрано</span>
       </div>
-      <div class="city-selector__search" data-city-search {% if cities|length <= city_threshold %}hidden{% endif %}>
-        <svg viewBox="0 0 24 24" aria-hidden="true" class="city-selector__search-icon">
-          <circle cx="11" cy="11" r="7.5" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
-          <path d="m16.5 16.5 4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
-        </svg>
-        <input
-          type="search"
-          name="city-search"
-          placeholder="Поиск по названию или часовому поясу"
-          autocomplete="off"
-          data-city-search-input
-        >
-      </div>
-      <div class="city-selector__chips" data-selected-chips hidden></div>
-      <div class="city-selector__options" role="group" aria-label="Список городов">
+      <div class="choice-grid" role="group" aria-label="Ответственные города" data-multiselect-options>
         {% for city in cities %}
-          {% set checked = city.id in selected_cities %}
-          <label
-            class="city-option"
-            data-city-option
-            data-name="{{ city.name|lower }}"
-            data-tz="{{ city.tz|lower }}"
-          >
-            <input type="checkbox" name="cities" value="{{ city.id }}" {% if checked %}checked{% endif %}>
-            <span class="city-option__check" aria-hidden="true">
-              <svg viewBox="0 0 20 20" fill="none">
-                <path d="m4.5 10.5 3 3.5 8-8.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </span>
-            <span class="city-option__body">
-              <span class="city-option__name">{{ city.name }}</span>
-              <span class="city-option__tz">{{ city.tz }}</span>
-            </span>
+          <label class="choice-tile" data-filter="{{ city.name_plain|lower }} {{ city.tz|lower }}">
+            {% set checked = city.id in selected_cities %}
+            <input type="checkbox" name="cities" value="{{ city.id }}" {% if checked %}checked{% endif %} data-city-checkbox>
+            <span class="choice-tile__checkmark" style="position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; border-radius: 4px; border: 2px solid currentColor; display: none; align-items: center; justify-content: center; background: var(--accent); color: white; font-size: 14px; font-weight: bold;">✓</span>
+            <span class="choice-tile__title">{{ city.display_name }}</span>
+            <span class="choice-tile__meta">{{ city.tz }}</span>
           </label>
         {% endfor %}
       </div>
-      <p class="city-selector__empty" data-empty-state hidden>Ничего не найдено. Попробуйте другой запрос.</p>
-      <div class="sr-only" data-city-live aria-live="polite"></div>
+      <p class="muted" data-multiselect-empty hidden>Совпадений не найдено</p>
+      <p class="form-note" style="margin-top: 12px; color: var(--muted); font-size: 13px;">💡 Совет: Кликните на несколько городов для выбора. Выбранные города будут подсвечены.</p>
     </div>
   {% endcall %}
+
+  {% call forms.field("Статус") %}
+    {{ forms.switch(id='active', name='active', value='1', checked=form_state.get('active', False), label='Активен') }}
+  {% endcall %}
 {% endcall %}
-
-<script type="module">
-import { initCitySelector } from "/static/js/modules/city-selector.js";
-import { installDirtyGuard } from "/static/js/modules/form-dirty-guard.js";
-
-const selectorRoot = document.querySelector('[data-city-selector]');
-if (selectorRoot) {
-  initCitySelector(selectorRoot);
-}
-
-const form = document.getElementById('recForm');
-if (form) {
-  installDirtyGuard(form, { message: 'Несохранённые изменения будут потеряны.' });
-}
-</script>
 {% endblock %}
+
+<script nonce="{{ request.state.csp_nonce }}">
+(function(){
+  const form = document.getElementById('recForm');
+  if (!form) return;
+  form.addEventListener('submit', ()=>{
+    window.requestAnimationFrame(()=>{ window.scrollTo(0, 0); });
+  });
+})();
+
+(function(){
+  const widgets = document.querySelectorAll('[data-multiselect]');
+  widgets.forEach((widget) => {
+    const search = widget.querySelector('[data-multiselect-search]');
+    const options = Array.from(widget.querySelectorAll('[data-filter]'));
+    const emptyHint = widget.querySelector('[data-multiselect-empty]');
+    const counter = widget.querySelector('[data-cities-counter]');
+    const checkboxes = Array.from(widget.querySelectorAll('[data-city-checkbox]'));
+
+    // Update counter and checkmarks
+    function updateSelection() {
+      const checkedCount = checkboxes.filter(cb => cb.checked).length;
+      if (counter) {
+        counter.textContent = checkedCount === 0 ? '0 выбрано' :
+                              checkedCount === 1 ? '1 выбран' :
+                              `${checkedCount} выбрано`;
+      }
+
+      // Update checkmarks visibility
+      checkboxes.forEach(cb => {
+        const label = cb.closest('.choice-tile');
+        const checkmark = label ? label.querySelector('.choice-tile__checkmark') : null;
+        if (checkmark) {
+          checkmark.style.display = cb.checked ? 'flex' : 'none';
+        }
+      });
+    }
+
+    // Listen to checkbox changes
+    checkboxes.forEach(cb => {
+      cb.addEventListener('change', updateSelection);
+    });
+
+    // Initial update
+    updateSelection();
+
+    // Search functionality
+    if (!search || !options.length) {
+      if (emptyHint) {
+        emptyHint.hidden = true;
+      }
+      return;
+    }
+    search.addEventListener('input', () => {
+      const term = search.value.trim().toLowerCase();
+      let visible = 0;
+      options.forEach((option) => {
+        const haystack = option.getAttribute('data-filter') || '';
+        const match = !term || haystack.indexOf(term) !== -1;
+        option.hidden = !match;
+        if (match) visible += 1;
+      });
+      if (emptyHint) {
+        emptyHint.hidden = visible !== 0;
+      }
+    });
+  });
+})();
+</script>

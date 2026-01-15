@@ -1,81 +1,68 @@
-from datetime import date as date_type
-from typing import Optional
+from datetime import datetime
+from typing import List, Optional
 
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.orm import selectinload
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import OperationalError
 
 from backend.apps.admin_ui.services.cities import (
     api_cities_payload,
     api_city_owners_payload,
+    get_city_capacity,
 )
 from backend.apps.admin_ui.services.dashboard import dashboard_counts
-from backend.apps.admin_ui.services.dashboard_calendar import (
-    dashboard_calendar_snapshot,
+from backend.apps.admin_ui.services.recruiters import (
+    RecruiterValidationError,
+    api_get_recruiter,
+    api_recruiters_payload,
+    build_recruiter_payload,
+    create_recruiter,
+    update_recruiter,
 )
-from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
-from backend.apps.admin_ui.services.slots.core import api_slots_payload, serialize_slot
+from backend.apps.admin_ui.services.slots import api_slots_payload
 from backend.apps.admin_ui.services.templates import api_templates_payload
-from backend.apps.admin_ui.utils import (
-    ensure_sequence,
-    parse_optional_int,
-    status_filter,
+from backend.apps.admin_ui.utils import parse_optional_int, status_filter
+from backend.apps.admin_ui.timezones import DEFAULT_TZ
+from backend.apps.admin_ui.services.candidates import api_candidate_detail_payload
+from backend.apps.admin_ui.services.notifications import notification_feed
+from backend.apps.admin_ui.services.chat import (
+    get_chat_templates,
+    list_chat_history,
+    send_chat_message as service_send_chat_message,
+    retry_chat_message,
 )
-from backend.core.db import async_session
+from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
+from backend.apps.admin_ui.security import require_csrf_token
 from backend.core.settings import get_settings
-from backend.domain.models import Slot, SlotStatus
 
 router = APIRouter(prefix="/api", tags=["api"])
 
 
-def _normalize_status_filters(values: Optional[list[str]]) -> list[str]:
-    normalized: list[str] = []
-    for raw in ensure_sequence(values):
-        candidate = (raw or "").strip()
-        if not candidate:
-            continue
-        lowered = candidate.lower()
-        if lowered == "free":
-            if "FREE" not in normalized:
-                normalized.append("FREE")
-            continue
-        if lowered == "booked":
-            for legacy in ("BOOKED", "CONFIRMED_BY_CANDIDATE"):
-                if legacy not in normalized:
-                    normalized.append(legacy)
-            continue
-        if lowered in {"cancelled", "canceled"}:
-            if "CANCELED" not in normalized:
-                normalized.append("CANCELED")
-            continue
-        if lowered == "expired":
-            # Derived status — filtered client-side.
-            continue
-        fallback = status_filter(candidate)
-        if fallback and fallback not in normalized:
-            normalized.append(fallback)
-    return normalized
+class RecruiterPayload(BaseModel):
+    name: str = Field(..., min_length=1)
+    tz: Optional[str] = Field(default=DEFAULT_TZ)
+    telemost: Optional[str] = None
+    tg_chat_id: Optional[int] = Field(default=None, ge=1)
+    active: Optional[bool] = True
+    city_ids: List[int] = Field(default_factory=list)
+
+    def tz_value(self) -> str:
+        value = (self.tz or DEFAULT_TZ).strip()
+        return value or DEFAULT_TZ
+
+    def chat_id_str(self) -> str:
+        return str(self.tg_chat_id) if self.tg_chat_id is not None else ""
+
+    def city_values(self) -> List[str]:
+        return [str(cid) for cid in self.city_ids if cid is not None]
 
 
-class CandidateUpdatePayload(BaseModel):
-    full_name: Optional[str] = Field(default=None, max_length=160)
-    phone: Optional[str] = Field(default=None, max_length=64)
-    email: Optional[str] = Field(default=None, max_length=255)
-    notes: Optional[str] = Field(default=None, max_length=2000)
-    booking_confirmed: Optional[bool] = None
+class ChatSendPayload(BaseModel):
+    text: Optional[str] = Field(default=None, max_length=2000)
+    template_key: Optional[str] = None
+    client_request_id: Optional[str] = Field(default=None, max_length=64)
 
-    @field_validator("full_name", "phone", "email", "notes", mode="before")
-    @classmethod
-    def _strip(cls, value: object) -> Optional[str]:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            text = value.strip()
-            return text or None
-        return str(value)
 
 @router.get("/health")
 async def api_health():
@@ -83,26 +70,107 @@ async def api_health():
     return counts
 
 
-@router.get("/dashboard/calendar")
-async def api_dashboard_calendar(
-    date: Optional[str] = Query(default=None),
-    days: int = Query(default=14, ge=1, le=60),
-):
-    target_date: Optional[date_type] = None
-    if date:
-        try:
-            target_date = date_type.fromisoformat(date)
-        except ValueError:
-            return JSONResponse(
-                {"ok": False, "error": "invalid_date"}, status_code=400
-            )
-    snapshot = await dashboard_calendar_snapshot(target_date, days=days)
-    return JSONResponse(snapshot)
-
-
 @router.get("/recruiters")
 async def api_recruiters():
     return JSONResponse(await api_recruiters_payload())
+
+
+@router.post("/recruiters", status_code=status.HTTP_201_CREATED)
+async def api_recruiters_create(
+    payload: RecruiterPayload, csrf_ok: None = Depends(require_csrf_token)
+):
+    try:
+        recruiter_data = build_recruiter_payload(
+            name=payload.name,
+            tz=payload.tz_value(),
+            telemost=payload.telemost or "",
+            tg_chat_id=payload.chat_id_str(),
+            active=payload.active if payload.active is not None else True,
+        )
+    except RecruiterValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"field": exc.field, "message": str(exc)},
+        ) from exc
+
+    result = await create_recruiter(recruiter_data, cities=payload.city_values())
+    if not result.get("ok"):
+        error_payload = result.get("error", {}) or {}
+        detail = {"message": error_payload.get("message", "Не удалось создать рекрутёра.")}
+        field = error_payload.get("field")
+        if field:
+            detail["field"] = field
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    recruiter_id = int(result.get("recruiter_id"))
+    resource = await api_get_recruiter(recruiter_id)
+    if resource is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"message": "Рекрутёр создан, но данные недоступны."},
+        )
+
+    response = JSONResponse(resource, status_code=status.HTTP_201_CREATED)
+    response.headers["Location"] = f"/api/recruiters/{recruiter_id}"
+    return response
+
+
+@router.put("/recruiters/{recruiter_id}")
+async def api_recruiters_update(
+    recruiter_id: int,
+    payload: RecruiterPayload,
+    csrf_ok: None = Depends(require_csrf_token),
+):
+    try:
+        recruiter_data = build_recruiter_payload(
+            name=payload.name,
+            tz=payload.tz_value(),
+            telemost=payload.telemost or "",
+            tg_chat_id=payload.chat_id_str(),
+            active=payload.active if payload.active is not None else True,
+        )
+    except RecruiterValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"field": exc.field, "message": str(exc)},
+        ) from exc
+
+    result = await update_recruiter(
+        recruiter_id,
+        recruiter_data,
+        cities=payload.city_values(),
+    )
+    if not result.get("ok"):
+        error_payload = result.get("error", {}) or {}
+        if error_payload.get("type") == "not_found":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"message": error_payload.get("message", "Рекрутёр не найден.")},
+            )
+        detail = {"message": error_payload.get("message", "Не удалось обновить рекрутёра.")}
+        field = error_payload.get("field")
+        if field:
+            detail["field"] = field
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    resource = await api_get_recruiter(recruiter_id)
+    if resource is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "Рекрутёр не найден."},
+        )
+    return JSONResponse(resource)
+
+
+@router.get("/recruiters/{recruiter_id}")
+async def api_recruiter_detail(recruiter_id: int):
+    resource = await api_get_recruiter(recruiter_id)
+    if resource is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "Рекрутёр не найден."},
+        )
+    return JSONResponse(resource)
 
 
 @router.get("/cities")
@@ -110,167 +178,33 @@ async def api_cities():
     return JSONResponse(await api_cities_payload())
 
 
+@router.get("/cities/{city_id}/capacity")
+async def api_city_capacity(city_id: int):
+    """Get slot capacity information for a specific city.
+
+    Returns:
+        JSON with has_available_slots, total_free_slots, and city info.
+        Returns 404 if city is not found.
+    """
+    capacity = await get_city_capacity(city_id)
+    if capacity is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "Город не найден"},
+        )
+    return JSONResponse(capacity)
+
+
 @router.get("/slots")
 async def api_slots(
     recruiter_id: Optional[str] = Query(default=None),
-    status: Optional[list[str]] = Query(default=None),
-    city_id: Optional[str] = Query(default=None),
-    purpose: Optional[list[str]] = Query(default=None),
-    date_from: Optional[str] = Query(default=None, alias="date_from"),
-    date_to: Optional[str] = Query(default=None, alias="date_to"),
-    date: Optional[str] = Query(default=None),
-    future: Optional[str] = Query(default=None),
-    free_only: Optional[str] = Query(default=None, alias="free_only"),
-    search: Optional[list[str]] = Query(default=None),
+    status: Optional[str] = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ):
     recruiter = parse_optional_int(recruiter_id)
-    statuses = _normalize_status_filters(status)
-    city_filter = parse_optional_int(city_id)
-    purpose_values = [item.lower() for item in ensure_sequence(purpose)]
-    date_start: Optional[date_type] = None
-    date_end: Optional[date_type] = None
-    if date_from:
-        try:
-            date_start = date_type.fromisoformat(date_from)
-        except ValueError:
-            date_start = None
-    if date_to:
-        try:
-            date_end = date_type.fromisoformat(date_to)
-        except ValueError:
-            date_end = None
-    if not date_start and not date_end and date:
-        try:
-            parsed = date_type.fromisoformat(date)
-            date_start = parsed
-            date_end = parsed
-        except ValueError:
-            date_start = None
-            date_end = None
-    tokens: list[str] = []
-    if search:
-        for chunk in search:
-            if not chunk:
-                continue
-            for part in chunk.split(','):
-                value = part.strip()
-                if value and value not in tokens:
-                    tokens.append(value)
-    future_only = (future or '').lower() in {'1', 'true', 'yes'}
-    free_only_flag = (free_only or '').lower() in {'1', 'true', 'yes'}
-    payload = await api_slots_payload(
-        recruiter,
-        statuses,
-        limit,
-        city_id=city_filter,
-        purposes=purpose_values,
-        date_from=date_start,
-        date_to=date_end,
-        search_tokens=tokens,
-        free_only=free_only_flag,
-        future_only=future_only,
-    )
+    status_norm = status_filter(status)
+    payload = await api_slots_payload(recruiter, status_norm, limit)
     return JSONResponse(payload)
-
-
-@router.get("/slots/{slot_id}")
-async def api_slot_detail(slot_id: int):
-    async with async_session() as session:
-        slot = await session.get(
-            Slot,
-            slot_id,
-            options=[selectinload(Slot.city), selectinload(Slot.recruiter)],
-        )
-        if slot is None:
-            raise HTTPException(status_code=404, detail="slot_not_found")
-        payload = serialize_slot(slot, now=datetime.now(timezone.utc))
-    return JSONResponse(payload)
-
-
-@router.patch("/slots/{slot_id}/candidate")
-async def api_slot_candidate_update(slot_id: int, payload: CandidateUpdatePayload):
-    async with async_session() as session:
-        slot = await session.get(
-            Slot,
-            slot_id,
-            options=[selectinload(Slot.city), selectinload(Slot.recruiter)],
-        )
-        if slot is None:
-            raise HTTPException(status_code=404, detail="slot_not_found")
-
-        if payload.full_name is not None:
-            slot.candidate_fio = payload.full_name
-        if payload.phone is not None:
-            slot.candidate_phone = payload.phone
-        if payload.email is not None:
-            slot.candidate_email = payload.email
-        if payload.notes is not None:
-            slot.candidate_notes = payload.notes
-        if payload.booking_confirmed is not None:
-            slot.booking_confirmed = bool(payload.booking_confirmed)
-
-        if slot.cancelled_at:
-            slot.status = SlotStatus.CANCELED
-        elif slot.booking_confirmed:
-            slot.status = SlotStatus.BOOKED
-        elif slot.candidate_fio:
-            slot.status = SlotStatus.BOOKED
-        else:
-            slot.status = SlotStatus.FREE
-
-        await session.commit()
-        await session.refresh(slot)
-        serialized = serialize_slot(slot, now=datetime.now(timezone.utc))
-
-    return JSONResponse({"ok": True, "slot": serialized})
-
-
-@router.post("/slots/{slot_id}/cancel")
-async def api_slot_cancel(slot_id: int):
-    async with async_session() as session:
-        slot = await session.get(
-            Slot,
-            slot_id,
-            options=[selectinload(Slot.city), selectinload(Slot.recruiter)],
-        )
-        if slot is None:
-            raise HTTPException(status_code=404, detail="slot_not_found")
-
-        now = datetime.now(timezone.utc)
-        slot.cancelled_at = now
-        slot.status = SlotStatus.CANCELED
-        await session.commit()
-        await session.refresh(slot)
-        serialized = serialize_slot(slot, now=now)
-
-    return JSONResponse({"ok": True, "slot": serialized})
-
-
-@router.post("/slots/{slot_id}/restore")
-async def api_slot_restore(slot_id: int):
-    async with async_session() as session:
-        slot = await session.get(
-            Slot,
-            slot_id,
-            options=[selectinload(Slot.city), selectinload(Slot.recruiter)],
-        )
-        if slot is None:
-            raise HTTPException(status_code=404, detail="slot_not_found")
-
-        slot.cancelled_at = None
-        if slot.booking_confirmed:
-            slot.status = SlotStatus.BOOKED
-        elif slot.candidate_fio:
-            slot.status = SlotStatus.BOOKED
-        else:
-            slot.status = SlotStatus.FREE
-
-        await session.commit()
-        await session.refresh(slot)
-        serialized = serialize_slot(slot, now=datetime.now(timezone.utc))
-
-    return JSONResponse({"ok": True, "slot": serialized})
 
 
 @router.get("/templates")
@@ -282,17 +216,79 @@ async def api_templates(city_id: Optional[int] = None, key: Optional[str] = None
     return JSONResponse(payload, status_code=status_code)
 
 
-@router.get("/kpis/current")
-async def api_weekly_kpis(company_tz: Optional[str] = Query(default=None)):
-    return JSONResponse(await get_weekly_kpis(company_tz))
+@router.get("/candidates/{candidate_id}")
+async def api_candidate_detail_view(candidate_id: int):
+    payload = await api_candidate_detail_payload(candidate_id)
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="candidate_not_found")
+    return JSONResponse(payload)
 
 
-@router.get("/kpis/history")
-async def api_weekly_history(
-    limit: int = Query(default=12, ge=1, le=104),
-    offset: int = Query(default=0, ge=0),
+@router.get("/candidates/{candidate_id}/chat")
+async def api_candidate_chat_messages(
+    candidate_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    before: Optional[str] = Query(default=None),
 ):
-    return JSONResponse(await list_weekly_history(limit=limit, offset=offset))
+    before_dt: Optional[datetime] = None
+    if before:
+        try:
+            before_dt = datetime.fromisoformat(before)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"message": "Некорректный формат параметра before"},
+            ) from exc
+    payload = await list_chat_history(candidate_id, limit, before_dt)
+    return JSONResponse(payload)
+
+
+@router.post("/candidates/{candidate_id}/chat")
+async def api_candidate_chat_send(
+    candidate_id: int,
+    payload: ChatSendPayload,
+    bot_service: BotService = Depends(provide_bot_service),
+    csrf_ok: None = Depends(require_csrf_token),
+):
+    text_value = (payload.text or "").strip()
+    if payload.template_key:
+        template = next(
+            (tpl for tpl in get_chat_templates() if tpl["key"] == payload.template_key),
+            None,
+        )
+        if template is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"message": "Неизвестный ключ шаблона"},
+            )
+        if not text_value:
+            text_value = template["text"]
+    if not text_value:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Сообщение не может быть пустым"},
+        )
+    settings = get_settings()
+    author_label = settings.admin_username or "admin"
+    result = await service_send_chat_message(
+        candidate_id,
+        text=text_value,
+        client_request_id=payload.client_request_id,
+        author_label=author_label,
+        bot_service=bot_service,
+    )
+    return JSONResponse(result)
+
+
+@router.post("/candidates/{candidate_id}/chat/{message_id}/retry")
+async def api_candidate_chat_retry(
+    candidate_id: int,
+    message_id: int,
+    bot_service: BotService = Depends(provide_bot_service),
+    csrf_ok: None = Depends(require_csrf_token),
+):
+    result = await retry_chat_message(candidate_id, message_id, bot_service=bot_service)
+    return JSONResponse(result)
 
 
 @router.get("/template_keys")
@@ -304,11 +300,36 @@ async def api_template_keys():
             "after_approval",
             "intro_day_reminder",
             "confirm_2h",
-            "reminder_1h",
             "followup_missed",
             "after_meeting",
             "slot_rejected",
         ]
+    )
+
+
+@router.get("/notifications/feed")
+async def api_notifications_feed(
+    request: Request,
+    after_id: Optional[int] = Query(default=None, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    if not getattr(request.app.state, "db_available", True):
+        return JSONResponse(
+            {"items": [], "latest_id": after_id, "degraded": True}
+        )
+    try:
+        items = await notification_feed(after_id, limit)
+    except OperationalError:
+        request.app.state.db_available = False
+        return JSONResponse(
+            {"items": [], "latest_id": after_id, "degraded": True}
+        )
+    latest_id = items[-1]["id"] if items else after_id
+    return JSONResponse(
+        {
+            "items": items,
+            "latest_id": latest_id,
+        }
     )
 
 
@@ -338,7 +359,9 @@ async def api_bot_integration_status(request: Request):
 
 
 @router.post("/bot/integration")
-async def api_bot_integration_update(request: Request):
+async def api_bot_integration_update(
+    request: Request, csrf_ok: None = Depends(require_csrf_token)
+):
     switch = getattr(request.app.state, "bot_integration_switch", None)
     if switch is None:
         return JSONResponse(

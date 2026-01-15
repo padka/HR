@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Шаблон #{{ tmpl.id }}{% endblock %}
 {% block content %}
 {% call forms.shell(
@@ -39,17 +39,16 @@
     {% call forms.field("Город", hint="Для глобального шаблона город не нужен.") %}
       <select id="city_id" name="city_id" {% if tmpl.is_global or (tmpl.city_id is none) %}disabled{% else %}required{% endif %}>
         {% for c in cities %}
-          <option value="{{ c.id }}" {% if c.id == tmpl.city_id %}selected{% endif %}>{{ c.name }} ({{ c.tz or "Europe/Moscow" }})</option>
+          <option value="{{ c.id }}" {% if c.id == tmpl.city_id %}selected{% endif %}>{{ c.display_name }} ({{ c.tz or "Europe/Moscow" }})</option>
         {% endfor %}
       </select>
     {% endcall %}
 
-    {% call forms.field("Ключ", hint="Ключ используют бот и админка для поиска нужного сообщения") %}
-      <input id="key" type="text" name="key" required value="{{ tmpl.key }}" placeholder="например: intro, confirm_2h, reminder_1h" list="key_suggestions">
+    {% call forms.field("Ключ", hint="Ключ используют бот и админка для поиска нужного сообщения", required=True) %}
+      <input id="key" type="text" name="key" required aria-required="true" value="{{ tmpl.key }}" placeholder="например: intro, confirm_2h, intro_day_reminder" list="key_suggestions">
       <datalist id="key_suggestions">
         <option value="invite_interview"></option>
         <option value="confirm_2h"></option>
-        <option value="reminder_1h"></option>
         <option value="after_meeting"></option>
         <option value="followup_missed"></option>
         <option value="slot_rejected"></option>
@@ -59,19 +58,21 @@
 
   {% call forms.section("Содержимое сообщения", span='full') %}
     {% call forms.note() %}Поддерживаются плейсхолдеры: имя, город, дата/время, контакты.{% endcall %}
-    {% call forms.field("Текст") %}
-      <textarea id="text" name="text" rows="14" required class="text-mono">{{ tmpl.text_field }}</textarea>
+    {% call forms.field("Текст", required=True) %}
+      <textarea id="text" name="text" rows="14" required aria-required="true" class="text-mono">{{ tmpl.text_field }}</textarea>
       {% call forms.note() %}Вставить плейсхолдер:{% endcall %}
       <div class="btn-group">
         {% raw %}
-        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{candidate_fio}}">{{candidate_fio}}</button>
-        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{city_name}}">{{city_name}}</button>
-        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{slot_date_local}}">{{slot_date_local}}</button>
-        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{slot_time_local}}">{{slot_time_local}}</button>
-        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{recruiter_name}}">{{recruiter_name}}</button>
-        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{recruiter_phone}}">{{recruiter_phone}}</button>
-        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{address}}">{{address}}</button>
-        <button class="btn btn-ghost btn-sm" type="button" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{candidate_fio}}">{{candidate_fio}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{city_name}}">{{city_name}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{slot_date_local}}">{{slot_date_local}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{slot_time_local}}">{{slot_time_local}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{recruiter_name}}">{{recruiter_name}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{recruiter_phone}}">{{recruiter_phone}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{address}}">{{address}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{intro_address}}">{{intro_address}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{intro_contact}}">{{intro_contact}}</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-role="insert-var" data-insert="{{whatsapp_link}}">{{whatsapp_link}}</button>
         {% endraw %}
       </div>
       {% call forms.meta() %}
@@ -117,11 +118,12 @@
   <h2 class="form-shell__section-title">Опасная зона</h2>
   <p class="form-shell__section-hint">Удаление шаблона безвозвратно.</p>
   <form method="post" action="/templates/{{ tmpl.id }}/delete" onsubmit="return confirm('Удалить шаблон безвозвратно?');" class="mt-sm">
-    <button type="submit" class="btn btn-danger">Удалить шаблон</button>
+    {{ csrf_input(request) }}
+    <button type="submit" class="btn btn--danger">Удалить шаблон</button>
   </form>
 </div>
 
-<script type="module">
+<script type="module" nonce="{{ request.state.csp_nonce }}">
 import { initTemplateEditor } from "/static/js/modules/template-editor.js";
 
 initTemplateEditor({

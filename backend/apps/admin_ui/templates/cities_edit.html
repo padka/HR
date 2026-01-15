@@ -1,0 +1,1137 @@
+{% extends "base.html" %}
+{% import "partials/form_shell.html" as forms with context %}
+{% block title %}Настройки города — {{ city.display_name }}{% endblock %}
+{% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'cities-edit';
+</script>
+{% set form_state = form_state or {} %}
+{% set template_values = form_state.get("templates") or {} %}
+{% set custom_count = namespace(value=0) %}
+{% for key, val in template_values.items() %}
+  {% if val and val.strip() %}
+    {% set custom_count.value = custom_count.value + 1 %}
+  {% endif %}
+{% endfor %}
+{% set selected_recruiters = form_state.get('recruiter_ids') or city.recruiters | map(attribute='id') | list %}
+<style>
+  .city-hero {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    padding: var(--space-4);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+    border: var(--border-w) solid var(--border);
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 24px;
+  }
+  .city-editor {
+    display: grid;
+    gap: 20px;
+  }
+  .city-editor .form-shell {
+    max-width: 100%;
+    width: 100%;
+  }
+  .city-templates {
+    grid-column: 1 / -1;
+  }
+  .city-hero__title {
+    font-size: 28px;
+    font-weight: 800;
+    margin: 0;
+  }
+  .city-hero__chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    width: 100%;
+  }
+  .city-chip {
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-2);
+    border: var(--border-w) solid var(--border);
+  }
+  .city-chip span {
+    font-size: 12px;
+    color: var(--muted);
+    display: block;
+  }
+  .city-chip strong {
+    display: block;
+    font-size: 18px;
+    margin-top: 4px;
+  }
+.city-edit-nav {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .city-edit-nav a,
+  .city-edit-nav button {
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-2);
+    font-size: 14px;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .city-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .city-template-editor {
+    display: grid;
+    gap: 16px;
+  }
+  .city-template-editor__header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .city-template-editor__title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .city-template-editor__subtitle {
+    margin: 4px 0 0;
+    color: var(--muted);
+  }
+  .city-template-editor__status {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .template-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--glass-stroke);
+    background: color-mix(in srgb, var(--surface) 80%, transparent);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .template-status-pill.is-dirty {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--glass-stroke));
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  .template-status-hint {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .city-template-editor__grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  .template-panel {
+    padding: 16px;
+    border-radius: var(--radius-lg);
+  }
+  .template-steps {
+    position: sticky;
+    top: 92px;
+    display: grid;
+    gap: 12px;
+  }
+  .template-steps__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .template-steps__title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .template-steps__search input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--field-border);
+    background: var(--field-bg);
+    color: var(--text);
+  }
+  .template-steps__list {
+    display: grid;
+    gap: 8px;
+  }
+  .template-step {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+    background: color-mix(in srgb, var(--surface) 85%, transparent);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.2s var(--transition-soft), transform 0.2s var(--transition-soft);
+  }
+  .template-step.is-active {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--glass-stroke));
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .template-step__title {
+    font-weight: 600;
+  }
+  .template-step__desc {
+    margin: 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .template-step__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .template-step__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    display: none;
+  }
+  .template-step.is-dirty .template-step__dot {
+    display: inline-block;
+  }
+  .template-step__badge {
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--glass-stroke);
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .template-step__badge.is-danger {
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--glass-stroke));
+    color: var(--danger);
+  }
+  .template-workspace {
+    display: grid;
+    gap: 16px;
+    min-height: 520px;
+  }
+  .template-workspace__content {
+    display: grid;
+    gap: 16px;
+  }
+  .template-workspace__header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .template-workspace__title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .template-workspace__desc {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .template-workspace__actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .template-tabs {
+    display: inline-flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .template-tab {
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--glass-stroke);
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .template-tab.is-active {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--glass-stroke));
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .template-tab-panel {
+    display: none;
+  }
+  .template-tab-panel.is-active {
+    display: block;
+  }
+  .template-editor-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(200px, 240px);
+    gap: 16px;
+    align-items: start;
+  }
+  .template-editor-panel {
+    display: grid;
+    gap: 12px;
+  }
+  .template-editor-panel textarea {
+    width: 100%;
+    min-height: 320px;
+    padding: 14px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--field-border);
+    background: var(--field-bg);
+    color: var(--text);
+    resize: vertical;
+  }
+  .template-editor-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .template-vars {
+    display: grid;
+    gap: 10px;
+  }
+  .template-vars__title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .template-vars__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .template-var {
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--glass-stroke);
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .template-preview {
+    display: grid;
+    gap: 12px;
+  }
+  .template-preview__bubble {
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid var(--glass-stroke);
+    background: color-mix(in srgb, var(--surface) 80%, transparent);
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .template-preview__bubble span {
+    font-family: var(--font-mono);
+    color: var(--accent);
+  }
+  .template-warnings {
+    display: grid;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--glass-stroke));
+    background: color-mix(in srgb, var(--warning) 14%, transparent);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .template-toast {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    padding: 12px 16px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--success) 40%, var(--glass-stroke));
+    background: color-mix(in srgb, var(--success) 16%, transparent);
+    font-size: 13px;
+    box-shadow: var(--shadow-sm);
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.2s var(--transition-soft), transform 0.2s var(--transition-soft);
+    pointer-events: none;
+    z-index: 20;
+  }
+  .template-toast.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .template-empty {
+    text-align: center;
+    padding: 24px;
+    color: var(--muted);
+  }
+  .template-mobile-toggle {
+    display: none;
+    gap: 8px;
+  }
+  .template-mobile-toggle button {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--glass-stroke);
+    background: color-mix(in srgb, var(--surface) 80%, transparent);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .template-mobile-toggle button.is-active {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--glass-stroke));
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .city-template-editor[data-loading="true"] .template-steps__list,
+  .city-template-editor[data-loading="true"] .template-workspace__content {
+    visibility: hidden;
+  }
+  .template-skeleton {
+    display: none;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-stroke);
+    padding: 16px;
+    min-height: 180px;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface) 90%, transparent), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease infinite;
+  }
+  .city-template-editor[data-loading="true"] .template-skeleton {
+    display: block;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (max-width: 980px) {
+    .city-template-editor__grid {
+      grid-template-columns: 1fr;
+    }
+    .template-steps {
+      position: relative;
+      top: 0;
+    }
+    .template-editor-grid {
+      grid-template-columns: 1fr;
+    }
+    .template-mobile-toggle {
+      display: flex;
+    }
+    .city-template-editor[data-mobile-view="steps"] .template-workspace {
+      display: none;
+    }
+    .city-template-editor[data-mobile-view="editor"] .template-steps {
+      display: none;
+    }
+  }
+  .city-plan-pills {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .city-plan-pills button {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.05);
+    color: var(--fg);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .city-plan-pills button:hover {
+    border-color: rgba(99,102,241,0.6);
+    background: rgba(99,102,241,0.15);
+  }
+  .form-field--minimal .form-field__label {
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .form-field--minimal .form-field__surface {
+    border-radius: 16px;
+  }
+</style>
+{% if success_message %}
+  <div class="surface glass grain alert" data-tone="success" role="status">
+    {{ success_message }}
+  </div>
+{% endif %}
+{% if form_error %}
+  <div class="surface glass grain alert" data-tone="danger" role="alert">
+    {{ form_error }}
+  </div>
+{% endif %}
+<div class="city-editor">
+<div class="city-hero">
+  <div style="flex:1 1 240px; min-width: 240px;">
+    <p class="muted" style="margin:0 0 4px;">Город</p>
+    <h1 class="city-hero__title">{{ city.display_name }}</h1>
+    <p class="muted">ID #{{ city.id }} · {{ "Активен" if form_state.get("active", city.active) else "В архиве" }}</p>
+  </div>
+  <div class="city-hero__chips">
+    <div class="city-chip">
+      <span>Таймзона</span>
+      <strong>{{ form_state.get('tz', city.tz) }}</strong>
+    </div>
+    <div class="city-chip">
+      {% set unique_recs = (city.recruiters or []) | unique(attribute='id') | list %}
+      {% set rec_names = unique_recs | map(attribute='name') | list %}
+      <span>Ответственные</span>
+      <strong>{{ rec_names|join(", ") if rec_names else "Не назначены" }}</strong>
+    </div>
+    <div class="city-chip">
+      <span>Шаблоны</span>
+      <strong>{{ custom_count.value }} / {{ stage_meta|length }}</strong>
+    </div>
+    <div class="city-chip">
+      <span>Привязанных рекрутёров</span>
+      <strong>{{ unique_recs|length }}</strong>
+    </div>
+  </div>
+</div>
+<div class="city-edit-nav">
+  <a href="#city-general">Основные</a>
+  <a href="#city-templates">Шаблоны</a>
+  <form action="/cities/{{ city.id }}/delete" method="post" style="margin:0;" onsubmit="return confirm('Удалить город {{ city.display_name }}? Это действие нельзя отменить.');">
+    {{ csrf_input(request) }}
+    <button type="submit" class="btn btn--danger">Удалить город</button>
+  </form>
+</div>
+{% call forms.shell(
+  title="Настройки города",
+  description="",
+  form_id="citySettingsForm",
+  action="/cities/" ~ city.id ~ "/edit",
+  method="post",
+  back_href="/cities",
+  back_label="К списку городов",
+  actions=[
+    {"type": "submit", "text": "Сохранить", "variant": "primary"},
+    {"href": "/cities", "text": "Отмена", "variant": "ghost"}
+  ],
+  meta=[city.display_name]
+) %}
+  <div id="city-general">
+    {% call forms.section("Основные") %}
+      <div class="city-form-grid">
+        {% call forms.field("Название") %}
+          <input type="text" name="name" value="{{ form_state.get('name', city.display_name) }}" required aria-required="true">
+        {% endcall %}
+
+        {% call forms.field("Ответственные рекрутёры") %}
+          {% set selected_list = selected_recruiters %}
+          <select name="recruiter_ids" id="recruiter_ids" multiple>
+            {% for row in recruiter_rows %}
+              {% set rec = row.rec %}
+              <option value="{{ rec.id }}" {% if rec.id in selected_list %}selected{% endif %}>{{ rec.name }}</option>
+            {% endfor %}
+          </select>
+          <p class="muted" style="margin:4px 0 0;">Можно выбрать нескольких.</p>
+        {% endcall %}
+
+        {% call forms.field("Часовой пояс", required=True) %}
+          <input type="text"
+                 name="tz"
+                 value="{{ form_state.get('tz', city.tz) }}"
+                 list="tz-list"
+                 required
+                 aria-required="true">
+          <datalist id="tz-list">
+            <option value="Europe/Moscow"></option>
+            <option value="Europe/Samara"></option>
+            <option value="Europe/Kaliningrad"></option>
+            <option value="Asia/Yekaterinburg"></option>
+            <option value="Asia/Novosibirsk"></option>
+            <option value="Asia/Krasnoyarsk"></option>
+            <option value="Asia/Irkutsk"></option>
+            <option value="Asia/Vladivostok"></option>
+            <option value="Asia/Almaty"></option>
+            <option value="Europe/Minsk"></option>
+          </datalist>
+        {% endcall %}
+
+        {% call forms.field("Активность", inline=True) %}
+          {% call forms.switch(name="active", value="1", checked=form_state.get("active", city.active)) %}
+            Активен
+          {% endcall %}
+        {% endcall %}
+
+        {% call forms.field("План, неделя") %}
+          <input type="number" name="plan_week" min="0" value="{{ form_state.get('plan_week', '') }}" data-plan-field="plan_week">
+        {% endcall %}
+        <div class="city-plan-pills" data-plan-preset="plan_week">
+          <button type="button" data-value="5">5</button>
+          <button type="button" data-value="10">10</button>
+          <button type="button" data-value="20">20</button>
+        </div>
+
+        {% call forms.field("План, месяц") %}
+          <input type="number" name="plan_month" min="0" value="{{ form_state.get('plan_month', '') }}" data-plan-field="plan_month">
+        {% endcall %}
+        <div class="city-plan-pills" data-plan-preset="plan_month">
+          <button type="button" data-value="30">30</button>
+          <button type="button" data-value="60">60</button>
+          <button type="button" data-value="100">100</button>
+        </div>
+      </div>
+
+      {% call forms.field("Фильтр") %}
+        <textarea name="criteria" rows="3">{{ form_state.get('criteria', '') }}</textarea>
+      {% endcall %}
+
+      {% call forms.field("Контакты") %}
+        <textarea name="experts" rows="3">{{ form_state.get('experts', '') }}</textarea>
+      {% endcall %}
+    {% endcall %}
+  </div>
+
+  <div id="city-templates" class="city-templates">
+    {% call forms.section("Шаблоны сообщений", span='full') %}
+      <div class="city-template-editor"
+           data-template-editor
+           data-loading="false"
+           data-mobile-view="editor"
+           data-allowed-vars="{{ template_vars | map(attribute='name') | join(',') }}"
+           data-preview-context='{{ template_preview_context | tojson }}'>
+        <div class="city-template-editor__header">
+          <div>
+            <h2 class="city-template-editor__title">Редактор шаблонов города</h2>
+            <p class="city-template-editor__subtitle">Управляйте текстами шагов и напоминаний для {{ city.display_name }}.</p>
+          </div>
+          <div class="city-template-editor__status">
+            <span class="template-status-pill" data-save-status>Сохранено</span>
+            <span class="template-status-hint" data-save-hint>Все изменения применены.</span>
+          </div>
+        </div>
+        <div class="template-mobile-toggle" data-mobile-toggle>
+          <button type="button" data-mobile-target="steps">Шаги</button>
+          <button type="button" class="is-active" data-mobile-target="editor">Редактор</button>
+        </div>
+        <div class="city-template-editor__grid">
+          <aside class="surface glass grain template-panel template-steps">
+            <div class="template-steps__header">
+              <div>
+                <h3 class="template-steps__title">Шаги</h3>
+                <p class="muted" style="margin:4px 0 0;">{{ stage_meta|length }} шаблона</p>
+              </div>
+              <button type="button" class="btn btn--primary btn--sm" data-add-step disabled title="Шаги фиксированы текущей логикой бота">
+                + Добавить шаг
+              </button>
+            </div>
+            <div class="template-steps__search">
+              <input type="search" placeholder="Поиск по шагам или тексту" aria-label="Поиск шаблонов" data-step-search>
+            </div>
+            <div class="template-steps__list" data-step-list role="list">
+              {% for stage in stage_meta %}
+                {% set field_value = template_values.get(stage.key, '') %}
+                {% set is_custom = field_value and field_value.strip() %}
+                <button type="button"
+                        class="template-step interactive glass-hover pressable focus-ring{% if loop.first %} is-active{% endif %}"
+                        data-step-key="{{ stage.key }}"
+                        data-step-title="{{ stage.title }}"
+                        data-step-description="{{ stage.description }}"
+                        aria-pressed="{{ 'true' if loop.first else 'false' }}">
+                  <div class="template-step__title">{{ stage.title }}</div>
+                  <p class="template-step__desc">{{ stage.description }}</p>
+                  <div class="template-step__meta">
+                    <span class="template-step__dot" aria-hidden="true"></span>
+                    <span class="template-step__badge">Шаг {{ loop.index }}</span>
+                    <span class="template-step__badge" data-step-state>
+                      {{ "Городской" if is_custom else "Глобальный" }}
+                    </span>
+                  </div>
+                </button>
+              {% endfor %}
+            </div>
+            <div class="template-empty" data-step-empty hidden>Шаблонов нет. Создайте первый шаг.</div>
+            <div class="template-skeleton" aria-hidden="true"></div>
+          </aside>
+          <section class="surface glass grain template-panel template-workspace">
+            <div class="template-skeleton" aria-hidden="true"></div>
+            <div class="template-workspace__content">
+              <header class="template-workspace__header">
+                <div>
+                  <h3 class="template-workspace__title" data-active-title>
+                    {{ stage_meta[0].title if stage_meta else "Шаблон" }}
+                  </h3>
+                  <p class="template-workspace__desc" data-active-desc>
+                    {{ stage_meta[0].description if stage_meta else "" }}
+                  </p>
+                </div>
+                <div class="template-workspace__actions">
+                  <button type="button" class="btn btn--ghost" data-reset-step>Отменить</button>
+                  <button type="button" class="btn btn--ghost" data-fill-global>Заполнить глобальным</button>
+                  <button type="button" class="btn btn--danger" data-clear-step>Удалить текст</button>
+                  <button type="submit" class="btn btn--primary" form="citySettingsForm">Сохранить</button>
+                </div>
+            </header>
+            <div class="template-tabs" role="tablist">
+              <button type="button" class="template-tab interactive pressable focus-ring is-active" data-tab="editor">Редактор</button>
+              <button type="button" class="template-tab interactive pressable focus-ring" data-tab="preview">Предпросмотр</button>
+            </div>
+              <div class="template-tab-panel is-active" data-tab-panel="editor">
+                <div class="template-editor-grid">
+                  <div class="template-editor-panel">
+                    {% for stage in stage_meta %}
+                      {% set field_value = template_values.get(stage.key, '') %}
+                      {% set global_value = (global_templates.get(stage.key) or stage.default_text or '') %}
+                      <div data-step-panel="{{ stage.key }}"{% if not loop.first %} hidden{% endif %}>
+                        <textarea id="template_{{ stage.key }}"
+                                  name="template_{{ stage.key }}"
+                                  form="citySettingsForm"
+                                  rows="10"
+                                  data-default='{{ global_value | tojson }}'
+                                  data-step-label="{{ stage.title }}"
+                                  placeholder="Введите текст для шага">{{ field_value }}</textarea>
+                        <div class="template-editor-tools">
+                          <button type="button" class="btn btn--ghost btn--sm" data-copy-template>Скопировать текст</button>
+                          <span class="template-step__badge" data-char-count>0 символов</span>
+                        </div>
+                      </div>
+                    {% endfor %}
+                    <div class="template-warnings" data-warnings hidden></div>
+                  </div>
+                  <aside class="template-vars">
+                    <div class="template-vars__title">Переменные</div>
+                    <div class="template-vars__list" data-vars>
+                      {% for var in template_vars %}
+                      <button type="button"
+                              class="template-var text-mono interactive pressable focus-ring"
+                              title="{{ var.label }}"
+                              data-insert="{{ '{' ~ var.name ~ '}' }}">{{ '{' ~ var.name ~ '}' }}</button>
+                    {% endfor %}
+                    </div>
+                    <p class="muted" style="margin:0;">Клик вставит переменную в активный текст.</p>
+                  </aside>
+                </div>
+              </div>
+              <div class="template-tab-panel" data-tab-panel="preview">
+                <div class="template-preview">
+                  <div class="template-preview__bubble" data-preview></div>
+                  <div class="template-warnings" data-preview-warnings hidden></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    {% endcall %}
+  </div>
+
+{% endcall %}
+
+<div class="template-toast" id="template-toast" role="status" aria-live="polite"{% if not success_message %} hidden{% endif %}>
+  {{ success_message or "Сохранено" }}
+</div>
+</div>
+
+<script type="module" nonce="{{ request.state.csp_nonce }}">
+(() => {
+  const editor = document.querySelector('[data-template-editor]');
+  if (!editor) return;
+  editor.dataset.loading = 'true';
+
+  const steps = Array.from(editor.querySelectorAll('[data-step-key]'));
+  const panels = Array.from(editor.querySelectorAll('[data-step-panel]'));
+  const tabs = Array.from(editor.querySelectorAll('[data-tab]'));
+  const tabPanels = Array.from(editor.querySelectorAll('[data-tab-panel]'));
+  const statusPill = editor.querySelector('[data-save-status]');
+  const statusHint = editor.querySelector('[data-save-hint]');
+  const activeTitle = editor.querySelector('[data-active-title]');
+  const activeDesc = editor.querySelector('[data-active-desc]');
+  const warnings = editor.querySelector('[data-warnings]');
+  const previewWarnings = editor.querySelector('[data-preview-warnings]');
+  const previewBox = editor.querySelector('[data-preview]');
+  const searchInput = editor.querySelector('[data-step-search]');
+  const stepEmpty = editor.querySelector('[data-step-empty]');
+  const resetBtn = editor.querySelector('[data-reset-step]');
+  const fillBtn = editor.querySelector('[data-fill-global]');
+  const clearBtn = editor.querySelector('[data-clear-step]');
+  const mobileToggle = editor.querySelector('[data-mobile-toggle]');
+  const toast = document.getElementById('template-toast');
+  const allowedVars = new Set(
+    (editor.dataset.allowedVars || '')
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean)
+  );
+  const previewContext = (() => {
+    const raw = editor.dataset.previewContext || '{}';
+    let parsed = {};
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      parsed = {};
+    }
+    const ctx = { ...parsed };
+    if (!ctx.candidate_name && ctx.candidate_fio) ctx.candidate_name = ctx.candidate_fio;
+    if (!ctx.candidate_fio && ctx.candidate_name) ctx.candidate_fio = ctx.candidate_name;
+    if (!ctx.slot_datetime_local && ctx.dt_local) ctx.slot_datetime_local = ctx.dt_local;
+    if (!ctx.dt_local && ctx.slot_datetime_local) ctx.dt_local = ctx.slot_datetime_local;
+    if (!ctx.dt && ctx.dt_local) ctx.dt = ctx.dt_local;
+    if (!ctx.interview_dt_hint) {
+      ctx.interview_dt_hint = ctx.dt_local || ctx.slot_datetime_local || '';
+    }
+    return ctx;
+  })();
+  let isSubmitting = false;
+
+  const panelByKey = new Map();
+  const textareaByKey = new Map();
+  panels.forEach(panel => {
+    const key = panel.dataset.stepPanel;
+    if (!key) return;
+    panelByKey.set(key, panel);
+    const textarea = panel.querySelector('textarea');
+    if (textarea) {
+      textareaByKey.set(key, textarea);
+    }
+  });
+
+  const initialValues = new Map();
+  textareaByKey.forEach((textarea, key) => {
+    initialValues.set(key, textarea.value);
+  });
+
+  let activeKey = steps[0]?.dataset.stepKey || null;
+
+  function escapeHtml(text) {
+    return (text || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function getActiveTextarea() {
+    return activeKey ? textareaByKey.get(activeKey) : null;
+  }
+
+  function getDefaultValue(textarea) {
+    const raw = textarea?.dataset.default;
+    if (!raw) return '';
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      return raw;
+    }
+  }
+
+  function updateCharCount() {
+    const panel = activeKey ? panelByKey.get(activeKey) : null;
+    if (!panel) return;
+    const counter = panel.querySelector('[data-char-count]');
+    const textarea = panel.querySelector('textarea');
+    if (!counter || !textarea) return;
+    const length = (textarea.value || '').length;
+    counter.textContent = `${length} символов`;
+    counter.classList.toggle('is-danger', length > 4096);
+  }
+
+  function updateStepState(key) {
+    const step = steps.find(item => item.dataset.stepKey === key);
+    const textarea = textareaByKey.get(key);
+    if (!step || !textarea) return;
+    const state = step.querySelector('[data-step-state]');
+    const hasCustom = Boolean((textarea.value || '').trim());
+    if (state) {
+      state.textContent = hasCustom ? 'Городской' : 'Глобальный';
+    }
+  }
+
+  function updateDirtyState() {
+    let dirty = false;
+    textareaByKey.forEach((textarea, key) => {
+      const isDirty = (textarea.value || '') !== (initialValues.get(key) || '');
+      const step = steps.find(item => item.dataset.stepKey === key);
+      if (step) {
+        step.classList.toggle('is-dirty', isDirty);
+      }
+      if (isDirty) dirty = true;
+    });
+    if (statusPill) {
+      statusPill.textContent = dirty ? 'Есть изменения' : 'Сохранено';
+      statusPill.classList.toggle('is-dirty', dirty);
+    }
+    if (statusHint) {
+      statusHint.textContent = dirty
+        ? 'Не забудьте сохранить изменения.'
+        : 'Все изменения применены.';
+    }
+    return dirty;
+  }
+
+  function updateWarnings() {
+    const textarea = getActiveTextarea();
+    if (!textarea) return;
+    const text = textarea.value || '';
+    const unknown = new Set();
+    const regex = /{([a-zA-Z0-9_]+)}/g;
+    let match = null;
+    while ((match = regex.exec(text)) !== null) {
+      if (!allowedVars.has(match[1])) {
+        unknown.add(match[1]);
+      }
+    }
+    const messages = [];
+    if (unknown.size) {
+      messages.push(`Неизвестные переменные: ${Array.from(unknown).join(', ')}`);
+    }
+    if (text.length > 4096) {
+      messages.push('Текст длиннее 4096 символов — Telegram может обрезать сообщение.');
+    }
+    const target = warnings;
+    const previewTarget = previewWarnings;
+    if (target) {
+      target.hidden = messages.length === 0;
+      target.textContent = messages.join(' ');
+    }
+    if (previewTarget) {
+      previewTarget.hidden = messages.length === 0;
+      previewTarget.textContent = messages.join(' ');
+    }
+  }
+
+  function updatePreview() {
+    if (!previewBox) return;
+    const textarea = getActiveTextarea();
+    const text = textarea ? textarea.value : '';
+    if (!text) {
+      previewBox.innerHTML = '<span class="muted">Пустой шаблон.</span>';
+      return;
+    }
+    const escaped = escapeHtml(text);
+    const rendered = escaped.replace(
+      /{([a-zA-Z0-9_]+)}/g,
+      (_, name) => {
+        const value = previewContext[name];
+        if (value === undefined || value === null || value === '') {
+          return `<span>{${name}}</span>`;
+        }
+        return escapeHtml(String(value));
+      }
+    );
+    previewBox.innerHTML = rendered.replace(/\n/g, '<br>');
+  }
+
+  function setActive(key) {
+    if (!key) return;
+    activeKey = key;
+    steps.forEach(step => {
+      const isActive = step.dataset.stepKey === key;
+      step.classList.toggle('is-active', isActive);
+      step.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+    panelByKey.forEach((panel, panelKey) => {
+      panel.hidden = panelKey !== key;
+    });
+    const step = steps.find(item => item.dataset.stepKey === key);
+    if (step && activeTitle) activeTitle.textContent = step.dataset.stepTitle || '';
+    if (step && activeDesc) activeDesc.textContent = step.dataset.stepDescription || '';
+    updateCharCount();
+    updatePreview();
+    updateWarnings();
+  }
+
+  steps.forEach(step => {
+    step.addEventListener('click', () => {
+      setActive(step.dataset.stepKey);
+      if (editor.dataset.mobileView === 'steps') {
+        editor.dataset.mobileView = 'editor';
+        if (mobileToggle) {
+          mobileToggle.querySelectorAll('button').forEach(btn => {
+            btn.classList.toggle('is-active', btn.dataset.mobileTarget === 'editor');
+          });
+        }
+      }
+    });
+  });
+
+  textareaByKey.forEach((textarea, key) => {
+    textarea.addEventListener('input', () => {
+      updateStepState(key);
+      updateDirtyState();
+      updateCharCount();
+      updatePreview();
+      updateWarnings();
+    });
+  });
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(item => item.classList.remove('is-active'));
+      tabPanels.forEach(panel => panel.classList.remove('is-active'));
+      tab.classList.add('is-active');
+      const target = tab.dataset.tab;
+      const panel = editor.querySelector(`[data-tab-panel="${target}"]`);
+      if (panel) panel.classList.add('is-active');
+      updatePreview();
+    });
+  });
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      const query = (searchInput.value || '').toLowerCase().trim();
+      let visible = 0;
+      steps.forEach(step => {
+        const key = step.dataset.stepKey;
+        const title = (step.dataset.stepTitle || '').toLowerCase();
+        const desc = (step.dataset.stepDescription || '').toLowerCase();
+        const textarea = key ? textareaByKey.get(key) : null;
+        const text = (textarea?.value || '').toLowerCase();
+        const matches = !query || title.includes(query) || desc.includes(query) || text.includes(query);
+        step.style.display = matches ? '' : 'none';
+        if (matches) visible += 1;
+      });
+      if (stepEmpty) {
+        stepEmpty.hidden = visible !== 0;
+      }
+    });
+  }
+
+  const varsContainer = editor.querySelector('[data-vars]');
+  if (varsContainer) {
+    varsContainer.addEventListener('click', event => {
+      const target = event.target.closest('[data-insert]');
+      if (!target) return;
+      const textarea = getActiveTextarea();
+      if (!textarea) return;
+      const value = target.dataset.insert || '';
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const end = textarea.selectionEnd ?? textarea.value.length;
+      const before = textarea.value.slice(0, start);
+      const after = textarea.value.slice(end);
+      textarea.value = before + value + after;
+      const pos = start + value.length;
+      textarea.selectionStart = textarea.selectionEnd = pos;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.focus();
+    });
+  }
+
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      if (!activeKey) return;
+      const textarea = textareaByKey.get(activeKey);
+      if (!textarea) return;
+      textarea.value = initialValues.get(activeKey) || '';
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  if (fillBtn) {
+    fillBtn.addEventListener('click', () => {
+      const textarea = getActiveTextarea();
+      if (!textarea) return;
+      const fallback = getDefaultValue(textarea);
+      textarea.value = fallback;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      const textarea = getActiveTextarea();
+      if (!textarea) return;
+      const ok = window.confirm('Очистить текст для этого шага?');
+      if (!ok) return;
+      textarea.value = '';
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  editor.querySelectorAll('[data-copy-template]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const textarea = getActiveTextarea();
+      if (!textarea) return;
+      const text = textarea.value || '';
+      try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = 'Скопировано';
+        setTimeout(() => (button.textContent = 'Скопировать текст'), 1500);
+      } catch (err) {
+        console.warn('Clipboard unavailable', err);
+      }
+    });
+  });
+
+  if (mobileToggle) {
+    mobileToggle.addEventListener('click', event => {
+      const target = event.target.closest('[data-mobile-target]');
+      if (!target) return;
+      editor.dataset.mobileView = target.dataset.mobileTarget;
+      mobileToggle.querySelectorAll('button').forEach(btn => {
+        btn.classList.toggle('is-active', btn === target);
+      });
+    });
+  }
+
+  const form = document.getElementById('citySettingsForm');
+  if (form) {
+    form.addEventListener('submit', () => {
+      isSubmitting = true;
+      if (!statusPill) return;
+      statusPill.textContent = 'Сохраняю...';
+      statusPill.classList.remove('is-dirty');
+      if (statusHint) statusHint.textContent = 'Подождите, сохраняем изменения.';
+    });
+  }
+
+  window.addEventListener('beforeunload', (event) => {
+    if (isSubmitting) return;
+    const dirty = updateDirtyState();
+    if (!dirty) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
+  if (toast && !toast.hasAttribute('hidden')) {
+    toast.classList.add('is-visible');
+    setTimeout(() => {
+      toast.classList.remove('is-visible');
+    }, 2200);
+  }
+
+  if (!steps.length) {
+    if (stepEmpty) stepEmpty.hidden = false;
+    editor.dataset.loading = 'false';
+    return;
+  }
+
+  updateDirtyState();
+  updateCharCount();
+  updatePreview();
+  updateWarnings();
+  if (activeKey) setActive(activeKey);
+  editor.dataset.loading = 'false';
+})();
+
+(() => {
+  document.querySelectorAll('[data-plan-preset]').forEach(group => {
+    const targetName = group.getAttribute('data-plan-preset');
+    const field = document.querySelector(`[data-plan-field="${targetName}"]`);
+    if (!field) return;
+    group.querySelectorAll('button[data-value]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        field.value = btn.getAttribute('data-value');
+      });
+    });
+  });
+})();
+</script>
+{% endblock %}

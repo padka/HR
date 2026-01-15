@@ -152,15 +152,14 @@ async def test_kb_recruiters_filters_by_city():
         rec2 = models.Recruiter(name="Дальний", tz="Europe/Samara", active=True)
         city1 = models.City(name="Москва", tz="Europe/Moscow", active=True)
         city2 = models.City(name="Самара", tz="Europe/Samara", active=True)
+        rec1.cities.append(city1)
+        rec2.cities.append(city2)
         session.add_all([rec1, rec2, city1, city2])
         await session.commit()
         await session.refresh(rec1)
         await session.refresh(rec2)
         await session.refresh(city1)
         await session.refresh(city2)
-        city1.responsible_recruiter_id = rec1.id
-        city2.responsible_recruiter_id = rec2.id
-        await session.commit()
 
         now = datetime.now(timezone.utc)
         session.add_all(

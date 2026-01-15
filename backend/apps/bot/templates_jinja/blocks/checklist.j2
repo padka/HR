@@ -1,0 +1,9 @@
+{# Чек-лист с заголовком #}
+
+{% macro render(title, items) -%}
+⚡ <b>{{ title }}:</b>
+
+{% for item in items -%}
+✓ {{ item }}
+{% endfor %}
+{%- endmacro %}

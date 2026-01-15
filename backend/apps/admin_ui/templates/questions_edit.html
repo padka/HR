@@ -1,7 +1,10 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Редактирование вопроса{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'questions-edit';
+</script>
 {% call forms.shell(
   title="Редактирование вопроса",
   description="Измените параметры и текст вопроса.",
@@ -22,15 +25,15 @@
 
   {% call forms.section("Общие параметры") %}
     <div class="form-grid form-grid--three">
-      {% call forms.field("Тест") %}
-        <select name="test_id" required>
+      {% call forms.field("Тест", required=True) %}
+        <select name="test_id" required aria-required="true">
           {% for key, label in detail.test_choices %}
             <option value="{{ key }}" {% if key == detail.question.test_id %}selected{% endif %}>{{ label }} ({{ key }})</option>
           {% endfor %}
         </select>
       {% endcall %}
-      {% call forms.field("Порядковый номер") %}
-        <input type="number" name="question_index" min="1" value="{{ detail.question.question_index }}" required>
+      {% call forms.field("Порядковый номер", required=True) %}
+        <input type="number" name="question_index" min="1" value="{{ detail.question.question_index }}" required aria-required="true">
       {% endcall %}
       {% call forms.field("Статус") %}
         {{ forms.switch(name='is_active', value='1', checked=detail.question.is_active, label='Вопрос активен') }}
@@ -43,7 +46,7 @@
   {% endcall %}
 
   {% call forms.section("Данные вопроса") %}
-    {% call forms.field("JSON", hint="Структура должна соответствовать формату, который использует бот.") %}
+    {% call forms.field("JSON", hint="Структура должна соответствовать формату, который использует бот.", required=True) %}
       <div class="payload-toolbar">
         <button class="btn btn-soft btn-sm" type="button" id="btn-format-json">Форматировать JSON</button>
         <button class="btn btn-ghost btn-sm" type="button" id="btn-template-choice">Шаблон «Варианты»</button>
@@ -102,7 +105,7 @@
         </div>
       </div>
 
-      <textarea name="payload" id="payload-editor" rows="18" class="text-mono" required spellcheck="false">{{ detail.payload_json }}</textarea>
+      <textarea name="payload" id="payload-editor" rows="18" class="text-mono" required aria-required="true" spellcheck="false">{{ detail.payload_json }}</textarea>
       <p class="payload-status" id="payload-status" aria-live="polite"></p>
       <div class="payload-preview" id="payload-preview" aria-live="polite" aria-atomic="true"></div>
       {% call forms.note() %}Поддерживаются ключи <code>prompt</code>, <code>options</code>, <code>correct</code>, <code>validation</code>, <code>hints</code> и др. Некорректный JSON не позволит сохранить изменения.{% endcall %}
@@ -137,7 +140,7 @@
 
 
 {% raw %}
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 (function(){
   const $ = (s, r=document)=>r.querySelector(s);
   const editor = $('#payload-editor');

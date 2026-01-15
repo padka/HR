@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
 from sqlalchemy.engine import Connection
+
+from backend.migrations.utils import table_exists
 
 
 revision = "0010_add_notification_logs"
@@ -14,76 +14,49 @@ branch_labels = None
 depends_on = None
 
 
-def _get_operations(conn: Connection) -> tuple[Operations, MigrationContext]:
-    context = MigrationContext.configure(connection=conn)
-    return Operations(context), context
-
-
 def upgrade(conn: Connection) -> None:
-    op, context = _get_operations(conn)
-    dialect_name = conn.dialect.name
-    with context.begin_transaction():
-        if dialect_name == "sqlite":
-            with op.batch_alter_table("slots") as batch_op:
-                batch_op.alter_column(
-                    "status",
-                    existing_type=sa.String(length=20),
-                    type_=sa.String(length=32),
-                    existing_nullable=False,
-                )
-        else:
-            op.alter_column(
-                "slots",
-                "status",
-                existing_type=sa.String(length=20),
-                type_=sa.String(length=32),
-                existing_nullable=False,
-            )
+    """Add notification_logs and telegram_callback_logs tables, expand slots.status."""
 
-        op.create_table(
-            "notification_logs",
-            sa.Column("id", sa.Integer, primary_key=True),
-            sa.Column("booking_id", sa.Integer, nullable=False),
-            sa.Column("type", sa.String(length=50), nullable=False),
-            sa.Column("payload", sa.Text, nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-            sa.ForeignKeyConstraint(
-                ["booking_id"],
-                ["slots.id"],
-                name="fk_notification_logs_booking_id",
-                ondelete="CASCADE",
-            ),
-            sa.UniqueConstraint("type", "booking_id", name="uq_notification_logs_type_booking"),
+    # Расширяем колонку status в таблице slots
+    if table_exists(conn, "slots"):
+        conn.execute(sa.text(
+            "ALTER TABLE slots ALTER COLUMN status TYPE VARCHAR(32)"
+        ))
+
+    # Создаём таблицу notification_logs
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS notification_logs (
+            id SERIAL PRIMARY KEY,
+            booking_id INTEGER NOT NULL,
+            type VARCHAR(50) NOT NULL,
+            payload TEXT,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            CONSTRAINT fk_notification_logs_booking_id
+                FOREIGN KEY (booking_id) REFERENCES slots(id) ON DELETE CASCADE,
+            CONSTRAINT uq_notification_logs_type_booking
+                UNIQUE (type, booking_id)
         )
+    """))
 
-        op.create_table(
-            "telegram_callback_logs",
-            sa.Column("id", sa.Integer, primary_key=True),
-            sa.Column("callback_id", sa.String(length=128), nullable=False),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-            sa.UniqueConstraint("callback_id", name="uq_telegram_callback_logs_callback_id"),
+    # Создаём таблицу telegram_callback_logs
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS telegram_callback_logs (
+            id SERIAL PRIMARY KEY,
+            callback_id VARCHAR(128) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            CONSTRAINT uq_telegram_callback_logs_callback_id
+                UNIQUE (callback_id)
         )
+    """))
 
 
-def downgrade(conn: Connection) -> None:  # pragma: no cover - rollback helper
-    op, context = _get_operations(conn)
-    dialect_name = conn.dialect.name
-    with context.begin_transaction():
-        op.drop_table("telegram_callback_logs")
-        op.drop_table("notification_logs")
-        if dialect_name == "sqlite":
-            with op.batch_alter_table("slots") as batch_op:
-                batch_op.alter_column(
-                    "status",
-                    existing_type=sa.String(length=32),
-                    type_=sa.String(length=20),
-                    existing_nullable=False,
-                )
-        else:
-            op.alter_column(
-                "slots",
-                "status",
-                existing_type=sa.String(length=32),
-                type_=sa.String(length=20),
-                existing_nullable=False,
-            )
+def downgrade(conn: Connection) -> None:  # pragma: no cover
+    """Remove notification_logs and telegram_callback_logs tables."""
+    conn.execute(sa.text("DROP TABLE IF EXISTS telegram_callback_logs CASCADE"))
+    conn.execute(sa.text("DROP TABLE IF EXISTS notification_logs CASCADE"))
+
+    if table_exists(conn, "slots"):
+        conn.execute(sa.text(
+            "ALTER TABLE slots ALTER COLUMN status TYPE VARCHAR(20)"
+        ))
+

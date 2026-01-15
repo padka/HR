@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 
 from backend.apps.bot.template_provider import TemplateProvider
 from backend.core.db import async_session
@@ -85,3 +85,30 @@ async def test_template_lookup_and_invalidation():
             .values(body_md=original_body, updated_at=datetime.now(timezone.utc))
         )
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_template_provider_fallback_for_missing_template():
+    async with async_session() as session:
+        await session.execute(
+            delete(MessageTemplate).where(
+                MessageTemplate.key == "candidate_rejection",
+                MessageTemplate.locale == "ru",
+                MessageTemplate.channel == "tg",
+            )
+        )
+        await session.commit()
+
+    provider = TemplateProvider(cache_ttl=1)
+    context = {
+        "candidate_name": "Иван",
+        "dt_local": "01.02 12:00",
+        "slot_datetime_local": "01.02 12:00",
+        "slot_time_local": "12:00",
+        "slot_date_local": "01.02",
+        "recruiter_name": "Анна",
+        "join_link": "",
+    }
+    rendered = await provider.render("candidate_rejection", context)
+    assert rendered is not None
+    assert rendered.text.strip()

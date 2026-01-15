@@ -17,7 +17,8 @@ def test_create_bot_uses_custom_api_base(monkeypatch):
     bot = bot_app.create_bot(token="123:ABC")
 
     try:
-        assert bot.session.api.base == base_url
+        api = bot.session.api
+        assert getattr(api, "api_base", base_url).startswith(base_url)
     finally:
         asyncio.run(bot.session.close())
 

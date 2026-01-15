@@ -27,14 +27,18 @@ def _define_tables(metadata: sa.MetaData) -> None:
         sa.Column("name", sa.String(120), nullable=False),
         sa.Column("tz", sa.String(64), nullable=False, server_default=sa.text("'Europe/Moscow'")),
         sa.Column("active", sa.Boolean, nullable=False, server_default=sa.true()),
-        sa.Column("responsible_recruiter_id", sa.Integer, nullable=True),
-        sa.ForeignKeyConstraint(
-            ["responsible_recruiter_id"],
-            ["recruiters.id"],
-            name="fk_cities_responsible_recruiter_id",
-            ondelete="SET NULL",
-        ),
         sa.UniqueConstraint("name", name="uq_city_name"),
+    )
+
+    sa.Table(
+        "recruiter_cities",
+        metadata,
+        sa.Column("recruiter_id", sa.Integer, nullable=False),
+        sa.Column("city_id", sa.Integer, nullable=False),
+        sa.ForeignKeyConstraint(["recruiter_id"], ["recruiters.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["city_id"], ["cities.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("recruiter_id", "city_id"),
+        sa.UniqueConstraint("city_id", name="uq_recruiter_city_unique_city"),
     )
 
     sa.Table(
@@ -56,6 +60,7 @@ def _define_tables(metadata: sa.MetaData) -> None:
         sa.Column("city_id", sa.Integer, nullable=True),
         sa.Column("candidate_city_id", sa.Integer, nullable=True),
         sa.Column("purpose", sa.String(32), nullable=False, server_default=sa.text("'interview'")),
+        sa.Column("tz_name", sa.String(64), nullable=False, server_default=sa.text("'Europe/Moscow'")),
         sa.Column("start_utc", sa.DateTime(timezone=True), nullable=False),
         sa.Column("duration_min", sa.Integer, nullable=False, server_default=sa.text("60")),
         sa.Column("status", sa.String(20), nullable=False, server_default=sa.text("'free'")),
@@ -156,6 +161,22 @@ def _define_tables(metadata: sa.MetaData) -> None:
         sa.Column("is_sent", sa.Boolean, nullable=False, server_default=sa.false()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
+    )
+
+    sa.Table(
+        "bot_message_logs",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("candidate_tg_id", sa.BigInteger, nullable=True),
+        sa.Column("message_type", sa.String(50), nullable=False),
+        sa.Column("slot_id", sa.Integer, nullable=True),
+        sa.Column("payload_json", sa.JSON(), nullable=True),
+        sa.Column(
+            "sent_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
     )
 
 

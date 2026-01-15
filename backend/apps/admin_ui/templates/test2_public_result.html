@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тест 2 · Результат</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap&subset=cyrillic" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/theme-tokens.css">
+  <link rel="stylesheet" href="/static/css/design-system.css">
+  <link rel="stylesheet" href="/static/css/glass-surfaces.css">
+  <link rel="stylesheet" href="/static/css/liquid-glass.css">
+  <link rel="stylesheet" href="/static/css/liquid-glass-integration.css">
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text);
+    }
+    .public-shell {
+      max-width: 760px;
+      margin: 40px auto;
+      padding: 0 18px 40px;
+      display: grid;
+      gap: 18px;
+    }
+    .public-card {
+      padding: 24px;
+      border-radius: 22px;
+    }
+    .public-title {
+      margin: 0 0 8px;
+      font-size: 26px;
+      font-weight: 700;
+    }
+    .public-note {
+      margin: 0;
+      color: var(--text-muted);
+    }
+    .result-metrics {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    }
+    .metric-card {
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+    .metric-card span {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .metric-card strong {
+      font-size: 18px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <main class="public-shell">
+    <section class="surface glass grain public-card">
+      <h1 class="public-title">Результат Test2</h1>
+      {% if status == "ok" %}
+        <p class="public-note">Ответы сохранены. Спасибо!</p>
+      {% elif status == "completed" %}
+        <p class="public-note">Тест уже был пройден ранее.</p>
+      {% elif status == "expired" %}
+        <p class="public-note">Ссылка на тест устарела.</p>
+      {% elif status == "revoked" %}
+        <p class="public-note">Ссылка была отозвана.</p>
+      {% elif status == "invalid" %}
+        <p class="public-note">Ссылка недействительна.</p>
+      {% else %}
+        <p class="public-note">Не удалось обработать тест. Попробуйте позже.</p>
+      {% endif %}
+    </section>
+
+    {% if result %}
+      <section class="surface glass grain public-card">
+        <h2 class="public-title">Статистика</h2>
+        <div class="result-metrics">
+          <div class="metric-card">
+            <span>Правильных ответов</span>
+            <strong>{{ result.raw_score }} / {{ total_questions }}</strong>
+          </div>
+          <div class="metric-card">
+            <span>Баллы</span>
+            <strong>{{ '%.1f'|format(result.final_score) }}</strong>
+          </div>
+          <div class="metric-card">
+            <span>Статус</span>
+            <strong>{{ "Пройден" if passed else "Не пройден" }}</strong>
+          </div>
+        </div>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

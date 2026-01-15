@@ -1,374 +1,518 @@
 {% extends "base.html" %}
 {% block title %}Города{% endblock %}
 {% block content %}
-{% set city_count = cities|length %}
-<section class="page-grid" data-page="cities" aria-labelledby="cities-title">
-  <aside class="page-aside panel">
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'cities';
+</script>
+<section class="page page--cities" aria-labelledby="cities-title">
+  <header class="page-header page-header--card">
     <div>
       <h1 id="cities-title" class="page-title">Города</h1>
-      <p class="muted">
-        Табличный список городов. Редактирование и тексты для этапов — во всплывающей панели «Настроить».
-      </p>
-    </div>
-    <div class="page-actions">
-      <a class="btn btn-primary" href="/cities/new" aria-label="Добавить новый город">+ Новый город</a>
-    </div>
-  </aside>
-  <div class="page-main">
-    <div class="panel">
-      <div class="toolbar">
-        <div class="toolbar__primary">
-          <p class="toolbar__hint">
-            Наведите курсор или щёлкните по строке таблицы, чтобы увидеть детали и открыть панель настроек справа.
-          </p>
-        </div>
-        <div class="toolbar__aside toolbar__chips" role="status" aria-live="polite">
-          <span class="chip chip--info">
-            <span class="chip__label">Всего городов</span>
-            <span class="chip__value" id="total_count">{{ city_count }}</span>
-          </span>
-        </div>
-      </div>
-
-      {% if not cities %}
-        <div class="panel panel--flush">
-          <h3 class="section-title">Пока пусто</h3>
-          <p class="muted">Добавьте первый город, чтобы настроить планы и сообщения.</p>
-          <div class="page-actions">
-            <a class="btn btn-primary" href="/cities/new">+ Новый город</a>
-          </div>
-        </div>
-      {% else %}
-        <div class="panel panel--compact">
-          <div class="table__wrap">
-            <table class="table list-table table--stackable city-table" id="city_table">
-              <thead>
-                <tr>
-                  <th scope="col" class="col-toggle">
-                    <span class="visually-hidden">Подробнее</span>
-                  </th>
-                  <th scope="col" class="sortable col-name">
-                    <button class="sort" type="button" data-key="name" aria-sort="ascending">
-                      Город <span class="arrow" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col" class="sortable">
-                    <button class="sort" type="button" data-key="tz" aria-sort="none">
-                      Часовой пояс <span class="arrow" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col" class="sortable">
-                    <button class="sort" type="button" data-key="owner" aria-sort="none">
-                      Ответственный <span class="arrow" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col" class="sortable col-align-end is-optional">
-                    <button class="sort" type="button" data-key="week" aria-sort="none">
-                      План · нед <span class="arrow" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col" class="sortable col-align-end is-optional">
-                    <button class="sort" type="button" data-key="month" aria-sort="none">
-                      План · мес <span class="arrow" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col" class="col-actions">Действия</th>
-                </tr>
-              </thead>
-              <tbody id="cities_tbody">
-                {% for c in cities %}
-              {% set tz = c.tz or "Europe/Moscow" %}
-              {% set criteria = c.criteria|default('') %}
-              {% set experts = c.experts|default('') %}
-              {% set plan_week = c.plan_week|default('') %}
-              {% set plan_month = c.plan_month|default('') %}
-              {% set owner_id = owners.get(c.id) %}
-              {% set owner = rec_map.get(owner_id) if owner_id else None %}
-              {% set stages = city_stages.get(c.id, []) %}
-              <tr class="city-row"
-                  tabindex="0"
-                  data-id="{{ c.id }}"
-                  data-name="{{ c.name|lower }}"
-                  data-tz="{{ tz|lower }}"
-                  data-owner="{{ (owner.name if owner else '')|lower }}"
-                  data-criteria="{{ criteria|e }}"
-                  data-experts="{{ experts|e }}"
-                  data-plan-week="{{ plan_week }}"
-                  data-plan-month="{{ plan_month }}"
-                  data-owner-id="{{ owner_id or '' }}">
-                <td class="col-toggle" data-label="">
-                  <button type="button"
-                          class="row-expand"
-                          aria-expanded="false"
-                          aria-label="Показать детали по городу {{ c.name }}">
-                    <span class="row-expand__icon" aria-hidden="true"></span>
-                  </button>
-                </td>
-                <td data-label="Город" class="col-name">
-                  <span class="cell-title">{{ c.name }}</span>
-                </td>
-                <td data-label="Часовой пояс" class="col-tz">
-                  <span class="badge badge--soft"><code>{{ tz }}</code></span>
-                </td>
-                <td data-label="Ответственный" class="col-owner">
-                  <span class="owner-label {% if not owner %}muted{% endif %}">
-                    {% if owner %}{{ owner.name }}{% else %}Не назначен{% endif %}
-                  </span>
-                </td>
-                <td data-label="План · нед" class="col-week is-optional" data-sort="{{ plan_week or 0 }}">
-                  {{ plan_week or '—' }}
-                </td>
-                <td data-label="План · мес" class="col-month is-optional" data-sort="{{ plan_month or 0 }}">
-                  {{ plan_month or '—' }}
-                </td>
-                <td data-label="" class="cell-actions">
-                  <button class="btn btn-soft btn-sm btn-edit" type="button">Настроить</button>
-                </td>
-              </tr>
-              {% set stage_ns = namespace(custom=0, total=0) %}
-              <tr class="city-row city-row--details" data-details-for="{{ c.id }}" hidden>
-                <td colspan="7">
-                  <section class="city-insight" aria-label="Детали по городу {{ c.name }}">
-                    <header class="city-insight__header">
-                      <div class="city-insight__title">
-                        <h3>{{ c.name }}</h3>
-                        <p class="muted">Часовой пояс: {{ tz }}</p>
-                      </div>
-                      <div class="city-insight__meta">
-                        <span class="badge badge--soft" data-field="id">ID {{ c.id }}</span>
-                        <span class="badge badge--soft" data-field="plan-week">План нед: {{ plan_week or '—' }}</span>
-                        <span class="badge badge--soft" data-field="plan-month">План мес: {{ plan_month or '—' }}</span>
-                      </div>
-                    </header>
-
-                    <div class="city-insight__grid">
-                      <article class="city-insight__block">
-                        <h4>Критерии отбора</h4>
-                        {% set criteria_clean = criteria|default('')|trim %}
-                        {% if criteria_clean %}
-                          <p data-field="criteria">{{ criteria_clean|replace('\n','<br>')|safe }}</p>
-                        {% else %}
-                          <p class="muted" data-field="criteria">Нет описания</p>
-                        {% endif %}
-                      </article>
-                      <article class="city-insight__block">
-                        <h4>Ресурсы экспертов</h4>
-                        {% set experts_clean = experts|default('')|trim %}
-                        {% if experts_clean %}
-                          <p data-field="experts">{{ experts_clean|replace('\n','<br>')|safe }}</p>
-                        {% else %}
-                          <p class="muted" data-field="experts">Не заполнено</p>
-                        {% endif %}
-                      </article>
-                      <article class="city-insight__block city-insight__block--stages">
-                        <h4>Этапы сообщений</h4>
-                        {% if stages %}
-                          <ul class="stage-summary" role="list">
-                            {% for stage in stages %}
-                              {% set stage_ns.total = stage_ns.total + 1 %}
-                              {% set stage_value = stage.value|default('')|trim %}
-                              {% set stage_default = stage.default|default('')|trim %}
-                              {% set is_custom = stage_value and stage_value != stage_default %}
-                              {% if is_custom %}{% set stage_ns.custom = stage_ns.custom + 1 %}{% endif %}
-                              <li class="stage-summary__item{% if is_custom %} is-custom{% endif %}"
-                                  data-stage="{{ stage.key }}"
-                                  data-default="{{ stage.default|e }}">
-                                <span class="stage-summary__title">{{ stage.title }}</span>
-                                <span class="stage-summary__status" data-role="stage-status">{{ 'Своя версия' if is_custom else 'По умолчанию' }}</span>
-                                <p class="stage-summary__excerpt" data-role="stage-preview"{% if not is_custom %} hidden{% endif %}>{{ stage_value|truncate(120, True)|e }}</p>
-                              </li>
-                            {% endfor %}
-                          </ul>
-                        {% else %}
-                          <p class="muted">Этапы не настроены</p>
-                        {% endif %}
-                      </article>
-                    </div>
-
-                    <footer class="city-insight__footer">
-                      {% if owner %}
-                        <span class="city-insight__owner">Ответственный: <strong>{{ owner.name }}</strong></span>
-                      {% else %}
-                        <span class="city-insight__owner muted">Ответственный не назначен</span>
-                      {% endif %}
-                      <div class="city-insight__actions">
-                        <button type="button" class="btn btn-soft btn-sm btn-edit" data-action="open-sheet" data-target="{{ c.id }}">Настроить</button>
-                        {% if stage_ns.total %}
-                          <span class="muted" data-role="stage-count">Кастомных этапов: {{ stage_ns.custom }}/{{ stage_ns.total }}</span>
-                        {% else %}
-                          <span class="muted" data-role="stage-count">Этапы не подключены</span>
-                        {% endif %}
-                      </div>
-                    </footer>
-                  </section>
-                </td>
-              </tr>
-              <template id="tpl-stages-{{ c.id }}">
-                <div class="stage-accordion">
-                  {% for stage in stages %}
-                    <details class="stage-item" data-stage="{{ stage.key }}">
-                      <summary>
-                        <div class="stage-item__summary">
-                          <span class="stage-item__title">{{ stage.title }}</span>
-                          <span class="stage-item__preview muted">Текст по умолчанию</span>
-                        </div>
-                      </summary>
-                      <div class="stage-item__body">
-                        <textarea
-                          id="stage_{{ stage.key }}_{{ c.id }}"
-                          name="stage__{{ stage.key }}"
-                          data-stage="{{ stage.key }}"
-                          data-default="{{ stage.default|e }}"
-                          rows="5"
-                          placeholder="{{ stage.default|e }}">{{ stage.value }}</textarea>
-                        <div class="stage-controls">
-                          <button type="button" class="btn btn-ghost btn-sm stage-default-btn" data-stage="{{ stage.key }}">Вставить по умолчанию</button>
-                          <span class="muted">{{ stage.description }}</span>
-                        </div>
-                      </div>
-                    </details>
-                  {% endfor %}
-                </div>
-              </template>
-            {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      <p class="page-description">Каждая карточка — профиль города со статусом, часовым поясом и ответственными.</p>
+      {% if request.query_params.get("deleted") == "1" %}
+        <div class="surface glass grain alert" data-tone="success" role="status" style="margin-top:10px;">Город удалён.</div>
+      {% elif request.query_params.get("deleted") == "0" %}
+        <div class="surface glass grain alert" data-tone="warning" role="status" style="margin-top:10px;">Город не найден или уже удалён.</div>
       {% endif %}
     </div>
-  </div>
+    <div class="page-actions">
+      <a class="ui-btn ui-btn--primary" href="/cities/new">Добавить город</a>
+    </div>
+  </header>
+
+  <style>
+    :root {
+      --radius-sm: 12px;
+      --radius-md: 16px;
+      --radius-lg: 20px;
+      --border-w: 1px;
+      --space-1: 8px;
+      --space-2: 12px;
+      --space-3: 16px;
+      --space-4: 24px;
+    }
+
+    html[data-theme="light"] {
+      --bg: #F6F7FB;
+      --surface-1: rgba(255, 255, 255, 0.88);
+      --surface-2: rgba(255, 255, 255, 0.74);
+      --surface-3: rgba(255, 255, 255, 0.62);
+      --text: #0F172A;
+      --text-muted: rgba(15, 23, 42, 0.62);
+      --border: rgba(15, 23, 42, 0.10);
+      --accent: #6366F1;
+      --accent-contrast: #FFFFFF;
+      --accent-soft: rgba(99, 102, 241, 0.14);
+      --success: #16A34A;
+      --warning: #D97706;
+      --danger:  #DC2626;
+      --success-soft: rgba(22, 163, 74, 0.12);
+      --warning-soft: rgba(217, 119, 6, 0.12);
+      --danger-soft:  rgba(220, 38, 38, 0.12);
+      --shadow-sm: 0 6px 18px rgba(13, 31, 55, 0.06);
+      --shadow-md: 0 12px 30px rgba(13, 31, 55, 0.08);
+    }
+
+    html[data-theme="dark"] {
+      --bg: #0B1220;
+      --surface-1: rgba(17, 24, 39, 0.70);
+      --surface-2: rgba(17, 24, 39, 0.55);
+      --surface-3: rgba(17, 24, 39, 0.42);
+      --text: rgba(255, 255, 255, 0.92);
+      --text-muted: rgba(255, 255, 255, 0.60);
+      --border: rgba(255, 255, 255, 0.10);
+      --accent: #7C83FF;
+      --accent-contrast: #0B1220;
+      --accent-soft: rgba(124, 131, 255, 0.16);
+      --success: #22C55E;
+      --warning: #F59E0B;
+      --danger:  #EF4444;
+      --success-soft: rgba(34, 197, 94, 0.14);
+      --warning-soft: rgba(245, 158, 11, 0.14);
+      --danger-soft:  rgba(239, 68, 68, 0.14);
+      --shadow-sm: 0 10px 24px rgba(0, 0, 0, 0.30);
+      --shadow-md: 0 18px 52px rgba(0, 0, 0, 0.40);
+    }
+
+    .page-header--card {
+      background: var(--surface-1, var(--surface-raised));
+      border: var(--border-w) solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm, var(--shadow-soft));
+      padding: var(--space-4);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+    }
+
+    .ui-card {
+      background: var(--surface-1);
+      border: var(--border-w) solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      backdrop-filter: blur(8px);
+    }
+
+    .ui-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      border: var(--border-w) solid var(--border);
+      background: var(--surface-2);
+      color: var(--text, var(--fg));
+      font-weight: 700;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .ui-btn:hover { background: var(--surface-1); box-shadow: var(--shadow-sm); }
+    .ui-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+    .ui-btn--primary {
+      background: var(--accent);
+      color: var(--accent-contrast);
+      border-color: transparent;
+      box-shadow: var(--shadow-sm);
+    }
+    .ui-btn--primary:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    .ui-btn[disabled] { opacity: 0.55; cursor: not-allowed; }
+    .ui-btn--ghost {
+      background: var(--surface-2);
+      color: var(--text, var(--fg));
+      border-color: var(--border);
+    }
+    .ui-btn--ghost:hover { background: var(--surface-1); }
+
+    .ui-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      border: var(--border-w) solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-muted, var(--muted));
+      text-transform: uppercase;
+    }
+    .ui-badge[data-tone="success"] { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, var(--border)); }
+    .ui-badge[data-tone="danger"] { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+
+    .ui-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: var(--border-w) solid var(--border);
+      background: var(--surface-2);
+      color: var(--text, var(--fg));
+      font-size: 13px;
+      font-weight: 600;
+      transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .ui-chip .chip-icon { color: var(--text-muted, var(--muted)); }
+    .ui-chip:hover { background: var(--surface-1); box-shadow: var(--shadow-sm); }
+
+    .city-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: var(--space-4);
+      margin-top: var(--space-4);
+    }
+    .city-profile-card {
+      padding: var(--space-4);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+      background: var(--glass-bg);
+      border: var(--border-w) solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--glass-shadow);
+      backdrop-filter: blur(var(--glass-backdrop-blur));
+      -webkit-backdrop-filter: blur(var(--glass-backdrop-blur));
+    }
+    .city-profile-card__header {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .city-profile-card__title-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .city-profile-card__name {
+      font-size: 22px;
+      font-weight: 800;
+      margin: 0;
+      color: var(--text, var(--fg));
+    }
+    .city-profile-card__description {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--text-muted, var(--muted));
+    }
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      border: var(--border-w) solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-muted, var(--muted));
+      text-transform: uppercase;
+    }
+    .badge-status[data-state="active"] { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, var(--border)); }
+    .badge-status[data-state="archived"] { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+    .city-profile-card__meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .city-profile-card__note {
+      font-size: 13px;
+      color: var(--text-muted, var(--muted));
+      margin: 4px 0 0;
+    }
+    .city-stages {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .stage-chip {
+      flex: 1 1 140px;
+      min-width: 140px;
+      padding: 12px;
+      border-radius: var(--radius-md);
+      border: var(--border-w) solid var(--border);
+      background: var(--surface-2);
+    }
+    .stage-chip__title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-muted, var(--muted));
+      margin-bottom: 6px;
+    }
+    .stage-chip__value {
+      font-size: 13px;
+      color: var(--text, var(--fg));
+      max-height: 70px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+    }
+    .city-profile-card__footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--text-muted, var(--muted));
+    }
+    .stage-summary {
+      border-radius: var(--radius-md);
+      border: var(--border-w) solid var(--glass-border);
+      background: color-mix(in srgb, var(--glass-bg) 85%, transparent);
+      padding: 12px 16px;
+    }
+    .stage-summary > summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--text, var(--fg));
+      list-style: none;
+      gap: 12px;
+    }
+    .stage-summary__left {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .stage-summary__right {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .stage-summary__count {
+      min-width: 28px;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      border: var(--border-w) solid var(--border);
+      background: var(--surface-2);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text, var(--fg));
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .stage-summary__chevron {
+      font-size: 16px;
+      color: var(--text-muted, var(--muted));
+      transition: transform var(--dur-sm) var(--ease-out);
+    }
+    .stage-summary[open] .stage-summary__chevron {
+      transform: rotate(90deg);
+    }
+    .stage-summary > summary::-webkit-details-marker {
+      display: none;
+    }
+    .stage-summary__meta {
+      font-size: 12px;
+      color: var(--text-muted, var(--muted));
+    }
+    .stage-summary__content {
+      margin-top: 14px;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 64px 20px;
+      color: var(--text-muted, var(--muted));
+    }
+    .empty-state__icon {
+      font-size: 64px;
+      margin-bottom: 12px;
+    }
+
+    .city-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: var(--border-w) solid var(--border);
+      background: var(--surface-2);
+      color: var(--text, var(--fg));
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .city-chip__icon {
+      font-size: 14px;
+      color: var(--text-muted, var(--muted));
+    }
+    .city-chip strong { color: var(--text, var(--fg)); }
+
+    .city-chip--muted {
+      color: var(--text-muted, var(--muted));
+    }
+    .city-chip--count {
+      min-width: 34px;
+      justify-content: center;
+    }
+
+    .city-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .city-responsibles {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .city-responsibles__label {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted, var(--muted));
+    }
+    .city-responsibles__list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .city-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .ui-btn--soft {
+      background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+      color: var(--text, var(--fg));
+      border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+    }
+    .ui-btn--soft:hover {
+      background: color-mix(in srgb, var(--accent) 18%, var(--surface-2));
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+  </style>
+
+  {% if not cities %}
+    <div class="empty-state">
+      <div class="empty-state__icon">🗺️</div>
+      <p>Ещё нет городов. Добавьте первый, чтобы настроить процесс.</p>
+    </div>
+  {% else %}
+    <div class="city-grid" data-city-grid>
+      {% for city in cities %}
+        {% set responsibles = city_responsibles.get(city.id, []) %}
+        {% set responsibles_visible = responsibles[:3] %}
+        {% set responsibles_extra = (responsibles|length) - (responsibles_visible|length) %}
+        {% set tz = city.tz or "Не указан" %}
+        {% set stages = city_stages.get(city.id, []) %}
+        {% set plan_week = city.plan_week %}
+        {% set plan_month = city.plan_month %}
+        <article class="city-profile-card ui-card glass interactive glass-hover pressable" data-city-id="{{ city.id }}">
+          <header class="city-profile-card__header">
+            <div>
+              <div class="city-profile-card__title-row">
+                <p class="city-profile-card__name">{{ city.display_name or city.name_plain }}</p>
+                <span class="badge-status ui-badge" data-state="{{ 'active' if city.active else 'archived' }}">
+                  {{ "Активен" if city.active else "В архиве" }}
+                </span>
+              </div>
+              {% if city.criteria %}
+                <p class="city-profile-card__description">{{ city.criteria }}</p>
+              {% endif %}
+            </div>
+          </header>
+
+          <div class="city-meta">
+            <span class="city-chip interactive glass-hover pressable">
+              <span class="city-chip__icon">🕒</span>
+              <strong>{{ tz }}</strong>
+            </span>
+            <span class="city-chip interactive glass-hover pressable">
+              <span class="city-chip__icon">📅</span>
+              Нед.: <strong>{{ plan_week if plan_week is not none else "—" }}</strong>
+            </span>
+            <span class="city-chip interactive glass-hover pressable">
+              <span class="city-chip__icon">📈</span>
+              Мес.: <strong>{{ plan_month if plan_month is not none else "—" }}</strong>
+            </span>
+          </div>
+
+          <div class="city-responsibles">
+            <div class="city-responsibles__label">Ответственные</div>
+            <div class="city-responsibles__list">
+              {% if responsibles_visible %}
+                {% for rec in responsibles_visible %}
+                  <span class="city-chip interactive glass-hover pressable" title="{{ rec.name }}">
+                    <span class="city-chip__icon">👤</span>
+                    <strong>{{ rec.name }}</strong>
+                  </span>
+                {% endfor %}
+                {% if responsibles_extra > 0 %}
+                  <span class="city-chip city-chip--count city-chip--muted">+{{ responsibles_extra }}</span>
+                {% endif %}
+              {% else %}
+                <span class="city-chip city-chip--muted">Ответственные не назначены</span>
+              {% endif %}
+            </div>
+          </div>
+
+          {% if city.experts %}
+          <p class="city-profile-card__note">👥 Эксперты: {{ city.experts }}</p>
+          {% endif %}
+
+          {% if stages %}
+            {% set stage_total = stages|length %}
+            {% set stage_custom = stages|selectattr('is_custom')|list|length %}
+            <details class="stage-summary interactive glass-hover pressable" data-stage-summary>
+              <summary>
+                <div class="stage-summary__left">
+                  <span>Этапы найма</span>
+                  <span class="stage-summary__meta">
+                    {% if stage_custom %}
+                      {{ stage_custom }} кастомных ·
+                    {% endif %}
+                    {{ stage_total }} всего
+                  </span>
+                </div>
+                <div class="stage-summary__right">
+                  <span class="stage-summary__count">{{ stage_total }}</span>
+                  <span class="stage-summary__chevron" aria-hidden="true">›</span>
+                </div>
+              </summary>
+              <div class="stage-summary__content">
+                <div class="city-stages">
+                  {% for stage in stages %}
+                    <div class="stage-chip" data-custom="{{ '1' if stage.is_custom else '0' }}">
+                      <p class="stage-chip__title">{{ stage.title }}</p>
+                      <p class="stage-chip__value">{{ stage.value or stage.default or "—" }}</p>
+                    </div>
+                  {% endfor %}
+                </div>
+              </div>
+            </details>
+          {% endif %}
+
+          <footer class="city-profile-card__footer">
+            <span class="muted">Рекрутеров: {{ city.recruiters|length if city.recruiters else 0 }}</span>
+            <div class="city-actions">
+              <a class="ui-btn ui-btn--soft interactive pressable focus-ring" href="/cities/{{ city.id }}/edit">Настроить</a>
+              <form action="/cities/{{ city.id }}/delete" method="post" style="margin:0;"
+                    onsubmit="return confirm('Удалить город {{ city.display_name }}? Это действие нельзя отменить.');">
+                {{ csrf_input(request) }}
+                <button type="submit" class="ui-btn ui-btn--danger ui-btn--ghost interactive pressable focus-ring">
+                  Удалить
+                </button>
+              </form>
+            </div>
+          </footer>
+        </article>
+      {% endfor %}
+    </div>
+  {% endif %}
 </section>
-
-  <div id="sheet_backdrop" class="sheet-backdrop" hidden></div>
-  <aside id="sheet" class="sheet city-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="sheet-title">
-    <header class="sheet-header">
-      <div>
-        <h3 id="sheet-title" class="sheet-title">Настройки города</h3>
-        <p id="sheet-sub" class="sheet-sub muted">Выберите город в таблице.</p>
-      </div>
-      <button id="sheet_close" class="btn btn-ghost btn-sm" type="button" aria-label="Закрыть">✕</button>
-    </header>
-
-    <form id="sheet_form" class="sheet-body city-sheet" novalidate>
-      <input type="hidden" name="city_id" id="city_id">
-
-      <section class="city-overview" aria-live="polite">
-        <div class="city-overview__top">
-          <div class="city-overview__identity">
-            <span class="badge badge--soft city-overview__id" id="city_overview_id">ID —</span>
-            <h4 class="city-overview__title" id="city_overview_name">Город не выбран</h4>
-            <p class="city-overview__tz muted" id="city_overview_tz">Часовой пояс: —</p>
-          </div>
-          <div class="city-overview__metrics">
-            <span class="badge badge--soft" id="city_overview_week">План нед: —</span>
-            <span class="badge badge--soft" id="city_overview_month">План мес: —</span>
-          </div>
-        </div>
-        <div class="city-overview__foot">
-          <p class="city-overview__owner muted" id="city_overview_owner">Ответственный не назначен</p>
-          <span class="badge badge--soft" id="city_overview_stages">Этапы не подключены</span>
-        </div>
-      </section>
-
-      <section class="city-panel">
-        <div class="city-panel__header">
-          <span class="city-panel__icon" aria-hidden="true">🏙</span>
-          <div>
-            <h4 class="city-panel__title">Основные параметры</h4>
-            <p class="city-panel__hint">Ответственный и цели по найму.</p>
-          </div>
-        </div>
-        <div class="city-panel__body">
-          <div class="form-field">
-            <label for="owner_select">Ответственный рекрутёр</label>
-            <select id="owner_select" name="responsible_id">
-              <option value="">— Не назначен —</option>
-              {% for r in recruiters %}
-                <option value="{{ r.id }}">{{ r.name }}</option>
-              {% endfor %}
-            </select>
-            <p class="form-note">Назначьте ответственного, чтобы заявки автоматически падали к нужному рекрутёру.</p>
-          </div>
-          <div class="form-grid form-grid--two">
-            <div class="form-field form-field--compact">
-              <label for="plan_week">План на неделю</label>
-              <input id="plan_week" name="plan_week" type="number" inputmode="numeric" min="0" step="1" placeholder="Например, 12">
-              <p class="form-note">Используется в отчётах и сводках.</p>
-            </div>
-            <div class="form-field form-field--compact">
-              <label for="plan_month">План на месяц</label>
-              <input id="plan_month" name="plan_month" type="number" inputmode="numeric" min="0" step="1" placeholder="Например, 48">
-              <p class="form-note">Можно оставить пустым, если пока нет цели.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="city-panel">
-        <div class="city-panel__header">
-          <span class="city-panel__icon" aria-hidden="true">🗂</span>
-          <div>
-            <h4 class="city-panel__title">Профиль города</h4>
-            <p class="city-panel__hint">Критерии и ресурсы.</p>
-          </div>
-        </div>
-        <div class="city-panel__body city-panel__body--stacked">
-          <details class="city-collapse" open>
-            <summary>
-              <span>Критерии отбора</span>
-              <span id="crit_preview" class="muted">—</span>
-            </summary>
-            <div class="city-collapse__body">
-              <textarea id="criteria" name="criteria" rows="4" placeholder="Опыт продаж от 6 мес, грамотная речь, готовность к гибридному формату…"></textarea>
-            </div>
-          </details>
-          <details class="city-collapse">
-            <summary>
-              <span>Ресурсы экспертов</span>
-              <span id="exp_preview" class="muted">—</span>
-            </summary>
-            <div class="city-collapse__body">
-              <textarea id="experts" name="experts" rows="4" placeholder="Эксперт A: 10 ч/нед; Эксперт B: 6 ч/нед; Каналы: реферальный, ярмарки вакансий…"></textarea>
-            </div>
-          </details>
-        </div>
-      </section>
-
-      <section class="city-panel city-panel--stages" id="sheet_stages">
-        <div class="city-panel__header">
-          <span class="city-panel__icon" aria-hidden="true">✉️</span>
-          <div class="city-panel__headline">
-            <h4 class="city-panel__title">Этапы и сообщения</h4>
-            <p class="city-panel__hint">Тексты для кандидатов. Используйте кнопки справа, чтобы раскрыть или свернуть все секции.</p>
-          </div>
-          <div class="city-panel__header-actions">
-            <button id="stages_expand" class="btn btn-soft btn-sm" type="button" disabled>Развернуть</button>
-            <button id="stages_collapse" class="btn btn-ghost btn-sm" type="button" disabled>Свернуть</button>
-          </div>
-        </div>
-        <div id="sheet_stages_body" class="city-panel__body city-panel__body--stacked">
-          <p class="muted stage-placeholder">Выберите город в таблице, чтобы загрузить тексты.</p>
-        </div>
-      </section>
-    </form>
-
-    <footer class="sheet-footer">
-      <span id="save_status" class="save-status muted" aria-live="polite">Сохранено</span>
-      <div class="form-actions">
-        <button id="btn_delete" class="btn btn-danger" type="button" disabled>Удалить</button>
-        <button id="btn_save" class="btn btn-primary" type="button">Сохранить</button>
-        <button id="btn_cancel" class="btn btn-ghost" type="button">Отмена</button>
-      </div>
-    </footer>
-  </aside>
-
-  <div id="toasts" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
-</section>
-
-
-{% endblock %}
-{% block extra_js %}
-  {{ super() }}
-  <script type="module" src="/static/js/modules/cities-list.js"></script>
 {% endblock %}

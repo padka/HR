@@ -1,82 +1,129 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select, update
-from sqlalchemy.inspection import inspect as sa_inspect
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
+from backend.core.cache import CacheKeys, CacheTTL, get_cache
 from backend.core.db import async_session
-from backend.domain.models import City, Recruiter
+from backend.core.sanitizers import sanitize_plain_text
+from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.repositories import city_has_available_slots, slot_status_free_clause
+from backend.domain.errors import CityAlreadyExistsError
 
 from .templates import update_templates_for_city
 
 __all__ = [
     "list_cities",
+    "get_city",
     "create_city",
     "update_city_settings",
+    "update_city_owner",
+    "set_city_active",
     "delete_city",
-    "city_owner_field_name",
     "api_cities_payload",
     "api_city_owners_payload",
+    "normalize_city_timezone",
+    "get_city_capacity",
 ]
 
 
 async def list_cities(order_by_name: bool = True) -> List[City]:
     async with async_session() as session:
-        query = select(City)
+        query = select(City).options(selectinload(City.recruiters))
         if order_by_name:
             query = query.order_by(City.name.asc())
         return (await session.scalars(query)).all()
 
 
+async def get_city(city_id: int) -> Optional[City]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(City)
+                .options(selectinload(City.recruiters))
+                .where(City.id == city_id)
+        )
+        return result.scalar_one_or_none()
+
+
+def normalize_city_timezone(value: Optional[str]) -> str:
+    tz_candidate = (value or "").strip()
+    if not tz_candidate:
+        return "Europe/Moscow"
+    try:
+        ZoneInfo(tz_candidate)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(
+            "Укажите корректный идентификатор часового пояса (например, Europe/Moscow)"
+        ) from exc
+    return tz_candidate
+
+
 async def create_city(name: str, tz: str) -> None:
     """Create a new city ensuring that basic validation is applied."""
 
-    clean_name = (name or "").strip()
-    clean_tz = (tz or "").strip()
-    if not clean_tz:
-        clean_tz = "Europe/Moscow"
+    clean_name = sanitize_plain_text(name)
+    if not clean_name:
+        raise ValueError("Название города не может быть пустым")
+    clean_tz = normalize_city_timezone(tz)
 
     async with async_session() as session:
         session.add(City(name=clean_name, tz=clean_tz))
-        await session.commit()
-
-
-def city_owner_field_name() -> Optional[str]:
-    inspector = sa_inspect(City)
-    attrs = set(inspector.attrs.keys())
-    cols = set(getattr(inspector, "columns", {}).keys()) if hasattr(inspector, "columns") else set()
-    allowed = attrs | cols
-    for name in ["responsible_recruiter_id", "owner_id", "recruiter_id", "manager_id"]:
-        if name in allowed:
-            return name
-    return None
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise CityAlreadyExistsError(clean_name) from exc
 
 
 async def update_city_settings(
     city_id: int,
     *,
-    responsible_id: Optional[int],
+    name: Optional[str],
+    recruiter_ids: Optional[List[int]] = None,
+    responsible_id: Optional[int] = None,
     templates: Dict[str, Optional[str]],
     criteria: Optional[str],
     experts: Optional[str],
     plan_week: Optional[int],
     plan_month: Optional[int],
-) -> Optional[str]:
-    owner_field = city_owner_field_name()
+    tz: Optional[str] = None,
+    active: Optional[bool] = None,
+) -> Tuple[Optional[str], Optional[City], Optional[Recruiter]]:
     async with async_session() as session:
         try:
-            city = await session.get(City, city_id)
+            city_result = await session.execute(
+                select(City)
+                .options(selectinload(City.recruiters))
+                .where(City.id == city_id)
+            )
+            city = city_result.scalar_one_or_none()
             if not city:
-                return "City not found"
+                return "City not found", None, None
 
+            assigned_recruiter: Optional[Recruiter] = None
+
+            # Support both responsible_id (single, backward compat) and recruiter_ids (list)
+            effective_ids: List[int] = []
             if responsible_id is not None:
-                recruiter = await session.get(Recruiter, responsible_id)
-                if not recruiter:
-                    return "Recruiter not found"
+                effective_ids = [responsible_id]
+            elif recruiter_ids is not None:
+                effective_ids = recruiter_ids
 
-            if owner_field:
-                setattr(city, owner_field, responsible_id)
+            if effective_ids:
+                recruiters_list = list(
+                    await session.scalars(select(Recruiter).where(Recruiter.id.in_(effective_ids)))
+                )
+                if not recruiters_list:
+                    return "Recruiter not found", None, None
+                city.recruiters = recruiters_list
+                assigned_recruiter = recruiters_list[0]  # Primary recruiter
+            else:
+                city.recruiters = []
 
             clean_criteria = (criteria or "").strip() or None
             clean_experts = (experts or "").strip() or None
@@ -88,16 +135,79 @@ async def update_city_settings(
             city.plan_week = normalized_week
             city.plan_month = normalized_month
 
+            if name is not None:
+                clean_name = sanitize_plain_text(name)
+                if not clean_name:
+                    await session.rollback()
+                    return "Название города не может быть пустым", None, None
+                city.name = clean_name
+
+            if tz is not None:
+                try:
+                    city.tz = normalize_city_timezone(tz)
+                except ValueError as exc:
+                    await session.rollback()
+                    return str(exc), None, None
+            if active is not None:
+                city.active = bool(active)
+
             error = await update_templates_for_city(city_id, templates, session=session)
             if error:
                 await session.rollback()
-                return error
+                return error, None, None
 
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError as exc:
+                await session.rollback()
+                detail = str(getattr(exc, "orig", exc)).lower()
+                if "uq_city_name" in detail or "unique" in detail:
+                    return "Город с таким названием уже существует", None, None
+                raise
+            await session.refresh(city)
         except Exception:
             await session.rollback()
             raise
-    return None
+    return None, city, assigned_recruiter
+
+
+async def update_city_owner(
+    city_id: int, responsible_id: Optional[int]
+) -> Tuple[Optional[str], Optional[City], Optional[Recruiter]]:
+    async with async_session() as session:
+        try:
+            city = await session.get(City, city_id)
+            if not city:
+                return "City not found", None, None
+            recruiter_obj: Optional[Recruiter] = None
+            if responsible_id is not None:
+                recruiter_obj = await session.get(Recruiter, responsible_id)
+                if not recruiter_obj:
+                    return "Recruiter not found", None, None
+                city.recruiters = [recruiter_obj]
+            else:
+                city.recruiters = []
+            await session.commit()
+            await session.refresh(city)
+        except Exception:
+            await session.rollback()
+            raise
+    return None, city, recruiter_obj
+
+
+async def set_city_active(city_id: int, active: bool) -> Tuple[Optional[str], Optional[City]]:
+    async with async_session() as session:
+        try:
+            city = await session.get(City, city_id)
+            if not city:
+                return "City not found", None
+            city.active = bool(active)
+            await session.commit()
+            await session.refresh(city)
+        except Exception:
+            await session.rollback()
+            raise
+    return None, city
 
 
 async def delete_city(city_id: int) -> bool:
@@ -115,31 +225,120 @@ async def delete_city(city_id: int) -> bool:
 
 
 async def api_cities_payload() -> List[Dict[str, object]]:
-    owner_field = city_owner_field_name()
     async with async_session() as session:
-        cities = (await session.scalars(select(City).order_by(City.id.asc()))).all()
-    return [
-        {
-            "id": c.id,
-            "name": c.name,
-            "tz": getattr(c, "tz", None),
-            "owner_recruiter_id": getattr(c, owner_field) if owner_field else None,
-            "criteria": getattr(c, "criteria", None),
-            "experts": getattr(c, "experts", None),
-            "plan_week": getattr(c, "plan_week", None),
-            "plan_month": getattr(c, "plan_month", None),
-        }
-        for c in cities
-    ]
+        cities = (
+            await session.scalars(
+                select(City)
+                .options(selectinload(City.recruiters))
+                .order_by(City.id.asc())
+            )
+        ).all()
+    payload: List[Dict[str, object]] = []
+    for city in cities:
+        primary = _primary_recruiter(city)
+        payload.append(
+            {
+                "id": city.id,
+                "name": city.name_plain,
+                "name_plain": city.name_plain,
+                "display_name": str(city.display_name),
+                "name_html": sanitize_plain_text(city.name_plain),
+                "tz": getattr(city, "tz", None),
+                "owner_recruiter_id": primary.id if primary else None,
+                "criteria": getattr(city, "criteria", None),
+                "experts": getattr(city, "experts", None),
+                "plan_week": getattr(city, "plan_week", None),
+                "plan_month": getattr(city, "plan_month", None),
+            }
+        )
+    return payload
 
 
 async def api_city_owners_payload() -> Dict[str, object]:
-    owner_field = city_owner_field_name()
-    if not owner_field:
-        return {"ok": False, "error": "Owner field is missing on City model."}
     async with async_session() as session:
-        cities = (await session.scalars(select(City))).all()
+        cities = (
+            await session.scalars(
+                select(City).options(selectinload(City.recruiters))
+            )
+        ).all()
     return {
         "ok": True,
-        "owners": {c.id: getattr(c, owner_field, None) for c in cities},
+        "owners": {
+            city.id: (_primary_recruiter(city).id if _primary_recruiter(city) else None)
+            for city in cities
+        },
     }
+
+
+def _primary_recruiter(city: City) -> Optional[Recruiter]:
+    if not getattr(city, "recruiters", None):
+        return None
+    for recruiter in city.recruiters:
+        if recruiter is not None:
+            return recruiter
+    return None
+
+
+async def get_city_capacity(city_id: int) -> Optional[Dict[str, object]]:
+    """Get capacity information for a city including slot availability.
+
+    Returns a dictionary with:
+    - has_available_slots: boolean indicating if there are any free slots
+    - total_free_slots: count of available slots
+    - city: basic city info (id, name, tz)
+
+    Returns None if city is not found.
+    Cached for 5 minutes (CacheTTL.SHORT).
+    """
+    # Try to get from cache first
+    try:
+        cache = get_cache()
+        cache_key = CacheKeys.city_capacity(city_id)
+        result = await cache.get(cache_key)
+        if result.is_success and result.unwrap() is not None:
+            return result.unwrap()
+    except RuntimeError:
+        # Cache not initialized (e.g., in tests), skip caching
+        pass
+
+    async with async_session() as session:
+        city = await session.get(City, city_id)
+        if not city:
+            return None
+
+        # Check if city has available slots
+        has_slots = await city_has_available_slots(city_id)
+
+        # Count total free slots
+        now_utc = datetime.now(timezone.utc)
+        total_free = await session.scalar(
+            select(func.count())
+            .select_from(Slot)
+            .where(
+                Slot.city_id == city_id,
+                slot_status_free_clause(Slot),
+                Slot.start_utc > now_utc,
+            )
+        )
+
+        capacity_data = {
+            "has_available_slots": has_slots,
+            "total_free_slots": total_free or 0,
+            "city": {
+                "id": city.id,
+                "name": city.name_plain,
+                "tz": getattr(city, "tz", None),
+                "active": getattr(city, "active", None),
+            },
+        }
+
+        # Cache the result for 5 minutes
+        try:
+            cache = get_cache()
+            cache_key = CacheKeys.city_capacity(city_id)
+            await cache.set(cache_key, capacity_data, ttl=CacheTTL.SHORT)
+        except RuntimeError:
+            # Cache not initialized, skip caching
+            pass
+
+        return capacity_data

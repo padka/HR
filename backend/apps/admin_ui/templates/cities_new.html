@@ -1,7 +1,16 @@
 {% extends "base.html" %}
-{% import "partials/form_shell.html" as forms %}
+{% import "partials/form_shell.html" as forms with context %}
 {% block title %}Новый город{% endblock %}
 {% block content %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.body.dataset.page = 'cities-new';
+</script>
+{% set form_state = form_data or {} %}
+{% if form_error %}
+  <div class="surface glass grain alert" data-tone="danger" role="alert">
+    {{ form_error }}
+  </div>
+{% endif %}
 {% call forms.shell(
   title="Новый город",
   description="Поддерживается кириллица, таймзона подставится автоматически (можно изменить вручную).",
@@ -16,21 +25,22 @@
   ]
 ) %}
   {% call forms.section("Параметры") %}
-    {% call forms.field("Название", hint="Например: Новосибирск") %}
-      <input id="name" type="text" name="name" placeholder="Новосибирск" required autofocus>
+    {% call forms.field("Название", hint="Например: Новосибирск", required=True) %}
+      <input id="name" type="text" name="name" value="{{ form_state.get('name', '') }}" placeholder="Новосибирск" required aria-required="true" autofocus>
     {% endcall %}
 
-    {% call forms.field("Часовой пояс (IANA)", hint="Например: Europe/Moscow, Asia/Novosibirsk") %}
+    {% call forms.field("Часовой пояс (IANA)", hint="Например: Europe/Moscow, Asia/Novosibirsk", required=True) %}
       <input id="tz"
              type="text"
              name="tz"
-             value="Europe/Moscow"
+             value="{{ form_state.get('tz', 'Europe/Moscow') }}"
              placeholder="Asia/Novosibirsk"
              list="tz-list"
              inputmode="text"
              pattern="[A-Za-z_]+(?:\/[A-Za-z_\-]+)+"
              title="Например: Europe/Moscow, Europe/Samara, Asia/Novosibirsk"
-             required>
+             required
+             aria-required="true">
       <datalist id="tz-list">
         <option value="Europe/Moscow"></option>
         <option value="Europe/Samara"></option>
@@ -54,7 +64,7 @@
   {% endcall %}
 {% endcall %}
 
-<script type="module">
+<script type="module" nonce="{{ request.state.csp_nonce }}">
 import { bindSubmitHotkey } from "/static/js/modules/form-hotkeys.js";
 
 (function(){

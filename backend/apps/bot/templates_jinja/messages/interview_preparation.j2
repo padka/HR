@@ -1,0 +1,23 @@
+{# Инструкция перед созвоном #}
+{% import 'blocks/header.j2' as header %}
+{% import 'blocks/info_row.j2' as info %}
+{% import 'blocks/checklist.j2' as checklist %}
+{% import 'blocks/footer_hint.j2' as footer %}
+
+{{ header.render('✨', 'Готовимся к встрече')|safe }}
+
+{{ info.date(start_utc, tz_name)|safe }}
+{% if meet_link %}
+{{ info.link(meet_link, 'Ссылка на встречу')|safe }}
+{% endif %}
+
+{{ checklist.render('Чек-лист перед созвоном', [
+    'Проверьте интернет (speedtest.net)',
+    'Закройте лишние вкладки/приложения',
+    'Приготовьте воду',
+    'Улыбнитесь — это не экзамен! 😊'
+])|safe }}
+
+{% if time_left %}
+{{ footer.render('До встречи через ' ~ time_left ~ '!')|safe }}
+{% endif %}

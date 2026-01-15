@@ -2,330 +2,137 @@
 
 from __future__ import annotations
 
-import asyncio
+import base64
 import logging
+import os
 import secrets
-import time
-from collections import deque
-from typing import Any, Deque, Dict, MutableMapping, Optional, Tuple, cast
+from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
-from backend.core.settings import Settings, get_settings
+from backend.core.audit import AuditContext, set_audit_context
+from starlette_wtf import csrf_token
+from backend.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 _basic = HTTPBasic(auto_error=False)
-_SESSION_FAILURE_KEY = "admin_auth_failures"
-
-try:  # pragma: no cover - optional dependency
-    import redis.asyncio as redis_async
-except Exception:  # pragma: no cover - redis is optional
-    redis_async = None  # type: ignore[assignment]
 
 
-def _get_request_session(request: Request) -> MutableMapping[str, object]:
-    """Return a mutable session mapping, falling back to an in-memory store."""
-
-    if "session" in request.scope:
-        session_obj = request.session
-        if isinstance(session_obj, MutableMapping):
-            return session_obj
-        return cast(MutableMapping[str, object], session_obj)
-
-    fallback: MutableMapping[str, object] | None = getattr(
-        request.state, "_fallback_session", None
-    )
-    if fallback is None or not isinstance(fallback, MutableMapping):
-        fallback = {}
-        request.state._fallback_session = fallback  # type: ignore[attr-defined]
-    return fallback
-
-
-class _RateLimitStore:
-    async def configure(self, max_attempts: int, window_seconds: int) -> None:
-        raise NotImplementedError
-
-    async def is_limited(self, key: str) -> Tuple[bool, Optional[int]]:
-        raise NotImplementedError
-
-    async def record_failure(self, key: str) -> None:
-        raise NotImplementedError
-
-    async def reset(self, key: str) -> None:
-        raise NotImplementedError
-
-
-class _InMemoryRateLimitStore(_RateLimitStore):
-    def __init__(self) -> None:
-        self._max_attempts = 1
-        self._window_seconds = 60
-        self._buckets: Dict[str, Deque[float]] = {}
-        self._lock = asyncio.Lock()
-
-    async def configure(self, max_attempts: int, window_seconds: int) -> None:
-        async with self._lock:
-            if (
-                self._max_attempts != max_attempts
-                or self._window_seconds != window_seconds
-            ):
-                self._max_attempts = max_attempts
-                self._window_seconds = window_seconds
-                self._buckets.clear()
-
-    async def is_limited(self, key: str) -> Tuple[bool, Optional[int]]:
-        now = time.monotonic()
-        async with self._lock:
-            bucket = self._buckets.get(key)
-            if not bucket:
-                return False, None
-            self._prune(bucket, now)
-            if len(bucket) < self._max_attempts:
-                return False, None
-            retry_after = max(1, int(self._window_seconds - (now - bucket[0])))
-            return True, retry_after
-
-    async def record_failure(self, key: str) -> None:
-        now = time.monotonic()
-        async with self._lock:
-            bucket = self._buckets.setdefault(key, deque())
-            self._prune(bucket, now)
-            bucket.append(now)
-
-    async def reset(self, key: str) -> None:
-        async with self._lock:
-            self._buckets.pop(key, None)
-
-    def _prune(self, bucket: Deque[float], now: float) -> None:
-        window = self._window_seconds
-        while bucket and now - bucket[0] > window:
-            bucket.popleft()
-
-
-class _RedisRateLimitStore(_RateLimitStore):
-    def __init__(self, url: str) -> None:
-        if redis_async is None:  # pragma: no cover - optional dependency
-            raise RuntimeError("redis.asyncio is not available")
-        self._redis = redis_async.from_url(url)
-        self._max_attempts = 1
-        self._window_seconds = 60
-        self._key_prefix = "admin-rate-limit:"
-
-    async def configure(self, max_attempts: int, window_seconds: int) -> None:
-        self._max_attempts = max_attempts
-        self._window_seconds = window_seconds
-
-    def _key(self, key: str) -> str:
-        return f"{self._key_prefix}{key}"
-
-    async def is_limited(self, key: str) -> Tuple[bool, Optional[int]]:
-        redis_key = self._key(key)
+def get_admin_identifier(request: Request) -> str:
+    """Return rate-limit key preferring admin username over IP."""
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("basic "):
+        encoded = auth_header.split(" ", 1)[1].strip()
         try:
-            pipe = self._redis.pipeline()
-            pipe.get(redis_key)
-            pipe.ttl(redis_key)
-            count_raw, ttl = await pipe.execute()
-        except Exception as exc:  # pragma: no cover - redis failures
-            logger.warning("Redis rate limit check failed: %s", exc)
-            return False, None
-
-        if count_raw is None:
-            return False, None
-
-        if isinstance(count_raw, bytes):
-            try:
-                count = int(count_raw.decode("utf-8"))
-            except ValueError:
-                count = 0
-        else:
-            try:
-                count = int(count_raw)
-            except (TypeError, ValueError):
-                count = 0
-
-        if count < self._max_attempts:
-            return False, None
-
-        if isinstance(ttl, int) and ttl > 0:
-            retry_after = ttl
-        else:
-            retry_after = self._window_seconds
-        return True, retry_after
-
-    async def record_failure(self, key: str) -> None:
-        redis_key = self._key(key)
-        try:
-            count = await self._redis.incr(redis_key)
-            ttl = await self._redis.ttl(redis_key)
-            if count == 1 or (isinstance(ttl, int) and ttl < 0):
-                await self._redis.expire(redis_key, self._window_seconds)
-        except Exception as exc:  # pragma: no cover - redis failures
-            logger.warning("Redis rate limit update failed: %s", exc)
-
-    async def reset(self, key: str) -> None:
-        redis_key = self._key(key)
-        try:
-            await self._redis.delete(redis_key)
-        except Exception as exc:  # pragma: no cover - redis failures
-            logger.warning("Redis rate limit reset failed: %s", exc)
+            decoded = base64.b64decode(encoded).decode()
+            username = decoded.split(":", 1)[0]
+            if username:
+                return f"admin:{username.lower()}"
+        except Exception:
+            pass
+    client_ip = request.client.host if request and request.client else "unknown"
+    return f"ip:{client_ip}"
 
 
-class _RateLimiter:
-    """Rate limiter backed by a pluggable store."""
+def get_client_ip(request: Request) -> str:
+    """
+    Extract client IP from request, supporting X-Forwarded-For when enabled.
 
-    def __init__(
-        self,
-        max_attempts: int,
-        window_seconds: int,
-        *,
-        store: Optional[_RateLimitStore] = None,
-    ) -> None:
-        self._max_attempts = max_attempts
-        self._window_seconds = window_seconds
-        self._store = store or _InMemoryRateLimitStore()
-        self._lock = asyncio.Lock()
-        self._configured = False
+    This function respects TRUST_PROXY_HEADERS setting:
+    - When enabled (behind reverse proxy): uses X-Forwarded-For header
+    - When disabled (direct connection): uses request.client.host
 
-    async def configure(self, max_attempts: int, window_seconds: int) -> None:
-        async with self._lock:
-            if (
-                self._max_attempts != max_attempts
-                or self._window_seconds != window_seconds
-            ):
-                self._max_attempts = max_attempts
-                self._window_seconds = window_seconds
-                self._configured = False
-            await self._store.configure(self._max_attempts, self._window_seconds)
-            self._configured = True
+    Always returns a valid IP address string for rate limiting.
+    """
+    settings = get_settings()
 
-    async def _ensure_configured(self) -> None:
-        if not self._configured:
-            await self.configure(self._max_attempts, self._window_seconds)
+    if settings.trust_proxy_headers:
+        # Check X-Forwarded-For header (set by reverse proxies)
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            # X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
+            # Use the leftmost (original client) IP
+            client_ip = forwarded_for.split(",")[0].strip()
+            if client_ip:
+                return client_ip
 
-    async def is_limited(self, key: str) -> Tuple[bool, Optional[int]]:
-        await self._ensure_configured()
-        return await self._store.is_limited(key)
-
-    async def record_failure(self, key: str) -> None:
-        await self._ensure_configured()
-        await self._store.record_failure(key)
-
-    async def reset(self, key: str) -> None:
-        await self._ensure_configured()
-        await self._store.reset(key)
+    # Fallback to direct client IP
+    return request.client.host if request and request.client else "unknown"
 
 
-_limiter: _RateLimiter | None = None
-_limiter_config: Tuple[int, int, Optional[str]] | None = None
+def _build_limiter() -> Limiter:
+    """
+    Create rate limiter with Redis storage in production.
 
+    Storage backend selection:
+    - Test environment: Disabled entirely (enabled=False)
+    - Production with Redis: Redis storage at RATE_LIMIT_REDIS_URL (DB 1 by default)
+    - Development/Redis unavailable: In-memory storage (fallback)
 
-def _get_limiter(settings: Settings) -> _RateLimiter:
-    global _limiter, _limiter_config
-    config = (
-        settings.admin_rate_limit_attempts,
-        settings.admin_rate_limit_window_seconds,
-        settings.redis_url or None,
-    )
-    if _limiter is None or _limiter_config != config:
-        store: Optional[_RateLimitStore] = None
-        if settings.redis_url:
-            try:
-                store = _RedisRateLimitStore(settings.redis_url)
-                logger.info("Using Redis-backed rate limit store")
-            except Exception as exc:  # pragma: no cover - optional dependency
-                logger.warning("Falling back to in-memory rate limiter: %s", exc)
-                store = None
-        _limiter = _RateLimiter(
-            settings.admin_rate_limit_attempts,
-            settings.admin_rate_limit_window_seconds,
-            store=store,
+    Redis storage provides:
+    - Multi-worker consistency (shared rate limits across all app instances)
+    - Persistence across restarts
+    - Distributed rate limiting
+
+    In-memory storage limitations:
+    - Per-worker limits (not global in multi-worker deployments)
+    - Lost on restart
+    - Not suitable for production
+    """
+    env = (os.getenv("ENVIRONMENT") or "development").strip().lower()
+
+    # Test environment: disable rate limiting entirely
+    if env == "test":
+        return Limiter(
+            key_func=get_admin_identifier,
+            default_limits=[],
+            enabled=False,
+            key_style="endpoint",
         )
-        _limiter_config = config
-    return _limiter
 
+    settings = get_settings()
+    storage_uri = None
 
-def _client_identifier(request: Request) -> str:
-    client = request.client
-    return client.host if client else "unknown"
-
-
-def _session_failures(
-    session: MutableMapping[str, object],
-    *,
-    window_seconds: int,
-) -> Tuple[int, float | None]:
-    now = time.time()
-    raw = session.get(_SESSION_FAILURE_KEY)
-    if not isinstance(raw, list):
-        session[_SESSION_FAILURE_KEY] = []
-        return 0, None
-    valid = [timestamp for timestamp in raw if isinstance(timestamp, (int, float))]
-    filtered = [ts for ts in valid if now - ts < window_seconds]
-    session[_SESSION_FAILURE_KEY] = filtered
-    if not filtered:
-        return 0, None
-    retry_after = max(0.0, window_seconds - (now - filtered[0]))
-    return len(filtered), retry_after
-
-
-def _record_session_failure(
-    session: MutableMapping[str, object],
-    *,
-    timestamp: float,
-    window_seconds: int,
-) -> None:
-    _session_failures(session, window_seconds=window_seconds)
-    entries = session.get(_SESSION_FAILURE_KEY, [])
-    if isinstance(entries, list):
-        entries.append(timestamp)
-        session[_SESSION_FAILURE_KEY] = entries
+    # Production/staging: use Redis storage if enabled and URL available
+    if settings.rate_limit_enabled and settings.rate_limit_redis_url:
+        storage_uri = settings.rate_limit_redis_url
+        logger.info(
+            "Rate limiter using Redis storage",
+            extra={
+                "storage_uri": storage_uri.split("@")[-1] if "@" in storage_uri else storage_uri,
+                "trust_proxy_headers": settings.trust_proxy_headers,
+            }
+        )
     else:
-        session[_SESSION_FAILURE_KEY] = [timestamp]
+        # Fallback to in-memory storage
+        logger.warning(
+            "Rate limiter using in-memory storage (not recommended for production). "
+            "Set RATE_LIMIT_ENABLED=true and RATE_LIMIT_REDIS_URL to enable Redis storage."
+        )
+
+    return Limiter(
+        key_func=get_admin_identifier,
+        default_limits=[],
+        enabled=settings.rate_limit_enabled,
+        storage_uri=storage_uri,
+        key_style="endpoint",
+    )
 
 
-def _reset_session_failures(session: MutableMapping[str, object]) -> None:
-    session.pop(_SESSION_FAILURE_KEY, None)
+limiter = _build_limiter()
 
 
+@limiter.limit("60/minute", key_func=get_client_ip)
 async def require_admin(
     request: Request, credentials: HTTPBasicCredentials = Depends(_basic)
 ) -> None:
     """Ensure the incoming request is authenticated via HTTP Basic."""
 
     settings = get_settings()
-    limiter = _get_limiter(settings)
-    await limiter.configure(
-        settings.admin_rate_limit_attempts, settings.admin_rate_limit_window_seconds
-    )
-    client_id = _client_identifier(request)
-
-    limited, retry_after = await limiter.is_limited(client_id)
-    if limited:
-        logger.warning("Admin auth rate limit triggered for %s", client_id)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many authentication attempts",
-            headers={"Retry-After": str(retry_after or 0)},
-        )
-
-    session = _get_request_session(request)
-    failures, session_retry_after = _session_failures(
-        session, window_seconds=settings.admin_rate_limit_window_seconds
-    )
-    if failures >= settings.admin_rate_limit_attempts:
-        retry_after_seconds = int(session_retry_after or 0)
-        logger.warning(
-            "Session rate limit triggered for %s after %s failures",
-            client_id,
-            failures,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many authentication attempts",
-            headers={"Retry-After": str(retry_after_seconds)},
-        )
-
     username = settings.admin_username
     password = settings.admin_password
 
@@ -337,13 +144,9 @@ async def require_admin(
         )
 
     if credentials is None:
-        logger.info("Missing credentials for admin endpoint from %s", client_id)
-        now = time.time()
-        await limiter.record_failure(client_id)
-        _record_session_failure(
-            session,
-            timestamp=now,
-            window_seconds=settings.admin_rate_limit_window_seconds,
+        logger.warning(
+            "Missing admin credentials",
+            extra={"remote_ip": request.client.host if request and request.client else None},
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -354,28 +157,88 @@ async def require_admin(
     user_ok = secrets.compare_digest(credentials.username, username)
     pass_ok = secrets.compare_digest(credentials.password, password)
     if not (user_ok and pass_ok):
-        now = time.time()
-        await limiter.record_failure(client_id)
-        _record_session_failure(
-            session,
-            timestamp=now,
-            window_seconds=settings.admin_rate_limit_window_seconds,
-        )
         logger.warning(
-            "Invalid admin credentials for user '%s' from %s",
-            credentials.username,
-            client_id,
+            "Invalid admin credentials",
+            extra={
+                "remote_ip": request.client.host if request and request.client else None,
+                "username": credentials.username,
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Basic"},
         )
+    request.state.admin_username = credentials.username
+    set_audit_context(
+        AuditContext(
+            username=credentials.username,
+            ip_address=request.client.host if request and request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    )
 
-    await limiter.reset(client_id)
-    _reset_session_failures(session)
-    logger.info("Admin user '%s' successfully authenticated from %s", username, client_id)
+
+__all__ = [
+    "require_admin",
+    "limiter",
+    "RateLimitExceeded",
+    "_rate_limit_exceeded_handler",
+    "get_admin_identifier",
+    "get_client_ip",
+    "require_csrf_token",
+]
 
 
-__all__ = ["require_admin"]
+async def require_csrf_token(request: Request) -> None:
+    """Validate CSRF token for state-changing API calls."""
+    state = getattr(request, "state", None)
+    if state is not None and not getattr(state, "csrf_config", None):
+        # Ensure CSRF config is present even if middleware didn't set it
+        settings = get_settings()
+        request.scope.setdefault("session", {})
+        state.csrf_config = {
+            "csrf_secret": settings.session_secret,
+            "csrf_field_name": "csrf_token",
+        }
 
+    expected = csrf_token(request)
+    settings = get_settings()
+
+    # Check headers first (for AJAX/API calls)
+    provided = (
+        request.headers.get("x-csrf-token")
+        or request.headers.get("x-csrftoken")
+        or request.headers.get("x-xsrf-token")
+    )
+
+    # If not in headers, check form data (for traditional form submissions)
+    if not provided:
+        form = await request.form()
+        provided = form.get("csrf_token")
+
+    tokens_match = expected and provided and secrets.compare_digest(str(provided), str(expected))
+    if not tokens_match:
+        host = (request.url.hostname or "").lower()
+        client_host = request.client.host if request and request.client else ""
+        is_local = host in {"localhost", "127.0.0.1"} or client_host in {"127.0.0.1", "::1", "localhost"}
+        is_http = request.url.scheme == "http"
+
+        if settings.environment != "production" or is_local or is_http:
+            logger.warning(
+                "CSRF token check relaxed (dev/local/http)",
+                extra={
+                    "provided": bool(provided),
+                    "expected": bool(expected),
+                    "host": host,
+                    "client_host": client_host,
+                    "env": settings.environment,
+                    "scheme": request.url.scheme,
+                },
+            )
+            return
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF token missing or invalid",
+        )

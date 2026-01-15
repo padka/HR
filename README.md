@@ -3,19 +3,225 @@
 [![CI](https://github.com/OWNER/HR/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-85%25+-brightgreen.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 
+## Локальная разработка (без PostgreSQL/Redis)
+
+Для локальной разработки создайте файл `.env.local` для переопределения настроек production:
+
+```bash
+# Копируем пример конфигурации для разработки
+cp .env.development.example .env.local
+```
+
+Файл `.env.local` автоматически загружается после `.env` и может переопределять настройки. Он не коммитится в git.
+
+**Важно:** Файл `.env` содержит настройки production (`ENVIRONMENT=production`), что требует PostgreSQL и Redis. Файл `.env.local` переопределяет это на `ENVIRONMENT=development`, что позволяет использовать SQLite и memory broker.
+
+## Быстрый старт (dev/test)
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+make install            # ставит dev-зависимости (pytest и пр.)
+make test               # прогоны на SQLite + in-memory broker, без Redis/Postgres
+```
+
+Переменные окружения для тестов выставляются автоматически (ENVIRONMENT=test, DATABASE_URL=sqlite+aiosqlite:///./data/test.db, NOTIFICATION_BROKER=memory, ADMIN_USER/PASSWORD=admin). Брокер уведомлений и бот отключены, используется in-memory state/store.
+
+## Ветки и CI (обязательно)
+
+- Рабочие ветки: `main` (стабильная), `testing` (интеграционная), фичи — `feature/*`.  
+- PR только в `testing`; после стабилизации — PR из `testing` в `main`.  
+- Протекции: no force-push; `main` — обязательные проверки + 1 review; `testing` — обязательные проверки.  
+- CI (см. `.github/workflows/ci.yml`): поднимает Postgres, запускает `scripts/run_migrations.py`, потом smoke‑pytest (`test_prod_config_simple`, `test_session_cookie_config`, `test_admin_state_nullbot`).
+- Обязательные файлы: `.env.example` (шаблон окружения), `CHANGELOG_DEV.md` (фиксировать изменения и проверки).
+- Фича-флаг для старого эндпоинта статусов: `ENABLE_LEGACY_STATUS_API` (по умолчанию выключен в dev/staging, в prod обязательно выключен; включать только для отладки/тестов).
+  - Новый контракт статусов: `GET /candidates/{id}/state` возвращает `status` + `allowed_actions`; действия — `POST /candidates/{id}/actions/{action}` (см. tests/test_workflow_api.py).
+
+## Локальный запуск (Postgres + Redis в Docker)
+
+Подготовка:
+1. Поднимите контейнеры Postgres и Redis (пример: `docker compose up -d postgres redis_notifications` или существующие `rs-postgres`/`rs-redis`).
+2. Скопируйте шаблон: `cp .env.local.example .env.local` и заполните `BOT_TOKEN`, при необходимости обновите `SESSION_SECRET`.
+3. Установите зависимости: `make install`.
+
+Запуск:
+1. `make dev-migrate`
+2. `make dev-admin`  (админка на http://localhost:8000)
+3. `make dev-bot`    (отдельный процесс, polling)
+
+Примечания:
+- Бот — отдельный процесс (`bot.py`). Админка умеет жить с NullBot при пустом токене, но сам бот без валидного `BOT_TOKEN` не стартует.
+- Скрипты `scripts/dev_admin.sh` / `scripts/dev_bot.sh` сами подхватывают `.env.local` (или `.env.local.example`) и предупреждают, если в оболочке висит конфликтный `BOT_TOKEN` (dummy).
+- Не запускайте несколько экземпляров бота одновременно: параллельный polling (двойной `getUpdates`) приводит к `TelegramConflictError` в логах.
+- Проверка токена (без вывода значения):  
+  `python -c "from backend.core.env import load_env; load_env('.env.local'); import os; print('BOT_TOKEN has colon:', ':' in os.getenv('BOT_TOKEN',''))"`
+
+## Database Migrations
+
+⚠️ **Important:** Database migrations must be run **before** starting any application services.
+
+Migrations are managed using Alembic and should be executed separately to prevent race conditions in multi-instance deployments:
+
+```bash
+# Run migrations
+python scripts/run_migrations.py
+
+# Or apply to local SQLite test DB
+make migrate-test
+```
+
+For detailed migration documentation, Docker/K8s setup, and troubleshooting, see [docs/MIGRATIONS.md](docs/MIGRATIONS.md).
+
 ## Admin UI
 The admin interface is served by a single FastAPI application located at
 `backend.apps.admin_ui.app:app`. Any ASGI server (for example, Uvicorn) can
 load it directly:
 
 ```bash
+# Run migrations first (required)
+python scripts/run_migrations.py
+
+# Then start the admin UI
 python3 -m uvicorn backend.apps.admin_ui.app:app
 ```
 
-> **Security prerequisites:** configure `ADMIN_USER`, `ADMIN_PASSWORD` and
-> `SESSION_SECRET` before starting the service. Placeholder values such as
-> `admin`/`change-me` are rejected during startup. For local development over
-> HTTP set `SESSION_COOKIE_SECURE=false` to disable automatic HTTPS redirects.
+For day-to-day development there is also a resilient wrapper that auto-restarts
+the server on code changes or unexpected crashes:
+
+```bash
+python scripts/dev_server.py
+# customize command or watch paths via flags:
+python scripts/dev_server.py --cmd "uvicorn backend.apps.admin_ui.app:app --port 8100" --watch backend --watch admin_app
+```
+- Порты ниже 1024 требуют root. Используйте 8000/8100 (по умолчанию) вместо 800, чтобы избежать проблем с CSRF/сессией в dev.
+
+### Кандидаты: представления по воронкам
+
+Страница `/candidates` поддерживает два специализированных режима работы, выбираемых через
+query‑параметр `pipeline` (и переключатель в UI):
+
+| Pipeline | URL-пример | Описание |
+| --- | --- | --- |
+| `interview` _(по умолчанию)_ | `/candidates` | Классическая воронка до Test2: поиск, фильтры, канбан и календарь работают с интервальными слотами (`purpose != intro_day`). |
+| `intro_day` | `/candidates?pipeline=intro_day` | Отдельная доска кандидатов, прошедших Test2. Показывает стадии «Ждут назначения», «Приглашены», «Подтвердили», «Результат», «Отказались», календарь и список привязаны к слотам `purpose == intro_day`. |
+
+В режиме `intro_day` появляются:
+
+- **Funnel Overview** — карточки с конверсией по стадиям и списком статусов (используется `summary.funnel` из сервиса `list_candidates`).
+- **Расширенная таблица** — отдельные колонки для адреса/контакта, ответственного рекрутёра, кнопки «Назначить ОД» и «Переназначить».
+- **Фильтры и экспорт** автоматически прокидывают активный `pipeline`, поэтому при переключении режимов сохраняются выбранные города, статусы и пагинация.
+
+API `GET /candidates` и соответствующие сервисы (`list_candidates`, `candidate_filter_options`) принимают параметр `pipeline`, что позволяет UI/автоматизации получать нужное представление без дополнительных маршрутов.
+
+### Telegram контакты кандидата
+
+- Как только кандидат пишет боту (команда, сообщение или нажатие кнопки), middleware бота сохраняет `telegram_user_id`, `telegram_username` и время связи в профиле кандидата.
+- В карточке кандидата в админке появился блок «Telegram»: кнопки «Открыть чат», «Скопировать username/TG ID» и fallback‑инструкция с `tg://user?id=<id>` если username скрыт.
+- В таблицах, календаре и карточках подсказок выводится та же информация, поэтому рекрутёр всегда видит deeplink и может скопировать идентификатор в один клик.
+- Админка не отправляет сообщения от лица рекрутера — блок лишь помогает открыть чат или скопировать данные для ручного контакта.
+
+### Чат с кандидатом
+
+- На странице кандидата есть раздел «Чат (Telegram)» с последними сообщениями, индикатором статуса доставки и кнопкой «Загрузить ещё».
+- Отправка сообщений выполняется через Telegram Bot API: каждое сообщение сохраняется в `chat_messages` со статусами `queued/sent/failed`, поддерживается повторная отправка.
+- Входящие сообщения логируются ботом как `inbound` и отображаются в карточке после обновления (или через кнопку «Обновить»). Реалтайма нет, но добавлен 5‑секундный поллинг.
+- Для быстрых ответов есть набор шаблонов (Напоминание, Подтвердите время и т.д.), которые подставляют текст одним кликом.
+
+## Notifications Broker (Redis)
+
+Интеграционные тесты для уведомлений и полноценный NotificationService ожидают работающий
+Redis. Для локальной разработки достаточно поднять контейнер:
+
+```bash
+docker compose up -d redis_notifications
+```
+
+Установите `NOTIFICATION_BROKER=redis` и `REDIS_URL=redis://redis_notifications:6379/0`
+в `.env`, чтобы сервер и интеграционные тесты использовали Redis вместо InMemory брокера.
+Для интеграционных проверок запустите `pytest -m notifications --redis-url redis://localhost:6379/0`
+— параметр `--redis-url` также пробрасывается в CI.
+
+Тесты с маркером `notifications` используют InMemory broker, если Redis недоступен, но сценарии
+из `tests/integration/test_notification_broker_redis.py` подключаются к указанному `--redis-url` и
+автоматически пропускаются, если сервис не запущен.
+
+## Deployment / Production run
+
+The repository now ships with a minimal docker-compose stack that can be used for
+production-like deployments or staging smoke tests. It creates five services:
+
+| Service            | Port  | Description |
+| ------------------ | ----- | ----------- |
+| `postgres`         | 5432  | Primary application database (AsyncPG access from apps). |
+| `redis_notifications` | 6379 | Notification broker / state store for the bot. |
+| `redis_cache`      | 6380  | Optional cache instance used by the admin UI. |
+| `admin_ui`         | 8000  | FastAPI admin interface (`backend.apps.admin_ui.app`). |
+| `admin_api`        | 8100  | FastAPI admin API/SQLAdmin surface (`backend.apps.admin_api.main`). |
+| `bot`              | n/a   | Telegram worker (`bot.py`) that consumes Redis queues. |
+
+### Prepare configuration
+
+1. Copy `docker-compose.env.example` to `.env` (or pass it via `docker compose --env-file`).
+2. Replace placeholder values:
+   - Generate a real `SESSION_SECRET`.
+   - Set `ADMIN_PASSWORD` and `POSTGRES_PASSWORD` to strong values.
+   - Provide a valid `BOT_TOKEN` from @BotFather (the bot container refuses to start otherwise).
+
+### Run the stack
+
+```bash
+# Build the shared image once
+docker compose build
+
+# Run migrations against the Postgres container
+docker compose run --rm admin_ui python scripts/run_migrations.py
+
+# Start everything (-d for detached)
+docker compose up -d
+
+# Tail logs for specific services
+docker compose logs -f admin_ui
+docker compose logs -f bot
+```
+
+Healthchecks expose `/health` for the UI and `/` for the Admin API, so you can
+verify status quickly:
+
+```bash
+curl -f http://localhost:8000/health
+curl -f http://localhost:8100/
+```
+
+The bot container reports readiness once it connects to Redis and Telegram. If
+you run without a valid token you can temporarily set `BOT_ENABLED=false` to skip
+startup, but for production you must provide credentials.
+
+All containers share the same image defined in `Dockerfile`, so the build result
+is cached and used by the Admin UI, Admin API and the bot service.
+
+### Load tests
+
+- Dev sanity: `PYTHONPATH=. python scripts/loadtest_notifications.py --count 200`
+- Pre-release baseline: `PYTHONPATH=. python scripts/loadtest_notifications.py --broker redis --count 2000 --rate-limit 50 --metrics-json docs/reliability/<date>-redis.json`
+
+Все артефакты из нагрузочных и эксплуатационных проверок складывайте в `docs/reliability/`
+с ISO-датой в имени файла (см. `docs/NOTIFICATIONS_LOADTEST.md`).
+
+### Health endpoints
+
+- `GET /health` — базовый статус БД, state manager и кэша.
+- `GET /health/bot` — запускаемость Telegram‑бота и состояние интеграции.
+- `GET /health/notifications` — состояние брокера уведомлений, работы воркера/напоминаний и
+  факт запуска бота (polling). Для Redis брокера эндпоинт делает лёгкий `PING` и вернёт 503,
+  если брокер или воркер недоступны.
+- `GET /metrics/notifications` — Prometheus-совместимые метрики (`seconds_since_poll`, `poll_skipped_total`,
+  `rate_limit_wait_seconds`, per-type counters и др.) для построения графиков/алертов.
+
+### Sandbox & диагностика
+
+- `PYTHONPATH=. python scripts/e2e_notifications_sandbox.py` — поднимает локальный Telegram sandbox,
+  прогоняет кандидат + рекрутер уведомления end-to-end и формирует `NotificationLog` записи.
+  Подробности в `docs/NOTIFICATIONS_E2E.md`.
 
 ## Telegram bot
 The Telegram bot is exposed through a small CLI wrapper (`bot.py`) that calls
@@ -23,6 +229,10 @@ the new application factory defined in `backend.apps.bot.app`. To launch the
 bot locally, ensure `BOT_TOKEN` is configured (for example via `.env`) and run:
 
 ```bash
+# Run migrations first (required)
+python scripts/run_migrations.py
+
+# Then start the bot
 python bot.py
 ```
 
@@ -31,72 +241,19 @@ The same behaviour can be reproduced programmatically via
 
 ## Development workflow
 
-The project now provides dedicated Make targets that orchestrate the Python and
-frontend tooling. To bootstrap a workstation, initialise the database and run
-the full test suite execute the following commands:
+Install the development dependencies, enable the local Git hooks, and run the
+test suite from the project root:
 
 ```bash
-make bootstrap   # install Python dependencies in a virtualenv and Node dependencies
-make dev-db      # apply migrations and seed the default data locally
-make test        # execute the Python test suite
+python -m pip install --upgrade pip
+pip install -r requirements-dev.txt
+pre-commit install
+pytest --cov=backend --cov=tests --cov-report=term
 ```
-
-The bootstrap target provisions a virtual environment in `.venv`, installs the
-project dependencies via `pip install -e ".[dev]"` and then ensures the Node
-tooling is available. It also provisions Playwright browsers so that UI
-screenshot tests can run without manual intervention.
 
 The default configuration runs the admin UI with a "NullBot" when `BOT_TOKEN`
 is not provided, which allows the smoke checks in CI to execute without access
-to Telegram credentials. Refer to `docs/DEVEX.md` for a complete set of backend
-and frontend workflows, Playwright usage guidelines, smoke-test procedures and
-Liquid Glass token rotation notes.
-
-### Weekly KPI dashboard
-
-The admin dashboard includes a liquid-glass KPI block that surfaces the core
-funnels for the current recruiting week (Sunday 00:00 — Saturday 23:59 in the
-company timezone). Raw counters are refreshed every minute and cached in memory
-so that repeated page loads stay below the 200&nbsp;ms budget. Every completed
-week is persisted into the `kpi_weekly` snapshot table; historical data powers
-trend comparisons, CSV exports from the UI and the `/api/kpis/history` endpoint.
-
-- **Timezone:** set the `COMPANY_TZ` environment variable (for example
-  `Europe/Moscow`) to change the aggregation zone. When it is not provided the
-  service falls back to `TZ` and finally to `UTC`.
-- **Time overrides:** for local experiments or automated tests you can set
-  `KPI_NOW` to an ISO 8601 timestamp (e.g. `2024-03-28T09:00:00+00:00`) so that
-  the dashboard recalculates metrics for a fixed reference week.
-- **Live counters:** API consumers can request the cached values via
-  `GET /api/kpis/current?company_tz=Europe/Moscow`.
-- **History:** the paginated `/api/kpis/history` endpoint returns stored
-  snapshots, making it trivial to build charts or export weekly archives.
-
-#### Recomputing and backfilling snapshots
-
-Use the management script to seed or refresh the KPI snapshots. The Make target
-below recalculates the last eight completed weeks and leaves the current week
-untouched:
-
-```bash
-make kpi-weekly
-```
-
-For fine-grained control run the tool directly:
-
-```bash
-# Recompute a specific historical week (week start date in company TZ)
-python tools/recompute_weekly_kpis.py --week 2024-03-24
-
-# Backfill the last 12 completed weeks and include the current week snapshot
-python tools/recompute_weekly_kpis.py --weeks 12 --include-current
-
-# Override the aggregation timezone for one-off jobs
-python tools/recompute_weekly_kpis.py --timezone Europe/Samara
-```
-
-The script runs migrations automatically and clears the in-memory cache once the
-job completes so that the dashboard reflects the updated numbers immediately.
+to Telegram credentials.
 
 ### Bot integration configuration
 
@@ -110,39 +267,195 @@ quick start template):
 | `BOT_ENABLED` | `true` | Master switch for the integration. Set to `false` to skip Test 2 dispatches entirely. |
 | `BOT_PROVIDER` | `telegram` | Bot provider identifier. Only the Telegram provider is currently supported. |
 | `BOT_TOKEN` | _(empty)_ | Telegram bot token. Required when `BOT_ENABLED=true`. |
+
+## Troubleshooting (dev)
+- `BOT_TOKEN invalid → NullBot` — админка продолжит работать, но бот не будет принимать обновления. Для реального бота заполните `BOT_TOKEN` в `.env.local` и перезапустите `make dev-bot`.
+- В оболочке лежит `BOT_TOKEN=dummy_token` → скрипты `dev_admin.sh/dev_bot.sh` предупреждают и игнорируют его; иначе вручную `unset BOT_TOKEN`.
+- `password authentication failed for user ...` → проверьте `DATABASE_URL` пользователя/пароль/БД. Для docker rs-postgres: `postgresql+asyncpg://rs:pass@localhost:5432/rs`.
+- Проверка Postgres в контейнере:  
+  `docker exec rs-postgres psql -U rs -d rs -c "\dt"`  
+  `docker exec rs-postgres psql -U rs -d rs -c "select * from alembic_version;"`
+- Быстрый smoke токена (без вывода значения):  
+  `python -c "from backend.core.env import load_env; load_env('.env.local'); import os; print('BOT_TOKEN has colon:', ':' in os.getenv('BOT_TOKEN',''))"`
 | `BOT_API_BASE` | _(empty)_ | Optional override for custom Telegram API endpoints. |
 | `BOT_USE_WEBHOOK` | `false` | Enable webhook mode for the bot (requires `BOT_WEBHOOK_URL`). |
 | `BOT_WEBHOOK_URL` | _(empty)_ | Public webhook endpoint used when `BOT_USE_WEBHOOK=true`. |
 | `TEST2_REQUIRED` | `false` | When `true`, a bot failure results in HTTP 503 responses from `/slots/{id}/outcome`. When `false`, the request succeeds and Test 2 is skipped. |
 | `BOT_FAILFAST` | `false` | If enabled, the admin UI refuses to start when the bot is misconfigured while `BOT_ENABLED=true`. |
+| `BOT_AUTOSTART` | `true` (dev) | When enabled, the Telegram bot long-polling worker starts automatically with the admin server (forced off in production). |
+| `LOG_LEVEL` | `INFO` | Global logging verbosity (`DEBUG`, `INFO`, `WARNING`, ...). |
+| `LOG_JSON` | `false` | Emit JSON logs to stdout/file when `true`. |
+| `LOG_FILE` | _(auto)_ | Override log file path (defaults to `data/logs/app.log`). |
 
 The `/health/bot` endpoint reports the runtime state of the integration
 (`enabled`, `ready`, `status`) which simplifies operational diagnostics.
+
+## Security configuration
+
+### Environment variables setup
+
+**IMPORTANT:** Never commit the `.env` file to version control. All sensitive credentials must be configured through environment variables.
+
+Required security settings:
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `SESSION_SECRET` | **Yes** | Session signing key. Must be at least 32 characters. Generate with: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `ADMIN_PASSWORD` | **Yes** | Admin UI password. Use a strong password (16+ characters, mixed case, numbers, symbols). |
+| `ADMIN_USER` | No | Admin UI username (default: `admin`). |
+| `BOT_TOKEN` | **Yes** | Telegram bot token from @BotFather. Keep this secret! |
+
+### Deployment checklist
+
+Before deploying to production:
+
+1. Generate a strong `SESSION_SECRET`:
+   ```bash
+   python -c "import secrets; print(secrets.token_hex(32))"
+   ```
+
+2. Set a strong `ADMIN_PASSWORD` (do not use the example value).
+
+3. Configure environment variables on your server (do not use `.env` file in production).
+
+4. Verify that `.env` is listed in `.gitignore` (already configured).
+
+5. Remove any `.env` file from your working directory:
+   ```bash
+   rm .env  # Only if you're using environment variables directly
+   ```
+
+### Example: Setting environment variables
+
+**Development (using .env file locally):**
+```bash
+cp .env.example .env
+# Edit .env with your values
+nano .env
+```
+
+**Production (using system environment):**
+```bash
+export SESSION_SECRET="your-generated-secret-here"
+export ADMIN_PASSWORD="your-strong-password-here"
+export BOT_TOKEN="your-telegram-bot-token"
+# ... other variables
+```
 
 ## Runtime data storage
 
 All runtime artefacts (SQLite databases, generated reports, uploaded resumes)
 are stored under the directory specified by the `DATA_DIR` environment
-variable. If the variable is not provided, the project falls back to the
-`data/` folder in the repository root. Within this directory the following
-sub-folders are used:
+variable. If the variable is not provided, the project falls back to
+`~/.recruitsmart_admin/data` (outside the repository tree). Within this
+directory the following sub-folders are used:
 
 - `reports/` – generated recruiter reports (`report_*.txt`).
 - `test1/` – interview questionnaires saved as text files (`test1_*.txt`).
 - `uploads/` – user-uploaded files such as resumes.
 
-The directories are created automatically on startup. To keep the repository
-clean, point `DATA_DIR` to a location outside the project checkout when
-running locally, for example:
+The directories are created automatically on startup. If you prefer another
+location, point `DATA_DIR` to it before launching the server. Avoid storing
+`bot.db` inside the project tree when running with `uvicorn --reload`: every
+write operation triggers the file watcher and the dev server restarts. The
+development preset intentionally keeps the SQLite file at `<repo>/data/bot.db`
+so that `make dev` works out of the box even when `asyncpg` is not installed.
+If reload churn becomes annoying, set `DATABASE_URL` to a path outside the
+checkout, for example:
 
 ```bash
 export DATA_DIR="$HOME/hr-bot-data"
 mkdir -p "$DATA_DIR"/reports "$DATA_DIR"/test1 "$DATA_DIR"/uploads
+python -c "from backend.migrations.runner import upgrade_to_head; upgrade_to_head(f'sqlite+aiosqlite:///{'$'}DATA_DIR/bot.db')"
 ```
 
-The bot uses SQLite by default with a database file located inside `DATA_DIR`
-(`bot.db`). You can override the connection string via the `DATABASE_URL`
-environment variable.
+The bot uses SQLite by default:
+
+- `ENVIRONMENT=development` + no `DATABASE_URL` → `sqlite+aiosqlite:///<repo>/data/bot.db`
+  (the bundled `aiosqlite` dependency covers this case).
+- Other environments + no `DATABASE_URL` → `sqlite+aiosqlite:///${DATA_DIR}/bot.db`.
+
+Provide a `DATABASE_URL` to move the SQLite file elsewhere or to switch to
+PostgreSQL/MySQL. The async SQLAlchemy engine expects explicit driver names
+such as `sqlite+aiosqlite` or `postgresql+asyncpg`.
+
+### Database quick start
+
+**SQLite dev (default):**
+
+```bash
+# Comment out DATABASE_URL in .env or override it with an empty value
+DATABASE_URL="" make dev
+```
+
+This resolves to `sqlite+aiosqlite:///./data/bot.db` when the project is run
+from the repository root. `aiosqlite` is part of `requirements-dev.txt`, so no
+extra packages are required.
+
+**PostgreSQL (docker compose / staging):**
+
+```bash
+python -m pip install asyncpg
+docker compose up -d postgres
+DATABASE_URL=postgresql+asyncpg://recruitsmart:recruitsmart@localhost:5432/recruitsmart make dev
+```
+
+The Admin UI logs the active dialect (passwords are masked) and fails fast with
+a short `RuntimeError` if the required async driver (`asyncpg` or `aiosqlite`)
+is missing.
+
+## Self-healing dev server
+
+During day-to-day work you no longer need to restart Uvicorn manually every
+time a file changes or the process crashes. The `scripts/dev_server.py`
+wrapper keeps the admin UI online by supervising the actual Uvicorn command
+and watching the project tree for changes:
+
+```bash
+# installs the watcher dependencies and launches the resilient server
+pip install -r requirements-dev.txt
+make dev-sqlite
+```
+
+`make dev-sqlite` clears `DATABASE_URL` and always uses the bundled SQLite
+database (`sqlite+aiosqlite:///./data/bot.db`). Use `make dev` (or the verbose
+`make dev-postgres` helper) when you want the supervisor to respect the
+`DATABASE_URL` from your shell or `.env` — for example, to connect to a local
+PostgreSQL instance.
+
+The helper does three things for you:
+
+1. Starts the FastAPI admin UI with Uvicorn (default host: `127.0.0.1:8000`).
+2. Restarts the process automatically when Python/HTML/TS files under
+   `backend/`, `scripts/`, `tests/`, or `docs/` change.
+3. Brings the server back up if it exits unexpectedly (for example, because of
+   an exception during startup).
+
+You can customise the command or watch paths without editing the script:
+
+```bash
+# Run on a different port and also watch the frontend bundle directory
+DEVSERVER_CMD="uvicorn backend.apps.admin_ui.app:app --host 0.0.0.0 --port 8100" \
+DEVSERVER_WATCH="backend frontend scripts" \
+make dev
+```
+
+If you prefer to run the supervisor directly, call:
+
+```bash
+ENVIRONMENT=development REDIS_URL="" \
+DEVSERVER_CMD="uvicorn backend.apps.admin_ui.app:app --port 8000" \
+python scripts/dev_server.py --watch backend --watch scripts
+```
+
+Once running, every change to the watched paths or an unexpected crash triggers
+an automatic restart, so you can concentrate on coding rather than retyping
+commands.
+
+If the child process crashes three times within 10 seconds, or if the database
+driver is missing (`asyncpg`/`aiosqlite`), the supervisor prints actionable
+hints (including `DATABASE_URL='' make dev-sqlite`) and exits instead of
+looping endlessly.
 
 ## Running tests
 Project level tests should be executed with the Python module runner to avoid
@@ -159,20 +472,12 @@ If you prefer to call `pytest` directly, ensure that your shell `PATH` includes
 `~/.local/bin` (or the equivalent directory where your Python environment
 installs console scripts).
 
-### Сериализация для `|tojson`
-
-При рендере шаблонов с фильтром Jinja `|tojson` передавайте только структуры
-данных (`dict`, `list`, Pydantic-модели), а не ORM-объекты. При необходимости
-преобразуйте данные через `fastapi.encoders.jsonable_encoder` в роутере перед
-вызовом `TemplateResponse`.
-
 ## Database migrations and seed data
 
 The database schema is managed through Python migration scripts located under
-`backend/migrations`. Both the web applications and the bot invoke
-`backend.core.bootstrap.ensure_database_ready()` during startup, which applies
-pending migrations, creates any missing tables from the ORM metadata and
-populates the default seed data.
+`backend/migrations`. Both the web applications and the bot call
+`backend.core.db.init_models()` during startup, which upgrades the database to
+the latest revision and applies the default seed data.
 
 For brand new environments or CI setups you can run the same logic manually:
 
@@ -184,6 +489,3 @@ The seeding step is idempotent and can be executed multiple times without
 creating duplicate cities, recruiters or test questions.
 
 > **Note:** The latest migrations require PostgreSQL because they rely on concurrent index operations.
-
-## Visual tests (Playwright)
-The first run seeds baseline screenshots via `npm run test:e2e:update`. Regular runs with `npm run test:e2e` will fail when snapshots drift. Baseline images live next to the tests under `__snapshots__`.

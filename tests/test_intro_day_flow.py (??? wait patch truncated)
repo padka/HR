@@ -1,0 +1,25 @@
+
+
+@pytest.mark.asyncio
+async def test_city_lookup_is_case_insensitive_for_unicode():
+    """City detection should work even if stored name uses different casing."""
+
+    async with async_session() as session:
+        city = City(name="Волгоград", tz="Europe/Volgograd", active=True)
+        session.add(city)
+        await session.flush()
+
+        recruiter = Recruiter(
+            name="Case Recruiter",
+            tg_chat_id=777100,
+            tz="Europe/Volgograd",
+        )
+        recruiter.cities.append(city)
+        session.add(recruiter)
+        await session.commit()
+        city_id = city.id
+
+    matched_city = await candidates_router._load_city_with_recruiters("волгоград")
+    assert matched_city is not None
+    assert matched_city.id == city_id
+    assert matched_city.recruiters, "expected recruiters to be loaded for matched city"

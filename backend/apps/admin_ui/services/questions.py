@@ -153,4 +153,13 @@ async def update_test_question(
             await session.rollback()
             return False, "duplicate_index"
 
+    # Keep the in-process bot question bank in sync with admin edits.
+    try:
+        from backend.apps.bot.config import refresh_questions_bank
+
+        refresh_questions_bank()
+    except Exception:
+        # Best-effort: the bot will fall back to defaults if refresh fails.
+        pass
+
     return True, None

@@ -22,8 +22,9 @@ async def test_template_payloads_and_city_owner_assignment():
 
     stage_key = CITY_TEMPLATE_STAGES[0].key
 
-    error = await update_city_settings(
+    error, updated_city, updated_owner = await update_city_settings(
         city_id=city.id,
+        name=None,
         responsible_id=recruiter.id,
         templates={stage_key: "custom text"},
         criteria="Опыт продаж",
@@ -32,11 +33,17 @@ async def test_template_payloads_and_city_owner_assignment():
         plan_month=48,
     )
     assert error is None
+    assert updated_city is not None
+    assert updated_city.plan_week == 12
+    assert updated_city.plan_month == 48
+    assert updated_owner is not None
+    assert updated_owner.id == recruiter.id
 
     async with async_session() as session:
         refreshed_city = await session.get(models.City, city.id)
         assert refreshed_city is not None
-        assert refreshed_city.responsible_recruiter_id == recruiter.id
+        await session.refresh(refreshed_city, attribute_names=["recruiters"])
+        assert any(rec.id == recruiter.id for rec in refreshed_city.recruiters)
         assert refreshed_city.criteria == "Опыт продаж"
         assert refreshed_city.experts == "Эксперт А"
         assert refreshed_city.plan_week == 12
@@ -62,8 +69,9 @@ async def test_update_city_settings_rolls_back_on_template_error():
         await session.refresh(recruiter)
         await session.refresh(city)
 
-    error = await update_city_settings(
+    error, _, _ = await update_city_settings(
         city_id=city.id,
+        name=None,
         responsible_id=recruiter.id,
         templates={"invalid_key": "should fail"},
         criteria="",
@@ -77,8 +85,8 @@ async def test_update_city_settings_rolls_back_on_template_error():
 
     async with async_session() as session:
         refreshed_city = await session.get(models.City, city.id)
-        assert refreshed_city.responsible_recruiter_id is None
-        await session.refresh(refreshed_city, attribute_names=["templates"])
+        await session.refresh(refreshed_city, attribute_names=["recruiters", "templates"])
+        assert refreshed_city.recruiters == []
         assert refreshed_city.templates == []
 
 
@@ -112,6 +120,39 @@ async def test_update_template_returns_false_on_duplicate_key():
 
     async with async_session() as session:
         persisted = await session.get(models.Template, original_id)
+    assert persisted is not None
+    assert persisted.key == "greeting"
+    assert persisted.content == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_update_city_settings_updates_timezone_and_active():
+    async with async_session() as session:
+        city = models.City(name="Advanced City", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+
+    error, updated_city, _ = await update_city_settings(
+        city_id=city.id,
+        name=None,
+        responsible_id=None,
+        templates={},
+        criteria=None,
+        experts=None,
+        plan_week=None,
+        plan_month=None,
+        tz="Asia/Vladivostok",
+        active=False,
+    )
+
+    assert error is None
+    assert updated_city is not None
+    assert updated_city.tz == "Asia/Vladivostok"
+    assert updated_city.active is False
+
+    async with async_session() as session:
+        persisted = await session.get(models.City, city.id)
         assert persisted is not None
-        assert persisted.key == "greeting"
-        assert persisted.content == "Hello"
+        assert persisted.tz == "Asia/Vladivostok"
+        assert persisted.active is False

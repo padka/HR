@@ -1,0 +1,820 @@
+/* Unified liquid glass card components */
+
+/* Liquid Glass Variables - define globally if not already defined */
+:root {
+  --liquid-glass-bg: linear-gradient(135deg,
+    color-mix(in srgb, var(--glass-bg) 92%, transparent) 0%,
+    color-mix(in srgb, var(--glass-bg) 76%, transparent) 100%);
+  --liquid-glass-bg-hover: linear-gradient(135deg,
+    color-mix(in srgb, var(--glass-bg) 98%, transparent) 0%,
+    color-mix(in srgb, var(--glass-bg) 82%, transparent) 100%);
+  --liquid-glass-border: color-mix(in srgb, var(--glass-border) 90%, transparent);
+  --liquid-glass-highlight: linear-gradient(180deg,
+    color-mix(in srgb, var(--glass-highlight) 85%, transparent) 0%,
+    transparent 55%);
+  --liquid-glass-shadow:
+    var(--shadow-soft),
+    inset 0 1px 1px color-mix(in srgb, var(--glass-highlight) 40%, transparent);
+  --liquid-glass-shadow-hover:
+    var(--shadow-softer),
+    inset 0 1px 1px color-mix(in srgb, var(--glass-highlight) 55%, transparent);
+  --liquid-glass-blur: blur(var(--glass-backdrop-blur));
+  --liquid-glass-saturate: saturate(140%);
+}
+
+.card-grid {
+  --card-min-width: min(320px, 100%);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--card-min-width), 1fr));
+  gap: clamp(20px, 3vw, 32px);
+  padding: clamp(4px, 1.5vw, 12px);
+  align-items: stretch;
+}
+
+.glass-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(16px, 2vw, 24px);
+  padding: clamp(20px, 2.8vw, 28px);
+  border-radius: clamp(20px, 2.2vw, 28px);
+  border: 1px solid var(--liquid-glass-border);
+  background: var(--liquid-glass-bg);
+  backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+  -webkit-backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+  box-shadow: var(--liquid-glass-shadow);
+  isolation: isolate;
+  overflow: hidden;
+  transition: all var(--dur-lg) var(--ease-out);
+}
+
+.glass-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: var(--liquid-glass-highlight);
+  transition: opacity var(--dur-lg) var(--ease-out);
+}
+
+.glass-card::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  z-index: -1;
+  opacity: 0;
+  transition: opacity var(--dur-lg) var(--ease-out);
+}
+
+.glass-card:hover {
+  transform: translateY(var(--lift-md)) scale(1.01);
+  box-shadow: var(--liquid-glass-shadow-hover);
+  border-color: color-mix(in srgb, var(--glass-border) 85%, transparent);
+}
+
+.glass-card:hover::after {
+  opacity: 0.15;
+}
+
+.glass-card--summary {
+  gap: 12px;
+  padding: clamp(18px, 3vw, 24px);
+}
+
+.card-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: clamp(16px, 2.2vw, 20px);
+  border-radius: clamp(16px, 1.8vw, 20px);
+  border: 1px solid color-mix(in srgb, var(--glass-border) 70%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--glass-bg) 88%, transparent),
+    color-mix(in srgb, var(--glass-bg) 68%, transparent)
+  );
+  backdrop-filter: blur(var(--glass-backdrop-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-backdrop-blur)) saturate(180%);
+  box-shadow: var(--shadow-sm), inset 0 1px 1px color-mix(in srgb, var(--glass-highlight) 30%, transparent);
+  position: relative;
+  overflow: hidden;
+  transition: all var(--dur-md) var(--ease-out);
+}
+
+.card-surface::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-highlight) 40%, transparent), transparent);
+  pointer-events: none;
+}
+
+.card-surface:hover {
+  border-color: color-mix(in srgb, var(--glass-border) 85%, transparent);
+  box-shadow: var(--shadow-md), inset 0 1px 1px color-mix(in srgb, var(--glass-highlight) 45%, transparent);
+}
+
+/* Status pills */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-border) 45%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--glass-highlight) 22%, transparent),
+    color-mix(in srgb, var(--glass-bg) 10%, transparent)
+  );
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 12%, transparent),
+    inset 0 1px 1px color-mix(in srgb, var(--glass-highlight) 40%, transparent);
+  transition: all var(--dur-md) var(--ease-out);
+  position: relative;
+}
+
+.status-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor, 0 0 0 2px color-mix(in srgb, currentColor 25%, transparent);
+  opacity: 0.9;
+  transition: all var(--dur-md) var(--ease-out);
+}
+
+.status-pill:hover {
+  transform: translateY(var(--lift-sm));
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--text) 18%, transparent),
+    inset 0 1px 1px color-mix(in srgb, var(--glass-highlight) 55%, transparent);
+  border-color: color-mix(in srgb, var(--glass-border) 55%, transparent);
+}
+
+.status-pill:hover::before {
+  box-shadow: 0 0 10px currentColor, 0 0 0 3px color-mix(in srgb, currentColor 30%, transparent);
+}
+
+.status-pill__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.status-pill[data-tone="success"] {
+  color: color-mix(in srgb, var(--ok) 72%, var(--fg));
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--glass-stroke));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--ok) 24%, var(--glass-highlight)) 0%,
+    color-mix(in srgb, var(--ok) 8%, transparent) 100%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ok) 38%, var(--glass-highlight));
+}
+
+.status-pill[data-tone="danger"] {
+  color: color-mix(in srgb, var(--bad) 70%, var(--fg));
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--glass-stroke));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--bad) 22%, var(--glass-highlight)) 0%,
+    color-mix(in srgb, var(--bad) 8%, transparent) 100%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bad) 30%, var(--glass-highlight));
+}
+
+.status-pill[data-tone="info"] {
+  color: color-mix(in srgb, var(--accent) 68%, var(--fg));
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--glass-stroke));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 22%, var(--glass-highlight)) 0%,
+    color-mix(in srgb, var(--accent) 6%, transparent) 100%);
+}
+
+.status-pill[data-tone="primary"] {
+  color: color-mix(in srgb, var(--accent-2, var(--accent)) 65%, var(--fg));
+  border-color: color-mix(in srgb, var(--accent-2, var(--accent)) 42%, var(--glass-stroke));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent-2, var(--accent)) 24%, var(--glass-highlight)) 0%,
+    color-mix(in srgb, var(--accent-2, var(--accent)) 8%, transparent) 100%);
+}
+
+.status-pill[data-tone="muted"],
+.status-pill[data-tone="neutral"] {
+  color: color-mix(in srgb, var(--muted) 85%, var(--fg));
+  border-color: color-mix(in srgb, var(--glass-stroke) 80%, transparent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--glass-tint) 75%, transparent) 0%,
+    color-mix(in srgb, var(--text) 10%, transparent) 100%);
+}
+
+.status-pill[data-tone="warning"] {
+  color: color-mix(in srgb, var(--warn) 70%, var(--fg));
+  border-color: color-mix(in srgb, var(--warn) 46%, var(--glass-stroke));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--warn) 24%, var(--glass-highlight)) 0%,
+    color-mix(in srgb, var(--warn) 8%, transparent) 100%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--warn) 34%, var(--glass-highlight));
+}
+
+/* Inline helper collections */
+.meta-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+  font-size: 12px;
+}
+
+.meta-list > * {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Recruiter list cards */
+.recruiter-card {
+  min-height: 0;
+    background: var(--liquid-glass-bg);
+    backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+    -webkit-backdrop-filter: var(--liquid-glass-blur) var(--liquid-glass-saturate);
+  border: 1px solid var(--liquid-glass-border);
+  box-shadow: var(--liquid-glass-shadow);
+  border-radius: clamp(20px, 2.2vw, 28px);
+  padding: clamp(20px, 2.8vw, 28px);
+  transition: all var(--dur-lg) var(--ease-out);
+  position: relative;
+  overflow: hidden;
+}
+
+.recruiter-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--liquid-glass-highlight);
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.recruiter-card:hover {
+  transform: translateY(var(--lift-md));
+  box-shadow: var(--liquid-glass-shadow-hover);
+  border-color: color-mix(in srgb, var(--glass-border) 55%, transparent);
+}
+
+.recruiter-card__header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.recruiter-card__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recruiter-card__name {
+  margin: 0;
+  font-size: clamp(20px, 2.2vw, 24px);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.recruiter-card__body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: clamp(14px, 2vw, 20px);
+}
+
+.recruiter-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recruiter-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.recruiter-metrics div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recruiter-metrics dt {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--muted) 88%, transparent);
+}
+
+.recruiter-metrics dd {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--fg-strong);
+}
+
+.recruiter-card__fold {
+  border-radius: clamp(16px, 1.8vw, 20px);
+  border: 1px solid color-mix(in srgb, var(--glass-border) 45%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--glass-highlight) 22%, transparent),
+    color-mix(in srgb, var(--glass-bg) 10%, transparent)
+  );
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--text) 12%, transparent),
+    inset 0 1px 1px color-mix(in srgb, var(--glass-highlight) 30%, transparent);
+  overflow: visible;
+  position: relative;
+  transition: all var(--dur-md) var(--ease-out);
+}
+
+.recruiter-card__fold::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-highlight) 35%, transparent), transparent);
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.recruiter-card__fold:hover {
+  border-color: color-mix(in srgb, var(--glass-border) 55%, transparent);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 18%, transparent),
+    inset 0 1px 1px color-mix(in srgb, var(--glass-highlight) 45%, transparent);
+}
+
+.recruiter-card__fold summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: clamp(12px, 2vw, 16px);
+  margin: 0;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+}
+
+.recruiter-card__fold-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.recruiter-card__fold-head .section-title {
+  margin: 0;
+}
+
+.recruiter-card__fold summary::-webkit-details-marker {
+  display: none;
+}
+
+.recruiter-card__fold summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: .45;
+  transition: transform var(--dur-sm) var(--ease-out), opacity var(--dur-sm) var(--ease-out);
+}
+
+.recruiter-card__fold[open] summary::after {
+  transform: rotate(45deg);
+  opacity: .65;
+}
+
+.recruiter-card__fold-body {
+  padding: 0 clamp(12px, 2vw, 18px) clamp(14px, 2vw, 18px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recruiter-card__fold-hint {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--muted) 84%, transparent);
+}
+
+.recruiter-card__footer {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.recruiter-card__footer .btn {
+  flex: 1 1 160px;
+  justify-content: center;
+}
+
+/* Responsive rules */
+@media (min-width: 600px) {
+  .recruiter-card__fold summary {
+    cursor: default;
+  }
+
+  .recruiter-card__fold summary::after {
+    display: none;
+  }
+}
+
+@media (max-width: 880px) {
+  .card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .card-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding: 0;
+  }
+
+  .glass-card {
+    padding: 18px;
+    border-radius: 18px;
+  }
+
+  .recruiter-card__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recruiter-card__footer {
+    justify-content: flex-start;
+  }
+
+  .recruiter-card__footer .btn {
+    flex: 1 1 100%;
+  }
+}
+
+/* ===========================================
+   STATUS CENTER - Candidate status management
+   =========================================== */
+
+.status-center {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: clamp(18px, 2.5vw, 24px);
+  border: 2px solid color-mix(in srgb, var(--accent) 35%, var(--glass-border));
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--accent) 8%, var(--glass-bg)) 0%,
+    color-mix(in srgb, var(--glass-bg) 92%, transparent) 100%);
+}
+
+.status-center__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.status-center__current {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: clamp(18px, 2.2vw, 22px);
+  font-weight: 650;
+  color: var(--fg-strong);
+}
+
+.status-center__dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 25%, transparent);
+  transition: all var(--dur-md) var(--ease-out);
+}
+
+/* Status dot colors by tone */
+.status-center__current[data-tone="success"] .status-center__dot {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok), 0 0 0 4px color-mix(in srgb, var(--ok) 25%, transparent);
+}
+
+.status-center__current[data-tone="danger"] .status-center__dot {
+  background: var(--bad);
+  box-shadow: 0 0 8px var(--bad), 0 0 0 4px color-mix(in srgb, var(--bad) 25%, transparent);
+}
+
+.status-center__current[data-tone="warning"] .status-center__dot {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn), 0 0 0 4px color-mix(in srgb, var(--warn) 25%, transparent);
+}
+
+.status-center__current[data-tone="info"],
+.status-center__current[data-tone="primary"] .status-center__dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.status-center__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.status-center__badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-center__badge--terminal {
+  background: color-mix(in srgb, var(--muted) 20%, transparent);
+  color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
+}
+
+/* Pipeline progress */
+.status-center__pipeline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 12px 0;
+}
+
+.pipeline-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pipeline-stage__dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--glass-border);
+  background: var(--glass-bg);
+  transition: all var(--dur-md) var(--ease-out);
+  position: relative;
+}
+
+.pipeline-stage__dot::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: transparent;
+  transition: all var(--dur-md) var(--ease-out);
+}
+
+.pipeline-stage__label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  text-align: center;
+  transition: color var(--dur-md) var(--ease-out);
+}
+
+/* Pipeline stage states */
+.pipeline-stage[data-state="passed"] .pipeline-stage__dot {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 15%, var(--glass-bg));
+}
+
+.pipeline-stage[data-state="passed"] .pipeline-stage__dot::after {
+  background: var(--ok);
+}
+
+.pipeline-stage[data-state="passed"] .pipeline-stage__label {
+  color: var(--ok);
+}
+
+.pipeline-stage[data-state="active"] .pipeline-stage__dot {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--glass-bg));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.pipeline-stage[data-state="active"] .pipeline-stage__dot::after {
+  background: var(--accent);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.pipeline-stage[data-state="active"] .pipeline-stage__label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.pipeline-stage[data-state="declined"] .pipeline-stage__dot {
+  border-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 15%, var(--glass-bg));
+}
+
+.pipeline-stage[data-state="declined"] .pipeline-stage__dot::after {
+  background: var(--bad);
+}
+
+.pipeline-stage[data-state="declined"] .pipeline-stage__label {
+  color: var(--bad);
+}
+
+/* Pipeline connectors */
+.pipeline-connector {
+  flex: 0.5;
+  height: 2px;
+  background: var(--glass-border);
+  margin-top: -18px;
+  transition: background var(--dur-md) var(--ease-out);
+}
+
+.pipeline-connector[data-state="passed"] {
+  background: var(--ok);
+}
+
+.pipeline-connector[data-state="active"] {
+  background: linear-gradient(90deg, var(--ok), var(--accent));
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.85); }
+}
+
+/* Status actions */
+.status-center__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.status-center__actions-label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-center__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-center__buttons .action-btn {
+  flex: 1 1 auto;
+  min-width: 140px;
+}
+
+.status-center__empty {
+  margin: 0;
+  padding: 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  background: color-mix(in srgb, var(--glass-bg) 50%, transparent);
+  border-radius: 8px;
+  border: 1px dashed var(--glass-border);
+}
+
+/* Manual override section */
+.status-center__override {
+  margin-top: 4px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--glass-border) 60%, transparent);
+  background: color-mix(in srgb, var(--glass-bg) 40%, transparent);
+  overflow: hidden;
+}
+
+.status-center__override summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all var(--dur-sm) var(--ease-out);
+}
+
+.status-center__override summary::-webkit-details-marker {
+  display: none;
+}
+
+.status-center__override summary::before {
+  content: "▸";
+  font-size: 10px;
+  transition: transform var(--dur-sm) var(--ease-out);
+}
+
+.status-center__override[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.status-center__override summary:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--glass-highlight) 20%, transparent);
+}
+
+.status-center__override-content {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 14px;
+}
+
+.status-center__override-content .status-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.status-center__hint {
+  margin: 0;
+  padding: 0 14px 12px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+
+/* Loading state for status buttons */
+.status-center .action-btn[data-loading] {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.status-center .action-btn[data-loading]::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-left: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .status-center__current {
+    font-size: 16px;
+  }
+
+  .pipeline-stage__label {
+    font-size: 10px;
+  }
+
+  .pipeline-stage__dot {
+    width: 20px;
+    height: 20px;
+  }
+
+  .status-center__buttons .action-btn {
+    min-width: 100%;
+  }
+}

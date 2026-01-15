@@ -14,12 +14,10 @@ async def _setup_recruiter_with_city():
         unique_suffix = uuid.uuid4().hex[:6]
         recruiter = models.Recruiter(name=f"DeleteCase {unique_suffix}", tz="Europe/Moscow", active=True)
         city = models.City(name=f"Delete City {unique_suffix}", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
         session.add_all([recruiter, city])
         await session.commit()
         await session.refresh(recruiter)
-        await session.refresh(city)
-        city.responsible_recruiter_id = recruiter.id
-        await session.commit()
         await session.refresh(city)
         return recruiter.id, city.id
 
@@ -55,6 +53,8 @@ async def test_delete_slot_allows_free_and_pending_blocks_booked():
         await session.commit()
         await session.refresh(pending_slot)
         await session.refresh(booked_slot)
+        assert free_slot is not None
+        assert free_slot.tz_name == "Europe/Moscow"
 
     ok_free, err_free = await delete_slot(free_slot.id)
     assert ok_free is True
