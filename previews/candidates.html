@@ -23,53 +23,251 @@
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/build/main.css">
   
+  <style>
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .dock-nav {
+      --dock-peek: 18px;
+      position: fixed;
+      top: 50%;
+      left: clamp(12px, 2vw, 20px);
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 12px;
+      border-radius: 24px;
+      border: 1px solid rgba(var(--border-rgb) / 0.32);
+      background: linear-gradient(180deg,
+        rgb(var(--bg-elev-1) / 0.92),
+        rgb(var(--bg-elev-2) / 0.86));
+      box-shadow: 0 22px 48px rgba(0, 0, 0, 0.18);
+      backdrop-filter: blur(var(--glass-blur-lg)) saturate(1.2);
+      z-index: 50;
+      transition: transform 220ms var(--transition-snap), opacity 220ms var(--transition-snap), box-shadow 220ms var(--transition-snap);
+    }
+
+    .dock-nav[data-dock-hidden="true"] {
+      transform: translateY(-50%) translateX(calc(-100% + var(--dock-peek)));
+      opacity: 0.85;
+    }
+
+    .dock-nav[data-dock-hidden="true"]:hover,
+    .dock-nav[data-dock-hidden="true"]:focus-within {
+      transform: translateY(-50%) translateX(0);
+      opacity: 1;
+    }
+
+    .dock-nav__toggle {
+      position: absolute;
+      top: 50%;
+      right: calc(var(--dock-peek) * -1);
+      transform: translateY(-50%);
+      width: 30px;
+      height: 52px;
+      border-radius: 999px;
+      border: 1px solid rgba(var(--border-rgb) / 0.4);
+      background: rgb(var(--bg-elev-1) / 0.92);
+      color: inherit;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+      transition: transform 180ms var(--transition-snap), box-shadow 180ms var(--transition-snap);
+    }
+
+    .dock-nav__toggle:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(var(--accent-soft) / 0.5), 0 12px 24px rgba(0, 0, 0, 0.18);
+    }
+
+    .dock-nav__toggle-icon {
+      font-size: 16px;
+      line-height: 1;
+      transition: transform 200ms var(--transition-snap);
+    }
+
+    .dock-nav[data-dock-hidden="false"] .dock-nav__toggle-icon {
+      transform: rotate(180deg);
+    }
+
+    .dock-nav__link {
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      position: relative;
+      color: var(--color-text);
+      text-decoration: none;
+      background: linear-gradient(160deg,
+        rgb(var(--bg-elev-1) / 0.92),
+        rgb(var(--bg-elev-3) / 0.88));
+      border: 1px solid rgba(var(--border-rgb) / 0.28);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12);
+      transform-origin: left center;
+      transition: transform 180ms var(--transition-snap), box-shadow 180ms var(--transition-snap), border-color 180ms var(--transition-snap);
+      z-index: 1;
+    }
+
+    .dock-nav__link::after {
+      content: attr(data-label);
+      position: absolute;
+      left: calc(100% + 14px);
+      top: 50%;
+      transform: translateY(-50%) translateX(-6px);
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgb(var(--bg-elev-1) / 0.94);
+      border: 1px solid rgba(var(--border-rgb) / 0.3);
+      color: var(--color-text);
+      font-size: 12px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.16);
+      transition: opacity 160ms var(--transition-snap), transform 160ms var(--transition-snap);
+      z-index: 2;
+    }
+
+    .dock-nav__link:hover,
+    .dock-nav__link:focus-visible {
+      transform: translateX(8px) scale(1.08);
+      border-color: rgba(var(--accent-soft) / 0.8);
+      box-shadow: 0 18px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    .dock-nav__link:hover::after,
+    .dock-nav__link:focus-visible::after {
+      opacity: 1;
+      transform: translateY(-50%) translateX(0);
+    }
+
+    .dock-nav__link:active {
+      transform: translateX(6px) scale(1.02);
+    }
+
+    .dock-nav__link[aria-current="page"] {
+      border-color: rgba(var(--accent-soft) / 0.9);
+      box-shadow: 0 0 0 1px rgba(var(--accent-soft) / 0.6), 0 14px 26px rgba(0, 0, 0, 0.18);
+    }
+
+    .dock-nav__icon {
+      font-size: 20px;
+      line-height: 1;
+      transition: transform 180ms var(--transition-snap), filter 180ms var(--transition-snap);
+    }
+
+    .dock-nav__link:hover .dock-nav__icon,
+    .dock-nav__link:focus-visible .dock-nav__icon,
+    .dock-nav__link[aria-current="page"] .dock-nav__icon {
+      transform: scale(1.12);
+      filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.18));
+    }
+
+    .app-main {
+      padding-left: clamp(72px, 9vw, 120px);
+    }
+
+    @media (max-width: 900px) {
+      .dock-nav {
+        --dock-peek: 14px;
+        left: 8px;
+        padding: 12px 10px;
+        gap: 10px;
+        border-radius: 22px;
+      }
+
+      .dock-nav__link {
+        width: 46px;
+        height: 46px;
+        border-radius: 14px;
+      }
+
+      .dock-nav__icon {
+        font-size: 18px;
+      }
+
+      .dock-nav__toggle {
+        width: 26px;
+        height: 44px;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .dock-nav {
+        --dock-peek: 12px;
+        left: 6px;
+        padding: 10px 8px;
+        gap: 8px;
+        border-radius: 20px;
+      }
+
+      .dock-nav__link {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+      }
+
+      .app-main {
+        padding-left: clamp(56px, 12vw, 80px);
+      }
+    }
+
+    @media (max-width: 560px) {
+      .app-main {
+        padding-left: 0;
+      }
+    }
+  </style>
+
 </head>
 <body>
   <div class="app-shell">
-    <header class="topbar" data-topbar>
-      <div class="topbar__content">
-        <button class="topbar__burger" type="button" aria-label="Открыть меню" aria-expanded="false" data-topbar-toggle>
-          <span aria-hidden="true">☰</span>
-        </button>
-        <a class="topbar__brand" href="/">
-          <span>TG</span>
-          Bot Admin
-        </a>
-        <nav class="topbar__nav" data-topbar-nav aria-label="Основная навигация">
-          <ul class="nav-links">
-            <li class="nav-links__item">
-              <a href="/" class="nav-link">Дашборд</a>
-            </li>
-            <li class="nav-links__item">
-              <a href="/recruiters" class="nav-link">Рекрутёры</a>
-            </li>
-            <li class="nav-links__item">
-              <a href="/cities" class="nav-link">Города</a>
-            </li>
-            <li class="nav-links__item">
-              <a href="/slots" class="nav-link">Слоты</a>
-            </li>
-            <li class="nav-links__item">
-              <a href="/candidates" class="nav-link" aria-current="page">Кандидаты</a>
-            </li>
-            <li class="nav-links__item">
-              <a href="/templates" class="nav-link">Шаблоны</a>
-            </li>
-            <li class="nav-links__item">
-              <a href="/questions" class="nav-link">Вопросы</a>
-            </li>
-          </ul>
-        </nav>
-        <div class="topbar__actions">
-          <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Переключить тему">
-            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
-            <span class="theme-toggle__label">Тёмная тема</span>
-          </button>
-          <span class="topbar__badge">demo.local</span>
-        </div>
-      </div>
-    </header>
-    <div class="topbar__scrim" data-topbar-scrim></div>
+    <nav class="dock-nav" data-dock-nav data-dock-hidden="false" aria-label="Навигация">
+      <button class="dock-nav__toggle" type="button" data-dock-toggle aria-label="Скрыть навигацию" aria-pressed="true">
+        <span class="dock-nav__toggle-icon" aria-hidden="true">&gt;</span>
+      </button>
+      <a href="/" class="dock-nav__link" data-label="Дашборд">
+        <span class="dock-nav__icon" aria-hidden="true">📊</span>
+        <span class="visually-hidden">Дашборд</span>
+      </a>
+      <a href="/recruiters" class="dock-nav__link" data-label="Рекрутёры">
+        <span class="dock-nav__icon" aria-hidden="true">👥</span>
+        <span class="visually-hidden">Рекрутёры</span>
+      </a>
+      <a href="/cities" class="dock-nav__link" data-label="Города">
+        <span class="dock-nav__icon" aria-hidden="true">🌆</span>
+        <span class="visually-hidden">Города</span>
+      </a>
+      <a href="/slots" class="dock-nav__link" data-label="Слоты">
+        <span class="dock-nav__icon" aria-hidden="true">📅</span>
+        <span class="visually-hidden">Слоты</span>
+      </a>
+      <a href="/candidates" class="dock-nav__link" data-label="Кандидаты" aria-current="page">
+        <span class="dock-nav__icon" aria-hidden="true">👤</span>
+        <span class="visually-hidden">Кандидаты</span>
+      </a>
+      <a href="/templates" class="dock-nav__link" data-label="Шаблоны">
+        <span class="dock-nav__icon" aria-hidden="true">💬</span>
+        <span class="visually-hidden">Шаблоны</span>
+      </a>
+      <a href="/questions" class="dock-nav__link" data-label="Вопросы">
+        <span class="dock-nav__icon" aria-hidden="true">❓</span>
+        <span class="visually-hidden">Вопросы</span>
+      </a>
+    </nav>
     <main class="app-main">
       <div class="container">
         
@@ -281,9 +479,10 @@
       const storageKey = 'tg-admin-theme';
       const docEl = document.documentElement;
       const toggle = document.getElementById('theme-toggle');
-      const nav = document.querySelector('[data-topbar-nav]');
-      const burger = document.querySelector('[data-topbar-toggle]');
-      const scrim = document.querySelector('[data-topbar-scrim]');
+      const dock = document.querySelector('[data-dock-nav]');
+      const dockToggle = document.querySelector('[data-dock-toggle]');
+      const dockMedia = window.matchMedia('(max-width: 900px)');
+      let dockUserToggled = false;
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
 
       function storeTheme(theme) {
@@ -338,38 +537,36 @@
         });
       }
 
-      function setNavOpen(open) {
-        if (!nav || !burger) return;
-        nav.dataset.open = open ? 'true' : 'false';
-        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
-        if (scrim) {
-          scrim.dataset.open = open ? 'true' : 'false';
+      function setDockHidden(hidden) {
+        if (!dock) return;
+        dock.dataset.dockHidden = hidden ? 'true' : 'false';
+        if (dockToggle) {
+          dockToggle.setAttribute('aria-pressed', hidden ? 'false' : 'true');
+          dockToggle.setAttribute('aria-label', hidden ? 'Показать навигацию' : 'Скрыть навигацию');
         }
       }
 
-      if (burger) {
-        burger.addEventListener('click', () => {
-          const next = nav && nav.dataset.open !== 'true';
-          setNavOpen(next);
+      function syncDock() {
+        if (!dock || dockUserToggled) return;
+        setDockHidden(dockMedia.matches);
+      }
+
+      if (dockToggle) {
+        dockToggle.addEventListener('click', () => {
+          if (!dock) return;
+          dockUserToggled = true;
+          const isHidden = dock.dataset.dockHidden === 'true';
+          setDockHidden(!isHidden);
         });
       }
 
-      if (scrim) {
-        scrim.addEventListener('click', () => setNavOpen(false));
+      if (dockMedia && typeof dockMedia.addEventListener === 'function') {
+        dockMedia.addEventListener('change', syncDock);
+      } else if (dockMedia && typeof dockMedia.addListener === 'function') {
+        dockMedia.addListener(syncDock);
       }
 
-      if (nav) {
-        nav.addEventListener('click', (event) => {
-          const target = event.target;
-          if (window.innerWidth <= 768 && target instanceof HTMLElement && target.closest('a')) {
-            setNavOpen(false);
-          }
-        });
-      }
-
-      window.addEventListener('resize', () => {
-        if (window.innerWidth > 768) {
-          setNavOpen(false);
+      syncDock();
         }
       });
     })();
