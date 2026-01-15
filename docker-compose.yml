@@ -64,6 +64,7 @@ services:
   admin_ui:
     build:
       context: .
+      target: prod
     image: recruitsmart-admin:latest
     command: ["uvicorn", "backend.apps.admin_ui.app:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
