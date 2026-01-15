@@ -254,7 +254,7 @@ test suite from the project root:
 
 ```bash
 python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 pre-commit install
 pytest --cov=backend --cov=tests --cov-report=term
 ```
@@ -397,8 +397,9 @@ DATABASE_URL="" make dev
 ```
 
 This resolves to `sqlite+aiosqlite:///./data/bot.db` when the project is run
-from the repository root. `aiosqlite` is part of `requirements-dev.txt`, so no
-extra packages are required.
+from the repository root. `aiosqlite` ships in the base dependencies declared
+in `pyproject.toml`, so no extra packages are required after installing
+`pip install -e ".[dev]"`.
 
 **PostgreSQL (docker compose / staging):**
 
@@ -421,7 +422,7 @@ and watching the project tree for changes:
 
 ```bash
 # installs the watcher dependencies and launches the resilient server
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 make dev-sqlite
 ```
 
@@ -472,7 +473,7 @@ of the standard library, therefore make sure to install the development
 requirements before invoking pytest:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 python3 -m pytest
 ```
 
