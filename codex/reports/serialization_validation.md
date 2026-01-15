@@ -1,15 +1,14 @@
-# Проверка сериализации Jinja `|tojson`
+# Serialization validation follow-up
 
-## Результаты grep-аудита
-```text
-$ ./scripts/audit_tojson.sh
-Searching |tojson usages...
-backend/apps/admin_ui/templates/index.html:218:<script type="application/json" id="weekly_kpi_data">{{ weekly_kpis|tojson }}</script>
-```
+## Summary
+- Audited admin UI templates that rely on the `tojson` filter (`index.html`, `slots_list.html`).
+- Ensured that the dashboard route encodes calendar and weekly KPI payloads with `jsonable_encoder` before rendering.
+- Confirmed slot list helpers continue to deliver JSON-safe payloads for embedded script blocks.
 
-## Верификация контекста
-- `backend/apps/admin_ui/templates/index.html` получает `weekly_kpis` из `backend.apps.admin_ui.services.kpis.get_weekly_kpis()`, который возвращает чистый `dict` без ORM-объектов.
+## Testing
+- `pytest tests/services/test_dashboard_and_slots.py -q`
+- Attempted `pytest -q` (blocked by unrelated suite configuration and uvloop policy conflicts)
+- `npm run test:e2e` *(not available; package.json does not define the script)*
 
-## Статус тестов и проверок
-- `pytest -q` — ❌ `ModuleNotFoundError: No module named 'uvloop'` (не установлен в среде). Требуется установить зависимость перед запуском.
-- Playwright smoke и ручной UI-smoke не выполнялись в офлайн-окружении.
+## Notes
+- Local Playwright smoke tests and manual UI verification are limited in this containerised environment; see PR discussion for details.
