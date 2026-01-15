@@ -33,7 +33,7 @@ try:
 except ImportError as exc:  # pragma: no cover - dev helper dependency
     raise SystemExit(
         "watchfiles is required for scripts/dev_server.py. "
-        "Install development dependencies with `pip install -r requirements-dev.txt`."
+        "Install development dependencies with `pip install -e \".[dev]\"`."
     ) from exc
 
 DEFAULT_CMD = os.environ.get(

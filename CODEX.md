@@ -26,7 +26,7 @@ pytest
 
 ## Локальный запуск
 1. **Создайте виртуальное окружение:** `python3 -m venv .venv && source .venv/bin/activate` (Python ≥3.11).
-2. **Установите зависимости:** `pip install -r requirements.txt -r requirements-dev.txt`.
+2. **Установите зависимости:** `pip install -e ".[dev]"`.
 3. **Поставьте frontend-пакеты:** `npm install` (или `npm ci` для чистой среды).
 4. **Скопируйте конфиг:** `cp .env.example .env` и заполните минимум `ADMIN_USER`, `ADMIN_PASSWORD`, `SESSION_SECRET_KEY` (≥32 символов).
 5. **Соберите Tailwind:** `npm run build` — сформирует `backend/apps/admin_ui/static/build/main.css`.

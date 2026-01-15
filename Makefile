@@ -30,7 +30,7 @@ ensure-venv:
 # Install dependencies
 install: ensure-venv
 	$(PYTHON) -m pip install --upgrade pip
-	$(PYTHON) -m pip install -r requirements-dev.txt
+	$(PYTHON) -m pip install -e ".[dev]"
 
 # Run database migrations
 migrate:
@@ -46,7 +46,7 @@ dev-postgres:
 
 # Run tests (in-memory broker, PostgreSQL test DB)
 test: ensure-venv
-	$(PYTHON) -m pip show pytest >/dev/null 2>&1 || $(PYTHON) -m pip install -r requirements-dev.txt
+	$(PYTHON) -m pip show pytest >/dev/null 2>&1 || $(PYTHON) -m pip install -e ".[dev]"
 	DATABASE_URL="postgresql+asyncpg://rs:pass@localhost:5432/rs_test" \
 	ENVIRONMENT=test \
 	REDIS_URL="" \
@@ -61,7 +61,7 @@ test: ensure-venv
 
 # Run tests with coverage
 test-cov: ensure-venv
-	$(PYTHON) -m pip show pytest >/dev/null 2>&1 || $(PYTHON) -m pip install -r requirements-dev.txt
+	$(PYTHON) -m pip show pytest >/dev/null 2>&1 || $(PYTHON) -m pip install -e ".[dev]"
 	DATABASE_URL="postgresql+asyncpg://rs:pass@localhost:5432/rs_test" \
 	ENVIRONMENT=test \
 	REDIS_URL="" \

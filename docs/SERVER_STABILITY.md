@@ -348,7 +348,7 @@ groups:
 
 ```bash
 # 1. Установить зависимости
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 
 # 2. Запустить миграции
 ENVIRONMENT=production make migrate

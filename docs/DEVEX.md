@@ -6,8 +6,8 @@ work on the Liquid Glass admin UI.
 ## Backend workflows
 
 1. **Bootstrap dependencies** – run `make bootstrap` to install Python
-   dependencies via Poetry (when available) or pip and to provision Node tooling
-   and Playwright browsers.
+   dependencies via `pip install -e ".[dev]"`, provision Node tooling, and
+   download Playwright browsers.
 2. **Prepare the database** – execute `make dev-db` to apply migrations and seed
    default reference data. The command reuses the same logic as the application
    lifespan hook, which guarantees parity between development and production
@@ -46,6 +46,18 @@ work on the Liquid Glass admin UI.
 * Regenerate snapshots intentionally via `pytest tests/test_ui_screenshots.py --update-snapshots`.
 * Store custom Playwright helpers under `tests/` and document them inline—the
   project currently favours pytest-style fixtures over bespoke CLI wrappers.
+
+## Dependency updates
+
+* The single source of truth for Python dependencies is `pyproject.toml`.
+  Runtime requirements live in `[project.dependencies]`, and developer tooling
+  lives in `[project.optional-dependencies].dev`.
+* To add or upgrade a dependency:
+  1. Edit `pyproject.toml` with the new pinned version.
+  2. Reinstall extras locally: `pip install -e ".[dev]"`.
+  3. Run the relevant checks (`make test`, `pytest`, or CI-equivalent commands).
+  4. If you touched runtime dependencies, rebuild the Docker image or rerun the
+     deployment installation step (`pip install -e ".[dev]"`) before validation.
 
 ## Smoke testing
 

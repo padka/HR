@@ -320,7 +320,6 @@ recruitsmart_admin/
 ├── README.md
 ├── pyproject.toml
 ├── pytest.ini
-├── requirements-dev.txt
 ├── Makefile
 ├── docker-compose.yml
 ├── .gitignore

@@ -2,7 +2,7 @@
 
 ## Главное
 1. **База не поднимается на чистой среде.** `ensure_database_ready()` требует alembic и падает до создания таблиц (`slot_reminder_jobs`). Без ручной установки `alembic` сервис не стартует. 【F:backend/core/bootstrap.py†L19-L53】【F:audit/smoke_no_db.log†L1-L8】
-2. **Пакетная установка ломается.** В `pyproject.toml` нет зависимостей (`apscheduler`, `python-multipart`, `alembic`), поэтому `pip install -e .` выдаёт `ModuleNotFoundError`, а CI по `requirements-dev.txt` тянет другие версии. 【F:pyproject.toml†L19-L33】【F:backend/apps/bot/services.py†L37-L42】【F:backend/apps/admin_ui/routers/candidates.py†L1-L44】
+2. **Пакетная установка выровнена.** Базовые и dev‑зависимости закреплены в `pyproject.toml`, поэтому `pip install -e ".[dev]"` и CI используют единый источник истины. 【F:pyproject.toml†L19-L78】【F:.github/workflows/ci.yml†L1-L34】
 3. **Тестовый контур нестабилен.** `pytest` падает на несовместимом API `TestClient` и отсутствии playwright-браузеров, что блокирует release pipeline. 【F:audit/pytest.log†L1-L116】
 4. **Админка защищена только HTTP Basic и демо-секретами.** `.env.example` хранит реальные ID и дефолтные пароли, `require_admin` не усиливает безопасность. 【F:.env.example†L1-L37】【F:backend/apps/admin_ui/security.py†L15-L38】
 5. **Внедрение Liquid Glass незавершено.** Tailwind-токены подключены, но шаблоны используют ограниченное число классов (≈60 селекторов), отсутствуют визуальные снапшоты и a11y-хуки. 【F:tailwind.config.js†L1-L56】【F:audit/METRICS.md†L1-L19】

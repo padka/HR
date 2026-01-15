@@ -231,14 +231,12 @@
 ├── postcss.config.cjs
 ├── pyproject.toml
 ├── pytest.ini
-├── requirements-dev.txt
 └── tailwind.config.js
 ```
 
 ## Configuration Files
 
 - **pyproject.toml**: pyproject.toml
-- **requirements-dev.txt**: requirements-dev.txt
 - **package.json**: package.json
 - **package-lock.json**: package-lock.json
 - **tailwind.config**: tailwind.config.js
@@ -250,18 +248,17 @@
 - Version: `0.1.0`
 - Optional Dependencies:
   - **dev**:
-    - `fastapi`
-    - `uvicorn`
-    - `jinja2`
-    - `sqlalchemy[asyncio]`
-    - `aiogram`
-    - `aiosqlite`
-    - `redis`
     - `httpx`
     - `pytest`
     - `pytest-asyncio`
     - `playwright`
     - `ruff`
+    - `black`
+    - `isort`
+    - `mypy`
+    - `pre-commit`
+    - `fakeredis`
+    - `watchfiles`
 
 ## Node Package Metadata
 

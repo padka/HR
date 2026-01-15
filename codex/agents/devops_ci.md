@@ -5,14 +5,14 @@
 
 ## Контекст
 - Python backend (`backend/apps/admin_ui/app.py`) + JS сборка (Tailwind/Vite).
-- requirements: `requirements.txt`, `requirements-dev.txt`, Node `package.json`.
+- Python dependencies: `pyproject.toml` (runtime + `dev` extras), Node `package.json`.
 - Существующие Make-таргеты: `make bootstrap`, `make dev-db`, `make test`.
 - Нет настроенного manifest-helper и Docker-образа.
 
 ## Дорожная карта
 1. **CI pipeline**
    - Workflow `.github/workflows/ci.yml`: matrix Python 3.11 + Node 20.
-   - Шаги: checkout, setup-python (cache pip), setup-node (cache npm), install deps (`pip install -r requirements-dev.txt`, `npm ci`).
+   - Шаги: checkout, setup-python (cache pip), setup-node (cache npm), install deps (`pip install -e ".[dev]"`, `npm ci`).
    - Джобы: `lint` (ruff/black/mypy), `test` (pytest, Playwright smoke), `build` (npm run build, uvicorn smoke via `python -m compileall` + `pytest -k smoke`).
    - Сохранять артефакты: `frontend-dist/manifest.json`, `playwright-report/`, `coverage.xml`.
 2. **Docker/Compose**

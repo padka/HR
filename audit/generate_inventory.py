@@ -244,7 +244,6 @@ def list_static_assets() -> Dict[str, Any]:
 def main() -> None:
     tree_lines = iter_tree(ROOT)
     pyproject_path = ROOT / "pyproject.toml"
-    requirements_path = ROOT / "requirements-dev.txt"
     package_json_path = ROOT / "package.json"
     package_lock_path = ROOT / "package-lock.json"
     tailwind_config = ROOT / "tailwind.config.js"
@@ -257,7 +256,6 @@ def main() -> None:
         "tree": tree_lines,
         "configs": {
             "pyproject.toml": str(pyproject_path.relative_to(ROOT)) if pyproject_path.exists() else None,
-            "requirements-dev.txt": str(requirements_path.relative_to(ROOT)) if requirements_path.exists() else None,
             "package.json": str(package_json_path.relative_to(ROOT)) if package_json_path.exists() else None,
             "package-lock.json": str(package_lock_path.relative_to(ROOT)) if package_lock_path.exists() else None,
             "tailwind.config": str(tailwind_config.relative_to(ROOT)) if tailwind_config.exists() else None,

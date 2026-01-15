@@ -3,7 +3,7 @@
 ## Workflow outline
 1. Check out sources.
 2. Provision Python 3.12 and Node.js 20.
-3. Install Python dependencies from `requirements.txt` and `requirements-dev.txt`.
+3. Install Python dependencies from `pyproject.toml` via `pip install -e ".[dev]"`.
 4. Install frontend dependencies with `npm ci`.
 5. Build Tailwind bundle via `npm run build`.
 6. Execute `pytest -q` (currently fails because uvloop's default event loop policy is not initialised in tests and Playwright browsers are missing).

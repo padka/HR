@@ -1,10 +1,10 @@
 # Диагностика
 
-1. **Отсутствующие зависимости для бота и форм**  
-   • **Симптом:** импорт `apscheduler` и `python-multipart` роняет приложение и тесты.  
-   • **Причина:** модули используются в коде (`apscheduler` в бот-сервисах, `Form` в роутерах), но не задекларированы в `pyproject.toml`.  
-   • **Подтверждение:** импорт `AsyncIOScheduler` из `apscheduler` в `backend/apps/bot/services.py`, обработка HTML-форм в `backend/apps/admin_ui/routers/candidates.py`, тогда как `[project]` зависимостей пуст.  
-   • **Ориентировочный фикс:** добавить обязательные пакеты (`apscheduler`, `python-multipart`) в базовый список зависимостей и синхронизировать с `requirements-dev.txt` и CI.
+1. **Зависимости для бота и форм**  
+   • **Симптом:** импорт `apscheduler` и `python-multipart` роняет приложение и тесты при неполной установке.  
+   • **Причина:** модули используются в коде (`apscheduler` в бот-сервисах, `Form` в роутерах) и должны присутствовать в базовых зависимостях.  
+   • **Подтверждение:** импорт `AsyncIOScheduler` из `apscheduler` в `backend/apps/bot/services.py`, обработка HTML-форм в `backend/apps/admin_ui/routers/candidates.py`.  
+   • **Ориентировочный фикс:** держать обязательные пакеты (`apscheduler`, `python-multipart`) в `[project.dependencies]` и устанавливать через `pip install -e ".[dev]"`.
 
 2. **Миграции не применяются при чистом старте**  
    • **Симптом:** сервер не поднимается без предварительно созданной базы — старт ломается на таблице `slot_reminder_jobs`.  

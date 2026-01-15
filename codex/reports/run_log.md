@@ -2,13 +2,8 @@
 
 ## Python dependency install
 ```bash
-$ pip install -r requirements.txt
+$ pip install -e ".[dev]"
 Successfully installed ... uvicorn-0.30.6 watchfiles-1.1.1 websockets-15.0.1
-```
-
-```bash
-$ pip install -r requirements-dev.txt
-Successfully installed APScheduler-3.10.4 ... yarl-1.22.0
 ```
 
 ## FastAPI startup attempts
