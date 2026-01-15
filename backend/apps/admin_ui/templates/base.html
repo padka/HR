@@ -528,7 +528,7 @@
   .container {
     max-width: 1120px;
     margin: 0 auto;
-    padding: clamp(12px, 3vw, 20px) clamp(16px, 4vw, 28px) clamp(24px, 6vw, 42px);
+    padding: 0 clamp(16px, 4vw, 28px) clamp(24px, 6vw, 42px);
     display: flex;
     flex-direction: column;
     gap: var(--grid-gap);
@@ -917,8 +917,9 @@
     .dock-hotspot {
       width: 18px;
     }
-    .container {
-      padding: clamp(64px, 18vw, 90px) clamp(14px, 6vw, 22px) clamp(28px, 8vw, 40px);
+    .container,
+    body[data-page] main.container {
+      padding: 0 clamp(14px, 6vw, 22px) clamp(28px, 8vw, 40px);
     }
 
     .dock-hotspot {
@@ -1220,7 +1221,7 @@
     max-width: min(1600px, 100%);
     width: 100%;
     margin: 0 auto;
-    padding: clamp(12px, 3vw, 20px) clamp(16px, 3vw, 28px) clamp(24px, 5vw, 42px);
+    padding: 0 clamp(16px, 3vw, 28px) clamp(24px, 5vw, 42px);
   }
 
   body[data-page] nav.nav {
