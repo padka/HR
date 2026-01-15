@@ -503,6 +503,39 @@
     font-size: 14px;
   }
 
+  .funnel-conversion-badge {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px 6px 38px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 10%, var(--layer-glass));
+  }
+
+  .funnel-conversion-badge::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: conic-gradient(
+      var(--accent) calc(var(--conversion, 0) * 1%),
+      color-mix(in srgb, var(--layer-border) 60%, transparent) 0
+    );
+  }
+
+  .funnel-conversion-badge::after {
+    content: "";
+    position: absolute;
+    left: 14px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--layer-panel);
+  }
+
   .incoming-list {
     display: grid;
     gap: 20px;
@@ -852,6 +885,23 @@
     background: var(--surface-1);
     border: var(--border-w) solid var(--border);
     box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+    backdrop-filter: blur(14px);
+  }
+
+  .funnel-toolbar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 0% 50%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 55%);
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  .funnel-toolbar > * {
+    position: relative;
+    z-index: 1;
   }
 
   .funnel-toolbar__group {
@@ -859,6 +909,10 @@
     flex-wrap: wrap;
     gap: 10px;
     align-items: center;
+    padding: 6px;
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
   }
 
   .funnel-range__btn {
@@ -873,11 +927,17 @@
     transition: 0.2s ease;
   }
 
+  .funnel-range__btn:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+
   .funnel-range__btn.is-active {
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
     color: #fff;
     border-color: transparent;
     box-shadow: 0 10px 20px rgba(69, 133, 255, 0.35);
+    transform: translateY(-1px);
   }
 
   .funnel-toolbar__input {
@@ -887,6 +947,13 @@
     background: var(--surface-2);
     color: var(--text);
     font-size: 13px;
+  }
+
+  .funnel-toolbar__input:focus,
+  .funnel-toolbar__select:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
   }
 
   .funnel-toolbar__select {
@@ -906,6 +973,7 @@
     border-radius: 999px;
     background: var(--surface-2);
     border: var(--border-w) solid var(--border);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 6%, transparent);
   }
 
   .funnel-toggle button {
@@ -920,7 +988,11 @@
   }
 
   .funnel-toggle button.is-active {
-    background: var(--surface-1);
+    background: linear-gradient(
+      135deg,
+      var(--surface-1),
+      color-mix(in srgb, var(--accent) 10%, var(--surface-1))
+    );
     color: var(--text);
     box-shadow: var(--shadow-sm);
   }
@@ -931,6 +1003,12 @@
     gap: 10px;
     font-size: 12px;
     color: var(--text-muted);
+  }
+
+  .funnel-toolbar__meta span + span::before {
+    content: "•";
+    margin: 0 8px 0 2px;
+    color: color-mix(in srgb, var(--text-muted) 70%, transparent);
   }
 
   .funnel-toolbar__refresh {
@@ -1038,6 +1116,12 @@
     color: var(--text-muted);
   }
 
+  .funnel-summary__meta span + span::before {
+    content: "•";
+    margin: 0 6px 0 2px;
+    color: color-mix(in srgb, var(--text-muted) 75%, transparent);
+  }
+
   .funnel-summary__bar {
     margin-top: 10px;
     height: 4px;
@@ -1051,6 +1135,7 @@
     height: 100%;
     width: var(--fill, 0%);
     background: linear-gradient(90deg, var(--summary-accent), color-mix(in srgb, var(--summary-accent) 40%, transparent));
+    transition: width 0.4s ease;
   }
 
   .funnel-summary__delta {
@@ -1066,6 +1151,11 @@
     color: var(--text);
   }
 
+  .funnel-summary__delta::before {
+    content: "•";
+    font-size: 10px;
+  }
+
   .funnel-summary__delta[data-tone="up"] {
     color: color-mix(in srgb, var(--success) 80%, var(--text));
   }
@@ -1078,6 +1168,14 @@
     color: var(--text-muted);
   }
 
+  .funnel-summary__delta[data-tone="up"]::before {
+    content: "▲";
+  }
+
+  .funnel-summary__delta[data-tone="down"]::before {
+    content: "▼";
+  }
+
   .funnel-layout {
     display: grid;
     grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
@@ -1087,15 +1185,63 @@
   .funnel-steps {
     display: grid;
     gap: 14px;
+    position: relative;
+    padding-left: 14px;
   }
 
+  .funnel-steps::before {
+    content: "";
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    bottom: 8px;
+    width: 2px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(90, 140, 255, 0.65), transparent);
+    opacity: 0.4;
+  }
+
+  .funnel-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .funnel-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    color: var(--text);
+  }
+
+  .funnel-legend span::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--legend-tone, var(--accent));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--legend-tone, var(--accent)) 60%, transparent);
+  }
+
+  .funnel-legend span[data-tone="good"] { --legend-tone: var(--success); }
+  .funnel-legend span[data-tone="warn"] { --legend-tone: var(--warning); }
+  .funnel-legend span[data-tone="risk"] { --legend-tone: var(--danger); }
+
   .funnel-step {
+    --step-accent: var(--accent);
     width: 100%;
     text-align: left;
     border: var(--border-w) solid var(--border);
     background: var(--surface-1);
     border-radius: var(--radius-lg);
-    padding: 16px 18px;
+    padding: 16px 18px 16px 30px;
     display: grid;
     grid-template-columns: 1fr auto;
     gap: 12px 18px;
@@ -1103,12 +1249,55 @@
     box-shadow: var(--shadow-sm);
     transition: 0.2s ease;
     cursor: pointer;
+    position: relative;
+    overflow: hidden;
   }
+
+  .funnel-step::before {
+    content: "";
+    position: absolute;
+    left: 6px;
+    top: 22px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--step-accent);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--step-accent) 60%, transparent);
+  }
+
+  .funnel-step::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--step-accent) 12%, transparent), transparent 55%);
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .funnel-step > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .funnel-step[data-tone="good"] { --step-accent: var(--success); }
+  .funnel-step[data-tone="warn"] { --step-accent: var(--warning); }
+  .funnel-step[data-tone="risk"] { --step-accent: var(--danger); }
 
   .funnel-step:hover {
     transform: translateY(-3px);
-    border-color: rgba(105, 183, 255, 0.4);
+    border-color: color-mix(in srgb, var(--step-accent) 45%, transparent);
     box-shadow: 0 18px 40px rgba(23, 60, 102, 0.18);
+  }
+
+  .funnel-step.is-active {
+    border-color: color-mix(in srgb, var(--step-accent) 60%, transparent);
+    box-shadow: 0 22px 46px rgba(23, 60, 102, 0.22);
+  }
+
+  .funnel-step:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--step-accent) 70%, transparent);
+    outline-offset: 2px;
   }
 
   .funnel-step__title {
@@ -1118,14 +1307,29 @@
   }
 
   .funnel-step__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
     font-size: 12px;
     color: var(--text-muted);
+    line-height: 1.4;
+  }
+
+  .funnel-step__pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--step-accent) 12%, var(--surface-2));
+    border: 1px solid color-mix(in srgb, var(--step-accent) 28%, transparent);
+    font-size: 11px;
+    color: var(--text);
   }
 
   .funnel-step__count {
     font-size: 30px;
     font-weight: 900;
-    color: var(--fg-strong);
+    color: color-mix(in srgb, var(--step-accent) 75%, var(--fg-strong));
   }
 
   .funnel-step__progress {
@@ -1142,7 +1346,11 @@
     position: absolute;
     inset: 0;
     width: var(--progress, 0%);
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    background: linear-gradient(
+      90deg,
+      var(--step-accent),
+      color-mix(in srgb, var(--step-accent) 65%, var(--accent-2))
+    );
     transition: width 0.4s ease;
   }
 
@@ -1216,6 +1424,11 @@
     color: color-mix(in srgb, var(--warning) 80%, var(--text));
   }
 
+  .funnel-speed__badge[data-tone="neutral"] {
+    background: var(--surface-2);
+    color: var(--text-muted);
+  }
+
   .funnel-speed__insights {
     display: flex;
     flex-wrap: wrap;
@@ -1228,10 +1441,12 @@
     border-radius: 999px;
     background: var(--surface-2);
     color: var(--text);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
   }
 
   .funnel-speed__insight[data-tone="warning"] {
     color: color-mix(in srgb, var(--warning) 80%, var(--text));
+    border-color: color-mix(in srgb, var(--warning) 35%, transparent);
   }
 
   .funnel-speed__list,
@@ -1270,6 +1485,7 @@
   .funnel-snapshot__row[data-hot="true"] {
     border-color: color-mix(in srgb, var(--accent) 45%, transparent);
     box-shadow: 0 10px 22px rgba(90, 140, 255, 0.18);
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
   }
 
   .funnel-speed__label {
@@ -1304,6 +1520,7 @@
     height: 100%;
     width: var(--speed-fill, 0%);
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.4s ease;
   }
 
   .funnel-speed__sample {
@@ -1349,6 +1566,33 @@
     height: 100%;
     width: var(--fill, 0%);
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.4s ease;
+  }
+
+  .funnel-summary__card,
+  .funnel-speed__item,
+  .funnel-snapshot__row {
+    animation: funnelRise 0.45s ease both;
+    animation-delay: var(--delay, 0ms);
+  }
+
+  @keyframes funnelRise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .funnel-summary__card,
+    .funnel-speed__item,
+    .funnel-snapshot__row {
+      animation: none;
+    }
   }
 
   .funnel-chart {
@@ -1357,6 +1601,48 @@
     background: var(--surface-1);
     padding: 16px;
     box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .funnel-chart::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0 18px,
+        rgba(255, 255, 255, 0.06) 18px 19px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        transparent 0 36px,
+        rgba(255, 255, 255, 0.04) 36px 37px
+      );
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .funnel-chart > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .funnel-chart svg polyline {
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    animation: chartDraw 1.1s ease forwards;
+  }
+
+  @keyframes chartDraw {
+    to { stroke-dashoffset: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .funnel-chart svg polyline {
+      animation: none;
+    }
   }
 
   .funnel-chart__title {
@@ -1371,6 +1657,16 @@
     font-size: 12px;
     color: var(--text-muted);
     margin-top: 10px;
+  }
+
+  .funnel-chart__legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
   }
 
   .funnel-chart__dot {
@@ -1392,13 +1688,28 @@
   }
 
   .funnel-dropoff {
+    --dropoff-accent: var(--accent);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     padding: 10px 12px;
     border-radius: 12px;
-    background: var(--surface-2);
+    background: color-mix(in srgb, var(--dropoff-accent) 10%, var(--surface-2));
+    border: 1px solid color-mix(in srgb, var(--dropoff-accent) 35%, transparent);
+  }
+
+  .funnel-dropoff.is-active {
+    border-color: color-mix(in srgb, var(--dropoff-accent) 60%, transparent);
+    box-shadow: 0 14px 28px rgba(20, 30, 50, 0.16);
+  }
+
+  .funnel-dropoff[data-tone="warning"] {
+    --dropoff-accent: var(--warning);
+  }
+
+  .funnel-dropoff[data-tone="danger"] {
+    --dropoff-accent: var(--danger);
   }
 
   .funnel-dropoff__label {
@@ -1409,16 +1720,27 @@
   .funnel-dropoff__value {
     font-size: 20px;
     font-weight: 800;
-    color: var(--fg-strong);
+    color: color-mix(in srgb, var(--dropoff-accent) 85%, var(--fg-strong));
   }
 
   .funnel-dropoff__action {
     border: none;
-    background: transparent;
-    color: var(--accent);
+    background: color-mix(in srgb, var(--dropoff-accent) 18%, var(--surface-2));
+    color: var(--dropoff-accent);
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 999px;
+  }
+
+  .funnel-dropoff__action:hover {
+    filter: brightness(1.05);
+  }
+
+  .funnel-dropoff__action:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--dropoff-accent) 60%, transparent);
+    outline-offset: 2px;
   }
 
   .funnel-skeleton {
@@ -2578,6 +2900,22 @@
       grid-template-columns: 1fr;
     }
 
+    .funnel-steps {
+      padding-left: 0;
+    }
+
+    .funnel-steps::before {
+      display: none;
+    }
+
+    .funnel-step {
+      padding-left: 22px;
+    }
+
+    .funnel-step::before {
+      left: 10px;
+    }
+
     .activity-feed {
       width: calc(100% - 32px);
       right: 16px;
@@ -3146,7 +3484,7 @@
       <h2 class="section-header__title">Прогресс кандидатов</h2>
     </div>
     <div class="section-header__actions">
-      <span class="incoming-section__badge" id="funnelConversionBadge">Конверсия: —</span>
+      <span class="incoming-section__badge funnel-conversion-badge" id="funnelConversionBadge">Конверсия: —</span>
     </div>
   </div>
 
@@ -3201,6 +3539,11 @@
         <div class="funnel-skeleton__line"></div>
       </div>
       <div class="funnel-steps" id="funnelSteps"></div>
+      <div class="funnel-legend" id="funnelLegend" hidden>
+        <span data-tone="good">70%+ конверсия</span>
+        <span data-tone="warn">50-70% зона внимания</span>
+        <span data-tone="risk">Менее 50% риск</span>
+      </div>
       <div class="funnel-empty" id="funnelEmpty" hidden>
         На выбранный период нет данных. Попробуйте расширить диапазон или сбросить фильтры.
       </div>
@@ -3236,15 +3579,15 @@
         <div class="funnel-snapshot__list" id="funnelSnapshotList"></div>
       </div>
       <div class="funnel-dropoffs" id="funnelDropoffs">
-        <div class="funnel-dropoff">
+        <div class="funnel-dropoff" data-tone="warning">
           <div class="funnel-dropoff__label">Не дошли до Теста 1</div>
           <div class="funnel-dropoff__value" id="funnelNoTest1">—</div>
-          <button class="funnel-dropoff__action" data-dropoff="no_test1">Список</button>
+          <button class="funnel-dropoff__action" data-dropoff="no_test1" aria-pressed="false">Список</button>
         </div>
-        <div class="funnel-dropoff">
+        <div class="funnel-dropoff" data-tone="danger">
           <div class="funnel-dropoff__label">Отвалились на Тесте 1</div>
           <div class="funnel-dropoff__value" id="funnelDropTest1">—</div>
-          <button class="funnel-dropoff__action" data-dropoff="test1_timeout">Список</button>
+          <button class="funnel-dropoff__action" data-dropoff="test1_timeout" aria-pressed="false">Список</button>
         </div>
       </div>
     </div>
@@ -3897,6 +4240,7 @@
       const stepsContainer = document.getElementById('funnelSteps');
       const skeleton = document.getElementById('funnelSkeleton');
       const emptyState = document.getElementById('funnelEmpty');
+      const legend = document.getElementById('funnelLegend');
       const chartPlot = document.getElementById('funnelChartPlot');
       const conversionBadge = document.getElementById('funnelConversionBadge');
       const rangeLabel = document.getElementById('funnelRangeLabel');
@@ -4044,7 +4388,7 @@
           slot_booked: '📅',
           show_up: '✨',
         };
-        summaryWrap.innerHTML = cards.map((card) => {
+        summaryWrap.innerHTML = cards.map((card, index) => {
           const count = Number(card.count || 0);
           const fill = maxCount ? Math.round((count / maxCount) * 100) : 0;
           const deltaTone = card.delta_pct > 0 ? 'up' : card.delta_pct < 0 ? 'down' : 'flat';
@@ -4056,7 +4400,7 @@
             : '';
           const icon = icons[card.key] || '•';
           return `
-            <div class="funnel-summary__card" data-tone="${deltaTone}" style="--fill: ${fill}%;">
+            <div class="funnel-summary__card" data-tone="${deltaTone}" style="--fill: ${fill}%; --delay: ${index * 70}ms;">
               <div class="funnel-summary__label">
                 <span class="funnel-summary__icon">${icon}</span>
                 ${card.label || '—'}
@@ -4088,14 +4432,14 @@
           1,
           ...transitions.map((item) => Number(item.median_sec || 0))
         );
-        speedList.innerHTML = transitions.map((item) => {
+        speedList.innerHTML = transitions.map((item, index) => {
           const median = formatDuration(item.median_sec);
           const p75 = formatDuration(item.p75_sec);
           const medianValue = Number(item.median_sec || 0);
           const fill = maxMedian ? Math.round((medianValue / maxMedian) * 100) : 0;
           const highlight = item.key && item.key === bottleneckKey ? 'true' : 'false';
           return `
-            <div class="funnel-speed__item" data-highlight="${highlight}" style="--speed-fill: ${fill}%;">
+            <div class="funnel-speed__item" data-highlight="${highlight}" style="--speed-fill: ${fill}%; --delay: ${index * 60}ms;">
               <div class="funnel-speed__label">${item.label || '—'}</div>
               <div class="funnel-speed__value">
                 <span>${median || '—'}</span>
@@ -4151,7 +4495,7 @@
           0,
           ...stages.map((stage) => Number(stage.p75_age_hours || 0))
         );
-        snapshotList.innerHTML = stages.map((stage) => {
+        snapshotList.innerHTML = stages.map((stage, index) => {
           const count = Number(stage.count || 0);
           const fill = total ? Math.round((count / total) * 100) : 0;
           const median = stage.median_age_hours !== null && stage.median_age_hours !== undefined
@@ -4162,7 +4506,7 @@
             : null;
           const hot = stage.p75_age_hours && stage.p75_age_hours === maxAge ? 'true' : 'false';
           return `
-            <div class="funnel-snapshot__row" data-hot="${hot}" style="--fill: ${fill}%;">
+            <div class="funnel-snapshot__row" data-hot="${hot}" style="--fill: ${fill}%; --delay: ${index * 60}ms;">
               <div class="funnel-snapshot__row-top">
                 <span class="funnel-snapshot__stage">${stage.stage || '—'}</span>
                 <span class="funnel-snapshot__count">${count.toLocaleString('ru-RU')}</span>
@@ -4177,14 +4521,19 @@
         }).join('');
       };
       const renderSteps = (data, counter) => {
-        if (!stepsContainer || !data || !data.steps) return;
+        if (!stepsContainer || !data || !data.steps) {
+          if (legend) legend.hidden = true;
+          return;
+        }
         const steps = data.steps;
         if (!steps.length) {
           stepsContainer.innerHTML = '';
           if (emptyState) emptyState.hidden = false;
+          if (legend) legend.hidden = true;
           return;
         }
         if (emptyState) emptyState.hidden = true;
+        if (legend) legend.hidden = false;
         const baseCount = counter === 'events' ? steps[0].events : steps[0].count;
         stepsContainer.innerHTML = steps.map((step, index) => {
           const count = counter === 'events' ? step.events : step.count;
@@ -4193,7 +4542,7 @@
           const avgTime = formatDuration(step.avg_time_to_step_sec);
           const progress = baseCount ? Math.round((count / baseCount) * 100) : 0;
           const metaParts = [];
-          if (index > 0) {
+          if (index > 0 && conversion !== null && conversion !== undefined) {
             metaParts.push(`Конверсия: ${conversion}%`);
           }
           if (dropoff !== null && index > 0) {
@@ -4202,11 +4551,25 @@
           if (avgTime) {
             metaParts.push(`Среднее: ${avgTime}`);
           }
+          const metaHtml = metaParts.length
+            ? metaParts.map((part) => `<span class="funnel-step__pill">${part}</span>`).join('')
+            : '<span class="funnel-step__pill">Входной шаг</span>';
+          let tone = 'base';
+          if (index > 0 && conversion !== null && conversion !== undefined) {
+            const value = Number(conversion) || 0;
+            if (value < 50) {
+              tone = 'risk';
+            } else if (value < 70) {
+              tone = 'warn';
+            } else {
+              tone = 'good';
+            }
+          }
           return `
-            <button class="funnel-step" data-step="${step.key}" data-title="${step.title}" style="--progress: ${progress}%;">
+            <button class="funnel-step" data-step="${step.key}" data-title="${step.title}" data-tone="${tone}" style="--progress: ${progress}%;" aria-pressed="false">
               <div>
                 <div class="funnel-step__title">${step.title}</div>
-                <div class="funnel-step__meta">${metaParts.join(' · ') || 'Входной шаг'}</div>
+                <div class="funnel-step__meta">${metaHtml}</div>
               </div>
               <div class="funnel-step__count">${Number(count || 0).toLocaleString('ru-RU')}</div>
               <div class="funnel-step__progress"></div>
@@ -4223,6 +4586,8 @@
         const conversion = data?.summary?.conversion_total;
         if (conversion !== null && conversion !== undefined) {
           conversionBadge.textContent = `Конверсия до ОД: ${conversion}%`;
+          const safeValue = Math.max(0, Math.min(100, Number(conversion) || 0));
+          conversionBadge.style.setProperty('--conversion', safeValue);
           return;
         }
         if (!data?.steps?.length) return;
@@ -4231,6 +4596,8 @@
         const last = steps[steps.length - 1].count || 0;
         const fallback = base ? ((last / base) * 100).toFixed(1) : '0.0';
         conversionBadge.textContent = `Конверсия: ${fallback}%`;
+        const safeValue = Math.max(0, Math.min(100, Number(fallback) || 0));
+        conversionBadge.style.setProperty('--conversion', safeValue);
       };
       const renderUpdatedAt = () => {
         if (updatedAt) {
@@ -4240,6 +4607,22 @@
           });
         }
       };
+      const setActiveFunnelCard = (target) => {
+        if (stepsContainer) {
+          stepsContainer.querySelectorAll('.funnel-step').forEach((card) => {
+            const isActive = target && card === target;
+            card.classList.toggle('is-active', isActive);
+            card.setAttribute('aria-pressed', String(isActive));
+          });
+        }
+        funnelModule.querySelectorAll('.funnel-dropoff').forEach((card) => {
+          const isActive = target && card.contains(target);
+          card.classList.toggle('is-active', isActive);
+          const btn = card.querySelector('.funnel-dropoff__action');
+          if (btn) btn.setAttribute('aria-pressed', String(isActive));
+        });
+      };
+      const clearActiveFunnelCard = () => setActiveFunnelCard(null);
       const fetchFunnel = async () => {
         const state = buildState();
         updateRangeLabel();
@@ -4260,6 +4643,7 @@
               emptyState.hidden = false;
               emptyState.textContent = 'База данных временно недоступна.';
             }
+            if (legend) legend.hidden = true;
             return;
           }
           renderSummary(data.summary || {});
@@ -4279,6 +4663,7 @@
             emptyState.hidden = false;
             emptyState.textContent = 'Не удалось загрузить данные. Проверьте подключение.';
           }
+          if (legend) legend.hidden = true;
         } finally {
           funnelModule.classList.remove('is-loading');
         }
@@ -4400,12 +4785,15 @@
         stepsContainer.addEventListener('click', (event) => {
           const card = event.target.closest('.funnel-step');
           if (!card) return;
+          setActiveFunnelCard(card);
           openDrawer(card.dataset.step, card.dataset.title);
         });
       }
       funnelModule.querySelectorAll('[data-dropoff]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const key = btn.dataset.dropoff;
+          const card = btn.closest('.funnel-dropoff') || btn;
+          setActiveFunnelCard(card);
           openDrawer(key, key === 'no_test1' ? 'Не дошли до Теста 1' : 'Отвалились на Тесте 1');
         });
       });
@@ -4414,6 +4802,9 @@
           if (event.target === drawer) {
             drawer.close();
           }
+        });
+        drawer.addEventListener('close', () => {
+          clearActiveFunnelCard();
         });
       }
       document.querySelectorAll('[data-funnel-close]').forEach((btn) => {
