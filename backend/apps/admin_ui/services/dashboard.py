@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import math
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import (
@@ -50,6 +51,7 @@ __all__ = [
     "get_ai_insights",
     "get_quick_slots",
     "get_waiting_candidates",
+    "get_pipeline_snapshot",
     "smart_create_candidate",
     "format_dashboard_candidate",
     "SmartCreateError",
@@ -710,6 +712,59 @@ def _avg_time_between(
     return sum(deltas) / len(deltas)
 
 
+def _percentile(values: List[float], percentile: float) -> Optional[float]:
+    if not values:
+        return None
+    if percentile <= 0:
+        return min(values)
+    if percentile >= 1:
+        return max(values)
+    ordered = sorted(values)
+    index = (len(ordered) - 1) * percentile
+    lower = math.floor(index)
+    upper = math.ceil(index)
+    if lower == upper:
+        return ordered[int(index)]
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower)
+
+
+def _time_deltas_between(
+    events_by_subject: Dict[int, Dict[str, List[datetime]]],
+    *,
+    start_event: str,
+    end_event: str,
+    date_from: datetime,
+    date_to: datetime,
+) -> List[float]:
+    deltas: List[float] = []
+    for events in events_by_subject.values():
+        start_times = [
+            ts for ts in events.get(start_event, []) if date_from <= ts <= date_to
+        ]
+        if not start_times:
+            continue
+        start_time = min(start_times)
+        end_times = [
+            ts for ts in events.get(end_event, []) if start_time <= ts <= date_to
+        ]
+        if not end_times:
+            continue
+        delta = (min(end_times) - start_time).total_seconds()
+        if delta >= 0:
+            deltas.append(delta)
+    return deltas
+
+
+def _step_counts_from_sets(subject_sets: Dict[str, set]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for step in FUNNEL_STEP_DEFS:
+        subjects = set()
+        for event_name in step["events"]:
+            subjects |= subject_sets.get(event_name, set())
+        counts[str(step["key"])] = len(subjects)
+    return counts
+
+
 async def get_bot_funnel_stats(
     *,
     date_from: Optional[datetime] = None,
@@ -868,6 +923,151 @@ async def get_bot_funnel_stats(
         series_completed.append(len(daily_completed.get(day_cursor, set())))
         day_cursor += timedelta(days=1)
 
+    step_counts = {step["key"]: step["count"] for step in steps}
+    range_days = max(1, (date_to.date() - date_from.date()).days + 1)
+    prev_step_counts: Dict[str, int] = {}
+    period_delta = date_to - date_from
+    prev_to = date_from - timedelta(seconds=1)
+    prev_from = prev_to - period_delta
+    prev_window_end = prev_to + timedelta(hours=ttl_hours)
+    async with async_session() as session:
+        prev_rows = await _fetch_funnel_events(
+            session,
+            event_names=all_event_names,
+            date_from=prev_from,
+            date_to=prev_window_end,
+            city=city,
+            recruiter_id=recruiter_id,
+            source=source,
+        )
+    _, prev_subject_sets, _ = _collect_event_stats(
+        prev_rows,
+        date_from=prev_from,
+        date_to=prev_to,
+    )
+    prev_step_counts = _step_counts_from_sets(prev_subject_sets)
+
+    summary_cards = []
+    summary_flow = [
+        ("entered", "Вошли в бот"),
+        ("test1_completed", "Завершили Тест 1"),
+        ("slot_booked", "Записались на слот"),
+        ("show_up", "Пришли на ОД"),
+    ]
+    prev_count = None
+    for key, label in summary_flow:
+        count = int(step_counts.get(key, 0) or 0)
+        prev_value = int(prev_step_counts.get(key, 0) or 0)
+        delta_abs = count - prev_value if prev_value else None
+        delta_pct = round((delta_abs / prev_value) * 100, 1) if prev_value else None
+        conversion = (
+            round((count / prev_count) * 100, 1)
+            if prev_count not in (None, 0)
+            else None
+        )
+        per_day = round(count / range_days, 1) if range_days else 0.0
+        summary_cards.append(
+            {
+                "key": key,
+                "label": label,
+                "count": count,
+                "conversion": conversion,
+                "per_day": per_day,
+                "delta_abs": delta_abs,
+                "delta_pct": delta_pct,
+            }
+        )
+        prev_count = count
+
+    speed_transitions = [
+        {
+            "key": "test1_started",
+            "label": "До старта Теста 1",
+            "start_event": FunnelEvent.BOT_ENTERED.value,
+            "end_event": FunnelEvent.TEST1_STARTED.value,
+        },
+        {
+            "key": "test1_completed",
+            "label": "Тест 1 → завершение",
+            "start_event": FunnelEvent.TEST1_STARTED.value,
+            "end_event": FunnelEvent.TEST1_COMPLETED.value,
+        },
+        {
+            "key": "test2_completed",
+            "label": "Тест 2 → завершение",
+            "start_event": FunnelEvent.TEST2_STARTED.value,
+            "end_event": FunnelEvent.TEST2_COMPLETED.value,
+        },
+        {
+            "key": "slot_confirmed",
+            "label": "Бронь → подтверждение",
+            "start_event": FunnelEvent.SLOT_BOOKED.value,
+            "end_event": FunnelEvent.SLOT_CONFIRMED.value,
+        },
+        {
+            "key": "show_up",
+            "label": "Подтверждение → ОД",
+            "start_event": FunnelEvent.SLOT_CONFIRMED.value,
+            "end_event": FunnelEvent.SHOW_UP.value,
+        },
+    ]
+    speed_rows: List[Dict[str, object]] = []
+    for transition in speed_transitions:
+        deltas = _time_deltas_between(
+            events_by_subject,
+            start_event=transition["start_event"],
+            end_event=transition["end_event"],
+            date_from=date_from,
+            date_to=date_to,
+        )
+        median = _percentile(deltas, 0.5)
+        p75 = _percentile(deltas, 0.75)
+        speed_rows.append(
+            {
+                "key": transition["key"],
+                "label": transition["label"],
+                "median_sec": round(median, 1) if median is not None else None,
+                "p75_sec": round(p75, 1) if p75 is not None else None,
+                "samples": len(deltas),
+            }
+        )
+
+    speed_candidates = [
+        item for item in speed_rows if item.get("median_sec") is not None
+    ]
+    speed_bottleneck = None
+    if speed_candidates:
+        speed_bottleneck = max(
+            speed_candidates,
+            key=lambda item: float(item.get("median_sec") or 0),
+        )
+
+    conversion_bottleneck = None
+    for idx in range(1, len(steps)):
+        prev_total = steps[idx - 1]["count"] or 0
+        if prev_total < 5:
+            continue
+        conversion = steps[idx].get("conversion_from_prev")
+        if conversion is None:
+            continue
+        if conversion_bottleneck is None or conversion < conversion_bottleneck["conversion"]:
+            conversion_bottleneck = {
+                "key": steps[idx]["key"],
+                "title": steps[idx]["title"],
+                "conversion": conversion,
+                "dropoff": steps[idx].get("dropoff_count", 0),
+            }
+
+    conversion_total = 0.0
+    if summary_cards:
+        entered_count = summary_cards[0]["count"]
+        last_count = summary_cards[-1]["count"]
+        conversion_total = (
+            round((last_count / entered_count) * 100, 1)
+            if entered_count
+            else 0.0
+        )
+
     return {
         "range": {
             "from": date_from.isoformat(),
@@ -885,7 +1085,98 @@ async def get_bot_funnel_stats(
             "entered": series_entered,
             "test1_completed": series_completed,
         },
+        "summary": {
+            "cards": summary_cards,
+            "conversion_total": conversion_total,
+            "range_days": range_days,
+        },
+        "speed": {
+            "transitions": speed_rows,
+            "bottlenecks": {
+                "speed": speed_bottleneck,
+                "conversion": conversion_bottleneck,
+            },
+        },
         "last_period_comparison": None,
+    }
+
+
+async def get_pipeline_snapshot(
+    *,
+    city: Optional[str] = None,
+    recruiter_id: Optional[int] = None,
+    source: Optional[str] = None,
+) -> Dict[str, object]:
+    city = _clean_filter_value(city)
+    source = _clean_filter_value(source)
+    stage_definitions: List[Tuple[str, List[CandidateStatus]]] = []
+    for name, statuses in get_funnel_stages():
+        if name == "Тестирование":
+            statuses = statuses + [
+                CandidateStatus.WAITING_SLOT,
+                CandidateStatus.STALLED_WAITING_SLOT,
+            ]
+        stage_definitions.append((name, statuses))
+
+    stage_index: Dict[CandidateStatus, int] = {}
+    for idx, (_, statuses) in enumerate(stage_definitions):
+        for status in statuses:
+            stage_index[status] = idx
+
+    counts = [0 for _ in stage_definitions]
+    ages: List[List[float]] = [[] for _ in stage_definitions]
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        stmt = (
+            select(
+                User.candidate_status,
+                User.status_changed_at,
+                User.last_activity,
+            )
+            .where(User.is_active == True)
+        )
+        stmt = _apply_funnel_filters(
+            stmt,
+            city=city,
+            recruiter_id=recruiter_id,
+            source=source,
+        )
+        rows = await session.execute(stmt)
+
+    for status, status_changed_at, last_activity in rows:
+        if status is None:
+            continue
+        idx = stage_index.get(status)
+        if idx is None:
+            continue
+        counts[idx] += 1
+        reference = status_changed_at or last_activity
+        if not reference:
+            continue
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=timezone.utc)
+        age_hours = (now - reference).total_seconds() / 3600
+        if age_hours >= 0:
+            ages[idx].append(age_hours)
+
+    stages_payload: List[Dict[str, object]] = []
+    total = sum(counts)
+    for idx, (stage_name, _) in enumerate(stage_definitions):
+        median = _percentile(ages[idx], 0.5)
+        p75 = _percentile(ages[idx], 0.75)
+        stages_payload.append(
+            {
+                "stage": stage_name,
+                "count": counts[idx],
+                "median_age_hours": round(median, 1) if median is not None else None,
+                "p75_age_hours": round(p75, 1) if p75 is not None else None,
+            }
+        )
+
+    return {
+        "total": total,
+        "stages": stages_payload,
     }
 
 

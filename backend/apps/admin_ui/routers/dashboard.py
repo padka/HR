@@ -1,24 +1,45 @@
 from __future__ import annotations
 
 import logging
+from datetime import date as date_type, datetime, time, timezone
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request, Query, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from backend.apps.admin_ui.config import safe_template_response
 from backend.apps.admin_ui.services.bot_service import (
     BOT_RUNTIME_AVAILABLE,
     IntegrationSwitch,
 )
-from backend.apps.admin_ui.services.dashboard import dashboard_counts
+from backend.apps.admin_ui.services.dashboard import (
+    dashboard_counts,
+    get_bot_funnel_stats,
+    get_funnel_step_candidates,
+    get_pipeline_snapshot,
+)
 from backend.apps.admin_ui.services.dashboard_calendar import (
     dashboard_calendar_snapshot,
 )
 from backend.apps.admin_ui.services.kpis import get_weekly_kpis
+from backend.apps.admin_ui.utils import parse_optional_int
 from backend.core.settings import get_settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _parse_date_param(value: str | None, *, end: bool = False) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = date_type.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Некорректный параметр даты"},
+        ) from exc
+    dt = datetime.combine(parsed, time.max if end else time.min)
+    return dt.replace(tzinfo=timezone.utc)
 
 
 def _empty_weekly_kpis(timezone: str) -> dict[str, object]:
@@ -113,3 +134,61 @@ async def index(request: Request):
         },
         encode_json_keys=("weekly_kpis", "calendar"),
     )
+
+
+@router.get("/dashboard/funnel")
+async def dashboard_funnel(
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    city: str | None = Query(default=None),
+    recruiter: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+) -> JSONResponse:
+    date_from = _parse_date_param(from_)
+    date_to = _parse_date_param(to, end=True)
+    recruiter_id = parse_optional_int(recruiter)
+    try:
+        payload = await get_bot_funnel_stats(
+            date_from=date_from,
+            date_to=date_to,
+            city=city,
+            recruiter_id=recruiter_id,
+            source=source,
+        )
+        snapshot = await get_pipeline_snapshot(
+            city=city,
+            recruiter_id=recruiter_id,
+            source=source,
+        )
+        payload["snapshot"] = snapshot
+        return JSONResponse(payload)
+    except Exception:
+        logger.exception("Failed to load funnel stats.")
+        return JSONResponse({"degraded": True, "error": "funnel_unavailable"})
+
+
+@router.get("/dashboard/funnel/step")
+async def dashboard_funnel_step(
+    step: str = Query(...),
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    city: str | None = Query(default=None),
+    recruiter: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+) -> JSONResponse:
+    date_from = _parse_date_param(from_)
+    date_to = _parse_date_param(to, end=True)
+    recruiter_id = parse_optional_int(recruiter)
+    try:
+        items = await get_funnel_step_candidates(
+            step_key=step,
+            date_from=date_from,
+            date_to=date_to,
+            city=city,
+            recruiter_id=recruiter_id,
+            source=source,
+        )
+        return JSONResponse({"items": items})
+    except Exception:
+        logger.exception("Failed to load funnel step candidates.")
+        return JSONResponse({"items": [], "degraded": True})

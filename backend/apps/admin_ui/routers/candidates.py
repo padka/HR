@@ -586,13 +586,28 @@ async def candidates_set_status(
     bot_service: BotService = Depends(provide_bot_service),
     _: None = Depends(require_csrf_token),
 ) -> Response:
-    """Update candidate status via UI or AJAX/kanban board."""
+    """Update candidate status via UI or AJAX/kanban board.
+
+    DEPRECATED: Use POST /api/candidates/{id}/actions/{action_key} instead.
+    This endpoint is only available when ENABLE_LEGACY_STATUS_API=true.
+    """
     settings = get_settings()
     if not settings.enable_legacy_status_api:
         return JSONResponse(
             {"ok": False, "message": "Legacy status endpoint disabled in this environment."},
             status_code=403,
         )
+
+    # Log deprecation warning for monitoring
+    logger.warning(
+        "legacy_status_api.called",
+        extra={
+            "candidate_id": candidate_id,
+            "user_agent": request.headers.get("user-agent", ""),
+            "referer": request.headers.get("referer", ""),
+            "deprecation_notice": "Use POST /api/candidates/{id}/actions/{action_key} instead",
+        },
+    )
     allowed_form_statuses = {
         "hired",
         "not_hired",

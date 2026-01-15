@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional
+from collections import defaultdict
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -19,6 +20,14 @@ from backend.domain.candidates.services import (
 from backend.domain.models import Slot, Recruiter
 
 logger = logging.getLogger(__name__)
+
+# Rate limiting configuration
+CHAT_RATE_LIMIT_PER_HOUR = 20  # Max messages per candidate per hour
+CHAT_RATE_LIMIT_WINDOW_SECONDS = 3600  # 1 hour window
+
+# In-memory rate limit store (candidate_id -> list of timestamps)
+# In production, consider using Redis for persistence across workers
+_rate_limit_store: Dict[int, List[float]] = defaultdict(list)
 
 CHAT_TEMPLATES: List[Dict[str, str]] = [
     {
@@ -58,6 +67,31 @@ CHAT_MODE_TTL_MINUTES = 45
 
 def get_chat_templates() -> List[Dict[str, str]]:
     return CHAT_TEMPLATES
+
+
+def _check_rate_limit(candidate_id: int) -> Tuple[bool, int]:
+    """Check if sending to this candidate is allowed within rate limits.
+
+    Returns:
+        Tuple of (is_allowed, remaining_count)
+    """
+    now = datetime.now(timezone.utc).timestamp()
+    window_start = now - CHAT_RATE_LIMIT_WINDOW_SECONDS
+
+    # Clean up old entries
+    timestamps = _rate_limit_store[candidate_id]
+    _rate_limit_store[candidate_id] = [ts for ts in timestamps if ts > window_start]
+
+    current_count = len(_rate_limit_store[candidate_id])
+    remaining = max(0, CHAT_RATE_LIMIT_PER_HOUR - current_count)
+
+    return current_count < CHAT_RATE_LIMIT_PER_HOUR, remaining
+
+
+def _record_message_sent(candidate_id: int) -> None:
+    """Record that a message was sent for rate limiting."""
+    now = datetime.now(timezone.utc).timestamp()
+    _rate_limit_store[candidate_id].append(now)
 
 
 def serialize_chat_message(message: ChatMessage) -> Dict[str, object]:
@@ -130,6 +164,17 @@ async def send_chat_message(
             detail={"message": "Для кандидата не найден Telegram ID"},
         )
 
+    # Check rate limit before processing
+    is_allowed, remaining = _check_rate_limit(candidate_id)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "message": f"Превышен лимит сообщений ({CHAT_RATE_LIMIT_PER_HOUR} в час). Попробуйте позже.",
+                "retry_after": CHAT_RATE_LIMIT_WINDOW_SECONDS,
+            },
+        )
+
     duplicate = await _existing_message(candidate_id, client_request_id)
     if duplicate:
         return {
@@ -157,6 +202,9 @@ async def send_chat_message(
 
     send_result = await bot_service.send_chat_message(candidate.telegram_user_id or candidate.telegram_id, text)
     if send_result.ok:
+        # Record successful send for rate limiting
+        _record_message_sent(candidate_id)
+
         await update_chat_message_status(
             message_id,
             status=ChatMessageStatus.SENT,

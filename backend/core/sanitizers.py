@@ -6,7 +6,7 @@ from typing import Optional
 __all__ = ["sanitize_plain_text"]
 
 
-def sanitize_plain_text(value: Optional[str]) -> str:
+def sanitize_plain_text(value: Optional[str], max_length: Optional[int] = None) -> str:
     """
     Normalize user-provided plain text so it is safe for HTML contexts.
 
@@ -20,6 +20,14 @@ def sanitize_plain_text(value: Optional[str]) -> str:
         candidate = ""
     else:
         candidate = str(value)
+
+    if max_length is not None:
+        try:
+            limit = int(max_length)
+            if limit > 0:
+                candidate = candidate[:limit]
+        except Exception:
+            pass
 
     # Trim whitespace and undo previous escaping to keep the function idempotent.
     normalized = html.unescape(candidate.strip())

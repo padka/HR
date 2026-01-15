@@ -943,6 +943,141 @@
     font-weight: 700;
   }
 
+  .funnel-summary {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-top: 6px;
+  }
+
+  .funnel-summary__card {
+    --summary-accent: var(--accent);
+    border-radius: 18px;
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-1);
+    padding: 14px 16px;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+
+  .funnel-summary__card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--summary-accent) 20%, transparent), transparent 55%);
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .funnel-summary__card::after {
+    content: "";
+    position: absolute;
+    inset: auto -40% 0 -40%;
+    height: 60%;
+    background: radial-gradient(
+      circle at 50% 120%,
+      color-mix(in srgb, var(--summary-accent) 35%, transparent),
+      transparent 70%
+    );
+    opacity: 0.5;
+  }
+
+  .funnel-summary__card[data-tone="up"] {
+    --summary-accent: var(--success);
+    border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+  }
+
+  .funnel-summary__card[data-tone="down"] {
+    --summary-accent: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  }
+
+  .funnel-summary__card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 35px rgba(15, 23, 42, 0.18);
+  }
+
+  .funnel-summary__icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--summary-accent) 20%, transparent);
+    color: var(--summary-accent);
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .funnel-summary__label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .funnel-summary__value {
+    font-size: 26px;
+    font-weight: 900;
+    color: var(--fg-strong);
+    margin: 6px 0 4px;
+  }
+
+  .funnel-summary__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .funnel-summary__bar {
+    margin-top: 10px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--surface-3);
+    overflow: hidden;
+  }
+
+  .funnel-summary__bar-fill {
+    display: block;
+    height: 100%;
+    width: var(--fill, 0%);
+    background: linear-gradient(90deg, var(--summary-accent), color-mix(in srgb, var(--summary-accent) 40%, transparent));
+  }
+
+  .funnel-summary__delta {
+    margin-top: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .funnel-summary__delta[data-tone="up"] {
+    color: color-mix(in srgb, var(--success) 80%, var(--text));
+  }
+
+  .funnel-summary__delta[data-tone="down"] {
+    color: color-mix(in srgb, var(--danger) 80%, var(--text));
+  }
+
+  .funnel-summary__delta[data-tone="flat"] {
+    color: var(--text-muted);
+  }
+
   .funnel-layout {
     display: grid;
     grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
@@ -1014,6 +1149,206 @@
   .funnel-side {
     display: grid;
     gap: 16px;
+  }
+
+  .funnel-speed,
+  .funnel-snapshot {
+    border-radius: var(--radius-lg);
+    border: var(--border-w) solid var(--border);
+    background: var(--surface-1);
+    padding: 16px;
+    box-shadow: var(--shadow-sm);
+    display: grid;
+    gap: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .funnel-speed::before,
+  .funnel-snapshot::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 55%);
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .funnel-speed > *,
+  .funnel-snapshot > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .funnel-speed__header,
+  .funnel-snapshot__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .funnel-speed__title,
+  .funnel-snapshot__title {
+    font-weight: 800;
+    color: var(--fg-strong);
+  }
+
+  .funnel-speed__subtitle,
+  .funnel-snapshot__subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .funnel-speed__badge,
+  .funnel-snapshot__badge {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .funnel-speed__badge[data-tone="warning"] {
+    background: color-mix(in srgb, var(--warning) 18%, var(--surface-2));
+    color: color-mix(in srgb, var(--warning) 80%, var(--text));
+  }
+
+  .funnel-speed__insights {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .funnel-speed__insight {
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .funnel-speed__insight[data-tone="warning"] {
+    color: color-mix(in srgb, var(--warning) 80%, var(--text));
+  }
+
+  .funnel-speed__list,
+  .funnel-snapshot__list {
+    display: grid;
+    gap: 10px;
+  }
+
+  .funnel-speed__item,
+  .funnel-snapshot__row {
+    background: var(--surface-2);
+    border-radius: 12px;
+    padding: 10px 12px;
+    display: grid;
+    gap: 6px;
+    border: 1px solid transparent;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+  }
+
+  .funnel-speed__item {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+
+  .funnel-speed__item[data-highlight="true"] {
+    border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+    box-shadow: 0 10px 24px rgba(235, 170, 60, 0.2);
+  }
+
+  .funnel-snapshot__row:hover,
+  .funnel-speed__item:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+
+  .funnel-snapshot__row[data-hot="true"] {
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    box-shadow: 0 10px 22px rgba(90, 140, 255, 0.18);
+  }
+
+  .funnel-speed__label {
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  .funnel-speed__value {
+    display: inline-flex;
+    gap: 8px;
+    font-weight: 800;
+    color: var(--fg-strong);
+    font-size: 12px;
+  }
+
+  .funnel-speed__value span {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--surface-3);
+  }
+
+  .funnel-speed__bar {
+    grid-column: 1 / -1;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--surface-3);
+    overflow: hidden;
+  }
+
+  .funnel-speed__bar-fill {
+    display: block;
+    height: 100%;
+    width: var(--speed-fill, 0%);
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  }
+
+  .funnel-speed__sample {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .funnel-snapshot__row-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .funnel-snapshot__stage {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .funnel-snapshot__count {
+    font-weight: 800;
+    color: var(--fg-strong);
+  }
+
+  .funnel-snapshot__row-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .funnel-snapshot__bar {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--surface-3);
+    overflow: hidden;
+  }
+
+  .funnel-snapshot__bar-fill {
+    display: block;
+    height: 100%;
+    width: var(--fill, 0%);
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
   }
 
   .funnel-chart {
@@ -2855,6 +3190,8 @@
     </div>
   </div>
 
+  <div class="funnel-summary" id="funnelSummary"></div>
+
   <div class="funnel-layout">
     <div>
       <div class="funnel-skeleton" id="funnelSkeleton">
@@ -2869,6 +3206,17 @@
       </div>
     </div>
     <div class="funnel-side">
+      <div class="funnel-speed" id="funnelSpeed">
+        <div class="funnel-speed__header">
+          <div>
+            <div class="funnel-speed__title">Скорость переходов</div>
+            <div class="funnel-speed__subtitle">Медиана · p75</div>
+          </div>
+          <span class="funnel-speed__badge" id="funnelBottleneck">—</span>
+        </div>
+        <div class="funnel-speed__insights" id="funnelInsights"></div>
+        <div class="funnel-speed__list" id="funnelSpeedList"></div>
+      </div>
       <div class="funnel-chart" id="funnelChart">
         <div class="funnel-chart__title">Динамика входа vs завершения Теста 1</div>
         <div id="funnelChartPlot"></div>
@@ -2876,6 +3224,16 @@
           <span><span class="funnel-chart__dot" style="background: var(--accent);"></span>Зашли в бот</span>
           <span><span class="funnel-chart__dot" style="background: var(--accent-2);"></span>Тест 1 завершили</span>
         </div>
+      </div>
+      <div class="funnel-snapshot" id="funnelSnapshot">
+        <div class="funnel-snapshot__header">
+          <div>
+            <div class="funnel-snapshot__title">Очередь сейчас</div>
+            <div class="funnel-snapshot__subtitle">Медиана · p75</div>
+          </div>
+          <span class="funnel-snapshot__badge" id="funnelSnapshotTotal">—</span>
+        </div>
+        <div class="funnel-snapshot__list" id="funnelSnapshotList"></div>
       </div>
       <div class="funnel-dropoffs" id="funnelDropoffs">
         <div class="funnel-dropoff">
@@ -3549,6 +3907,14 @@
       const drawer = document.getElementById('funnelDrawer');
       const drawerList = document.getElementById('funnelDrawerList');
       const drawerTitle = document.getElementById('funnelDrawerTitle');
+      const summaryWrap = document.getElementById('funnelSummary');
+      const speedWrap = document.getElementById('funnelSpeed');
+      const speedList = document.getElementById('funnelSpeedList');
+      const speedBadge = document.getElementById('funnelBottleneck');
+      const speedInsights = document.getElementById('funnelInsights');
+      const snapshotWrap = document.getElementById('funnelSnapshot');
+      const snapshotList = document.getElementById('funnelSnapshotList');
+      const snapshotTotal = document.getElementById('funnelSnapshotTotal');
 
       const params = new URLSearchParams(window.location.search);
       const toIsoDate = (dateObj) => {
@@ -3576,6 +3942,11 @@
           return `${Math.round(hours * 10) / 10} ч`;
         }
         return `${Math.max(1, Math.round(seconds / 60))} мин`;
+      };
+      const formatDelta = (value) => {
+        if (value === null || value === undefined || Number.isNaN(value)) return '—';
+        const sign = value > 0 ? '+' : value < 0 ? '−' : '';
+        return `${sign}${Math.abs(value).toFixed(1)}%`;
       };
       const setActiveRange = (days) => {
         rangeButtons.forEach((btn) => {
@@ -3659,6 +4030,152 @@
           </svg>
         `;
       };
+      const renderSummary = (summary = {}) => {
+        if (!summaryWrap) return;
+        const cards = summary.cards || [];
+        if (!cards.length) {
+          summaryWrap.innerHTML = '<div class="incoming-section__empty">Нет данных</div>';
+          return;
+        }
+        const maxCount = Math.max(1, ...cards.map((card) => Number(card.count || 0)));
+        const icons = {
+          entered: '🤖',
+          test1_completed: '🧪',
+          slot_booked: '📅',
+          show_up: '✨',
+        };
+        summaryWrap.innerHTML = cards.map((card) => {
+          const count = Number(card.count || 0);
+          const fill = maxCount ? Math.round((count / maxCount) * 100) : 0;
+          const deltaTone = card.delta_pct > 0 ? 'up' : card.delta_pct < 0 ? 'down' : 'flat';
+          const conversion = card.conversion !== null && card.conversion !== undefined
+            ? `Конверсия: ${card.conversion}%`
+            : 'Входной поток';
+          const perDay = card.per_day !== null && card.per_day !== undefined
+            ? `≈ ${card.per_day}/день`
+            : '';
+          const icon = icons[card.key] || '•';
+          return `
+            <div class="funnel-summary__card" data-tone="${deltaTone}" style="--fill: ${fill}%;">
+              <div class="funnel-summary__label">
+                <span class="funnel-summary__icon">${icon}</span>
+                ${card.label || '—'}
+              </div>
+              <div class="funnel-summary__value">${count.toLocaleString('ru-RU')}</div>
+              <div class="funnel-summary__meta">
+                <span>${conversion}</span>
+                <span>${perDay}</span>
+              </div>
+              <div class="funnel-summary__bar"><span class="funnel-summary__bar-fill"></span></div>
+              <div class="funnel-summary__delta" data-tone="${deltaTone}" title="К прошлому периоду">
+                ${formatDelta(card.delta_pct)}
+              </div>
+            </div>
+          `;
+        }).join('');
+      };
+      const renderSpeed = (speed = {}) => {
+        if (!speedList || !speedWrap) return;
+        const transitions = speed.transitions || [];
+        if (!transitions.length) {
+          speedList.innerHTML = '<div class="incoming-section__empty">Нет данных</div>';
+          if (speedBadge) speedBadge.textContent = 'Узкое место: —';
+          if (speedInsights) speedInsights.innerHTML = '';
+          return;
+        }
+        const bottleneckKey = speed.bottlenecks?.speed?.key;
+        const maxMedian = Math.max(
+          1,
+          ...transitions.map((item) => Number(item.median_sec || 0))
+        );
+        speedList.innerHTML = transitions.map((item) => {
+          const median = formatDuration(item.median_sec);
+          const p75 = formatDuration(item.p75_sec);
+          const medianValue = Number(item.median_sec || 0);
+          const fill = maxMedian ? Math.round((medianValue / maxMedian) * 100) : 0;
+          const highlight = item.key && item.key === bottleneckKey ? 'true' : 'false';
+          return `
+            <div class="funnel-speed__item" data-highlight="${highlight}" style="--speed-fill: ${fill}%;">
+              <div class="funnel-speed__label">${item.label || '—'}</div>
+              <div class="funnel-speed__value">
+                <span>${median || '—'}</span>
+                <span>${p75 || '—'}</span>
+              </div>
+              <div class="funnel-speed__bar"><span class="funnel-speed__bar-fill"></span></div>
+              <div class="funnel-speed__sample">${item.samples ? `n=${item.samples}` : '—'}</div>
+            </div>
+          `;
+        }).join('');
+
+        if (speedBadge) {
+          const bottleneck = speed.bottlenecks?.speed;
+          if (bottleneck && bottleneck.label && bottleneck.median_sec !== null) {
+            const value = formatDuration(bottleneck.median_sec);
+            speedBadge.textContent = `Узкое место: ${bottleneck.label} · ${value || '—'}`;
+            speedBadge.dataset.tone = 'warning';
+          } else {
+            speedBadge.textContent = 'Узкое место: —';
+            speedBadge.dataset.tone = 'neutral';
+          }
+        }
+
+        if (speedInsights) {
+          const insights = [];
+          const conversion = speed.bottlenecks?.conversion;
+          if (conversion) {
+            insights.push(
+              `<span class="funnel-speed__insight" data-tone="warning">Конверсия: ${conversion.title} · ${conversion.conversion}%</span>`
+            );
+          }
+          const slowest = speed.bottlenecks?.speed;
+          if (slowest && slowest.label && slowest.median_sec !== null) {
+            insights.push(
+              `<span class="funnel-speed__insight">Скорость: ${slowest.label} · ${formatDuration(slowest.median_sec) || '—'}</span>`
+            );
+          }
+          speedInsights.innerHTML = insights.join('');
+        }
+      };
+      const renderSnapshot = (snapshot = {}) => {
+        if (!snapshotList || !snapshotWrap) return;
+        const stages = snapshot.stages || [];
+        const total = snapshot.total || 0;
+        if (snapshotTotal) {
+          snapshotTotal.textContent = total ? `Всего: ${total}` : 'Нет данных';
+        }
+        if (!stages.length) {
+          snapshotList.innerHTML = '<div class="incoming-section__empty">Нет данных</div>';
+          return;
+        }
+        const maxAge = Math.max(
+          0,
+          ...stages.map((stage) => Number(stage.p75_age_hours || 0))
+        );
+        snapshotList.innerHTML = stages.map((stage) => {
+          const count = Number(stage.count || 0);
+          const fill = total ? Math.round((count / total) * 100) : 0;
+          const median = stage.median_age_hours !== null && stage.median_age_hours !== undefined
+            ? formatDuration(stage.median_age_hours * 3600)
+            : null;
+          const p75 = stage.p75_age_hours !== null && stage.p75_age_hours !== undefined
+            ? formatDuration(stage.p75_age_hours * 3600)
+            : null;
+          const hot = stage.p75_age_hours && stage.p75_age_hours === maxAge ? 'true' : 'false';
+          return `
+            <div class="funnel-snapshot__row" data-hot="${hot}" style="--fill: ${fill}%;">
+              <div class="funnel-snapshot__row-top">
+                <span class="funnel-snapshot__stage">${stage.stage || '—'}</span>
+                <span class="funnel-snapshot__count">${count.toLocaleString('ru-RU')}</span>
+              </div>
+              <div class="funnel-snapshot__row-meta">
+                <span>медиана ${median || '—'}</span>
+                <span>p75 ${p75 || '—'}</span>
+              </div>
+              <div class="funnel-snapshot__bar"><span class="funnel-snapshot__bar-fill"></span></div>
+            </div>
+          `;
+        }).join('');
+      };
       const renderSteps = (data, counter) => {
         if (!stepsContainer || !data || !data.steps) return;
         const steps = data.steps;
@@ -3702,12 +4219,18 @@
         if (dropTest1El) dropTest1El.textContent = Number(dropoffs.test1_timeout || 0).toLocaleString('ru-RU');
       };
       const renderHeader = (data) => {
-        if (!conversionBadge || !data?.steps?.length) return;
+        if (!conversionBadge) return;
+        const conversion = data?.summary?.conversion_total;
+        if (conversion !== null && conversion !== undefined) {
+          conversionBadge.textContent = `Конверсия до ОД: ${conversion}%`;
+          return;
+        }
+        if (!data?.steps?.length) return;
         const steps = data.steps;
         const base = steps[0].count || 0;
         const last = steps[steps.length - 1].count || 0;
-        const conversion = base ? ((last / base) * 100).toFixed(1) : '0.0';
-        conversionBadge.textContent = `Конверсия: ${conversion}%`;
+        const fallback = base ? ((last / base) * 100).toFixed(1) : '0.0';
+        conversionBadge.textContent = `Конверсия: ${fallback}%`;
       };
       const renderUpdatedAt = () => {
         if (updatedAt) {
@@ -3739,6 +4262,8 @@
             }
             return;
           }
+          renderSummary(data.summary || {});
+          renderSpeed(data.speed || {});
           renderSteps(data, state.counter);
           renderDropoffs(data.dropoffs || {});
           renderHeader(data);
@@ -3747,6 +4272,7 @@
             data.series?.entered || [],
             data.series?.test1_completed || [],
           );
+          renderSnapshot(data.snapshot || {});
           renderUpdatedAt();
         } catch (err) {
           if (emptyState) {
@@ -4028,6 +4554,7 @@
     const candidateNameEl = document.getElementById('rejectCandidateName');
     const candidateIdInput = document.getElementById('rejectCandidateId');
     const closeButtons = document.querySelectorAll('[data-modal-close]');
+    const csrfToken = window.__CSRF_TOKEN__ || form?.querySelector('[name="csrf_token"]')?.value || '';
 
     // Check if user wants to skip modal
     const skipModalKey = 'reject_modal_skip';
@@ -4038,31 +4565,37 @@
       // localStorage not available
     }
 
+    // Submit rejection via new API
+    async function submitRejection(candidateId) {
+      const response = await fetch(`/api/candidates/${candidateId}/actions/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
+        body: JSON.stringify({}),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.message || payload.detail?.message || 'Не удалось отклонить кандидата');
+      }
+      return payload;
+    }
+
     // Open modal function
     window.openRejectModal = function(candidateId, candidateName, formAction) {
       if (skipModal) {
-        // Submit directly without modal
-        const quickForm = document.createElement('form');
-        quickForm.method = 'POST';
-        quickForm.action = formAction;
-        quickForm.style.display = 'none';
-
-        const csrfInput = form.querySelector('[name="csrf_token"]').cloneNode(true);
-        const statusInput = document.createElement('input');
-        statusInput.type = 'hidden';
-        statusInput.name = 'status';
-        statusInput.value = 'interview_declined';
-
-        quickForm.appendChild(csrfInput);
-        quickForm.appendChild(statusInput);
-        document.body.appendChild(quickForm);
-        quickForm.submit();
+        // Submit directly without modal using new API
+        submitRejection(candidateId)
+          .then(() => window.location.reload())
+          .catch(err => window.alert(err.message));
         return;
       }
 
       candidateNameEl.textContent = candidateName;
       candidateIdInput.value = candidateId;
-      form.action = formAction;
+      form.action = formAction; // Keep for fallback
       modal.classList.add('active');
       document.body.style.overflow = 'hidden';
     };
@@ -4093,8 +4626,10 @@
       }
     });
 
-    // Handle form submission
-    form.addEventListener('submit', function(e) {
+    // Handle form submission - use new API instead of form post
+    form.addEventListener('submit', async function(e) {
+      e.preventDefault();
+
       const skipCheckbox = document.getElementById('skip_modal_next_time');
       if (skipCheckbox && skipCheckbox.checked) {
         try {
@@ -4103,7 +4638,19 @@
           // localStorage not available
         }
       }
-      // Form will submit normally
+
+      const candidateId = candidateIdInput.value;
+      const submitBtn = form.querySelector('[type="submit"]');
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        await submitRejection(candidateId);
+        closeModal();
+        window.location.reload();
+      } catch (err) {
+        window.alert(err.message);
+        if (submitBtn) submitBtn.disabled = false;
+      }
     });
   })();
 </script>

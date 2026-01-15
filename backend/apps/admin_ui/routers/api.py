@@ -1,7 +1,7 @@
-from datetime import date as date_type
+from datetime import date as date_type, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from backend.apps.admin_ui.services.cities import (
@@ -12,6 +12,17 @@ from backend.apps.admin_ui.services.dashboard import dashboard_counts
 from backend.apps.admin_ui.services.dashboard_calendar import (
     dashboard_calendar_snapshot,
 )
+from backend.apps.admin_ui.services.candidates import (
+    get_candidate_detail,
+    update_candidate_status,
+)
+from backend.apps.admin_ui.services.chat import (
+    list_chat_history,
+    retry_chat_message,
+    send_chat_message,
+)
+from backend.apps.admin_ui.services.slots import execute_bot_dispatch
+from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
 from backend.apps.admin_ui.services.slots.core import api_slots_payload
 from backend.apps.admin_ui.services.templates import (
@@ -19,7 +30,9 @@ from backend.apps.admin_ui.services.templates import (
     list_known_template_keys,
 )
 from backend.apps.admin_ui.utils import parse_optional_int, status_filter
+from backend.apps.admin_ui.security import require_csrf_token
 from backend.core.settings import get_settings
+from backend.core.sanitizers import sanitize_plain_text
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -155,3 +168,127 @@ async def api_bot_integration_update(request: Request):
         "service_ready": bot_service.is_ready() if bot_service else False,
     }
     return JSONResponse(payload)
+
+
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Parse ISO datetime string into aware datetime if possible."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Некорректный параметр before"},
+        )
+
+
+@router.get("/candidates/{candidate_id}/chat")
+async def api_chat_history(
+    candidate_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    before: Optional[str] = Query(default=None),
+) -> JSONResponse:
+    before_dt = _parse_iso_datetime(before)
+    payload = await list_chat_history(candidate_id, limit=limit, before=before_dt)
+    return JSONResponse(payload)
+
+
+@router.post("/candidates/{candidate_id}/chat")
+async def api_chat_send(
+    request: Request,
+    candidate_id: int,
+    bot_service: BotService = Depends(provide_bot_service),
+    _: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"message": "Ожидался JSON"})
+
+    raw_text = str(data.get("text") or "").strip()
+    if not raw_text:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Текст сообщения обязателен"},
+        )
+    text = sanitize_plain_text(raw_text, max_length=2000)
+    client_request_id = data.get("client_request_id") or None
+    author_label = getattr(request.state, "admin_username", None) or "admin"
+
+    result = await send_chat_message(
+        candidate_id,
+        text=text,
+        client_request_id=client_request_id,
+        author_label=author_label,
+        bot_service=bot_service,
+    )
+    return JSONResponse(result)
+
+
+@router.post("/candidates/{candidate_id}/chat/{message_id}/retry")
+async def api_chat_retry(
+    candidate_id: int,
+    message_id: int,
+    bot_service: BotService = Depends(provide_bot_service),
+    _: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    result = await retry_chat_message(candidate_id, message_id, bot_service=bot_service)
+    return JSONResponse(result)
+
+
+@router.post("/candidates/{candidate_id}/actions/{action_key}")
+async def api_candidate_action(
+    request: Request,
+    candidate_id: int,
+    action_key: str,
+    background_tasks: BackgroundTasks,
+    bot_service: BotService = Depends(provide_bot_service),
+    _: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    detail = await get_candidate_detail(candidate_id)
+    if not detail:
+        raise HTTPException(
+            status_code=404,
+            detail={"message": "Кандидат не найден"},
+        )
+
+    actions = detail.get("candidate_actions") or []
+    action = next((item for item in actions if getattr(item, "key", None) == action_key), None)
+    if not action:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Действие недоступно для текущего статуса"},
+        )
+    if (action.method or "GET").upper() != "POST":
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Действие выполняется как переход по ссылке"},
+        )
+
+    if action.target_status:
+        ok, message, stored_status, dispatch = await update_candidate_status(
+            candidate_id, action.target_status, bot_service=bot_service
+        )
+        if dispatch is not None and ok:
+            plan = getattr(dispatch, "plan", None)
+            if plan is not None:
+                background_tasks.add_task(
+                    execute_bot_dispatch, plan, stored_status or "", bot_service
+                )
+        status_code = 200 if ok else 400
+        return JSONResponse(
+            {
+                "ok": ok,
+                "message": message or "",
+                "status": stored_status or action.target_status,
+            },
+            status_code=status_code,
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail={"message": "Действие не поддерживается"},
+    )

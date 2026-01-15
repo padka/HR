@@ -6,6 +6,7 @@
 ## Documentation index
 
 - Technical overview: [docs/TECHNICAL_OVERVIEW.md](docs/TECHNICAL_OVERVIEW.md)
+- Candidate profile UX/API: [docs/candidate_profile.md](docs/candidate_profile.md)
 - Local dev guide: [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md)
 - Migrations: [docs/MIGRATIONS.md](docs/MIGRATIONS.md)
 - DevEx notes: [docs/DEVEX.md](docs/DEVEX.md)

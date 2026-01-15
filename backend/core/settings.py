@@ -376,12 +376,15 @@ def get_settings() -> Settings:
 
     raw_db_url = db_url_env.strip()
 
-    # Ensure it's PostgreSQL
-    if not raw_db_url.startswith("postgresql+asyncpg://") and not raw_db_url.startswith("postgresql://"):
-        raise RuntimeError(
-            f"DATABASE_URL must use PostgreSQL with asyncpg driver. Got: {raw_db_url[:30]}... "
-            f"Example: DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/dbname"
-        )
+    # Ensure it's PostgreSQL (prod), но позволяем SQLite в dev/test
+    if not raw_db_url.startswith(("postgresql+asyncpg://", "postgresql://")):
+        if environment in {"development", "test"} and raw_db_url.startswith("sqlite"):
+            pass
+        else:
+            raise RuntimeError(
+                f"DATABASE_URL must use PostgreSQL with asyncpg driver. Got: {raw_db_url[:30]}... "
+                f"Example: DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/dbname"
+            )
 
     # Normalize to postgresql+asyncpg if just postgresql://
     if raw_db_url.startswith("postgresql://") and not raw_db_url.startswith("postgresql+asyncpg://"):
@@ -421,8 +424,11 @@ def get_settings() -> Settings:
             pass
 
     async_url = raw_db_url
-    # Sync URL: remove +asyncpg driver suffix
-    sync_url = raw_db_url.replace("+asyncpg", "")
+    # Sync URL: remove async driver suffix; adjust sqlite driver name
+    if raw_db_url.startswith("sqlite+aiosqlite"):
+        sync_url = raw_db_url.replace("+aiosqlite", "")
+    else:
+        sync_url = raw_db_url.replace("+asyncpg", "")
 
     bot_enabled = _get_bool_with_fallback("BOT_ENABLED", "ENABLE_TEST2_BOT", default=True)
     bot_provider = os.getenv("BOT_PROVIDER", "telegram").strip().lower() or "telegram"

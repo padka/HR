@@ -367,6 +367,40 @@
     border-radius: 12px;
   }
 
+  .timeline-filters {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .timeline-filter-btn {
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--layer-border);
+    background: var(--layer-panel);
+    color: var(--ink-soft);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .timeline-filter-btn:hover {
+    border-color: var(--accent);
+    color: var(--ink);
+  }
+
+  .timeline-filter-btn[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--accent) 15%, var(--layer-panel));
+    border-color: var(--accent);
+    color: var(--ink);
+  }
+
+  .timeline-item[hidden] {
+    display: none;
+  }
+
   @keyframes fadeUp {
     from {
       opacity: 0;
@@ -816,6 +850,28 @@
     gap: 8px;
   }
 
+  .chat-message__status-icon {
+    font-size: 0.85rem;
+    opacity: 0.8;
+  }
+
+  .chat-message__status-icon--failed {
+    color: var(--bad, #ef4444);
+  }
+
+  .chat-message--outbound .chat-message__status-icon {
+    color: var(--ok, #22c55e);
+  }
+
+  .chat-message__error {
+    font-size: 0.75rem;
+    color: var(--bad, #ef4444);
+    margin-top: 4px;
+    padding: 4px 8px;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: 6px;
+  }
+
   .chat-panel__templates {
     display: flex;
     flex-wrap: wrap;
@@ -944,55 +1000,6 @@
     background: rgba(15, 23, 42, 0.05);
   }
 
-  .manual-slot-card {
-    margin-top: 24px;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 20px;
-    align-items: center;
-    border-radius: 24px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.04);
-    padding: 24px;
-  }
-
-  html[data-theme="light"] .manual-slot-card {
-    border-color: rgba(15, 23, 42, 0.08);
-    background: rgba(15, 23, 42, 0.03);
-  }
-
-  .manual-slot-card__eyebrow {
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 0.75rem;
-    color: var(--muted);
-    margin: 0 0 6px;
-  }
-
-  .manual-slot-card__window {
-    font-size: 1.3rem;
-    margin: 0;
-    font-weight: 600;
-  }
-
-  .manual-slot-card__note {
-    margin: 8px 0 0;
-    color: var(--fg);
-  }
-
-  .manual-slot-card__meta {
-    font-size: 0.85rem;
-    color: var(--muted);
-    margin: 4px 0 0;
-  }
-
-  .manual-slot-card__actions {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-  }
-
   .candidate-next {
     padding: 24px;
     border-radius: 24px;
@@ -1051,77 +1058,6 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-  }
-
-  .candidate-slot-control {
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 18px;
-    padding: 14px 16px;
-    background: rgba(15, 23, 42, 0.35);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  html[data-theme="light"] .candidate-slot-control {
-    background: rgba(255, 255, 255, 0.9);
-    border-color: rgba(15, 23, 42, 0.12);
-  }
-
-  .candidate-slot-control__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .candidate-slot-panel {
-    display: grid;
-    gap: 14px;
-  }
-
-  .candidate-slot-panel[hidden] {
-    display: none;
-  }
-
-  .candidate-slot-panel__group {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    padding-top: 12px;
-    display: grid;
-    gap: 10px;
-  }
-
-  html[data-theme="light"] .candidate-slot-panel__group {
-    border-top-color: rgba(15, 23, 42, 0.08);
-  }
-
-  .candidate-slot-panel__label {
-    margin: 0;
-    font-weight: 600;
-  }
-
-  .candidate-slot-panel__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .candidate-slot-panel__hint {
-    margin: 0;
-    font-size: 0.9rem;
-    color: var(--muted);
-  }
-
-  .candidate-slot-panel__hint[data-tone="success"] {
-    color: color-mix(in srgb, var(--ok) 80%, var(--fg));
-  }
-
-  .candidate-slot-panel__hint[data-tone="error"] {
-    color: color-mix(in srgb, var(--bad) 80%, var(--fg));
-  }
-
-  .candidate-slot-control.is-disabled {
-    opacity: 0.6;
   }
 
   .surface.mt-lg {
@@ -1573,8 +1509,9 @@
 {% set test2_section = test_sections_map.get('test2') if test_sections_map else None %}
 {% set has_test2_result = test2_passed or (test2_section and test2_section.status in ['passed', 'failed']) %}
 {% set has_test2_completed = has_test2_result %}
-{% set status_label = workflow_status_label or stage or 'Статус не указан' %}
-{% set status_color = workflow_status_color or 'muted' %}
+{% set status_option = (candidate_status_options | selectattr('slug', 'equalto', candidate_status_slug) | list | first) %}
+{% set status_label = status_option.label if status_option else (workflow_status_label or stage or 'Статус не указан') %}
+{% set status_color = workflow_status_color or candidate_status_color or 'muted' %}
 {% set profile_state = 'ready' %}
 {% if error %}
   {% set profile_state = 'error' %}
@@ -1606,7 +1543,7 @@
         </a>
       {% endif %}
       {% if cs not in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] %}
-        <button class="btn btn-ghost" type="button" onclick="if(typeof openRejectModal === 'function') { openRejectModal('{{ user.id }}', '{{ user.fio }}', '/candidates/{{ user.id }}/status'); } else { if(confirm('Отклонить кандидата {{ user.fio }}?')) { var f=document.createElement('form'); f.method='POST'; f.action='/candidates/{{ user.id }}/status'; var c=document.querySelector('[name=csrf_token]').cloneNode(true); var s=document.createElement('input'); s.type='hidden'; s.name='status'; s.value='interview_declined'; f.appendChild(c); f.appendChild(s); document.body.appendChild(f); f.submit(); } }">🚫 Отказ</button>
+        <button class="btn btn-ghost" type="button" data-reject-candidate="{{ user.id }}" data-reject-name="{{ user.fio }}">🚫 Отказ</button>
       {% endif %}
     </div>
     {% if pending_slot %}
@@ -1624,6 +1561,31 @@
   </div>
 </section>
 
+{% set signals = namespace(items=[]) %}
+{% if not telegram_user_id %}
+  {% set _ = signals.items.append('Нет Telegram — чат и уведомления недоступны') %}
+{% endif %}
+{% if not user.phone %}
+  {% set _ = signals.items.append('Нет телефона кандидата') %}
+{% endif %}
+{% if not user.city %}
+  {% set _ = signals.items.append('Не указан город') %}
+{% endif %}
+{% if not responsible_recruiter %}
+  {% set _ = signals.items.append('Не назначен ответственный рекрутер') %}
+{% endif %}
+{% if needs_intro_day %}
+  {% set _ = signals.items.append('Нужно назначить ознакомительный день') %}
+{% endif %}
+{% if not user.is_active %}
+  {% set _ = signals.items.append('Кандидат в архиве — включите, если нужно продолжить работу') %}
+{% endif %}
+{% if signals.items %}
+  <div class="surface glass grain alert" data-tone="warning" role="status">
+    <strong>Что поправить:</strong> {{ signals.items | join(' · ') }}
+  </div>
+{% endif %}
+
 
 <section class="profile-shell" data-profile-state="{{ profile_state }}">
   <header class="profile-header">
@@ -1633,7 +1595,7 @@
       <h1>{{ user.fio or telegram_username or 'Кандидат' }}</h1>
       <p class="subtitle">
         {{ user.city or 'Город не указан' }}
-        {% if stage %} · {{ stage }}{% endif %}
+        {% if status_label %} · {{ status_label }}{% endif %}
       </p>
     </div>
     <div class="status-chip" aria-label="Текущий статус">
@@ -1723,56 +1685,75 @@
       <div class="card-head">
         <div>
           <p class="eyebrow">Основные данные</p>
-          <h3>Связь и статус</h3>
+          <h3>Паспорт кандидата</h3>
         </div>
         <span class="pill">15 сек на понимание</span>
       </div>
       <div class="identity-grid">
         <div class="identity-item">
-          <span class="identity-label">TG ID</span>
-          {% if telegram_user_id %}
-            <span class="identity-value">{{ telegram_user_id }}</span>
+          <span class="identity-label">Телефон</span>
+          {% if user.phone %}
+            <span class="identity-value">{{ user.phone }}</span>
             <div class="inline-actions">
-              <button class="action-btn action-btn--ghost" type="button" data-copy-value="{{ telegram_user_id }}" data-copy-success="Скопировано">Скопировать</button>
-              <span class="timeline-meta">Связан {{ fmt_local(telegram_linked_at, 'Europe/Moscow') if telegram_linked_at else 'нет отметки' }}</span>
+              <button class="action-btn action-btn--ghost" type="button" data-copy-value="{{ user.phone }}" data-copy-success="Скопировано">Скопировать</button>
+              <span class="timeline-meta">Для звонка или WhatsApp</span>
             </div>
           {% else %}
-            <div class="inline-actions">
-              <span class="identity-value muted">Нет данных</span>
-              <span class="timeline-meta">Появится после первого контакта</span>
-            </div>
+            <span class="identity-value muted">Не указан</span>
+            <p class="timeline-meta">Добавьте, чтобы можно было позвонить или отправить SMS.</p>
           {% endif %}
         </div>
 
         <div class="identity-item">
-          <span class="identity-label">Username</span>
-          {% if telegram_username %}
-            <span class="identity-value">@{{ telegram_username }}</span>
+          <span class="identity-label">Telegram</span>
+          {% if telegram_username or telegram_user_id %}
+            <span class="identity-value">
+              {% if telegram_username %}@{{ telegram_username }}{% else %}tg_id: {{ telegram_user_id }}{% endif %}
+            </span>
             <div class="inline-actions">
-              <button class="action-btn action-btn--ghost" type="button" data-copy-value="{{ telegram_username }}" data-copy-success="Скопировано">Скопировать</button>
-              <a class="quiet-link" href="https://t.me/{{ telegram_username }}" target="_blank" rel="noopener">Открыть в Telegram</a>
+              {% if telegram_username %}
+                <button class="action-btn action-btn--ghost" type="button" data-copy-value="{{ telegram_username }}" data-copy-success="Скопировано">@ скопирован</button>
+                <a class="action-btn action-btn--secondary" href="https://t.me/{{ telegram_username }}" target="_blank" rel="noopener">Открыть чат</a>
+              {% elif telegram_user_id %}
+                <button class="action-btn action-btn--ghost" type="button" data-copy-value="{{ telegram_user_id }}" data-copy-success="Скопировано">ID скопирован</button>
+                <a class="action-btn action-btn--secondary" href="tg://user?id={{ telegram_user_id }}">Открыть в Telegram</a>
+              {% endif %}
+              <button class="action-btn action-btn--ghost" type="button" data-chat-toggle {% if not telegram_user_id %}disabled{% endif %}>
+                История сообщений
+              </button>
             </div>
+            <span class="timeline-meta">Связан {{ fmt_local(telegram_linked_at, 'Europe/Moscow') if telegram_linked_at else 'нет отметки' }}</span>
           {% else %}
-            <span class="identity-value muted">Скрыт или не привязан</span>
+            <span class="identity-value muted">Ещё не привязан</span>
+            <p class="timeline-meta">Пригласите кандидата в бота, чтобы включить чат.</p>
           {% endif %}
         </div>
 
         <div class="identity-item">
-          <span class="identity-label">Чат</span>
-          <div class="inline-actions">
-            {% if telegram_username %}
-              <a class="action-btn action-btn--secondary" href="https://t.me/{{ telegram_username }}" target="_blank" rel="noopener">
-                💬 Открыть чат
-              </a>
-            {% elif telegram_user_id %}
-              <a class="action-btn action-btn--secondary" href="tg://user?id={{ telegram_user_id }}">💬 Открыть чат</a>
-            {% else %}
-              <button class="action-btn action-btn--ghost" type="button" disabled>Чат станет доступен после первого сообщения</button>
+          <span class="identity-label">Ответственный рекрутер</span>
+          {% if responsible_recruiter %}
+            <span class="identity-value">{{ responsible_recruiter.name }}</span>
+            {% if responsible_recruiter.tg_chat_id %}
+              <div class="inline-actions">
+                <a class="quiet-link" href="tg://user?id={{ responsible_recruiter.tg_chat_id }}">Написать в Telegram</a>
+              </div>
             {% endif %}
-            <button class="action-btn action-btn--ghost" type="button" data-chat-toggle {% if not telegram_user_id %}disabled{% endif %}>
-              История сообщений
-            </button>
+          {% else %}
+            <span class="identity-value muted">Не назначен</span>
+            <p class="timeline-meta">Закрепите ответственного, чтобы не потерять кандидата.</p>
+          {% endif %}
+        </div>
+
+        <div class="identity-item">
+          <span class="identity-label">Канал и активность</span>
+          <span class="identity-value">{{ user.source or '—' }}</span>
+          <div class="inline-actions">
+            <span class="pill">{% if user.is_active %}Активен{% else %}Архив{% endif %}</span>
+            <span class="timeline-meta">{{ user.city or 'Город не указан' }}</span>
           </div>
+          {% if telemost_url %}
+            <p class="timeline-meta">Ссылка на созвон: <a class="quiet-link" href="{{ telemost_url }}" target="_blank" rel="noopener">{{ telemost_source or 'телемост' }}</a></p>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -1785,7 +1766,7 @@
         </div>
         <span class="pill">до 4 вариантов</span>
       </div>
-      {% set actions = workflow_actions %}
+      {% set actions = candidate_actions %}
       <div class="action-grid">
         {% if actions %}
           {% set visible_actions = actions[:4] %}
@@ -1813,7 +1794,8 @@
                   class="action-btn {{ variant_class }}"
                   type="button"
                   data-action-target="{{ action.target_status or action.key }}"
-                  {% if action.kind %}data-action-kind="{{ action.kind }}"{% endif %}
+                  data-action-key="{{ action.key }}"
+                  data-action-method="{{ action.method }}"
                   {% if action.confirmation %}data-action-confirm="{{ action.confirmation }}"{% endif %}>
                   {% if action.icon %}<span aria-hidden="true">{{ action.icon }}</span>{% endif %}
                   <span>{{ action.label }}</span>
@@ -1859,7 +1841,13 @@
     <summary>История и сигналы</summary>
     <div class="timeline-body" data-timeline>
       {% if timeline_items %}
-        <ul class="timeline-list">
+        <div class="timeline-filters" data-timeline-filters>
+          <button type="button" class="timeline-filter-btn" data-filter="all" aria-pressed="true">Все</button>
+          <button type="button" class="timeline-filter-btn" data-filter="slot" aria-pressed="false">🗓️ Слоты</button>
+          <button type="button" class="timeline-filter-btn" data-filter="test" aria-pressed="false">🧠 Тесты</button>
+          <button type="button" class="timeline-filter-btn" data-filter="message" aria-pressed="false">💬 Сообщения</button>
+        </div>
+        <ul class="timeline-list" data-timeline-list>
           {% for item in timeline_items %}
             {% set ts = item.dt %}
             {% set timestamp = fmt_local(ts, item.tz or 'Europe/Moscow') if ts else '—' %}
@@ -1880,7 +1868,7 @@
               {% set tone = 'message' %}
               {% set icon = '💬' %}
             {% endif %}
-            <li class="timeline-item" data-stagger>
+            <li class="timeline-item" data-stagger data-kind="{{ tone }}">
               <div class="timeline-icon" data-tone="{{ tone }}">{{ icon }}</div>
               <div>
                 <div class="timeline-title">{{ label }}</div>
@@ -1908,6 +1896,52 @@
   const timelineItems = shell.querySelectorAll('[data-stagger]');
   timelineItems.forEach((item, idx) => {
     item.style.animationDelay = `${idx * 0.04}s`;
+  });
+})();
+</script>
+
+<script nonce="{{ request.state.csp_nonce }}">
+(function() {
+  const STORAGE_KEY = 'timeline_filter';
+  const filtersContainer = document.querySelector('[data-timeline-filters]');
+  const timelineList = document.querySelector('[data-timeline-list]');
+  if (!filtersContainer || !timelineList) return;
+
+  const filterButtons = filtersContainer.querySelectorAll('[data-filter]');
+  const items = timelineList.querySelectorAll('[data-kind]');
+
+  function applyFilter(filter) {
+    filterButtons.forEach((btn) => {
+      btn.setAttribute('aria-pressed', btn.dataset.filter === filter ? 'true' : 'false');
+    });
+    items.forEach((item) => {
+      if (filter === 'all' || item.dataset.kind === filter) {
+        item.hidden = false;
+      } else {
+        item.hidden = true;
+      }
+    });
+    try {
+      localStorage.setItem(STORAGE_KEY, filter);
+    } catch (e) {
+      // localStorage unavailable
+    }
+  }
+
+  // Restore saved filter
+  let savedFilter = 'all';
+  try {
+    savedFilter = localStorage.getItem(STORAGE_KEY) || 'all';
+  } catch (e) {
+    // localStorage unavailable
+  }
+  applyFilter(savedFilter);
+
+  // Handle clicks
+  filtersContainer.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-filter]');
+    if (!btn) return;
+    applyFilter(btn.dataset.filter);
   });
 })();
 </script>
@@ -2403,7 +2437,17 @@
     return [...messages].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   };
 
-  const render = () => {
+  // Status icons for delivery indication
+  const STATUS_ICONS = {
+    'queued': '🕐',      // Clock - waiting to send
+    'sent': '✓',        // Single check - sent
+    'received': '✓✓',   // Double check - delivered/read
+    'failed': '⚠️',      // Warning - failed
+  };
+
+  const getStatusIcon = (status) => STATUS_ICONS[status] || status;
+
+  const render = (scrollToBottom = false) => {
     if (!chatList) return;
     chatList.innerHTML = '';
     if (!state.length) {
@@ -2413,18 +2457,31 @@
     state.forEach((msg) => {
       const row = document.createElement('div');
       row.className = 'chat-message' + (msg.direction === 'outbound' ? ' chat-message--outbound' : '');
+      row.dataset.messageId = msg.id;
+
       const content = document.createElement('div');
       content.className = 'chat-message__text';
       content.textContent = msg.text || '';
       row.appendChild(content);
+
       const meta = document.createElement('div');
       meta.className = 'chat-message__meta';
       const dt = new Date(msg.created_at);
-      meta.innerHTML = `<span>${dt.toLocaleString('ru-RU')}</span><span>${msg.status}</span>`;
+      const timeStr = dt.toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+
+      // Show delivery status icon for outbound messages
+      if (msg.direction === 'outbound') {
+        const statusIcon = getStatusIcon(msg.status);
+        const statusClass = msg.status === 'failed' ? 'chat-message__status-icon--failed' : '';
+        meta.innerHTML = `<span>${timeStr}</span><span class="chat-message__status-icon ${statusClass}">${statusIcon}</span>`;
+      } else {
+        meta.innerHTML = `<span>${timeStr}</span>`;
+      }
       row.appendChild(meta);
+
       if (msg.error) {
         const error = document.createElement('div');
-        error.className = 'chat-message__status';
+        error.className = 'chat-message__error';
         error.textContent = msg.error;
         row.appendChild(error);
       }
@@ -2438,9 +2495,14 @@
       }
       chatList.appendChild(row);
     });
+
+    // Auto-scroll to bottom if requested
+    if (scrollToBottom && chatList.lastElementChild) {
+      chatList.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
   };
 
-  const upsertMessages = (messages, { replace = false, prepend = false } = {}) => {
+  const upsertMessages = (messages, { replace = false, prepend = false, scrollToBottom = false } = {}) => {
     if (!messages || !messages.length) {
       if (replace) {
         state = [];
@@ -2459,7 +2521,7 @@
       messages.forEach((msg) => map.set(msg.id, msg));
       state = sortMessages(Array.from(map.values()));
     }
-    render();
+    render(scrollToBottom);
     if (state.length) {
       state = sortMessages(state);
     }
@@ -2520,7 +2582,7 @@
       body,
     });
     if (result?.message) {
-      upsertMessages([result.message]);
+      upsertMessages([result.message], { scrollToBottom: true });
     } else {
       await loadLatest();
     }
@@ -2537,7 +2599,7 @@
       },
     });
     if (data?.message) {
-      upsertMessages([data.message]);
+      upsertMessages([data.message], { scrollToBottom: true });
     }
     setStatus('');
   };
@@ -2594,486 +2656,6 @@
     if (pollTimer) {
       window.clearInterval(pollTimer);
     }
-  });
-})();
-</script>
-
-<script nonce="{{ request.state.csp_nonce }}">
-(function(){
-  const slotControls = document.querySelector('[data-slot-controls]');
-  const outcomeRoot = document.querySelector('[data-slot-outcome-root]');
-  if (!slotControls && !outcomeRoot) return;
-  const slotId = (slotControls?.dataset.slotId || outcomeRoot?.dataset.slotId || '').trim();
-  const toggleBtn = slotControls?.querySelector('[data-slot-toggle]');
-  const panel = slotControls?.querySelector('[data-slot-panel]');
-  const messageEl = slotControls?.querySelector('[data-slot-message]');
-  const outcomeStatusEl = (outcomeRoot || slotControls)?.querySelector('[data-slot-outcome-status]');
-  const nextTime = document.querySelector('.candidate-next__time');
-  const nextMeta = document.querySelector('.candidate-next__meta');
-  const emptyMetaText = 'Назначьте интервью или тест, чтобы запланировать следующий шаг.';
-  const csrfToken = window.__CSRF_TOKEN__ || document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-  const slotStatus = (slotControls?.dataset.slotStatus || outcomeRoot?.dataset.slotStatus || '').toLowerCase();
-  const slotHasCandidate = (slotControls?.dataset.slotHasCandidate || outcomeRoot?.dataset.slotHasCandidate || '0') !== '0';
-  const actionableStatuses = new Set(['pending', 'booked', 'confirmed_by_candidate']);
-  const slotEligible = slotHasCandidate && actionableStatuses.has(slotStatus);
-
-  const setMessage = (el, text, tone = 'muted') => {
-    if (!el) { return; }
-    el.textContent = text || '';
-    if (tone) {
-      el.dataset.tone = tone;
-    } else {
-      el.removeAttribute('data-tone');
-    }
-  };
-
-  const disableButtons = (root, selector, disabled) => {
-    if (!root) return;
-    root.querySelectorAll(selector).forEach(btn => {
-      btn.disabled = disabled;
-    });
-  };
-
-  if (!slotId) {
-    disableButtons(slotControls, '[data-slot-action]', true);
-    disableButtons(outcomeRoot, '[data-slot-outcome]', true);
-    return;
-  }
-
-  const closePanel = () => {
-    if (!panel) { return; }
-    panel.setAttribute('hidden', '');
-    slotControls?.classList.remove('is-open');
-    if (toggleBtn) {
-      toggleBtn.textContent = 'Редактировать слот';
-    }
-  };
-
-  const lockPanel = (message, tone = 'warning') => {
-    closePanel();
-    slotControls?.classList.add('is-disabled');
-    disableButtons(slotControls, '[data-slot-action]', true);
-    if (toggleBtn) {
-      toggleBtn.disabled = true;
-    }
-    setMessage(messageEl, message || '', tone);
-  };
-
-  toggleBtn?.addEventListener('click', () => {
-    if (!panel) return;
-    const isHidden = panel.hasAttribute('hidden');
-    if (isHidden) {
-      panel.removeAttribute('hidden');
-      slotControls?.classList.add('is-open');
-      toggleBtn.textContent = 'Скрыть панель';
-    } else {
-      closePanel();
-    }
-  });
-
-  async function postSlotAction(path) {
-    const response = await fetch(`/slots/${slotId}/${path}`, {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'X-CSRFToken': csrfToken,
-      },
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok === false) {
-      const message = payload && payload.message ? payload.message : 'Не удалось выполнить действие.';
-      const error = new Error(message);
-      error.status = response.status;
-      throw error;
-    }
-    return payload;
-  }
-
-  async function postOutcome(outcome) {
-    const response = await fetch(`/slots/${slotId}/outcome`, {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'X-CSRFToken': csrfToken,
-      },
-      body: JSON.stringify({ outcome }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok === false) {
-      const message = payload && payload.message ? payload.message : 'Не удалось обновить исход.';
-      const error = new Error(message);
-      error.status = response.status;
-      throw error;
-    }
-    return payload;
-  }
-
-  const markSlotAsInactive = (message, tone = 'success') => {
-    lockPanel(message, tone);
-    if (nextTime) {
-      nextTime.textContent = 'Нет в календаре';
-    }
-    if (nextMeta) {
-      nextMeta.textContent = emptyMetaText;
-    }
-  };
-
-  if (!slotEligible) {
-    const warningText = slotHasCandidate
-      ? 'Слот в этом статусе нельзя редактировать из карточки кандидата.'
-      : 'Слот не привязан к кандидату.';
-    if (slotControls) {
-      lockPanel(warningText, slotHasCandidate ? 'warning' : 'error');
-    }
-    if (outcomeRoot) {
-      disableButtons(outcomeRoot, '[data-slot-outcome]', true);
-      setMessage(outcomeStatusEl, warningText, slotHasCandidate ? 'warning' : 'error');
-    }
-    return;
-  }
-
-  slotControls?.addEventListener('click', async (event) => {
-    const actionBtn = event.target.closest('[data-slot-action]');
-    if (!actionBtn || actionBtn.disabled) return;
-    const action = actionBtn.dataset.slotAction;
-    if (!action) return;
-    actionBtn.disabled = true;
-    setMessage(messageEl, 'Выполняем…');
-    try {
-      const payload = await postSlotAction(action === 'reschedule' ? 'reschedule' : 'reject_booking');
-      markSlotAsInactive(payload.message || 'Слот обновлён.');
-    } catch (err) {
-      console.error(err);
-      setMessage(messageEl, err.message || 'Не удалось изменить слот.', 'error');
-      if (err && err.status === 404) {
-        markSlotAsInactive(err.message || 'Слот больше недоступен.', 'warning');
-        return;
-      }
-      actionBtn.disabled = false;
-    }
-  });
-
-  outcomeRoot?.addEventListener('click', async (event) => {
-    const outcomeBtn = event.target.closest('[data-slot-outcome]');
-    if (!outcomeBtn || outcomeBtn.disabled) return;
-    const outcome = outcomeBtn.dataset.slotOutcome;
-    const confirmMsg = outcomeBtn.dataset.slotOutcomeConfirm;
-    if (!outcome) return;
-    if (confirmMsg && !window.confirm(confirmMsg)) {
-      return;
-    }
-    outcomeBtn.disabled = true;
-    disableButtons(outcomeRoot, '[data-slot-outcome]', true);
-    setMessage(outcomeStatusEl, 'Обновляем исход…');
-    let unlockOutcomes = true;
-    try {
-      const payload = await postOutcome(outcome);
-      setMessage(outcomeStatusEl, payload.message || 'Исход обновлён.', 'success');
-    } catch (err) {
-      console.error(err);
-      setMessage(outcomeStatusEl, err.message || 'Не удалось обновить исход.', 'error');
-      if (err && err.status === 404) {
-        markSlotAsInactive(err.message || 'Слот больше недоступен.', 'warning');
-        unlockOutcomes = false;
-      }
-    } finally {
-      if (unlockOutcomes) {
-        disableButtons(outcomeRoot, '[data-slot-outcome]', false);
-      }
-    }
-  });
-})();
-
-// ============================================
-// Reject Candidate Modal
-// ============================================
-(function() {
-  const modalHTML = `
-<style>
-  .modal-overlay {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
-    z-index: 9998;
-    animation: fadeIn 0.2s ease-out;
-  }
-
-  .modal-overlay.active {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .modal-dialog {
-    background: var(--layer-panel-strong, linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9)));
-    border: 1px solid var(--layer-border-strong, rgba(255, 255, 255, 0.12));
-    border-radius: 16px;
-    padding: 24px;
-    max-width: 500px;
-    width: 90%;
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: var(--shadow-2xl, 0 25px 50px -12px rgba(0, 0, 0, 0.5));
-    animation: slideIn 0.3s ease-out;
-    position: relative;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateY(-20px) scale(0.95); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-
-  .modal-header {
-    margin-bottom: 20px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--layer-border, rgba(255, 255, 255, 0.08));
-  }
-
-  .modal-title {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--ink-strong, var(--fg-strong));
-    margin: 0;
-  }
-
-  .modal-body { margin-bottom: 20px; }
-
-  .modal-form-group { margin-bottom: 16px; }
-
-  .modal-form-group label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: 500;
-    color: var(--ink-strong, var(--fg));
-  }
-
-  .modal-form-group select,
-  .modal-form-group textarea {
-    width: 100%;
-    padding: 10px 12px;
-    border: 1px solid var(--layer-border, rgba(255, 255, 255, 0.12));
-    border-radius: 8px;
-    background: var(--layer-panel, rgba(255, 255, 255, 0.02));
-    color: var(--ink, var(--fg));
-    font-size: 14px;
-    font-family: inherit;
-  }
-
-  .modal-form-group textarea {
-    min-height: 80px;
-    resize: vertical;
-  }
-
-  .modal-form-group select:focus,
-  .modal-form-group textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  .modal-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 12px;
-  }
-
-  .modal-checkbox input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-  }
-
-  .modal-checkbox label {
-    margin: 0;
-    cursor: pointer;
-    font-weight: 400;
-    color: var(--ink, var(--muted));
-  }
-
-  .modal-footer {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-    padding-top: 16px;
-    border-top: 1px solid var(--layer-border, rgba(255, 255, 255, 0.08));
-  }
-
-  .modal-close-btn {
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    background: none;
-    border: none;
-    font-size: 24px;
-    color: var(--ink-soft, var(--muted));
-    cursor: pointer;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    transition: background 0.2s, color 0.2s;
-  }
-
-  .modal-close-btn:hover {
-    background: var(--layer-panel, rgba(255, 255, 255, 0.06));
-    color: var(--ink-strong, var(--fg-strong));
-  }
-
-  .btn-danger {
-    background: var(--danger, #dc2626);
-    color: white;
-    border: none;
-  }
-
-  .btn-danger:hover {
-    background: var(--danger-hover, #b91c1c);
-  }
-
-  .btn-danger:active {
-    background: var(--danger-active, #991b1b);
-  }
-</style>
-
-<div class="modal-overlay" id="rejectModal">
-  <div class="modal-dialog">
-    <button type="button" class="modal-close-btn" data-modal-close>×</button>
-    <div class="modal-header">
-      <h2 class="modal-title">Отклонить кандидата</h2>
-    </div>
-    <form id="rejectForm" method="post">
-      {{ csrf_input(request) }}
-      <input type="hidden" name="status" value="interview_declined">
-      <input type="hidden" name="candidate_id" id="rejectCandidateId">
-      <div class="modal-body">
-        <p>Вы действительно хотите отклонить кандидата <strong id="rejectCandidateName"></strong>?</p>
-        <div class="modal-form-group">
-          <label for="reject_reason">Причина отклонения *</label>
-          <select id="reject_reason" name="reject_reason" required>
-            <option value="">Выберите причину...</option>
-            <option value="not_qualified">Не соответствует квалификации</option>
-            <option value="bad_communication">Проблемы с коммуникацией</option>
-            <option value="schedule_conflict">Несоответствие по графику</option>
-            <option value="failed_test">Не прошёл тестирование</option>
-            <option value="declined_by_candidate">Кандидат отказался</option>
-            <option value="other">Другое</option>
-          </select>
-        </div>
-        <div class="modal-form-group">
-          <label for="reject_comment">Комментарий (опционально)</label>
-          <textarea id="reject_comment" name="reject_comment" placeholder="Дополнительная информация..."></textarea>
-        </div>
-        <div class="modal-checkbox">
-          <input type="checkbox" id="skip_modal_next_time" name="skip_modal_next_time">
-          <label for="skip_modal_next_time">Не показывать это окно в следующий раз (быстрое действие)</label>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-ghost" data-modal-close>Отмена</button>
-        <button type="submit" class="btn btn-danger">Отклонить кандидата</button>
-      </div>
-    </form>
-  </div>
-</div>
-  `;
-
-  // Insert modal into page
-  document.body.insertAdjacentHTML('beforeend', modalHTML);
-
-  const modal = document.getElementById('rejectModal');
-  const form = document.getElementById('rejectForm');
-  const candidateNameEl = document.getElementById('rejectCandidateName');
-  const candidateIdInput = document.getElementById('rejectCandidateId');
-  const closeButtons = document.querySelectorAll('[data-modal-close]');
-
-  // Check if user wants to skip modal
-  const skipModalKey = 'reject_modal_skip';
-  let skipModal = false;
-  try {
-    skipModal = localStorage.getItem(skipModalKey) === 'true';
-  } catch (e) {
-    // localStorage not available
-  }
-
-  // Open modal function
-  window.openRejectModal = function(candidateId, candidateName, formAction) {
-    if (skipModal) {
-      // Submit directly without modal
-      const quickForm = document.createElement('form');
-      quickForm.method = 'POST';
-      quickForm.action = formAction;
-      quickForm.style.display = 'none';
-
-      const csrfInput = document.querySelector('[name="csrf_token"]').cloneNode(true);
-      const statusInput = document.createElement('input');
-      statusInput.type = 'hidden';
-      statusInput.name = 'status';
-      statusInput.value = 'interview_declined';
-
-      quickForm.appendChild(csrfInput);
-      quickForm.appendChild(statusInput);
-      document.body.appendChild(quickForm);
-      quickForm.submit();
-      return;
-    }
-
-    candidateNameEl.textContent = candidateName;
-    candidateIdInput.value = candidateId;
-    form.action = formAction;
-    modal.classList.add('active');
-    document.body.style.overflow = 'hidden';
-  };
-
-  // Close modal function
-  function closeModal() {
-    modal.classList.remove('active');
-    document.body.style.overflow = '';
-    form.reset();
-  }
-
-  // Close buttons
-  closeButtons.forEach(btn => {
-    btn.addEventListener('click', closeModal);
-  });
-
-  // Close on overlay click
-  modal.addEventListener('click', function(e) {
-    if (e.target === modal) {
-      closeModal();
-    }
-  });
-
-  // Close on Escape key
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape' && modal.classList.contains('active')) {
-      closeModal();
-    }
-  });
-
-  // Handle form submission
-  form.addEventListener('submit', function(e) {
-    const skipCheckbox = document.getElementById('skip_modal_next_time');
-    if (skipCheckbox && skipCheckbox.checked) {
-      try {
-        localStorage.setItem(skipModalKey, 'true');
-      } catch (err) {
-        // localStorage not available
-      }
-    }
-    // Form will submit normally
   });
 })();
 </script>
@@ -3249,7 +2831,28 @@
     }
   });
 
-  const sendStatus = async (targetStatus, btnToDisable, onError) => {
+  const performCandidateAction = async (actionKey, btnToDisable) => {
+    if (!actionKey) return;
+    if (btnToDisable) btnToDisable.disabled = true;
+    try {
+      const response = await fetch(`/api/candidates/${candidateId}/actions/${actionKey}`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload?.detail?.message || payload.message || 'Не удалось выполнить действие');
+      }
+      return true;
+    } finally {
+      if (btnToDisable) btnToDisable.disabled = false;
+    }
+  };
+
+  const sendLegacyStatus = async (targetStatus, btnToDisable, onError) => {
     if (!targetStatus) return;
     if (btnToDisable) btnToDisable.disabled = true;
     try {
@@ -3287,30 +2890,11 @@
     const btn = event.target.closest('[data-action-target]');
     if (!btn || btn.disabled) return;
     const targetStatus = btn.dataset.actionTarget;
-    const actionKind = btn.dataset.actionKind || 'legacy';
+    const actionKey = btn.dataset.actionKey || targetStatus;
     const confirmMsg = btn.dataset.actionConfirm;
-    if (!targetStatus) return;
+    if (!actionKey) return;
     const performAction = async () => {
-      if (actionKind === 'workflow') {
-        btn.disabled = true;
-        try {
-          const response = await fetch(`/candidates/${candidateId}/actions/${targetStatus}`, {
-            method: 'POST',
-            headers: {
-              'Accept': 'application/json',
-              'X-CSRFToken': csrfToken,
-            },
-          });
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok || payload.ok === false) {
-            throw new Error(payload.detail?.message || payload.message || 'Не удалось выполнить действие');
-          }
-          return true;
-        } finally {
-          btn.disabled = false;
-        }
-      }
-      return sendStatus(targetStatus, btn, (err) => setError(err?.message));
+      return performCandidateAction(actionKey, btn);
     };
 
     if (confirmMsg) {
@@ -3345,7 +2929,7 @@
       const isDecline = declineStatuses.has(targetStatus);
       const doSend = async () => {
         try {
-          await sendStatus(targetStatus, statusApply, (err) => setStatusError(err?.message));
+          await sendLegacyStatus(targetStatus, statusApply, (err) => setStatusError(err?.message));
           showToast('Статус обновлён');
           window.setTimeout(() => window.location.reload(), 650);
         } catch (err) {
@@ -3392,19 +2976,7 @@
       setStatusCenterError('');
 
       try {
-        const response = await fetch(`/candidates/${candidateId}/status`, {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken,
-          },
-          body: JSON.stringify({ status: targetStatus }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
-          throw new Error(payload.message || 'Не удалось обновить статус');
-        }
+        await sendLegacyStatus(targetStatus, null, (err) => setStatusCenterError(err?.message));
         showToast('Статус обновлён');
         window.setTimeout(() => window.location.reload(), 650);
         return true;
@@ -3513,6 +3085,52 @@
         alert.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }, 100);
     }
+  });
+})();
+</script>
+
+<script nonce="{{ request.state.csp_nonce }}">
+// Reject candidate button handler using new API
+(function() {
+  'use strict';
+
+  const csrfToken = window.__CSRF_TOKEN__ || document.querySelector('[name="csrf_token"]')?.value || '';
+
+  async function rejectCandidate(candidateId) {
+    const response = await fetch(`/api/candidates/${candidateId}/actions/reject`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-CSRFToken': csrfToken,
+      },
+      body: JSON.stringify({}),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.message || payload.detail?.message || 'Не удалось отклонить кандидата');
+    }
+    return payload;
+  }
+
+  document.querySelectorAll('[data-reject-candidate]').forEach(btn => {
+    btn.addEventListener('click', async function() {
+      const candidateId = this.dataset.rejectCandidate;
+      const candidateName = this.dataset.rejectName || '';
+
+      if (!confirm(`Отклонить кандидата ${candidateName}?`)) {
+        return;
+      }
+
+      this.disabled = true;
+      try {
+        await rejectCandidate(candidateId);
+        window.location.reload();
+      } catch (err) {
+        alert(err.message);
+        this.disabled = false;
+      }
+    });
   });
 })();
 </script>

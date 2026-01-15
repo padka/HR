@@ -13,7 +13,11 @@ from sqlalchemy.sql import Select
 
 from backend.core.db import async_session
 from backend.domain.candidates.models import TestResult, User
-from backend.domain.models import City, KPIWeekly, Recruiter, Slot, SlotStatus
+try:
+    from backend.domain.models import City, KPIWeekly, Recruiter, Slot, SlotStatus
+except ImportError:  # pragma: no cover - optional KPI storage
+    from backend.domain.models import City, Recruiter, Slot, SlotStatus
+    KPIWeekly = None  # type: ignore[assignment]
 
 __all__ = [
     "get_weekly_kpis",
@@ -98,6 +102,11 @@ _METRIC_META: Tuple[Dict[str, str], ...] = (
 
 _CACHE_LOCK = asyncio.Lock()
 _WTD_CACHE: Optional[Dict[str, object]] = None
+
+
+def _ensure_kpi_model() -> None:
+    if KPIWeekly is None:  # pragma: no cover - defensive guard
+        raise RuntimeError("KPIWeekly model is not available in this build")
 
 
 def _normalize_timezone_name(tz_name: Optional[str]) -> str:
@@ -471,6 +480,11 @@ async def _load_previous_metrics(
     start_utc: datetime,
     end_utc: datetime,
 ) -> Tuple[Dict[str, int], Optional[str]]:
+    if KPIWeekly is None:
+        async with async_session() as session:
+            metrics = await _query_metrics(session, start_utc, end_utc)
+            return metrics, None
+
     async with async_session() as session:
         stored = await session.get(KPIWeekly, week_start)
         if stored is not None:
@@ -597,6 +611,8 @@ def _set_cache(
 
 
 async def list_weekly_history(limit: int = 12, offset: int = 0) -> List[Dict[str, object]]:
+    if KPIWeekly is None:
+        return []
     async with async_session() as session:
         rows = await session.execute(
             select(KPIWeekly)
@@ -640,6 +656,7 @@ async def compute_weekly_snapshot(
 
 
 async def store_weekly_snapshot(snapshot: WeeklySnapshot) -> None:
+    _ensure_kpi_model()
     async with async_session() as session:
         async with session.begin():
             existing = await session.get(KPIWeekly, snapshot.week_start, with_for_update=True)

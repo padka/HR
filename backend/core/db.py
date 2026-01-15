@@ -34,8 +34,10 @@ def _preflight_database_backend(url: str) -> None:
     masked_url = parsed.render_as_string(hide_password=True)
     logger.info("Database dialect: %s (%s)", driver or "unknown", masked_url)
 
-    # Only PostgreSQL with asyncpg is supported
+    # Only PostgreSQL with asyncpg is supported in production; allow sqlite in dev/test
     if not driver.startswith("postgresql+asyncpg"):
+        if driver.startswith("sqlite") and _settings.environment in {"development", "test"}:
+            return
         raise RuntimeError(
             f"Only PostgreSQL with asyncpg driver is supported. "
             f"Got: {driver}. "
@@ -54,22 +56,30 @@ def _preflight_database_backend(url: str) -> None:
 _preflight_database_backend(_settings.database_url_async)
 
 # Build engine kwargs with PostgreSQL pool settings
-_async_engine_kwargs = {
-    "echo": _settings.sql_echo,
-    "echo_pool": _settings.environment == "development",  # Log pool checkouts/checkins in dev
-    "future": True,
-    "pool_size": _settings.db_pool_size,
-    "max_overflow": _settings.db_max_overflow,
-    "pool_timeout": _settings.db_pool_timeout,
-    "pool_pre_ping": True,
-    "pool_recycle": _settings.db_pool_recycle,
-}
-if _settings.environment == "test":
+_drivername = make_url(_settings.database_url_async).drivername
+if _drivername and _drivername.lower().startswith("sqlite"):
     _async_engine_kwargs = {
         "echo": _settings.sql_echo,
         "future": True,
         "poolclass": NullPool,
     }
+else:
+    _async_engine_kwargs = {
+        "echo": _settings.sql_echo,
+        "echo_pool": _settings.environment == "development",  # Log pool checkouts/checkins in dev
+        "future": True,
+        "pool_size": _settings.db_pool_size,
+        "max_overflow": _settings.db_max_overflow,
+        "pool_timeout": _settings.db_pool_timeout,
+        "pool_pre_ping": True,
+        "pool_recycle": _settings.db_pool_recycle,
+    }
+    if _settings.environment == "test":
+        _async_engine_kwargs = {
+            "echo": _settings.sql_echo,
+            "future": True,
+            "poolclass": NullPool,
+        }
 
 async_engine: AsyncEngine = create_async_engine(
     _settings.database_url_async,

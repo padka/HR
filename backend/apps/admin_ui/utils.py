@@ -8,7 +8,8 @@ import math
 
 from backend.domain.models import SlotStatus
 from backend.core.settings import get_settings
-from backend.core.time_utils import local_to_utc
+from backend.core.time_utils import local_to_utc, ensure_aware_utc
+from backend.core.timezone import validate_timezone_name
 
 
 DEFAULT_TZ = get_settings().timezone or "Europe/Moscow"
@@ -34,6 +35,27 @@ def fmt_utc(dt_utc: datetime) -> str:
     if dt_utc.tzinfo is None:
         dt_utc = dt_utc.replace(tzinfo=timezone.utc)
     return dt_utc.astimezone(timezone.utc).strftime("%d.%m %H:%M")
+
+
+def local_naive_to_utc(dt_local: datetime, tz_name: Optional[str]) -> datetime:
+    """Конвертирует наивное локальное время в aware UTC через общий helper."""
+    if dt_local.tzinfo is not None:
+        # Уже aware, просто приводим к UTC
+        return dt_local.astimezone(timezone.utc)
+    return local_to_utc(dt_local, tz_name or DEFAULT_TZ)
+
+
+def ensure_utc(dt: datetime) -> datetime:
+    """Приводит дату к aware UTC (тонкая обёртка над core.ensure_aware_utc)."""
+    return ensure_aware_utc(dt)
+
+
+def utc_to_local_naive(dt_utc: datetime, tz_name: Optional[str]) -> datetime:
+    """Преобразует UTC-aware datetime в наивное локальное время."""
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+    local = dt_utc.astimezone(safe_zone(tz_name or DEFAULT_TZ))
+    return local.replace(tzinfo=None)
 
 
 def format_optional_local(

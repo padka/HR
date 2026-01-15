@@ -10,7 +10,46 @@ function updateCounter(column, delta) {
   counter.textContent = String(Math.max(0, current + delta));
 }
 
+// Map kanban column statuses to action keys for the new API
+const STATUS_ACTION_MAP = {
+  'hired': 'mark_hired',
+  'not_hired': 'mark_not_hired',
+  'interview_declined': 'reject',
+  'test2_failed': 'reject',
+  'intro_day_declined_day_of': 'decline_after_intro',
+  'intro_day_declined_invitation': 'reject',
+};
+
 async function postStatus(candidateId, status) {
+  // Use new actions API if action mapping exists, otherwise fall back to legacy
+  const actionKey = STATUS_ACTION_MAP[status];
+
+  if (actionKey) {
+    // Use new API endpoint
+    const response = await fetch(`/api/candidates/${candidateId}/actions/${actionKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-CSRFToken': csrfToken,
+      },
+      body: JSON.stringify({}),
+    });
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch (err) {
+      // ignore JSON parse errors
+    }
+    if (!response.ok) {
+      const message = payload.message || payload.detail?.message || 'Не удалось обновить статус кандидата.';
+      window.alert(message);
+      throw new Error(message);
+    }
+    return payload;
+  }
+
+  // Fallback to legacy endpoint for unmapped statuses (should not happen with droppable columns)
   const response = await fetch(`/candidates/${candidateId}/status`, {
     method: 'POST',
     headers: {

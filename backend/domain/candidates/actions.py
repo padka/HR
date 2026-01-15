@@ -63,7 +63,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="reject",
             label="Отказ",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/reject",
             icon="🚫",
             variant="ghost",
             confirmation="Отклонить кандидата?",
@@ -104,7 +104,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="interview_outcome_passed",
             label="Исход: прошел (отправить Тест 2)",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/interview_outcome_passed",
             icon="✅",
             variant="primary",
             method="POST",
@@ -115,7 +115,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="interview_outcome_failed",
             label="Исход: не прошел",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/interview_outcome_failed",
             icon="⛔️",
             variant="ghost",
             method="POST",
@@ -129,7 +129,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="interview_passed",
             label="Прошел собеседование (отправить Тест 2)",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/interview_passed",
             icon="✅",
             variant="primary",
             method="POST",
@@ -139,7 +139,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="interview_declined",
             label="Отклонить после собеседования",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/interview_declined",
             icon="⛔️",
             variant="danger",
             method="POST",
@@ -178,7 +178,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="reject",
             label="Отказ",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/reject",
             icon="🚫",
             variant="ghost",
             confirmation="Отклонить кандидата?",
@@ -202,7 +202,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="mark_hired",
             label="Закреплен на обучение",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/mark_hired",
             icon="🎉",
             variant="primary",
             method="POST",
@@ -211,7 +211,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="mark_not_hired",
             label="Не закреплен",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/mark_not_hired",
             icon="⚠️",
             variant="ghost",
             confirmation="Пометить как не закрепленного?",
@@ -224,7 +224,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="mark_hired",
             label="Закреплен на обучение",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/mark_hired",
             icon="🎉",
             variant="primary",
             method="POST",
@@ -233,7 +233,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="mark_not_hired",
             label="Не закреплен",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/mark_not_hired",
             icon="⚠️",
             variant="ghost",
             confirmation="Пометить как не закрепленного?",
@@ -243,7 +243,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="decline_after_intro",
             label="Отказ",
-            url_pattern="/candidates/{id}/status",
+            url_pattern="/api/candidates/{id}/actions/decline_after_intro",
             icon="⛔️",
             variant="ghost",
             confirmation="Отказать кандидату после ОД?",
