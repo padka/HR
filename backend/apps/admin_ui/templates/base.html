@@ -249,24 +249,202 @@
     opacity: .9;
   }
 
-  header {
+  .app-header {
     position: sticky;
     top: 0;
-    z-index: 20;
-    padding: 12px 16px 6px;
+    z-index: 30;
+    padding: 12px 16px 14px;
     background: linear-gradient(180deg, rgba(0,0,0,.22), transparent 70%);
     transition: transform .35s var(--transition-soft), opacity .35s ease;
     will-change: transform;
   }
 
-  header.is-hidden {
+  .app-header.is-hidden {
     transform: translateY(-110%);
     opacity: 0;
     pointer-events: none;
   }
 
-  html[data-theme="light"] header {
+  html[data-theme="light"] .app-header {
     background: linear-gradient(180deg, rgba(246,247,251,.92), rgba(246,247,251,0));
+  }
+
+  .app-header__inner {
+    max-width: min(1120px, 100%);
+    margin: 0 auto;
+    display: grid;
+    gap: 12px;
+  }
+
+  .app-header__bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--outline-strong);
+    background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+    box-shadow: var(--shadow-2), var(--glow-soft);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .app-header__bar > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .app-header__brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    color: var(--fg-strong);
+    font-weight: 800;
+  }
+
+  .app-header__brand-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    font-size: 14px;
+    font-weight: 800;
+    box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+
+  .app-header__brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+  }
+
+  .app-header__brand-title {
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+
+  .app-header__brand-subtitle {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+  }
+
+  .app-header__search {
+    flex: 1;
+    max-width: 520px;
+    min-width: 220px;
+    position: relative;
+  }
+
+  .app-header__search-input {
+    width: 100%;
+    padding: 10px 14px 10px 40px;
+    border-radius: 999px;
+    border: 1px solid var(--field-border);
+    background: var(--field-bg);
+    color: var(--fg);
+    font-size: 13px;
+    transition: all .2s ease;
+  }
+
+  .app-header__search-input::placeholder {
+    color: var(--muted);
+  }
+
+  .app-header__search-input:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--field-border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  }
+
+  .app-header__search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 14px;
+    pointer-events: none;
+  }
+
+  .app-header__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .app-header__actions .btn:not(.theme-toggle) {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .app-header__actions .btn.btn--sm:not(.theme-toggle),
+  .app-header__actions .btn.btn-sm:not(.theme-toggle) {
+    min-height: 34px;
+    padding: 5px 12px;
+  }
+
+  .app-header__actions .btn-ghost {
+    background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
+  }
+
+  .app-header__actions .btn-ghost:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  .app-header__menu-toggle {
+    margin-right: 2px;
+  }
+
+  .app-header__inner .nav {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+  }
+
+  @media (max-width: 1100px) {
+    .app-header__bar {
+      flex-wrap: wrap;
+    }
+
+    .app-header__search {
+      order: 3;
+      width: 100%;
+      max-width: none;
+    }
+
+    .app-header__actions {
+      margin-left: auto;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .app-header__bar {
+      gap: 10px;
+    }
+
+    .app-header__brand-text {
+      display: none;
+    }
+
+    .nav__menu-label {
+      display: none;
+    }
+
+    .app-header__actions .btn-ghost {
+      display: none;
+    }
+
+    .app-header__search-input {
+      padding-left: 36px;
+    }
   }
 
   .nav {
@@ -958,7 +1136,7 @@
       transform: translateY(-8px);
       opacity: 0;
       pointer-events: none;
-      z-index: 20;
+      z-index: 40;
       background: var(--surface-3, var(--surface-raised));
       border: 1px solid var(--border-1, var(--outline-strong));
       box-shadow: var(--shadow-2, var(--shadow-md));
@@ -1280,22 +1458,19 @@
     padding: clamp(40px, 6vw, 84px) clamp(18px, 3vw, 30px) clamp(28px, 5vw, 48px);
   }
 
-  body[data-page] nav.nav {
+  body[data-page] .app-header__inner {
     max-width: min(1600px, 100%);
-    width: 100%;
-    margin: 0 auto;
   }
   </style>
 </head>
 <body>
   <a href="#main" class="skip-link">Перейти к содержимому</a>
   <div aria-hidden="true" class="halo"></div>
-  <header>
+  <header class="app-header">
     <div class="mobile-backdrop" data-mobile-backdrop></div>
-    <nav class="nav glass grain" role="navigation" data-mobile-nav data-mobile-open="false">
-      {% block nav %}
-      <div class="nav__top">
-        <button class="nav__menu-toggle" type="button" id="nav-menu-toggle" aria-label="Показать меню" aria-controls="primary-nav" aria-expanded="false">
+    <div class="app-header__inner">
+      <div class="app-header__bar glass grain">
+        <button class="nav__menu-toggle app-header__menu-toggle" type="button" id="nav-menu-toggle" aria-label="Показать меню" aria-controls="primary-nav" aria-expanded="false">
           <span class="nav__menu-icon" aria-hidden="true">
             <span></span>
             <span></span>
@@ -1303,48 +1478,73 @@
           </span>
           <span class="nav__menu-label">Меню</span>
         </button>
+        <a class="app-header__brand" href="/">
+          <span class="app-header__brand-icon" aria-hidden="true">RS</span>
+          <span class="app-header__brand-text">
+            <span class="app-header__brand-title">RecruitSmart</span>
+            <span class="app-header__brand-subtitle">Админ панель</span>
+          </span>
+        </a>
+        <form class="app-header__search" action="/candidates" method="get" role="search">
+          <span class="app-header__search-icon" aria-hidden="true">🔎</span>
+          <input
+            id="globalSearch"
+            class="app-header__search-input"
+            type="search"
+            name="search"
+            placeholder="Поиск кандидата"
+            aria-label="Поиск кандидата по имени, городу или TG"
+            value="{{ request.query_params.get('search', '') if request.url.path.startswith('/candidates') else '' }}"
+            autocomplete="off"
+          >
+        </form>
+        <div class="app-header__actions">
+          <a class="btn btn-primary btn--sm" href="/candidates/new">+ Кандидат</a>
+          <a class="btn btn-ghost btn--sm" href="/slots">Слоты</a>
+          <button id="theme-toggle" class="btn theme-toggle" type="button" aria-label="Переключить тему" aria-pressed="true">
+            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+          </button>
+        </div>
       </div>
-      <div class="nav__section nav__section--primary" id="primary-nav">
-        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
-          <span class="nav__link-icon" aria-hidden="true">📊</span>
-          <span>Дашборд</span>
-        </a>
-        <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">
-          <span class="nav__link-icon" aria-hidden="true">👥</span>
-          <span>Рекрутёры</span>
-        </a>
-        <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">
-          <span class="nav__link-icon" aria-hidden="true">🌆</span>
-          <span>Города</span>
-        </a>
-        <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">
-          <span class="nav__link-icon" aria-hidden="true">📅</span>
-          <span>Слоты</span>
-        </a>
-        <a href="/candidates" class="{% if request.url.path.startswith('/candidates') and not request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
-          <span class="nav__link-icon" aria-hidden="true">👤</span>
-          <span>Кандидаты</span>
-        </a>
-        <a href="/candidates/detailization" class="{% if request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
-          <span class="nav__link-icon" aria-hidden="true">📋</span>
-          <span>Детализация</span>
-        </a>
-        <a href="/templates" class="{% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}">
-          <span class="nav__link-icon" aria-hidden="true">💬</span>
-          <span>Шаблоны</span>
-        </a>
-        <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">
-          <span class="nav__link-icon" aria-hidden="true">❓</span>
-          <span>Вопросы</span>
-        </a>
-      </div>
-      <div class="nav__section nav__meta">
-        <button id="theme-toggle" class="btn theme-toggle" type="button" aria-label="Переключить тему" aria-pressed="true">
-          <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
-        </button>
-      </div>
-      {% endblock nav %}
-    </nav>
+      <nav class="nav glass grain" role="navigation" data-mobile-nav data-mobile-open="false">
+        {% block nav %}
+        <div class="nav__section nav__section--primary" id="primary-nav">
+          <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">📊</span>
+            <span>Дашборд</span>
+          </a>
+          <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">👥</span>
+            <span>Рекрутёры</span>
+          </a>
+          <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">🌆</span>
+            <span>Города</span>
+          </a>
+          <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">📅</span>
+            <span>Слоты</span>
+          </a>
+          <a href="/candidates" class="{% if request.url.path.startswith('/candidates') and not request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">👤</span>
+            <span>Кандидаты</span>
+          </a>
+          <a href="/candidates/detailization" class="{% if request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">📋</span>
+            <span>Детализация</span>
+          </a>
+          <a href="/templates" class="{% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">💬</span>
+            <span>Шаблоны</span>
+          </a>
+          <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">❓</span>
+            <span>Вопросы</span>
+          </a>
+        </div>
+        {% endblock nav %}
+      </nav>
+    </div>
   </header>
 
   <main id="main" class="container">
@@ -1487,7 +1687,7 @@
 
     syncNavForViewport();
 
-    const headerEl = document.querySelector('header');
+    const headerEl = document.querySelector('.app-header');
     let lastScrollY = window.scrollY || 0;
     let headerHidden = false;
     let scrollTicking = false;
