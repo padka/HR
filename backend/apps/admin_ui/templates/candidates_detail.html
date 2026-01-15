@@ -1583,6 +1583,48 @@
 {% endif %}
 {% set timeline_items = timeline or [] %}
 
+<section class="page-header">
+  <div>
+    <a class="muted" href="/candidates">← К списку кандидатов</a>
+    <h1 class="page-title">{{ user.fio }}</h1>
+    <p class="page-description">
+      Telegram ID {{ telegram_user_id or '—' }} · {{ user.city or 'Город не указан' }}
+    </p>
+  </div>
+  <div class="page-actions">
+    {% set cs = (candidate_status_slug or user.candidate_status or '')|lower %}
+    {% set intro_day_allowed = can_schedule_intro_day or (cs in ['test2_completed', 'intro_day_scheduled', 'intro_day_confirmed_preliminary', 'intro_day_confirmed_day_of'] or has_test2_completed) %}
+    {% if not (has_intro_day_slot | default(false)) and intro_day_allowed %}
+      <a href="/candidates/{{ user.id }}/schedule-intro-day" class="btn btn-primary">
+        📆 Назначить ознакомительный день
+      </a>
+    {% endif %}
+    <div class="btn-group">
+      {% if cs not in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] and not has_test2_completed and (cs in ['waiting_slot', 'stalled_waiting_slot', 'test1_completed', 'interview_declined', 'interview_scheduled'] or not has_interview_slot) %}
+        <a href="/candidates/{{ user.id }}/schedule-slot" class="btn {% if cs in ['waiting_slot', 'stalled_waiting_slot'] %}btn-primary{% else %}btn-secondary{% endif %}">
+          🕒 {% if cs in ['waiting_slot', 'stalled_waiting_slot'] %}Предложить время собеседования{% else %}Назначить/перенести собеседование{% endif %}
+        </a>
+      {% endif %}
+      {% if cs not in ['intro_day_confirmed_day_of', 'intro_day_confirmed_preliminary'] %}
+        <button class="btn btn-ghost" type="button" onclick="if(typeof openRejectModal === 'function') { openRejectModal('{{ user.id }}', '{{ user.fio }}', '/candidates/{{ user.id }}/status'); } else { if(confirm('Отклонить кандидата {{ user.fio }}?')) { var f=document.createElement('form'); f.method='POST'; f.action='/candidates/{{ user.id }}/status'; var c=document.querySelector('[name=csrf_token]').cloneNode(true); var s=document.createElement('input'); s.type='hidden'; s.name='status'; s.value='interview_declined'; f.appendChild(c); f.appendChild(s); document.body.appendChild(f); f.submit(); } }">🚫 Отказ</button>
+      {% endif %}
+    </div>
+    {% if pending_slot %}
+      <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve" class="approve-form">
+        {{ csrf_input(request) }}
+        <button class="btn btn-primary" type="submit">
+          ✅ Согласовать интервью
+        </button>
+        <span class="approve-form__hint">
+          {{ fmt_local(pending_slot.start_utc, pending_slot.candidate_tz or 'Europe/Moscow') }} ·
+          {% if pending_slot.recruiter %}{{ pending_slot.recruiter.name }}{% else %}Без рекрутёра{% endif %}
+        </span>
+      </form>
+    {% endif %}
+  </div>
+</section>
+
+
 <section class="profile-shell" data-profile-state="{{ profile_state }}">
   <header class="profile-header">
     <a class="back-link" href="/candidates" aria-label="Вернуться к списку">← Назад</a>
@@ -2740,6 +2782,298 @@
         disableButtons(outcomeRoot, '[data-slot-outcome]', false);
       }
     }
+  });
+})();
+
+// ============================================
+// Reject Candidate Modal
+// ============================================
+(function() {
+  const modalHTML = `
+<style>
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 9998;
+    animation: fadeIn 0.2s ease-out;
+  }
+
+  .modal-overlay.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .modal-dialog {
+    background: var(--layer-panel-strong, linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9)));
+    border: 1px solid var(--layer-border-strong, rgba(255, 255, 255, 0.12));
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-2xl, 0 25px 50px -12px rgba(0, 0, 0, 0.5));
+    animation: slideIn 0.3s ease-out;
+    position: relative;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-20px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .modal-header {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--layer-border, rgba(255, 255, 255, 0.08));
+  }
+
+  .modal-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--ink-strong, var(--fg-strong));
+    margin: 0;
+  }
+
+  .modal-body { margin-bottom: 20px; }
+
+  .modal-form-group { margin-bottom: 16px; }
+
+  .modal-form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: var(--ink-strong, var(--fg));
+  }
+
+  .modal-form-group select,
+  .modal-form-group textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--layer-border, rgba(255, 255, 255, 0.12));
+    border-radius: 8px;
+    background: var(--layer-panel, rgba(255, 255, 255, 0.02));
+    color: var(--ink, var(--fg));
+    font-size: 14px;
+    font-family: inherit;
+  }
+
+  .modal-form-group textarea {
+    min-height: 80px;
+    resize: vertical;
+  }
+
+  .modal-form-group select:focus,
+  .modal-form-group textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  .modal-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .modal-checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+  }
+
+  .modal-checkbox label {
+    margin: 0;
+    cursor: pointer;
+    font-weight: 400;
+    color: var(--ink, var(--muted));
+  }
+
+  .modal-footer {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    padding-top: 16px;
+    border-top: 1px solid var(--layer-border, rgba(255, 255, 255, 0.08));
+  }
+
+  .modal-close-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: var(--ink-soft, var(--muted));
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .modal-close-btn:hover {
+    background: var(--layer-panel, rgba(255, 255, 255, 0.06));
+    color: var(--ink-strong, var(--fg-strong));
+  }
+
+  .btn-danger {
+    background: var(--danger, #dc2626);
+    color: white;
+    border: none;
+  }
+
+  .btn-danger:hover {
+    background: var(--danger-hover, #b91c1c);
+  }
+
+  .btn-danger:active {
+    background: var(--danger-active, #991b1b);
+  }
+</style>
+
+<div class="modal-overlay" id="rejectModal">
+  <div class="modal-dialog">
+    <button type="button" class="modal-close-btn" data-modal-close>×</button>
+    <div class="modal-header">
+      <h2 class="modal-title">Отклонить кандидата</h2>
+    </div>
+    <form id="rejectForm" method="post">
+      {{ csrf_input(request) }}
+      <input type="hidden" name="status" value="interview_declined">
+      <input type="hidden" name="candidate_id" id="rejectCandidateId">
+      <div class="modal-body">
+        <p>Вы действительно хотите отклонить кандидата <strong id="rejectCandidateName"></strong>?</p>
+        <div class="modal-form-group">
+          <label for="reject_reason">Причина отклонения *</label>
+          <select id="reject_reason" name="reject_reason" required>
+            <option value="">Выберите причину...</option>
+            <option value="not_qualified">Не соответствует квалификации</option>
+            <option value="bad_communication">Проблемы с коммуникацией</option>
+            <option value="schedule_conflict">Несоответствие по графику</option>
+            <option value="failed_test">Не прошёл тестирование</option>
+            <option value="declined_by_candidate">Кандидат отказался</option>
+            <option value="other">Другое</option>
+          </select>
+        </div>
+        <div class="modal-form-group">
+          <label for="reject_comment">Комментарий (опционально)</label>
+          <textarea id="reject_comment" name="reject_comment" placeholder="Дополнительная информация..."></textarea>
+        </div>
+        <div class="modal-checkbox">
+          <input type="checkbox" id="skip_modal_next_time" name="skip_modal_next_time">
+          <label for="skip_modal_next_time">Не показывать это окно в следующий раз (быстрое действие)</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-modal-close>Отмена</button>
+        <button type="submit" class="btn btn-danger">Отклонить кандидата</button>
+      </div>
+    </form>
+  </div>
+</div>
+  `;
+
+  // Insert modal into page
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+  const modal = document.getElementById('rejectModal');
+  const form = document.getElementById('rejectForm');
+  const candidateNameEl = document.getElementById('rejectCandidateName');
+  const candidateIdInput = document.getElementById('rejectCandidateId');
+  const closeButtons = document.querySelectorAll('[data-modal-close]');
+
+  // Check if user wants to skip modal
+  const skipModalKey = 'reject_modal_skip';
+  let skipModal = false;
+  try {
+    skipModal = localStorage.getItem(skipModalKey) === 'true';
+  } catch (e) {
+    // localStorage not available
+  }
+
+  // Open modal function
+  window.openRejectModal = function(candidateId, candidateName, formAction) {
+    if (skipModal) {
+      // Submit directly without modal
+      const quickForm = document.createElement('form');
+      quickForm.method = 'POST';
+      quickForm.action = formAction;
+      quickForm.style.display = 'none';
+
+      const csrfInput = document.querySelector('[name="csrf_token"]').cloneNode(true);
+      const statusInput = document.createElement('input');
+      statusInput.type = 'hidden';
+      statusInput.name = 'status';
+      statusInput.value = 'interview_declined';
+
+      quickForm.appendChild(csrfInput);
+      quickForm.appendChild(statusInput);
+      document.body.appendChild(quickForm);
+      quickForm.submit();
+      return;
+    }
+
+    candidateNameEl.textContent = candidateName;
+    candidateIdInput.value = candidateId;
+    form.action = formAction;
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  };
+
+  // Close modal function
+  function closeModal() {
+    modal.classList.remove('active');
+    document.body.style.overflow = '';
+    form.reset();
+  }
+
+  // Close buttons
+  closeButtons.forEach(btn => {
+    btn.addEventListener('click', closeModal);
+  });
+
+  // Close on overlay click
+  modal.addEventListener('click', function(e) {
+    if (e.target === modal) {
+      closeModal();
+    }
+  });
+
+  // Close on Escape key
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && modal.classList.contains('active')) {
+      closeModal();
+    }
+  });
+
+  // Handle form submission
+  form.addEventListener('submit', function(e) {
+    const skipCheckbox = document.getElementById('skip_modal_next_time');
+    if (skipCheckbox && skipCheckbox.checked) {
+      try {
+        localStorage.setItem(skipModalKey, 'true');
+      } catch (err) {
+        // localStorage not available
+      }
+    }
+    // Form will submit normally
   });
 })();
 </script>
