@@ -3,6 +3,14 @@
 [![CI](https://github.com/OWNER/HR/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-85%25+-brightgreen.svg)](https://github.com/OWNER/HR/actions/workflows/ci.yml)
 
+## Documentation index
+
+- Technical overview: [docs/TECHNICAL_OVERVIEW.md](docs/TECHNICAL_OVERVIEW.md)
+- Local dev guide: [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md)
+- Migrations: [docs/MIGRATIONS.md](docs/MIGRATIONS.md)
+- DevEx notes: [docs/DEVEX.md](docs/DEVEX.md)
+- UI strategy: [docs/TECH_STRATEGY.md](docs/TECH_STRATEGY.md)
+
 ## Локальная разработка (без PostgreSQL/Redis)
 
 Для локальной разработки создайте файл `.env.local` для переопределения настроек production:
