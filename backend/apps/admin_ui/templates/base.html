@@ -295,7 +295,7 @@
 
   .nav {
     --dock-peek: 30px;
-    --dock-hidden-shift: 68%;
+    --dock-hidden-shift: 72%;
     position: fixed;
     top: 50%;
     left: 0;
@@ -313,7 +313,7 @@
     pointer-events: auto;
     z-index: 5020;
     opacity: .82;
-    transition: transform .35s var(--transition-soft), opacity .35s ease, box-shadow .35s ease, border-color .35s ease;
+    transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease, box-shadow 220ms ease, border-color 220ms ease;
     will-change: transform, opacity;
   }
 
@@ -321,6 +321,7 @@
   .dock-hotspot:focus-visible + .nav,
   .nav:hover,
   .nav:focus-within,
+  .nav[data-dock-open="true"],
   .nav[data-dock-pinned="true"] {
     transform: translateY(-50%) translateX(0);
     opacity: 1;
@@ -358,6 +359,28 @@
 
   .nav::after {
     box-shadow: inset 0 1px 0 rgba(255,255,255,.4);
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
+  .nav::before {
+    pointer-events: none;
+  }
+
+  .nav::after {
+    pointer-events: none;
+  }
+
+  .nav::before {
+    mask-image: linear-gradient(90deg, black 0%, black 40%, transparent 70%);
+  }
+
+  .nav::after {
+    mask-image: linear-gradient(90deg, black 0%, black 35%, transparent 70%);
+  }
+
+  .nav:not([data-dock-open="true"]):not([data-dock-pinned="true"])::after {
+    opacity: .3;
   }
 
   .nav__dock-toggle {
@@ -505,7 +528,7 @@
   .container {
     max-width: 1120px;
     margin: 0 auto;
-    padding: clamp(84px, 12vw, 120px) clamp(18px, 4vw, 34px) clamp(36px, 6vw, 52px);
+    padding: clamp(40px, 8vw, 72px) clamp(18px, 4vw, 34px) clamp(36px, 6vw, 52px);
     display: flex;
     flex-direction: column;
     gap: var(--grid-gap);
@@ -1193,7 +1216,7 @@
     max-width: min(1600px, 100%);
     width: 100%;
     margin: 0 auto;
-    padding: clamp(40px, 6vw, 84px) clamp(18px, 3vw, 30px) clamp(28px, 5vw, 48px);
+    padding: clamp(32px, 6vw, 60px) clamp(18px, 3vw, 30px) clamp(28px, 5vw, 48px);
   }
 
   body[data-page] nav.nav {
@@ -1207,12 +1230,11 @@
 <body>
   <a href="#main" class="skip-link">Перейти к содержимому</a>
   <div aria-hidden="true" class="halo"></div>
-  <header class="app-header">
-    <button class="dock-hotspot" type="button" data-dock-hotspot aria-label="Показать навигацию" aria-pressed="false"></button>
-    <nav class="nav nav--dock glass grain" role="navigation" aria-label="Навигация" data-dock-nav data-dock-pinned="false">
-      <button class="nav__dock-toggle" type="button" id="nav-menu-toggle" aria-label="Закрепить навигацию" aria-pressed="false" aria-controls="primary-nav">
-        <span class="nav__dock-toggle-icon" aria-hidden="true">&gt;</span>
-      </button>
+  <button class="dock-hotspot" type="button" data-dock-hotspot aria-label="Показать навигацию" aria-pressed="false"></button>
+  <nav class="nav nav--dock glass grain" role="navigation" aria-label="Навигация" data-dock-nav data-dock-open="false" data-dock-pinned="false">
+    <button class="nav__dock-toggle" type="button" id="nav-menu-toggle" aria-label="Закрепить навигацию" aria-pressed="false" aria-controls="primary-nav">
+      <span class="nav__dock-toggle-icon" aria-hidden="true">&gt;</span>
+    </button>
       {% block nav %}
       <div class="nav__section nav__section--primary" id="primary-nav">
         <a href="/" class="{% if request.url.path == '/' %}active{% endif %}" data-label="Дашборд">
@@ -1249,8 +1271,7 @@
         </a>
       </div>
       {% endblock nav %}
-    </nav>
-  </header>
+  </nav>
 
   <main id="main" class="container">
     {% block content %}{% endblock %}
@@ -1321,11 +1342,15 @@
     const nav = document.querySelector('[data-dock-nav]');
     const navToggle = document.getElementById('nav-menu-toggle');
     const dockHotspot = document.querySelector('[data-dock-hotspot]');
+    const CLOSE_DELAY = 240;
+    let closeTimer = null;
 
-    function setDockPinned(pinned) {
+    function reflectState() {
       if (!nav) { return; }
-      nav.dataset.dockPinned = pinned ? 'true' : 'false';
+      const pinned = nav.dataset.dockPinned === 'true';
+      const isOpen = nav.dataset.dockOpen === 'true' || pinned;
       if (navToggle) {
+        navToggle.setAttribute('aria-expanded', String(isOpen));
         navToggle.setAttribute('aria-pressed', String(pinned));
         navToggle.setAttribute('aria-label', pinned ? 'Открепить навигацию' : 'Закрепить навигацию');
       }
@@ -1335,19 +1360,76 @@
       }
     }
 
+    function setDockOpen(open) {
+      if (!nav) { return; }
+      nav.dataset.dockOpen = open ? 'true' : 'false';
+      reflectState();
+    }
+
+    function setDockPinned(pinned) {
+      if (!nav) { return; }
+      nav.dataset.dockPinned = pinned ? 'true' : 'false';
+      if (pinned) {
+        nav.dataset.dockOpen = 'true';
+      }
+      reflectState();
+    }
+
     function toggleDockPinned() {
       if (!nav) { return; }
       const pinned = nav.dataset.dockPinned === 'true';
       setDockPinned(!pinned);
     }
 
+    function clearCloseTimer() {
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+    }
+
+    function scheduleClose() {
+      if (!nav || nav.dataset.dockPinned === 'true') { return; }
+      clearCloseTimer();
+      closeTimer = window.setTimeout(() => {
+        setDockOpen(false);
+      }, CLOSE_DELAY);
+    }
+
+    function openDock() {
+      clearCloseTimer();
+      setDockOpen(true);
+    }
+
+    dockHotspot?.addEventListener('pointerenter', openDock);
+    dockHotspot?.addEventListener('pointerleave', scheduleClose);
+    dockHotspot?.addEventListener('click', (event) => {
+      event.preventDefault();
+      toggleDockPinned();
+    });
+
+    nav?.addEventListener('pointerenter', openDock);
+    nav?.addEventListener('pointerleave', scheduleClose);
+
     navToggle?.addEventListener('click', (event) => {
       event.preventDefault();
       toggleDockPinned();
     });
 
-    dockHotspot?.addEventListener('click', () => {
-      toggleDockPinned();
+    document.addEventListener('pointerdown', (event) => {
+      if (!nav || nav.dataset.dockPinned === 'true') { return; }
+      const isInsideDock = nav.contains(event.target);
+      const isHotspot = dockHotspot && dockHotspot.contains(event.target);
+      if (!isInsideDock && !isHotspot) {
+        setDockOpen(false);
+      }
+    }, { capture: true });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        setDockPinned(false);
+        setDockOpen(false);
+      }
     });
 
     setDockPinned(nav?.dataset.dockPinned === 'true');
