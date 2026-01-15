@@ -1,14 +1,11 @@
-# Playwright визуальный смоук
+# QA Visual Smoke
 
-## Зачем
-Проверяет, что ключевые экраны (/slots, /candidates, /recruiters) загружаются и не меняют верстку неожиданно.
+## A11y smoke
 
-## Как запускать локально
-- Установите зависимости: `npm install && npx playwright install --with-deps` (однократно).
-- Для обновления эталонов: `npm run test:e2e:update` — создаст/перезапишет снимки в `tests/e2e/__snapshots__/`.
-- Для проверки без обновления: `npm run test:e2e` — упадёт при расхождении с эталоном.
+- Criteria: 0 critical/serious accessibility violations detected by axe-core.
 
-## CI
-- CI использует `npm run test:e2e` для smoke + визуального сравнения.
-- HTML-отчёт Playwright сохраняется артефактом `playwright-report`.
-- Базовые снимки в CI не генерируются, они должны быть закоммичены в репозиторий.
+## Keyboard A11y (focus trap, ESC)
+
+- Sheets and modals move focus inside when opened and keep focus cycling with Tab/Shift+Tab.
+- Pressing Escape closes the sheet/modal and restores focus to the trigger element.
+- Covered by Playwright specs in `tests/e2e/focus.slots.spec.ts` and `tests/e2e/focus.cities.spec.ts`.
