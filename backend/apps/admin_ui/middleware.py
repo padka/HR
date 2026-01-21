@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
+import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, HTMLResponse, JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 class DegradedDatabaseMiddleware(BaseHTTPMiddleware):
@@ -73,4 +77,26 @@ class SecureHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-__all__ = ["SecureHeadersMiddleware", "DegradedDatabaseMiddleware"]
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Add X-Request-ID header for request tracing and correlation."""
+
+    HEADER_NAME = "X-Request-ID"
+
+    async def dispatch(self, request: Request, call_next):
+        # Use existing request ID from header or generate new one
+        request_id = request.headers.get(self.HEADER_NAME)
+        if not request_id:
+            request_id = str(uuid.uuid4())
+
+        # Store in request state for use in logging/error reporting
+        request.state.request_id = request_id
+
+        response: Response = await call_next(request)
+
+        # Add to response headers
+        response.headers[self.HEADER_NAME] = request_id
+
+        return response
+
+
+__all__ = ["SecureHeadersMiddleware", "DegradedDatabaseMiddleware", "RequestIDMiddleware"]

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from typing import Optional, List
 import html
 
@@ -16,8 +16,10 @@ from sqlalchemy import (
     UniqueConstraint,
     JSON,
     Table,
+    event,
+    select,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates, object_session, reconstructor
 from markupsafe import Markup
 
 from .base import Base
@@ -142,6 +144,11 @@ class City(Base):
     experts: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     plan_week: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     plan_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    responsible_recruiter_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("recruiters.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     templates: Mapped[List["Template"]] = relationship(back_populates="city", cascade="all, delete-orphan")
     message_templates: Mapped[List["MessageTemplate"]] = relationship(
@@ -151,6 +158,10 @@ class City(Base):
     recruiters: Mapped[List["Recruiter"]] = relationship(
         secondary=lambda: recruiter_city_association,
         back_populates="cities",
+    )
+    responsible_recruiter: Mapped[Optional["Recruiter"]] = relationship(
+        "Recruiter",
+        foreign_keys=[responsible_recruiter_id],
     )
 
     @validates("name")
@@ -195,6 +206,19 @@ class Template(Base):
 
     def __repr__(self) -> str:
         return f"<Template {self.key} city={self.city_id}>"
+
+
+@event.listens_for(Recruiter.cities, "append")
+def _set_city_owner(recruiter: Recruiter, city: City, _initiator) -> None:
+    if city.responsible_recruiter_id in (None, recruiter.id):
+        # Assign relationship to ensure FK is populated even before recruiter.id is persisted
+        city.responsible_recruiter = recruiter
+
+
+@event.listens_for(Recruiter.cities, "remove")
+def _clear_city_owner(recruiter: Recruiter, city: City, _initiator) -> None:
+    if city.responsible_recruiter_id == recruiter.id:
+        city.responsible_recruiter_id = None
 
 
 class SlotStatus:
@@ -299,6 +323,12 @@ class Slot(Base):
     def __repr__(self) -> str:
         return f"<Slot {self.id} {self.start_utc.isoformat()} {self.status}>"
 
+    @reconstructor
+    def _attach_timezone(self) -> None:
+        """Ensure start_utc keeps UTC tzinfo when drivers (e.g. SQLite) drop it."""
+        if self.start_utc is not None and self.start_utc.tzinfo is None:
+            self.start_utc = self.start_utc.replace(tzinfo=timezone.utc)
+
     @validates("status")
     def _normalize_status(self, _key, value: Optional[str]) -> Optional[str]:
         if value is None:
@@ -315,6 +345,65 @@ class Slot(Base):
         if value is None:
             return None
         return validate_timezone_name(value)
+
+    @validates("duration_min")
+    def _validate_duration(self, _key, value: Optional[int]) -> int:
+        if value is None:
+            raise ValueError("Duration cannot be None")
+        try:
+            duration = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("Duration must be a positive integer")
+        if duration <= 0:
+            raise ValueError("Duration must be a positive integer")
+        if duration < SLOT_MIN_DURATION_MIN:
+            raise ValueError("duration too short")
+        if duration > SLOT_MAX_DURATION_MIN:
+            raise ValueError("duration too long")
+        return duration
+
+
+def _normalize_slot_start(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+@event.listens_for(Slot, "before_insert")
+def _enforce_slot_overlap(mapper, connection, target: Slot) -> None:  # pragma: no cover - defensive for sqlite
+    """
+    SQLite не поддерживает exclusion constraints, поэтому проверяем пересечения вручную.
+    Повторяет поведение slots_no_recruiter_time_overlap_excl: фиксированное окно 10 минут.
+    """
+    if connection.dialect.name != "sqlite":
+        return
+
+    if target.recruiter_id is None:
+        return
+
+    new_start = _normalize_slot_start(target.start_utc)
+    if new_start is None:
+        return
+
+    new_duration = max(target.duration_min or SLOT_MIN_DURATION_MIN, SLOT_MIN_DURATION_MIN)
+    new_end = new_start + timedelta(minutes=new_duration)
+
+    existing_rows = connection.execute(
+        select(Slot.start_utc, Slot.duration_min).where(Slot.recruiter_id == target.recruiter_id)
+    )
+    for row in existing_rows:
+        start_raw, duration_raw = (row.start_utc, row.duration_min) if hasattr(row, "start_utc") else row
+        existing = _normalize_slot_start(start_raw)
+        if existing is None:
+            continue
+        existing_duration = max(duration_raw or SLOT_MIN_DURATION_MIN, SLOT_MIN_DURATION_MIN)
+        existing_end = existing + timedelta(minutes=existing_duration)
+        if new_start < existing_end and new_end > existing:
+            from sqlalchemy.exc import IntegrityError
+
+            raise IntegrityError("slots_no_recruiter_time_overlap_excl", params=None, orig=Exception("slot_overlap"))
 
     @validates("duration_min")
     def _validate_duration(self, _key, value: Optional[int]) -> int:
@@ -518,8 +607,47 @@ class MessageTemplateHistory(Base):
     template: Mapped["MessageTemplate"] = relationship()
 
 
+class KPIWeekly(Base):
+    """Aggregated weekly KPIs for the candidate funnel."""
+
+    __tablename__ = "kpi_weekly"
+
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    tested: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_test: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    booked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    confirmed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    interview_passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    intro_day: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<KPIWeekly week_start={self.week_start} "
+            f"tested={self.tested} booked={self.booked} intro_day={self.intro_day}>"
+        )
+
+
 class OutboxNotification(Base):
     __tablename__ = "outbox_notifications"
+    __table_args__ = (
+        Index("ix_outbox_status_created", "status", "created_at"),
+        Index(
+            "ix_outbox_status_retry",
+            "status",
+            "next_retry_at",
+            postgresql_where="next_retry_at IS NOT NULL",
+        ),
+        Index(
+            "ix_outbox_correlation",
+            "correlation_id",
+            postgresql_where="correlation_id IS NOT NULL",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     booking_id: Mapped[Optional[int]] = mapped_column(

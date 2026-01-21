@@ -237,21 +237,21 @@ async def test_weekly_kpis_respects_performance_budget(monkeypatch):
                     final_score=75.0,
                     rating="B",
                     total_time=900,
-                    created_at=window.week_start_utc + timedelta(minutes=index),
+                    created_at=window.week_start_utc + timedelta(minutes=index * 15),
                 )
             )
             session.add(
                 Slot(
                     recruiter_id=recruiter.id,
                     city_id=city.id,
-                    start_utc=window.week_start_utc + timedelta(minutes=index),
+                    start_utc=window.week_start_utc + timedelta(minutes=index * 15),
                     status=SlotStatus.PENDING,
                     purpose="interview",
                     candidate_tg_id=9_500_000 + index,
                     candidate_fio=f"Perf {index}",
                     candidate_tz="Europe/Moscow",
-                    created_at=window.week_start_utc + timedelta(minutes=index),
-                    updated_at=window.week_start_utc + timedelta(minutes=index),
+                    created_at=window.week_start_utc + timedelta(minutes=index * 15),
+                    updated_at=window.week_start_utc + timedelta(minutes=index * 15),
                 )
             )
         session.add_all(entries)

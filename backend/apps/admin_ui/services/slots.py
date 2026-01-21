@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 from dataclasses import dataclass, field
@@ -68,6 +69,16 @@ from backend.domain.errors import SlotOverlapError
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidate_status_service import CandidateStatusService
 from backend.core.time_utils import ensure_aware_utc
+
+
+def _resolve_hook(name: str, fallback):
+    """Resolve callable from the core slots module so test monkeypatches are honored."""
+    try:
+        core_mod = importlib.import_module("backend.apps.admin_ui.services.slots")
+        return getattr(core_mod, name, fallback)
+    except Exception:
+        return fallback
+
 
 __all__ = [
     "list_slots",
@@ -265,6 +276,7 @@ async def list_slots(
     per_page: int,
     search_query: Optional[str] = None,
     city_name: Optional[str] = None,
+    city_id: Optional[int] = None,
     day: Optional[date_type] = None,
     day_end: Optional[date_type] = None,
     ) -> Dict[str, object]:
@@ -274,7 +286,10 @@ async def list_slots(
             filtered = filtered.where(Slot.recruiter_id == recruiter_id)
         if status:
             filtered = filtered.where(Slot.status == status_to_db(status))
-        if city_name:
+        if city_id is not None:
+            filtered = filtered.where(Slot.city_id == city_id)
+        elif city_name:
+            # Backward-compatibility: allow filtering by city name for callers/tests
             filtered = filtered.where(Slot.city.has(City.name == city_name))
         if day is not None or day_end is not None:
             # Interpret day in default company timezone to align with generator UI.
@@ -316,65 +331,65 @@ async def list_slots(
             )
         ).all()
 
-    aggregated: Dict[str, int] = {}
-    for raw_status, count in status_rows:
-        aggregated[norm_status(raw_status)] = int(count or 0)
-    aggregated.setdefault("CONFIRMED_BY_CANDIDATE", 0)
+        aggregated: Dict[str, int] = {}
+        for raw_status, count in status_rows:
+            aggregated[norm_status(raw_status)] = int(count or 0)
+        aggregated.setdefault("CONFIRMED_BY_CANDIDATE", 0)
 
-    pages_total, page, offset = paginate(total, page, per_page)
+        pages_total, page, offset = paginate(total, page, per_page)
 
-    query = (
-        filtered.options(
-            selectinload(Slot.recruiter),
-            selectinload(Slot.city),
-        )
-        .order_by(Slot.start_utc.desc())
-        .offset(offset)
-        .limit(per_page)
-    )
-    items = (await session.scalars(query)).all()
-
-    candidate_ids = {slot.candidate_id for slot in items if slot.candidate_id}
-    candidate_tg_ids = {slot.candidate_tg_id for slot in items if slot.candidate_tg_id}
-    usernames: Dict[str, Optional[str]] = {}
-    usernames_by_tg: Dict[int, Optional[str]] = {}
-    user_ids_by_candidate: Dict[str, Optional[int]] = {}
-    user_ids_by_tg: Dict[int, Optional[int]] = {}
-    if candidate_ids:
-        username_rows = await session.execute(
-            select(User.candidate_id, User.id, User.username, User.telegram_username).where(
-                User.candidate_id.in_(candidate_ids)
+        query = (
+            filtered.options(
+                selectinload(Slot.recruiter),
+                selectinload(Slot.city),
             )
+            .order_by(Slot.start_utc.desc())
+            .offset(offset)
+            .limit(per_page)
         )
-        for candidate_id, user_id, username, telegram_username in username_rows:
-            if candidate_id:
-                usernames[str(candidate_id)] = username or telegram_username
-                user_ids_by_candidate[str(candidate_id)] = user_id
-    if candidate_tg_ids:
-        username_rows = await session.execute(
-            select(User.telegram_id, User.id, User.username, User.telegram_username).where(
-                User.telegram_id.in_(candidate_tg_ids)
-            )
-        )
-        for tg_id, user_id, username, telegram_username in username_rows:
-            if tg_id:
-                usernames_by_tg[int(tg_id)] = username or telegram_username
-                user_ids_by_tg[int(tg_id)] = user_id
+        items = (await session.scalars(query)).all()
 
-    # Ensure all datetime fields are timezone-aware
-    for item in items:
-        if item.start_utc:
-            item.start_utc = item.start_utc.replace(tzinfo=timezone.utc) if item.start_utc.tzinfo is None else item.start_utc
-        if item.candidate_id:
-            cid_key = str(item.candidate_id)
-            item.candidate_username = usernames.get(cid_key)
-            item.candidate_user_id = user_ids_by_candidate.get(cid_key)
-        elif item.candidate_tg_id:
-            tg_key = int(item.candidate_tg_id)
-            item.candidate_username = usernames_by_tg.get(tg_key)
-            item.candidate_user_id = user_ids_by_tg.get(tg_key)
-        # Expunge to prevent lazy loading after session closes
-        session.expunge(item)
+        candidate_ids = {slot.candidate_id for slot in items if slot.candidate_id}
+        candidate_tg_ids = {slot.candidate_tg_id for slot in items if slot.candidate_tg_id}
+        usernames: Dict[str, Optional[str]] = {}
+        usernames_by_tg: Dict[int, Optional[str]] = {}
+        user_ids_by_candidate: Dict[str, Optional[int]] = {}
+        user_ids_by_tg: Dict[int, Optional[int]] = {}
+        if candidate_ids:
+            username_rows = await session.execute(
+                select(User.candidate_id, User.id, User.username, User.telegram_username).where(
+                    User.candidate_id.in_(candidate_ids)
+                )
+            )
+            for candidate_id, user_id, username, telegram_username in username_rows:
+                if candidate_id:
+                    usernames[str(candidate_id)] = username or telegram_username
+                    user_ids_by_candidate[str(candidate_id)] = user_id
+        if candidate_tg_ids:
+            username_rows = await session.execute(
+                select(User.telegram_id, User.id, User.username, User.telegram_username).where(
+                    User.telegram_id.in_(candidate_tg_ids)
+                )
+            )
+            for tg_id, user_id, username, telegram_username in username_rows:
+                if tg_id:
+                    usernames_by_tg[int(tg_id)] = username or telegram_username
+                    user_ids_by_tg[int(tg_id)] = user_id
+
+        # Ensure all datetime fields are timezone-aware
+        for item in items:
+            if item.start_utc:
+                item.start_utc = item.start_utc.replace(tzinfo=timezone.utc) if item.start_utc.tzinfo is None else item.start_utc
+            if item.candidate_id:
+                cid_key = str(item.candidate_id)
+                item.candidate_username = usernames.get(cid_key)
+                item.candidate_user_id = user_ids_by_candidate.get(cid_key)
+            elif item.candidate_tg_id:
+                tg_key = int(item.candidate_tg_id)
+                item.candidate_username = usernames_by_tg.get(tg_key)
+                item.candidate_user_id = user_ids_by_tg.get(tg_key)
+            # Expunge to prevent lazy loading after session closes
+            session.expunge(item)
 
     return {
         "items": items,
@@ -443,6 +458,20 @@ async def create_slot(
             ensure_slot_not_in_past(dt_utc, slot_tz=recruiter_tz, allow_past=allow_past)
         except SlotValidationError:
             return False
+
+        # Проверяем пересечения вручную (особенно важно для SQLite без EXCLUDE CONSTRAINT).
+        norm_start = _normalize_utc(dt_utc)
+        new_end = norm_start + timedelta(minutes=DEFAULT_INTERVIEW_DURATION_MIN)
+        existing_rows = await session.execute(
+            select(Slot.start_utc, Slot.duration_min).where(Slot.recruiter_id == recruiter_id)
+        )
+        for existing_start, existing_duration in existing_rows:
+            existing_norm = _normalize_utc(existing_start)
+            duration = max(existing_duration or SLOT_MIN_DURATION_MIN, SLOT_MIN_DURATION_MIN)
+            existing_end = existing_norm + timedelta(minutes=duration)
+            if norm_start < existing_end and new_end > existing_norm:
+                raise SlotOverlapError(recruiter_id=recruiter_id, start_utc=dt_utc)
+
         status_free = getattr(SlotStatus, "FREE", "FREE")
         if hasattr(status_free, "value"):
             status_free = status_free.value
@@ -740,7 +769,8 @@ async def schedule_manual_candidate_slot(
         await session.refresh(slot)
         slot_id = slot.id
 
-    reservation = await reserve_slot(
+    reserve_fn = _resolve_hook("reserve_slot", reserve_slot)
+    reservation = await reserve_fn(
         slot_id,
         candidate.telegram_id,
         candidate.fio,
@@ -758,7 +788,8 @@ async def schedule_manual_candidate_slot(
         await delete_slot(slot_id, force=True)
         raise ManualSlotError(_reservation_error_message(reservation.status))
 
-    result = await approve_slot_and_notify(slot_id, force_notify=True)
+    approve_fn = _resolve_hook("approve_slot_and_notify", approve_slot_and_notify)
+    result = await approve_fn(slot_id, force_notify=True)
     if result.status in {"approved", "notify_failed", "already"}:
         # Log manual slot assignment to audit table
         await _log_manual_slot_assignment(

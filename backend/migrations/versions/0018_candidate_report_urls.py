@@ -6,7 +6,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 
 revision = "0018_candidate_report_urls"
-down_revision = "0017_bot_message_logs"
+down_revision = "0017_recruiter_capacity_and_pipeline"
 branch_labels = None
 depends_on = None
 

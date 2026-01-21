@@ -9,7 +9,7 @@ from backend.migrations.utils import table_exists, index_exists
 
 
 revision = "0019_fix_notification_log_unique_index"
-down_revision = "0018_candidate_report_urls"
+down_revision = "0018_slots_candidate_fields"
 branch_labels = None
 depends_on = None
 

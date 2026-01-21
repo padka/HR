@@ -83,7 +83,7 @@ async def bulk_create_slots(
         break_end_minutes = pause_end.hour * 60 + pause_end.minute
 
         try:
-            tz = validate_timezone_name(city.tz)
+            tz = validate_timezone_name(recruiter.tz or city.tz)
         except ValueError:
             return 0, "Некорректный часовой пояс региона"
 

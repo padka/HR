@@ -115,6 +115,16 @@ _sync_session_factory = sessionmaker(
 async def init_models() -> None:
     """Initialise the database by applying all migrations."""
 
+    url = make_url(_settings.database_url_sync)
+    backend = url.get_backend_name()
+    if backend and backend.startswith("sqlite"):
+        # SQLite doesn't support several ALTER/DROP patterns used in migrations.
+        # For local dev/test we create the schema directly from ORM metadata.
+        from backend.domain.base import Base
+
+        await asyncio.to_thread(Base.metadata.create_all, sync_engine)
+        return
+
     await asyncio.to_thread(upgrade_to_head, sync_engine)
 
 

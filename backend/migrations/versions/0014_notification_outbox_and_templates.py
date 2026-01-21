@@ -35,6 +35,7 @@ def upgrade(conn: Connection) -> None:
                 body_md TEXT NOT NULL,
                 version INTEGER NOT NULL DEFAULT 1,
                 is_active BOOLEAN NOT NULL DEFAULT true,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 CONSTRAINT uq_template_key_locale_channel_version
                     UNIQUE (key, locale, channel, version)
@@ -176,10 +177,13 @@ def upgrade(conn: Connection) -> None:
         ).fetchone()
 
         if not result:
+            now = datetime.now(timezone.utc)
             conn.execute(
                 sa.text("""
-                    INSERT INTO message_templates (key, locale, channel, body_md, version, is_active, updated_at)
-                    VALUES (:key, :locale, :channel, :body_md, :version, true, :updated_at)
+                    INSERT INTO message_templates (
+                        key, locale, channel, body_md, version, is_active, created_at, updated_at
+                    )
+                    VALUES (:key, :locale, :channel, :body_md, :version, true, :created_at, :updated_at)
                 """),
                 {
                     "key": template["key"],
@@ -187,7 +191,8 @@ def upgrade(conn: Connection) -> None:
                     "channel": template["channel"],
                     "body_md": template["body_md"],
                     "version": template["version"],
-                    "updated_at": datetime.now(timezone.utc),
+                    "created_at": now,
+                    "updated_at": now,
                 },
             )
 

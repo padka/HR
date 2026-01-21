@@ -42,6 +42,7 @@ class Settings:
     log_file: str
     admin_chat_id: int
     timezone: str
+    default_company_name: str
     session_secret: str
     admin_username: str
     admin_password: str
@@ -56,6 +57,7 @@ class Settings:
     notification_retry_base_seconds: int
     notification_retry_max_seconds: int
     notification_max_attempts: int
+    rejection_template_key: str
     db_pool_size: int
     db_max_overflow: int
     db_pool_timeout: int
@@ -64,6 +66,8 @@ class Settings:
     rate_limit_redis_url: str
     trust_proxy_headers: bool
     enable_legacy_status_api: bool
+    sentry_dsn: str
+    sentry_traces_sample_rate: float
 
 
 def _get_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
@@ -378,7 +382,7 @@ def get_settings() -> Settings:
 
     # Ensure it's PostgreSQL (prod), но позволяем SQLite в dev/test
     if not raw_db_url.startswith(("postgresql+asyncpg://", "postgresql://")):
-        if environment in {"development", "test"} and raw_db_url.startswith("sqlite"):
+        if environment in {"development", "test", "staging"} and raw_db_url.startswith("sqlite"):
             pass
         else:
             raise RuntimeError(
@@ -448,6 +452,7 @@ def get_settings() -> Settings:
     bot_autostart = _get_bool("BOT_AUTOSTART", default=environment != "production")
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
+    default_company_name = os.getenv("DEFAULT_COMPANY_NAME", "SMART SERVICE").strip() or "SMART SERVICE"
     session_secret = (
         os.getenv("SESSION_SECRET")
         or os.getenv("SECRET_KEY")
@@ -498,6 +503,7 @@ def get_settings() -> Settings:
     if notification_retry_max_seconds < notification_retry_base_seconds:
         notification_retry_max_seconds = notification_retry_base_seconds
     notification_max_attempts = _get_int("NOTIFICATION_MAX_ATTEMPTS", 8, minimum=1)
+    rejection_template_key = os.getenv("REJECTION_TEMPLATE_KEY", "rejection_generic").strip() or "rejection_generic"
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
     log_json = _get_bool("LOG_JSON", default=False)
     log_file = os.getenv("LOG_FILE", "").strip()
@@ -543,9 +549,15 @@ def get_settings() -> Settings:
     enable_legacy_status_api = _get_bool_default_by_env(
         "ENABLE_LEGACY_STATUS_API",
         environment=environment,
-        default_non_prod=False,
+        default_non_prod=True,
         default_prod=False,
     )
+
+    # Sentry error tracking (optional)
+    sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+    sentry_traces_sample_rate = _get_float("SENTRY_TRACES_SAMPLE_RATE", 0.1, minimum=0.0)
+    if sentry_traces_sample_rate > 1.0:
+        sentry_traces_sample_rate = 1.0
 
     settings = Settings(
         environment=environment,
@@ -571,6 +583,7 @@ def get_settings() -> Settings:
         log_file=log_file,
         admin_chat_id=admin_chat_id,
         timezone=timezone,
+        default_company_name=default_company_name,
         session_secret=session_secret,
         admin_username=admin_username,
         admin_password=admin_password,
@@ -585,6 +598,7 @@ def get_settings() -> Settings:
         notification_retry_base_seconds=notification_retry_base_seconds,
         notification_retry_max_seconds=notification_retry_max_seconds,
         notification_max_attempts=notification_max_attempts,
+        rejection_template_key=rejection_template_key,
         db_pool_size=db_pool_size,
         db_max_overflow=db_max_overflow,
         db_pool_timeout=db_pool_timeout,
@@ -593,6 +607,8 @@ def get_settings() -> Settings:
         rate_limit_redis_url=rate_limit_redis_url,
         trust_proxy_headers=trust_proxy_headers,
         enable_legacy_status_api=enable_legacy_status_api,
+        sentry_dsn=sentry_dsn,
+        sentry_traces_sample_rate=sentry_traces_sample_rate,
     )
 
     # Validate production configuration (fails fast with clear error messages)

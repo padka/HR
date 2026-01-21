@@ -1472,6 +1472,12 @@ function handleBulkAction(action, button) {
 }
 
 async function performBulkAssign(recruiterId) {
+  const btn = document.querySelector('[data-bulk-action="assign"]');
+  const originalText = btn?.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Назначение...';
+  }
   try {
     const response = await fetch('/slots/bulk', {
       method: 'POST',
@@ -1488,10 +1494,21 @@ async function performBulkAssign(recruiterId) {
   } catch (err) {
     console.error('slots.bulk-assign', err);
     toast('Ошибка при назначении', 'danger');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText || 'Назначить';
+    }
   }
 }
 
 async function performBulkRemind() {
+  const btn = document.querySelector('[data-bulk-action="remind"]');
+  const originalText = btn?.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Отправка...';
+  }
   try {
     const response = await fetch('/slots/bulk', {
       method: 'POST',
@@ -1507,10 +1524,21 @@ async function performBulkRemind() {
   } catch (err) {
     console.error('slots.bulk-remind', err);
     toast('Ошибка при планировании', 'danger');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText || 'Напомнить';
+    }
   }
 }
 
 async function performBulkDelete() {
+  const btn = document.querySelector('[data-bulk-action="delete"]');
+  const originalText = btn?.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Удаление...';
+  }
   try {
     const response = await fetch('/slots/bulk', {
       method: 'POST',
@@ -1527,6 +1555,11 @@ async function performBulkDelete() {
   } catch (err) {
     console.error('slots.bulk-delete', err);
     toast('Ошибка удаления', 'danger');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText || 'Удалить';
+    }
   }
 }
 

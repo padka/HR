@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 from enum import Enum
+import logging
 from typing import Dict, Optional
 
 from datetime import datetime
@@ -44,6 +45,7 @@ from backend.core.settings import get_settings
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
 
 router = APIRouter(prefix="/slots", tags=["slots"])
+logger = logging.getLogger(__name__)
 
 _FLASH_COOKIE = "admin_flash"
 _SETTINGS = get_settings()
@@ -156,7 +158,21 @@ async def slots_list(
     recruiter = parse_optional_int(recruiter_id)
     status_norm = status_filter(status)
     city_filter = parse_optional_int(city_id)
-    result = await list_slots(recruiter, status_norm, page, per_page, city_id=city_filter)
+    try:
+        result = await list_slots(recruiter, status_norm, page, per_page, city_id=city_filter)
+    except Exception as exc:
+        logger.exception(
+            "slots.list_failed",
+            extra={
+                "recruiter": recruiter,
+                "status": status_norm,
+                "city_id": city_filter,
+                "page": page,
+                "per_page": per_page,
+                "path": str(request.url.path),
+            },
+        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось загрузить список слотов") from exc
     recruiter_rows = await list_recruiters()
     recruiter_entities = [row["rec"] for row in recruiter_rows]
     recruiter_options = [
@@ -261,12 +277,24 @@ async def slots_new(request: Request):
 
 @router.post("/create")
 async def slots_create(
-    recruiter_id: int = Form(...),
-    city_id: int = Form(...),
-    date: str = Form(...),
-    time: str = Form(...),
+    recruiter_id: Optional[str] = Form(default=None),
+    city_id: Optional[str] = Form(default=None),
+    date: Optional[str] = Form(default=None),
+    time: Optional[str] = Form(default=None),
 ):
-    ok, _ = await create_slot(recruiter_id, date, time, city_id=city_id)
+    if not city_id:
+        return JSONResponse({"detail": "Укажите город"}, status_code=422)
+    try:
+        recruiter_val = int(recruiter_id) if recruiter_id is not None else None
+        city_val = int(city_id)
+    except (TypeError, ValueError):
+        return JSONResponse({"detail": "Укажите корректный город"}, status_code=422)
+
+    result = await create_slot(recruiter_val, date or "", time or "", city_id=city_val)
+    if isinstance(result, tuple):
+        ok, _slot_obj = result
+    else:
+        ok, _slot_obj = bool(result), None
     redirect = "/slots" if ok else "/slots/new"
     response = RedirectResponse(url=redirect, status_code=303)
     if ok:

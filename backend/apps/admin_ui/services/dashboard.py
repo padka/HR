@@ -9,7 +9,6 @@ from sqlalchemy import (
     Column,
     DateTime,
     Integer,
-    MetaData,
     String,
     Table,
     Text,
@@ -24,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.admin_ui.utils import fmt_local, safe_zone
 from backend.core.db import async_session
+from backend.domain.base import Base
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
 from backend.domain.candidates.models import User
 from backend.domain.analytics import FunnelEvent
@@ -68,19 +68,18 @@ STATUS_COLOR_TO_CLASS = {
     "secondary": "pending",
 }
 
-_ANALYTICS_META = MetaData()
 ANALYTICS_EVENTS = Table(
     "analytics_events",
-    _ANALYTICS_META,
-    Column("id", Integer),
-    Column("event_name", String),
+    Base.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("event_name", String(100), nullable=False),
     Column("user_id", BigInteger),
     Column("candidate_id", Integer),
     Column("city_id", Integer),
     Column("slot_id", Integer),
     Column("booking_id", Integer),
     Column("metadata", Text),
-    Column("created_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 
 FUNNEL_STEP_DEFS: List[Dict[str, object]] = [

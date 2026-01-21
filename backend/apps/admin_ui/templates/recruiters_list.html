@@ -43,7 +43,18 @@
         {% else %}
           {% set next_slot_label = None %}
         {% endif %}
-        <article class="liquid-glass-card liquid-glass-card--interactive recruiter-card" data-animate-in data-parallax>
+        <article
+          class="liquid-glass-card liquid-glass-card--interactive recruiter-card"
+          data-rec-card
+          data-rec-id="{{ r.id }}"
+          data-rec-url="/recruiters/{{ r.id }}/edit"
+          data-rec-active="{{ 'true' if active else 'false' }}"
+          tabindex="0"
+          role="link"
+          aria-label="Открыть карточку рекрутёра {{ r.name }}"
+          data-animate-in
+          data-parallax
+        >
           <header class="recruiter-card__header">
             <div class="recruiter-card__identity">
               <div class="recruiter-card__avatar" aria-hidden="true">{{ initials }}</div>
@@ -267,5 +278,6 @@
   }
 })();
 </script>
+<script src="/static/js/modules/recruiter-grid.js" nonce="{{ request.state.csp_nonce }}" defer></script>
 {% endif %}
 {% endblock %}

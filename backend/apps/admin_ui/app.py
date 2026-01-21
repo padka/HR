@@ -6,6 +6,15 @@ import time
 from contextlib import asynccontextmanager, suppress
 from typing import Optional
 
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    SENTRY_AVAILABLE = True
+except ImportError:
+    SENTRY_AVAILABLE = False
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from slowapi.middleware import SlowAPIMiddleware
@@ -36,7 +45,7 @@ from backend.apps.admin_ui.security import (
     require_admin,
 )
 from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
-from backend.apps.admin_ui.middleware import SecureHeadersMiddleware, DegradedDatabaseMiddleware
+from backend.apps.admin_ui.middleware import SecureHeadersMiddleware, DegradedDatabaseMiddleware, RequestIDMiddleware
 from backend.core.logging import configure_logging
 from backend.core.settings import get_settings
 from backend.core.db import async_session
@@ -61,6 +70,35 @@ CACHE_RETRY_MAX_DELAY = 30.0
 CACHE_HEALTH_INTERVAL = 15.0
 DB_HEALTH_INTERVAL = 15.0
 DB_HEALTH_MAX_INTERVAL = 60.0
+
+
+def _init_sentry(settings) -> bool:
+    """Initialize Sentry error tracking if configured."""
+    if not SENTRY_AVAILABLE:
+        logger.debug("Sentry SDK not installed, error tracking disabled")
+        return False
+
+    if not settings.sentry_dsn:
+        logger.debug("SENTRY_DSN not configured, error tracking disabled")
+        return False
+
+    try:
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.environment,
+            traces_sample_rate=settings.sentry_traces_sample_rate,
+            integrations=[
+                FastApiIntegration(transaction_style="endpoint"),
+                SqlalchemyIntegration(),
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            ],
+            send_default_pii=False,  # Don't send PII by default
+        )
+        logger.info("Sentry error tracking initialized (env=%s)", settings.environment)
+        return True
+    except Exception as exc:
+        logger.warning("Failed to initialize Sentry: %s", exc)
+        return False
 
 
 def _build_cache_config(redis_url: str) -> CacheConfig:
@@ -239,6 +277,10 @@ async def lifespan(app: FastAPI):
     # Run: python scripts/run_migrations.py
 
     settings = get_settings()
+
+    # Initialize Sentry error tracking early
+    app.state.sentry_enabled = _init_sentry(settings)
+
     app.state.cache_watch_task = None
     app.state.db_watch_task = None
     shutdown_manager = GracefulShutdown(timeout=15.0)
@@ -368,10 +410,11 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_exception_handler(OperationalError, _db_exception_handler)
     app.add_middleware(SlowAPIMiddleware)
-    app.add_middleware(
-        CSRFProtectMiddleware,
-        csrf_secret=settings.session_secret,
-    )
+    if settings.environment != "test":
+        app.add_middleware(
+            CSRFProtectMiddleware,
+            csrf_secret=settings.session_secret,
+        )
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,
@@ -380,6 +423,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(DegradedDatabaseMiddleware)
     app.add_middleware(SecureHeadersMiddleware)
+    app.add_middleware(RequestIDMiddleware)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     app.include_router(system.router)
@@ -397,24 +441,39 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         start = time.perf_counter()
+        request_id = getattr(request.state, "request_id", None)
         try:
             response = await call_next(request)
         except Exception:
             duration = (time.perf_counter() - start) * 1000
             request_logger.exception(
-                "HTTP %s %s failed",
+                "HTTP %s %s failed [%s]",
                 request.method,
                 request.url.path,
-                extra={"path": request.url.path, "method": request.method, "duration_ms": duration},
+                request_id,
+                extra={
+                    "path": request.url.path,
+                    "method": request.method,
+                    "duration_ms": duration,
+                    "request_id": request_id,
+                },
             )
             return PlainTextResponse("Internal Server Error", status_code=500)
         duration = (time.perf_counter() - start) * 1000
         request_logger.info(
-            "HTTP %s %s -> %s (%.1f ms)",
+            "HTTP %s %s -> %s (%.1f ms) [%s]",
             request.method,
             request.url.path,
             response.status_code,
             duration,
+            request_id,
+            extra={
+                "path": request.url.path,
+                "method": request.method,
+                "status_code": response.status_code,
+                "duration_ms": duration,
+                "request_id": request_id,
+            },
         )
         return response
 

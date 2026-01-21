@@ -9,7 +9,7 @@ from backend.migrations.utils import table_exists, column_exists
 
 
 revision = "0015_recruiter_city_links"
-down_revision = "0014_notification_outbox_and_templates"
+down_revision = "0015_add_kpi_weekly_table"
 branch_labels = None
 depends_on = None
 
@@ -34,6 +34,13 @@ def upgrade(conn: Connection) -> None:
                     FOREIGN KEY (city_id) REFERENCES cities(id) ON DELETE CASCADE
             )
         """))
+
+    # Гарантируем уникальность city_id для корректной UPSERT-логики
+    conn.execute(
+        sa.text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_recruiter_city_unique_city ON recruiter_cities (city_id)"
+        )
+    )
 
     # Мигрируем данные из cities.responsible_recruiter_id, если колонка существует
     if table_exists(conn, "cities") and column_exists(conn, "cities", "responsible_recruiter_id"):

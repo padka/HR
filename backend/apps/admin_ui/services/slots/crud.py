@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.utils import (
+    DEFAULT_TZ,
     local_naive_to_utc,
     norm_status,
     paginate,
@@ -207,6 +209,24 @@ async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
     return deleted, remaining_after
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """Attach UTC tzinfo when database returns naive datetimes (SQLite)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _slot_local_time(slot: Slot) -> str:
+    """Return ISO datetime string in slot timezone (fallback to default TZ)."""
+    start = _ensure_utc(slot.start_utc)
+    tz_label = getattr(slot, "tz_name", None) or (slot.city.tz if getattr(slot, "city", None) else DEFAULT_TZ)
+    try:
+        zone = ZoneInfo(tz_label)
+    except Exception:
+        zone = ZoneInfo(DEFAULT_TZ)
+    return start.astimezone(zone).isoformat()
+
+
 async def api_slots_payload(
     recruiter_id: Optional[int],
     status: Optional[str],
@@ -230,10 +250,12 @@ async def api_slots_payload(
             "id": sl.id,
             "recruiter_id": sl.recruiter_id,
             "recruiter_name": sl.recruiter.name if sl.recruiter else None,
-            "start_utc": sl.start_utc.isoformat(),
+            "start_utc": _ensure_utc(sl.start_utc).isoformat(),
             "status": norm_status(sl.status),
             "candidate_fio": getattr(sl, "candidate_fio", None),
             "candidate_tg_id": getattr(sl, "candidate_tg_id", None),
+            "tz_name": getattr(sl, "tz_name", None) or (sl.city.tz if getattr(sl, "city", None) else None),
+            "local_time": _slot_local_time(sl),
         }
         for sl in slots
     ]

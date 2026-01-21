@@ -88,7 +88,22 @@ def _empty_calendar(timezone: str) -> dict[str, object]:
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    counts = await dashboard_counts()
+    db_available = True
+    try:
+        counts = await dashboard_counts()
+    except Exception:
+        logger.exception("Failed to load dashboard counts.")
+        db_available = False
+        counts = {
+            "cities": 0,
+            "recruiters": 0,
+            "pending": 0,
+            "booked": 0,
+            "confirmed": 0,
+            "total_slots": 0,
+            "waiting_candidates": 0,
+            "all_slots_total": 0,
+        }
     switch: IntegrationSwitch | None = getattr(
         request.app.state, "bot_integration_switch", None
     )
@@ -131,9 +146,16 @@ async def index(request: Request):
             "bot_status": bot_status,
             "weekly_kpis": weekly,
             "calendar": calendar,
+            "db_available": db_available,
         },
         encode_json_keys=("weekly_kpis", "calendar"),
     )
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_alias(request: Request):
+    """Backward-compatible route used by rate limit checks."""
+    return await index(request)
 
 
 @router.get("/dashboard/funnel")

@@ -2,6 +2,7 @@ from datetime import date as date_type, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from backend.apps.admin_ui.services.cities import (
@@ -14,6 +15,7 @@ from backend.apps.admin_ui.services.dashboard_calendar import (
 )
 from backend.apps.admin_ui.services.candidates import (
     get_candidate_detail,
+    api_candidate_detail_payload,
     update_candidate_status,
 )
 from backend.apps.admin_ui.services.chat import (
@@ -23,7 +25,11 @@ from backend.apps.admin_ui.services.chat import (
 )
 from backend.apps.admin_ui.services.slots import execute_bot_dispatch
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
-from backend.apps.admin_ui.services.recruiters import api_recruiters_payload
+from backend.apps.admin_ui.services.recruiters import (
+    api_recruiters_payload,
+    create_recruiter,
+    update_recruiter,
+)
 from backend.apps.admin_ui.services.slots.core import api_slots_payload
 from backend.apps.admin_ui.services.templates import (
     api_templates_payload,
@@ -63,6 +69,74 @@ async def api_dashboard_calendar(
 @router.get("/recruiters")
 async def api_recruiters():
     return JSONResponse(await api_recruiters_payload())
+
+
+@router.post("/recruiters", status_code=201)
+async def api_create_recruiter(request: Request):
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+
+    payload = {
+        "name": sanitize_plain_text(str(data.get("name") or "")),
+        "tz": data.get("tz") or "Europe/Moscow",
+        "telemost_url": data.get("telemost") or data.get("telemost_url") or "",
+        "tg_chat_id": data.get("tg_chat_id"),
+        "active": bool(data.get("active", True)),
+    }
+    city_ids = data.get("city_ids") or []
+    if not isinstance(city_ids, list):
+        city_ids = []
+
+    result = await create_recruiter(payload, cities=[str(cid) for cid in city_ids])
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=400)
+
+    result["city_ids"] = [int(cid) for cid in city_ids]
+    recruiter_id = result.get("recruiter_id")
+    result["id"] = recruiter_id
+    result["name"] = payload["name"]
+    result["tz"] = payload["tz"]
+    result["tg_chat_id"] = payload["tg_chat_id"]
+    result["active"] = payload["active"]
+    headers = {}
+    if recruiter_id:
+        headers["Location"] = f"/api/recruiters/{recruiter_id}"
+    return JSONResponse(result, status_code=201, headers=headers)
+
+
+@router.put("/recruiters/{recruiter_id}")
+async def api_update_recruiter(
+    recruiter_id: int,
+    request: Request,
+):
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+
+    payload = {
+        "name": sanitize_plain_text(str(data.get("name") or "")),
+        "tz": data.get("tz") or "Europe/Moscow",
+        "telemost_url": data.get("telemost") or data.get("telemost_url") or "",
+        "tg_chat_id": data.get("tg_chat_id"),
+        "active": bool(data.get("active", True)),
+    }
+    city_ids = data.get("city_ids") or []
+    if not isinstance(city_ids, list):
+        city_ids = []
+
+    result = await update_recruiter(recruiter_id, payload, cities=[str(cid) for cid in city_ids])
+    if not result.get("ok"):
+        status_code = 404 if result.get("error", {}).get("type") == "not_found" else 400
+        return JSONResponse(result, status_code=status_code)
+
+    result["city_ids"] = [int(cid) for cid in city_ids]
+    result["id"] = recruiter_id
+    result["name"] = payload["name"]
+    result["tz"] = payload["tz"]
+    result["tg_chat_id"] = payload["tg_chat_id"]
+    result["active"] = payload["active"]
+    return JSONResponse(result, status_code=200)
 
 
 @router.get("/cities")
@@ -114,6 +188,16 @@ async def api_city_owners():
     payload = await api_city_owners_payload()
     status_code = 200 if payload.get("ok") else 400
     return JSONResponse(payload, status_code=status_code)
+
+
+@router.get("/notifications/feed")
+async def api_notifications_feed(
+    request: Request,
+    after_id: int = Query(default=0, ge=0),
+):
+    if getattr(request.app.state, "db_available", True) is False:
+        return JSONResponse({"items": [], "latest_id": after_id, "degraded": True})
+    return JSONResponse({"items": [], "latest_id": after_id, "degraded": False})
 
 
 @router.get("/bot/integration")
@@ -237,6 +321,14 @@ async def api_chat_retry(
 ) -> JSONResponse:
     result = await retry_chat_message(candidate_id, message_id, bot_service=bot_service)
     return JSONResponse(result)
+
+
+@router.get("/candidates/{candidate_id}")
+async def api_candidate(candidate_id: int):
+    detail = await api_candidate_detail_payload(candidate_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return JSONResponse(jsonable_encoder(detail))
 
 
 @router.post("/candidates/{candidate_id}/actions/{action_key}")

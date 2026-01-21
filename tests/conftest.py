@@ -4,6 +4,7 @@ import os
 import sys
 
 import pytest
+import sqlalchemy as sa
 
 try:
     import uvloop  # type: ignore
@@ -42,10 +43,16 @@ def event_loop():
 
 @pytest.fixture(scope="session", autouse=True)
 def configure_backend(tmp_path_factory):
-    db_dir = tmp_path_factory.mktemp("data")
-    db_path = db_dir / "bot.db"
-    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
-    os.environ["DATA_DIR"] = str(db_dir)
+    db_url = os.getenv("TEST_DATABASE_URL")
+    if db_url:
+        os.environ["DATABASE_URL"] = db_url
+        if not os.getenv("DATA_DIR"):
+            os.environ["DATA_DIR"] = str(tmp_path_factory.mktemp("data"))
+    else:
+        db_dir = tmp_path_factory.mktemp("data")
+        db_path = db_dir / "bot.db"
+        os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+        os.environ["DATA_DIR"] = str(db_dir)
     os.environ.pop("SQL_ECHO", None)
 
     from backend.core import settings as settings_module
@@ -85,6 +92,27 @@ def clean_database():
     from backend.domain.base import Base
     from backend.core.db import sync_engine
 
-    Base.metadata.drop_all(bind=sync_engine)
-    Base.metadata.create_all(bind=sync_engine)
+    backend_name = sync_engine.url.get_backend_name()
+    if backend_name == "postgresql":
+        with sync_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            inspector = sa.inspect(conn)
+            tables = [t for t in inspector.get_table_names(schema="public") if t != "alembic_version"]
+            if tables:
+                joined = ", ".join(f'"public"."{t}"' for t in tables)
+                conn.execute(sa.text(f"TRUNCATE TABLE {joined} RESTART IDENTITY CASCADE"))
+        Base.metadata.create_all(bind=sync_engine)
+    else:
+        import time
+
+        for attempt in range(3):
+            try:
+                Base.metadata.drop_all(bind=sync_engine)
+                break
+            except sa.exc.OperationalError as exc:
+                if "locked" in str(exc).lower() and attempt < 2:
+                    sync_engine.dispose()
+                    time.sleep(0.1)
+                    continue
+                raise
+        Base.metadata.create_all(bind=sync_engine)
     yield

@@ -8,7 +8,7 @@ from sqlalchemy.engine import Connection
 
 
 revision = "0016_add_slot_interview_feedback"
-down_revision = "0015_add_kpi_weekly_table"
+down_revision = "0015_recruiter_city_links"
 branch_labels = None
 depends_on = None
 
@@ -28,4 +28,3 @@ def downgrade(conn: Connection) -> None:  # pragma: no cover - symmetry with upg
     if not _column_exists(conn, "slots", "interview_feedback"):
         return
     conn.execute(sa.text("ALTER TABLE slots DROP COLUMN interview_feedback"))
-

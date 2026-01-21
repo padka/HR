@@ -8,7 +8,7 @@ from sqlalchemy.engine import Connection
 
 
 revision = "0016_add_slot_timezone"
-down_revision = "0015_recruiter_city_links"
+down_revision = "0016_add_slot_interview_feedback"
 branch_labels = None
 depends_on = None
 

@@ -6,7 +6,7 @@ from sqlalchemy.engine import Connection
 
 
 revision = "0018_slots_candidate_fields"
-down_revision = "0017_recruiter_capacity_and_pipeline"
+down_revision = "0018_candidate_report_urls"
 branch_labels = None
 depends_on = None
 

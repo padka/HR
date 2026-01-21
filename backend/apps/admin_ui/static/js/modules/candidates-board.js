@@ -10,6 +10,32 @@ function updateCounter(column, delta) {
   counter.textContent = String(Math.max(0, current + delta));
 }
 
+// Toast notification instead of blocking alert
+function showToast(message, type = 'error') {
+  const toast = document.createElement('div');
+  toast.className = `kanban-toast kanban-toast--${type}`;
+  toast.textContent = message;
+  toast.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    border-radius: 8px;
+    background: ${type === 'error' ? '#ef4444' : '#22c55e'};
+    color: white;
+    font-size: 14px;
+    z-index: 9999;
+    animation: fadeIn 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  `;
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s ease';
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
 // Map kanban column statuses to action keys for the new API
 const STATUS_ACTION_MAP = {
   'hired': 'mark_hired',
@@ -39,11 +65,11 @@ async function postStatus(candidateId, status) {
     try {
       payload = await response.json();
     } catch (err) {
-      // ignore JSON parse errors
+      console.warn('candidates-board: JSON parse error', { status: response.status, candidateId });
     }
     if (!response.ok) {
       const message = payload.message || payload.detail?.message || 'Не удалось обновить статус кандидата.';
-      window.alert(message);
+      showToast(message, 'error');
       throw new Error(message);
     }
     return payload;
@@ -63,11 +89,11 @@ async function postStatus(candidateId, status) {
   try {
     payload = await response.json();
   } catch (err) {
-    // ignore JSON parse errors
+    console.warn('candidates-board: JSON parse error (legacy)', { status: response.status, candidateId });
   }
   if (!response.ok) {
     const message = payload.message || 'Не удалось обновить статус кандидата.';
-    window.alert(message);
+    showToast(message, 'error');
     throw new Error(message);
   }
   return payload;
@@ -114,7 +140,7 @@ if (board) {
         return;
       }
       if (column.dataset.droppable !== 'true') {
-        window.alert('Эту колонку нельзя трогать вручную.');
+        showToast('Эту колонку нельзя трогать вручную.', 'error');
         return;
       }
       if (column === sourceColumn) {
@@ -123,24 +149,36 @@ if (board) {
 
       const candidateId = draggedCard.dataset.candidateId;
       const status = column.dataset.status;
+      const previousStatus = draggedCard.dataset.status;
       if (!candidateId || !status) {
-        return;
-      }
-
-      try {
-        await postStatus(candidateId, status);
-      } catch (err) {
         return;
       }
 
       const targetBody = column.querySelector('[data-kanban-column]') || column;
       const sourceBody = sourceColumn.querySelector('[data-kanban-column]') || sourceColumn;
 
+      // Optimistic UI update
+      draggedCard.classList.add('is-loading');
+      draggedCard.style.opacity = '0.6';
+      targetBody.appendChild(draggedCard);
       updateCounter(sourceColumn, -1);
       updateCounter(column, 1);
-
-      targetBody.appendChild(draggedCard);
       draggedCard.dataset.status = status;
+
+      try {
+        await postStatus(candidateId, status);
+        // Success - finalize UI
+        draggedCard.classList.remove('is-loading');
+        draggedCard.style.opacity = '1';
+      } catch (err) {
+        // Rollback UI on error
+        sourceBody.appendChild(draggedCard);
+        updateCounter(column, -1);
+        updateCounter(sourceColumn, 1);
+        draggedCard.dataset.status = previousStatus;
+        draggedCard.classList.remove('is-loading');
+        draggedCard.style.opacity = '1';
+      }
     });
   });
 }

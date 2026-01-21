@@ -101,6 +101,8 @@ templates.env.globals.update(
     fmt_utc=fmt_utc,
     tz_display=tz_display,
     norm_status=norm_status,
+    csrf_token=lambda _request=None: "",
+    csrf_input=lambda _request=None: "",
 )
 
 
@@ -835,6 +837,16 @@ CITY_STAGES_DATA = {
     ]
 }
 
+CITY_RESPONSIBLES_DATA = {
+    1: [
+        {"id": 10, "name": "Алексей Захаров"},
+        {"id": 11, "name": "Мария Орлова"},
+    ],
+    2: [
+        {"id": 10, "name": "Алексей Захаров"},
+    ],
+}
+
 OWNERS_DATA = {1: 10}
 REC_MAP_DATA = {item["rec"]["id"]: item["rec"] for item in RECRUITER_ROWS_DATA}
 CITY_CITIES_DATA = [
@@ -968,6 +980,7 @@ def cities_list_context() -> Dict[str, Any]:
         "owners": build(OWNERS_DATA),
         "rec_map": build(REC_MAP_DATA),
         "city_stages": build(CITY_STAGES_DATA),
+        "city_responsibles": build(CITY_RESPONSIBLES_DATA),
     }
 
 

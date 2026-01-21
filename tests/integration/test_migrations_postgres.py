@@ -18,6 +18,8 @@ def test_migrations_on_clean_postgres():
     """
     # Use test database URL from environment
     db_url = os.getenv("TEST_DATABASE_URL", "postgresql://rs:pass@localhost:5432/rs_test")
+    if not db_url.startswith("postgresql"):
+        pytest.skip("PostgreSQL is required for migration integration test")
 
     # Convert to sync URL (remove +asyncpg if present)
     sync_db_url = db_url.replace("+asyncpg", "")

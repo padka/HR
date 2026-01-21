@@ -101,9 +101,14 @@ def status_to_db(value: str):
 
 
 def parse_optional_int(value: Optional[str]) -> Optional[int]:
+    # Unwrap FastAPI Query/Path defaults or similar objects that carry `default`
+    if hasattr(value, "default"):
+        value = value.default  # type: ignore[assignment]
     if value is None:
         return None
-    text = value.strip()
+    if hasattr(value, "value"):
+        value = getattr(value, "value")  # e.g. Starlette Form/Query types
+    text = str(value).strip()
     if not text:
         return None
     try:

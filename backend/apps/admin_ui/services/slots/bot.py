@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, Optional
+import sys
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -227,19 +228,36 @@ async def execute_bot_dispatch(
     success = False
 
     try:
+        slots_pkg = sys.modules.get("backend.apps.admin_ui.services.slots")
+        trigger_test2 = getattr(slots_pkg, "_trigger_test2", _trigger_test2) if slots_pkg else _trigger_test2
+        trigger_rejection = (
+            getattr(slots_pkg, "_trigger_rejection", _trigger_rejection) if slots_pkg else _trigger_rejection
+        )
+
         if plan.kind == "test2":
-            result = await _trigger_test2(
-                plan.candidate_id,
-                plan.candidate_tz,
-                plan.candidate_city_id,
-                plan.candidate_name,
-                bot_service=service,
-                required=plan.required,
-            )
+            try:
+                result = await trigger_test2(
+                    plan.candidate_id,
+                    plan.candidate_tz,
+                    plan.candidate_city_id,
+                    plan.candidate_name,
+                    bot_service=service,
+                    required=plan.required,
+                    slot_id=plan.slot_id,
+                )
+            except TypeError:
+                result = await trigger_test2(
+                    plan.candidate_id,
+                    plan.candidate_tz,
+                    plan.candidate_city_id,
+                    plan.candidate_name,
+                    bot_service=service,
+                    required=plan.required,
+                )
             action_result = _map_test2_status(result.status)
             success = result.ok and action_result == "sent_test2"
         elif plan.kind == "rejection":
-            result = await _trigger_rejection(
+            result = await trigger_rejection(
                 plan.candidate_id,
                 plan.template_key or get_settings().rejection_template_key,
                 plan.template_context,

@@ -353,7 +353,10 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     bot, configured = _build_bot(settings)
 
     switch = IntegrationSwitch(initial=settings.bot_integration_enabled)
-    scheduler = create_scheduler(None if force_memory else redis_url) if settings.bot_enabled else None
+    if settings.environment == "test" and settings.database_url_sync.startswith("sqlite"):
+        scheduler = None
+    else:
+        scheduler = create_scheduler(None if force_memory else redis_url) if settings.bot_enabled else None
 
     broker_instance: Optional[object] = None
 
@@ -469,7 +472,9 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     else:
         configure_bot_services(bot if configured else None, state_manager)
 
-    if settings.bot_enabled:
+    if settings.environment == "test" and settings.database_url_sync.startswith("sqlite"):
+        logger.info("Notification service not started in test sqlite mode")
+    elif settings.bot_enabled:
         # Start notification service (independent of bot supervision)
         # Use poll loop if scheduler is not available or in development
         allow_poll_loop = settings.environment != "production" or scheduler is None

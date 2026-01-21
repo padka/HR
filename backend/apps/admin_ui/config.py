@@ -18,8 +18,17 @@ STATIC_DIR = BASE_DIR / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+def _safe_csrf_token(request) -> str:
+    try:
+        return csrf_token(request)
+    except Exception:
+        return ""
+
+
 def _render_csrf_input(request) -> Markup:
-    token = csrf_token(request)
+    token = _safe_csrf_token(request)
+    if not token:
+        return Markup("")
     return Markup(f'<input type="hidden" name="csrf_token" value="{token}">')
 
 
@@ -32,7 +41,7 @@ def register_template_globals() -> None:
         tz_region_name=tz_region_name,
         render_or_empty=render_or_empty,
         csrf_input=_render_csrf_input,
-        csrf_token=csrf_token,
+        csrf_token=_safe_csrf_token,
     )
     templates.env.filters.setdefault("render_or_empty", render_or_empty)
 

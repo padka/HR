@@ -166,8 +166,8 @@
           </div>
         </div>
 
-        <div class="table__wrap slots-table__wrap">
-          <table class="table slots-table table--stackable" id="slots_table">
+        <div class="table__wrap slots-table__wrap" data-testid="slots-table-wrapper">
+          <table class="table slots-table table--stackable" id="slots_table" data-testid="slots-table">
             <caption class="visually-hidden">Таблица слотов</caption>
             <thead>
               <tr>
@@ -244,7 +244,7 @@
                         <span class="status-chip" data-tone="{{ tone }}">{{ status_label }}</span>
                       </div>
                       <div class="slot-summary__meta">
-                        <span class="slot-summary__person">{{ s.recruiter.name if s.recruiter else 'Не назначен' }}</span>
+                        <span class="slot-summary__person" data-testid="slot-recruiter-cell">{{ s.recruiter.name if s.recruiter else 'Не назначен' }}</span>
                         {% if s.city %}
                           <span class="slot-summary__city">{{ s.city.name }}</span>
                         {% else %}
@@ -255,7 +255,7 @@
                   </td>
                   <td class="col-time" data-label="Время">
                     <div class="slot-time" data-role="time">
-                      <span class="slot-time__primary" data-role="time-primary">{{ fmt_local(s.start_utc, tz_rec) }}</span>
+                      <span class="slot-time__primary" data-role="time-primary" data-testid="slot-local-time">{{ fmt_local(s.start_utc, tz_rec) }}</span>
                       <span class="slot-time__secondary" data-role="time-secondary">UTC {{ fmt_utc(s.start_utc) }}</span>
                       {% if cand_tz %}
                         <span class="slot-time__candidate" data-role="time-candidate">{{ fmt_local(s.start_utc, cand_tz) }} · {{ tz_display(cand_tz) }}</span>

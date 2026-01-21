@@ -42,7 +42,7 @@ for _module in (_legacy_module, _bulk_module, _crud_module, _bot_module):
     globals().update(_collect_exports(_module))
 
 # Добавляем служебные функции, начинающиеся с подчёркивания, которые используют другие модули
-for name in ("_trigger_test2", "_trigger_rejection"):
+for name in ("_trigger_test2", "_trigger_rejection", "reject_slot_booking", "reschedule_slot_booking"):
     if hasattr(_legacy_module, name):
         globals()[name] = getattr(_legacy_module, name)
 
@@ -66,7 +66,16 @@ async def bulk_assign_slots(slot_ids, recruiter_id):
 async def bulk_schedule_reminders(slot_ids):
     scheduled = 0
     missing = []
-    reminder_service = getattr(_bot_module, "get_reminder_service", lambda: None)()
+    getter = globals().get("get_reminder_service")
+    if getter is None:
+        getter = getattr(_bot_module, "get_reminder_service", None)
+
+    reminder_service = None
+    if callable(getter):
+        try:
+            reminder_service = getter()
+        except Exception:
+            reminder_service = None
     async with async_session() as session:
         slots = list(await session.scalars(select(Slot).where(Slot.id.in_(slot_ids))))
         found_ids = {slot.id for slot in slots}
@@ -94,6 +103,11 @@ async def bulk_delete_slots(slot_ids, force: bool = False):
         if deleted:
             await session.commit()
     return deleted, failed
+
+# Созданию и выдаче слотов используем легаси-реализацию (с валидацией времени/оверлапов).
+for _name in ("create_slot", "list_slots", "bulk_create_slots"):
+    if hasattr(_legacy_module, _name):
+        globals()[_name] = getattr(_legacy_module, _name)
 
 # Собираем __all__ для корректной работы from ... import *
 __all__ = [name for name in globals() if not name.startswith("_")]

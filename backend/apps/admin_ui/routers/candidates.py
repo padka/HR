@@ -625,7 +625,10 @@ async def candidates_set_status(
     is_form_submission = not is_json_request
 
     # Prefer JSON payloads (AJAX actions)
-    raw_body = await request.body()
+    try:
+        raw_body = await request.body()
+    except RuntimeError:
+        raw_body = getattr(request, "_body", b"") or b""
     if raw_body and is_json_request:
         try:
             parsed = json.loads(raw_body)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy.engine import Connection
 
 revision = "0017_recruiter_capacity_and_pipeline"
-down_revision = "0016_add_slot_interview_feedback"
+down_revision = "0017_bot_message_logs"
 branch_labels = None
 depends_on = None
 

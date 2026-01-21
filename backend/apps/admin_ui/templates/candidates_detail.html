@@ -1547,9 +1547,9 @@
       {% endif %}
     </div>
     {% if pending_slot %}
-      <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve" class="approve-form">
+      <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve" class="approve-form" data-pending-form>
         {{ csrf_input(request) }}
-        <button class="btn btn-primary" type="submit">
+        <button class="btn btn-primary" type="submit" data-loading-text="Обработка...">
           ✅ Согласовать интервью
         </button>
         <span class="approve-form__hint">
@@ -1966,9 +1966,9 @@
       <div class="candidate-slot-panel__group">
         <p class="candidate-slot-panel__label">Выберите исход</p>
         <div class="candidate-slot-panel__actions">
-          <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve">
+          <form method="post" action="/candidates/{{ user.id }}/slots/{{ pending_slot.id }}/approve" data-pending-form>
             <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-            <button class="btn btn-primary" type="submit">
+            <button class="btn btn-primary" type="submit" data-loading-text="Обработка...">
               Согласовать слот
             </button>
           </form>
@@ -3133,6 +3133,21 @@
     });
   });
 })();
+</script>
+
+<script>
+// Loading state for forms with data-pending-form attribute
+document.querySelectorAll('[data-pending-form]').forEach(form => {
+  form.addEventListener('submit', function() {
+    const btn = this.querySelector('button[type="submit"]');
+    if (btn && !btn.disabled) {
+      btn.disabled = true;
+      const loadingText = btn.dataset.loadingText || 'Обработка...';
+      btn.dataset.originalText = btn.textContent;
+      btn.textContent = loadingText;
+    }
+  });
+});
 </script>
 
 {# Сообщения кандидату и хронология скрыты по запросу #}

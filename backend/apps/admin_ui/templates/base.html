@@ -21,16 +21,25 @@
   </script>
   <script nonce="{{ request.state.csp_nonce }}">
     (function () {
+      var docEl = document.documentElement;
       var storageKey = "tg-admin-theme";
+      var prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
+      function applyEarly(mode) {
+        var modeSafe = mode === "light" || mode === "dark" || mode === "auto" ? mode : "auto";
+        var resolved = modeSafe === "auto" ? (prefersDark.matches ? "dark" : "light") : modeSafe;
+        docEl.dataset.themeMode = modeSafe;
+        if (modeSafe === "auto") {
+          docEl.removeAttribute("data-theme");
+        } else {
+          docEl.dataset.theme = resolved;
+        }
+        docEl.style.colorScheme = resolved;
+      }
       try {
         var stored = window.localStorage.getItem(storageKey);
-        var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-        var theme = stored || (prefersDark ? "dark" : "light");
-        document.documentElement.dataset.theme = theme;
-        document.documentElement.style.colorScheme = theme;
+        applyEarly(stored);
       } catch (err) {
-        document.documentElement.dataset.theme = document.documentElement.dataset.theme || "light";
-        document.documentElement.style.colorScheme = document.documentElement.dataset.theme;
+        applyEarly(docEl.dataset.themeMode || docEl.dataset.theme || "auto");
       }
     })();
   </script>
@@ -108,18 +117,6 @@
 
   [hidden] {
     display: none !important;
-  }
-
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-    border: 0;
   }
 
   html {
@@ -262,70 +259,232 @@
   }
 
   .app-header {
-    position: fixed;
+    position: sticky;
     top: 0;
-    left: 0;
-    z-index: 5000;
-    padding: 0;
-    background: none;
-    pointer-events: auto;
+    z-index: 30;
+    padding: 12px 16px 14px;
+    background: linear-gradient(180deg, rgba(0,0,0,.22), transparent 70%);
+    transition: transform .35s var(--transition-soft), opacity .35s ease;
+    will-change: transform;
   }
 
-  .dock-hotspot {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 24px;
-    height: 100vh;
-    border: none;
-    padding: 0;
+  .app-header.is-hidden {
+    transform: translateY(-110%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  html[data-theme="light"] .app-header {
+    background: linear-gradient(180deg, rgba(246,247,251,.92), rgba(246,247,251,0));
+  }
+
+  .app-header__inner {
+    max-width: min(1120px, 100%);
+    margin: 0 auto;
+    display: grid;
+    gap: 12px;
+  }
+
+  .app-header__bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--outline-strong);
+    background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+    box-shadow: var(--shadow-2), var(--glow-soft);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .app-header__bar > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .app-header__brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    color: var(--fg-strong);
+    font-weight: 800;
+  }
+
+  .app-header__brand-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    font-size: 14px;
+    font-weight: 800;
+    box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+
+  .app-header__brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+  }
+
+  .app-header__brand-title {
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+
+  .app-header__brand-subtitle {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+  }
+
+  .app-header__search {
+    flex: 1;
+    max-width: 520px;
+    min-width: 220px;
+    position: relative;
+  }
+
+  .app-header__search-input {
+    width: 100%;
+    padding: 10px 14px 10px 40px;
+    border-radius: 999px;
+    border: 1px solid var(--field-border);
+    background: var(--field-bg);
+    color: var(--fg);
+    font-size: 13px;
+    transition: all .2s ease;
+  }
+
+  .app-header__search-input::placeholder {
+    color: var(--muted);
+  }
+
+  .app-header__search-input:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--field-border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  }
+
+  .app-header__search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 14px;
+    pointer-events: none;
+  }
+
+  .app-header__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .app-header__actions .btn:not(.theme-toggle) {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .app-header__actions .btn.btn--sm:not(.theme-toggle),
+  .app-header__actions .btn.btn-sm:not(.theme-toggle) {
+    min-height: 34px;
+    padding: 5px 12px;
+  }
+
+  .app-header__actions .btn-ghost {
+    background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
+  }
+
+  .app-header__actions .btn-ghost:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  .app-header__menu-toggle {
+    margin-right: 2px;
+  }
+
+  .app-header__inner .nav {
+    width: 100%;
+    max-width: 100%;
     margin: 0;
-    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent);
-    opacity: 0.18;
-    cursor: pointer;
-    pointer-events: auto;
-    z-index: 5010;
   }
 
-  .dock-hotspot:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
-    outline-offset: 4px;
-    opacity: 0.4;
+  @media (max-width: 1100px) {
+    .app-header__bar {
+      flex-wrap: wrap;
+    }
+
+    .app-header__search {
+      order: 3;
+      width: 100%;
+      max-width: none;
+    }
+
+    .app-header__actions {
+      margin-left: auto;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .app-header__bar {
+      gap: 10px;
+    }
+
+    .app-header__brand-text {
+      display: none;
+    }
+
+    .nav__menu-label {
+      display: none;
+    }
+
+    .app-header__actions .btn-ghost {
+      display: none;
+    }
+
+    .app-header__search-input {
+      padding-left: 36px;
+    }
   }
 
   .nav {
-    --dock-peek: 30px;
-    --dock-hidden-shift: 72%;
-    position: fixed;
-    top: 50%;
-    left: 0;
-    transform: translateY(-50%) translateX(calc(-1 * var(--dock-hidden-shift)));
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 12px;
-    border-radius: 24px;
+    position: relative;
+    max-width: min(1120px, 100%);
+    margin: clamp(6px, 1.6vw, 12px) auto 0;
+    padding: clamp(8px, 1.4vw, 12px);
+    display: grid;
+    gap: clamp(4px, 1vw, 8px);
+    border-radius: 14px;
     border: 1px solid var(--outline-strong);
-    background: color-mix(in srgb, var(--surface-raised) 90%, rgba(255,255,255,.02));
+    background: linear-gradient(180deg,
+      color-mix(in srgb, var(--surface-raised) 92%, rgba(255,255,255,.02)),
+      color-mix(in srgb, var(--surface) 88%, transparent));
     box-shadow: var(--shadow-2), var(--glow-soft);
     isolation: isolate;
-    pointer-events: auto;
-    z-index: 5020;
-    opacity: .82;
-    transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease, box-shadow 220ms ease, border-color 220ms ease;
-    will-change: transform, opacity;
+    transition: all .35s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: navSlideIn 0.6s cubic-bezier(0.4, 0, 0.2, 1) both;
   }
 
-  .dock-hotspot:hover + .nav,
-  .dock-hotspot:focus-visible + .nav,
-  .nav:hover,
-  .nav:focus-within,
-  .nav[data-dock-open="true"],
-  .nav[data-dock-pinned="true"] {
-    transform: translateY(-50%) translateX(0);
-    opacity: 1;
-    pointer-events: auto;
+  @keyframes navSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-20px);
+      filter: blur(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+      filter: blur(0);
+    }
   }
 
   .nav:hover {
@@ -351,197 +510,268 @@
 
   .nav::before {
     background:
-      linear-gradient(145deg, rgba(255,255,255,.22), transparent 55%),
-      radial-gradient(40% 80% at 0% 100%, rgba(105,183,255,.28), transparent 70%);
+      linear-gradient(145deg, rgba(255,255,255,.24), transparent 55%),
+      radial-gradient(40% 80% at 0% 100%, rgba(105,183,255,.35), transparent 70%);
     mix-blend-mode: screen;
     opacity: .6;
   }
 
   .nav::after {
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.4);
-    opacity: 0;
-    transition: opacity 180ms ease;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.45);
   }
 
-  .nav::before {
-    pointer-events: none;
+  .nav__top {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
   }
 
-  .nav::after {
-    pointer-events: none;
+  .nav__row {
+    display: flex;
+    gap: clamp(8px, 1vw, 12px);
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    width: 100%;
   }
 
-  .nav::before {
-    mask-image: linear-gradient(90deg, black 0%, black 40%, transparent 70%);
-  }
-
-  .nav::after {
-    mask-image: linear-gradient(90deg, black 0%, black 35%, transparent 70%);
-  }
-
-  .nav:not([data-dock-open="true"]):not([data-dock-pinned="true"])::after {
-    opacity: .3;
-  }
-
-  .nav__dock-toggle {
-    position: absolute;
-    top: 50%;
-    right: calc(var(--dock-peek) * -1);
-    transform: translateY(-50%);
-    width: 30px;
-    height: 52px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
-    background: var(--btn-bg);
-    color: inherit;
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    box-shadow: var(--shadow-2);
-    transition: transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease;
-    pointer-events: auto;
-  }
-
-  .nav__dock-toggle:hover {
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--glass-stroke));
-    background: var(--btn-bg-hover);
-    transform: translateY(-50%) scale(1.04);
-    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.25);
-  }
-
-  .nav__dock-toggle:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 3px var(--focus-ring), var(--shadow-2);
-  }
-
-  .nav__dock-toggle-icon {
-    font-size: 16px;
-    line-height: 1;
-    transition: transform .25s ease;
-  }
-
-  .nav[data-dock-pinned="true"] .nav__dock-toggle-icon {
-    transform: rotate(180deg);
+  .nav__row--links {
+    width: 100%;
+    justify-content: center;
+    gap: clamp(6px, 1vw, 10px);
   }
 
   .nav__section {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 10px;
+    gap: clamp(8px, 1vw, 12px);
+    flex-wrap: wrap;
   }
 
   .nav__section--primary {
-    width: auto;
+    justify-content: center;
+    padding: clamp(6px, 1vw, 8px);
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+    background: linear-gradient(145deg,
+      color-mix(in srgb, var(--surface-raised) 88%, transparent),
+      color-mix(in srgb, var(--surface) 82%, transparent));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06), var(--shadow-1);
+  }
+
+  .nav .brand {
+    font-weight: 800;
+    letter-spacing: .2px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+    font-size: 19px;
+    transition: all .3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    display: inline-block;
+  }
+
+  .nav .brand::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 2px;
+  }
+
+  .nav .brand:hover::after {
+    transform: scaleX(1);
+  }
+
+  .nav .brand:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.15);
+  }
+
+  .nav__menu-toggle {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 16px;
+    border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
+    background: linear-gradient(145deg, color-mix(in srgb, var(--btn-bg) 90%, transparent), color-mix(in srgb, var(--btn-bg-hover) 70%, transparent));
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color .2s ease, background .2s ease, transform .2s ease, box-shadow .2s ease;
+  }
+
+  .nav__menu-toggle:hover {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--glass-stroke));
+    background: color-mix(in srgb, var(--btn-bg-hover) 85%, transparent);
+    transform: translateY(-1px) scale(1.01);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  }
+
+  .nav__menu-icon {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+    position: relative;
+  }
+
+  .nav__menu-icon span {
+    width: 18px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+    transition: transform .25s ease, opacity .25s ease, width .25s ease, box-shadow .2s ease;
+    box-shadow: 0 0 0 rgba(255,255,255,0.35);
+  }
+
+  .nav__menu-label {
+    font-size: 13px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+
+  .nav[data-mobile-open="true"] .nav__menu-icon span:nth-child(1) {
+    transform: translateY(6px) rotate(45deg);
+    width: 18px;
+  }
+
+  .nav[data-mobile-open="true"] .nav__menu-icon span:nth-child(2) {
+    opacity: 0;
+    width: 18px;
+  }
+
+  .nav[data-mobile-open="true"] .nav__menu-icon span:nth-child(3) {
+    transform: translateY(-6px) rotate(-45deg);
+    width: 18px;
   }
 
   .nav a {
-    width: 52px;
-    height: 52px;
-    border-radius: 16px;
-    display: grid;
-    place-items: center;
-    position: relative;
     color: var(--fg);
-    background: linear-gradient(160deg,
-      color-mix(in srgb, var(--surface-raised) 88%, transparent),
-      color-mix(in srgb, var(--surface) 80%, transparent));
-    border: 1px solid color-mix(in srgb, var(--glass-stroke) 75%, transparent);
-    box-shadow: var(--shadow-1);
-    text-decoration: none;
-    transform-origin: left center;
-    transition: transform .22s var(--transition-snappy), box-shadow .22s ease, background .22s ease, border-color .22s ease, color .22s ease;
-    z-index: 1;
+    opacity: .9;
+    padding: 9px 11px;
+    border-radius: 12px;
+    transition: all .22s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 48px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-align: center;
+    backdrop-filter: blur(6px);
+  }
+
+  .nav a::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
+    opacity: 0;
+    transition: opacity .2s ease;
+    border-radius: inherit;
+    filter: blur(10px);
   }
 
   .nav a::after {
-    content: attr(data-label);
+    content: '';
     position: absolute;
-    left: calc(100% + 14px);
-    top: 50%;
-    transform: translateY(-50%) translateX(-6px);
-    padding: 6px 10px;
+    bottom: 6px;
+    left: 50%;
+    width: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transform: translateX(-50%);
+    transition: width .25s cubic-bezier(0.4, 0, 0.2, 1);
     border-radius: 999px;
-    background: color-mix(in srgb, var(--surface-raised) 92%, rgba(255,255,255,.02));
-    border: 1px solid var(--glass-stroke);
-    color: var(--fg-strong);
-    font-size: 12px;
-    white-space: nowrap;
-    opacity: 0;
-    pointer-events: none;
-    box-shadow: var(--shadow-2);
-    transition: opacity .2s ease, transform .2s ease;
-    z-index: 2;
   }
 
-  .nav a:hover,
-  .nav a:focus-visible {
-    color: var(--fg-strong);
-    background: linear-gradient(160deg,
-      color-mix(in srgb, var(--accent) 14%, transparent),
-      color-mix(in srgb, var(--accent-2) 10%, transparent));
-    border-color: color-mix(in srgb, var(--accent) 40%, var(--glass-stroke));
-    transform: translateX(8px) scale(1.08);
-    box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 25%, transparent);
-  }
-
-  .nav a:hover::after,
-  .nav a:focus-visible::after {
+  .nav a:hover {
     opacity: 1;
-    transform: translateY(-50%) translateX(0);
+    color: var(--fg-strong);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    transform: translateY(-1px) scale(1.01);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  .nav a:hover::before {
+    opacity: 0.45;
+  }
+
+  .nav a:hover::after {
+    width: 70%;
   }
 
   .nav a:active {
-    transform: translateX(6px) scale(1.02);
+    transform: translateY(0) scale(0.98);
+    transition: transform .1s ease;
   }
 
   .nav a.active {
     color: var(--accent);
-    background: linear-gradient(160deg,
-      color-mix(in srgb, var(--accent) 18%, transparent),
-      color-mix(in srgb, var(--accent-2) 14%, transparent));
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--glass-stroke));
+    font-weight: 700;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.12),
-      0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent);
+      inset 0 1px 0 rgba(255,255,255,.16),
+      0 4px 14px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+
+  .nav a.active::before {
+    opacity: 0.55;
+  }
+
+  .nav a.active::after {
+    width: 80%;
   }
 
   .nav__link-icon {
-    font-size: 20px;
+    font-size: 17px;
     line-height: 1;
     opacity: 0.88;
-    transition: transform .2s ease, opacity .2s ease, filter .2s ease;
+    transition: opacity .2s ease, transform .2s ease;
   }
 
   .nav a:hover .nav__link-icon,
-  .nav a:focus-visible .nav__link-icon,
   .nav a.active .nav__link-icon {
     opacity: 1;
-    transform: scale(1.12);
-    filter: drop-shadow(0 6px 12px color-mix(in srgb, var(--accent) 30%, transparent));
+    transform: scale(1.08);
   }
 
   .mobile-backdrop {
     display: none;
   }
 
+  .nav__meta {
+    margin-left: auto;
+    gap: 10px;
+  }
+
+
   .container {
     max-width: 1120px;
     margin: 0 auto;
-    padding: 0 clamp(16px, 4vw, 28px) clamp(24px, 6vw, 42px);
+    padding: clamp(84px, 12vw, 120px) clamp(18px, 4vw, 34px) clamp(36px, 6vw, 52px);
     display: flex;
     flex-direction: column;
     gap: var(--grid-gap);
     position: relative;
     z-index: 1;
     animation: containerFade .55s var(--transition-soft) both;
-  }
-
-  /* Сброс возможного "компенсирующего" отступа сверху:
-     первый визуальный блок без маргина, даже если перед ним идут <script>/<style>. */
-  .container > :first-child,
-  .container > *:not(style):not(script):not(link):not(template):first-of-type {
-    margin-top: 0;
   }
 
   @keyframes containerFade {
@@ -917,44 +1147,58 @@
   }
 
   @media (max-width: 960px) {
-    .dock-hotspot {
-      width: 18px;
-    }
-    .container,
-    body[data-page] main.container {
-      padding: 0 clamp(14px, 6vw, 22px) clamp(28px, 8vw, 40px);
-    }
-
-    .dock-hotspot {
-      width: 14px;
+    .container {
+      padding: clamp(64px, 18vw, 90px) clamp(14px, 6vw, 22px) clamp(28px, 8vw, 40px);
     }
 
     .nav {
-      --dock-peek: 14px;
-      left: 0;
-      padding: 12px 10px;
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      padding: 10px;
+      transform: translateY(-8px);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 40;
+      gap: 8px;
+      background: var(--surface-3, var(--surface-raised));
+      border: 1px solid var(--border-1, var(--outline-strong));
+      box-shadow: var(--shadow-2, var(--shadow-md));
+    }
+
+    .nav__top {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .nav__menu-toggle {
+      display: inline-flex;
+    }
+
+    .nav__section--primary,
+    .nav__meta {
+      width: 100%;
+      border-top: 1px solid color-mix(in srgb, var(--row-sep) 80%, transparent);
+      padding-top: 12px;
+      margin-top: 4px;
+      transition: max-height .35s ease, opacity .25s ease;
+    }
+
+    .nav__section--primary {
+      grid-auto-flow: row;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 6px;
+    }
+
+    .nav__section--primary a {
+      flex-direction: row;
+      align-items: center;
+      width: 100%;
+      justify-content: flex-start;
+      min-height: 52px;
+      text-align: left;
       gap: 10px;
-      border-radius: 22px;
-    }
-
-    .nav a {
-      width: 46px;
-      height: 46px;
-      border-radius: 14px;
-    }
-
-    .nav a::after {
-      font-size: 11px;
-      padding: 5px 9px;
-    }
-
-    .nav__link-icon {
-      font-size: 18px;
-    }
-
-    .nav__dock-toggle {
-      width: 26px;
-      height: 44px;
     }
 
     .page {
@@ -964,32 +1208,56 @@
   }
 
   @media (max-width: 720px) {
-    .dock-hotspot {
-      width: 16px;
+    .nav__section--primary {
+      gap: 6px;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     }
 
-    .nav {
-      --dock-peek: 12px;
-      left: 0;
-      padding: 10px 8px;
+    /* make burger visible on mobile */
+    .nav__menu-toggle {
+      display: inline-flex;
+    }
+
+    .nav__section--primary,
+    .nav__meta {
+      width: 100%;
+    }
+
+    /* Slide-in effect for mobile menu */
+    .nav[data-mobile-open="false"] {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .nav[data-mobile-open="false"] .nav__section--primary,
+    .nav[data-mobile-open="false"] .nav__meta {
+      max-height: 0;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateY(-6px);
+      transition: max-height 0.25s ease, opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .nav[data-mobile-open="true"] {
+      transform: translateY(0);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .nav[data-mobile-open="true"] .nav__section--primary,
+    .nav[data-mobile-open="true"] .nav__meta {
+      max-height: 1200px;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .nav__section--primary a {
+      display: flex;
+      width: 100%;
+      justify-content: flex-start;
+      min-height: 48px;
+      padding: 8px 10px;
       gap: 8px;
-      border-radius: 20px;
-    }
-
-    .nav a {
-      width: 42px;
-      height: 42px;
-      border-radius: 12px;
-    }
-
-    .nav a::after {
-      font-size: 10px;
-      padding: 4px 8px;
-    }
-
-    .nav__dock-toggle {
-      width: 24px;
-      height: 38px;
     }
   }
 
@@ -1224,62 +1492,97 @@
     max-width: min(1600px, 100%);
     width: 100%;
     margin: 0 auto;
-    padding: 0 clamp(16px, 3vw, 28px) clamp(24px, 5vw, 42px);
+    padding: clamp(40px, 6vw, 84px) clamp(18px, 3vw, 30px) clamp(28px, 5vw, 48px);
   }
 
-  body[data-page] nav.nav {
-    max-width: none;
-    width: auto;
-    margin: 0;
+  body[data-page] .app-header__inner {
+    max-width: min(1600px, 100%);
   }
-
   </style>
 </head>
 <body>
   <a href="#main" class="skip-link">Перейти к содержимому</a>
   <div aria-hidden="true" class="halo"></div>
-  <button class="dock-hotspot" type="button" data-dock-hotspot aria-label="Показать навигацию" aria-pressed="false"></button>
-  <nav class="nav nav--dock glass grain" role="navigation" aria-label="Навигация" data-dock-nav data-dock-open="false" data-dock-pinned="false">
-    <button class="nav__dock-toggle" type="button" id="nav-menu-toggle" aria-label="Закрепить навигацию" aria-pressed="false" aria-controls="primary-nav">
-      <span class="nav__dock-toggle-icon" aria-hidden="true">&gt;</span>
-    </button>
-      {% block nav %}
-      <div class="nav__section nav__section--primary" id="primary-nav">
-        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}" data-label="Дашборд">
-          <span class="nav__link-icon" aria-hidden="true">📊</span>
-          <span class="nav__link-label visually-hidden">Дашборд</span>
+  <header class="app-header">
+    <div class="mobile-backdrop" data-mobile-backdrop></div>
+    <nav class="nav glass grain" role="navigation" data-mobile-nav data-mobile-open="false">
+      <div class="nav__row nav__row--top">
+        <button class="nav__menu-toggle app-header__menu-toggle" type="button" id="nav-menu-toggle" aria-label="Показать меню" aria-controls="primary-nav" aria-expanded="false">
+          <span class="nav__menu-icon" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </span>
+          <span class="nav__menu-label">Меню</span>
+        </button>
+        <a class="app-header__brand" href="/">
+          <span class="app-header__brand-icon" aria-hidden="true">RS</span>
+          <span class="app-header__brand-text">
+            <span class="app-header__brand-title">RecruitSmart</span>
+            <span class="app-header__brand-subtitle">Админ панель</span>
+          </span>
         </a>
-        <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}" data-label="Рекрутёры">
-          <span class="nav__link-icon" aria-hidden="true">👥</span>
-          <span class="nav__link-label visually-hidden">Рекрутёры</span>
-        </a>
-        <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}" data-label="Города">
-          <span class="nav__link-icon" aria-hidden="true">🌆</span>
-          <span class="nav__link-label visually-hidden">Города</span>
-        </a>
-        <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}" data-label="Слоты">
-          <span class="nav__link-icon" aria-hidden="true">📅</span>
-          <span class="nav__link-label visually-hidden">Слоты</span>
-        </a>
-        <a href="/candidates" class="{% if request.url.path.startswith('/candidates') and not request.url.path.startswith('/candidates/detailization') %}active{% endif %}" data-label="Кандидаты">
-          <span class="nav__link-icon" aria-hidden="true">👤</span>
-          <span class="nav__link-label visually-hidden">Кандидаты</span>
-        </a>
-        <a href="/candidates/detailization" class="{% if request.url.path.startswith('/candidates/detailization') %}active{% endif %}" data-label="Детализация">
-          <span class="nav__link-icon" aria-hidden="true">📋</span>
-          <span class="nav__link-label visually-hidden">Детализация</span>
-        </a>
-        <a href="/templates" class="{% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}" data-label="Шаблоны">
-          <span class="nav__link-icon" aria-hidden="true">💬</span>
-          <span class="nav__link-label visually-hidden">Шаблоны</span>
-        </a>
-        <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}" data-label="Вопросы">
-          <span class="nav__link-icon" aria-hidden="true">❓</span>
-          <span class="nav__link-label visually-hidden">Вопросы</span>
-        </a>
+        <form class="app-header__search" action="/candidates" method="get" role="search">
+          <span class="app-header__search-icon" aria-hidden="true">🔎</span>
+          <input
+            id="globalSearch"
+            class="app-header__search-input"
+            type="search"
+            name="search"
+            placeholder="Поиск кандидата"
+            aria-label="Поиск кандидата по имени, городу или TG"
+            value="{{ request.query_params.get('search', '') if request.url.path.startswith('/candidates') else '' }}"
+            autocomplete="off"
+          >
+        </form>
+        <div class="app-header__actions">
+          <a class="btn btn-primary btn--sm" href="/candidates/new">+ Кандидат</a>
+          <a class="btn btn-ghost btn--sm" href="/slots">Слоты</a>
+          <button id="theme-toggle" class="btn theme-toggle" type="button" data-theme-toggle aria-label="Переключить тему" aria-pressed="true">
+            <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
+          </button>
+        </div>
       </div>
-      {% endblock nav %}
-  </nav>
+      <div class="nav__row nav__row--links">
+        {% block nav %}
+        <div class="nav__section nav__section--primary" id="primary-nav">
+          <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">📊</span>
+            <span>Дашборд</span>
+          </a>
+          <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">👥</span>
+            <span>Рекрутёры</span>
+          </a>
+          <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">🌆</span>
+            <span>Города</span>
+          </a>
+          <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">📅</span>
+            <span>Слоты</span>
+          </a>
+          <a href="/candidates" class="{% if request.url.path.startswith('/candidates') and not request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">👤</span>
+            <span>Кандидаты</span>
+          </a>
+          <a href="/candidates/detailization" class="{% if request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">📋</span>
+            <span>Детализация</span>
+          </a>
+          <a href="/templates" class="{% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">💬</span>
+            <span>Шаблоны</span>
+          </a>
+          <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">
+            <span class="nav__link-icon" aria-hidden="true">❓</span>
+            <span>Вопросы</span>
+          </a>
+        </div>
+        {% endblock nav %}
+      </div>
+    </nav>
+  </header>
 
   <main id="main" class="container">
     {% block content %}{% endblock %}
@@ -1297,150 +1600,195 @@
     const docEl = document.documentElement;
     const storageKey = 'tg-admin-theme';
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
-    const toggle = document.getElementById('theme-toggle');
+    const toggles = Array.from(document.querySelectorAll('[data-theme-toggle], #theme-toggle'));
 
     function getStoredTheme() {
       try { return window.localStorage.getItem(storageKey); } catch (err) { return null; }
     }
 
-    function storeTheme(theme) {
-      try { window.localStorage.setItem(storageKey, theme); } catch (err) { /* noop */ }
+    function storeTheme(mode) {
+      try { window.localStorage.setItem(storageKey, mode); } catch (err) { /* noop */ }
     }
 
-    function applyTheme(theme, persist = true) {
-      const next = theme === 'light' ? 'light' : 'dark';
-      docEl.dataset.theme = next;
-      docEl.style.colorScheme = next;
-      if (persist) {
-        storeTheme(next);
+    function resolveTheme(mode) {
+      if (mode === 'dark') { return 'dark'; }
+      if (mode === 'light') { return 'light'; }
+      return prefersDark.matches ? 'dark' : 'light';
+    }
+
+    function applyTheme(mode, persist = true) {
+      const nextMode = mode === 'light' || mode === 'dark' || mode === 'auto' ? mode : 'auto';
+      const resolved = resolveTheme(nextMode);
+      docEl.dataset.themeMode = nextMode;
+      if (nextMode === 'auto') {
+        docEl.removeAttribute('data-theme');
+      } else {
+        docEl.dataset.theme = resolved;
       }
-      reflectTheme(next);
+      docEl.style.colorScheme = resolved;
+      if (persist) {
+        storeTheme(nextMode);
+      }
+      reflectTheme(nextMode, resolved);
     }
 
-    function reflectTheme(theme) {
-      if (!toggle) { return; }
-      toggle.dataset.mode = theme;
-      toggle.setAttribute('aria-pressed', theme === 'dark');
-      const icon = theme === 'dark' ? '🌙' : '🌞';
-      toggle.querySelector('.theme-toggle__icon').textContent = icon;
-      toggle.title = 'Сменить на ' + (theme === 'dark' ? 'светлую' : 'тёмную') + ' тему';
-      toggle.setAttribute('aria-label', theme === 'dark' ? 'Переключить на светлую тему' : 'Переключить на тёмную тему');
+    function reflectTheme(mode, resolved) {
+      if (!toggles.length) { return; }
+      toggles.forEach(btn => {
+        btn.dataset.mode = mode;
+        btn.dataset.themeState = mode;
+        btn.dataset.resolvedTheme = resolved;
+        btn.setAttribute('aria-pressed', mode === 'dark');
+        const iconEl = btn.querySelector('.theme-toggle__icon');
+        if (iconEl) {
+          iconEl.textContent = mode === 'auto' ? '🌓' : mode === 'dark' ? '🌙' : '🌞';
+        }
+        const nextLabel = mode === 'auto' ? 'светлую' : mode === 'light' ? 'тёмную' : 'авто';
+        btn.title = 'Сменить на ' + nextLabel + ' тему';
+        btn.setAttribute('aria-label', 'Переключить на ' + nextLabel + ' тему');
+      });
     }
 
     const stored = getStoredTheme();
-    const initialTheme = stored || docEl.dataset.theme || (prefersDark.matches ? 'dark' : 'light');
-    applyTheme(initialTheme, false);
+    const initialMode =
+      (stored === 'light' || stored === 'dark' || stored === 'auto')
+        ? stored
+        : (docEl.dataset.themeMode || docEl.dataset.theme || 'auto');
+    applyTheme(initialMode, false);
 
-    if (toggle) {
-      toggle.addEventListener('click', () => {
-        const current = docEl.dataset.theme === 'light' ? 'light' : 'dark';
-        const next = current === 'dark' ? 'light' : 'dark';
-        applyTheme(next);
+    if (toggles.length) {
+      toggles.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const current = (docEl.dataset.themeMode === 'light' || docEl.dataset.themeMode === 'dark')
+            ? docEl.dataset.themeMode
+            : 'auto';
+          const next = current === 'auto' ? 'light' : current === 'light' ? 'dark' : 'auto';
+          applyTheme(next);
+        });
       });
     }
 
     if (prefersDark && typeof prefersDark.addEventListener === 'function') {
-      prefersDark.addEventListener('change', event => {
-        if (!getStoredTheme()) {
-          applyTheme(event.matches ? 'dark' : 'light', false);
+      prefersDark.addEventListener('change', () => {
+        if ((docEl.dataset.themeMode || 'auto') === 'auto') {
+          applyTheme('auto', getStoredTheme() === 'auto');
         }
       });
     }
 
-    const nav = document.querySelector('[data-dock-nav]');
+    const nav = document.querySelector('[data-mobile-nav]');
     const navToggle = document.getElementById('nav-menu-toggle');
-    const dockHotspot = document.querySelector('[data-dock-hotspot]');
-    const CLOSE_DELAY = 240;
-    let closeTimer = null;
+    const mobileBackdrop = document.querySelector('[data-mobile-backdrop]');
+    const mobileMedia = window.matchMedia('(max-width: 960px)');
+    let mobileNavInitialized = false;
 
-    function reflectState() {
-      if (!nav) { return; }
-      const pinned = nav.dataset.dockPinned === 'true';
-      const isOpen = nav.dataset.dockOpen === 'true' || pinned;
-      if (navToggle) {
-        navToggle.setAttribute('aria-expanded', String(isOpen));
-        navToggle.setAttribute('aria-pressed', String(pinned));
-        navToggle.setAttribute('aria-label', pinned ? 'Открепить навигацию' : 'Закрепить навигацию');
-      }
-      if (dockHotspot) {
-        dockHotspot.setAttribute('aria-pressed', String(pinned));
-        dockHotspot.setAttribute('aria-label', pinned ? 'Скрыть навигацию' : 'Показать навигацию');
+    function setNavToggleAccessibility(isMobile) {
+      if (!navToggle) { return; }
+      if (isMobile) {
+        navToggle.removeAttribute('aria-hidden');
+        navToggle.tabIndex = 0;
+      } else {
+        navToggle.setAttribute('aria-hidden', 'true');
+        navToggle.tabIndex = -1;
       }
     }
 
-    function setDockOpen(open) {
-      if (!nav) { return; }
-      nav.dataset.dockOpen = open ? 'true' : 'false';
-      reflectState();
-    }
-
-    function setDockPinned(pinned) {
-      if (!nav) { return; }
-      nav.dataset.dockPinned = pinned ? 'true' : 'false';
-      if (pinned) {
-        nav.dataset.dockOpen = 'true';
+    function syncNavForViewport() {
+      if (!nav || !navToggle) { return; }
+      const isMobile = mobileMedia.matches;
+      setNavToggleAccessibility(isMobile);
+      if (!isMobile) {
+        nav.dataset.mobileOpen = 'true';
+        navToggle.setAttribute('aria-expanded', 'true');
+        navToggle.setAttribute('aria-label', 'Показать меню');
+        document.body.dataset.mobileLock = 'false';
+        if (mobileBackdrop) {
+          mobileBackdrop.dataset.open = 'false';
+        }
+        mobileNavInitialized = false;
+        return;
       }
-      reflectState();
-    }
-
-    function toggleDockPinned() {
-      if (!nav) { return; }
-      const pinned = nav.dataset.dockPinned === 'true';
-      setDockPinned(!pinned);
-    }
-
-    function clearCloseTimer() {
-      if (closeTimer) {
-        clearTimeout(closeTimer);
-        closeTimer = null;
+      if (!mobileNavInitialized) {
+        nav.dataset.mobileOpen = 'false';
+        mobileNavInitialized = true;
       }
+      const isOpen = nav.dataset.mobileOpen === 'true';
+      navToggle.setAttribute('aria-expanded', String(isOpen));
+      navToggle.setAttribute('aria-label', isOpen ? 'Скрыть меню' : 'Показать меню');
+      if (mobileBackdrop) {
+        mobileBackdrop.dataset.open = String(isOpen);
+      }
+      document.body.dataset.mobileLock = isOpen ? 'true' : 'false';
     }
 
-    function scheduleClose() {
-      if (!nav || nav.dataset.dockPinned === 'true') { return; }
-      clearCloseTimer();
-      closeTimer = window.setTimeout(() => {
-        setDockOpen(false);
-      }, CLOSE_DELAY);
-    }
-
-    function openDock() {
-      clearCloseTimer();
-      setDockOpen(true);
-    }
-
-    dockHotspot?.addEventListener('pointerenter', openDock);
-    dockHotspot?.addEventListener('pointerleave', scheduleClose);
-    dockHotspot?.addEventListener('click', (event) => {
-      event.preventDefault();
-      toggleDockPinned();
+    navToggle?.addEventListener('click', () => {
+      if (!nav || !mobileMedia.matches) { return; }
+      const next = nav.dataset.mobileOpen !== 'true';
+      nav.dataset.mobileOpen = next ? 'true' : 'false';
+      navToggle.setAttribute('aria-expanded', String(next));
+      navToggle.setAttribute('aria-label', next ? 'Скрыть меню' : 'Показать меню');
+      if (mobileBackdrop) {
+        mobileBackdrop.dataset.open = String(next);
+      }
+      document.body.dataset.mobileLock = next ? 'true' : 'false';
     });
 
-    nav?.addEventListener('pointerenter', openDock);
-    nav?.addEventListener('pointerleave', scheduleClose);
-
-    navToggle?.addEventListener('click', (event) => {
-      event.preventDefault();
-      toggleDockPinned();
+    mobileBackdrop?.addEventListener('click', () => {
+      if (!nav || !mobileMedia.matches) { return; }
+      nav.dataset.mobileOpen = 'false';
+      navToggle?.setAttribute('aria-expanded', 'false');
+      navToggle?.setAttribute('aria-label', 'Показать меню');
+      mobileBackdrop.dataset.open = 'false';
+      document.body.dataset.mobileLock = 'false';
     });
 
-    document.addEventListener('pointerdown', (event) => {
-      if (!nav || nav.dataset.dockPinned === 'true') { return; }
-      const isInsideDock = nav.contains(event.target);
-      const isHotspot = dockHotspot && dockHotspot.contains(event.target);
-      if (!isInsideDock && !isHotspot) {
-        setDockOpen(false);
-      }
-    }, { capture: true });
+    if (typeof mobileMedia.addEventListener === 'function') {
+      mobileMedia.addEventListener('change', syncNavForViewport);
+    } else if (typeof mobileMedia.addListener === 'function') {
+      mobileMedia.addListener(syncNavForViewport);
+    }
 
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        setDockPinned(false);
-        setDockOpen(false);
-      }
-    });
+    syncNavForViewport();
 
-    setDockPinned(nav?.dataset.dockPinned === 'true');
+    const headerEl = document.querySelector('.app-header');
+    let lastScrollY = window.scrollY || 0;
+    let headerHidden = false;
+    let scrollTicking = false;
+
+    function shouldKeepHeaderVisible() {
+      return !headerEl
+        || (mobileMedia.matches && nav?.dataset.mobileOpen === 'true')
+        || (window.scrollY || 0) < 80;
+    }
+
+    function updateHeaderVisibility() {
+      if (!headerEl) { return; }
+      const current = window.scrollY || 0;
+      if (shouldKeepHeaderVisible()) {
+        headerEl.classList.remove('is-hidden');
+        headerHidden = false;
+        lastScrollY = current;
+        return;
+      }
+      if (current > lastScrollY && !headerHidden) {
+        headerEl.classList.add('is-hidden');
+        headerHidden = true;
+      } else if (current < lastScrollY && headerHidden) {
+        headerEl.classList.remove('is-hidden');
+        headerHidden = false;
+      }
+      lastScrollY = current <= 0 ? 0 : current;
+    }
+
+    window.addEventListener('scroll', () => {
+      if (scrollTicking) { return; }
+      scrollTicking = true;
+      requestAnimationFrame(() => {
+        updateHeaderVisibility();
+        scrollTicking = false;
+      });
+    }, { passive: true });
+    updateHeaderVisibility();
 
     if (!reduceMotion) {
       const tiltTargets = Array.from(document.querySelectorAll('[data-tilt]'));

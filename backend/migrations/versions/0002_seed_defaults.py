@@ -58,7 +58,8 @@ def upgrade(conn):
         sa.Column("updated_at", sa.DateTime(timezone=True)),
     )
 
-    _ensure_entries(conn, cities, unique_field="name", rows=DEFAULT_CITIES)
+    city_rows = [dict(row, active=row.get("active", True)) for row in DEFAULT_CITIES]
+    _ensure_entries(conn, cities, unique_field="name", rows=city_rows)
     recruiter_rows = default_recruiters()
     if recruiter_rows:
         _ensure_entries(conn, recruiters, unique_field="name", rows=recruiter_rows)

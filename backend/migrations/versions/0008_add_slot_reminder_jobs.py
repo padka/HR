@@ -28,19 +28,23 @@ def upgrade(conn: Connection) -> None:
     if table_exists(conn, TABLE_NAME):
         return
 
-    conn.execute(sa.text(f"""
-        CREATE TABLE {TABLE_NAME} (
-            id BIGSERIAL PRIMARY KEY,
-            slot_id INTEGER NOT NULL REFERENCES slots(id) ON DELETE CASCADE,
-            kind VARCHAR(32) NOT NULL,
-            job_id VARCHAR(255) NOT NULL,
-            scheduled_at TIMESTAMPTZ NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            UNIQUE(slot_id, kind),
-            UNIQUE(job_id)
+    conn.execute(
+        sa.text(
+            f"""
+            CREATE TABLE {TABLE_NAME} (
+                id BIGSERIAL PRIMARY KEY,
+                slot_id INTEGER NOT NULL REFERENCES slots(id) ON DELETE CASCADE,
+                kind VARCHAR(32) NOT NULL,
+                job_id VARCHAR(255) NOT NULL,
+                scheduled_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(slot_id, kind),
+                UNIQUE(job_id)
+            )
+            """
         )
-    """))
+    )
 
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover

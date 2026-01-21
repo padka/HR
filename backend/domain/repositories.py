@@ -1059,7 +1059,7 @@ async def reserve_slot(
                         select(User.candidate_id).where(User.telegram_id == candidate_tg_id)
                     )
                 if candidate_uuid is None:
-                    candidate_uuid = str(uuid.uuid4())
+                    candidate_uuid = f"tg:{candidate_tg_id}" if candidate_tg_id is not None else str(uuid.uuid4())
 
                 slot = await session.scalar(
                     select(Slot)
