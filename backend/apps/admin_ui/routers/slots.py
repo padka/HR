@@ -150,13 +150,13 @@ class SlotUpdatePayload(SlotPayloadBase):
 async def slots_list(
     request: Request,
     recruiter_id: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
+    slot_status: Optional[str] = Query(default=None, alias="status"),
     city_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
 ):
     recruiter = parse_optional_int(recruiter_id)
-    status_norm = status_filter(status)
+    status_norm = status_filter(slot_status)
     city_filter = parse_optional_int(city_id)
     try:
         result = await list_slots(recruiter, status_norm, page, per_page, city_id=city_filter)

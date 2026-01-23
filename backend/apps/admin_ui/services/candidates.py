@@ -882,7 +882,10 @@ def _map_to_workflow_status(user: User) -> WorkflowStatus:
         try:
             return WorkflowStatus(raw_workflow)
         except Exception:
-            pass
+            logging.warning(
+                "candidates.invalid_workflow_status",
+                extra={"user_id": getattr(user, "id", None), "raw_value": raw_workflow},
+            )
     legacy = getattr(user, "candidate_status", None)
     if isinstance(legacy, CandidateStatus):
         mapped = LEGACY_TO_WORKFLOW.get(legacy.value)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import logging.config
@@ -7,9 +8,51 @@ import hashlib
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+# Context variable for request correlation ID
+_request_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "request_id", default=None
+)
+
+
+def set_request_id(request_id: Optional[str]) -> contextvars.Token[Optional[str]]:
+    """Set the current request ID for logging correlation."""
+    return _request_id_var.set(request_id)
+
+
+def get_request_id() -> Optional[str]:
+    """Get the current request ID for logging correlation."""
+    return _request_id_var.get()
+
+
+def reset_request_id(token: contextvars.Token[Optional[str]]) -> None:
+    """Reset request ID to previous value using token from set_request_id."""
+    _request_id_var.reset(token)
+
+
+class StandardFormatter(logging.Formatter):
+    """Standard text formatter with request_id support."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        request_id = get_request_id()
+        if request_id:
+            # Add short request_id prefix (first 8 chars)
+            record.request_id_prefix = f"[{request_id[:8]}] "
+        else:
+            record.request_id_prefix = ""
+        return super().format(record)
+
 
 class JsonFormatter(logging.Formatter):
     """Simple JSON formatter for structured logs."""
+
+    # Fields that are internal to LogRecord and shouldn't be included as extra
+    _INTERNAL_FIELDS = {
+        "name", "msg", "args", "created", "filename", "funcName",
+        "levelname", "levelno", "lineno", "module", "msecs",
+        "pathname", "process", "processName", "relativeCreated",
+        "stack_info", "exc_info", "exc_text", "thread", "threadName",
+        "taskName", "message",
+    }
 
     def format(self, record: logging.LogRecord) -> str:
         payload = {
@@ -18,6 +61,20 @@ class JsonFormatter(logging.Formatter):
             "name": record.name,
             "message": record.getMessage(),
         }
+        # Include request_id from context if available
+        request_id = get_request_id()
+        if request_id:
+            payload["request_id"] = request_id
+
+        # Include extra fields passed via logging.info(..., extra={...})
+        for key, value in record.__dict__.items():
+            if key not in self._INTERNAL_FIELDS and not key.startswith("_"):
+                try:
+                    json.dumps(value)  # Check if serializable
+                    payload[key] = value
+                except (TypeError, ValueError):
+                    payload[key] = str(value)
+
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
         if record.stack_info:
@@ -115,7 +172,8 @@ def configure_logging(settings=None) -> None:
     formatter_name = "json" if log_json else "standard"
     formatters = {
         "standard": {
-            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            "()": "backend.core.logging.StandardFormatter",
+            "format": "%(asctime)s %(request_id_prefix)s[%(levelname)s] %(name)s: %(message)s",
         },
         "json": {
             "()": "backend.core.logging.JsonFormatter",
@@ -172,7 +230,12 @@ def configure_logging(settings=None) -> None:
 
 __all__ = [
     "configure_logging",
+    "get_request_id",
+    "JsonFormatter",
     "PIIFilter",
-    "SecretsFilter",
     "pseudonymize",
+    "reset_request_id",
+    "SecretsFilter",
+    "set_request_id",
+    "StandardFormatter",
 ]

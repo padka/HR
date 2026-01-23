@@ -32,6 +32,10 @@ from backend.domain.candidates.status import CandidateStatus
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        Index("ix_users_workflow_status", "workflow_status"),
+        Index("ix_users_responsible_recruiter", "responsible_recruiter_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     candidate_id: Mapped[str] = mapped_column(

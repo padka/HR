@@ -141,7 +141,7 @@ async def main() -> None:
                 from backend.core.cache import disconnect_cache
                 await disconnect_cache()
         except Exception:
-            pass
+            logging.debug("bot.cache_disconnect_error", exc_info=True)
 
 
 if __name__ == "__main__":

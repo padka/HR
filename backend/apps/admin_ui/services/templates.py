@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 import string
 import time
@@ -84,7 +85,7 @@ def notify_templates_changed() -> None:
     try:
         bot_templates.clear_cache()
     except Exception:  # pragma: no cover - guard against runtime issues
-        pass
+        logging.warning("templates.cache_clear_failed", exc_info=True)
 
 
 def generate_template_key(prefix: str = "tmpl") -> str:

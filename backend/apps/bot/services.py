@@ -4175,7 +4175,11 @@ async def finalize_test1(user_id: int) -> None:
         with open(fname, "w", encoding="utf-8") as f:
             f.write(report_content)
     except Exception:
-        pass
+        logger.warning(
+            "test1.report_write_failed",
+            extra={"user_id": user_id, "filename": str(fname)},
+            exc_info=True,
+        )
 
     if not state.get("t1_notified"):
         shared = await _share_test1_with_recruiters(user_id, state, fname)
@@ -5117,7 +5121,11 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
                         return st, None
                     await state_manager.atomic_update(user_id, _mark_test1_shared)
             except Exception:
-                pass
+                logger.warning(
+                    "bot.send_document_failed",
+                    extra={"recruiter_id": rec.id if rec else None, "slot_id": slot.id},
+                    exc_info=True,
+                )
             break
 
     if rec and rec.tg_chat_id and not attached:
@@ -5126,7 +5134,11 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
                 rec.tg_chat_id, caption, reply_markup=kb_approve(slot.id)
             )
         except Exception:
-            pass
+            logger.warning(
+                "bot.send_message_to_recruiter_failed",
+                extra={"recruiter_id": rec.id if rec else None, "slot_id": slot.id},
+                exc_info=True,
+            )
     elif not rec or not rec.tg_chat_id:
         await bot.send_message(
             user_id,
@@ -5740,7 +5752,11 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
                 f"{fmt_dt_local(slot.start_utc, rec.tz or DEFAULT_TZ)}. Слот освобождён.",
             )
         except Exception:
-            pass
+            logger.warning(
+                "bot.slot_rejection_notify_failed",
+                extra={"recruiter_id": rec.id, "slot_id": slot.id},
+                exc_info=True,
+            )
 
     st = await get_state_manager().get(callback.from_user.id) or {}
     prompt = await templates.tpl(

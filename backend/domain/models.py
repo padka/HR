@@ -278,6 +278,11 @@ def enforce_slot_transition(current: Optional[str], target: str) -> str:
 
 class Slot(Base):
     __tablename__ = "slots"
+    __table_args__ = (
+        Index("ix_slots_status", "status"),
+        Index("ix_slots_recruiter_start", "recruiter_id", "start_utc"),
+        Index("ix_slots_candidate_id", "candidate_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     recruiter_id: Mapped[int] = mapped_column(ForeignKey("recruiters.id", ondelete="CASCADE"))

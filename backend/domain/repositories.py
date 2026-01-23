@@ -780,6 +780,10 @@ async def claim_outbox_batch(
     stale_before = now - lock_timeout
     async with async_session() as session:
         async with session.begin():
+            # Use with_for_update(skip_locked=True) to prevent race conditions
+            # between multiple workers claiming the same notifications.
+            # skip_locked=True ensures we skip rows already locked by other transactions
+            # rather than waiting for them.
             rows = (
                 await session.execute(
                     select(OutboxNotification)
@@ -796,6 +800,7 @@ async def claim_outbox_batch(
                     )
                     .order_by(OutboxNotification.id.asc())
                     .limit(batch_size)
+                    .with_for_update(skip_locked=True)
                 )
             ).scalars().all()
 

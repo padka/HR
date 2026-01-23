@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
         try:
             await disconnect_cache()
         except Exception:
-            pass
+            logger.debug("admin_api.cache_disconnect_error", exc_info=True)
 
 
 def create_app() -> FastAPI:

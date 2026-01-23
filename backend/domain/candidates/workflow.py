@@ -151,11 +151,110 @@ class CandidateWorkflowService:
         return self.describe(candidate)
 
 
+@dataclass
+class UnifiedStatus:
+    """Unified status for UI display."""
+
+    status: WorkflowStatus
+    label: str
+    badge_class: str  # CSS class for styling
+
+
+# Human-readable labels for workflow statuses
+WORKFLOW_STATUS_LABELS: Dict[WorkflowStatus, str] = {
+    WorkflowStatus.WAITING_FOR_SLOT: "Ожидает слот",
+    WorkflowStatus.INTERVIEW_SCHEDULED: "Интервью назначено",
+    WorkflowStatus.INTERVIEW_CONFIRMED: "Интервью подтверждено",
+    WorkflowStatus.INTERVIEW_COMPLETED: "Интервью завершено",
+    WorkflowStatus.TEST_SENT: "Тест отправлен",
+    WorkflowStatus.ONBOARDING_DAY_SCHEDULED: "ОД назначен",
+    WorkflowStatus.ONBOARDING_DAY_CONFIRMED: "ОД подтверждён",
+    WorkflowStatus.REJECTED: "Отклонён",
+}
+
+
+# CSS badge classes for status display
+WORKFLOW_STATUS_BADGES: Dict[WorkflowStatus, str] = {
+    WorkflowStatus.WAITING_FOR_SLOT: "badge-warning",
+    WorkflowStatus.INTERVIEW_SCHEDULED: "badge-info",
+    WorkflowStatus.INTERVIEW_CONFIRMED: "badge-primary",
+    WorkflowStatus.INTERVIEW_COMPLETED: "badge-success",
+    WorkflowStatus.TEST_SENT: "badge-info",
+    WorkflowStatus.ONBOARDING_DAY_SCHEDULED: "badge-primary",
+    WorkflowStatus.ONBOARDING_DAY_CONFIRMED: "badge-success",
+    WorkflowStatus.REJECTED: "badge-danger",
+}
+
+
+# Legacy candidate_status to workflow_status mapping
+LEGACY_STATUS_MAPPING: Dict[str, WorkflowStatus] = {
+    "waiting_slot": WorkflowStatus.WAITING_FOR_SLOT,
+    "stalled_waiting_slot": WorkflowStatus.WAITING_FOR_SLOT,
+    "interview_scheduled": WorkflowStatus.INTERVIEW_SCHEDULED,
+    "interview_confirmed": WorkflowStatus.INTERVIEW_CONFIRMED,
+    "interview_declined": WorkflowStatus.REJECTED,
+    "test2_sent": WorkflowStatus.TEST_SENT,
+    "test2_completed": WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
+    "test2_failed": WorkflowStatus.REJECTED,
+    "intro_day_scheduled": WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+    "intro_day_confirmed_preliminary": WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+    "intro_day_declined_invitation": WorkflowStatus.REJECTED,
+    "intro_day_declined_day_of": WorkflowStatus.REJECTED,
+    "hired": WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+    "not_hired": WorkflowStatus.REJECTED,
+}
+
+
+def unified_status(candidate: User) -> UnifiedStatus:
+    """Get unified status for a candidate, preferring workflow_status over legacy.
+
+    This is the single source of truth for status display in UI.
+    Falls back to mapping from legacy candidate_status if workflow_status is not set.
+    """
+    # Try workflow_status first (new system)
+    raw_workflow = getattr(candidate, "workflow_status", None)
+    if raw_workflow:
+        try:
+            status = WorkflowStatus(raw_workflow)
+            return UnifiedStatus(
+                status=status,
+                label=WORKFLOW_STATUS_LABELS.get(status, raw_workflow),
+                badge_class=WORKFLOW_STATUS_BADGES.get(status, "badge-secondary"),
+            )
+        except ValueError:
+            pass
+
+    # Fall back to legacy candidate_status
+    legacy = getattr(candidate, "candidate_status", None)
+    if legacy:
+        legacy_value = legacy.value if hasattr(legacy, "value") else str(legacy).lower()
+        mapped = LEGACY_STATUS_MAPPING.get(legacy_value)
+        if mapped:
+            return UnifiedStatus(
+                status=mapped,
+                label=WORKFLOW_STATUS_LABELS.get(mapped, legacy_value),
+                badge_class=WORKFLOW_STATUS_BADGES.get(mapped, "badge-secondary"),
+            )
+
+    # Default status
+    default = WorkflowStatus.WAITING_FOR_SLOT
+    return UnifiedStatus(
+        status=default,
+        label=WORKFLOW_STATUS_LABELS[default],
+        badge_class=WORKFLOW_STATUS_BADGES[default],
+    )
+
+
 __all__ = [
-    "WorkflowStatus",
-    "WorkflowAction",
-    "TRANSITIONS",
-    "CandidateWorkflowService",
     "CandidateStateDTO",
+    "CandidateWorkflowService",
+    "LEGACY_STATUS_MAPPING",
+    "TRANSITIONS",
+    "unified_status",
+    "UnifiedStatus",
+    "WorkflowAction",
     "WorkflowConflict",
+    "WorkflowStatus",
+    "WORKFLOW_STATUS_BADGES",
+    "WORKFLOW_STATUS_LABELS",
 ]

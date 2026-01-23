@@ -10,6 +10,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, HTMLResponse, JSONResponse
 
+from backend.core.logging import set_request_id, reset_request_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -91,12 +93,15 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # Store in request state for use in logging/error reporting
         request.state.request_id = request_id
 
-        response: Response = await call_next(request)
-
-        # Add to response headers
-        response.headers[self.HEADER_NAME] = request_id
-
-        return response
+        # Set context variable for automatic inclusion in all logs
+        token = set_request_id(request_id)
+        try:
+            response: Response = await call_next(request)
+            # Add to response headers
+            response.headers[self.HEADER_NAME] = request_id
+            return response
+        finally:
+            reset_request_id(token)
 
 
 __all__ = ["SecureHeadersMiddleware", "DegradedDatabaseMiddleware", "RequestIDMiddleware"]

@@ -19,6 +19,8 @@ from backend.core.redis_factory import parse_redis_target
 
 from .config import State
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T")
 Mutator = Callable[[State], Tuple[State, T]]
 
@@ -298,7 +300,7 @@ class RedisStateStore(StateStore):
             else:  # pragma: no branch - backwards compatibility path
                 await self._redis.close()
         except Exception:
-            pass
+            logger.debug("state_store.close_error", exc_info=True)
 
 
 class StateManager:

@@ -106,7 +106,7 @@ async def _notification_health_watcher(
             try:
                 await service.detach_broker()
             except Exception:
-                pass
+                logger.debug("state.broker_detach_error", exc_info=True)
             integration.notification_broker = None
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, NOTIFICATION_RETRY_MAX)
