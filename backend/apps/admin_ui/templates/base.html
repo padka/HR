@@ -258,14 +258,32 @@
     opacity: .9;
   }
 
+  :root {
+    --toolbar-height: 58px;
+    --tabs-height: 40px;
+    --toolbar-radius: 15px;
+    --toolbar-blur: 18px;
+    --toolbar-bg: rgba(18, 26, 40, 0.62);
+    --toolbar-border: rgba(255, 255, 255, 0.14);
+    --toolbar-glow: 0 16px 42px rgba(0, 0, 0, 0.12);
+    --toolbar-sheen: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,0));
+    --toolbar-backplate: linear-gradient(180deg, rgba(0,0,0,.12), rgba(255,255,255,.02));
+  }
+
+  html[data-theme="light"] {
+    --toolbar-bg: rgba(245, 248, 255, 0.82);
+    --toolbar-border: rgba(12, 22, 48, 0.10);
+    --toolbar-glow: 0 12px 32px rgba(0, 0, 0, 0.06);
+  }
+
   .app-header {
     position: sticky;
     top: 0;
     z-index: 30;
-    padding: 12px 16px 14px;
-    background: linear-gradient(180deg, rgba(0,0,0,.22), transparent 70%);
-    transition: transform .35s var(--transition-soft), opacity .35s ease;
-    will-change: transform;
+    padding: 8px 14px 12px;
+    background: linear-gradient(180deg, rgba(0,0,0,.16), transparent 70%);
+    transition: transform .25s ease, opacity .25s ease;
+    backdrop-filter: blur(6px);
   }
 
   .app-header.is-hidden {
@@ -274,491 +292,259 @@
     pointer-events: none;
   }
 
-  html[data-theme="light"] .app-header {
-    background: linear-gradient(180deg, rgba(246,247,251,.92), rgba(246,247,251,0));
+  .app-header.is-shrunk {
+    padding-top: 4px;
+    padding-bottom: 8px;
+  }
+  .app-header.is-shrunk .toolbar {
+    height: 52px;
+    padding: 8px 11px;
+  }
+  .app-header.is-shrunk .toolbar-tabs {
+    height: 36px;
   }
 
-  .app-header__inner {
-    max-width: min(1120px, 100%);
+  .app-header__shell {
+    max-width: min(1280px, 100%);
     margin: 0 auto;
-    display: grid;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
     gap: 12px;
-  }
+    height: var(--toolbar-height);
+    padding: 9px 12px;
+    border-radius: var(--toolbar-radius);
+    border: 1px solid var(--toolbar-border);
+    background:
+      var(--toolbar-sheen),
+      var(--toolbar-backplate),
+      var(--toolbar-bg);
+    box-shadow: var(--toolbar-glow), inset 0 1px 0 rgba(255,255,255,0.16);
+    backdrop-filter: blur(var(--toolbar-blur)) saturate(1.2) brightness(1.02);
+    -webkit-backdrop-filter: blur(var(--toolbar-blur)) saturate(1.2) brightness(1.02);
+    }
 
-  .app-header__bar {
-    display: flex;
+  .toolbar__brand {
+    display: inline-flex;
     align-items: center;
-    gap: 14px;
-    padding: 10px 14px;
-    border-radius: 20px;
-    border: 1px solid var(--outline-strong);
-    background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
-    box-shadow: var(--shadow-2), var(--glow-soft);
-    position: relative;
-    overflow: hidden;
-  }
-
-  .app-header__bar > * {
-    position: relative;
-    z-index: 1;
-  }
-
-  .app-header__brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    gap: 8px;
     text-decoration: none;
-    color: var(--fg-strong);
-    font-weight: 800;
+    color: var(--fg);
+    min-width: 120px;
   }
 
-  .app-header__brand-icon {
-    width: 34px;
-    height: 34px;
+  .toolbar__brand-icon {
+    width: 32px;
+    height: 32px;
     border-radius: 12px;
     display: grid;
     place-items: center;
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
     color: #fff;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 800;
-    box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 30%, transparent);
+    box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 28%, transparent);
   }
 
-  .app-header__brand-text {
+  .toolbar__brand-text {
     display: flex;
     flex-direction: column;
     line-height: 1.1;
   }
 
-  .app-header__brand-title {
-    font-size: 15px;
-    letter-spacing: -0.01em;
-  }
+  .toolbar__brand-title { font-size: 15px; letter-spacing: -0.01em; font-weight: 700; }
+  .toolbar__brand-subtitle { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
 
-  .app-header__brand-subtitle {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: var(--muted);
-  }
-
-  .app-header__search {
-    flex: 1;
-    max-width: 520px;
-    min-width: 220px;
+  .toolbar__search {
     position: relative;
+    flex: 1 1 auto;
+    min-width: 220px;
+    max-width: 620px;
+    display: flex;
+    align-items: center;
   }
 
-  .app-header__search-input {
+  .toolbar__search-input {
     width: 100%;
-    padding: 10px 14px 10px 40px;
-    border-radius: 999px;
-    border: 1px solid var(--field-border);
-    background: var(--field-bg);
+    height: 40px;
+    padding: 9px 42px 9px 40px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--field-border) 70%, transparent);
+    background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
     color: var(--fg);
     font-size: 13px;
-    transition: all .2s ease;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+    transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
   }
 
-  .app-header__search-input::placeholder {
-    color: var(--muted);
-  }
+  .toolbar__search-input::placeholder { color: var(--muted); }
 
-  .app-header__search-input:focus {
+  .toolbar__search-input:focus {
     outline: none;
-    border-color: color-mix(in srgb, var(--accent) 55%, var(--field-border));
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-    background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--field-border));
+    box-shadow: 0 0 0 2px rgba(93,113,255,0.28), inset 0 1px 0 rgba(255,255,255,0.18);
+    background: color-mix(in srgb, var(--surface-raised) 96%, transparent);
   }
 
-  .app-header__search-icon {
+  .toolbar__search-icon {
     position: absolute;
-    left: 14px;
+    left: 12px;
     top: 50%;
     transform: translateY(-50%);
     color: var(--muted);
-    font-size: 14px;
+    font-size: 15px;
     pointer-events: none;
   }
 
-  .app-header__actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .app-header__actions .btn:not(.theme-toggle) {
-    min-height: 36px;
-    padding: 6px 12px;
-    font-size: 12px;
-  }
-
-  .app-header__actions .btn.btn--sm:not(.theme-toggle),
-  .app-header__actions .btn.btn-sm:not(.theme-toggle) {
-    min-height: 34px;
-    padding: 5px 12px;
-  }
-
-  .app-header__actions .btn-ghost {
-    background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
-  }
-
-  .app-header__actions .btn-ghost:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-
-  .app-header__menu-toggle {
-    margin-right: 2px;
-  }
-
-  .app-header__inner .nav {
-    width: 100%;
-    max-width: 100%;
-    margin: 0;
-  }
-
-  @media (max-width: 1100px) {
-    .app-header__bar {
-      flex-wrap: wrap;
-    }
-
-    .app-header__search {
-      order: 3;
-      width: 100%;
-      max-width: none;
-    }
-
-    .app-header__actions {
-      margin-left: auto;
-    }
-  }
-
-  @media (max-width: 720px) {
-    .app-header__bar {
-      gap: 10px;
-    }
-
-    .app-header__brand-text {
-      display: none;
-    }
-
-    .nav__menu-label {
-      display: none;
-    }
-
-    .app-header__actions .btn-ghost {
-      display: none;
-    }
-
-    .app-header__search-input {
-      padding-left: 36px;
-    }
-  }
-
-  .nav {
-    position: relative;
-    max-width: min(1120px, 100%);
-    margin: clamp(6px, 1.6vw, 12px) auto 0;
-    padding: clamp(8px, 1.4vw, 12px);
-    display: grid;
-    gap: clamp(4px, 1vw, 8px);
-    border-radius: 14px;
-    border: 1px solid var(--outline-strong);
-    background: linear-gradient(180deg,
-      color-mix(in srgb, var(--surface-raised) 92%, rgba(255,255,255,.02)),
-      color-mix(in srgb, var(--surface) 88%, transparent));
-    box-shadow: var(--shadow-2), var(--glow-soft);
-    isolation: isolate;
-    transition: all .35s cubic-bezier(0.4, 0, 0.2, 1);
-    animation: navSlideIn 0.6s cubic-bezier(0.4, 0, 0.2, 1) both;
-  }
-
-  @keyframes navSlideIn {
-    from {
-      opacity: 0;
-      transform: translateY(-20px);
-      filter: blur(4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-      filter: blur(0);
-    }
-  }
-
-  .nav:hover {
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--outline-strong));
-    box-shadow: var(--shadow-3), var(--glow-strong);
-  }
-
-  @supports ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {
-    .nav {
-      backdrop-filter: blur(26px) saturate(1.35);
-      -webkit-backdrop-filter: blur(26px) saturate(1.35);
-    }
-  }
-
-  .nav::before,
-  .nav::after {
-    content: "";
+  .toolbar__search-spinner,
+  .toolbar__search-status {
     position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 13px;
+    color: var(--muted);
   }
 
-  .nav::before {
-    background:
-      linear-gradient(145deg, rgba(255,255,255,.24), transparent 55%),
-      radial-gradient(40% 80% at 0% 100%, rgba(105,183,255,.35), transparent 70%);
-    mix-blend-mode: screen;
-    opacity: .6;
+  .toolbar__search[data-state="error"] .toolbar__search-input {
+    border-color: color-mix(in srgb, var(--bad) 55%, var(--field-border));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad) 24%, transparent);
   }
 
-  .nav::after {
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.45);
-  }
-
-  .nav__top {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-  }
-
-  .nav__row {
-    display: flex;
-    gap: clamp(8px, 1vw, 12px);
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    width: 100%;
-  }
-
-  .nav__row--links {
-    width: 100%;
-    justify-content: center;
-    gap: clamp(6px, 1vw, 10px);
-  }
-
-  .nav__section {
-    display: flex;
-    align-items: center;
-    gap: clamp(8px, 1vw, 12px);
-    flex-wrap: wrap;
-  }
-
-  .nav__section--primary {
-    justify-content: center;
-    padding: clamp(6px, 1vw, 8px);
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
-    background: linear-gradient(145deg,
-      color-mix(in srgb, var(--surface-raised) 88%, transparent),
-      color-mix(in srgb, var(--surface) 82%, transparent));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.06), var(--shadow-1);
-  }
-
-  .nav .brand {
-    font-weight: 800;
-    letter-spacing: .2px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    text-shadow: none;
-    font-size: 19px;
-    transition: all .3s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    display: inline-block;
-  }
-
-  .nav .brand::after {
-    content: '';
-    position: absolute;
-    bottom: -2px;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
-    transform: scaleX(0);
-    transform-origin: left;
-    transition: transform .3s cubic-bezier(0.4, 0, 0.2, 1);
-    border-radius: 2px;
-  }
-
-  .nav .brand:hover::after {
-    transform: scaleX(1);
-  }
-
-  .nav .brand:hover {
-    transform: translateY(-1px);
-    filter: brightness(1.15);
-  }
-
-  .nav__menu-toggle {
-    display: none;
+  .toolbar__actions {
+    display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
-    border-radius: 16px;
-    border: 1px solid color-mix(in srgb, var(--glass-stroke) 70%, transparent);
-    background: linear-gradient(145deg, color-mix(in srgb, var(--btn-bg) 90%, transparent), color-mix(in srgb, var(--btn-bg-hover) 70%, transparent));
-    color: inherit;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-    transition: border-color .2s ease, background .2s ease, transform .2s ease, box-shadow .2s ease;
   }
 
-  .nav__menu-toggle:hover {
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--glass-stroke));
-    background: color-mix(in srgb, var(--btn-bg-hover) 85%, transparent);
-    transform: translateY(-1px) scale(1.01);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-  }
-
-  .nav__menu-icon {
-    display: inline-flex;
-    flex-direction: column;
-    gap: 4px;
-    position: relative;
-  }
-
-  .nav__menu-icon span {
-    width: 18px;
-    height: 2px;
-    border-radius: 999px;
-    background: currentColor;
-    transition: transform .25s ease, opacity .25s ease, width .25s ease, box-shadow .2s ease;
-    box-shadow: 0 0 0 rgba(255,255,255,0.35);
-  }
-
-  .nav__menu-label {
+  .toolbar__actions .btn {
+    min-height: 40px;
+    padding: 8px 14px;
     font-size: 13px;
-    letter-spacing: .06em;
-    text-transform: uppercase;
   }
 
-  .nav[data-mobile-open="true"] .nav__menu-icon span:nth-child(1) {
-    transform: translateY(6px) rotate(45deg);
-    width: 18px;
-  }
+  .toolbar__slots { min-width: 72px; }
 
-  .nav[data-mobile-open="true"] .nav__menu-icon span:nth-child(2) {
-    opacity: 0;
-    width: 18px;
-  }
-
-  .nav[data-mobile-open="true"] .nav__menu-icon span:nth-child(3) {
-    transform: translateY(-6px) rotate(-45deg);
-    width: 18px;
-  }
-
-  .nav a {
-    color: var(--fg);
-    opacity: .9;
-    padding: 9px 11px;
+  .toolbar__more {
+    display: none;
+    width: 36px;
+    height: 36px;
     border-radius: 12px;
-    transition: all .22s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 1px solid var(--toolbar-border);
+    background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+    color: var(--fg);
+    font-size: 18px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .toolbar-tabs {
+    height: var(--tabs-height);
+    border-radius: 14px;
+    border: 1px solid var(--toolbar-border);
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,0)),
+      color-mix(in srgb, var(--toolbar-bg) 92%, transparent);
+    box-shadow: var(--toolbar-glow), inset 0 1px 0 rgba(255,255,255,0.12);
+    overflow: hidden;
     position: relative;
+  }
+
+  .tabs-scroll {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 4px 8px;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+  }
+  .tabs-scroll::-webkit-scrollbar { display: none; }
+
+  .tab {
     display: inline-flex;
-    flex-direction: row;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    min-height: 48px;
+    min-height: 40px;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    color: var(--fg);
     font-size: 13px;
     font-weight: 600;
-    letter-spacing: -0.01em;
-    overflow: hidden;
-    text-align: center;
-    backdrop-filter: blur(6px);
+    text-decoration: none;
+    transition: background .16s ease, border-color .16s ease, color .16s ease;
   }
 
-  .nav a::before {
-    content: '';
+  .tab:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .tab:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(93,113,255,0.28);
+  }
+  .tab.active {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+    color: color-mix(in srgb, var(--accent) 90%, var(--fg));
+    position: relative;
+  }
+  .tab.active::after {
+    content: "";
     position: absolute;
-    inset: 0;
-    background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
-    opacity: 0;
-    transition: opacity .2s ease;
-    border-radius: inherit;
-    filter: blur(10px);
+    inset: 4px;
+    border-radius: 10px;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+                0 8px 20px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .tab[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+
+  @media (max-width: 1279px) {
+    .toolbar { gap: 10px; }
+    .toolbar__search { max-width: 520px; }
+    .toolbar__actions .btn-ghost.toolbar__slots { padding: 8px 10px; min-width: 48px; }
   }
 
-  .nav a::after {
-    content: '';
-    position: absolute;
-    bottom: 6px;
-    left: 50%;
-    width: 0;
-    height: 2px;
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
-    transform: translateX(-50%);
-    transition: width .25s cubic-bezier(0.4, 0, 0.2, 1);
-    border-radius: 999px;
+  @media (max-width: 960px) {
+    .toolbar {
+      height: 56px;
+      padding: 8px 12px;
+    }
+    .toolbar__brand-text { display: none; }
+    .toolbar__search { max-width: none; }
+    .toolbar__actions .btn-ghost.toolbar__slots { display: none; }
+    .toolbar__more { display: inline-flex; }
+    .tabs-scroll { gap: 4px; }
   }
 
-  .nav a:hover {
-    opacity: 1;
-    color: var(--fg-strong);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    transform: translateY(-1px) scale(1.01);
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 18%, transparent);
-  }
-
-  .nav a:hover::before {
-    opacity: 0.45;
-  }
-
-  .nav a:hover::after {
-    width: 70%;
-  }
-
-  .nav a:active {
-    transform: translateY(0) scale(0.98);
-    transition: transform .1s ease;
-  }
-
-  .nav a.active {
-    color: var(--accent);
-    font-weight: 700;
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.16),
-      0 4px 14px color-mix(in srgb, var(--accent) 22%, transparent);
-  }
-
-  .nav a.active::before {
-    opacity: 0.55;
-  }
-
-  .nav a.active::after {
-    width: 80%;
-  }
-
-  .nav__link-icon {
-    font-size: 17px;
-    line-height: 1;
-    opacity: 0.88;
-    transition: opacity .2s ease, transform .2s ease;
-  }
-
-  .nav a:hover .nav__link-icon,
-  .nav a.active .nav__link-icon {
-    opacity: 1;
-    transform: scale(1.08);
-  }
-
-  .mobile-backdrop {
-    display: none;
-  }
-
-  .nav__meta {
-    margin-left: auto;
-    gap: 10px;
+  @media (max-width: 767px) {
+    .app-header { padding: 8px 12px 10px; }
+    .toolbar { gap: 8px; }
+    .toolbar__search { flex: 1; }
+    .toolbar__actions .btn.btn-primary { padding: 0 12px; min-width: 40px; }
+    .toolbar-tabs {
+      position: fixed;
+      left: 10px;
+      right: 10px;
+      bottom: max(10px, env(safe-area-inset-bottom));
+      height: 56px;
+      border-radius: 14px;
+      padding: 0;
+      z-index: 35;
+    }
+    .tabs-scroll {
+      gap: 4px;
+      padding: 6px 8px;
+      mask-image: none;
+    }
+    body {
+      padding-bottom: 76px;
+    }
   }
 
 
@@ -1504,84 +1290,51 @@
   <a href="#main" class="skip-link">Перейти к содержимому</a>
   <div aria-hidden="true" class="halo"></div>
   <header class="app-header">
-    <div class="mobile-backdrop" data-mobile-backdrop></div>
-    <nav class="nav glass grain" role="navigation" data-mobile-nav data-mobile-open="false">
-      <div class="nav__row nav__row--top">
-        <button class="nav__menu-toggle app-header__menu-toggle" type="button" id="nav-menu-toggle" aria-label="Показать меню" aria-controls="primary-nav" aria-expanded="false">
-          <span class="nav__menu-icon" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
-          </span>
-          <span class="nav__menu-label">Меню</span>
-        </button>
-        <a class="app-header__brand" href="/">
-          <span class="app-header__brand-icon" aria-hidden="true">RS</span>
-          <span class="app-header__brand-text">
-            <span class="app-header__brand-title">RecruitSmart</span>
-            <span class="app-header__brand-subtitle">Админ панель</span>
+    <div class="app-header__shell">
+      <div class="toolbar glass">
+        <a class="toolbar__brand" href="/">
+          <span class="toolbar__brand-icon" aria-hidden="true">RS</span>
+          <span class="toolbar__brand-text">
+            <span class="toolbar__brand-title">RecruitSmart</span>
+            <span class="toolbar__brand-subtitle">Админ панель</span>
           </span>
         </a>
-        <form class="app-header__search" action="/candidates" method="get" role="search">
-          <span class="app-header__search-icon" aria-hidden="true">🔎</span>
+        <form class="toolbar__search" action="/candidates" method="get" role="search">
+          <span class="toolbar__search-icon" aria-hidden="true">🔍</span>
           <input
             id="globalSearch"
-            class="app-header__search-input"
+            class="toolbar__search-input"
             type="search"
             name="search"
-            placeholder="Поиск кандидата"
+            placeholder="Поиск кандидата…"
             aria-label="Поиск кандидата по имени, городу или TG"
             value="{{ request.query_params.get('search', '') if request.url.path.startswith('/candidates') else '' }}"
             autocomplete="off"
           >
+          <span class="toolbar__search-status" aria-hidden="true"></span>
         </form>
-        <div class="app-header__actions">
+        <div class="toolbar__actions">
           <a class="btn btn-primary btn--sm" href="/candidates/new">+ Кандидат</a>
-          <a class="btn btn-ghost btn--sm" href="/slots">Слоты</a>
+          <a class="btn btn-ghost btn--sm toolbar__slots" href="/slots">Слоты</a>
           <button id="theme-toggle" class="btn theme-toggle" type="button" data-theme-toggle aria-label="Переключить тему" aria-pressed="true">
             <span class="theme-toggle__icon" aria-hidden="true">🌙</span>
           </button>
+          <button class="toolbar__more" type="button" aria-label="Дополнительные действия">⋯</button>
         </div>
       </div>
-      <div class="nav__row nav__row--links">
-        {% block nav %}
-        <div class="nav__section nav__section--primary" id="primary-nav">
-          <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
-            <span class="nav__link-icon" aria-hidden="true">📊</span>
-            <span>Дашборд</span>
-          </a>
-          <a href="/recruiters" class="{% if request.url.path.startswith('/recruiters') %}active{% endif %}">
-            <span class="nav__link-icon" aria-hidden="true">👥</span>
-            <span>Рекрутёры</span>
-          </a>
-          <a href="/cities" class="{% if request.url.path.startswith('/cities') %}active{% endif %}">
-            <span class="nav__link-icon" aria-hidden="true">🌆</span>
-            <span>Города</span>
-          </a>
-          <a href="/slots" class="{% if request.url.path.startswith('/slots') %}active{% endif %}">
-            <span class="nav__link-icon" aria-hidden="true">📅</span>
-            <span>Слоты</span>
-          </a>
-          <a href="/candidates" class="{% if request.url.path.startswith('/candidates') and not request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
-            <span class="nav__link-icon" aria-hidden="true">👤</span>
-            <span>Кандидаты</span>
-          </a>
-          <a href="/candidates/detailization" class="{% if request.url.path.startswith('/candidates/detailization') %}active{% endif %}">
-            <span class="nav__link-icon" aria-hidden="true">📋</span>
-            <span>Детализация</span>
-          </a>
-          <a href="/templates" class="{% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}">
-            <span class="nav__link-icon" aria-hidden="true">💬</span>
-            <span>Шаблоны</span>
-          </a>
-          <a href="/questions" class="{% if request.url.path.startswith('/questions') %}active{% endif %}">
-            <span class="nav__link-icon" aria-hidden="true">❓</span>
-            <span>Вопросы</span>
-          </a>
+      <nav class="toolbar-tabs" aria-label="Разделы">
+        <div class="tabs-scroll">
+          <a href="/" class="tab {% if request.url.path == '/' %}active{% endif %}">Дашборд</a>
+          <a href="/recruiters" class="tab {% if request.url.path.startswith('/recruiters') %}active{% endif %}">Рекрутёры</a>
+          <a href="/cities" class="tab {% if request.url.path.startswith('/cities') %}active{% endif %}">Города</a>
+          <a href="/slots" class="tab {% if request.url.path.startswith('/slots') %}active{% endif %}">Слоты</a>
+          <a href="/candidates" class="tab {% if request.url.path.startswith('/candidates') and not request.url.path.startswith('/candidates/detailization') %}active{% endif %}">Кандидаты</a>
+          <a href="/candidates/detailization" class="tab {% if request.url.path.startswith('/candidates/detailization') %}active{% endif %}">Детализация</a>
+          <a href="/templates" class="tab {% if request.url.path.startswith('/templates') or request.url.path.startswith('/message-templates') %}active{% endif %}">Шаблоны</a>
+          <a href="/questions" class="tab {% if request.url.path.startswith('/questions') %}active{% endif %}">Вопросы</a>
         </div>
-        {% endblock nav %}
-      </div>
-    </nav>
+      </nav>
+    </div>
   </header>
 
   <main id="main" class="container">
@@ -1751,44 +1504,24 @@
     syncNavForViewport();
 
     const headerEl = document.querySelector('.app-header');
-    let lastScrollY = window.scrollY || 0;
-    let headerHidden = false;
     let scrollTicking = false;
 
-    function shouldKeepHeaderVisible() {
-      return !headerEl
-        || (mobileMedia.matches && nav?.dataset.mobileOpen === 'true')
-        || (window.scrollY || 0) < 80;
-    }
-
-    function updateHeaderVisibility() {
+    function updateHeaderState() {
       if (!headerEl) { return; }
       const current = window.scrollY || 0;
-      if (shouldKeepHeaderVisible()) {
-        headerEl.classList.remove('is-hidden');
-        headerHidden = false;
-        lastScrollY = current;
-        return;
-      }
-      if (current > lastScrollY && !headerHidden) {
-        headerEl.classList.add('is-hidden');
-        headerHidden = true;
-      } else if (current < lastScrollY && headerHidden) {
-        headerEl.classList.remove('is-hidden');
-        headerHidden = false;
-      }
-      lastScrollY = current <= 0 ? 0 : current;
+      const shouldShrink = current > 80;
+      headerEl.classList.toggle('is-shrunk', shouldShrink);
     }
 
     window.addEventListener('scroll', () => {
       if (scrollTicking) { return; }
       scrollTicking = true;
       requestAnimationFrame(() => {
-        updateHeaderVisibility();
+        updateHeaderState();
         scrollTicking = false;
       });
     }, { passive: true });
-    updateHeaderVisibility();
+    updateHeaderState();
 
     if (!reduceMotion) {
       const tiltTargets = Array.from(document.querySelectorAll('[data-tilt]'));

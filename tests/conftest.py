@@ -2,6 +2,8 @@ import asyncio
 import importlib
 import os
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -10,6 +12,14 @@ try:
     import uvloop  # type: ignore
 except Exception:  # pragma: no cover - uvloop optional in CI images
     uvloop = None  # type: ignore
+
+# Ensure test-safe defaults before any project modules import settings/db
+if "DATABASE_URL" not in os.environ:
+    _tmp = Path(tempfile.mkdtemp(prefix="rs-test-db-"))
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_tmp/'bot.db'}"
+    os.environ["DATA_DIR"] = str(_tmp)
+os.environ.setdefault("REDIS_URL", "")
+os.environ.setdefault("RATE_LIMIT_REDIS_URL", "")
 
 
 def _choose_event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
@@ -54,6 +64,9 @@ def configure_backend(tmp_path_factory):
         os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
         os.environ["DATA_DIR"] = str(db_dir)
     os.environ.pop("SQL_ECHO", None)
+    # Force in-memory state stores for tests to avoid external Redis flakiness
+    os.environ["REDIS_URL"] = ""
+    os.environ["RATE_LIMIT_REDIS_URL"] = ""
 
     from backend.core import settings as settings_module
 
@@ -90,7 +103,7 @@ def configure_backend(tmp_path_factory):
 @pytest.fixture(autouse=True)
 def clean_database():
     from backend.domain.base import Base
-    from backend.core.db import sync_engine
+    from backend.core.db import async_engine, sync_engine
 
     backend_name = sync_engine.url.get_backend_name()
     if backend_name == "postgresql":
@@ -103,6 +116,18 @@ def clean_database():
         Base.metadata.create_all(bind=sync_engine)
     else:
         import time
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(async_engine.dispose())
+        except Exception:
+            pass
+        sync_engine.dispose()
 
         for attempt in range(3):
             try:

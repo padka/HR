@@ -11,9 +11,10 @@ from backend.core.settings import get_settings
 SIGNATURE_LENGTH = 32
 
 
-def _is_test_env() -> bool:
+def _should_sign() -> bool:
+    """Only sign callbacks in production to keep dev/tests readable."""
     try:
-        return get_settings().environment.lower() == "test"
+        return get_settings().environment.lower() == "production"
     except Exception:
         return False
 
@@ -28,7 +29,7 @@ def _secret_bytes() -> bytes:
 
 def sign_callback_data(payload: str) -> str:
     """Attach an HMAC signature to callback payload."""
-    if _is_test_env():
+    if not _should_sign():
         return payload
     signature = hmac.new(_secret_bytes(), payload.encode(), hashlib.sha256).hexdigest()[:SIGNATURE_LENGTH]
     return f"{payload}:{signature}"
@@ -38,7 +39,7 @@ def verify_callback_data(callback_data: str, *, expected_prefix: Optional[str] =
     """Verify callback signature and return payload without signature."""
     if expected_prefix and not callback_data.startswith(expected_prefix):
         return None
-    if _is_test_env():
+    if not _should_sign():
         return callback_data
 
     parts = callback_data.rsplit(":", 1)

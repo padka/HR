@@ -25,11 +25,17 @@ const cardsContainer = document.querySelector('[data-view="cards"]');
 const cardsRoot = document.getElementById('slots_card_container');
 const cardEmpty = document.getElementById('slots_card_empty');
 let cards = cardsRoot ? Array.from(cardsRoot.querySelectorAll('.slot-card')) : [];
+const agendaContainer = document.querySelector('[data-view="agenda"]');
+const agendaRoot = document.getElementById('slots_agenda_container');
+const agendaEmpty = document.getElementById('slots_agenda_empty');
+let agendaItems = agendaRoot ? Array.from(agendaRoot.querySelectorAll('.slot-agenda')) : [];
 const tableContainer = document.querySelector('[data-view="table"]');
 const skeleton = document.getElementById('slots_skeleton');
 const errorBox = document.getElementById('slots_error');
 const selectAll = document.getElementById('slots_select_all');
 const viewToggleButtons = $$('[data-view-toggle]');
+const densityButtons = $$('[data-density-toggle]');
+const densityTarget = document.querySelector('[data-density-target]');
 const refreshButton = document.querySelector('[data-action="refresh-slots"]');
 const exportButton = document.querySelector('[data-action="export-slots"]');
 const retryButton = document.querySelector('[data-action="retry-load"]');
@@ -99,6 +105,7 @@ const state = {
   onlyFree: readFreeFlag() || Boolean(slotsContext?.only_free || initialFilters?.free_only),
   tokens: readInitialTokens(),
   view: readInitialView(),
+  density: readInitialDensity(),
   filters: {
     recruiter: String(initialFilters?.recruiter_id ?? '') || '',
     statuses: normalizeList(initialFilters?.statuses),
@@ -122,6 +129,7 @@ function init() {
   applyInitialRole();
   applyInitialFuture();
   applyInitialView();
+  applyInitialDensity();
   hydrateTokens();
   bindEvents();
   cardVirtualizer = setupCardVirtualization();
@@ -186,7 +194,13 @@ function readInitialRole() {
 function readInitialView() {
   const params = new URLSearchParams(window.location.search);
   const value = params.get('view');
-  return value === 'cards' ? 'cards' : 'table';
+  if (value === 'cards' || value === 'agenda') return value;
+  return 'table';
+}
+
+function readInitialDensity() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('density') === 'compact' ? 'compact' : 'comfortable';
 }
 
 function readFutureFlag() {
@@ -327,6 +341,17 @@ function bindEvents() {
     });
   });
 
+  densityButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.densityToggle === 'compact' ? 'compact' : 'comfortable';
+      if (next === state.density) return;
+      state.density = next;
+      applyDensity();
+      setDensityButtonState();
+      syncQueryState();
+    });
+  });
+
   if (searchInput) {
     searchInput.addEventListener('keydown', handleSearchKey);
     searchInput.addEventListener('blur', () => addTokenFromInput());
@@ -384,17 +409,13 @@ function bindEvents() {
         if (value) {
           purposeChips.forEach((chip) => {
             if (chip.dataset.filterPurpose === value) {
-              chip.classList.remove('border-accent', 'bg-accent/10', 'text-fg-primary');
-              chip.setAttribute('aria-pressed', 'false');
+              setChipActive(chip, false);
             }
           });
           const filtered = state.filters.purposes.filter((code) => code !== value);
           applyFilterSelection({ purposes: filtered });
         } else {
-          purposeChips.forEach((chip) => {
-            chip.classList.remove('border-accent', 'bg-accent/10', 'text-fg-primary');
-            chip.setAttribute('aria-pressed', 'false');
-          });
+          purposeChips.forEach((chip) => setChipActive(chip, false));
           applyFilterSelection({ purposes: [] });
         }
       } else if (key === 'date') {
@@ -501,6 +522,22 @@ function bindEvents() {
     });
   });
 
+  agendaItems.forEach((item) => {
+    item.addEventListener('click', (event) => {
+      if (event.target.closest('button') || event.target.closest('a')) {
+        return;
+      }
+      openSheetWithRow(item);
+    });
+    item.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        handleRowAction(item, btn.dataset.action, btn);
+      });
+    });
+  });
+
   if (bulkButtons.length) {
     bulkButtons.forEach((btn) => {
       btn.addEventListener('click', () => handleBulkAction(btn.dataset.bulkAction, btn));
@@ -553,6 +590,7 @@ function applyRole() {
   setRoleButtonState();
   rows.forEach((row) => updateTimeCells(row));
   cards.forEach((card) => updateTimeCells(card));
+  agendaItems.forEach((item) => updateTimeCells(item));
   syncQueryState();
 }
 
@@ -566,8 +604,13 @@ function applyInitialView() {
   switchView(state.view, { silent: true });
 }
 
+function applyInitialDensity() {
+  applyDensity();
+  setDensityButtonState();
+}
+
 function switchView(next, options = {}) {
-  const target = next === 'cards' ? 'cards' : 'table';
+  const target = next === 'cards' || next === 'agenda' ? next : 'table';
   state.view = target;
   if (tableContainer) {
     tableContainer.hidden = target !== 'table';
@@ -575,18 +618,44 @@ function switchView(next, options = {}) {
   if (cardsContainer) {
     cardsContainer.hidden = target !== 'cards';
   }
+  if (agendaContainer) {
+    agendaContainer.hidden = target !== 'agenda';
+  }
   viewToggleButtons.forEach((btn) => {
     const isActive = btn.dataset.viewToggle === target;
-    btn.classList.toggle('border-accent', isActive);
-    btn.classList.toggle('bg-accent/10', isActive);
-    btn.classList.toggle('text-fg-primary', isActive);
-    btn.classList.toggle('text-fg-muted', !isActive);
+    btn.classList.toggle('is-active', isActive);
     btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   });
   updateEmptyStates();
+  animateView(target);
   if (!options.silent) {
     syncQueryState();
   }
+}
+
+function applyDensity() {
+  if (!densityTarget) return;
+  densityTarget.dataset.density = state.density;
+}
+
+function setDensityButtonState() {
+  densityButtons.forEach((btn) => {
+    const isActive = btn.dataset.densityToggle === state.density;
+    btn.classList.toggle('is-active', isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+function animateView(target) {
+  let node = null;
+  if (target === 'table') node = tableContainer;
+  if (target === 'cards') node = cardsContainer;
+  if (target === 'agenda') node = agendaContainer;
+  if (!node) return;
+  node.classList.remove('is-entering');
+  void node.offsetWidth;
+  node.classList.add('is-entering');
+  window.setTimeout(() => node.classList.remove('is-entering'), 260);
 }
 
 function setupCardVirtualization() {
@@ -652,10 +721,7 @@ function disableCardVirtualization() {
 function setRoleButtonState() {
   roleSwitchButtons.forEach((btn) => {
     const isActive = btn.dataset.roleTarget === state.role;
-    btn.classList.toggle('border-accent', isActive);
-    btn.classList.toggle('bg-accent/10', isActive);
-    btn.classList.toggle('text-fg-primary', isActive);
-    btn.classList.toggle('text-fg-muted', !isActive);
+    btn.classList.toggle('is-active', isActive);
     btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   });
 }
@@ -744,13 +810,8 @@ function togglePurposeChip(chip) {
 }
 
 function setChipActive(chip, active) {
-  if (active) {
-    chip.classList.add('border-accent', 'bg-accent/10', 'text-fg-primary');
-    chip.setAttribute('aria-pressed', 'true');
-  } else {
-    chip.classList.remove('border-accent', 'bg-accent/10', 'text-fg-primary');
-    chip.setAttribute('aria-pressed', 'false');
-  }
+  chip.classList.toggle('is-active', active);
+  chip.setAttribute('aria-pressed', active ? 'true' : 'false');
 }
 
 function hydrateTokens() {
@@ -858,6 +919,16 @@ function updateSelectionUI() {
       }
     }
   }
+
+  rows.forEach((row) => {
+    row.classList.toggle('is-selected', state.selection.has(row.dataset.id));
+  });
+  cards.forEach((card) => {
+    card.classList.toggle('is-selected', state.selection.has(card.dataset.id));
+  });
+  agendaItems.forEach((item) => {
+    item.classList.toggle('is-selected', state.selection.has(item.dataset.id));
+  });
 }
 
 function applyFilters() {
@@ -875,6 +946,7 @@ function applyFilters() {
 
   let visibleRows = 0;
   let visibleCards = 0;
+  let visibleAgenda = 0;
   const tokens = state.tokens.map((token) => token.toLowerCase());
 
   const matchesFilters = (element) => {
@@ -933,11 +1005,23 @@ function applyFilters() {
     if (show && !virtHidden) {
       visibleCards += 1;
       updateTimeCells(card);
+      updateDeadline(card);
+    }
+  });
+
+  agendaItems.forEach((item) => {
+    const show = matchesFilters(item);
+    item.hidden = !show;
+    item.classList.toggle('is-hidden', !show);
+    if (show) {
+      visibleAgenda += 1;
+      updateTimeCells(item);
+      updateDeadline(item);
     }
   });
 
   updateCounts();
-  updateEmptyStates({ table: visibleRows, cards: visibleCards });
+  updateEmptyStates({ table: visibleRows, cards: visibleCards, agenda: visibleAgenda });
   updateSelectionUI();
 }
 
@@ -977,6 +1061,9 @@ function updateEmptyStates(counts = {}) {
   const cardCount = typeof counts.cards === 'number'
     ? counts.cards
     : cards.filter((card) => !card.hidden).length;
+  const agendaCount = typeof counts.agenda === 'number'
+    ? counts.agenda
+    : agendaItems.filter((item) => !item.hidden).length;
 
   if (tableEmpty) {
     const show = tableCount === 0;
@@ -987,6 +1074,11 @@ function updateEmptyStates(counts = {}) {
     const show = cardCount === 0;
     cardEmpty.hidden = !show;
     cardEmpty.setAttribute('aria-hidden', show ? 'false' : 'true');
+  }
+  if (agendaEmpty) {
+    const show = agendaCount === 0;
+    agendaEmpty.hidden = !show;
+    agendaEmpty.setAttribute('aria-hidden', show ? 'false' : 'true');
   }
 }
 
@@ -1037,6 +1129,8 @@ function scheduleRelativeUpdates() {
 
 function updateDeadlines() {
   rows.forEach((row) => updateDeadline(row));
+  cards.forEach((card) => updateDeadline(card));
+  agendaItems.forEach((item) => updateDeadline(item));
   if (currentRow && sheetRefs.rel) {
     const ts = Date.parse(currentRow.dataset.startIso || '');
     sheetRefs.rel.textContent = formatRelative(ts);
@@ -1148,8 +1242,10 @@ function applyFilterSelection(nextFilters = {}, options = {}) {
   else params.delete('free_only');
   if (state.role === 'candidate') params.set('role', 'candidate');
   else params.delete('role');
-  if (state.view === 'cards') params.set('view', 'cards');
+  if (state.view === 'cards' || state.view === 'agenda') params.set('view', state.view);
   else params.delete('view');
+  if (state.density === 'compact') params.set('density', 'compact');
+  else params.delete('density');
 
   params.delete('search');
   const tokens = options.resetTokens ? [] : state.tokens;
@@ -1188,8 +1284,10 @@ function syncQueryState() {
   else params.delete('free_only');
   if (state.role === 'candidate') params.set('role', 'candidate');
   else params.delete('role');
-  if (state.view === 'cards') params.set('view', 'cards');
+  if (state.view === 'cards' || state.view === 'agenda') params.set('view', state.view);
   else params.delete('view');
+  if (state.density === 'compact') params.set('density', 'compact');
+  else params.delete('density');
   params.delete('search');
   state.tokens.forEach((token) => params.append('search', token));
   const queryString = params.toString();
