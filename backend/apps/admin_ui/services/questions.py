@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.db import async_session
@@ -14,6 +14,8 @@ __all__ = [
     "list_test_questions",
     "get_test_question_detail",
     "update_test_question",
+    "create_test_question",
+    "clone_test_question",
 ]
 
 
@@ -163,3 +165,100 @@ async def update_test_question(
         pass
 
     return True, None
+
+
+async def create_test_question(
+    *,
+    title: str,
+    test_id: str,
+    question_index: Optional[int],
+    payload: str,
+    is_active: bool,
+) -> Tuple[bool, Optional[int], Optional[str]]:
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return False, None, "invalid_json"
+
+    if not isinstance(data, dict):
+        return False, None, "invalid_json"
+
+    clean_test_id = test_id.strip()
+    if not clean_test_id:
+        return False, None, "test_required"
+
+    resolved_index = question_index
+    if resolved_index is not None and resolved_index < 1:
+        return False, None, "index_required"
+
+    resolved_title = title.strip() or data.get("prompt") or data.get("text")
+
+    async with async_session() as session:
+        if resolved_index is None:
+            max_index = await session.scalar(
+                select(func.max(TestQuestion.question_index)).where(TestQuestion.test_id == clean_test_id)
+            )
+            resolved_index = (max_index or 0) + 1
+        if not resolved_title:
+            resolved_title = f"Вопрос {resolved_index}"
+
+        normalized_payload = json.dumps(data, ensure_ascii=False)
+        question = TestQuestion(
+            title=resolved_title,
+            test_id=clean_test_id,
+            question_index=resolved_index,
+            payload=normalized_payload,
+            is_active=is_active,
+            updated_at=datetime.now(timezone.utc),
+        )
+        session.add(question)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return False, None, "duplicate_index"
+
+    try:
+        from backend.apps.bot.config import refresh_questions_bank
+
+        refresh_questions_bank()
+    except Exception:
+        pass
+
+    return True, question.id, None
+
+
+async def clone_test_question(question_id: int) -> Tuple[bool, Optional[int], Optional[str]]:
+    async with async_session() as session:
+        original = await session.get(TestQuestion, question_id)
+        if not original:
+            return False, None, "not_found"
+
+        max_index = await session.scalar(
+            select(func.max(TestQuestion.question_index)).where(TestQuestion.test_id == original.test_id)
+        )
+        new_index = (max_index or 0) + 1
+        title = f"{original.title} (копия)"
+        clone = TestQuestion(
+            title=title,
+            test_id=original.test_id,
+            question_index=new_index,
+            payload=original.payload,
+            is_active=original.is_active,
+            updated_at=datetime.now(timezone.utc),
+        )
+        session.add(clone)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return False, None, "duplicate_index"
+
+    try:
+        from backend.apps.bot.config import refresh_questions_bank
+
+        refresh_questions_bank()
+    except Exception:
+        pass
+
+    return True, clone.id, None

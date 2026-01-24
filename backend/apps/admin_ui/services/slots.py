@@ -47,6 +47,7 @@ from backend.apps.admin_ui.utils import (
 from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
+from backend.apps.admin_ui.security import principal_ctx, Principal
 from backend.domain import analytics
 from backend.domain.models import (
     City,
@@ -279,9 +280,20 @@ async def list_slots(
     city_id: Optional[int] = None,
     day: Optional[date_type] = None,
     day_end: Optional[date_type] = None,
-    ) -> Dict[str, object]:
+    principal: Optional[Principal] = None,
+) -> Dict[str, object]:
+    principal = principal or principal_ctx.get()
+    if principal is None:
+        from backend.core.settings import get_settings
+        settings = get_settings()
+        if settings.environment != "production":
+            principal = Principal(type="admin", id=-1)
+        else:
+            raise RuntimeError("principal is required for list_slots")
     async with async_session() as session:
         filtered = select(Slot).where(func.coalesce(Slot.purpose, "interview") == "interview")
+        if principal and principal.type == "recruiter":
+            recruiter_id = principal.id
         if recruiter_id is not None:
             filtered = filtered.where(Slot.recruiter_id == recruiter_id)
         if status:
@@ -519,11 +531,14 @@ async def create_slot(
 
 
 async def delete_slot(
-    slot_id: int, *, force: bool = False
+    slot_id: int, *, force: bool = False, principal: Optional[Principal] = None
 ) -> Tuple[bool, Optional[str]]:
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if not slot:
+            return False, "Слот не найден"
+        if principal and principal.type == "recruiter" and slot.recruiter_id != principal.id:
             return False, "Слот не найден"
 
         status = norm_status(slot.status)
@@ -552,18 +567,22 @@ async def delete_slot(
     return True, None
 
 
-async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
+async def delete_all_slots(*, force: bool = False, principal: Optional[Principal] = None) -> Tuple[int, int]:
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
-        total_before = await session.scalar(select(func.count()).select_from(Slot)) or 0
+        base_query = select(Slot.id)
+        if principal and principal.type == "recruiter":
+            base_query = base_query.where(Slot.recruiter_id == principal.id)
+        total_before = await session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
         if total_before == 0:
             return 0, 0
 
         slot_ids: List[int] = []
 
         if force:
-            result = await session.execute(select(Slot.id))
+            result = await session.execute(base_query)
             slot_ids = [row[0] for row in result]
-            await session.execute(delete(Slot))
+            await session.execute(delete(Slot).where(Slot.id.in_(slot_ids)))
             await session.commit()
             remaining_after = 0
         else:
@@ -572,7 +591,7 @@ async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
                 status_to_db("PENDING"),
             }
             result = await session.execute(
-                select(Slot.id).where(Slot.status.in_(allowed_statuses))
+                base_query.where(Slot.status.in_(allowed_statuses))
             )
             slot_ids = [row[0] for row in result]
             if not slot_ids:
@@ -580,7 +599,7 @@ async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
             await session.execute(delete(Slot).where(Slot.id.in_(slot_ids)))
             await session.commit()
             remaining_after = (
-                await session.scalar(select(func.count()).select_from(Slot)) or 0
+                await session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
             )
 
     if callable(get_reminder_service):
@@ -697,9 +716,14 @@ async def schedule_manual_candidate_slot(
     user_agent: Optional[str] = None,
     custom_message_sent: bool = False,
     custom_message_text: Optional[str] = None,
+    principal: Optional[Principal] = None,
 ) -> SlotApprovalResult:
     if candidate.telegram_id is None:
         raise ManualSlotError("Для кандидата не указан Telegram ID.")
+
+    principal = principal or principal_ctx.get()
+    if principal and principal.type == "recruiter" and recruiter.id != principal.id:
+        raise ManualSlotError("Слот не найден или недоступен.")
 
     normalized_dt = ensure_aware_utc(dt_utc)
     requested_duration = max(SLOT_MIN_DURATION_MIN, duration_min)
@@ -822,8 +846,12 @@ async def schedule_manual_candidate_slot_silent(
     admin_username: str = "admin",
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
+    principal: Optional[Principal] = None,
 ) -> SlotApprovalResult:
     """Schedule a slot without candidate notification (manual lead flow)."""
+    principal = principal or principal_ctx.get()
+    if principal and principal.type == "recruiter" and recruiter.id != principal.id:
+        raise ManualSlotError("Слот не найден или недоступен.")
     normalized_dt = ensure_aware_utc(dt_utc)
     requested_duration = max(SLOT_MIN_DURATION_MIN, duration_min)
     overlap_end = normalized_dt + timedelta(minutes=SLOT_MIN_DURATION_MIN)
@@ -981,6 +1009,7 @@ async def set_slot_outcome(
     outcome: str,
     *,
     bot_service: Optional[BotService] = None,
+    principal: Optional[Principal] = None,
 ) -> Tuple[bool, Optional[str], Optional[str], Optional[BotDispatch]]:
     normalized = (outcome or "").strip().lower()
     aliases = {"passed": "success", "failed": "reject"}
@@ -1000,6 +1029,7 @@ async def set_slot_outcome(
         except RuntimeError:
             service = None
 
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
         slot = await session.scalar(
             select(Slot)
@@ -1007,6 +1037,8 @@ async def set_slot_outcome(
             .where(Slot.id == slot_id)
         )
         if not slot:
+            return False, "Слот не найден.", None, None
+        if principal and principal.type == "recruiter" and slot.recruiter_id != principal.id:
             return False, "Слот не найден.", None, None
         if not getattr(slot, "candidate_tg_id", None):
             return (
@@ -1248,7 +1280,8 @@ async def _trigger_test2(
     )
 
 
-async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
+async def reschedule_slot_booking(slot_id: int, principal: Optional[Principal] = None) -> Tuple[bool, str, bool]:
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
         slot = await session.scalar(
             select(Slot)
@@ -1257,6 +1290,8 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
         )
 
     if not slot:
+        return False, "Слот не найден.", False
+    if principal and principal.type == "recruiter" and slot.recruiter_id != principal.id:
         return False, "Слот не найден.", False
     has_candidate = slot.candidate_tg_id is not None or slot.candidate_id is not None
     if not has_candidate:
@@ -1311,7 +1346,8 @@ async def reschedule_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
     return True, message, notified
 
 
-async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
+async def reject_slot_booking(slot_id: int, principal: Optional[Principal] = None) -> Tuple[bool, str, bool]:
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
         slot = await session.scalar(
             select(Slot)
@@ -1320,6 +1356,8 @@ async def reject_slot_booking(slot_id: int) -> Tuple[bool, str, bool]:
         )
 
     if not slot:
+        return False, "Слот не найден.", False
+    if principal and principal.type == "recruiter" and slot.recruiter_id != principal.id:
         return False, "Слот не найден.", False
     has_candidate = slot.candidate_tg_id is not None or slot.candidate_id is not None
     if not has_candidate:

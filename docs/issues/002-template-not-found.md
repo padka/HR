@@ -20,3 +20,5 @@
 
 ## Ссылки
 - `codex/context/audit.md` — раздел «Проблемы и риски».
+# Статус
+> Этот инцидент относится к legacy Jinja (`app_demo.py` + `backend/apps/admin_ui/templates`), которые удалены в ходе миграции на SPA. Документ сохранён для истории.

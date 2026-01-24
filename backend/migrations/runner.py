@@ -78,7 +78,14 @@ def _ensure_version_storage(conn: Connection) -> None:
 def _get_current_revision(conn: Connection) -> Optional[str]:
     result = conn.execute(text(f"SELECT {VERSION_COLUMN} FROM {VERSION_TABLE} LIMIT 1"))
     row = result.first()
-    return row[0] if row else None
+    if not row:
+        return None
+    current = row[0]
+    # Backward-compatibility: map legacy revision IDs to the renamed ones
+    legacy_map = {
+        "20260123_0001": "0057_auth_accounts",
+    }
+    return legacy_map.get(current, current)
 
 
 def _set_current_revision(conn: Connection, revision: Optional[str]) -> None:
@@ -109,8 +116,13 @@ def _slice_pending_migrations(
     if current_revision is None:
         start_index = -1
     else:
+        # Allow legacy revisions that were renamed
+        legacy_map = {
+            "20260123_0001": "0057_auth_accounts",
+        }
+        effective_current = legacy_map.get(current_revision, current_revision)
         try:
-            start_index = next(i for i, item in enumerate(migrations) if item.revision == current_revision)
+            start_index = next(i for i, item in enumerate(migrations) if item.revision == effective_current)
         except StopIteration as exc:
             raise RuntimeError(
                 f"Database is at unknown migration revision {current_revision!r}."

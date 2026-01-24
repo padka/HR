@@ -144,12 +144,15 @@ async def create_slot(
 
 
 async def delete_slot(
-    slot_id: int, *, force: bool = False
+    slot_id: int, *, force: bool = False, principal=None
 ) -> Tuple[bool, Optional[str]]:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if not slot:
             return False, "Слот не найден"
+        if principal and getattr(principal, "type", None) == "recruiter":
+            if slot.recruiter_id != getattr(principal, "id", None):
+                return False, "Слот не найден"
 
         status = norm_status(slot.status)
         if not force and status not in {"FREE", "PENDING"}:
@@ -167,19 +170,26 @@ async def delete_slot(
     return True, None
 
 
-async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
+async def delete_all_slots(*, force: bool = False, principal=None) -> Tuple[int, int]:
+    principal_id = getattr(principal, "id", None)
+    principal_type = getattr(principal, "type", None)
     async with async_session() as session:
-        total_before = await session.scalar(select(func.count()).select_from(Slot)) or 0
+        base_query = select(Slot.id)
+        if principal_type == "recruiter":
+            base_query = base_query.where(Slot.recruiter_id == principal_id)
+
+        total_before = await session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
         if total_before == 0:
             return 0, 0
 
         slot_ids: List[int] = []
 
         if force:
-            result = await session.execute(select(Slot.id))
+            result = await session.execute(base_query)
             slot_ids = [row[0] for row in result]
-            await session.execute(delete(Slot))
-            await session.commit()
+            if slot_ids:
+                await session.execute(delete(Slot).where(Slot.id.in_(slot_ids)))
+                await session.commit()
             remaining_after = 0
         else:
             allowed_statuses = {
@@ -187,7 +197,7 @@ async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
                 status_to_db("PENDING"),
             }
             result = await session.execute(
-                select(Slot.id).where(Slot.status.in_(allowed_statuses))
+                base_query.where(Slot.status.in_(allowed_statuses))
             )
             slot_ids = [row[0] for row in result]
             if not slot_ids:
@@ -195,7 +205,7 @@ async def delete_all_slots(*, force: bool = False) -> Tuple[int, int]:
             await session.execute(delete(Slot).where(Slot.id.in_(slot_ids)))
             await session.commit()
             remaining_after = (
-                await session.scalar(select(func.count()).select_from(Slot)) or 0
+                await session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
             )
 
     if callable(get_reminder_service):

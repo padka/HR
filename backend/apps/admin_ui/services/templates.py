@@ -153,7 +153,11 @@ async def templates_overview() -> Dict[str, object]:
 
     city_payload = [
         {
-            "city": city,
+            "city": {
+                "id": city.id,
+                "name": getattr(city, "name_plain", city.name),
+                "tz": getattr(city, "tz", None),
+            },
             "stages": stage_payload_for_ui(raw_map.get(city.id, {}), allowed_keys=["stage3_intro_invite"]),
         }
         for city in cities
@@ -311,6 +315,7 @@ async def delete_template(tmpl_id: int) -> None:
     async with async_session() as session:
         await session.execute(delete(Template).where(Template.id == tmpl_id))
         await session.commit()
+    notify_templates_changed()
 
 
 async def api_templates_payload(

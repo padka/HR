@@ -21,6 +21,7 @@ from backend.apps.bot.services import approve_slot_and_notify, cancel_slot_remin
 from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
+from backend.apps.admin_ui.security import principal_ctx, Principal
 from backend.domain import analytics
 from backend.domain.candidates.models import (
     AutoMessage,
@@ -1099,7 +1100,17 @@ async def list_candidates(
     sort_dir: Optional[str] = None,
     calendar_mode: Optional[str] = None,
     pipeline: str = DEFAULT_PIPELINE,
+    principal: Optional[Principal] = None,
 ) -> Dict[str, object]:
+    principal = principal or principal_ctx.get()
+    if principal is None:
+        from backend.core.settings import get_settings
+        settings = get_settings()
+        if settings.environment != "production":
+            principal = Principal(type="admin", id=-1)
+        else:
+            raise RuntimeError("principal is required for list_candidates")
+
     normalized_statuses: List[str] = [
         slug for slug in (statuses or []) if slug in STATUS_DEFINITIONS
     ]
@@ -1161,6 +1172,10 @@ async def list_candidates(
     else:
         calendar_start = range_start_utc or datetime.combine(today, time.min, timezone.utc)
         calendar_end = range_end_utc or (calendar_start + timedelta(days=6))
+
+    principal = principal or principal_ctx.get()
+    if principal is None:
+        raise RuntimeError("principal is required for list_candidates")
 
     async with async_session() as session:
         conditions: List[Any] = []
@@ -1419,6 +1434,10 @@ async def list_candidates(
             conditions.append(
                 exists(select(1).where(*range_clauses).correlate(User))
             )
+
+        # Scoping: recruiter sees only owned candidates
+        if principal and principal.type == "recruiter":
+            conditions.append(User.responsible_recruiter_id == principal.id)
 
         if test1_status == 'passed':
             conditions.append(test1_completed_expr)
@@ -2245,6 +2264,7 @@ async def update_candidate_status(
     status_slug: str,
     *,
     bot_service: Optional["BotService"] = None,
+    principal: Optional[Principal] = None,
 ) -> Tuple[bool, str, Optional[str], Optional[object]]:
     """Update candidate workflow status via slot updates or outcomes."""
 
@@ -2265,9 +2285,12 @@ async def update_candidate_status(
     if normalized in legacy_statuses and normalized not in STATUS_DEFINITIONS:
         logger.warning("Legacy candidate status received", extra={"status": normalized, "candidate_id": candidate_id})
 
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
         user = await session.get(User, candidate_id)
         if not user:
+            return False, "Кандидат не найден", None, None
+        if principal and principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
             return False, "Кандидат не найден", None, None
         if user.telegram_id is None and normalized not in STATUS_DEFINITIONS:
             return False, "Для кандидата не указан Telegram ID", None, None
@@ -2309,6 +2332,7 @@ async def update_candidate_status(
                 target_slot.id,
                 outcome_map[normalized],
                 bot_service=bot_service,
+                principal=principal,
             )
             if ok:
                 await log_audit_action(
@@ -2418,11 +2442,15 @@ async def update_candidate_status(
     return False, "Этот статус нельзя установить вручную", None, None
 
 
-async def get_candidate_detail(user_id: int) -> Optional[Dict[str, object]]:
+async def get_candidate_detail(user_id: int, principal: Optional[Principal] = None) -> Optional[Dict[str, object]]:
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
         user = await session.get(User, user_id)
         if not user:
             return None
+        if principal and principal.type == "recruiter":
+            if user.responsible_recruiter_id != principal.id:
+                return None
 
         interview_note = await _load_interview_note(session, user_id)
 
@@ -2732,6 +2760,7 @@ async def save_interview_notes(
     *,
     interviewer_name: Optional[str],
     data: Dict[str, Any],
+    principal: Optional["Principal"] = None,
 ) -> bool:
     """Create or update interview notes for a candidate."""
     sanitized_data = {
@@ -2742,6 +2771,9 @@ async def save_interview_notes(
         user = await session.get(User, user_id)
         if not user:
             return False
+        if principal and getattr(principal, "type", None) == "recruiter":
+            if user.responsible_recruiter_id != getattr(principal, "id", None):
+                return False
 
         try:
             note = (
@@ -2875,10 +2907,13 @@ async def upsert_candidate(
         return user
 
 
-async def toggle_candidate_activity(user_id: int, *, active: bool) -> bool:
+async def toggle_candidate_activity(user_id: int, *, active: bool, principal: Optional[Principal] = None) -> bool:
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
         user = await session.get(User, user_id)
         if not user:
+            return False
+        if principal and principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
             return False
         user.is_active = active
         await session.commit()
@@ -2893,6 +2928,7 @@ async def update_candidate(
     city: Optional[str],
     phone: Optional[str] = None,
     is_active: bool,
+    principal: Optional[Principal] = None,
 ) -> bool:
     clean_fio = fio.strip()
     clean_city = city.strip() if city else None
@@ -2900,9 +2936,12 @@ async def update_candidate(
     if not clean_fio:
         raise ValueError("Имя кандидата не может быть пустым")
 
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
         user = await session.get(User, user_id)
         if not user:
+            return False
+        if principal and principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
             return False
 
         if telegram_id is not None:
@@ -2916,10 +2955,13 @@ async def update_candidate(
         return True
 
 
-async def delete_candidate(user_id: int) -> bool:
+async def delete_candidate(user_id: int, principal: Optional[Principal] = None) -> bool:
+    principal = principal or principal_ctx.get()
     async with async_session() as session:
         user = await session.get(User, user_id)
         if not user:
+            return False
+        if principal and principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
             return False
 
         release_result = await session.execute(
@@ -2946,11 +2988,17 @@ async def delete_candidate(user_id: int) -> bool:
         return True
 
 
-async def generate_candidate_invite_token(user_id: int) -> Optional[str]:
+async def generate_candidate_invite_token(
+    user_id: int,
+    principal: Optional["Principal"] = None,
+) -> Optional[str]:
     async with async_session() as session:
         user = await session.get(User, user_id)
         if not user:
             return None
+        if principal and getattr(principal, "type", None) == "recruiter":
+            if user.responsible_recruiter_id != getattr(principal, "id", None):
+                return None
         invite = await create_candidate_invite_token(user.candidate_id)
         current_status = user.candidate_status
         current_slug = (
@@ -3016,6 +3064,8 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         return None
     user: User = detail["user"]
     sections_map = detail.get("test_sections_map", {})
+    candidate_actions = detail.get("candidate_actions", []) or []
+    slots = detail.get("slots", []) or []
 
     def _iso(value: Optional[datetime]) -> Optional[str]:
         if not value:
@@ -3056,6 +3106,55 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
             "report_url": section.get("report_url"),
         }
 
+    def _action_field(action: object, key: str) -> Optional[object]:
+        if isinstance(action, dict):
+            return action.get(key)
+        return getattr(action, key, None)
+
+    actions_payload = []
+    for action in candidate_actions:
+        url_pattern = _action_field(action, "url_pattern")
+        resolved_url = None
+        if isinstance(url_pattern, str):
+            resolved_url = url_pattern.replace("{id}", str(user.id))
+        actions_payload.append(
+            {
+                "key": _action_field(action, "key"),
+                "label": _action_field(action, "label"),
+                "url_pattern": url_pattern,
+                "url": resolved_url,
+                "icon": _action_field(action, "icon"),
+                "variant": _action_field(action, "variant"),
+                "method": _action_field(action, "method") or "GET",
+                "target_status": _action_field(action, "target_status"),
+                "confirmation": _action_field(action, "confirmation"),
+                "requires_slot": bool(_action_field(action, "requires_slot")),
+                "requires_test2_passed": bool(_action_field(action, "requires_test2_passed")),
+            }
+        )
+
+    slots_payload = []
+    for slot in slots:
+        slots_payload.append(
+            {
+                "id": slot.id,
+                "status": slot.status,
+                "purpose": slot.purpose,
+                "start_utc": _iso(slot.start_utc),
+                "candidate_tz": slot.candidate_tz,
+                "recruiter_name": getattr(slot.recruiter, "name", None) if getattr(slot, "recruiter", None) else None,
+                "city_name": getattr(slot.city, "name", None) if getattr(slot, "city", None) else None,
+            }
+        )
+
+    responsible_recruiter = detail.get("responsible_recruiter")
+    responsible_payload = None
+    if responsible_recruiter is not None:
+        responsible_payload = {
+            "id": getattr(responsible_recruiter, "id", None),
+            "name": getattr(responsible_recruiter, "name", None),
+        }
+
     return {
         "id": user.id,
         "fio": user.fio,
@@ -3069,8 +3168,24 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         if getattr(user, "test2_report_url", None)
         else None,
         "test_results": test_results_payload,
+        "test_sections": detail.get("test_sections", []),
+        "stage": detail.get("stage"),
+        "workflow_status": detail.get("workflow_status"),
+        "workflow_status_label": detail.get("workflow_status_label"),
+        "workflow_status_color": detail.get("workflow_status_color"),
+        "candidate_status_slug": detail.get("candidate_status_slug"),
+        "candidate_status_color": detail.get("candidate_status_color"),
+        "stats": detail.get("stats", {}),
         "telemost_url": detail.get("telemost_url"),
         "telemost_source": detail.get("telemost_source"),
+        "responsible_recruiter": responsible_payload,
+        "candidate_actions": actions_payload,
+        "slots": slots_payload,
+        "allowed_next_statuses": detail.get("allowed_next_statuses", []),
+        "pipeline_stages": detail.get("pipeline_stages", []),
+        "status_is_terminal": detail.get("status_is_terminal", False),
+        "candidate_status_options": detail.get("candidate_status_options", []),
+        "legacy_status_enabled": detail.get("legacy_status_enabled", False),
     }
 
 

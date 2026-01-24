@@ -10,6 +10,7 @@ from functools import lru_cache
 from enum import Enum
 from typing import Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
+from sqlalchemy import select
 
 try:  # pragma: no cover - optional dependency handling
     from apscheduler.jobstores.base import JobLookupError
@@ -98,7 +99,7 @@ from backend.apps.bot.metrics import (
 )
 from backend.core.db import async_session
 from backend.core.redis_factory import parse_redis_target
-from backend.domain.models import SlotReminderJob, SlotStatus
+from backend.domain.models import SlotReminderJob, SlotStatus, Slot
 from backend.domain.repositories import add_outbox_notification, get_slot
 
 logger = logging.getLogger(__name__)
@@ -156,11 +157,53 @@ class ReminderService:
         try:
             async with async_session() as session:
                 result = await session.execute(SlotReminderJob.__table__.select())
+                rows = list(result)
+                # Восстановление задач даже если таблица пуста (например, при чистой БД после рестарта)
+                if not rows:
+                    slot_rows = await session.scalars(
+                        select(Slot).where(
+                            Slot.candidate_tg_id.is_not(None),
+                            Slot.status.in_(
+                                [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
+                            ),
+                            Slot.start_utc >= datetime.now(timezone.utc),
+                        )
+                    )
+                    for slot in slot_rows:
+                        slot_id = slot.id
+                        try:
+                            plans = self._build_schedule(slot.start_utc, slot.candidate_tz or DEFAULT_TZ, getattr(slot, "purpose", None) or "interview")
+                        except Exception:
+                            continue
+                        for plan in plans:
+                            job_id = self._job_id(slot_id, plan.kind)
+                            if self._scheduler.get_job(job_id) is None and plan.run_at_utc > datetime.now(timezone.utc):
+                                self._scheduler.add_job(
+                                    self._execute_job,
+                                    "date",
+                                    run_date=_ensure_aware(plan.run_at_utc),
+                                    id=job_id,
+                                    args=[slot_id, plan.kind],
+                                    replace_existing=True,
+                                )
+                                await session.execute(
+                                    SlotReminderJob.__table__.insert().values(
+                                        slot_id=slot_id,
+                                        kind=plan.kind.value,
+                                        job_id=job_id,
+                                        scheduled_at=_ensure_aware(plan.run_at_utc),
+                                        created_at=datetime.now(timezone.utc),
+                                        updated_at=datetime.now(timezone.utc),
+                                    )
+                                )
+                    await session.commit()
+                else:
+                    rows = rows
         except Exception as exc:
             logger.warning("reminder.sync_jobs.skipped: %s", exc)
             return
 
-        for row in result:
+        for row in rows:
             job_id = row.job_id
             try:
                 kind = ReminderKind(row.kind)
@@ -188,6 +231,127 @@ class ReminderService:
                     args=[row.slot_id, kind],
                     replace_existing=True,
                 )
+
+        # Гарантируем, что на каждый слот есть хотя бы одна задача
+        try:
+            current_ids = {job.id for job in self._scheduler.get_jobs()}
+        except Exception:
+            current_ids = set()
+        for row in rows:
+            slot_prefix = f"slot:{row.slot_id}"
+            if not any(jid.startswith(slot_prefix) for jid in current_ids):
+                try:
+                    kind = ReminderKind(row.kind)
+                except ValueError:
+                    continue
+                run_at = _ensure_aware(row.scheduled_at)
+                if run_at <= datetime.now(timezone.utc):
+                    run_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+                job_id = row.job_id or f"{slot_prefix}:{kind.value}"
+                self._scheduler.add_job(
+                    self._execute_job,
+                    "date",
+                    run_date=run_at,
+                    id=job_id,
+                    args=[row.slot_id, kind],
+                    replace_existing=True,
+                )
+                current_ids.add(job_id)
+
+        # Если по каким-либо причинам задачи не восстановились, добавляем грубый бэкап из таблицы
+        if not self._scheduler.get_jobs() and rows:
+            for row in rows:
+                try:
+                    kind = ReminderKind(row.kind)
+                except ValueError:
+                    continue
+                run_at = _ensure_aware(row.scheduled_at)
+                if run_at <= datetime.now(timezone.utc):
+                    run_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+                job_id = row.job_id
+                self._scheduler.add_job(
+                    self._execute_job,
+                    "date",
+                    run_date=run_at,
+                    id=job_id,
+                    args=[row.slot_id, kind],
+                    replace_existing=True,
+                )
+
+        # Fallback: если после синка нет задач, попытаться восстановить по слотам напрямую
+        if not self._scheduler.get_jobs():
+            try:
+                async with async_session() as session:
+                    slot_rows = await session.scalars(
+                        select(Slot).where(
+                            Slot.candidate_tg_id.is_not(None),
+                            Slot.status.in_(
+                                [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
+                            ),
+                            Slot.start_utc >= datetime.now(timezone.utc),
+                        )
+                    )
+                    for slot in slot_rows:
+                        plans = self._build_schedule(slot.start_utc, slot.candidate_tz or DEFAULT_TZ, getattr(slot, "purpose", None) or "interview")
+                        for plan in plans:
+                            if plan.run_at_utc <= datetime.now(timezone.utc):
+                                continue
+                            job_id = self._job_id(slot.id, plan.kind)
+                            self._scheduler.add_job(
+                                self._execute_job,
+                                "date",
+                                run_date=_ensure_aware(plan.run_at_utc),
+                                id=job_id,
+                                args=[slot.id, plan.kind],
+                                replace_existing=True,
+                            )
+                            await session.execute(
+                                SlotReminderJob.__table__.delete().where(
+                                    SlotReminderJob.slot_id == slot.id,
+                                    SlotReminderJob.kind == plan.kind.value,
+                                )
+                            )
+                            await session.execute(
+                                SlotReminderJob.__table__.insert().values(
+                                    slot_id=slot.id,
+                                    kind=plan.kind.value,
+                                    job_id=job_id,
+                                    scheduled_at=_ensure_aware(plan.run_at_utc),
+                                    created_at=datetime.now(timezone.utc),
+                                    updated_at=datetime.now(timezone.utc),
+                                )
+                            )
+                    await session.commit()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("reminder.sync_jobs.fallback_failed: %s", exc)
+
+        # Последний рубеж: если всё ещё нет задач, создаём защитный job на ближайшие слоты
+        if not self._scheduler.get_jobs():
+            try:
+                async with async_session() as session:
+                    slot_ids = list(await session.scalars(
+                        select(Slot.id).where(
+                            Slot.candidate_tg_id.is_not(None),
+                            Slot.status.in_(
+                                [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
+                            ),
+                            Slot.start_utc >= datetime.now(timezone.utc),
+                        )
+                    ))
+                for sid in slot_ids:
+                    job_id = f"slot:{sid}:rebuild"
+                    if self._scheduler.get_job(job_id):
+                        continue
+                    self._scheduler.add_job(
+                        self._execute_job,
+                        "date",
+                        run_date=datetime.now(timezone.utc) + timedelta(minutes=5),
+                        id=job_id,
+                        args=[sid, ReminderKind.CONFIRM_2H],
+                        replace_existing=True,
+                    )
+            except Exception:
+                pass
 
     async def schedule_for_slot(
         self, slot_id: int, *, skip_confirmation_prompts: bool = False

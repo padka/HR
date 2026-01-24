@@ -17,7 +17,6 @@ from sqlalchemy import func, select, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui.timezones import tz_display, DEFAULT_TZ
 from backend.apps.admin_ui.services.candidates import (
     INTERVIEW_FIELD_TYPES,
@@ -38,6 +37,7 @@ from backend.apps.admin_ui.services.candidates import (
     DEFAULT_PIPELINE,
 )
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
+from backend.apps.admin_ui.security import require_principal, Principal, require_admin
 from backend.apps.admin_ui.services.slots import (
     execute_bot_dispatch,
     schedule_manual_candidate_slot,
@@ -45,8 +45,10 @@ from backend.apps.admin_ui.services.slots import (
     ManualSlotError,
     recruiters_for_slot_form,
     _trigger_test2,
+    recruiter_time_to_utc,
 )
 from backend.apps.bot.services import approve_slot_and_notify
+from backend.core.guards import ensure_candidate_scope, ensure_slot_scope
 from backend.apps.admin_ui.security import require_csrf_token
 from backend.apps.admin_ui.utils import fmt_local
 from backend.core.db import async_session
@@ -175,176 +177,12 @@ async def candidates_list(
     view: str = Query("calendar"),
     calendar_mode: str = Query("day"),
     pipeline: str = Query("interview"),
+    principal: Principal = Depends(require_principal),
 ) -> HTMLResponse:
-    is_active = _parse_bool(active)
-    tests_flag = _parse_bool(has_tests)
-    messages_flag = _parse_bool(has_messages)
-
-    parsed_date_from = _parse_date(date_from)
-    parsed_date_to = _parse_date(date_to)
-    parsed_recruiter_id = _parse_int(recruiter_id)
-    normalized_calendar_mode = "day"
-    active_calendar_mode: Optional[str] = normalized_calendar_mode if view == "calendar" else None
-    pipeline_slug = (pipeline or DEFAULT_PIPELINE).strip().lower()
-    if pipeline_slug not in PIPELINE_DEFINITIONS:
-        pipeline_slug = DEFAULT_PIPELINE
-
-    data = await list_candidates(
-        page=page,
-        per_page=per_page,
-        search=q,
-        city=city,
-        is_active=is_active,
-        rating=rating,
-        has_tests=tests_flag,
-        has_messages=messages_flag,
-        stage=stage,
-        statuses=statuses,
-        recruiter_id=parsed_recruiter_id,
-        city_ids=city_ids,
-        date_from=parsed_date_from,
-        date_to=parsed_date_to,
-        test1_status=test1_status,
-        test2_status=test2_status,
-        sort=sort,
-        sort_dir=sort_dir,
-        calendar_mode=active_calendar_mode,
-        pipeline=pipeline_slug,
-    )
-
-    filter_options = await candidate_filter_options()
-    pipeline_statuses = set(PIPELINE_DEFINITIONS[pipeline_slug]["statuses"])
-    filter_options["statuses"] = [
-        option
-        for option in (filter_options.get("statuses") or [])
-        if option["slug"] in pipeline_statuses
-    ]
-    pipeline_options = [
-        {"slug": slug, "label": cfg["label"]}
-        for slug, cfg in PIPELINE_DEFINITIONS.items()
-    ]
-
-    filters_state = data.get("filters", {})
-    filter_chips = []
-
-    search_term = filters_state.get("search")
-    if search_term:
-        filter_chips.append({
-            "label": "Поиск",
-            "value": search_term,
-            "icon": "🔍",
-            "tone": "primary",
-        })
-
-    status_lookup = {item["slug"]: item for item in filter_options.get("statuses", [])}
-    for slug in filters_state.get("statuses", []) or []:
-        meta = status_lookup.get(slug)
-        if not meta:
-            continue
-        filter_chips.append({
-            "label": meta.get("label", slug),
-            "icon": meta.get("icon"),
-            "tone": meta.get("tone", "info"),
-        })
-
-    recruiter_lookup = {item["id"]: item for item in filter_options.get("recruiters", [])}
-    recruiter_id_value = filters_state.get("recruiter_id")
-    if recruiter_id_value and recruiter_lookup.get(recruiter_id_value):
-        recruiter_meta = recruiter_lookup[recruiter_id_value]
-        filter_chips.append({
-            "label": "Рекрутёр",
-            "value": recruiter_meta.get("name"),
-            "icon": "👤",
-            "tone": "info",
-        })
-
-    city_lookup = {item["id"]: item for item in filter_options.get("city_choices", [])}
-    for city_id_value in filters_state.get("city_ids", []) or []:
-        city_meta = city_lookup.get(city_id_value)
-        if not city_meta:
-            continue
-        filter_chips.append({
-            "label": "Город",
-            "value": city_meta.get("name"),
-            "icon": "🏙️",
-            "tone": "muted",
-        })
-
-    date_from_state = filters_state.get("date_from")
-    date_to_state = filters_state.get("date_to")
-    if date_from_state:
-        filter_chips.append({
-            "label": "С",
-            "value": date_from_state.strftime("%d.%m.%Y"),
-            "icon": "📅",
-            "tone": "muted",
-        })
-    if date_to_state:
-        filter_chips.append({
-            "label": "По",
-            "value": date_to_state.strftime("%d.%m.%Y"),
-            "icon": "📅",
-            "tone": "muted",
-        })
-
-    test_status_lookup = {item["slug"]: item for item in filter_options.get("test_statuses", [])}
-    test1_value = filters_state.get("test1_status")
-    if test1_value:
-        meta = test_status_lookup.get(test1_value)
-        filter_chips.append({
-            "label": "Тест 1",
-            "value": meta.get("label") if meta else test1_value,
-            "icon": meta.get("icon") if meta else "📋",
-            "tone": "info",
-        })
-    test2_value = filters_state.get("test2_status")
-    if test2_value:
-        meta = test_status_lookup.get(test2_value)
-        filter_chips.append({
-            "label": "Тест 2",
-            "value": meta.get("label") if meta else test2_value,
-            "icon": meta.get("icon") if meta else "📋",
-            "tone": "info",
-        })
-
-    sort_value = filters_state.get("sort")
-    sort_dir_value = filters_state.get("sort_dir")
-    if sort_value and (sort_value != "event" or sort_dir_value != "asc"):
-        sort_labels = {
-            "event": "Ближайшее событие",
-            "activity": "Активность",
-            "name": "Имя",
-            "status": "Статус",
-        }
-        label = sort_labels.get(sort_value, sort_value)
-        if sort_dir_value and sort_dir_value.lower() == "desc":
-            label = f"{label} ↓"
-        else:
-            label = f"{label} ↑"
-        filter_chips.append({
-            "label": "Сортировка",
-            "value": label,
-            "icon": "↕️",
-            "tone": "primary",
-        })
-
-    status_labels = {
-        item["slug"]: item.get("label", item["slug"])
-        for item in filter_options.get("statuses", [])
-    }
-
-    context = {
-        "request": request,
-        **data,
-        "filter_options": filter_options,
-        "filter_chips": filter_chips,
-        "selected_view": view.lower(),
-        "calendar_mode": normalized_calendar_mode,
-        "status_labels": status_labels,
-        "selected_pipeline": pipeline_slug,
-        "pipeline_options": pipeline_options,
-    }
-    return templates.TemplateResponse(request, "candidates_list.html", context)
+    target = "/app/candidates"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(url=target, status_code=302)
 
 @router.get("/detailization", response_class=HTMLResponse)
 async def candidates_detailization(
@@ -353,62 +191,20 @@ async def candidates_detailization(
     q: Optional[str] = Query(default=None, alias="search"),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=100, ge=5, le=200),
+    principal: Principal = Depends(require_principal),
 ) -> HTMLResponse:
-    status_filter = status if status in {"hired", "not_hired"} else None
-    statuses = [status_filter] if status_filter else ["hired", "not_hired"]
-    result = await list_candidates(
-        page=page,
-        per_page=per_page,
-        search=q,
-        city=None,
-        is_active=None,
-        rating=None,
-        has_tests=None,
-        has_messages=None,
-        stage=None,
-        statuses=statuses,
-        recruiter_id=None,
-        city_ids=None,
-        date_from=None,
-        date_to=None,
-        test1_status=None,
-        test2_status=None,
-        sort=None,
-        sort_dir=None,
-        calendar_mode=None,
-        pipeline="interview",
-    )
-    views = result.get("views")
-    list_groups = {}
-    if views:
-        list_groups = getattr(views, "list", None) or (views.get("list") if isinstance(views, dict) else {}) or {}
-    summary_block = result.get("summary", {}) if result else {}
-    status_totals = summary_block.get("status_totals", {}) if isinstance(summary_block, dict) else {}
-    status_labels = STATUS_DEFINITIONS
-    context = {
-        "request": request,
-        "list_groups": list_groups,
-        "selected_status": status_filter or "all",
-        "search_query": (q or "").strip(),
-        "total": result.get("total", 0) if result else 0,
-        "status_totals": status_totals,
-        "status_labels": status_labels,
-        "page": result.get("page", page),
-        "pages_total": result.get("pages_total", 1),
-    }
-    return templates.TemplateResponse(request, "candidates_detailization.html", context)
+    target = "/app/candidates"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(url=target, status_code=302)
 
 
 @router.get("/new", response_class=HTMLResponse)
-async def candidates_new(request: Request) -> HTMLResponse:
-    options = await candidate_filter_options()
-    context = {
-        "request": request,
-        "cities": options.get("cities", []),
-        "city_choices": options.get("city_choices", []),
-        "recruiters": options.get("recruiters", []),
-    }
-    return templates.TemplateResponse(request, "candidates_new.html", context)
+async def candidates_new(
+    request: Request,
+    principal: Principal = Depends(require_principal),
+) -> HTMLResponse:
+    return RedirectResponse(url="/app/candidates/new", status_code=302)
 
 
 @router.post("/create")
@@ -422,6 +218,7 @@ async def candidates_create(
     interview_date: Optional[str] = Form(None),
     interview_time: Optional[str] = Form(None),
     is_active: Optional[str] = Form("on"),
+    principal: Principal = Depends(require_principal),
 ):
     active_flag = _parse_bool(is_active)
     interview_dt = None
@@ -429,6 +226,8 @@ async def candidates_create(
     interview_city = None
     interview_recruiter = None
     recruiter_id_value = _parse_int(responsible_recruiter_id)
+    if principal.type == "recruiter":
+        recruiter_id_value = principal.id
     city_value = _parse_int(city_id)
     candidate_city = city or None
     if city_value is not None:
@@ -508,8 +307,16 @@ async def candidates_create(
 
 
 @router.post("/{candidate_id}/invite-token")
-async def candidates_invite_token(candidate_id: int) -> RedirectResponse:
-    token = await generate_candidate_invite_token(candidate_id)
+async def candidates_invite_token(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+) -> RedirectResponse:
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            return RedirectResponse(url="/candidates?error=candidate_not_found", status_code=303)
+        ensure_candidate_scope(user, principal)
+    token = await generate_candidate_invite_token(candidate_id, principal=principal)
     if not token:
         return RedirectResponse(
             url=f"/candidates/{candidate_id}?error=invite_token",
@@ -522,16 +329,12 @@ async def candidates_invite_token(candidate_id: int) -> RedirectResponse:
 
 
 @router.get("/{candidate_id}", response_class=HTMLResponse)
-async def candidates_detail(request: Request, candidate_id: int) -> HTMLResponse:
-    detail = await get_candidate_detail(candidate_id)
-    if not detail:
-        return RedirectResponse(url="/candidates", status_code=303)
-    context = {
-        "request": request,
-        "invite_token": request.query_params.get("invite_token"),
-        **detail,
-    }
-    return templates.TemplateResponse(request, "candidates_detail.html", context)
+async def candidates_detail(
+    request: Request,
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+) -> HTMLResponse:
+    return RedirectResponse(url=f"/app/candidates/{candidate_id}", status_code=302)
 
 
 @router.post("/{candidate_id}/update")
@@ -542,6 +345,7 @@ async def candidates_update(
     city: str = Form(""),
     phone: str = Form(""),
     is_active: Optional[str] = Form(None),
+    principal: Principal = Depends(require_principal),
 ):
     active_flag = _parse_bool(is_active)
     telegram_id_value: Optional[int] = None
@@ -558,6 +362,7 @@ async def candidates_update(
             city=city or None,
             phone=phone or None,
             is_active=True if active_flag is None else active_flag,
+            principal=principal,
         )
     except ValueError:
         success = False
@@ -570,11 +375,11 @@ async def candidates_update(
 
 
 @router.post("/{candidate_id}/toggle")
-async def candidates_toggle(candidate_id: int, active: str = Form("true")):
+async def candidates_toggle(candidate_id: int, active: str = Form("true"), principal: Principal = Depends(require_principal)):
     flag = _parse_bool(active)
     if flag is None:
         flag = True
-    await toggle_candidate_activity(candidate_id, active=flag)
+    await toggle_candidate_activity(candidate_id, active=flag, principal=principal)
     return RedirectResponse(url=f"/candidates/{candidate_id}", status_code=303)
 
 
@@ -585,6 +390,7 @@ async def candidates_set_status(
     background_tasks: BackgroundTasks,
     bot_service: BotService = Depends(provide_bot_service),
     _: None = Depends(require_csrf_token),
+    principal: Principal = Depends(require_principal),
 ) -> Response:
     """Update candidate status via UI or AJAX/kanban board.
 
@@ -674,7 +480,7 @@ async def candidates_set_status(
             await set_status_interview_declined(user.telegram_id)
 
     ok, message, stored_status, dispatch = await update_candidate_status(
-        candidate_id, normalized_slug, bot_service=bot_service
+        candidate_id, normalized_slug, bot_service=bot_service, principal=principal
     )
 
     bot_header = "skipped:not_applicable"
@@ -766,6 +572,7 @@ async def candidates_resend_test2(
     request: Request,
     candidate_id: int,
     bot_service: BotService = Depends(provide_bot_service),
+    principal: Principal = Depends(require_principal),
 ) -> Response:
     """Resend Test 2 invite to a candidate via bot."""
 
@@ -780,6 +587,8 @@ async def candidates_resend_test2(
                 url="/candidates?error=candidate_not_found",
                 status_code=303,
             )
+
+        ensure_candidate_scope(user, principal)
 
         telegram_id = user.telegram_user_id or user.telegram_id
         if not telegram_id:
@@ -856,6 +665,7 @@ async def candidates_resend_test2(
 async def candidates_save_interview_notes(
     request: Request,
     candidate_id: int,
+    principal: Principal = Depends(require_principal),
 ) -> RedirectResponse:
     form = await request.form()
     payload: Dict[str, Any] = {}
@@ -878,10 +688,20 @@ async def candidates_save_interview_notes(
     payload["interviewer_name"] = interviewer_name
     payload["script_version"] = "smart_service_v1"
 
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            return RedirectResponse(
+                url="/candidates?error=candidate_not_found",
+                status_code=303,
+            )
+        ensure_candidate_scope(user, principal)
+
     success = await save_interview_notes(
         candidate_id,
         interviewer_name=interviewer_name,
         data=payload,
+        principal=principal,
     )
     if not success:
         return RedirectResponse(
@@ -895,8 +715,11 @@ async def candidates_save_interview_notes(
 
 
 @router.get("/{candidate_id}/interview-notes/download")
-async def candidates_download_interview_notes(candidate_id: int) -> PlainTextResponse:
-    detail = await get_candidate_detail(candidate_id)
+async def candidates_download_interview_notes(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+) -> PlainTextResponse:
+    detail = await get_candidate_detail(candidate_id, principal=principal)
     if not detail or not detail.get("user"):
         raise HTTPException(status_code=404)
 
@@ -943,7 +766,11 @@ def _format_interview_notes(user: User, data: Dict[str, Any], sections: List[Dic
 
 
 @router.post("/{candidate_id}/slots/{slot_id}/approve")
-async def candidates_approve_slot(candidate_id: int, slot_id: int):
+async def candidates_approve_slot(
+    candidate_id: int,
+    slot_id: int,
+    principal: Principal = Depends(require_principal),
+):
     redirect_base = f"/candidates/{candidate_id}"
 
     def _redirect(status: str, message: str) -> RedirectResponse:
@@ -957,11 +784,13 @@ async def candidates_approve_slot(candidate_id: int, slot_id: int):
         user = await session.get(User, candidate_id)
         if not user:
             return _redirect("candidate_missing", "Кандидат не найден.")
+        ensure_candidate_scope(user, principal)
         if user.telegram_id is None:
             return _redirect("telegram_missing", "Для кандидата не указан Telegram ID.")
         slot = await session.get(Slot, slot_id)
         if not slot:
             return _redirect("slot_missing", "Слот не найден или уже удалён.")
+        ensure_slot_scope(slot, principal)
         if slot.candidate_tg_id != user.telegram_id:
             return _redirect("invalid_candidate", "Слот относится к другому кандидату.")
 
@@ -970,13 +799,13 @@ async def candidates_approve_slot(candidate_id: int, slot_id: int):
 
 
 @router.post("/{candidate_id}/delete")
-async def candidates_delete(candidate_id: int):
-    await delete_candidate(candidate_id)
+async def candidates_delete(candidate_id: int, principal: Principal = Depends(require_principal)):
+    await delete_candidate(candidate_id, principal=principal)
     return RedirectResponse(url="/candidates", status_code=303)
 
 
 @router.post("/delete-all")
-async def candidates_delete_all():
+async def candidates_delete_all(_: Principal = Depends(require_admin)):
     deleted = await delete_all_candidates()
     return RedirectResponse(
         url=f"/candidates?bulk_deleted={deleted}",
@@ -985,10 +814,14 @@ async def candidates_delete_all():
 
 
 @router.get("/{candidate_id}/reports/{report_key}")
-async def candidates_download_report(candidate_id: int, report_key: str):
+async def candidates_download_report(
+    candidate_id: int,
+    report_key: str,
+    principal: Principal = Depends(require_principal),
+):
     if report_key not in {"test1", "test2"}:
         raise HTTPException(status_code=404)
-    detail = await get_candidate_detail(candidate_id)
+    detail = await get_candidate_detail(candidate_id, principal=principal)
     if not detail:
         raise HTTPException(status_code=404)
     user = detail["user"]
@@ -1005,112 +838,60 @@ async def candidates_download_report(candidate_id: int, report_key: str):
 
 
 @router.get("/{candidate_id}/schedule-slot", response_class=HTMLResponse)
-async def candidates_schedule_slot_form(request: Request, candidate_id: int) -> HTMLResponse:
-    detail = await get_candidate_detail(candidate_id)
-    if not detail:
-        return RedirectResponse(url="/candidates", status_code=303)
-
-    candidate = detail["user"]
-    if not candidate.telegram_id:
-        return RedirectResponse(
-            url=f"/candidates/{candidate_id}?slot_scheduled=missing_telegram",
-            status_code=303,
-        )
-
-    recruiters = await recruiters_for_slot_form()
-    cities = await _list_active_cities()
-    default_city_id = None
-    if candidate.city:
-        city_record = await find_city_by_plain_name(candidate.city)
-        if city_record:
-            default_city_id = city_record.id
-
-    context = {
-        "request": request,
-        "candidate": candidate,
-        "recruiters": recruiters,
-        "cities": cities,
-        "errors": [],
-        "form_values": {
-            "recruiter_id": None,
-            "city_id": default_city_id,
-            "date": "",
-            "time": "10:00",
-        },
-    }
-    return templates.TemplateResponse(request, "schedule_manual_slot.html", context)
+async def candidates_schedule_slot_form(
+    request: Request,
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+) -> HTMLResponse:
+    return RedirectResponse(url=f"/app/candidates/{candidate_id}", status_code=302)
 
 
-@router.post("/{candidate_id}/schedule-slot", response_class=HTMLResponse)
+@router.post("/{candidate_id}/schedule-slot")
 async def candidates_schedule_slot_submit(
     request: Request,
     candidate_id: int,
-    recruiter_id: int = Form(...),
-    city_id: int = Form(...),
-    date: str = Form(...),
-    time: str = Form(...),
-    send_custom_message: Optional[str] = Form(None),
-    custom_message: Optional[str] = Form(None),
-) -> HTMLResponse:
-    detail = await get_candidate_detail(candidate_id)
+    principal: Principal = Depends(require_principal),
+) -> Response:
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        payload = await request.json()
+    else:
+        form = await request.form()
+        payload = dict(form)
+
+    recruiter_raw = payload.get("recruiter_id")
+    city_raw = payload.get("city_id")
+    date = payload.get("date")
+    time = payload.get("time")
+    send_custom_message = payload.get("send_custom_message")
+    custom_message = payload.get("custom_message")
+
+    recruiter_id = _parse_int(str(recruiter_raw)) if recruiter_raw is not None else None
+    city_id = _parse_int(str(city_raw)) if city_raw is not None else None
+    if not (recruiter_id and city_id and date and time):
+        return PlainTextResponse("Заполните рекрутёра, город, дату и время", status_code=400)
+
+    detail = await get_candidate_detail(candidate_id, principal=principal)
     if not detail:
-        return RedirectResponse(url="/candidates", status_code=303)
-
+        raise HTTPException(status_code=404, detail="Candidate not found")
     candidate = detail["user"]
-    if not candidate.telegram_id:
-        return RedirectResponse(
-            url=f"/candidates/{candidate_id}?slot_scheduled=missing_telegram",
-            status_code=303,
-        )
 
-    recruiters = await recruiters_for_slot_form()
-    cities = await _list_active_cities()
+    async with async_session() as session:
+        recruiter = await session.get(Recruiter, recruiter_id)
+        city = await session.get(City, city_id)
 
-    recruiter = next((entry["rec"] for entry in recruiters if entry["rec"].id == recruiter_id), None)
-    city = next((entry for entry in cities if entry.id == city_id), None)
+    if recruiter is None or city is None:
+        return PlainTextResponse("Некорректные рекрутёр или город", status_code=400)
 
-    errors: List[str] = []
-    if recruiter is None:
-        errors.append("Выберите действующего рекрутёра.")
-    if city is None:
-        errors.append("Выберите город для собеседования.")
+    slot_tz = city.tz or recruiter.tz or DEFAULT_TZ
+    dt_utc = recruiter_time_to_utc(str(date), str(time), slot_tz)
+    if not dt_utc:
+        return PlainTextResponse("Некорректная дата или время", status_code=400)
 
-    app_timezone = get_settings().timezone or DEFAULT_TZ
-    slot_tz = (getattr(city, "tz", None) if city else None) or app_timezone
-    dt_utc = None
-    if not errors:
-        try:
-            dt_utc = parse_form_datetime(f"{date}T{time}", slot_tz)
-        except ValueError:
-            errors.append("Укажите корректные дату и время.")
-
-    if errors:
-        context = {
-            "request": request,
-            "candidate": candidate,
-            "recruiters": recruiters,
-            "cities": cities,
-            "errors": errors,
-            "form_values": {
-                "recruiter_id": recruiter_id,
-                "city_id": city_id,
-                "date": date,
-                "time": time,
-            },
-        }
-        return templates.TemplateResponse(
-            request, "schedule_manual_slot.html", context, status_code=400
-        )
-
-    assert recruiter is not None
-    assert city is not None
-
-    # Extract audit information
+    send_flag = str(send_custom_message or "").lower() in {"1", "true", "yes", "on"}
     admin_username = request.session.get("username", "admin")
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent", None)
-    custom_message_sent = bool(send_custom_message)
-    custom_message_text = custom_message.strip() if custom_message and custom_message_sent else None
 
     try:
         result = await schedule_manual_candidate_slot(
@@ -1122,142 +903,60 @@ async def candidates_schedule_slot_submit(
             admin_username=admin_username,
             ip_address=ip_address,
             user_agent=user_agent,
-            custom_message_sent=custom_message_sent,
-            custom_message_text=custom_message_text,
+            custom_message_sent=send_flag,
+            custom_message_text=custom_message if send_flag else None,
+            principal=principal,
         )
     except ManualSlotError as exc:
-        context = {
-            "request": request,
-            "candidate": candidate,
-            "recruiters": recruiters,
-            "cities": cities,
-            "errors": [str(exc)],
-            "form_values": {
-                "recruiter_id": recruiter_id,
-                "city_id": city_id,
-                "date": date,
-                "time": time,
-            },
-        }
-        return templates.TemplateResponse(
-            request, "schedule_manual_slot.html", context, status_code=400
-        )
+        return PlainTextResponse(str(exc), status_code=400)
 
-    status_param = "success"
-    if result.status == "notify_failed":
-        status_param = "notify_failed"
-    elif result.status == "already":
-        status_param = "success"
-
-    return RedirectResponse(
-        url=f"/candidates/{candidate_id}?slot_scheduled={status_param}",
-        status_code=303,
-    )
+    slot_id = result.slot.id if result.slot else None
+    return JSONResponse({"ok": True, "slot_id": slot_id})
 
 
 @router.get("/{candidate_id}/schedule-intro-day", response_class=HTMLResponse)
 async def candidates_schedule_intro_day_form(
     request: Request,
     candidate_id: int,
+    principal: Principal = Depends(require_principal),
 ) -> HTMLResponse:
-    """Show form to schedule an intro day for a candidate"""
-    detail = await get_candidate_detail(candidate_id)
-    if not detail:
-        return RedirectResponse(url="/candidates", status_code=303)
-
-    user = detail["user"]
-
-    # Prevent scheduling duplicates if intro day already exists
-    if detail.get("has_intro_day_slot", False):
-        return RedirectResponse(url=f"/candidates/{candidate_id}", status_code=303)
-
-    city_record = await _load_city_with_recruiters(user.city)
-    recruiter = _select_primary_recruiter(city_record)
-    city_tz = None
-    if city_record:
-        city_tz = getattr(city_record, "tz", None)
-    if not city_tz and recruiter is not None:
-        city_tz = getattr(recruiter, "tz", None)
-    city_tz = city_tz or DEFAULT_TZ
-    tz_label = tz_display(city_tz)
-    cities_list = await _list_active_cities()
-
-    context = {
-        "request": request,
-        "candidate": user,
-        "city": city_record,
-        "city_timezone": city_tz,
-        "city_timezone_label": tz_label,
-        "city_missing": city_record is None,
-        "recruiter_missing": city_record is not None and recruiter is None,
-        "errors": [],
-        "cities": cities_list,
-    }
-    return templates.TemplateResponse(request, "schedule_intro_day.html", context)
+    return RedirectResponse(url=f"/app/candidates/{candidate_id}", status_code=302)
 
 
 @router.post("/{candidate_id}/assign-city", response_class=HTMLResponse)
 async def candidates_assign_city(
     request: Request,
     candidate_id: int,
-    city_id: int = Form(...),
+    city_id: Optional[int] = Form(None),
+    principal: Principal = Depends(require_principal),
 ) -> HTMLResponse:
-    """Assign city to candidate inline to continue intro day scheduling."""
-
-    detail = await get_candidate_detail(candidate_id)
-    if not detail:
-        return RedirectResponse(url="/candidates", status_code=303)
-
-    user = detail["user"]
-    cities_list = await _list_active_cities()
-
-    async with async_session() as session:
-        city = await session.get(City, city_id)
-        if city is None:
-            context = {
-                "request": request,
-                "candidate": user,
-                "city": None,
-                "city_timezone": DEFAULT_TZ,
-                "city_timezone_label": tz_display(DEFAULT_TZ),
-                "city_missing": True,
-                "recruiter_missing": False,
-                "errors": ["Город не найден. Попробуйте выбрать другой."],
-                "cities": cities_list,
-            }
-            return templates.TemplateResponse(request, "schedule_intro_day.html", context, status_code=400)
-
-        await update_candidate(
-            user.id,
-            telegram_id=user.telegram_id,
-            fio=user.fio,
-            city=getattr(city, "name_plain", None) or city.name,
-            is_active=user.is_active,
-        )
-
-    return RedirectResponse(url=f"/candidates/{candidate_id}/schedule-intro-day", status_code=303)
+    return RedirectResponse(url=f"/app/candidates/{candidate_id}", status_code=303)
 
 
 @router.post("/{candidate_id}/schedule-intro-day")
 async def candidates_schedule_intro_day_submit(
     request: Request,
     candidate_id: int,
-    date: str = Form(...),
-    time: str = Form(...),
-    bot_service: BotService = Depends(provide_bot_service),
-) -> HTMLResponse:
+    principal: Principal = Depends(require_principal),
+) -> Response:
     """Create intro_day slot and send invitation to candidate"""
-    from backend.domain.repositories import reserve_slot
-    from backend.apps.admin_ui.services.slots import recruiter_time_to_utc
     from backend.domain.repositories import add_outbox_notification
 
-    detail = await get_candidate_detail(candidate_id)
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        payload = await request.json()
+    else:
+        form = await request.form()
+        payload = dict(form)
+    date = payload.get("date")
+    time = payload.get("time")
+
+    detail = await get_candidate_detail(candidate_id, principal=principal)
     if not detail:
-        return RedirectResponse(url="/candidates", status_code=303)
+        raise HTTPException(status_code=404, detail="Candidate not found")
 
     user = detail["user"]
     errors = []
-    cities_list = await _list_active_cities()
 
     city_record = await _load_city_with_recruiters(user.city)
     recruiter = _select_primary_recruiter(city_record)
@@ -1268,6 +967,8 @@ async def candidates_schedule_intro_day_submit(
     )
     tz_label = tz_display(slot_tz)
 
+    if principal.type == "recruiter" and recruiter and recruiter.id != principal.id:
+        errors.append("Недостаточно прав для назначения ознакомительного дня другому рекрутёру.")
     if not date or not time:
         errors.append("Укажите дату и время ознакомительного дня")
     if city_record is None:
@@ -1282,18 +983,7 @@ async def candidates_schedule_intro_day_submit(
             errors.append("Некорректная дата или время")
 
     if errors:
-        context = {
-            "request": request,
-            "candidate": user,
-            "city": city_record,
-            "city_timezone": slot_tz,
-            "city_timezone_label": tz_label,
-            "city_missing": city_record is None,
-            "recruiter_missing": city_record is not None and recruiter is None,
-            "errors": errors,
-            "cities": cities_list,
-        }
-        return templates.TemplateResponse(request, "schedule_intro_day.html", context, status_code=400)
+        return PlainTextResponse("; ".join(errors), status_code=400)
 
     async with async_session() as session:
         city_id = city_record.id
@@ -1313,18 +1003,7 @@ async def candidates_schedule_intro_day_submit(
                 f"Ознакомительный день уже назначен для этого кандидата с рекрутером {recruiter.name}. "
                 f"Дата: {existing_slot.start_utc.strftime('%d.%m.%Y %H:%M')} UTC"
             )
-            context = {
-                "request": request,
-                "candidate": user,
-                "city": city_record,
-                "city_timezone": slot_tz,
-                "city_timezone_label": tz_label,
-                "city_missing": False,
-                "recruiter_missing": False,
-                "errors": errors,
-                "cities": cities_list,
-            }
-            return templates.TemplateResponse(request, "schedule_intro_day.html", context, status_code=400)
+            return PlainTextResponse("; ".join(errors), status_code=400)
 
         # Create intro_day slot
         slot = Slot(
@@ -1399,4 +1078,4 @@ async def candidates_schedule_intro_day_submit(
             logger = logging.getLogger(__name__)
             logger.exception("Failed to schedule reminders for intro day", extra={"slot_id": slot.id})
 
-    return RedirectResponse(url=f"/candidates/{candidate_id}", status_code=303)
+    return JSONResponse({"ok": True, "slot_id": slot.id})

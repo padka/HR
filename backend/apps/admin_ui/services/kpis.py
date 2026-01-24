@@ -4,7 +4,7 @@ import asyncio
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
 
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -27,6 +27,9 @@ __all__ = [
     "store_weekly_snapshot",
     "reset_weekly_cache",
 ]
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from backend.apps.admin_ui.security import Principal
 
 
 DEFAULT_COMPANY_TZ = "Europe/Moscow"
@@ -166,15 +169,26 @@ def _window_for_week_start(week_start: date, tz: ZoneInfo) -> WeekWindow:
     )
 
 
-async def _query_metrics(session, start_utc: datetime, end_utc: datetime) -> Dict[str, int]:
+async def _query_metrics(
+    session,
+    start_utc: datetime,
+    end_utc: datetime,
+    *,
+    recruiter_id: Optional[int] = None,
+) -> Dict[str, int]:
     metrics: Dict[str, int] = {}
 
-    tested = await session.scalar(
-        select(func.count(func.distinct(TestResult.user_id))).where(
+    tested_query = (
+        select(func.count(func.distinct(TestResult.user_id)))
+        .join(User, User.id == TestResult.user_id)
+        .where(
             TestResult.created_at >= start_utc,
             TestResult.created_at < end_utc,
         )
     )
+    if recruiter_id is not None:
+        tested_query = tested_query.where(User.responsible_recruiter_id == recruiter_id)
+    tested = await session.scalar(tested_query)
     metrics["tested"] = int(tested or 0)
     metrics["completed_test"] = metrics["tested"]
 
@@ -185,42 +199,46 @@ async def _query_metrics(session, start_utc: datetime, end_utc: datetime) -> Dic
         Slot.updated_at < end_utc,
     )
 
-    booked = await session.scalar(
-        select(func.count(func.distinct(Slot.candidate_tg_id))).where(
-            *booking_conditions,
-            func.lower(Slot.status).in_(BOOKING_STATES_LOWER),
-        )
+    booked_query = select(func.count(func.distinct(Slot.candidate_tg_id))).where(
+        *booking_conditions,
+        func.lower(Slot.status).in_(BOOKING_STATES_LOWER),
     )
+    if recruiter_id is not None:
+        booked_query = booked_query.where(Slot.recruiter_id == recruiter_id)
+    booked = await session.scalar(booked_query)
     metrics["booked"] = int(booked or 0)
 
-    confirmed = await session.scalar(
-        select(func.count(func.distinct(Slot.candidate_tg_id))).where(
-            *booking_conditions,
-            func.lower(Slot.status) == CONFIRMED_STATUS,
-        )
+    confirmed_query = select(func.count(func.distinct(Slot.candidate_tg_id))).where(
+        *booking_conditions,
+        func.lower(Slot.status) == CONFIRMED_STATUS,
     )
+    if recruiter_id is not None:
+        confirmed_query = confirmed_query.where(Slot.recruiter_id == recruiter_id)
+    confirmed = await session.scalar(confirmed_query)
     metrics["confirmed"] = int(confirmed or 0)
 
-    interview_passed = await session.scalar(
-        select(func.count(func.distinct(Slot.candidate_tg_id))).where(
-            Slot.candidate_tg_id.isnot(None),
-            func.lower(Slot.purpose) == "interview",
-            func.lower(Slot.interview_outcome).in_(SUCCESS_OUTCOMES),
-            Slot.updated_at >= start_utc,
-            Slot.updated_at < end_utc,
-        )
+    interview_query = select(func.count(func.distinct(Slot.candidate_tg_id))).where(
+        Slot.candidate_tg_id.isnot(None),
+        func.lower(Slot.purpose) == "interview",
+        func.lower(Slot.interview_outcome).in_(SUCCESS_OUTCOMES),
+        Slot.updated_at >= start_utc,
+        Slot.updated_at < end_utc,
     )
+    if recruiter_id is not None:
+        interview_query = interview_query.where(Slot.recruiter_id == recruiter_id)
+    interview_passed = await session.scalar(interview_query)
     metrics["interview_passed"] = int(interview_passed or 0)
 
-    intro_day = await session.scalar(
-        select(func.count(func.distinct(Slot.candidate_tg_id))).where(
-            Slot.candidate_tg_id.isnot(None),
-            func.lower(Slot.purpose) == "intro_day",
-            func.lower(Slot.status).in_(INTRO_ATTEND_STATES_LOWER),
-            Slot.updated_at >= start_utc,
-            Slot.updated_at < end_utc,
-        )
+    intro_query = select(func.count(func.distinct(Slot.candidate_tg_id))).where(
+        Slot.candidate_tg_id.isnot(None),
+        func.lower(Slot.purpose) == "intro_day",
+        func.lower(Slot.status).in_(INTRO_ATTEND_STATES_LOWER),
+        Slot.updated_at >= start_utc,
+        Slot.updated_at < end_utc,
     )
+    if recruiter_id is not None:
+        intro_query = intro_query.where(Slot.recruiter_id == recruiter_id)
+    intro_day = await session.scalar(intro_query)
     metrics["intro_day"] = int(intro_day or 0)
 
     return metrics
@@ -250,6 +268,8 @@ async def _test_details(
     start_utc: datetime,
     end_utc: datetime,
     tz: ZoneInfo,
+    *,
+    recruiter_id: Optional[int] = None,
 ) -> List[Dict[str, object]]:
     query: Select = (
         select(
@@ -265,6 +285,8 @@ async def _test_details(
         )
         .order_by(TestResult.created_at.desc(), TestResult.id.desc())
     )
+    if recruiter_id is not None:
+        query = query.where(User.responsible_recruiter_id == recruiter_id)
     rows = await session.execute(query)
     seen: set[int] = set()
     details: List[Dict[str, object]] = []
@@ -295,6 +317,7 @@ async def _slot_details(
     purpose: str,
     status_filter: Optional[Iterable[str]] = None,
     outcome_filter: Optional[Iterable[str]] = None,
+    recruiter_id: Optional[int] = None,
 ) -> List[Dict[str, object]]:
     conditions = [
         Slot.candidate_tg_id.isnot(None),
@@ -302,6 +325,8 @@ async def _slot_details(
         Slot.updated_at < end_utc,
         func.lower(Slot.purpose) == purpose.lower(),
     ]
+    if recruiter_id is not None:
+        conditions.append(Slot.recruiter_id == recruiter_id)
     if status_filter is not None:
         lowered = {value.lower() for value in status_filter}
         conditions.append(func.lower(Slot.status).in_(lowered))
@@ -365,9 +390,11 @@ async def _collect_details(
     start_utc: datetime,
     end_utc: datetime,
     tz: ZoneInfo,
+    *,
+    recruiter_id: Optional[int] = None,
 ) -> Dict[str, List[Dict[str, object]]]:
     details: Dict[str, List[Dict[str, object]]] = {}
-    tested_details = await _test_details(session, start_utc, end_utc, tz)
+    tested_details = await _test_details(session, start_utc, end_utc, tz, recruiter_id=recruiter_id)
     details["tested"] = tested_details
     details["completed_test"] = tested_details
 
@@ -378,6 +405,7 @@ async def _collect_details(
         tz,
         purpose="interview",
         status_filter=BOOKING_STATES,
+        recruiter_id=recruiter_id,
     )
 
     details["confirmed"] = await _slot_details(
@@ -387,6 +415,7 @@ async def _collect_details(
         tz,
         purpose="interview",
         status_filter={SlotStatus.CONFIRMED_BY_CANDIDATE},
+        recruiter_id=recruiter_id,
     )
 
     details["interview_passed"] = await _slot_details(
@@ -396,6 +425,7 @@ async def _collect_details(
         tz,
         purpose="interview",
         outcome_filter=SUCCESS_OUTCOMES,
+        recruiter_id=recruiter_id,
     )
 
     details["intro_day"] = await _slot_details(
@@ -405,6 +435,7 @@ async def _collect_details(
         tz,
         purpose="intro_day",
         status_filter=INTRO_ATTEND_STATES,
+        recruiter_id=recruiter_id,
     )
 
     return details
@@ -527,11 +558,23 @@ async def _compute_payload(
     reference_now: datetime,
     *,
     window: Optional[WeekWindow] = None,
+    recruiter_id: Optional[int] = None,
 ) -> Dict[str, object]:
     window = window or get_week_window(now=reference_now, tz_name=tz_name)
     async with async_session() as session:
-        metrics = await _query_metrics(session, window.week_start_utc, window.week_end_utc)
-        details = await _collect_details(session, window.week_start_utc, window.week_end_utc, window.tz)
+        metrics = await _query_metrics(
+            session,
+            window.week_start_utc,
+            window.week_end_utc,
+            recruiter_id=recruiter_id,
+        )
+        details = await _collect_details(
+            session,
+            window.week_start_utc,
+            window.week_end_utc,
+            window.tz,
+            recruiter_id=recruiter_id,
+        )
 
     previous_start = window.week_start_date - timedelta(days=7)
     previous_window = _window_for_week_start(previous_start, window.tz)
@@ -565,33 +608,41 @@ async def get_weekly_kpis(
     company_tz: Optional[str] = None,
     *,
     now: Optional[datetime] = None,
+    principal: Optional["Principal"] = None,
+    recruiter_id: Optional[int] = None,
 ) -> Dict[str, object]:
     tz_name = _normalize_timezone_name(company_tz)
     reference_now = _ensure_aware(now) if now else _current_time()
+    scoped_recruiter_id = recruiter_id
+    if getattr(principal, "type", None) == "recruiter":
+        scoped_recruiter_id = getattr(principal, "id", None)
     if now is not None:
-        return await _compute_payload(tz_name, reference_now)
+        return await _compute_payload(tz_name, reference_now, recruiter_id=scoped_recruiter_id)
 
     window = get_week_window(now=reference_now, tz_name=tz_name)
-    cache = _WTD_CACHE
-    if (
-        cache
-        and cache.get("tz") == tz_name
-        and cache.get("week_start") == window.week_start_date
-        and cache.get("expires_at") > reference_now
-    ):
-        return cache["data"]  # type: ignore[return-value]
-
-    async with _CACHE_LOCK:
-        cache = _WTD_CACHE
+    cache = _WTD_CACHE if scoped_recruiter_id is None else None
+    if scoped_recruiter_id is None:
         if (
             cache
             and cache.get("tz") == tz_name
             and cache.get("week_start") == window.week_start_date
-            and cache.get("expires_at") > datetime.now(timezone.utc)
+            and cache.get("expires_at") > reference_now
         ):
             return cache["data"]  # type: ignore[return-value]
-        payload = await _compute_payload(tz_name, reference_now, window=window)
-        _set_cache(tz_name, window.week_start_date, payload, reference_now)
+
+    async with _CACHE_LOCK:
+        cache = _WTD_CACHE if scoped_recruiter_id is None else None
+        if scoped_recruiter_id is None:
+            if (
+                cache
+                and cache.get("tz") == tz_name
+                and cache.get("week_start") == window.week_start_date
+                and cache.get("expires_at") > datetime.now(timezone.utc)
+            ):
+                return cache["data"]  # type: ignore[return-value]
+        payload = await _compute_payload(tz_name, reference_now, window=window, recruiter_id=scoped_recruiter_id)
+        if scoped_recruiter_id is None:
+            _set_cache(tz_name, window.week_start_date, payload, reference_now)
         return payload
 
 

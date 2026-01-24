@@ -14,6 +14,7 @@ from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
 from backend.domain.repositories import city_has_available_slots, slot_status_free_clause
 from backend.domain.errors import CityAlreadyExistsError
+from backend.apps.admin_ui.security import principal_ctx, Principal
 
 from .templates import update_templates_for_city
 
@@ -32,21 +33,32 @@ __all__ = [
 ]
 
 
-async def list_cities(order_by_name: bool = True) -> List[City]:
+async def list_cities(order_by_name: bool = True, principal: Optional[Principal] = None) -> List[City]:
+    principal = principal or principal_ctx.get()
+    if principal is None:
+        raise RuntimeError("principal is required for list_cities")
     async with async_session() as session:
         query = select(City).options(selectinload(City.recruiters))
+        if principal and principal.type == "recruiter":
+            query = query.join(City.recruiters).where(Recruiter.id == principal.id)
         if order_by_name:
             query = query.order_by(City.name.asc())
         return (await session.scalars(query)).all()
 
 
-async def get_city(city_id: int) -> Optional[City]:
+async def get_city(city_id: int, principal: Optional[Principal] = None) -> Optional[City]:
+    principal = principal or principal_ctx.get()
+    if principal is None:
+        raise RuntimeError("principal is required for get_city")
     async with async_session() as session:
-        result = await session.execute(
+        query = (
             select(City)
-                .options(selectinload(City.recruiters))
-                .where(City.id == city_id)
+            .options(selectinload(City.recruiters))
+            .where(City.id == city_id)
         )
+        if principal and principal.type == "recruiter":
+            query = query.join(City.recruiters).where(Recruiter.id == principal.id)
+        result = await session.execute(query)
         return result.scalar_one_or_none()
 
 
@@ -236,6 +248,11 @@ async def api_cities_payload() -> List[Dict[str, object]]:
     payload: List[Dict[str, object]] = []
     for city in cities:
         primary = _primary_recruiter(city)
+        recruiters_payload = [
+            {"id": recruiter.id, "name": recruiter.name}
+            for recruiter in (city.recruiters or [])
+            if recruiter is not None
+        ]
         payload.append(
             {
                 "id": city.id,
@@ -245,10 +262,13 @@ async def api_cities_payload() -> List[Dict[str, object]]:
                 "name_html": sanitize_plain_text(city.name_plain),
                 "tz": getattr(city, "tz", None),
                 "owner_recruiter_id": primary.id if primary else None,
+                "active": getattr(city, "active", True),
                 "criteria": getattr(city, "criteria", None),
                 "experts": getattr(city, "experts", None),
                 "plan_week": getattr(city, "plan_week", None),
                 "plan_month": getattr(city, "plan_month", None),
+                "recruiters": recruiters_payload,
+                "recruiter_count": len(recruiters_payload),
             }
         )
     return payload

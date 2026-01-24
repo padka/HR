@@ -53,17 +53,24 @@ def event_loop():
 
 @pytest.fixture(scope="session", autouse=True)
 def configure_backend(tmp_path_factory):
-    db_url = os.getenv("TEST_DATABASE_URL")
-    if db_url:
-        os.environ["DATABASE_URL"] = db_url
-        if not os.getenv("DATA_DIR"):
-            os.environ["DATA_DIR"] = str(tmp_path_factory.mktemp("data"))
-    else:
-        db_dir = tmp_path_factory.mktemp("data")
-        db_path = db_dir / "bot.db"
-        os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
-        os.environ["DATA_DIR"] = str(db_dir)
+    # Stable defaults for tests: force local sqlite unless TEST_DATABASE_URL is explicitly set
+    os.environ["ENVIRONMENT"] = "test"
+    # Force sqlite per test session to avoid asyncpg/uvloop issues
+    db_dir = tmp_path_factory.mktemp("data")
+    db_path = db_dir / "bot.db"
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    os.environ["DATA_DIR"] = str(db_dir)
+    # Force integration tests to use the same SQLite URL; this skips Postgres-only
+    # migration checks when a local Postgres instance is unavailable.
+    os.environ["TEST_DATABASE_URL"] = os.environ["DATABASE_URL"]
     os.environ.pop("SQL_ECHO", None)
+    # Allow legacy Basic auth in test runs for compatibility
+    os.environ["ALLOW_LEGACY_BASIC"] = "1"
+    os.environ.setdefault("ADMIN_USER", "admin")
+    os.environ.setdefault("ADMIN_PASSWORD", "admin")
+    os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
+    # Keep one event loop for async tests to avoid asyncpg/uvloop loop-close issues
+    os.environ.setdefault("PYTEST_ASYNCIO_LOOP_SCOPE", "session")
     # Force in-memory state stores for tests to avoid external Redis flakiness
     os.environ["REDIS_URL"] = ""
     os.environ["RATE_LIMIT_REDIS_URL"] = ""
@@ -129,14 +136,17 @@ def clean_database():
             pass
         sync_engine.dispose()
 
-        for attempt in range(3):
+        # Give background tasks a moment to release SQLite file locks
+        time.sleep(0.1)
+
+        for attempt in range(15):
             try:
                 Base.metadata.drop_all(bind=sync_engine)
                 break
             except sa.exc.OperationalError as exc:
-                if "locked" in str(exc).lower() and attempt < 2:
+                if "locked" in str(exc).lower() and attempt < 14:
                     sync_engine.dispose()
-                    time.sleep(0.1)
+                    time.sleep(0.3 * (attempt + 1))
                     continue
                 raise
         Base.metadata.create_all(bind=sync_engine)

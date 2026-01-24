@@ -38,6 +38,8 @@ from backend.domain.candidates.status import (
 from backend.domain.candidate_status_service import CandidateStatusService
 from backend.apps.bot.metrics import get_test1_metrics_snapshot
 from backend.domain.repositories import find_city_by_plain_name
+from backend.core.scoping import scope_candidates, scope_slots, scope_cities
+from backend.apps.admin_ui.security import Principal
 
 __all__ = [
     "dashboard_counts",
@@ -177,28 +179,35 @@ def _format_waiting_window(user: User, tz_label: str) -> Optional[str]:
     return f"{start_label} – {end_label}"
 
 
-async def dashboard_counts() -> Dict[str, object]:
+async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, object]:
     async with async_session() as session:
+        principal_type = getattr(principal, "type", None)
+        principal_id = getattr(principal, "id", None)
+
         rec_count = await session.scalar(
             select(func.count(Recruiter.id)).where(Recruiter.active.is_(True))
         )
-        city_count = await session.scalar(
-            select(func.count(City.id)).where(City.active.is_(True))
+        if principal_type == "recruiter":
+            rec_count = 1
+
+        city_stmt = select(City).where(City.active.is_(True))
+        city_stmt = scope_cities(city_stmt, principal) if principal else city_stmt
+        city_count = await session.scalar(select(func.count()).select_from(city_stmt.subquery()))
+
+        slot_stmt = select(Slot.status, func.count(Slot.id)).where(Slot.status != SlotStatus.CANCELED)
+        if principal_type == "recruiter":
+            slot_stmt = slot_stmt.where(Slot.recruiter_id == principal_id)
+        rows = (await session.execute(slot_stmt.group_by(Slot.status))).all()
+
+        candidate_stmt = select(User).where(
+            User.candidate_status.in_([
+                CandidateStatus.WAITING_SLOT,
+                CandidateStatus.STALLED_WAITING_SLOT,
+            ])
         )
-        rows = (
-            await session.execute(
-                select(Slot.status, func.count(Slot.id))
-                .where(Slot.status != SlotStatus.CANCELED)
-                .group_by(Slot.status)
-            )
-        ).all()
+        candidate_stmt = scope_candidates(candidate_stmt, principal) if principal else candidate_stmt
         waiting_total = await session.scalar(
-            select(func.count()).select_from(User).where(
-                User.candidate_status.in_([
-                    CandidateStatus.WAITING_SLOT,
-                    CandidateStatus.STALLED_WAITING_SLOT,
-                ])
-            )
+            select(func.count()).select_from(candidate_stmt.subquery())
         )
 
     test1_metrics = await get_test1_metrics_snapshot()
@@ -227,7 +236,7 @@ async def dashboard_counts() -> Dict[str, object]:
     }
 
 
-async def get_recent_candidates(limit: int = 5) -> List[Dict[str, object]]:
+async def get_recent_candidates(limit: int = 5, *, principal: Optional[Principal] = None) -> List[Dict[str, object]]:
     """Get recent candidates/applications for dashboard."""
     async with async_session() as session:
         stmt = (
@@ -236,13 +245,15 @@ async def get_recent_candidates(limit: int = 5) -> List[Dict[str, object]]:
             .order_by(User.last_activity.desc())
             .limit(limit)
         )
+        if principal is not None:
+            stmt = scope_candidates(stmt, principal)
         result = await session.execute(stmt)
         users = result.scalars().all()
 
         return [format_dashboard_candidate(user) for user in users]
 
 
-async def get_waiting_candidates(limit: int = 6) -> List[Dict[str, object]]:
+async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principal] = None) -> List[Dict[str, object]]:
     """Return candidates waiting for manual slot assignment (prioritized)."""
     async with async_session() as session:
         status_filter = User.candidate_status.in_([
@@ -255,6 +266,8 @@ async def get_waiting_candidates(limit: int = 6) -> List[Dict[str, object]]:
             .order_by(User.status_changed_at.asc())
             .limit(limit)
         )
+        if principal is not None:
+            stmt = scope_candidates(stmt, principal)
         result = await session.execute(stmt)
         users = result.scalars().all()
 

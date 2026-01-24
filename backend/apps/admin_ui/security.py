@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 import secrets
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Literal
+from contextvars import ContextVar
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -14,6 +15,10 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from backend.core.audit import AuditContext, set_audit_context
+from backend.core.db import async_session
+from backend.core.passwords import verify_password
+from backend.domain.auth_account import AuthAccount
+from backend.domain.models import Recruiter
 from starlette_wtf import csrf_token
 from backend.core.settings import get_settings
 
@@ -126,67 +131,137 @@ def _build_limiter() -> Limiter:
 limiter = _build_limiter()
 
 
-@limiter.limit("60/minute", key_func=get_client_ip)
-async def require_admin(
-    request: Request, credentials: HTTPBasicCredentials = Depends(_basic)
-) -> None:
-    """Ensure the incoming request is authenticated via HTTP Basic."""
+# ---- Principal helpers ------------------------------------------------------
 
+PrincipalType = Literal["admin", "recruiter"]
+
+
+@dataclass
+class Principal:
+    type: PrincipalType
+    id: int
+
+
+SESSION_KEY = "principal"
+principal_ctx: ContextVar[Optional[Principal]] = ContextVar("principal_ctx", default=None)
+def _allow_legacy_basic() -> bool:
+    env_flag = os.getenv("ALLOW_LEGACY_BASIC", "false").lower() in {"1", "true", "yes"}
     settings = get_settings()
-    username = settings.admin_username
-    password = settings.admin_password
+    return bool(env_flag or getattr(settings, "allow_legacy_basic", False))
 
-    if not username or not password:
-        logger.error("Admin credentials are not configured; refusing request")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Admin credentials are not configured",
-        )
 
-    if credentials is None:
-        logger.warning(
-            "Missing admin credentials",
-            extra={"remote_ip": request.client.host if request and request.client else None},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Basic"},
-        )
+@limiter.limit("60/minute", key_func=get_client_ip)
+async def get_current_principal(
+    request: Request, credentials: HTTPBasicCredentials = Depends(_basic)
+) -> Principal:
+    """
+    Resolve principal from session; fallback to legacy Basic admin to avoid lockout.
+    """
+    # Session principal
+    principal_data = request.session.get(SESSION_KEY) if hasattr(request, "session") else None
+    if principal_data and isinstance(principal_data, dict):
+        p_type = principal_data.get("type")
+        p_id = principal_data.get("id")
+        if p_type == "admin" and isinstance(p_id, int):
+            principal = Principal(type="admin", id=p_id)
+            principal_ctx.set(principal)
+            request.state.principal = principal
+            set_audit_context(
+                AuditContext(
+                    username=f"admin:{p_id}",
+                    ip_address=request.client.host if request and request.client else None,
+                    user_agent=request.headers.get("user-agent"),
+                )
+            )
+            return principal
+        if p_type == "recruiter" and isinstance(p_id, int):
+            async with async_session() as session:
+                recruiter = await session.get(Recruiter, p_id)
+                if recruiter and getattr(recruiter, "active", True):
+                    principal = Principal(type="recruiter", id=recruiter.id)
+                    principal_ctx.set(principal)
+                    request.state.principal = principal
+                    set_audit_context(
+                        AuditContext(
+                            username=f"recruiter:{recruiter.id}",
+                            ip_address=request.client.host if request and request.client else None,
+                            user_agent=request.headers.get("user-agent"),
+                        )
+                    )
+                    return principal
+            # stale session -> clear
+            request.session.pop(SESSION_KEY, None)
 
-    user_ok = secrets.compare_digest(credentials.username, username)
-    pass_ok = secrets.compare_digest(credentials.password, password)
-    if not (user_ok and pass_ok):
-        logger.warning(
-            "Invalid admin credentials",
-            extra={
-                "remote_ip": request.client.host if request and request.client else None,
-                "username": credentials.username,
-            },
+    # Legacy Basic admin fallback
+    settings = get_settings()
+    legacy_user = settings.admin_username
+    legacy_pass = settings.admin_password
+    if _allow_legacy_basic() and credentials and legacy_user and legacy_pass:
+        user_ok = secrets.compare_digest(credentials.username, legacy_user)
+        pass_ok = secrets.compare_digest(credentials.password, legacy_pass)
+        if user_ok and pass_ok:
+            # Persist into session for subsequent requests
+            if hasattr(request, "session"):
+                request.session[SESSION_KEY] = {"type": "admin", "id": -1}
+            principal = Principal(type="admin", id=-1)
+            principal_ctx.set(principal)
+            request.state.principal = principal
+            set_audit_context(
+                AuditContext(
+                    username=credentials.username,
+                    ip_address=request.client.host if request and request.client else None,
+                    user_agent=request.headers.get("user-agent"),
+                )
+            )
+            return principal
+
+    # Development/test safety valve: allow anonymous admin when not in production.
+    # Can be disabled by setting ALLOW_DEV_AUTOADMIN=0 to exercise real login locally.
+    allow_dev_autoadmin = os.getenv("ALLOW_DEV_AUTOADMIN", "1").lower() not in {"0", "false", "no"}
+    if settings.environment != "production" and allow_dev_autoadmin:
+        principal = Principal(type="admin", id=-1)
+        principal_ctx.set(principal)
+        request.state.principal = principal
+        set_audit_context(
+            AuditContext(
+                username="anon-admin",
+                ip_address=request.client.host if request and request.client else None,
+                user_agent=request.headers.get("user-agent"),
+            )
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    request.state.admin_username = credentials.username
-    set_audit_context(
-        AuditContext(
-            username=credentials.username,
-            ip_address=request.client.host if request and request.client else None,
-            user_agent=request.headers.get("user-agent"),
-        )
+        return principal
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required",
+        headers={"WWW-Authenticate": "Basic"},
     )
+
+
+async def require_principal(principal: Principal = Depends(get_current_principal)) -> Principal:
+    return principal
+
+
+async def require_admin(principal: Principal = Depends(get_current_principal)) -> Principal:
+    if principal.type != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+    return principal
 
 
 __all__ = [
     "require_admin",
+    "require_principal",
+    "get_current_principal",
+    "principal_ctx",
     "limiter",
     "RateLimitExceeded",
     "_rate_limit_exceeded_handler",
     "get_admin_identifier",
     "get_client_ip",
     "require_csrf_token",
+    "Principal",
+    "PrincipalType",
+    "SESSION_KEY",
 ]
 
 

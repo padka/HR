@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 RecruitSmart Admin is an HR recruitment management system with:
-- **Admin UI** (`backend/apps/admin_ui/`): FastAPI web application for managing candidates, recruiters, slots, and interview scheduling
+- **Admin UI** (`backend/apps/admin_ui/`): FastAPI backend for the SPA, manages candidates, recruiters, slots, and interview scheduling
 - **Telegram Bot** (`backend/apps/bot/`): Aiogram-based bot for candidate interactions (Test1/Test2 flows, scheduling)
 - **Admin API** (`backend/apps/admin_api/`): SQLAdmin-based API surface
 
@@ -23,6 +23,10 @@ python scripts/run_migrations.py  # Direct migration script
 make dev                  # Start admin UI with dev_server.py (auto-restart on changes)
 make dev-admin            # Start admin UI via scripts/dev_admin.sh
 make dev-bot              # Start bot via scripts/dev_bot.sh (separate terminal)
+
+# SPA (React/Vite)
+npm --prefix frontend/app run dev      # Start SPA dev server
+npm --prefix frontend/app run build    # Build SPA bundle (frontend/dist)
 
 # Testing (requires PostgreSQL test DB)
 make test                 # Run tests with PostgreSQL (rs:pass@localhost:5432/rs_test)
@@ -43,9 +47,7 @@ backend/
 ├── apps/
 │   ├── admin_ui/          # FastAPI admin interface
 │   │   ├── routers/       # Route handlers (candidates, slots, cities, etc.)
-│   │   ├── services/      # Business logic services
-│   │   ├── templates/     # Jinja2 HTML templates
-│   │   └── static/        # CSS, JS assets
+│   │   └── services/      # Business logic services
 │   ├── admin_api/         # SQLAdmin API
 │   └── bot/               # Telegram bot
 │       ├── handlers/      # Bot command/message handlers

@@ -8,11 +8,10 @@ from typing import Dict, Optional
 
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request, HTTPException, status as http_status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
-from backend.apps.admin_ui.config import safe_template_response
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import list_recruiters
@@ -40,6 +39,7 @@ from backend.apps.admin_ui.utils import (
     utc_to_local_naive,
     validate_timezone_name,
 )
+from backend.apps.admin_ui.security import require_principal, Principal, principal_ctx
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
@@ -54,6 +54,9 @@ _SECRET = _SETTINGS.session_secret.encode()
 
 def _parse_checkbox(value: Optional[str]) -> bool:
     return value not in (None, "", "0", "false", "False")
+
+
+from backend.core.guards import ensure_slot_scope
 
 
 def _pop_flash(request: Request) -> Optional[Dict[str, str]]:
@@ -150,129 +153,21 @@ class SlotUpdatePayload(SlotPayloadBase):
 async def slots_list(
     request: Request,
     recruiter_id: Optional[str] = Query(default=None),
-    slot_status: Optional[str] = Query(default=None, alias="status"),
+    status: Optional[str] = Query(default=None, alias="status"),
     city_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
+    principal: Principal = Depends(require_principal),
 ):
-    recruiter = parse_optional_int(recruiter_id)
-    status_norm = status_filter(slot_status)
-    city_filter = parse_optional_int(city_id)
-    try:
-        result = await list_slots(recruiter, status_norm, page, per_page, city_id=city_filter)
-    except Exception as exc:
-        logger.exception(
-            "slots.list_failed",
-            extra={
-                "recruiter": recruiter,
-                "status": status_norm,
-                "city_id": city_filter,
-                "page": page,
-                "per_page": per_page,
-                "path": str(request.url.path),
-            },
-        )
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось загрузить список слотов") from exc
-    recruiter_rows = await list_recruiters()
-    recruiter_entities = [row["rec"] for row in recruiter_rows]
-    recruiter_options = [
-        {
-            "id": rec.id,
-            "name": rec.name,
-            "tz": getattr(rec, "tz", None),
-            "active": getattr(rec, "active", None),
-        }
-        for rec in recruiter_entities
-    ]
-    slots = result["items"]
-    aggregated = result.get("status_counts") or {}
-    status_counts: Dict[str, int] = {
-        "total": result.get("total", len(slots)),
-        "FREE": int(aggregated.get("FREE", 0)),
-        "PENDING": int(aggregated.get("PENDING", 0)),
-        "BOOKED": int(aggregated.get("BOOKED", 0)),
-        "CONFIRMED_BY_CANDIDATE": int(
-            aggregated.get("CONFIRMED_BY_CANDIDATE", 0)
-        ),
-    }
-    flash = _pop_flash(request)
-    city_rows = await list_cities(order_by_name=True)
-    city_options = [
-        {
-            "id": city.id,
-            "name": city.name,
-            "tz": getattr(city, "tz", None),
-        }
-        for city in city_rows
-    ]
-
-    has_slots = len(slots) > 0
-
-    slots_context_payload = {
-        "filters": {
-            "recruiter_id": recruiter,
-            "status": status_norm,
-            "city_id": city_filter,
-        },
-        "status_counts": status_counts,
-        "recruiters": recruiter_options,
-        "cities": city_options,
-        "page": result["page"],
-        "pages_total": result["pages_total"],
-        "per_page": per_page,
-        "has_slots": has_slots,
-    }
-
-    context = {
-        "slots": slots,
-        "has_slots": has_slots,
-        "filter_recruiter_id": recruiter,
-        "filter_status": status_norm,
-        "filter_city_id": city_filter,
-        "page": result["page"],
-        "pages_total": result["pages_total"],
-        "per_page": per_page,
-        "recruiter_options": recruiter_options,
-        "city_options": city_options,
-        "status_counts": status_counts,
-        "flash": flash,
-        "slots_context": slots_context_payload,
-    }
-    response = safe_template_response(
-        "slots_list.html",
-        request,
-        context,
-        encode_json_keys=("slots_context",),
-    )
-    if flash:
-        response.delete_cookie(
-            _FLASH_COOKIE,
-            path="/",
-            secure=_SETTINGS.session_cookie_secure,
-            httponly=True,
-            samesite=_SETTINGS.session_cookie_samesite,
-        )
-    return response
+    target = "/app/slots"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(url=target, status_code=302)
 
 
 @router.get("/new", response_class=HTMLResponse)
-async def slots_new(request: Request):
-    recruiters = await recruiters_for_slot_form()
-    flash = _pop_flash(request)
-    response = safe_template_response(
-        "slots_new.html",
-        request,
-        {"recruiters": recruiters, "flash": flash},
-    )
-    if flash:
-        response.delete_cookie(
-            _FLASH_COOKIE,
-            path="/",
-            secure=_SETTINGS.session_cookie_secure,
-            httponly=True,
-            samesite=_SETTINGS.session_cookie_samesite,
-        )
-    return response
+async def slots_new(request: Request, principal: Principal = Depends(require_principal)):
+    return RedirectResponse(url="/app/slots/create", status_code=302)
 
 
 @router.post("/create")
@@ -281,6 +176,7 @@ async def slots_create(
     city_id: Optional[str] = Form(default=None),
     date: Optional[str] = Form(default=None),
     time: Optional[str] = Form(default=None),
+    principal: Principal = Depends(require_principal),
 ):
     if not city_id:
         return JSONResponse({"detail": "Укажите город"}, status_code=422)
@@ -289,6 +185,8 @@ async def slots_create(
         city_val = int(city_id)
     except (TypeError, ValueError):
         return JSONResponse({"detail": "Укажите корректный город"}, status_code=422)
+    if principal.type == "recruiter":
+        recruiter_val = principal.id
 
     result = await create_slot(recruiter_val, date or "", time or "", city_id=city_val)
     if isinstance(result, tuple):
@@ -318,7 +216,10 @@ async def slots_bulk_create(
     step_min: int = Form(...),
     include_weekends: Optional[str] = Form(default=None),
     use_break: Optional[str] = Form(default=None),
+    principal: Principal = Depends(require_principal),
 ):
+    if principal.type == "recruiter":
+        recruiter_id = principal.id
     created, error = await bulk_create_slots(
         recruiter_id=recruiter_id,
         city_id=city_id,
@@ -344,10 +245,13 @@ async def slots_bulk_create(
     return response
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
-async def slots_api_create(payload: SlotCreatePayload):
+@router.post("", status_code=http_status.HTTP_201_CREATED)
+async def slots_api_create(payload: SlotCreatePayload, principal: Principal = Depends(require_principal)):
     async with async_session() as session:
-        recruiter = await session.get(Recruiter, payload.recruiter_id)
+        target_recruiter_id = payload.recruiter_id
+        if principal.type == "recruiter":
+            target_recruiter_id = principal.id
+        recruiter = await session.get(Recruiter, target_recruiter_id)
         if recruiter is None:
             raise HTTPException(status_code=404, detail="Recruiter not found")
 
@@ -399,11 +303,12 @@ async def slots_api_create(payload: SlotCreatePayload):
 
 
 @router.put("/{slot_id}")
-async def slots_api_update(slot_id: int, payload: SlotUpdatePayload):
+async def slots_api_update(slot_id: int, payload: SlotUpdatePayload, principal: Principal = Depends(require_principal)):
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if slot is None:
             raise HTTPException(status_code=404, detail="Slot not found")
+        ensure_slot_scope(slot, principal)
 
         recruiter_id = payload.recruiter_id or slot.recruiter_id
         recruiter = await session.get(Recruiter, recruiter_id)
@@ -454,11 +359,12 @@ async def slots_api_update(slot_id: int, payload: SlotUpdatePayload):
 
 
 @router.get("/{slot_id}")
-async def slots_api_detail(slot_id: int):
+async def slots_api_detail(slot_id: int, principal: Principal = Depends(require_principal)):
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if slot is None:
             raise HTTPException(status_code=404, detail="Slot not found")
+        ensure_slot_scope(slot, principal)
 
         tz_name: Optional[str] = None
         if slot.city_id is not None:
@@ -473,9 +379,9 @@ async def slots_api_detail(slot_id: int):
 
 
 @router.post("/{slot_id}/delete")
-async def slots_delete_form(slot_id: int, force: Optional[str] = Form(default=None)):
+async def slots_delete_form(slot_id: int, force: Optional[str] = Form(default=None), principal: Principal = Depends(require_principal)):
     force_flag = str(force).lower() not in {"", "none", "0", "false"}
-    ok, error = await delete_slot(slot_id, force=force_flag)
+    ok, error = await delete_slot(slot_id, force=force_flag, principal=principal)
     response = RedirectResponse(url="/slots", status_code=303)
     if ok:
         _set_flash(response, "success", "Слот удалён")
@@ -485,8 +391,8 @@ async def slots_delete_form(slot_id: int, force: Optional[str] = Form(default=No
 
 
 @router.delete("/{slot_id}")
-async def slots_delete(slot_id: int, force: Optional[bool] = Query(default=False)):
-    ok, error = await delete_slot(slot_id, force=bool(force))
+async def slots_delete(slot_id: int, force: Optional[bool] = Query(default=False), principal: Principal = Depends(require_principal)):
+    ok, error = await delete_slot(slot_id, force=bool(force), principal=principal)
     if ok:
         return JSONResponse({"ok": True, "message": "Слот удалён"})
     payload: Dict[str, object] = {"ok": False, "message": error or "Не удалось удалить слот."}
@@ -501,8 +407,8 @@ class BulkDeletePayload(BaseModel):
 
 
 @router.post("/delete_all")
-async def slots_delete_all(payload: BulkDeletePayload):
-    deleted, remaining = await delete_all_slots(force=bool(payload.force))
+async def slots_delete_all(payload: BulkDeletePayload, principal: Principal = Depends(require_principal)):
+    deleted, remaining = await delete_all_slots(force=bool(payload.force), principal=principal)
     return JSONResponse({"ok": True, "deleted": deleted, "remaining": remaining})
 
 
@@ -528,13 +434,13 @@ class SlotsBulkPayload(BaseModel):
 
 
 @router.post("/bulk")
-async def slots_bulk_action(payload: SlotsBulkPayload):
+async def slots_bulk_action(payload: SlotsBulkPayload, principal: Principal = Depends(require_principal)):
     try:
         if payload.action is SlotsBulkAction.ASSIGN:
             if payload.recruiter_id is None:
                 raise HTTPException(status_code=422, detail="recruiter_id обязателен")
             updated, missing = await bulk_assign_slots(
-                payload.slot_ids, payload.recruiter_id
+                payload.slot_ids, payload.recruiter_id, principal=principal
             )
             return JSONResponse(
                 {
@@ -545,7 +451,7 @@ async def slots_bulk_action(payload: SlotsBulkPayload):
             )
 
         if payload.action is SlotsBulkAction.REMIND:
-            scheduled, missing = await bulk_schedule_reminders(payload.slot_ids)
+            scheduled, missing = await bulk_schedule_reminders(payload.slot_ids, principal=principal)
             return JSONResponse(
                 {
                     "ok": True,
@@ -556,7 +462,7 @@ async def slots_bulk_action(payload: SlotsBulkPayload):
 
         if payload.action is SlotsBulkAction.DELETE:
             deleted, failed = await bulk_delete_slots(
-                payload.slot_ids, force=bool(payload.force)
+                payload.slot_ids, force=bool(payload.force), principal=principal
             )
             return JSONResponse(
                 {
@@ -583,11 +489,13 @@ async def slots_set_outcome(
     payload: OutcomePayload,
     background_tasks: BackgroundTasks,
     bot_service: BotService = Depends(provide_bot_service),
+    principal: Principal = Depends(require_principal),
 ):
     ok, message, stored, dispatch = await set_slot_outcome(
         slot_id,
         payload.outcome,
         bot_service=bot_service,
+        principal=principal,
     )
     status_code = 200
     bot_status = dispatch.status if dispatch is not None else "skipped:not_applicable"
@@ -607,8 +515,8 @@ async def slots_set_outcome(
 
 
 @router.post("/{slot_id}/reschedule")
-async def slots_reschedule(slot_id: int):
-    ok, message, notified = await reschedule_slot_booking(slot_id)
+async def slots_reschedule(slot_id: int, principal: Principal = Depends(require_principal)):
+    ok, message, notified = await reschedule_slot_booking(slot_id, principal=principal)
     status_code = 200 if ok else (404 if "не найден" in message.lower() else 400)
     return JSONResponse(
         {"ok": ok, "message": message, "bot_notified": notified},
@@ -617,10 +525,75 @@ async def slots_reschedule(slot_id: int):
 
 
 @router.post("/{slot_id}/reject_booking")
-async def slots_reject_booking(slot_id: int):
-    ok, message, notified = await reject_slot_booking(slot_id)
+async def slots_reject_booking(slot_id: int, principal: Principal = Depends(require_principal)):
+    ok, message, notified = await reject_slot_booking(slot_id, principal=principal)
     status_code = 200 if ok else (404 if "не найден" in message.lower() else 400)
     return JSONResponse(
         {"ok": ok, "message": message, "bot_notified": notified},
         status_code=status_code,
     )
+
+
+@router.post("/{slot_id}/approve_booking")
+async def slots_approve_booking(slot_id: int, principal: Principal = Depends(require_principal)):
+    """Approve a pending slot booking (PENDING → BOOKED)."""
+    from backend.apps.admin_ui.services.slots.bot import approve_slot_booking
+    ok, message, notified = await approve_slot_booking(slot_id, principal=principal)
+    status_code = 200 if ok else (404 if "не найден" in message.lower() else 400)
+    return JSONResponse(
+        {"ok": ok, "message": message, "bot_notified": notified},
+        status_code=status_code,
+    )
+
+
+class BookSlotPayload(BaseModel):
+    candidate_tg_id: int
+    candidate_fio: Optional[str] = None
+
+
+@router.post("/{slot_id}/book")
+async def slots_book_candidate(
+    slot_id: int,
+    payload: BookSlotPayload,
+    principal: Principal = Depends(require_principal),
+):
+    """Book a candidate onto a FREE slot."""
+    from backend.domain.models import SlotStatus
+    from backend.domain.candidates.models import User
+    from sqlalchemy import select as sql_select
+
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if slot is None:
+            raise HTTPException(status_code=404, detail="Slot not found")
+        ensure_slot_scope(slot, principal)
+
+        if slot.status not in (SlotStatus.FREE, "free", "FREE"):
+            return JSONResponse(
+                {"ok": False, "error": "slot_not_free", "message": "Слот уже занят"},
+                status_code=400,
+            )
+
+        # Find candidate
+        candidate = await session.scalar(
+            sql_select(User).where(User.telegram_id == payload.candidate_tg_id)
+        )
+        if candidate is None:
+            return JSONResponse(
+                {"ok": False, "error": "candidate_not_found", "message": "Кандидат не найден"},
+                status_code=404,
+            )
+
+        # Book the slot
+        slot.candidate_tg_id = payload.candidate_tg_id
+        slot.candidate_fio = payload.candidate_fio or candidate.fio or ""
+        slot.candidate_tz = slot.tz_name
+        slot.status = SlotStatus.BOOKED
+        await session.commit()
+
+    return JSONResponse({
+        "ok": True,
+        "message": "Кандидат забронирован на слот",
+        "slot_id": slot_id,
+        "candidate_tg_id": payload.candidate_tg_id,
+    })

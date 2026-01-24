@@ -59,6 +59,7 @@ async def dashboard_calendar_snapshot(
     *,
     days: int = 14,
     tz_name: str = DEFAULT_TZ,
+    recruiter_id: Optional[int] = None,
 ) -> Dict[str, object]:
     days = max(days, 1)
     zone = safe_zone(tz_name)
@@ -78,6 +79,8 @@ async def dashboard_calendar_snapshot(
             )
             .order_by(Slot.start_utc.asc(), Slot.id.asc())
         )
+        if recruiter_id is not None:
+            query = query.where(Slot.recruiter_id == recruiter_id)
         slots = (await session.scalars(query)).all()
 
         candidate_ids = {

@@ -62,6 +62,7 @@ if _drivername and _drivername.lower().startswith("sqlite"):
         "echo": _settings.sql_echo,
         "future": True,
         "poolclass": NullPool,
+        "connect_args": {"timeout": 5},
     }
 else:
     _async_engine_kwargs = {
@@ -100,6 +101,20 @@ _sync_engine_kwargs = {
     "pool_pre_ping": True,
     "pool_recycle": _settings.db_pool_recycle,
 }
+if _drivername and _drivername.lower().startswith("sqlite"):
+    _sync_engine_kwargs = {
+        "echo": _settings.sql_echo,
+        "future": True,
+        "poolclass": NullPool,
+        "connect_args": {"timeout": 5},
+    }
+elif _settings.environment == "test":
+    _sync_engine_kwargs = {
+        "echo": _settings.sql_echo,
+        "future": True,
+        "poolclass": NullPool,
+        "connect_args": {"timeout": 5},
+    }
 
 sync_engine = create_engine(
     _settings.database_url_sync,
@@ -120,6 +135,10 @@ async def init_models() -> None:
     if backend and backend.startswith("sqlite"):
         # SQLite doesn't support several ALTER/DROP patterns used in migrations.
         # For local dev/test we create the schema directly from ORM metadata.
+        # Ensure all models are imported so metadata is fully populated.
+        from backend.domain import auth_account as _auth_account  # noqa: F401
+        from backend.domain import models as _models  # noqa: F401
+        from backend.domain.candidates import models as _candidate_models  # noqa: F401
         from backend.domain.base import Base
 
         await asyncio.to_thread(Base.metadata.create_all, sync_engine)

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 from datetime import date as date_type, datetime, time, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Request, Query, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Request, Query, HTTPException, Depends
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from backend.apps.admin_ui.config import safe_template_response
 from backend.apps.admin_ui.services.bot_service import (
     BOT_RUNTIME_AVAILABLE,
     IntegrationSwitch,
@@ -23,9 +23,11 @@ from backend.apps.admin_ui.services.dashboard_calendar import (
 from backend.apps.admin_ui.services.kpis import get_weekly_kpis
 from backend.apps.admin_ui.utils import parse_optional_int
 from backend.core.settings import get_settings
+from backend.apps.admin_ui.security import require_principal, Principal
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+SPA_DIST_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 
 def _parse_date_param(value: str | None, *, end: bool = False) -> datetime | None:
@@ -87,75 +89,14 @@ def _empty_calendar(timezone: str) -> dict[str, object]:
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    db_available = True
-    try:
-        counts = await dashboard_counts()
-    except Exception:
-        logger.exception("Failed to load dashboard counts.")
-        db_available = False
-        counts = {
-            "cities": 0,
-            "recruiters": 0,
-            "pending": 0,
-            "booked": 0,
-            "confirmed": 0,
-            "total_slots": 0,
-            "waiting_candidates": 0,
-            "all_slots_total": 0,
-        }
-    switch: IntegrationSwitch | None = getattr(
-        request.app.state, "bot_integration_switch", None
-    )
-    bot_service = getattr(request.app.state, "bot_service", None)
-    settings = get_settings()
-    runtime_enabled = (
-        switch.is_enabled() if switch else settings.bot_integration_enabled
-    )
-    health = bot_service.health_status if bot_service else "missing"
-    ready = bot_service.is_ready() if bot_service else False
-    mode = (
-        "real"
-        if bot_service and bot_service.configured and BOT_RUNTIME_AVAILABLE
-        else "null"
-    )
-    bot_status = {
-        "config_enabled": settings.bot_integration_enabled,
-        "runtime_enabled": runtime_enabled,
-        "updated_at": switch.updated_at.isoformat() if switch else None,
-        "health": health,
-        "ready": ready,
-        "mode": mode,
-    }
-    weekly = _empty_weekly_kpis(settings.timezone)
-    calendar = _empty_calendar(settings.timezone)
-    try:
-        weekly = await get_weekly_kpis()
-        weekly.pop("is_placeholder", None)
-    except Exception:
-        logger.exception("Failed to load weekly KPIs for admin dashboard.")
-    try:
-        calendar = await dashboard_calendar_snapshot(tz_name=settings.timezone)
-    except Exception:
-        logger.exception("Failed to load dashboard calendar snapshot.")
-    return safe_template_response(
-        "index.html",
-        request,
-        {
-            "counts": counts,
-            "bot_status": bot_status,
-            "weekly_kpis": weekly,
-            "calendar": calendar,
-            "db_available": db_available,
-        },
-        encode_json_keys=("weekly_kpis", "calendar"),
-    )
+async def index(request: Request, principal: Principal = Depends(require_principal)):
+    return RedirectResponse(url="/app/dashboard", status_code=302)
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_alias(request: Request):
+async def dashboard_alias(request: Request, principal: Principal = Depends(require_principal)):
     """Backward-compatible route used by rate limit checks."""
-    return await index(request)
+    return RedirectResponse(url="/app/dashboard", status_code=302)
 
 
 @router.get("/dashboard/funnel")
@@ -165,10 +106,13 @@ async def dashboard_funnel(
     city: str | None = Query(default=None),
     recruiter: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    principal: Principal = Depends(require_principal),
 ) -> JSONResponse:
     date_from = _parse_date_param(from_)
     date_to = _parse_date_param(to, end=True)
     recruiter_id = parse_optional_int(recruiter)
+    if principal.type == "recruiter":
+        recruiter_id = principal.id
     try:
         payload = await get_bot_funnel_stats(
             date_from=date_from,
@@ -197,10 +141,13 @@ async def dashboard_funnel_step(
     city: str | None = Query(default=None),
     recruiter: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    principal: Principal = Depends(require_principal),
 ) -> JSONResponse:
     date_from = _parse_date_param(from_)
     date_to = _parse_date_param(to, end=True)
     recruiter_id = parse_optional_int(recruiter)
+    if principal.type == "recruiter":
+        recruiter_id = principal.id
     try:
         items = await get_funnel_step_candidates(
             step_key=step,

@@ -356,25 +356,33 @@ def _parse_city_ids(raw: Optional[List[str]]) -> List[int]:
 
 
 async def api_recruiters_payload() -> List[Dict[str, object]]:
-    async with async_session() as session:
-        recs = (
-            await session.scalars(
-                select(Recruiter)
-                .options(selectinload(Recruiter.cities))
-                .order_by(Recruiter.id.asc())
-            )
-        ).all()
-    return [
-        {
-            "id": r.id,
-            "name": r.name,
-            "tz": getattr(r, "tz", None),
-            "tg_chat_id": getattr(r, "tg_chat_id", None),
-            "active": getattr(r, "active", True),
-            "city_ids": sorted(city.id for city in r.cities),
-        }
-        for r in recs
-    ]
+    rows = await list_recruiters()
+    payload: List[Dict[str, object]] = []
+    for item in rows:
+        rec: Recruiter = item["rec"]
+        stats = item.get("stats", {}) or {}
+        cities = item.get("cities") or []
+        payload.append(
+            {
+                "id": rec.id,
+                "name": rec.name,
+                "tz": getattr(rec, "tz", None),
+                "tg_chat_id": getattr(rec, "tg_chat_id", None),
+                "telemost_url": getattr(rec, "telemost_url", None),
+                "active": getattr(rec, "active", True),
+                "city_ids": item.get("city_ids", []),
+                "cities": [{"name": str(name), "tz": tz} for name, tz in cities],
+                "stats": {
+                    "total": int(stats.get("total", 0) or 0),
+                    "free": int(stats.get("free", 0) or 0),
+                    "pending": int(stats.get("pending", 0) or 0),
+                    "booked": int(stats.get("booked", 0) or 0),
+                },
+                "next_free_local": item.get("next_free_local"),
+                "next_is_future": item.get("next_is_future"),
+            }
+        )
+    return payload
 
 
 async def api_get_recruiter(recruiter_id: int) -> Optional[Dict[str, object]]:
@@ -391,6 +399,7 @@ async def api_get_recruiter(recruiter_id: int) -> Optional[Dict[str, object]]:
         "name": recruiter.name,
         "tz": getattr(recruiter, "tz", None),
         "tg_chat_id": getattr(recruiter, "tg_chat_id", None),
+        "telemost_url": getattr(recruiter, "telemost_url", None),
         "active": getattr(recruiter, "active", True),
         "city_ids": sorted(city.id for city in recruiter.cities),
     }

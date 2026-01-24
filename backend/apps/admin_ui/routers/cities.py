@@ -1,11 +1,9 @@
 from typing import Dict, Optional
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from backend.apps.admin_ui.config import templates
 from backend.apps.admin_ui.services.cities import (
-    create_city,
     get_city,
     list_cities,
     update_city_settings as update_city_settings_service,
@@ -21,7 +19,6 @@ from backend.apps.admin_ui.services.templates import (
     stage_payload_for_ui,
 )
 from backend.core.sanitizers import sanitize_plain_text
-from backend.domain.errors import CityAlreadyExistsError
 from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 
 router = APIRouter(prefix="/cities", tags=["cities"])
@@ -188,187 +185,27 @@ async def _prepare_city_edit_context(
 
 @router.get("", response_class=HTMLResponse)
 async def cities_list(request: Request):
-    cities = await list_cities()
-    recruiter_rows = await list_recruiters()
-    recruiters = [row["rec"] for row in recruiter_rows]
-    owners = {city.id: _primary_recruiter_id(city) for city in cities}
-    rec_map = {rec.id: rec for rec in recruiters}
-    city_responsibles = {
-        city.id: _dedupe_responsibles(list(city.recruiters or []), owners.get(city.id))
-        for city in cities
-    }
-    stage_map = await get_stage_templates(
-        city_ids=[c.id for c in cities], include_global=True
-    )
-    city_stages: Dict[int, object] = {
-        city.id: stage_payload_for_ui(stage_map.get(city.id, {})) for city in cities
-    }
-    context = {
-        "request": request,
-        "cities": cities,
-        "city_count": len(cities),
-        "owners": owners,
-        "rec_map": rec_map,
-        "city_responsibles": city_responsibles,
-        "recruiter_rows": recruiter_rows,
-        "recruiters": recruiters,
-        "stage_meta": CITY_TEMPLATE_STAGES,
-        "city_stages": city_stages,
-        "global_defaults": {key: STAGE_DEFAULTS[key] for key in STAGE_DEFAULTS},
-    }
-    return templates.TemplateResponse(request, "cities_list.html", context)
+    return RedirectResponse(url="/app/cities", status_code=302)
 
 
 @router.get("/new", response_class=HTMLResponse)
 async def cities_new(request: Request):
-    return templates.TemplateResponse(request, "cities_new.html", {"request": request})
+    return RedirectResponse(url="/app/cities/new", status_code=302)
 
 
 @router.get("/{city_id}/edit", response_class=HTMLResponse)
 async def cities_edit_page(city_id: int, request: Request):
-    success = None
-    if request.query_params.get("saved") == "1":
-        success = "Настройки города обновлены"
-    context = await _prepare_city_edit_context(
-        city_id,
-        request,
-        success_message=success,
-    )
-    return templates.TemplateResponse(request, "cities_edit.html", context)
+    return RedirectResponse(url=f"/app/cities/{city_id}/edit", status_code=302)
 
 
 @router.post("/{city_id}/edit", response_class=HTMLResponse)
 async def cities_edit_submit(city_id: int, request: Request):
-    form = await request.form()
-    form_data = dict(form)
-
-    recruiter_ids_raw = form.getlist("recruiter_ids") if hasattr(form, "getlist") else []
-    recruiter_ids: List[int] = []
-    for raw_id in recruiter_ids_raw:
-        try:
-            recruiter_ids.append(int(raw_id))
-        except (TypeError, ValueError):
-            continue
-    override_state = {
-        "name": form_data.get("name", ""),
-        "recruiter_ids": recruiter_ids,
-        "criteria": form_data.get("criteria", ""),
-        "experts": form_data.get("experts", ""),
-        "plan_week": form_data.get("plan_week", ""),
-        "plan_month": form_data.get("plan_month", ""),
-        "tz": form_data.get("tz", ""),
-        "active": bool(form_data.get("active")),
-        "templates": {
-            stage.key: form_data.get(f"template_{stage.key}", "")
-            for stage in CITY_TEMPLATE_STAGES
-        },
-    }
-
-    name_raw = (form_data.get("name") or "").strip()
-    name_clean = sanitize_plain_text(name_raw)
-    if not name_clean:
-        context = await _prepare_city_edit_context(
-            city_id,
-            request,
-            form_state=override_state,
-            form_error="Название города не может быть пустым",
-        )
-        return templates.TemplateResponse(request, "cities_edit.html", context, status_code=400)
-
-    try:
-        plan_week = _parse_plan_value(form_data.get("plan_week"))
-    except ValueError:
-        context = await _prepare_city_edit_context(
-            city_id,
-            request,
-            form_state=override_state,
-            form_error="Неделя: " + PLAN_ERROR_MESSAGE,
-        )
-        return templates.TemplateResponse(request, "cities_edit.html", context, status_code=422)
-
-    try:
-        plan_month = _parse_plan_value(form_data.get("plan_month"))
-    except ValueError:
-        context = await _prepare_city_edit_context(
-            city_id,
-            request,
-            form_state=override_state,
-            form_error="Месяц: " + PLAN_ERROR_MESSAGE,
-        )
-        return templates.TemplateResponse(request, "cities_edit.html", context, status_code=422)
-
-    tz_value = (form_data.get("tz") or "").strip()
-    if not tz_value:
-        context = await _prepare_city_edit_context(
-            city_id,
-            request,
-            form_state=override_state,
-            form_error="Укажите часовой пояс города",
-        )
-        return templates.TemplateResponse(request, "cities_edit.html", context, status_code=400)
-
-    criteria = (form_data.get("criteria") or "").strip()
-    experts = (form_data.get("experts") or "").strip()
-    templates_payload = override_state["templates"]
-
-    error, _, _ = await update_city_settings_service(
-        city_id,
-        name=name_clean,
-        recruiter_ids=recruiter_ids,
-        templates=templates_payload,
-        criteria=criteria,
-        experts=experts,
-        plan_week=plan_week,
-        plan_month=plan_month,
-        tz=tz_value,
-        active=bool(form_data.get("active")),
-    )
-    if error:
-        context = await _prepare_city_edit_context(
-            city_id,
-            request,
-            form_state=override_state,
-            form_error=error,
-        )
-        return templates.TemplateResponse(request, "cities_edit.html", context, status_code=400)
-
-    return RedirectResponse(url=f"/cities/{city_id}/edit?saved=1", status_code=303)
+    return RedirectResponse(url=f"/app/cities/{city_id}/edit", status_code=303)
 
 
 @router.post("/create")
-async def cities_create(
-    request: Request,
-    name: str = Form(...),
-    tz: str = Form("Europe/Moscow"),
-):
-    tz_value = (tz or "Europe/Moscow").strip()
-    try:
-        normalized_tz = normalize_city_timezone(tz_value)
-    except ValueError as exc:
-        context = {
-            "request": request,
-            "form_error": str(exc),
-            "form_data": {"name": (name or "").strip(), "tz": tz_value or ""},
-        }
-        return templates.TemplateResponse(request, "cities_new.html", context, status_code=422)
-
-    try:
-        await create_city(name, normalized_tz)
-    except CityAlreadyExistsError:
-        context = {
-            "request": request,
-            "form_error": "Город с таким названием уже существует",
-            "form_data": {"name": (name or "").strip(), "tz": tz_value or ""},
-        }
-        return templates.TemplateResponse(request, "cities_new.html", context, status_code=409)
-    except ValueError as exc:
-        context = {
-            "request": request,
-            "form_error": str(exc),
-            "form_data": {"name": (name or "").strip(), "tz": tz_value or ""},
-        }
-        return templates.TemplateResponse(request, "cities_new.html", context, status_code=422)
-    return RedirectResponse(url="/cities", status_code=303)
+async def cities_create(request: Request):
+    return RedirectResponse(url="/app/cities", status_code=303)
 
 
 @router.post("/{city_id}/settings")

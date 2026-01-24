@@ -13,6 +13,7 @@ from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService
 from backend.apps.admin_ui.services.bot_service import (
     get_bot_service as resolve_bot_service,
 )
+from backend.apps.admin_ui.security import Principal, principal_ctx
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain.models import Slot
@@ -68,6 +69,7 @@ async def set_slot_outcome(
     outcome: str,
     *,
     bot_service: Optional[BotService] = None,
+    principal: Optional[Principal] = None,
 ) -> tuple[bool, Optional[str], Optional[str], Optional[BotDispatch]]:
     normalized = (outcome or "").strip().lower()
     aliases = {"passed": "success", "failed": "reject"}
@@ -79,6 +81,8 @@ async def set_slot_outcome(
             None,
             None,
         )
+
+    principal = principal or principal_ctx.get()
 
     service = bot_service
     if service is None:
@@ -94,6 +98,8 @@ async def set_slot_outcome(
             .where(Slot.id == slot_id)
         )
         if not slot:
+            return False, "Слот не найден.", None, None
+        if principal and principal.type == "recruiter" and slot.recruiter_id != principal.id:
             return False, "Слот не найден.", None, None
         if not getattr(slot, "candidate_tg_id", None):
             return (
@@ -386,7 +392,47 @@ async def reschedule_slot_booking(slot_id: int) -> tuple[bool, str, bool]:
     )
 
 
-async def reject_slot_booking(slot_id: int) -> tuple[bool, str, bool]:
+async def approve_slot_booking(slot_id: int, principal: Optional[Principal] = None) -> tuple[bool, str, bool]:
+    """Approve a pending slot booking (PENDING → BOOKED). Notifies candidate."""
+    from backend.domain.models import SlotStatus
+
+    async with async_session() as session:
+        slot = await session.scalar(
+            select(Slot)
+            .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+            .where(Slot.id == slot_id)
+        )
+
+        if not slot:
+            return False, "Слот не найден.", False
+        if slot.candidate_tg_id is None:
+            return False, "Слот не привязан к кандидату.", False
+        if slot.status == SlotStatus.BOOKED:
+            return True, "Слот уже подтверждён.", False
+        if slot.status not in (SlotStatus.PENDING, "pending", "PENDING"):
+            return False, f"Невозможно подтвердить слот со статусом {slot.status}.", False
+
+        slot.status = SlotStatus.BOOKED
+        await session.commit()
+
+    # Notify candidate
+    try:
+        notification_service = get_notification_service()
+        snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
+        result = await notification_service.on_booking_status_changed(
+            slot_id,
+            BookingNotificationStatus.CONFIRMED,
+            snapshot=snapshot,
+        )
+        if result.status == "sent":
+            return True, "Слот подтверждён. Кандидату отправлено уведомление.", True
+        return True, "Слот подтверждён. Уведомление не отправлено.", False
+    except Exception as exc:
+        logger.exception("Failed to notify candidate about approval", extra={"slot_id": slot_id})
+        return True, f"Слот подтверждён. Ошибка уведомления: {exc}", False
+
+
+async def reject_slot_booking(slot_id: int, principal: Optional[Principal] = None) -> tuple[bool, str, bool]:
     async with async_session() as session:
         slot = await session.scalar(
             select(Slot)

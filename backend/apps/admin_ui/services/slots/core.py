@@ -52,20 +52,29 @@ from backend.core.db import async_session  # type: ignore
 from backend.domain.models import Slot, SlotStatus  # type: ignore
 
 
-async def bulk_assign_slots(slot_ids, recruiter_id):
+async def bulk_assign_slots(slot_ids, recruiter_id, principal=None):
+    principal_id = getattr(principal, "id", None)
+    principal_type = getattr(principal, "type", None)
+    updated = 0
     async with async_session() as session:
         slots = list(await session.scalars(select(Slot).where(Slot.id.in_(slot_ids))))
         found_ids = {slot.id for slot in slots}
         missing = [sid for sid in slot_ids if sid not in found_ids]
         for slot in slots:
+            if principal_type == "recruiter" and slot.recruiter_id != principal_id:
+                missing.append(slot.id)
+                continue
             slot.recruiter_id = recruiter_id
+            updated += 1
         await session.commit()
-        return len(slots), missing
+        return updated, missing
 
 
-async def bulk_schedule_reminders(slot_ids):
+async def bulk_schedule_reminders(slot_ids, principal=None):
     scheduled = 0
     missing = []
+    principal_id = getattr(principal, "id", None)
+    principal_type = getattr(principal, "type", None)
     getter = globals().get("get_reminder_service")
     if getter is None:
         getter = getattr(_bot_module, "get_reminder_service", None)
@@ -81,20 +90,28 @@ async def bulk_schedule_reminders(slot_ids):
         found_ids = {slot.id for slot in slots}
         missing = [sid for sid in slot_ids if sid not in found_ids]
         for slot in slots:
+            if principal_type == "recruiter" and slot.recruiter_id != principal_id:
+                missing.append(slot.id)
+                continue
             if reminder_service and slot.candidate_tg_id:
                 await reminder_service.schedule_for_slot(slot.id)
                 scheduled += 1
     return scheduled, missing
 
 
-async def bulk_delete_slots(slot_ids, force: bool = False):
+async def bulk_delete_slots(slot_ids, force: bool = False, principal=None):
     deleted = 0
     failed = []
+    principal_id = getattr(principal, "id", None)
+    principal_type = getattr(principal, "type", None)
     async with async_session() as session:
         slots = list(await session.scalars(select(Slot).where(Slot.id.in_(slot_ids))))
         found_ids = {slot.id for slot in slots}
         failed.extend([sid for sid in slot_ids if sid not in found_ids])
         for slot in slots:
+            if principal_type == "recruiter" and slot.recruiter_id != principal_id:
+                failed.append(slot.id)
+                continue
             if not force and slot.status != SlotStatus.FREE:
                 failed.append(slot.id)
                 continue

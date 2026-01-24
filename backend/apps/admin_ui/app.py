@@ -15,7 +15,7 @@ try:
 except ImportError:
     SENTRY_AVAILABLE = False
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.staticfiles import StaticFiles
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -25,11 +25,16 @@ from starlette.responses import Response, PlainTextResponse
 
 from backend.apps.admin_ui.background_tasks import periodic_stalled_candidate_checker
 from backend.apps.admin_ui.config import STATIC_DIR, register_template_globals
+from pathlib import Path
+from pathlib import Path
+from pathlib import Path
+from pathlib import Path
 from backend.apps.admin_ui.routers import (
     api,
     candidates,
     cities,
     dashboard,
+    auth as auth_router,
     message_templates,
     questions,
     recruiters,
@@ -37,12 +42,14 @@ from backend.apps.admin_ui.routers import (
     system,
     templates,
     workflow,
+    profile,
 )
 from backend.apps.admin_ui.security import (
     RateLimitExceeded,
     _rate_limit_exceeded_handler,
     limiter,
     require_admin,
+    require_principal,
 )
 from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
 from backend.apps.admin_ui.middleware import SecureHeadersMiddleware, DegradedDatabaseMiddleware, RequestIDMiddleware
@@ -58,7 +65,9 @@ from backend.core.error_handler import (
 from backend.migrations.runner import upgrade_to_head
 from backend.core.redis_factory import parse_redis_target
 from sqlalchemy.exc import OperationalError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
+from fastapi.exception_handlers import http_exception_handler
+from fastapi import HTTPException
 
 configure_logging()
 request_logger = logging.getLogger("tg.admin.requests")
@@ -70,6 +79,9 @@ CACHE_RETRY_MAX_DELAY = 30.0
 CACHE_HEALTH_INTERVAL = 15.0
 DB_HEALTH_INTERVAL = 15.0
 DB_HEALTH_MAX_INTERVAL = 60.0
+
+BASE_DIR = Path(__file__).resolve().parents[3]
+SPA_DIST_DIR = BASE_DIR / "frontend" / "dist"
 
 
 def _init_sentry(settings) -> bool:
@@ -425,18 +437,63 @@ def create_app() -> FastAPI:
     app.add_middleware(SecureHeadersMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    if SPA_DIST_DIR.exists():
+        assets_dir = SPA_DIST_DIR / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="spa-assets")
+    else:
+        logger.warning("SPA dist directory not found at %s. Build frontend to enable /app.", SPA_DIST_DIR)
 
     app.include_router(system.router)
-    app.include_router(dashboard.router, dependencies=[Depends(require_admin)])
-    app.include_router(slots.router, dependencies=[Depends(require_admin)])
-    app.include_router(candidates.router, dependencies=[Depends(require_admin)])
+    app.include_router(auth_router.router)
+    app.include_router(dashboard.router, dependencies=[Depends(require_principal)])
+    app.include_router(slots.router, dependencies=[Depends(require_principal)])
+    app.include_router(candidates.router, dependencies=[Depends(require_principal)])
+    app.include_router(profile.router, dependencies=[Depends(require_principal)])
     app.include_router(workflow.router, dependencies=[Depends(require_admin)])
     app.include_router(recruiters.router, dependencies=[Depends(require_admin)])
-    app.include_router(cities.router, dependencies=[Depends(require_admin)])
+    app.include_router(cities.router, dependencies=[Depends(require_principal)])
     app.include_router(templates.router, dependencies=[Depends(require_admin)])
     app.include_router(message_templates.router, dependencies=[Depends(require_admin)])
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
-    app.include_router(api.router, dependencies=[Depends(require_admin)])
+    app.include_router(api.router, dependencies=[Depends(require_principal)])
+
+    if SPA_DIST_DIR.exists():
+        @app.get("/app", include_in_schema=False)
+        async def spa_index() -> Response:
+            index_file = SPA_DIST_DIR / "index.html"
+            if index_file.exists():
+                return FileResponse(index_file)
+            return PlainTextResponse("SPA build not found", status_code=404)
+
+        @app.get("/app/{path:path}", include_in_schema=False)
+        async def spa_assets(path: str) -> Response:
+            target = (SPA_DIST_DIR / path).resolve()
+            if target.exists() and target.is_file():
+                return FileResponse(target)
+            index_file = SPA_DIST_DIR / "index.html"
+            if index_file.exists():
+                return FileResponse(index_file)
+            return PlainTextResponse("SPA build not found", status_code=404)
+
+    @app.exception_handler(HTTPException)
+    async def http_exc_handler(request: Request, exc: HTTPException):
+        if exc.status_code == status.HTTP_404_NOT_FOUND:
+            path = request.url.path
+            if path.startswith("/app") and SPA_DIST_DIR.exists():
+                # Serve SPA index for client-side routes, but not for asset files.
+                if "." not in Path(path).name:
+                    index_file = SPA_DIST_DIR / "index.html"
+                    if index_file.exists():
+                        return FileResponse(index_file)
+        if (
+            exc.status_code == status.HTTP_401_UNAUTHORIZED
+            and "text/html" in request.headers.get("accept", "")
+            and not str(request.url.path).startswith("/auth")
+        ):
+            target = f"/auth/login?redirect_to={request.url.path}"
+            return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+        return await http_exception_handler(request, exc)
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
