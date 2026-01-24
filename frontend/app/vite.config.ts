@@ -20,6 +20,26 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, '../dist'),
     emptyOutDir: true,
-    sourcemap: false
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('react-dom') || id.includes('/react/')) {
+              return 'react-vendor'
+            }
+            if (id.includes('@tanstack/react-router')) {
+              return 'router'
+            }
+            if (id.includes('@tanstack/react-query')) {
+              return 'query'
+            }
+            if (id.includes('lucide-react')) {
+              return 'icons'
+            }
+          }
+        }
+      }
+    }
   }
 })
