@@ -1,0 +1,159 @@
+/* Splash Screen Styles - Sorter Theme */
+:root {
+    --splash-bg: var(--bg-body, #0f172a);
+    --bar-color-initial: var(--color-primary-700, #1d4ed8);
+    --bar-color-final: var(--color-success-500, #22c55e);
+    --icon-color: var(--color-success-500, #22c55e);
+    --text-color: var(--text-primary, #f8fafc);
+}
+
+#splash-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--splash-bg);
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    transition: opacity 0.5s ease-out, visibility 0.5s;
+}
+
+#splash-screen.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.sorter-container {
+    position: relative;
+    width: 200px;
+    height: 100px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+}
+
+.sorter-bar {
+    width: 8px;
+    background-color: var(--bar-color-initial);
+    animation: sort-and-select 5s ease-in-out forwards;
+}
+
+/* Unique delays and initial states for each bar */
+.sorter-bar:nth-child(1) { animation-delay: 0s; --initial-height: 40%; --initial-opacity: 0.6; }
+.sorter-bar:nth-child(2) { animation-delay: 0.05s; --initial-height: 70%; --initial-opacity: 0.8; }
+/* This one will be selected */
+.sorter-bar:nth-child(3) { animation-delay: 0.1s; --initial-height: 50%; --initial-opacity: 0.7; transform-origin: bottom; animation-name: sort-and-select, select-chosen; }
+.sorter-bar:nth-child(4) { animation-delay: 0.15s; --initial-height: 80%; --initial-opacity: 0.9; }
+/* This one will be selected */
+.sorter-bar:nth-child(5) { animation-delay: 0.2s; --initial-height: 60%; --initial-opacity: 0.75; transform-origin: bottom; animation-name: sort-and-select, select-chosen; }
+.sorter-bar:nth-child(6) { animation-delay: 0.25s; --initial-height: 45%; --initial-opacity: 0.65; }
+/* This one will be selected */
+.sorter-bar:nth-child(7) { animation-delay: 0.3s; --initial-height: 75%; --initial-opacity: 0.85; transform-origin: bottom; animation-name: sort-and-select, select-chosen; }
+.sorter-bar:nth-child(8) { animation-delay: 0.35s; --initial-height: 55%; --initial-opacity: 0.7; }
+.sorter-bar:nth-child(9) { animation-delay: 0.4s; --initial-height: 65%; --initial-opacity: 0.8; }
+.sorter-bar:nth-child(10) { animation-delay: 0.45s; --initial-height: 40%; --initial-opacity: 0.6; }
+
+.sorter-icon-container {
+    position: absolute;
+    top: -40px; /* Position above the bars */
+    opacity: 0;
+    animation: fade-in-icon 1s ease-out 4s forwards;
+}
+
+.sorter-check-icon {
+    width: 32px;
+    height: 32px;
+    color: var(--icon-color);
+}
+
+.splash-text {
+    margin-top: 2rem;
+    font-family: var(--font-sans, sans-serif);
+    color: var(--text-color);
+    font-size: 1.125rem;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    opacity: 0;
+    animation: text-fade-in-out 5s ease-out forwards;
+}
+
+
+/* Keyframes */
+@keyframes sort-and-select {
+    0% {
+        height: var(--initial-height);
+        opacity: var(--initial-opacity);
+    }
+    20% { /* Scanning glow passes */
+        opacity: 1;
+    }
+    40% { /* Start fading out non-selected bars */
+        height: 10px;
+        opacity: 0;
+    }
+    60%, 100% { /* Keep non-selected bars hidden */
+        height: 0;
+        opacity: 0;
+        transform: translateX(0);
+    }
+}
+
+@keyframes select-chosen {
+    0%, 40% {
+        height: var(--initial-height);
+        opacity: var(--initial-opacity);
+        transform: translateX(0) scaleY(1);
+        background-color: var(--bar-color-initial);
+    }
+    60% { /* Move to center */
+        height: 50%;
+        opacity: 1;
+        background-color: var(--bar-color-initial);
+    }
+    80% { /* Grow and change color */
+        height: 100%;
+        opacity: 1;
+        background-color: var(--bar-color-final);
+        box-shadow: 0 0 15px var(--bar-color-final);
+    }
+    100% {
+        height: 100%;
+        opacity: 1;
+        background-color: var(--bar-color-final);
+        box-shadow: 0 0 15px var(--bar-color-final);
+    }
+}
+
+/* Specific movements for the chosen bars to group them */
+.sorter-bar:nth-child(3) { animation-name: sort-and-select, select-chosen, move-left; }
+.sorter-bar:nth-child(5) { animation-name: sort-and-select, select-chosen; } /* Stays in middle */
+.sorter-bar:nth-child(7) { animation-name: sort-and-select, select-chosen, move-right; }
+
+@keyframes move-left {
+    0%, 40% { transform: translateX(0); }
+    60%, 100% { transform: translateX(16px); } /* 1 bar width + 1 gap */
+}
+
+@keyframes move-right {
+    0%, 40% { transform: translateX(0); }
+    60%, 100% { transform: translateX(-16px); }
+}
+
+
+@keyframes fade-in-icon {
+    from { opacity: 0; transform: scale(0.5); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes text-fade-in-out {
+    0% { opacity: 0; transform: translateY(10px); }
+    10% { opacity: 1; transform: translateY(0); }
+    80% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-10px); }
+}

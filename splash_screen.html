@@ -1,0 +1,45 @@
+<!-- Splash Screen Component -->
+<div id="splash-screen" aria-hidden="false">
+    <div class="sorter-container">
+        <div class="sorter-bar"></div>
+        <div class="sorter-bar"></div>
+        <div class="sorter-bar"></div>
+        <div class="sorter-bar"></div>
+        <div class="sorter-bar"></div>
+        <div class="sorter-bar"></div>
+        <div class="sorter-bar"></div>
+        <div class="sorter-bar"></div>
+        <div class="sorter-bar"></div>
+        <div class="sorter-bar"></div>
+        <div class="sorter-icon-container">
+            <svg class="sorter-check-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        </div>
+    </div>
+    <div class="splash-text" data-text-initial="Поиск талантов..." data-text-final="Кандидаты найдены">Поиск талантов...</div>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const splash = document.getElementById('splash-screen');
+        const splashText = splash.querySelector('.splash-text');
+        const minDisplayTime = 5000; // 5 seconds for the full animation
+        const textChangeTime = 4000; // Time to change text
+        const startTime = Date.now();
+
+        // Change text during animation
+        setTimeout(() => {
+            splashText.textContent = splashText.dataset.textFinal;
+        }, textChangeTime);
+
+        window.addEventListener('load', function() {
+            const elapsedTime = Date.now() - startTime;
+            const remainingTime = Math.max(0, minDisplayTime - elapsedTime);
+
+            setTimeout(() => {
+                splash.classList.add('hidden');
+                // Optional: Remove from DOM after transition
+                setTimeout(() => splash.remove(), 500);
+            }, remainingTime);
+        });
+    });
+</script>
