@@ -2233,6 +2233,16 @@ async def api_schedule_slot(
     except ManualSlotError as exc:
         return JSONResponse({"ok": False, "error": "slot_conflict", "message": str(exc)}, status_code=409)
 
+    # Ensure recruiter is linked to candidate after successful scheduling
+    try:
+        async with async_session() as session:
+            db_user = await session.get(User, candidate_id)
+            if db_user and db_user.responsible_recruiter_id != recruiter.id:
+                db_user.responsible_recruiter_id = recruiter.id
+                await session.commit()
+    except Exception:
+        logger.exception("Failed to assign responsible recruiter after scheduling slot", extra={"candidate_id": candidate_id})
+
     return JSONResponse({
         "ok": True,
         "status": result.status,
