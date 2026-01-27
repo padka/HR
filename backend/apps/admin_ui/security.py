@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import base64
+from datetime import datetime, timezone, timedelta
 import os
 import secrets
 from dataclasses import dataclass
@@ -178,6 +180,13 @@ async def get_current_principal(
             async with async_session() as session:
                 recruiter = await session.get(Recruiter, p_id)
                 if recruiter and getattr(recruiter, "active", True):
+                    now = datetime.now(timezone.utc)
+                    last_seen = getattr(recruiter, "last_seen_at", None)
+                    if last_seen and last_seen.tzinfo is None:
+                        last_seen = last_seen.replace(tzinfo=timezone.utc)
+                    if last_seen is None or (now - last_seen) > timedelta(minutes=5):
+                        recruiter.last_seen_at = now
+                        await session.commit()
                     principal = Principal(type="recruiter", id=recruiter.id)
                     principal_ctx.set(principal)
                     request.state.principal = principal

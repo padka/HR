@@ -1,35 +1,49 @@
-<!-- Splash Screen Component -->
+<!-- Splash Screen Component: The Talent Pulse -->
 <div id="splash-screen" aria-hidden="false">
-    <div class="sorter-container">
-        <div class="sorter-bar"></div>
-        <div class="sorter-bar"></div>
-        <div class="sorter-bar"></div>
-        <div class="sorter-bar"></div>
-        <div class="sorter-bar"></div>
-        <div class="sorter-bar"></div>
-        <div class="sorter-bar"></div>
-        <div class="sorter-bar"></div>
-        <div class="sorter-bar"></div>
-        <div class="sorter-bar"></div>
-        <div class="sorter-icon-container">
-            <svg class="sorter-check-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+    <div class="pulse-wrapper">
+        <div class="radar">
+            <div class="sweep"></div>
+            <div class="circles">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        
+        <div class="talent-marker" id="candidate-marker">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+        </div>
+
+        <div class="logo-final" id="splash-logo">
+            <span class="logo-badge">RS</span>
+            <span class="logo-text">RecruitSmart</span>
         </div>
     </div>
-    <div class="splash-text" data-text-initial="Поиск талантов..." data-text-final="Кандидаты найдены">Поиск талантов...</div>
+    <div class="splash-status-text">Сканирование талантов...</div>
 </div>
 
 <script>
     document.addEventListener("DOMContentLoaded", function() {
         const splash = document.getElementById('splash-screen');
-        const splashText = splash.querySelector('.splash-text');
-        const minDisplayTime = 5000; // 5 seconds for the full animation
-        const textChangeTime = 4000; // Time to change text
+        const statusText = splash.querySelector('.splash-status-text');
+        const marker = document.getElementById('candidate-marker');
+        const logo = document.getElementById('splash-logo');
+        const wrapper = splash.querySelector('.pulse-wrapper');
+        
+        const minDisplayTime = 5500; 
         const startTime = Date.now();
 
-        // Change text during animation
+        // Animation sequence
         setTimeout(() => {
-            splashText.textContent = splashText.dataset.textFinal;
-        }, textChangeTime);
+            wrapper.classList.add('found');
+            statusText.textContent = "Идеальный кандидат найден";
+        }, 2200);
+
+        setTimeout(() => {
+            wrapper.classList.add('finish');
+            statusText.style.opacity = '0';
+        }, 4200);
 
         window.addEventListener('load', function() {
             const elapsedTime = Date.now() - startTime;
@@ -37,8 +51,7 @@
 
             setTimeout(() => {
                 splash.classList.add('hidden');
-                // Optional: Remove from DOM after transition
-                setTimeout(() => splash.remove(), 500);
+                setTimeout(() => splash.remove(), 600);
             }, remainingTime);
         });
     });

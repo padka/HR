@@ -1,18 +1,103 @@
 import { QueryClient } from '@tanstack/react-query'
 
-export const API_URL = '/api'
-export const queryClient = new QueryClient()
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000, // Data is fresh for 30s
+      refetchOnWindowFocus: false, // Don't spam server on tab switch
+    },
+  },
+})
+
+let csrfToken: string | null = null
+let csrfPromise: Promise<string> | null = null
+
+async function fetchCsrfToken(): Promise<string> {
+  if (csrfToken) return csrfToken
+  if (!csrfPromise) {
+    csrfPromise = fetch(`${API_URL}/csrf`, { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('CSRF fetch failed')
+        const data = (await res.json()) as { token?: string }
+        csrfToken = data.token || ''
+        return csrfToken
+      })
+      .finally(() => {
+        csrfPromise = null
+      })
+  }
+  return csrfPromise
+}
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method || 'GET').toUpperCase()
+  const needsCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method)
+  const headerObj =
+    init?.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : (init?.headers || {})
+  const isFormData = typeof FormData !== 'undefined' && init?.body instanceof FormData
+  let headers = new Headers({
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(headerObj as Record<string, string>),
+  })
+
+  if (needsCsrf) {
+    const token = await fetchCsrfToken()
+    if (token) headers.set('x-csrf-token', token)
+  }
+
   const res = await fetch(API_URL + path, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    headers,
     ...init,
   })
+  if (res.status === 403 && needsCsrf) {
+    // refresh token once and retry
+    csrfToken = null
+    const token = await fetchCsrfToken()
+    const retryHeaders = new Headers(headers)
+    retryHeaders.set('x-csrf-token', token)
+    const retryRes = await fetch(API_URL + path, {
+      credentials: 'include',
+      headers: retryHeaders,
+      ...init,
+    })
+    if (!retryRes.ok) {
+      const text = await retryRes.text()
+      const err = new Error(text || retryRes.statusText) as Error & { status?: number }
+      err.status = retryRes.status
+      throw err
+    }
+    return retryRes.json() as Promise<T>
+  }
   if (!res.ok) {
-    const text = await res.text()
-    const err = new Error(text || res.statusText) as Error & { status?: number }
+    let message = ''
+    let data: any = null
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      try {
+        data = await res.json()
+      } catch {
+        data = null
+      }
+    } else {
+      const text = await res.text()
+      try {
+        data = JSON.parse(text)
+      } catch {
+        message = text
+      }
+    }
+    if (!message && data) {
+      if (typeof data === 'string') message = data
+      else if (data.detail) {
+        message = typeof data.detail === 'string' ? data.detail : data.detail.message || ''
+      } else if (data.message) {
+        message = data.message
+      }
+    }
+    const err = new Error(message || res.statusText) as Error & { status?: number; data?: any }
     err.status = res.status
+    err.data = data
     throw err
   }
   return res.json() as Promise<T>

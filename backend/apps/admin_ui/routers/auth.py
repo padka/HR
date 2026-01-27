@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status, Query
@@ -44,9 +45,16 @@ async def login(
             recruiter = await session.get(Recruiter, principal.id)
             if not recruiter:
                 raise HTTPException(status_code=401, detail="Recruiter not found")
+            recruiter.last_seen_at = datetime.now(timezone.utc)
+            await session.commit()
 
     request.session[SESSION_KEY] = {"type": principal.type, "id": principal.id}
+    
+    # Security fix: prevent open redirects
     target = redirect_to or "/"
+    if not target.startswith("/") or target.startswith("//"):
+        target = "/"
+        
     return RedirectResponse(url=target, status_code=303)
 
 

@@ -2446,7 +2446,17 @@ async def update_candidate_status(
 async def get_candidate_detail(user_id: int, principal: Optional[Principal] = None) -> Optional[Dict[str, object]]:
     principal = principal or principal_ctx.get()
     async with async_session() as session:
-        user = await session.get(User, user_id)
+        # Optimized load: everything relevant in fewer queries
+        query = (
+            select(User)
+            .options(
+                selectinload(User.tests).selectinload(TestResult.answers),
+            )
+            .where(User.id == user_id)
+        )
+        result = await session.execute(query)
+        user = result.scalar_one_or_none()
+        
         if not user:
             return None
         if principal and principal.type == "recruiter":
@@ -2454,33 +2464,18 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
                 return None
 
         interview_note = await _load_interview_note(session, user_id)
+        test_results = sorted(user.tests, key=lambda r: (r.created_at or datetime.min, r.id), reverse=True)
 
-        test_results = (
-            await session.execute(
-                select(TestResult)
-                .where(TestResult.user_id == user_id)
-                .order_by(TestResult.created_at.desc(), TestResult.id.desc())
-            )
-        ).scalars().all()
-
-        test_ids = [result.id for result in test_results]
-        answers_by_result: Dict[int, List[QuestionAnswer]] = defaultdict(list)
+        answers_by_result: Dict[int, List[QuestionAnswer]] = {
+            res.id: list(res.answers) for res in test_results
+        }
         answers_map: Dict[int, Dict[str, int]] = {}
-        if test_ids:
-            answer_rows = await session.execute(
-                select(QuestionAnswer)
-                .where(QuestionAnswer.test_result_id.in_(test_ids))
-                .order_by(QuestionAnswer.test_result_id.asc(), QuestionAnswer.question_index.asc())
-            )
-            for answer in answer_rows.scalars():
-                answers_by_result[answer.test_result_id].append(answer)
-
-            for test_id, answer_items in answers_by_result.items():
-                answers_map[test_id] = {
-                    "questions_total": len(answer_items),
-                    "questions_correct": sum(1 for item in answer_items if item.is_correct),
-                    "questions_overtime": sum(1 for item in answer_items if item.overtime),
-                }
+        for test_id, answer_items in answers_by_result.items():
+            answers_map[test_id] = {
+                "questions_total": len(answer_items),
+                "questions_correct": sum(1 for item in answer_items if item.is_correct),
+                "questions_overtime": sum(1 for item in answer_items if item.overtime),
+            }
 
         if user.telegram_id is None:
             messages = []
@@ -2965,9 +2960,24 @@ async def delete_candidate(user_id: int, principal: Optional[Principal] = None) 
         if principal and principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
             return False
 
+        # Find all slots to cancel reminders before releasing them
+        slots_query = select(Slot.id).where(
+            or_(
+                Slot.candidate_id == user.candidate_id,
+                Slot.candidate_tg_id == user.telegram_id
+            )
+        )
+        slot_ids = (await session.execute(slots_query)).scalars().all()
+        
+        for s_id in slot_ids:
+            try:
+                await cancel_slot_reminders(s_id)
+            except Exception:
+                logger.warning("failed_to_cancel_reminders_on_delete", extra={"slot_id": s_id, "user_id": user_id})
+
         release_result = await session.execute(
             Slot.__table__.update()
-            .where(Slot.candidate_id == user.candidate_id)
+            .where(or_(Slot.candidate_id == user.candidate_id, Slot.candidate_tg_id == user.telegram_id))
             .values(
                 candidate_id=None,
                 candidate_tg_id=None,

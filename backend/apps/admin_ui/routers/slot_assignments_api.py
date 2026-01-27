@@ -75,6 +75,13 @@ async def request_reschedule(assignment_id: int, payload: ReschedulePayload):
         if not assignment or assignment.candidate_tg_id != payload.candidate_tg_id:
             raise HTTPException(status_code=404, detail="Assignment not found")
 
+        # Guard: allow rescheduling only from valid active states
+        if assignment.status not in {"offered", "confirmed"}:
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Cannot request reschedule for assignment in status: {assignment.status}"
+            )
+
         assignment.status = "reschedule_requested"
         
         req = RescheduleRequest(
