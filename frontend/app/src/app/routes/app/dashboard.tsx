@@ -135,6 +135,8 @@ type IncomingCandidate = {
   status_slug?: string | null
   waiting_hours?: number | null
   availability_window?: string | null
+  availability_note?: string | null
+  telegram_id?: number | null
   profile_url?: string | null
 }
 
@@ -679,7 +681,18 @@ export function DashboardPage() {
               <p style={{ color: '#f07373' }}>Ошибка: {(incomingQuery.error as Error).message}</p>
             )}
             {incomingQuery.data && incomingQuery.data.items.length === 0 && (
-              <p className="subtitle">Нет кандидатов, ожидающих слот.</p>
+              <div>
+                <p className="subtitle">Нет кандидатов, ожидающих слот.</p>
+                {profile.data?.recruiter?.cities?.length ? (
+                  <p className="text-muted text-sm">
+                    Ваши города: {profile.data.recruiter.cities.map((c) => c.name).join(', ')}. Кандидаты из других городов не попадут в список.
+                  </p>
+                ) : (
+                  <p className="text-muted text-sm">
+                    Проверьте, что к вашему профилю привязаны города — иначе входящие не появятся.
+                  </p>
+                )}
+              </div>
             )}
             {incomingQuery.data && incomingQuery.data.items.length > 0 && (
               <div className="incoming-grid">
@@ -697,6 +710,11 @@ export function DashboardPage() {
                             <span>· {candidate.availability_window}</span>
                           )}
                         </div>
+                        {candidate.availability_note && (
+                          <div className="text-muted text-sm">
+                            ✉️ {candidate.availability_note}
+                          </div>
+                        )}
                       </div>
                       {candidate.status_display && (
                         <span
