@@ -53,6 +53,7 @@ from backend.domain.repositories import (
     ReservationResult,
     OutboxItem,
     add_notification_log,
+    add_message_log,
     add_outbox_notification,
     claim_outbox_batch,
     get_active_recruiters_for_city,
@@ -111,6 +112,7 @@ from .keyboards import (
     kb_attendance_confirm,
     kb_recruiters,
     kb_slots_for_recruiter,
+    kb_slot_assignment_offer,
     kb_start,
 )
 from .city_registry import (
@@ -1223,6 +1225,14 @@ class NotificationService:
             "slot_reminder": self._process_interview_reminder,
             "intro_day_invitation": self._process_intro_day_invitation,
             "test2_completed": self._process_test2_completed,
+            "slot_proposal": self._process_slot_proposal,
+            "slot_confirmed_recruiter": self._process_slot_confirmed_recruiter,
+            "reschedule_requested_recruiter": self._process_reschedule_requested_recruiter,
+            "reschedule_approved_candidate": self._process_reschedule_approved_candidate,
+            "reschedule_declined_candidate": self._process_reschedule_declined_candidate,
+            "slot_assignment_offer": self._process_slot_assignment_offer,
+            "slot_assignment_reschedule_approved": self._process_slot_assignment_reschedule_approved,
+            "slot_assignment_reschedule_declined": self._process_slot_assignment_reschedule_declined,
         }
         handler = handlers.get(item.type)
         previous_message = self._current_message
@@ -1274,6 +1284,73 @@ class NotificationService:
             log_type, booking_id, candidate_tg_id=candidate_tg_id
         )
         return existing is not None and getattr(existing, "delivery_status", "") == "sent"
+
+    async def _process_slot_proposal(self, item: OutboxItem) -> None:
+        """Processes a slot proposal notification to a candidate."""
+        payload = dict(item.payload or {})
+        candidate_id = item.candidate_tg_id
+        if not candidate_id:
+            await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "candidate_missing", None, candidate_tg_id=None)
+            return
+
+        assignment_id = payload.get("assignment_id")
+        start_utc_str = payload.get("start_utc")
+        
+        if not assignment_id or not start_utc_str:
+            await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "payload_incomplete", None, candidate_tg_id=candidate_id)
+            return
+            
+        start_utc = datetime.fromisoformat(start_utc_str)
+
+        context = {"dt_local": fmt_dt_local(start_utc, "Europe/Moscow")} # Assume Moscow, should be candidate's TZ
+        rendered = await self._template_provider.render("slot_proposal_candidate", context)
+
+        if rendered is None:
+            await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "template_missing", None, candidate_tg_id=candidate_id)
+            return
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_assignment:{assignment_id}")],
+            [InlineKeyboardButton(text="🗓️ Другое время", callback_data=f"reschedule_assignment:{assignment_id}")]
+        ])
+
+        attempt = item.attempts + 1
+        try:
+            await get_bot().send_message(candidate_id, rendered.text, reply_markup=keyboard)
+        except Exception as exc:
+            await self._schedule_retry(item, attempt=attempt, log_type="slot_proposal", notification_type="slot_proposal", error=str(exc), rendered=rendered, candidate_tg_id=candidate_id)
+            return
+
+        await self._mark_sent(item, attempt, "slot_proposal", "slot_proposal", rendered, candidate_id)
+
+    async def _process_slot_confirmed_recruiter(self, item: OutboxItem) -> None:
+        """Notifies a recruiter that a candidate has confirmed a slot."""
+        # Simplified implementation
+        recruiter_id = item.recruiter_tg_id
+        if not recruiter_id:
+            return
+        await get_bot().send_message(recruiter_id, "Кандидат подтвердил слот.")
+
+    async def _process_reschedule_requested_recruiter(self, item: OutboxItem) -> None:
+        """Notifies a recruiter that a candidate has requested a reschedule."""
+        recruiter_id = item.recruiter_tg_id
+        if not recruiter_id:
+            return
+        await get_bot().send_message(recruiter_id, "Кандидат запросил другое время.")
+        
+    async def _process_reschedule_approved_candidate(self, item: OutboxItem) -> None:
+        """Notifies a candidate their reschedule request was approved."""
+        candidate_id = item.candidate_tg_id
+        if not candidate_id:
+            return
+        await get_bot().send_message(candidate_id, "Ваш запрос на перенос одобрен.")
+
+    async def _process_reschedule_declined_candidate(self, item: OutboxItem) -> None:
+        """Notifies a candidate their reschedule request was declined."""
+        candidate_id = item.candidate_tg_id
+        if not candidate_id:
+            return
+        await get_bot().send_message(candidate_id, "Ваш запрос на перенос отклонен.")
 
     async def _process_candidate_confirmation(self, item: OutboxItem) -> None:
         slot = await get_slot(item.booking_id) if item.booking_id is not None else None
@@ -2034,6 +2111,257 @@ class NotificationService:
             rendered,
             candidate_id,
         )
+
+    async def _process_slot_assignment_offer(self, item: OutboxItem) -> None:
+        payload = dict(item.payload or {})
+        candidate_id = item.candidate_tg_id or payload.get("candidate_tg_id")
+        if not candidate_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "slot_assignment_offer",
+                "slot_assignment_offer",
+                "candidate_missing",
+                None,
+                candidate_tg_id=None,
+            )
+            return
+
+        assignment_id = payload.get("slot_assignment_id")
+        tokens = (payload.get("action_tokens") or {})
+        confirm_token = tokens.get("confirm")
+        reschedule_token = tokens.get("reschedule")
+        if not assignment_id or not confirm_token or not reschedule_token:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "slot_assignment_offer",
+                "slot_assignment_offer",
+                "payload_incomplete",
+                None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        start_raw = payload.get("start_utc")
+        try:
+            start_utc = datetime.fromisoformat(start_raw) if start_raw else None
+        except Exception:
+            start_utc = None
+        if start_utc is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "slot_assignment_offer",
+                "slot_assignment_offer",
+                "start_missing",
+                None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        candidate_tz = payload.get("candidate_tz") or DEFAULT_TZ
+        dt_label = fmt_dt_local(start_utc, candidate_tz)
+        recruiter_name = payload.get("recruiter_name") or ""
+        city_name = payload.get("city_name") or ""
+        comment = payload.get("comment")
+        is_alternative = bool(payload.get("is_alternative"))
+
+        title = "🔁 Предлагаем другое время" if is_alternative else "📅 Предлагаем время собеседования"
+        text = f"{title}\n🗓 {dt_label}"
+        if recruiter_name:
+            text += f"\n👤 {escape_html(recruiter_name)}"
+        if city_name:
+            text += f"\n📍 {escape_html(city_name)}"
+        if comment:
+            text += f"\n\nКомментарий: {escape_html(str(comment))}"
+        text += "\n\nПодтвердите или выберите другое время."
+
+        keyboard = kb_slot_assignment_offer(
+            int(assignment_id),
+            confirm_token=str(confirm_token),
+            reschedule_token=str(reschedule_token),
+        )
+
+        attempt = item.attempts + 1
+        await self._throttle()
+        try:
+            await get_bot().send_message(candidate_id, text, reply_markup=keyboard)
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="slot_assignment_offer",
+                notification_type="slot_assignment_offer",
+                error=str(exc),
+                rendered=None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=attempt,
+            next_retry_at=None,
+            last_error=None,
+        )
+
+        try:
+            await add_message_log(
+                "slot_assignment_offer",
+                recipient_type="candidate",
+                recipient_id=candidate_id,
+                slot_assignment_id=int(assignment_id),
+                payload={"slot_id": payload.get("slot_id"), "text": text},
+            )
+        except Exception:
+            logger.exception("Failed to persist message log for slot assignment offer")
+
+        # Update state so free-text handler can capture reschedule input.
+        try:
+            state_manager = get_state_manager()
+            await state_manager.update(
+                candidate_id,
+                {
+                    "slot_assignment_state": "waiting_candidate",
+                    "slot_assignment_id": int(assignment_id),
+                    "slot_assignment_candidate_tz": candidate_tz,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to update candidate state for slot assignment offer")
+
+    async def _process_slot_assignment_reschedule_approved(self, item: OutboxItem) -> None:
+        payload = dict(item.payload or {})
+        candidate_id = item.candidate_tg_id
+        if not candidate_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "slot_assignment_reschedule_approved",
+                "slot_assignment_reschedule_approved",
+                "candidate_missing",
+                None,
+                candidate_tg_id=None,
+            )
+            return
+
+        start_raw = payload.get("start_utc")
+        try:
+            start_utc = datetime.fromisoformat(start_raw) if start_raw else None
+        except Exception:
+            start_utc = None
+        if start_utc is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "slot_assignment_reschedule_approved",
+                "slot_assignment_reschedule_approved",
+                "start_missing",
+                None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        candidate_tz = payload.get("candidate_tz") or DEFAULT_TZ
+        dt_label = fmt_dt_local(start_utc, candidate_tz)
+        comment = payload.get("comment")
+
+        text = f"✅ Перенос подтверждён.\n🗓 Новое время: {dt_label}"
+        if comment:
+            text += f"\n\nКомментарий: {escape_html(str(comment))}"
+
+        attempt = item.attempts + 1
+        await self._throttle()
+        try:
+            await get_bot().send_message(candidate_id, text)
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="slot_assignment_reschedule_approved",
+                notification_type="slot_assignment_reschedule_approved",
+                error=str(exc),
+                rendered=None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=attempt,
+            next_retry_at=None,
+            last_error=None,
+        )
+
+        try:
+            await add_message_log(
+                "slot_assignment_reschedule_approved",
+                recipient_type="candidate",
+                recipient_id=candidate_id,
+                slot_assignment_id=payload.get("slot_assignment_id"),
+                payload={"slot_id": payload.get("slot_id"), "text": text},
+            )
+        except Exception:
+            logger.exception("Failed to persist message log for reschedule approved")
+
+    async def _process_slot_assignment_reschedule_declined(self, item: OutboxItem) -> None:
+        payload = dict(item.payload or {})
+        candidate_id = item.candidate_tg_id
+        if not candidate_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "slot_assignment_reschedule_declined",
+                "slot_assignment_reschedule_declined",
+                "candidate_missing",
+                None,
+                candidate_tg_id=None,
+            )
+            return
+
+        comment = payload.get("comment")
+        text = "⛔️ Запрос на перенос отклонён."
+        if comment:
+            text += f"\n\nКомментарий: {escape_html(str(comment))}"
+        text += "\nЕсли время всё ещё подходит, подтвердите его в предыдущем сообщении."
+
+        attempt = item.attempts + 1
+        await self._throttle()
+        try:
+            await get_bot().send_message(candidate_id, text)
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="slot_assignment_reschedule_declined",
+                notification_type="slot_assignment_reschedule_declined",
+                error=str(exc),
+                rendered=None,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=attempt,
+            next_retry_at=None,
+            last_error=None,
+        )
+
+        try:
+            await add_message_log(
+                "slot_assignment_reschedule_declined",
+                recipient_type="candidate",
+                recipient_id=candidate_id,
+                slot_assignment_id=payload.get("slot_assignment_id"),
+                payload={"slot_id": payload.get("slot_id"), "text": text},
+            )
+        except Exception:
+            logger.exception("Failed to persist message log for reschedule declined")
 
     async def _process_intro_day_invitation(self, item: OutboxItem) -> None:
         """Process intro day invitation - immediate invitation with confirmation
@@ -5865,6 +6193,113 @@ async def capture_intro_decline_reason(message, state) -> bool:
         logger.exception("Failed to clear intro decline reason state", extra={"candidate": message.from_user.id})
 
     return True
+
+
+    async def _process_slot_proposal(self, item: OutboxItem) -> None:
+        """Processes a slot proposal notification to a candidate."""
+        payload = dict(item.payload or {})
+        candidate_id = item.candidate_tg_id
+        if not candidate_id:
+            await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "candidate_missing", None, candidate_tg_id=None)
+            return
+
+        assignment_id = payload.get("assignment_id")
+        start_utc_str = payload.get("start_utc")
+        
+        if not assignment_id or not start_utc_str:
+            await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "payload_incomplete", None, candidate_tg_id=candidate_id)
+            return
+            
+        start_utc = datetime.fromisoformat(start_utc_str)
+
+        candidate_tz = "Europe/Moscow" 
+        context = {"dt_local": fmt_dt_local(start_utc, candidate_tz)}
+        
+        rendered = await self._template_provider.render("slot_proposal_candidate", context)
+
+        if rendered is None:
+            await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "template_missing", None, candidate_tg_id=candidate_id)
+            return
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_assignment:{assignment_id}")],
+            [InlineKeyboardButton(text="🗓️ Другое время", callback_data=f"reschedule_assignment:{assignment_id}")]
+        ])
+
+        attempt = item.attempts + 1
+        try:
+            await get_bot().send_message(candidate_id, rendered.text, reply_markup=keyboard)
+        except Exception as exc:
+            await self._schedule_retry(item, attempt=attempt, log_type="slot_proposal", notification_type="slot_proposal", error=str(exc), rendered=rendered, candidate_tg_id=candidate_id)
+            return
+
+        await self._mark_sent(item, attempt, "slot_proposal", "slot_proposal", rendered, candidate_id)
+
+    async def _process_slot_confirmed_recruiter(self, item: OutboxItem) -> None:
+        """Notifies a recruiter that a candidate has confirmed a slot."""
+        recruiter_id = item.recruiter_tg_id
+        payload = dict(item.payload or {})
+        if not recruiter_id:
+            return
+            
+        context = {"candidate_name": "Кандидат", "dt_local": "???"}
+        rendered = await self._template_provider.render("slot_confirmed_recruiter", context)
+        
+        if rendered and rendered.text:
+            await get_bot().send_message(recruiter_id, rendered.text)
+        
+        await self._mark_sent(item, item.attempts + 1, "slot_confirmed_recruiter", "slot_confirmed_recruiter", rendered, item.candidate_tg_id)
+
+    async def _process_reschedule_requested_recruiter(self, item: OutboxItem) -> None:
+        """Notifies a recruiter that a candidate has requested a reschedule."""
+        recruiter_id = item.recruiter_tg_id
+        payload = dict(item.payload or {})
+        if not recruiter_id:
+            return
+
+        requested_time_utc = datetime.fromisoformat(payload.get("requested_time_utc", ""))
+        
+        context = {
+            "candidate_name": "Кандидат", 
+            "requested_time_local": fmt_dt_local(requested_time_utc, "Europe/Moscow")
+        }
+        rendered = await self._template_provider.render("reschedule_requested_recruiter", context)
+
+        if rendered and rendered.text:
+            await get_bot().send_message(recruiter_id, rendered.text)
+
+        await self._mark_sent(item, item.attempts + 1, "reschedule_requested_recruiter", "reschedule_requested_recruiter", rendered, item.candidate_tg_id)
+        
+    async def _process_reschedule_approved_candidate(self, item: OutboxItem) -> None:
+        """Notifies a candidate their reschedule request was approved."""
+        candidate_id = item.candidate_tg_id
+        payload = dict(item.payload or {})
+        if not candidate_id:
+            return
+            
+        new_time_utc = datetime.fromisoformat(payload.get("new_time_utc", ""))
+        context = {"new_time_local": fmt_dt_local(new_time_utc, "Europe/Moscow")}
+        rendered = await self._template_provider.render("reschedule_approved_candidate", context)
+        
+        if rendered and rendered.text:
+            await get_bot().send_message(candidate_id, rendered.text)
+        
+        await self._mark_sent(item, item.attempts + 1, "reschedule_approved_candidate", "reschedule_approved_candidate", rendered, candidate_id)
+
+    async def _process_reschedule_declined_candidate(self, item: OutboxItem) -> None:
+        """Notifies a candidate their reschedule request was declined."""
+        candidate_id = item.candidate_tg_id
+        payload = dict(item.payload or {})
+        if not candidate_id:
+            return
+            
+        context = {"recruiter_comment": payload.get("recruiter_comment", "Причина не указана.")}
+        rendered = await self._template_provider.render("reschedule_declined_candidate", context)
+
+        if rendered and rendered.text:
+            await get_bot().send_message(candidate_id, rendered.text)
+
+        await self._mark_sent(item, item.attempts + 1, "reschedule_declined_candidate", "reschedule_declined_candidate", rendered, candidate_id)
 
 
 def get_rating(score: float) -> str:

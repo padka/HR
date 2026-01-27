@@ -23,7 +23,10 @@ from starlette_wtf import CSRFProtectMiddleware
 from sqlalchemy import text
 from starlette.responses import Response, PlainTextResponse
 
-from backend.apps.admin_ui.background_tasks import periodic_stalled_candidate_checker
+from backend.apps.admin_ui.background_tasks import (
+    periodic_stalled_candidate_checker,
+    periodic_past_free_slot_cleanup,
+)
 from backend.apps.admin_ui.config import STATIC_DIR, register_template_globals
 from pathlib import Path
 from pathlib import Path
@@ -39,10 +42,15 @@ from backend.apps.admin_ui.routers import (
     questions,
     recruiters,
     slots,
+    slot_assignments,
     system,
     templates,
     workflow,
+    workflow,
     profile,
+    assignments,
+    reschedule_requests,
+    slot_assignments_api,
 )
 from backend.apps.admin_ui.security import (
     RateLimitExceeded,
@@ -355,6 +363,22 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Test mode: skipping stalled candidate checker")
 
+    # Start background task for auto-removing past free slots
+    slot_cleanup_task = None
+    if not is_test_mode:
+        try:
+            slot_cleanup_task = asyncio.create_task(
+                periodic_past_free_slot_cleanup(interval_minutes=1, grace_minutes=0, app=app),
+                name="past_free_slot_cleanup",
+            )
+            app.state.slot_cleanup_task = slot_cleanup_task
+            shutdown_manager.add_task(slot_cleanup_task)
+            logger.info("Past free slot cleanup started")
+        except Exception as exc:
+            logger.error("Failed to start past free slot cleanup: %s", exc, exc_info=True)
+    else:
+        logger.info("Test mode: skipping past free slot cleanup")
+
     # Initialize templates and bot integration
     try:
         register_template_globals()
@@ -448,6 +472,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(dashboard.router, dependencies=[Depends(require_principal)])
     app.include_router(slots.router, dependencies=[Depends(require_principal)])
+    app.include_router(slot_assignments.router, dependencies=[Depends(require_principal)])
     app.include_router(candidates.router, dependencies=[Depends(require_principal)])
     app.include_router(profile.router, dependencies=[Depends(require_principal)])
     app.include_router(workflow.router, dependencies=[Depends(require_admin)])
@@ -457,6 +482,9 @@ def create_app() -> FastAPI:
     app.include_router(message_templates.router, dependencies=[Depends(require_admin)])
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
     app.include_router(api.router, dependencies=[Depends(require_principal)])
+    app.include_router(assignments.router, prefix="/api/v1")
+    app.include_router(slot_assignments_api.router, prefix="/api")
+    app.include_router(reschedule_requests.router, prefix="/api/v1/admin", dependencies=[Depends(require_principal)])
 
     if SPA_DIST_DIR.exists():
         @app.get("/app", include_in_schema=False)
