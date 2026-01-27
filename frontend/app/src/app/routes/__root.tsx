@@ -131,6 +131,7 @@ export function RootLayout() {
                 title={item.label}
               >
                 <span className="app-nav__icon">{item.icon}</span>
+                <span className="app-nav__label">{item.label}</span>
               </Link>
             ))}
           </nav>
