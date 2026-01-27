@@ -105,9 +105,16 @@
   --glass-gradient-strong: linear-gradient(160deg, rgba(255,255,255,0.95), rgba(255,255,255,0.75));
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html,
 body {
   height: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -121,6 +128,11 @@ body {
     var(--bg);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+#root {
+  min-height: 100%;
+  overflow-x: hidden;
 }
 
 :root[data-theme='light'] body {
@@ -209,6 +221,13 @@ body {
   flex-direction: column;
   gap: 0;
   width: 100%;
+  overflow-x: hidden;
+}
+
+.app-shell > main {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
 }
 
 @media (max-width: 768px) {
@@ -252,6 +271,8 @@ body {
   height: 72px;
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
+  gap: 16px;
   z-index: 1000;
   background: var(--glass-gradient);
   backdrop-filter: blur(var(--blur));
@@ -265,21 +286,24 @@ body {
   display: flex;
   align-items: center;
   gap: 20px;
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .app-header-center {
   flex: 2;
   display: flex;
   justify-content: center;
+  min-width: 0;
 }
 
 .app-header-right {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex: 1;
+  flex: 1 1 0;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .app-nav-pill {
@@ -293,10 +317,11 @@ body {
   box-shadow: var(--glass-shadow);
   backdrop-filter: blur(var(--blur));
   -webkit-backdrop-filter: blur(var(--blur));
+  max-width: 100%;
 }
 
 .app-nav__item {
-  min-width: 78px;
+  min-width: 72px;
   height: 56px;
   border-radius: 14px;
   display: grid;
@@ -483,15 +508,21 @@ body {
 
 @media (max-width: 768px) {
   .app-header {
-    padding: 12px 20px;
+    padding: 12px 16px;
+    height: auto;
+    flex-wrap: wrap;
+    justify-content: center;
   }
   .app-nav-pill {
     gap: 4px;
     padding: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
   }
   .app-nav__item, .app-profile-pill {
     width: 48px;
     height: 48px;
+    min-width: 48px;
   }
   .app-nav__icon svg, .app-profile__icon svg {
     width: 28px;
@@ -611,12 +642,13 @@ body {
     --header-height: 100px;
   }
   .app-header {
-    grid-template-columns: 1fr;
-    justify-items: center;
+    height: auto;
+    flex-wrap: wrap;
+    justify-content: center;
     text-align: center;
   }
-  .app-header__left,
-  .app-header__right {
+  .app-header-left,
+  .app-header-right {
     width: 100%;
     justify-content: center;
   }
@@ -633,13 +665,28 @@ body {
   .app-shell {
     padding: 16px;
   }
-  .app-nav {
+  .app-nav-pill {
     gap: 8px;
     padding: 8px 10px;
   }
   .app-nav__icon {
     width: 40px;
     height: 40px;
+  }
+  .app-nav__item {
+    grid-template-rows: 1fr;
+  }
+  .app-nav__label {
+    display: none;
+  }
+  .app-header-left {
+    display: none;
+  }
+  .app-header-right {
+    order: 3;
+  }
+  .app-nav-pill {
+    order: 2;
   }
 }
 
@@ -650,6 +697,7 @@ body {
   flex-direction: column;
   gap: var(--space-lg);
   animation: pageIn 0.3s ease-out;
+  min-width: 0;
 }
 
 @keyframes pageIn {
@@ -2093,6 +2141,7 @@ body {
   z-index: -1;
   overflow: hidden;
   will-change: transform;
+  pointer-events: none;
 }
 
 .bubbles-layer {
@@ -2759,6 +2808,7 @@ body {
   flex-direction: column;
   gap: var(--space-lg);
   flex: 1;
+  min-width: 0;
 }
 
 .page-section__header {
@@ -2774,6 +2824,9 @@ body {
   flex-direction: column;
   gap: var(--space-sm);
   flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 /* Filter Bar - consistent filter controls */
