@@ -53,6 +53,7 @@ export function IncomingPage() {
   const incomingQuery = useQuery<IncomingPayload>({
     queryKey: ['dashboard-incoming'],
     queryFn: () => apiFetch('/dashboard/incoming'),
+    refetchInterval: 20000,
   })
 
   const scheduleIncoming = useMutation({

@@ -137,6 +137,7 @@ type IncomingCandidate = {
   availability_window?: string | null
   availability_note?: string | null
   telegram_id?: number | null
+  telegram_username?: string | null
   profile_url?: string | null
 }
 
@@ -225,6 +226,7 @@ export function DashboardPage() {
     queryKey: ['dashboard-incoming'],
     queryFn: () => apiFetch('/dashboard/incoming'),
     enabled: !isAdmin,
+    refetchInterval: 20000,
   })
 
   const kpiParams = useMemo(() => {
@@ -734,6 +736,19 @@ export function DashboardPage() {
                       >
                         Профиль
                       </Link>
+                      {(() => {
+                        const username = candidate.telegram_username?.replace(/^@/, '')
+                        const link = username
+                          ? `https://t.me/${username}`
+                          : candidate.telegram_id
+                            ? `tg://user?id=${candidate.telegram_id}`
+                            : null
+                        return link ? (
+                          <a className="ui-btn ui-btn--ghost ui-btn--sm" href={link} target="_blank" rel="noopener">
+                            Telegram
+                          </a>
+                        ) : null
+                      })()}
                       <button
                         className="ui-btn ui-btn--primary ui-btn--sm"
                         type="button"
