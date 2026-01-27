@@ -49,7 +49,8 @@ from backend.domain.candidates.workflow import (
     CandidateWorkflowService,
     WorkflowStatus,
 )
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
+from backend.domain.repositories import find_city_by_plain_name
 
 if TYPE_CHECKING:  # pragma: no cover - used only for typing
     from backend.apps.admin_ui.services.bot_service import BotService
@@ -2461,7 +2462,20 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
             return None
         if principal and principal.type == "recruiter":
             if user.responsible_recruiter_id != principal.id:
-                return None
+                # Allow access if candidate city belongs to recruiter's assigned cities
+                allowed = False
+                if user.city:
+                    city_record = await find_city_by_plain_name(user.city)
+                    if city_record:
+                        rows = await session.execute(
+                            select(recruiter_city_association.c.city_id)
+                            .where(recruiter_city_association.c.recruiter_id == principal.id)
+                        )
+                        allowed_city_ids = {row[0] for row in rows}
+                        if city_record.id in allowed_city_ids:
+                            allowed = True
+                if not allowed:
+                    return None
 
         interview_note = await _load_interview_note(session, user_id)
         test_results = sorted(user.test_results, key=lambda r: (r.created_at or datetime.min, r.id), reverse=True)
