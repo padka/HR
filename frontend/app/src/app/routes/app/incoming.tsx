@@ -20,6 +20,8 @@ type IncomingCandidate = {
   telegram_username?: string | null
   last_message?: string | null
   last_message_at?: string | null
+  responsible_recruiter_id?: number | null
+  responsible_recruiter_name?: string | null
   profile_url?: string | null
 }
 
@@ -38,6 +40,7 @@ function toIsoDate(value: Date) {
 
 export function IncomingPage() {
   const profile = useProfile()
+  const isAdmin = profile.data?.principal.type === 'admin'
   const [toast, setToast] = useState<string | null>(null)
   const [incomingTarget, setIncomingTarget] = useState<IncomingCandidate | null>(null)
   const [incomingDate, setIncomingDate] = useState(toIsoDate(new Date()))
@@ -56,6 +59,28 @@ export function IncomingPage() {
     queryKey: ['dashboard-incoming'],
     queryFn: () => apiFetch('/dashboard/incoming'),
     refetchInterval: 20000,
+  })
+
+  const recruitersQuery = useQuery<{ id: number; name: string }[]>({
+    queryKey: ['incoming-recruiters'],
+    queryFn: () => apiFetch('/recruiters'),
+    enabled: Boolean(isAdmin),
+    staleTime: 60_000,
+  })
+
+  const [assignTargets, setAssignTargets] = useState<Record<number, string>>({})
+
+  const assignRecruiter = useMutation({
+    mutationFn: async (payload: { candidateId: number; recruiterId: number }) =>
+      apiFetch(`/candidates/${payload.candidateId}/assign-recruiter`, {
+        method: 'POST',
+        body: JSON.stringify({ recruiter_id: payload.recruiterId }),
+      }),
+    onSuccess: () => {
+      showToast('Рекрутёр назначен')
+      incomingQuery.refetch()
+    },
+    onError: (error: Error) => showToast(error.message),
   })
 
   const scheduleIncoming = useMutation({
@@ -122,7 +147,7 @@ export function IncomingPage() {
   }, [incomingQuery.data, cityFilter, search])
 
   return (
-    <RoleGuard allow={['recruiter']}>
+    <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
         <header className="glass glass--elevated page-header page-header--row">
           <div>
@@ -171,17 +196,26 @@ export function IncomingPage() {
           {incomingQuery.data && filteredItems.length > 0 && (
             <div className="incoming-grid">
               {filteredItems.map((candidate) => {
+                const isNew = candidate.last_message_at
+                  ? Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
+                  : false
                 const telegramUsername = candidate.telegram_username?.replace(/^@/, '')
                 const telegramLink = telegramUsername
                   ? `https://t.me/${telegramUsername}`
                   : candidate.telegram_id
                     ? `tg://user?id=${candidate.telegram_id}`
                     : null
+                const selectedRecruiter =
+                  assignTargets[candidate.id] ??
+                  (candidate.responsible_recruiter_id ? String(candidate.responsible_recruiter_id) : '')
                 return (
                   <div key={candidate.id} className="glass glass--subtle incoming-card">
                     <div className="incoming-card__main">
                       <div>
-                        <div className="incoming-card__name">{candidate.name || 'Без имени'}</div>
+                        <div className="incoming-card__name">
+                          {candidate.name || 'Без имени'}
+                          {isNew && <span className="incoming-card__badge">NEW</span>}
+                        </div>
                         <div className="incoming-card__meta">
                           <span>{candidate.city || 'Город не указан'}</span>
                           {candidate.waiting_hours != null && (
@@ -199,6 +233,16 @@ export function IncomingPage() {
                         {candidate.last_message && candidate.last_message !== candidate.availability_note && (
                           <div className="incoming-card__note">
                             💬 {candidate.last_message}
+                            {candidate.last_message_at && (
+                              <span className="incoming-card__note-time">
+                                {new Date(candidate.last_message_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {isAdmin && (
+                          <div className="incoming-card__note">
+                            Ответственный: {candidate.responsible_recruiter_name || 'не назначен'}
                           </div>
                         )}
                       </div>
@@ -212,6 +256,31 @@ export function IncomingPage() {
                         </span>
                       )}
                     </div>
+                    {isAdmin && (
+                      <div className="incoming-card__assign">
+                        <select
+                          value={selectedRecruiter}
+                          onChange={(e) =>
+                            setAssignTargets((prev) => ({ ...prev, [candidate.id]: e.target.value }))
+                          }
+                        >
+                          <option value="">Выберите рекрутёра</option>
+                          {(recruitersQuery.data || []).map((rec) => (
+                            <option key={rec.id} value={String(rec.id)}>{rec.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          className="ui-btn ui-btn--primary ui-btn--sm"
+                          type="button"
+                          disabled={!selectedRecruiter || assignRecruiter.isPending}
+                          onClick={() =>
+                            assignRecruiter.mutate({ candidateId: candidate.id, recruiterId: Number(selectedRecruiter) })
+                          }
+                        >
+                          Назначить
+                        </button>
+                      </div>
+                    )}
                     <div className="incoming-card__actions">
                       <Link
                         className="ui-btn ui-btn--ghost ui-btn--sm"
@@ -225,13 +294,15 @@ export function IncomingPage() {
                           Telegram
                         </a>
                       )}
-                      <button
-                        className="ui-btn ui-btn--primary ui-btn--sm"
-                        type="button"
-                        onClick={() => openIncomingSchedule(candidate)}
-                      >
-                        Назначить
-                      </button>
+                      {!isAdmin && (
+                        <button
+                          className="ui-btn ui-btn--primary ui-btn--sm"
+                          type="button"
+                          onClick={() => openIncomingSchedule(candidate)}
+                        >
+                          Назначить
+                        </button>
+                      )}
                       <button
                         className="ui-btn ui-btn--danger ui-btn--sm"
                         type="button"

@@ -140,6 +140,8 @@ type IncomingCandidate = {
   telegram_username?: string | null
   last_message?: string | null
   last_message_at?: string | null
+  responsible_recruiter_id?: number | null
+  responsible_recruiter_name?: string | null
   profile_url?: string | null
 }
 
@@ -704,7 +706,12 @@ export function DashboardPage() {
                   <div key={candidate.id} className="glass glass--subtle incoming-card">
                     <div className="incoming-card__main">
                       <div>
-                        <div className="incoming-card__name">{candidate.name || 'Без имени'}</div>
+                        <div className="incoming-card__name">
+                          {candidate.name || 'Без имени'}
+                          {candidate.last_message_at && (
+                            Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
+                          ) && <span className="incoming-card__badge">NEW</span>}
+                        </div>
                         <div className="incoming-card__meta">
                           <span>{candidate.city || 'Город не указан'}</span>
                           {candidate.waiting_hours != null && (
@@ -722,6 +729,11 @@ export function DashboardPage() {
                         {!candidate.availability_note && candidate.last_message && (
                           <div className="incoming-card__note">
                             💬 {candidate.last_message}
+                            {candidate.last_message_at && (
+                              <span className="incoming-card__note-time">
+                                {new Date(candidate.last_message_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>

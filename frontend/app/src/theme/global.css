@@ -1491,6 +1491,9 @@ body {
   font-size: var(--text-md);
   font-weight: 600;
   letter-spacing: var(--text-tracking-tight);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
 }
 
 .incoming-card__meta {
@@ -1515,6 +1518,35 @@ body {
   margin-top: var(--space-xs);
   color: var(--muted);
   font-size: var(--text-sm);
+}
+
+.incoming-card__note-time {
+  display: inline-flex;
+  margin-left: var(--space-xs);
+  opacity: 0.7;
+  font-size: var(--text-xs);
+}
+
+.incoming-card__badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(123, 177, 255, 0.2);
+  color: var(--accent-light);
+  border: 1px solid rgba(123, 177, 255, 0.35);
+}
+
+.incoming-card__assign {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.incoming-card__assign select {
+  min-width: 180px;
 }
 
 .dashboard-kpi .kpi-card {

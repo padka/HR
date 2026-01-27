@@ -258,6 +258,8 @@ async def get_recent_candidates(limit: int = 5, *, principal: Optional[Principal
 
 async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principal] = None) -> List[Dict[str, object]]:
     """Return candidates waiting for manual slot assignment (prioritized)."""
+    last_message_map: Dict[int, dict] = {}
+    recruiter_map: Dict[int, str] = {}
     async with async_session() as session:
         recruiter_city_ids: set[int] = set()
         query_limit = limit
@@ -302,6 +304,13 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                         "text": text,
                         "created_at": created_at,
                     }
+
+        recruiter_ids = {u.responsible_recruiter_id for u in users if u.responsible_recruiter_id}
+        if recruiter_ids:
+            recruiters = (
+                await session.execute(select(Recruiter).where(Recruiter.id.in_(recruiter_ids)))
+            ).scalars().all()
+            recruiter_map = {rec.id: rec.name for rec in recruiters}
 
     now = datetime.now(timezone.utc)
     tz_cache: Dict[str, str] = {}
@@ -359,8 +368,10 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                 "telegram_id": user.telegram_id,
                 "telegram_user_id": user.telegram_user_id or user.telegram_id,
                 "telegram_username": user.telegram_username or user.username,
-                "last_message": last_msg.get(\"text\") if last_msg else None,
+                "last_message": last_msg.get("text") if last_msg else None,
                 "last_message_at": last_msg_at.isoformat() if last_msg_at else None,
+                "responsible_recruiter_id": user.responsible_recruiter_id,
+                "responsible_recruiter_name": recruiter_map.get(user.responsible_recruiter_id) if user.responsible_recruiter_id else None,
                 "schedule_url": f"/candidates/{user.id}/schedule-slot",
                 "profile_url": f"/candidates/{user.id}",
                 "priority_score": 0,  # will be updated below

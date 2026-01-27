@@ -2951,6 +2951,27 @@ async def update_candidate(
         return True
 
 
+async def assign_candidate_recruiter(
+    user_id: int,
+    recruiter_id: int,
+    *,
+    principal: Optional[Principal] = None,
+) -> bool:
+    principal = principal or principal_ctx.get()
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            return False
+        if principal and principal.type != "admin":
+            return False
+        recruiter = await session.get(Recruiter, recruiter_id)
+        if not recruiter:
+            raise ValueError("recruiter_not_found")
+        user.responsible_recruiter_id = recruiter_id
+        await session.commit()
+        return True
+
+
 async def delete_candidate(user_id: int, principal: Optional[Principal] = None) -> bool:
     principal = principal or principal_ctx.get()
     async with async_session() as session:

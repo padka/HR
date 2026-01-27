@@ -35,6 +35,7 @@ from backend.apps.admin_ui.services.calendar_events import (
 from backend.apps.admin_ui.services.candidates import (
     get_candidate_detail,
     api_candidate_detail_payload,
+    assign_candidate_recruiter,
     update_candidate_status,
     list_candidates,
 )
@@ -1960,6 +1961,32 @@ async def api_candidate_action(
         status_code=400,
         detail={"message": "Действие не поддерживается"},
     )
+
+
+@router.post("/candidates/{candidate_id}/assign-recruiter")
+async def api_assign_candidate_recruiter(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+    _: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    recruiter_id = data.get("recruiter_id")
+    if recruiter_id is None:
+        raise HTTPException(status_code=400, detail={"message": "recruiter_id required"})
+    try:
+        recruiter_id_value = int(recruiter_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail={"message": "invalid recruiter_id"})
+    try:
+        ok = await assign_candidate_recruiter(candidate_id, recruiter_id_value, principal=principal)
+    except ValueError:
+        raise HTTPException(status_code=404, detail={"message": "Recruiter not found"})
+    if not ok:
+        raise HTTPException(status_code=404, detail={"message": "Кандидат не найден"})
+    return JSONResponse({"ok": True, "recruiter_id": recruiter_id_value})
 
 
 @router.post("/candidates", status_code=201)

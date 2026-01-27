@@ -99,6 +99,7 @@ export function RootLayout() {
       : principalType === 'admin'
         ? [
             { to: '/app/dashboard', label: 'Дашборд', icon: ICONS.dashboard, tone: 'blue' },
+            { to: '/app/incoming', label: 'Входящие', icon: ICONS.incoming, tone: 'amber' },
             { to: '/app/recruiters', label: 'Рекрутёры', icon: ICONS.recruiters, tone: 'indigo' },
             { to: '/app/cities', label: 'Города', icon: ICONS.cities, tone: 'sunset' },
             { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
