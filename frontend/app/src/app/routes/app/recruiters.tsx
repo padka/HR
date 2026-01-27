@@ -11,6 +11,8 @@ type Recruiter = {
   tg_chat_id?: string | null
   telemost_url?: string | null
   active?: boolean | null
+  last_seen_at?: string | null
+  is_online?: boolean | null
   city_ids?: number[]
   cities?: Array<{ name: string; tz?: string | null }>
   stats?: { total: number; free: number; pending: number; booked: number }
@@ -85,32 +87,73 @@ export function RecruitersPage() {
                 <p className="subtitle">Пока нет рекрутёров. Добавьте первого, чтобы начать работу.</p>
               </div>
             )}
-            <div style={{ marginTop: 12, display: 'grid', gap: 12 }}>
+            <div className="recruiter-cards">
               {data.map((r) => {
                 const stats = r.stats || { total: 0, free: 0, pending: 0, booked: 0 }
                 const loadPercent = stats.total ? Math.round((stats.booked / stats.total) * 100) : 0
+                const initials = r.name
+                  .split(' ')
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((part) => part[0]?.toUpperCase())
+                  .join('')
+                const presenceClass = r.active
+                  ? (r.is_online ? 'is-online' : 'is-away')
+                  : 'is-inactive'
                 return (
-                  <div key={r.id} className="glass" style={{ padding: 16, display: 'grid', gap: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-                      <div>
-                        <h3 style={{ margin: 0 }}>{r.name}</h3>
-                        <div className="subtitle">ID #{r.id} · {r.tz || '—'}</div>
+                  <div key={r.id} className="glass recruiter-card">
+                    <div className="recruiter-card__header">
+                      <div className="recruiter-card__identity">
+                        <div className={`recruiter-avatar ${presenceClass}`} aria-hidden="true">
+                          {initials || 'RS'}
+                        </div>
+                        <div>
+                          <h3 className="recruiter-card__name">{r.name}</h3>
+                          <div className="recruiter-card__meta">ID #{r.id} · {r.tz || '—'}</div>
+                        </div>
                       </div>
-                      <span className="chip">{r.active ? 'Активен' : 'Отключен'}</span>
+                      <span className={`recruiter-card__status ${r.active ? 'is-active' : 'is-inactive'}`}>
+                        {r.active ? 'Активен' : 'Отключен'}
+                      </span>
                     </div>
 
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                      <span className="chip">Свободно: {stats.free}</span>
-                      <span className="chip">Ожидают: {stats.pending}</span>
-                      <span className="chip">Занято: {stats.booked}</span>
-                      <span className="chip">Всего: {stats.total}</span>
-                      <span className="chip">Занятость: {loadPercent}%</span>
-                      <span className="chip">Ближайший слот: {r.next_free_local || 'Нет свободных'}</span>
+                    <div className="recruiter-card__stats">
+                      <div className="recruiter-stat">
+                        <span>Свободно</span>
+                        <strong>{stats.free}</strong>
+                      </div>
+                      <div className="recruiter-stat">
+                        <span>Ожидают</span>
+                        <strong>{stats.pending}</strong>
+                      </div>
+                      <div className="recruiter-stat">
+                        <span>Занято</span>
+                        <strong>{stats.booked}</strong>
+                      </div>
+                      <div className="recruiter-stat">
+                        <span>Всего</span>
+                        <strong>{stats.total}</strong>
+                      </div>
                     </div>
 
-                    <div>
-                      <div className="subtitle" style={{ fontWeight: 600 }}>Города</div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                    <div className="recruiter-card__load">
+                      <div className="recruiter-card__load-header">
+                        <span>Занятость</span>
+                        <strong>{loadPercent}%</strong>
+                      </div>
+                      <div className="recruiter-card__load-bar">
+                        <span style={{ width: `${Math.min(loadPercent, 100)}%` }} />
+                      </div>
+                    </div>
+
+                    <div className="recruiter-card__next">
+                      <span>Ближайший слот</span>
+                      <strong>{r.next_free_local || 'Нет свободных'}</strong>
+                    </div>
+
+                    <div className="recruiter-card__cities">
+                      <div className="recruiter-card__section-title">Города</div>
+                      <div className="recruiter-card__chips">
                         {r.cities && r.cities.length > 0 ? (
                           r.cities.slice(0, 6).map((city) => (
                             <span key={city.name} className="chip">{city.name}</span>
@@ -124,8 +167,8 @@ export function RecruitersPage() {
                       </div>
                     </div>
 
-                    <div className="action-row" style={{ flexWrap: 'wrap' }}>
-                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <div className="recruiter-card__actions">
+                      <label className="recruiter-card__toggle">
                         <input
                           type="checkbox"
                           checked={Boolean(r.active)}

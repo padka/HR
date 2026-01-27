@@ -22,6 +22,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette_wtf import CSRFProtectMiddleware
 from sqlalchemy import text
 from starlette.responses import Response, PlainTextResponse
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from backend.apps.admin_ui.background_tasks import (
     periodic_stalled_candidate_checker,
@@ -60,6 +61,7 @@ from backend.apps.admin_ui.security import (
     require_principal,
 )
 from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
+from backend.apps.admin_ui.calendar_hub import calendar_hub
 from backend.apps.admin_ui.middleware import SecureHeadersMiddleware, DegradedDatabaseMiddleware, RequestIDMiddleware
 from backend.core.logging import configure_logging
 from backend.core.settings import get_settings
@@ -467,6 +469,21 @@ def create_app() -> FastAPI:
             app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="spa-assets")
     else:
         logger.warning("SPA dist directory not found at %s. Build frontend to enable /app.", SPA_DIST_DIR)
+
+    # WebSocket endpoint for calendar real-time updates
+    @app.websocket("/ws/calendar")
+    async def ws_calendar(websocket: WebSocket):
+        await calendar_hub.connect(websocket)
+        try:
+            while True:
+                # Keep connection alive, listen for any incoming messages
+                data = await websocket.receive_text()
+                # For now, we just echo back to confirm connection is alive
+                # Client can send ping messages if needed
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await calendar_hub.disconnect(websocket)
 
     app.include_router(system.router)
     app.include_router(auth_router.router)

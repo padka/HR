@@ -358,10 +358,17 @@ def _parse_city_ids(raw: Optional[List[str]]) -> List[int]:
 async def api_recruiters_payload() -> List[Dict[str, object]]:
     rows = await list_recruiters()
     payload: List[Dict[str, object]] = []
+    now = datetime.now(timezone.utc)
     for item in rows:
         rec: Recruiter = item["rec"]
         stats = item.get("stats", {}) or {}
         cities = item.get("cities") or []
+        last_seen = getattr(rec, "last_seen_at", None)
+        if last_seen and last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        is_online = False
+        if last_seen:
+            is_online = (now - last_seen).total_seconds() <= 300
         payload.append(
             {
                 "id": rec.id,
@@ -370,6 +377,8 @@ async def api_recruiters_payload() -> List[Dict[str, object]]:
                 "tg_chat_id": getattr(rec, "tg_chat_id", None),
                 "telemost_url": getattr(rec, "telemost_url", None),
                 "active": getattr(rec, "active", True),
+                "last_seen_at": last_seen.isoformat() if last_seen else None,
+                "is_online": bool(is_online and getattr(rec, "active", True)),
                 "city_ids": item.get("city_ids", []),
                 "cities": [{"name": str(name), "tz": tz} for name, tz in cities],
                 "stats": {

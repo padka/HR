@@ -2,10 +2,15 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from backend.apps.admin_ui.services.dashboard import dashboard_counts
+from backend.apps.admin_ui.services.dashboard import (
+    dashboard_counts,
+    get_recruiter_leaderboard,
+)
 from backend.apps.admin_ui.services.slots import api_slots_payload, create_slot, list_slots
 from backend.core.db import async_session
 from backend.domain import models
+from backend.domain.candidates.models import User
+from backend.domain.candidates.status import CandidateStatus
 from backend.apps.bot.metrics import (
     record_test1_completion,
     record_test1_rejection,
@@ -125,3 +130,107 @@ async def test_slots_list_status_counts_and_api_payload_normalizes_statuses():
     assert listing["status_counts"]["PENDING"] == 1
     assert listing["status_counts"]["BOOKED"] == 1
     assert listing["status_counts"]["CONFIRMED_BY_CANDIDATE"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recruiter_leaderboard_scores_and_ranking():
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        recruiter_a = models.Recruiter(name="Alpha", tz="Europe/Moscow", active=True)
+        recruiter_b = models.Recruiter(name="Beta", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter_a, recruiter_b])
+        await session.commit()
+        await session.refresh(recruiter_a)
+        await session.refresh(recruiter_b)
+
+        base_time = now - timedelta(days=1)
+
+        def _user(name: str, recruiter_id: int, status: CandidateStatus) -> User:
+            return User(
+                fio=name,
+                responsible_recruiter_id=recruiter_id,
+                candidate_status=status,
+                status_changed_at=base_time,
+                last_activity=base_time,
+                city="Moscow",
+            )
+
+        users = [
+            _user("A1", recruiter_a.id, CandidateStatus.INTERVIEW_SCHEDULED),
+            _user("A2", recruiter_a.id, CandidateStatus.INTERVIEW_SCHEDULED),
+            _user("A3", recruiter_a.id, CandidateStatus.INTERVIEW_SCHEDULED),
+            _user("A4", recruiter_a.id, CandidateStatus.INTERVIEW_SCHEDULED),
+            _user("A5", recruiter_a.id, CandidateStatus.INTRO_DAY_SCHEDULED),
+            _user("A6", recruiter_a.id, CandidateStatus.HIRED),
+            _user("A7", recruiter_a.id, CandidateStatus.HIRED),
+            _user("A8", recruiter_a.id, CandidateStatus.NOT_HIRED),
+            _user("A9", recruiter_a.id, CandidateStatus.TEST2_FAILED),
+            _user("A10", recruiter_a.id, CandidateStatus.WAITING_SLOT),
+            _user("B1", recruiter_b.id, CandidateStatus.INTERVIEW_SCHEDULED),
+            _user("B2", recruiter_b.id, CandidateStatus.WAITING_SLOT),
+            _user("B3", recruiter_b.id, CandidateStatus.WAITING_SLOT),
+            _user("B4", recruiter_b.id, CandidateStatus.NOT_HIRED),
+            _user("B5", recruiter_b.id, CandidateStatus.TEST2_FAILED),
+        ]
+        session.add_all(users)
+
+        slots = []
+        for idx in range(6):
+            status = models.SlotStatus.BOOKED if idx < 3 else models.SlotStatus.CONFIRMED_BY_CANDIDATE
+            slots.append(
+                models.Slot(
+                    recruiter_id=recruiter_a.id,
+                    start_utc=now - timedelta(hours=idx + 1),
+                    status=status,
+                )
+            )
+        for idx in range(2):
+            slots.append(
+                models.Slot(
+                    recruiter_id=recruiter_a.id,
+                    start_utc=now - timedelta(hours=idx + 10),
+                    status=models.SlotStatus.PENDING,
+                )
+            )
+        for idx in range(2):
+            slots.append(
+                models.Slot(
+                    recruiter_id=recruiter_a.id,
+                    start_utc=now - timedelta(hours=idx + 20),
+                    status=models.SlotStatus.FREE,
+                )
+            )
+        slots.append(
+            models.Slot(
+                recruiter_id=recruiter_b.id,
+                start_utc=now - timedelta(hours=2),
+                status=models.SlotStatus.BOOKED,
+            )
+        )
+        for idx in range(4):
+            slots.append(
+                models.Slot(
+                    recruiter_id=recruiter_b.id,
+                    start_utc=now - timedelta(hours=idx + 6),
+                    status=models.SlotStatus.FREE,
+                )
+            )
+        session.add_all(slots)
+        await session.commit()
+
+    payload = await get_recruiter_leaderboard(
+        date_from=now - timedelta(days=7),
+        date_to=now,
+    )
+    items = payload["items"]
+    assert len(items) == 2
+
+    item_a = next(item for item in items if item["recruiter_id"] == recruiter_a.id)
+    item_b = next(item for item in items if item["recruiter_id"] == recruiter_b.id)
+
+    assert item_a["candidates_total"] == 10
+    assert item_a["slots_booked"] == 6
+    assert item_a["fill_rate"] == 60.0
+    assert item_a["conversion_interview"] == 70.0
+    assert item_a["score"] >= item_b["score"]
+    assert item_a["rank"] == 1

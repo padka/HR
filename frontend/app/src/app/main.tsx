@@ -33,6 +33,8 @@ const QuestionsPage = lazy(() => import('./routes/app/questions').then(m => ({ d
 const QuestionNewPage = lazy(() => import('./routes/app/question-new').then(m => ({ default: m.QuestionNewPage })))
 const QuestionEditPage = lazy(() => import('./routes/app/question-edit').then(m => ({ default: m.QuestionEditPage })))
 const MessageTemplatesPage = lazy(() => import('./routes/app/message-templates').then(m => ({ default: m.MessageTemplatesPage })))
+const MessengerPage = lazy(() => import('./routes/app/messenger').then(m => ({ default: m.MessengerPage })))
+const CalendarPage = lazy(() => import('./routes/app/calendar').then(m => ({ default: m.CalendarPage })))
 
 // Loading fallback
 function PageLoader() {
@@ -69,7 +71,6 @@ function withSuspense<P extends object>(Component: React.ComponentType<P>) {
 }
 
 const rootRoute = createRootRoute({
-  id: 'root',
   component: RootLayout,
 })
 
@@ -125,7 +126,6 @@ const recruiterEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/app/recruiters/$recruiterId/edit',
   component: withSuspense(RecruiterEditPage),
-  id: 'recruiterEdit',
 })
 
 const citiesRoute = createRoute({
@@ -144,7 +144,6 @@ const cityEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/app/cities/$cityId/edit',
   component: withSuspense(CityEditPage),
-  id: 'cityEdit',
 })
 
 const templatesRoute = createRoute({
@@ -163,7 +162,6 @@ const templateEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/app/templates/$templateId/edit',
   component: withSuspense(TemplateEditPage),
-  id: 'templateEdit',
 })
 
 const questionsRoute = createRoute({
@@ -182,13 +180,24 @@ const questionEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/app/questions/$questionId/edit',
   component: withSuspense(QuestionEditPage),
-  id: 'questionEdit',
 })
 
 const messageTemplatesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/app/message-templates',
   component: withSuspense(MessageTemplatesPage),
+})
+
+const messengerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/app/messenger',
+  component: withSuspense(MessengerPage),
+})
+
+const calendarRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/app/calendar',
+  component: withSuspense(CalendarPage),
 })
 
 const systemRoute = createRoute({
@@ -213,7 +222,6 @@ const candidateDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/app/candidates/$candidateId',
   component: withSuspense(CandidateDetailPage),
-  id: 'candidateDetail',
 })
 
 const routeTree = rootRoute.addChildren([
@@ -236,6 +244,8 @@ const routeTree = rootRoute.addChildren([
   questionNewRoute,
   questionEditRoute,
   messageTemplatesRoute,
+  messengerRoute,
+  calendarRoute,
   systemRoute,
   candidatesRoute,
   candidateNewRoute,

@@ -24,7 +24,7 @@ from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.admin_ui.utils import fmt_local, safe_zone
 from backend.core.db import async_session
 from backend.domain.base import Base
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
 from backend.domain.candidates.models import User
 from backend.domain.analytics import FunnelEvent
 from backend.domain.candidates.status import (
@@ -40,6 +40,7 @@ from backend.apps.bot.metrics import get_test1_metrics_snapshot
 from backend.domain.repositories import find_city_by_plain_name
 from backend.core.scoping import scope_candidates, scope_slots, scope_cities
 from backend.apps.admin_ui.security import Principal
+from backend.core.cache import CacheTTL, get_cache
 
 __all__ = [
     "dashboard_counts",
@@ -49,6 +50,7 @@ __all__ = [
     "get_bot_funnel_stats",
     "get_funnel_step_candidates",
     "get_recruiter_performance",
+    "get_recruiter_leaderboard",
     "get_recent_activities",
     "get_ai_insights",
     "get_quick_slots",
@@ -256,6 +258,18 @@ async def get_recent_candidates(limit: int = 5, *, principal: Optional[Principal
 async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principal] = None) -> List[Dict[str, object]]:
     """Return candidates waiting for manual slot assignment (prioritized)."""
     async with async_session() as session:
+        recruiter_city_ids: set[int] = set()
+        query_limit = limit
+        principal_type = getattr(principal, "type", None)
+        principal_id = getattr(principal, "id", None)
+        if principal_type == "recruiter" and principal_id is not None:
+            rows = await session.execute(
+                select(recruiter_city_association.c.city_id).where(
+                    recruiter_city_association.c.recruiter_id == principal_id
+                )
+            )
+            recruiter_city_ids = {row[0] for row in rows}
+            query_limit = max(limit * 5, 20)
         status_filter = User.candidate_status.in_([
             CandidateStatus.WAITING_SLOT,
             CandidateStatus.STALLED_WAITING_SLOT,
@@ -264,9 +278,9 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
             select(User)
             .where(status_filter)
             .order_by(User.status_changed_at.asc())
-            .limit(limit)
+            .limit(query_limit)
         )
-        if principal is not None:
+        if principal is not None and principal_type == "admin":
             stmt = scope_candidates(stmt, principal)
         result = await session.execute(stmt)
         users = result.scalars().all()
@@ -274,20 +288,29 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
     now = datetime.now(timezone.utc)
     tz_cache: Dict[str, str] = {}
 
-    async def _resolve_tz(city_label: Optional[str]) -> str:
+    async def _resolve_city(city_label: Optional[str]) -> tuple[str, Optional[int]]:
         key = (city_label or "").strip().lower()
         if not key:
-            return DEFAULT_TZ
+            return (DEFAULT_TZ, None)
         if key in tz_cache:
             return tz_cache[key]
         record = await find_city_by_plain_name(city_label)
         tz_value = getattr(record, "tz", None) or DEFAULT_TZ
-        tz_cache[key] = tz_value
-        return tz_value
+        city_id = getattr(record, "id", None)
+        tz_cache[key] = (tz_value, city_id)
+        return tz_cache[key]
 
     waiting_rows: List[Dict[str, object]] = []
     for user in users:
-        tz_label = await _resolve_tz(user.city)
+        tz_label, city_id = await _resolve_city(user.city)
+        if principal is not None and getattr(principal, "type", None) == "recruiter":
+            owner_id = getattr(user, "responsible_recruiter_id", None)
+            if owner_id == getattr(principal, "id", None):
+                pass
+            elif city_id and city_id in recruiter_city_ids:
+                pass
+            else:
+                continue
         waiting_since = user.status_changed_at or user.manual_slot_requested_at
         waiting_hours = None
         normalized_waiting_since = waiting_since
@@ -297,15 +320,18 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
             delta = now - normalized_waiting_since
             waiting_hours = max(0, int(delta.total_seconds() // 3600))
 
+        waiting_since_iso = waiting_since.isoformat() if waiting_since else None
         waiting_rows.append(
             {
                 "id": user.id,
                 "name": user.fio,
                 "city": user.city or "Не указан",
+                "city_id": city_id,
                 "status_display": get_status_label(user.candidate_status),
                 "status_color": get_status_color(user.candidate_status),
                 "status_slug": user.candidate_status.value if user.candidate_status else None,
-                "waiting_since": waiting_since,
+                "waiting_since": waiting_since_iso,
+                "waiting_since_dt": normalized_waiting_since,
                 "waiting_hours": waiting_hours,
                 "availability_window": _format_waiting_window(user, tz_label),
                 "availability_note": user.manual_slot_comment,
@@ -322,7 +348,7 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
     def _priority(row: Dict[str, object]) -> tuple:
         is_stalled = (row.get("status_slug") == CandidateStatus.STALLED_WAITING_SLOT.value)
         wait_hours = row.get("waiting_hours") or 0
-        wait_since = row.get("waiting_since") or datetime.now(timezone.utc)
+        wait_since = row.get("waiting_since_dt") or datetime.now(timezone.utc)
         return (
             0 if is_stalled else 1,            # stalled first
             -int(wait_hours),                  # longer waiting first
@@ -332,6 +358,7 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
     prioritized = sorted(waiting_rows, key=_priority)
     for idx, row in enumerate(prioritized, start=1):
         row["priority_score"] = idx
+        row.pop("waiting_since_dt", None)
 
     return prioritized[:limit]
 
@@ -1492,6 +1519,272 @@ async def get_recruiter_performance(window_days: int = 30) -> List[Dict[str, obj
 
     performance.sort(key=lambda r: (r["booked_slots"], r["total_slots"]), reverse=True)
     return performance
+
+
+def _normalize_score(value: float, minimum: float, maximum: float) -> float:
+    if maximum <= minimum:
+        return 1.0 if maximum > 0 else 0.0
+    return (value - minimum) / (maximum - minimum)
+
+
+async def get_recruiter_leaderboard(
+    *,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    city: Optional[str] = None,
+    window_days: int = 30,
+) -> Dict[str, object]:
+    """Build recruiter leaderboard with efficiency metrics for admin dashboard."""
+    date_from, date_to = _normalize_funnel_range(
+        date_from, date_to, default_days=window_days
+    )
+    city = _clean_filter_value(city)
+    cache_key = f"dashboard:leaderboard:{date_from.date()}:{date_to.date()}:{city or 'all'}"
+
+    try:
+        cache = get_cache()
+        cached = await cache.get(cache_key)
+        if cached.is_success():
+            cached_value = cached.unwrap()
+            if cached_value is not None:
+                return cached_value
+    except Exception:
+        cache = None
+
+    interview_statuses = {
+        CandidateStatus.INTERVIEW_SCHEDULED,
+        CandidateStatus.INTERVIEW_CONFIRMED,
+    }
+    intro_statuses = {
+        CandidateStatus.INTRO_DAY_SCHEDULED,
+        CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+        CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF,
+    }
+    declined_statuses = {
+        CandidateStatus.INTERVIEW_DECLINED,
+        CandidateStatus.TEST2_FAILED,
+        CandidateStatus.INTRO_DAY_DECLINED_INVITATION,
+        CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
+        CandidateStatus.NOT_HIRED,
+    }
+
+    activity_ref = func.coalesce(User.status_changed_at, User.last_activity)
+
+    async with async_session() as session:
+        recruiter_rows = (
+            await session.execute(
+                select(Recruiter.id, Recruiter.name, Recruiter.tz)
+                .where(Recruiter.active.is_(True))
+                .order_by(Recruiter.name.asc())
+            )
+        ).all()
+        recruiters = {
+            row.id: {"recruiter_id": row.id, "name": row.name, "tz": row.tz}
+            for row in recruiter_rows
+        }
+
+        candidate_stmt = (
+            select(
+                User.responsible_recruiter_id.label("recruiter_id"),
+                func.count(User.id).label("candidates_total"),
+                func.sum(
+                    case(
+                        (User.candidate_status.in_(interview_statuses), 1),
+                        else_=0,
+                    )
+                ).label("interview_total"),
+                func.sum(
+                    case(
+                        (User.candidate_status.in_(intro_statuses), 1),
+                        else_=0,
+                    )
+                ).label("intro_total"),
+                func.sum(
+                    case(
+                        (User.candidate_status == CandidateStatus.HIRED, 1),
+                        else_=0,
+                    )
+                ).label("hired_total"),
+                func.sum(
+                    case(
+                        (User.candidate_status.in_(declined_statuses), 1),
+                        else_=0,
+                    )
+                ).label("declined_total"),
+            )
+            .where(
+                User.responsible_recruiter_id.isnot(None),
+                activity_ref >= date_from,
+                activity_ref <= date_to,
+            )
+        )
+        if city:
+            candidate_stmt = candidate_stmt.where(func.lower(User.city) == city.lower())
+        candidate_stmt = candidate_stmt.group_by(User.responsible_recruiter_id)
+        candidate_rows = (await session.execute(candidate_stmt)).all()
+
+        status_lower = func.lower(Slot.status)
+        booked_statuses = [
+            SlotStatus.BOOKED,
+            SlotStatus.CONFIRMED,
+            SlotStatus.CONFIRMED_BY_CANDIDATE,
+        ]
+        slot_stmt = (
+            select(
+                Slot.recruiter_id.label("recruiter_id"),
+                func.count(Slot.id).label("slots_total"),
+                func.sum(case((status_lower == SlotStatus.FREE, 1), else_=0)).label("slots_free"),
+                func.sum(case((status_lower == SlotStatus.PENDING, 1), else_=0)).label("slots_pending"),
+                func.sum(
+                    case((status_lower.in_(booked_statuses), 1), else_=0)
+                ).label("slots_booked"),
+                func.sum(
+                    case(
+                        (status_lower == SlotStatus.CONFIRMED_BY_CANDIDATE, 1),
+                        else_=0,
+                    )
+                ).label("slots_confirmed"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                Slot.start_utc >= date_from,
+                                Slot.start_utc <= date_to,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("slots_window_total"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                Slot.start_utc >= date_from,
+                                Slot.start_utc <= date_to,
+                                status_lower.in_(booked_statuses),
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("slots_window_booked"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                Slot.start_utc >= date_from,
+                                Slot.start_utc <= date_to,
+                                status_lower == SlotStatus.CONFIRMED_BY_CANDIDATE,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("slots_window_confirmed"),
+            )
+            .where(Slot.recruiter_id.isnot(None))
+            .group_by(Slot.recruiter_id)
+        )
+        slot_rows = (await session.execute(slot_stmt)).all()
+
+    candidate_by_rec: Dict[int, dict] = {row.recruiter_id: row for row in candidate_rows}
+    slots_by_rec: Dict[int, dict] = {row.recruiter_id: row for row in slot_rows}
+
+    items: List[Dict[str, object]] = []
+    for recruiter_id, base in recruiters.items():
+        cand = candidate_by_rec.get(recruiter_id)
+        slot = slots_by_rec.get(recruiter_id)
+
+        candidates_total = int(getattr(cand, "candidates_total", 0) or 0)
+        interview_total = int(getattr(cand, "interview_total", 0) or 0)
+        intro_total = int(getattr(cand, "intro_total", 0) or 0)
+        hired_total = int(getattr(cand, "hired_total", 0) or 0)
+        declined_total = int(getattr(cand, "declined_total", 0) or 0)
+        progressed_total = interview_total + intro_total + hired_total
+        conversion_interview = (
+            round((progressed_total / candidates_total) * 100, 1)
+            if candidates_total
+            else 0.0
+        )
+
+        slots_total = int(getattr(slot, "slots_window_total", 0) or 0)
+        if slots_total == 0:
+            slots_total = int(getattr(slot, "slots_total", 0) or 0)
+        slots_booked = int(getattr(slot, "slots_window_booked", 0) or 0)
+        if slots_booked == 0:
+            slots_booked = int(getattr(slot, "slots_booked", 0) or 0)
+        slots_confirmed = int(getattr(slot, "slots_window_confirmed", 0) or 0)
+        if slots_confirmed == 0:
+            slots_confirmed = int(getattr(slot, "slots_confirmed", 0) or 0)
+
+        fill_rate = round((slots_booked / slots_total) * 100, 1) if slots_total else 0.0
+        confirmation_rate = (
+            round((slots_confirmed / slots_booked) * 100, 1) if slots_booked else 0.0
+        )
+
+        items.append(
+            {
+                "recruiter_id": recruiter_id,
+                "name": base["name"],
+                "tz": base["tz"],
+                "candidates_total": candidates_total,
+                "interview_total": interview_total,
+                "intro_total": intro_total,
+                "hired_total": hired_total,
+                "declined_total": declined_total,
+                "conversion_interview": conversion_interview,
+                "slots_total": slots_total,
+                "slots_booked": slots_booked,
+                "slots_confirmed": slots_confirmed,
+                "fill_rate": fill_rate,
+                "confirmation_rate": confirmation_rate,
+                "throughput": candidates_total,
+            }
+        )
+
+    max_throughput = max((row["throughput"] for row in items), default=0)
+    max_fill = max((row["fill_rate"] for row in items), default=0.0)
+    max_confirm = max((row["confirmation_rate"] for row in items), default=0.0)
+    max_conversion = max((row["conversion_interview"] for row in items), default=0.0)
+
+    for row in items:
+        throughput_norm = (
+            row["throughput"] / max_throughput if max_throughput else 0.0
+        )
+        fill_norm = _normalize_score(row["fill_rate"], 0.0, max_fill)
+        confirm_norm = _normalize_score(row["confirmation_rate"], 0.0, max_confirm)
+        conversion_norm = _normalize_score(
+            row["conversion_interview"], 0.0, max_conversion
+        )
+        score = (
+            0.35 * conversion_norm
+            + 0.25 * confirm_norm
+            + 0.20 * fill_norm
+            + 0.20 * throughput_norm
+        )
+        row["score"] = round(score * 100, 1)
+
+    items.sort(key=lambda row: row["score"], reverse=True)
+    for idx, row in enumerate(items, start=1):
+        row["rank"] = idx
+
+    payload = {
+        "window": {
+            "from": date_from.date().isoformat(),
+            "to": date_to.date().isoformat(),
+            "days": (date_to.date() - date_from.date()).days + 1,
+        },
+        "items": items,
+    }
+
+    if cache:
+        try:
+            await cache.set(cache_key, payload, ttl=CacheTTL.SHORT)
+        except Exception:
+            pass
+
+    return payload
 
 
 async def get_recent_activities(limit: int = 10) -> List[Dict[str, object]]:

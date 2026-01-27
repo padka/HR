@@ -3,77 +3,48 @@ import { useProfile } from '@/app/hooks/useProfile'
 
 const ICONS = {
   dashboard: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M3 10.5 12 3l9 7.5" />
-      <path d="M5 9.5V21h14V9.5" />
-      <path d="M9.5 21v-6h5v6" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
     </svg>
   ),
   slots: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 3v3M17 3v3" />
-      <rect x="4" y="5" width="16" height="16" rx="3" />
-      <path d="M4 10h16" />
-      <path d="M8 14h3M13 14h3M8 17h3" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
     </svg>
   ),
   candidates: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="8" r="3.5" />
-      <path d="M4.5 20c1.8-3.8 5-5.5 7.5-5.5S17.2 16.2 19 20" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="8.5" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   ),
   recruiters: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="8" cy="9" r="3" />
-      <circle cx="16.5" cy="8" r="2.5" />
-      <path d="M3.5 20c1.3-3.4 3.9-5 6.5-5s5.2 1.6 6.5 5" />
-      <path d="M13.5 20c.7-2 2.1-3.1 4-3.1 1 0 1.9.3 2.6.9" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     </svg>
   ),
   cities: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="4" y="5" width="7" height="14" rx="2" />
-      <rect x="13" y="8" width="7" height="11" rx="2" />
-      <path d="M7 9h1M7 12h1M7 15h1M16 11h1M16 14h1M16 17h1" />
-    </svg>
-  ),
-  templates: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 3h7l4 4v14H7z" />
-      <path d="M14 3v5h5" />
-      <path d="M9 12h6M9 15h6" />
-    </svg>
-  ),
-  notifications: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 4c-3 0-5 2.2-5 5v3.2l-1.5 2.3h13L17 12.2V9c0-2.8-2-5-5-5z" />
-      <path d="M9.5 18a2.5 2.5 0 0 0 5 0" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+      <circle cx="12" cy="10" r="3" />
     </svg>
   ),
   messenger: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 5h16v10H8l-4 4V5z" />
-      <path d="M8 9h8M8 12h5" />
-    </svg>
-  ),
-  questions: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 5h16v11H7l-3 3V5z" />
-      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.7 2.2c-.9.5-1.2.9-1.2 1.8" />
-      <circle cx="12" cy="15.8" r="0.9" />
-    </svg>
-  ),
-  system: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="3.2" />
-      <path d="M12 2.8v2.4M12 18.8v2.4M4.8 12H2.4M21.6 12h-2.4M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   ),
   profile: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="8" r="3.5" />
-      <path d="M6 20c1.6-3.6 4.2-5.4 6-5.4s4.4 1.8 6 5.4" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+      <path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662" />
     </svg>
   ),
 }
@@ -146,16 +117,10 @@ export function RootLayout() {
         </div>
       </div>
       {!hideNav && (
-        <header className="app-header glass">
-          <div className="app-header__left">
-            <div className="app-brand">
-              <span className="app-brand__mark">RS</span>
-            </div>
-            {profileQuery.isLoading && (
-              <span className="app-header__status">Загрузка профиля…</span>
-            )}
-          </div>
-          <nav className="app-nav" aria-label="Основная навигация">
+        <header className="app-header">
+          <div className="app-header-left" />
+          
+          <nav className="app-nav-pill glass" aria-label="Основная навигация">
             {navItems.map((item) => (
               <Link
                 key={item.to}
@@ -163,20 +128,15 @@ export function RootLayout() {
                 className="app-nav__item"
                 activeProps={{ className: 'app-nav__item is-active' }}
                 data-tone={item.tone}
-                aria-label={item.label}
                 title={item.label}
               >
                 <span className="app-nav__icon">{item.icon}</span>
               </Link>
             ))}
           </nav>
-          <div className="app-header__right">
-            <Link
-              to="/app/profile"
-              className="app-profile"
-              aria-label="Профиль"
-              title="Профиль"
-            >
+
+          <div className="app-header-right">
+            <Link to="/app/profile" className="app-profile-pill glass" title="Профиль">
               <span className="app-profile__icon">{ICONS.profile}</span>
             </Link>
           </div>

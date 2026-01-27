@@ -49,3 +49,4 @@ logs/
 node_modules/
 .next/
 .env.local
+.aider*

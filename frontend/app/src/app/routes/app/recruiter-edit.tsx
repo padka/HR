@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { getTzPreview, validateRecruiterForm } from './recruiter-form'
 
 type City = { id: number; name: string; tz?: string | null }
 type TimezoneOption = { value: string; label: string; region?: string; offset?: string }
@@ -15,9 +16,23 @@ type RecruiterDetail = {
   active?: boolean | null
   city_ids?: number[]
 }
+type RecruiterSummary = {
+  id: number
+  name: string
+  tz?: string | null
+  tg_chat_id?: string | null
+  telemost_url?: string | null
+  active?: boolean | null
+  last_seen_at?: string | null
+  is_online?: boolean | null
+  city_ids?: number[]
+  stats?: { total: number; free: number; pending: number; booked: number }
+  next_free_local?: string | null
+  next_is_future?: boolean
+}
 
 export function RecruiterEditPage() {
-  const params = useParams({ from: 'recruiterEdit' })
+  const params = useParams({ from: '/app/recruiters/$recruiterId/edit' })
   const recruiterId = Number(params.recruiterId)
   const navigate = useNavigate()
 
@@ -34,6 +49,10 @@ export function RecruiterEditPage() {
     queryKey: ['recruiter-detail', recruiterId],
     queryFn: () => apiFetch(`/recruiters/${recruiterId}`),
   })
+  const recruitersQuery = useQuery<RecruiterSummary[]>({
+    queryKey: ['recruiters'],
+    queryFn: () => apiFetch('/recruiters'),
+  })
 
   const [form, setForm] = useState({
     name: '',
@@ -46,33 +65,29 @@ export function RecruiterEditPage() {
   const [citySearch, setCitySearch] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [fieldError, setFieldError] = useState<{ name?: string; tz?: string; tg_chat_id?: string; telemost_url?: string }>({})
+  const initialForm = useRef(form)
 
   useEffect(() => {
     if (!detailQuery.data) return
-    setForm({
+    const nextForm = {
       name: detailQuery.data.name || '',
       tz: detailQuery.data.tz || 'Europe/Moscow',
       tg_chat_id: detailQuery.data.tg_chat_id ? String(detailQuery.data.tg_chat_id) : '',
       telemost_url: detailQuery.data.telemost_url || '',
       active: Boolean(detailQuery.data.active),
       city_ids: detailQuery.data.city_ids || [],
-    })
+    }
+    initialForm.current = nextForm
+    setForm(nextForm)
   }, [detailQuery.data])
 
   const mutation = useMutation({
     mutationFn: async () => {
       setFormError(null)
       setFieldError({})
-      if (!form.name.trim()) {
-        setFieldError({ name: 'Укажите имя' })
-        throw new Error('invalid_form')
-      }
-      if (!form.tz.trim()) {
-        setFieldError({ tz: 'Укажите часовой пояс' })
-        throw new Error('invalid_form')
-      }
-      if (form.tg_chat_id && Number.isNaN(Number(form.tg_chat_id))) {
-        setFieldError({ tg_chat_id: 'TG chat ID должен быть числом' })
+      const validation = validateRecruiterForm(form)
+      if (!validation.valid) {
+        setFieldError(validation.errors)
         throw new Error('invalid_form')
       }
       const payload = {
@@ -105,6 +120,7 @@ export function RecruiterEditPage() {
       setFormError(message)
     },
   })
+  const isSaving = mutation.isPending
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -157,13 +173,54 @@ export function RecruiterEditPage() {
   const selectedCities = useMemo(() => {
     return cityList.filter(c => form.city_ids.includes(c.id))
   }, [cityList, form.city_ids])
+  const tzPreview = useMemo(() => getTzPreview(form.tz), [form.tz])
+
+  const summary = useMemo(() => {
+    return recruitersQuery.data?.find((rec) => rec.id === recruiterId)
+  }, [recruitersQuery.data, recruiterId])
+  const stats = summary?.stats || { total: 0, free: 0, pending: 0, booked: 0 }
+  const loadPercent = stats.total ? Math.round((stats.booked / stats.total) * 100) : 0
+  const presenceLabel = summary?.active
+    ? summary?.is_online
+      ? 'Онлайн'
+      : 'Вне сети'
+    : 'Отключен'
+  const presenceClass = summary?.active
+    ? summary?.is_online
+      ? 'is-online'
+      : 'is-away'
+    : 'is-inactive'
+  const lastSeen = summary?.last_seen_at
+    ? new Date(summary.last_seen_at).toLocaleString('ru-RU')
+    : '—'
+  const isDirty = useMemo(() => {
+    const base = initialForm.current
+    return (
+      base.name !== form.name ||
+      base.tz !== form.tz ||
+      base.tg_chat_id !== form.tg_chat_id ||
+      base.telemost_url !== form.telemost_url ||
+      base.active !== form.active ||
+      base.city_ids.join(',') !== form.city_ids.join(',')
+    )
+  }, [form])
 
   return (
     <RoleGuard allow={['admin']}>
-      <div className="page">
-        <div className="glass panel" style={{ display: 'grid', gap: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-            <Link to="/app/recruiters" className="glass action-link">← К списку рекрутёров</Link>
+      <div className="page recruiter-edit">
+        <div className="glass panel recruiter-edit__panel">
+          <div className="recruiter-edit__header">
+            <div>
+              <Link to="/app/recruiters" className="glass action-link">← К списку рекрутёров</Link>
+              <h1 className="title">Профиль рекрутёра</h1>
+              <p className="subtitle">Настройте профиль, связи с городами и доступы.</p>
+            </div>
+            <div className="recruiter-edit__header-actions">
+              {isDirty && <span className="badge badge--soft">Есть несохранённые изменения</span>}
+              <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={isSaving}>
+                {isSaving ? 'Сохраняем…' : 'Сохранить'}
+              </button>
+            </div>
           </div>
 
           {detailQuery.isLoading && <p className="subtitle">Загрузка…</p>}
@@ -171,277 +228,249 @@ export function RecruiterEditPage() {
 
           {!detailQuery.isLoading && (
             <>
-              {/* Summary card */}
-              <div className="glass" style={{ padding: 16, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-                <div
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: '50%',
-                    background: 'var(--accent)',
-                    color: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 20,
-                    fontWeight: 600,
-                    flexShrink: 0
-                  }}
-                >
-                  {initials}
-                </div>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <p className="subtitle" style={{ marginBottom: 2 }}>Редактирование рекрутёра</p>
-                  <h2 style={{ margin: 0, fontSize: 20 }}>{form.name || 'Без имени'}</h2>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-                    <span className="glass" style={{ padding: '2px 8px', borderRadius: 6, fontSize: 12 }}>ID #{recruiterId}</span>
-                    <span className="glass" style={{ padding: '2px 8px', borderRadius: 6, fontSize: 12 }}>{form.tz}</span>
-                    <span className="glass" style={{ padding: '2px 8px', borderRadius: 6, fontSize: 12, opacity: form.telemost_url ? 1 : 0.5 }}>
-                      {form.telemost_url || 'Телемост не указан'}
-                    </span>
+              <div className="glass recruiter-edit__hero">
+                <div className="recruiter-edit__hero-main">
+                  <div className={`recruiter-avatar ${presenceClass}`} aria-hidden="true">
+                    {initials}
                   </div>
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <div className="glass" style={{ padding: '8px 12px', borderRadius: 8, textAlign: 'center' }}>
-                    <span className="subtitle" style={{ fontSize: 11 }}>Города</span>
-                    <div style={{ fontWeight: 600 }}>{selectedCount}</div>
-                  </div>
-                  <div className="glass" style={{ padding: '8px 12px', borderRadius: 8, textAlign: 'center' }}>
-                    <span className="subtitle" style={{ fontSize: 11 }}>Telegram</span>
-                    <div style={{ fontWeight: 600 }}>{form.tg_chat_id ? 'Подключен' : 'Не указан'}</div>
-                  </div>
-                  <div
-                    className="glass"
-                    style={{
-                      padding: '8px 12px',
-                      borderRadius: 8,
-                      textAlign: 'center',
-                      background: form.active ? 'rgba(100, 200, 100, 0.1)' : 'rgba(150, 150, 150, 0.1)'
-                    }}
-                  >
-                    <span className="subtitle" style={{ fontSize: 11 }}>Статус</span>
-                    <div style={{ fontWeight: 600, color: form.active ? 'rgb(100, 200, 100)' : 'inherit' }}>
-                      {form.active ? 'Активен' : 'Отключен'}
+                  <div>
+                    <p className="subtitle">Редактирование рекрутёра</p>
+                    <h2 className="recruiter-edit__name">{form.name || 'Без имени'}</h2>
+                    <div className="recruiter-edit__meta">
+                      <span className="chip">ID #{recruiterId}</span>
+                      <span className="chip">{form.tz}</span>
+                      <span className="chip">{presenceLabel}</span>
                     </div>
+                  </div>
+                </div>
+                <div className="recruiter-edit__hero-stats">
+                  <div className="recruiter-edit__stat">
+                    <span>Города</span>
+                    <strong>{selectedCount}</strong>
+                  </div>
+                  <div className="recruiter-edit__stat">
+                    <span>Telegram</span>
+                    <strong>{form.tg_chat_id ? 'Подключен' : '—'}</strong>
+                  </div>
+                  <div className="recruiter-edit__stat">
+                    <span>Занятость</span>
+                    <strong>{loadPercent}%</strong>
+                  </div>
+                  <div className="recruiter-edit__stat">
+                    <span>Последний вход</span>
+                    <strong>{lastSeen}</strong>
                   </div>
                 </div>
               </div>
 
-              {/* Basic info section */}
-              <div className="glass" style={{ padding: 16 }}>
-                <h3 style={{ marginBottom: 4 }}>Основные данные</h3>
-                <p className="subtitle" style={{ marginBottom: 12 }}>Имя и рабочий регион для расчёта локального времени</p>
-                <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-                  <label style={{ display: 'grid', gap: 6 }}>
-                    <span>Имя <span style={{ color: 'var(--accent)' }}>*</span></span>
+              <div className="recruiter-edit__grid">
+                <div className="recruiter-edit__main">
+                  <div className="glass recruiter-edit__section">
+                    <div className="recruiter-edit__section-header">
+                      <div>
+                        <h3>Основные данные</h3>
+                        <p className="subtitle">Имя и рабочий регион для расчёта локального времени.</p>
+                      </div>
+                      <label className="recruiter-edit__toggle">
                     <input
-                      value={form.name}
-                      onChange={(e) => setForm({ ...form, name: e.target.value })}
-                      placeholder="Например: Анна Соколова"
-                      required
+                      type="checkbox"
+                      checked={form.active}
+                      disabled={isSaving}
+                      onChange={(e) => setForm({ ...form, active: e.target.checked })}
                     />
-                    {fieldError.name && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.name}</span>}
-                  </label>
-
-                  <label style={{ display: 'grid', gap: 6 }}>
-                    <span>Регион <span style={{ color: 'var(--accent)' }}>*</span></span>
-                    <select value={form.tz} onChange={(e) => setForm({ ...form, tz: e.target.value })} required>
+                    <span>{form.active ? 'Активен' : 'Отключен'}</span>
+                      </label>
+                    </div>
+                    <div className="recruiter-edit__fields">
+                      <label className="recruiter-edit__field">
+                        <span>Имя <span className="required">*</span></span>
+                        <input
+                          value={form.name}
+                          disabled={isSaving}
+                          onChange={(e) => setForm({ ...form, name: e.target.value })}
+                          placeholder="Например: Анна Соколова"
+                          required
+                        />
+                        {fieldError.name && <span className="field-error">{fieldError.name}</span>}
+                      </label>
+                  <label className="recruiter-edit__field">
+                    <span>Регион <span className="required">*</span></span>
+                    <select value={form.tz} onChange={(e) => setForm({ ...form, tz: e.target.value })} required disabled={isSaving}>
                       {tzOptions.map((tz) => (
                         <option key={tz.value} value={tz.value}>{tz.label}</option>
                       ))}
                     </select>
-                    <span className="subtitle" style={{ fontSize: 11 }}>Используется как базовая таймзона рекрутёра</span>
-                    {fieldError.tz && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.tz}</span>}
-                  </label>
-                </div>
-
-                <div style={{ marginTop: 12 }}>
-                  <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={form.active}
-                      onChange={(e) => setForm({ ...form, active: e.target.checked })}
-                    />
-                    <span>Активен</span>
-                  </label>
-                  <span className="subtitle" style={{ fontSize: 11 }}>Неактивные рекрутёры скрываются из расписаний и не получают новые назначения</span>
-                </div>
-              </div>
-
-              {/* Contacts section */}
-              <div className="glass" style={{ padding: 16 }}>
-                <h3 style={{ marginBottom: 4 }}>Контакты</h3>
-                <p className="subtitle" style={{ marginBottom: 12 }}>Укажите ссылку на Телемост и chat_id для интеграции с ботом</p>
-                <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-                  <label style={{ display: 'grid', gap: 6 }}>
-                    <span>Ссылка на Телемост</span>
-                    <input
-                      type="url"
-                      value={form.telemost_url}
-                      onChange={(e) => setForm({ ...form, telemost_url: e.target.value })}
-                      placeholder="https://telemost.yandex.ru/j/XXXXX"
-                    />
-                    {fieldError.telemost_url && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.telemost_url}</span>}
-                  </label>
-
-                  <label style={{ display: 'grid', gap: 6 }}>
-                    <span>Telegram chat_id</span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={form.tg_chat_id}
-                      onChange={(e) => setForm({ ...form, tg_chat_id: e.target.value })}
-                      placeholder="Например: 7588303412"
-                    />
-                    <span className="subtitle" style={{ fontSize: 11 }}>Только цифры; можно оставить пустым</span>
-                    {fieldError.tg_chat_id && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.tg_chat_id}</span>}
-                  </label>
-                </div>
-              </div>
-
-              {/* Cities section */}
-              <div className="glass" style={{ padding: 16 }}>
-                <h3 style={{ marginBottom: 4 }}>Ответственные города</h3>
-                <p className="subtitle" style={{ marginBottom: 12 }}>Выберите один или несколько городов. Они появятся в карточке рекрутёра и в фильтрах расписания.</p>
-
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-                  <input
-                    type="search"
-                    placeholder="Поиск города"
-                    value={citySearch}
-                    onChange={(e) => setCitySearch(e.target.value)}
-                    style={{ flex: 1, minWidth: 180 }}
-                  />
-                  <span
-                    style={{
-                      background: selectedCount > 0 ? 'var(--accent)' : 'rgba(150, 150, 150, 0.3)',
-                      color: 'white',
-                      padding: '6px 12px',
-                      borderRadius: 16,
-                      fontSize: 14,
-                      fontWeight: 600,
-                      minWidth: 90,
-                      textAlign: 'center'
-                    }}
-                  >
-                    {counterText}
-                  </span>
-                </div>
-
-                {/* Selected cities preview pills */}
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-                  {selectedCities.length === 0 && (
-                    <span className="subtitle">Города пока не выбраны</span>
-                  )}
-                  {selectedCities.slice(0, 4).map(city => (
-                    <span
-                      key={city.id}
-                      style={{
-                        background: 'rgba(105, 183, 255, 0.15)',
-                        border: '1px solid rgba(105, 183, 255, 0.3)',
-                        padding: '4px 10px',
-                        borderRadius: 16,
-                        fontSize: 13
-                      }}
-                    >
-                      {city.name}
+                    <span className="subtitle">
+                      Используется как базовая таймзона рекрутёра.
+                      {tzPreview && ` Сейчас: ${tzPreview}`}
                     </span>
-                  ))}
-                  {selectedCities.length > 4 && (
-                    <span
-                      style={{
-                        background: 'rgba(150, 150, 150, 0.15)',
-                        border: '1px solid rgba(150, 150, 150, 0.3)',
-                        padding: '4px 10px',
-                        borderRadius: 16,
-                        fontSize: 13
-                      }}
-                    >
-                      +{selectedCities.length - 4}
-                    </span>
-                  )}
-                </div>
+                    {fieldError.tz && <span className="field-error">{fieldError.tz}</span>}
+                  </label>
+                    </div>
+                  </div>
 
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                    gap: 8,
-                    maxHeight: 300,
-                    overflowY: 'auto',
-                    padding: 4
-                  }}
-                >
-                  {filteredCities.map(city => {
-                    const selected = form.city_ids.includes(city.id)
-                    return (
-                      <label
-                        key={city.id}
-                        style={{
-                          display: 'grid',
-                          gap: 2,
-                          padding: '10px 12px',
-                          borderRadius: 8,
-                          cursor: 'pointer',
-                          background: selected ? 'rgba(105, 183, 255, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                          border: selected ? '2px solid var(--accent)' : '2px solid transparent',
-                          position: 'relative',
-                          transition: 'all 0.15s ease'
-                        }}
-                      >
+                  <div className="glass recruiter-edit__section">
+                    <div className="recruiter-edit__section-header">
+                      <div>
+                        <h3>Контакты</h3>
+                        <p className="subtitle">Телемост и chat_id для интеграции с ботом.</p>
+                      </div>
+                    </div>
+                    <div className="recruiter-edit__fields">
+                      <label className="recruiter-edit__field">
+                        <span>Ссылка на Телемост</span>
+                        <input
+                          type="url"
+                          value={form.telemost_url}
+                          disabled={isSaving}
+                          onChange={(e) => setForm({ ...form, telemost_url: e.target.value })}
+                          placeholder="https://telemost.yandex.ru/j/XXXXX"
+                        />
+                        {fieldError.telemost_url && <span className="field-error">{fieldError.telemost_url}</span>}
+                      </label>
+                      <label className="recruiter-edit__field">
+                        <span>Telegram chat_id</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={form.tg_chat_id}
+                          disabled={isSaving}
+                          onChange={(e) => setForm({ ...form, tg_chat_id: e.target.value })}
+                          placeholder="Например: 7588303412"
+                        />
+                        <span className="subtitle">Только цифры; можно оставить пустым.</span>
+                        {fieldError.tg_chat_id && <span className="field-error">{fieldError.tg_chat_id}</span>}
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="glass recruiter-edit__section">
+                    <div className="recruiter-edit__section-header">
+                      <div>
+                        <h3>Ответственные города</h3>
+                        <p className="subtitle">Укажите города, где рекрутёр ведёт кандидатов.</p>
+                      </div>
+                      <span className="recruiter-edit__counter">{counterText}</span>
+                    </div>
+
+                    <div className="recruiter-edit__search">
+                    <input
+                      type="search"
+                      placeholder="Поиск города"
+                      value={citySearch}
+                      disabled={isSaving}
+                      onChange={(e) => setCitySearch(e.target.value)}
+                    />
+                    <button
+                      className="ui-btn ui-btn--ghost"
+                      onClick={() => setForm((prev) => ({ ...prev, city_ids: [] }))}
+                      disabled={isSaving}
+                      type="button"
+                    >
+                        Очистить
+                      </button>
+                    </div>
+
+                    <div className="recruiter-edit__chips">
+                      {selectedCities.length === 0 && (
+                        <span className="subtitle">Города пока не выбраны</span>
+                      )}
+                      {selectedCities.slice(0, 6).map((city) => (
+                        <span key={city.id} className="chip chip--soft">{city.name}</span>
+                      ))}
+                      {selectedCities.length > 6 && (
+                        <span className="chip chip--soft">+{selectedCities.length - 6}</span>
+                      )}
+                    </div>
+
+                    <div className="recruiter-edit__cities">
+                      {filteredCities.map((city) => {
+                        const selected = form.city_ids.includes(city.id)
+                        return (
+                          <label key={city.id} className={`recruiter-edit__city ${selected ? 'is-selected' : ''}`}>
                         <input
                           type="checkbox"
                           checked={selected}
+                          disabled={isSaving}
                           onChange={() => toggleCity(city.id)}
-                          style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
                         />
-                        {selected && (
-                          <span
-                            style={{
-                              position: 'absolute',
-                              top: 6,
-                              right: 6,
-                              width: 18,
-                              height: 18,
-                              borderRadius: 4,
-                              background: 'var(--accent)',
-                              color: 'white',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 12,
-                              fontWeight: 'bold'
-                            }}
-                          >
-                            ✓
-                          </span>
-                        )}
-                        <span style={{ fontWeight: 500 }}>{city.name}</span>
-                        <span className="subtitle" style={{ fontSize: 11 }}>{city.tz || '—'}</span>
-                      </label>
-                    )
-                  })}
+                            <span>{city.name}</span>
+                            <small>{city.tz || '—'}</small>
+                          </label>
+                        )
+                      })}
+                    </div>
+
+                    {filteredCities.length === 0 && (
+                      <p className="subtitle" style={{ marginTop: 8 }}>Совпадений не найдено</p>
+                    )}
+                  </div>
                 </div>
 
-                {filteredCities.length === 0 && (
-                  <p className="subtitle" style={{ marginTop: 8 }}>Совпадений не найдено</p>
-                )}
-
-                <p className="subtitle" style={{ marginTop: 12, fontSize: 12 }}>
-                  💡 Совет: используйте поиск или кликайте по карточкам, чтобы быстро закрепить несколько городов
-                </p>
+                <aside className="recruiter-edit__aside">
+                  <div className="glass recruiter-edit__section recruiter-edit__aside-card">
+                    <h3>Сводка</h3>
+                    <div className="recruiter-edit__stats">
+                      <div>
+                        <span>Свободно</span>
+                        <strong>{stats.free}</strong>
+                      </div>
+                      <div>
+                        <span>Ожидают</span>
+                        <strong>{stats.pending}</strong>
+                      </div>
+                      <div>
+                        <span>Занято</span>
+                        <strong>{stats.booked}</strong>
+                      </div>
+                      <div>
+                        <span>Всего</span>
+                        <strong>{stats.total}</strong>
+                      </div>
+                    </div>
+                    <div className="recruiter-edit__load">
+                      <div>
+                        <span>Занятость</span>
+                        <strong>{loadPercent}%</strong>
+                      </div>
+                      <div className="recruiter-edit__load-bar">
+                        <span style={{ width: `${Math.min(loadPercent, 100)}%` }} />
+                      </div>
+                    </div>
+                    <div className="recruiter-edit__next">
+                      <span>Ближайший слот</span>
+                      <strong>{summary?.next_free_local || 'Нет свободных'}</strong>
+                    </div>
+                  </div>
+                  <div className="glass recruiter-edit__section recruiter-edit__aside-card">
+                    <h3>Сервис</h3>
+                    <p className="subtitle">Проверьте доступность ключевых каналов связи.</p>
+                    <ul className="recruiter-edit__list">
+                      <li>Телемост: {form.telemost_url ? 'подключен' : 'нет ссылки'}</li>
+                      <li>Telegram: {form.tg_chat_id ? 'подключен' : 'нет chat_id'}</li>
+                      <li>Аккаунт: {form.active ? 'активен' : 'выключен'}</li>
+                    </ul>
+                  </div>
+                </aside>
               </div>
 
-              <div className="action-row">
-                <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-                  {mutation.isPending ? 'Сохраняем…' : 'Сохранить'}
+              <div className="action-row recruiter-edit__actions">
+            <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={isSaving}>
+              {isSaving ? 'Сохраняем…' : 'Сохранить'}
+            </button>
+                <button
+                  className="ui-btn ui-btn--ghost"
+                  onClick={() => setForm(initialForm.current)}
+                  disabled={!isDirty}
+                  type="button"
+                >
+                  Сбросить
                 </button>
                 <Link to="/app/recruiters" className="ui-btn ui-btn--ghost">Отмена</Link>
                 <button
                   className="ui-btn ui-btn--danger"
                   onClick={() => window.confirm('Удалить рекрутёра? Это действие нельзя отменить.') && deleteMutation.mutate()}
                   disabled={deleteMutation.isPending}
-                  style={{ marginLeft: 'auto' }}
                 >
                   {deleteMutation.isPending ? 'Удаляем…' : 'Удалить'}
                 </button>

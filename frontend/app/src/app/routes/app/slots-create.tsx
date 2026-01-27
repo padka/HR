@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { z } from 'zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
@@ -72,14 +72,12 @@ const bulkSchema = z.object({
 export function SlotsCreateForm() {
   const qc = useQueryClient()
   const [serverError, setServerError] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; tone?: 'success' | 'warning' | 'error' } | null>(null)
   const profile = useProfile()
   const canUse = profile.data?.principal.type === 'recruiter'
-
-  const { data: recruiters } = useQuery<RecruiterPayload[]>({
-    queryKey: ['recruiters'],
-    queryFn: () => apiFetch('/recruiters'),
-    enabled: Boolean(canUse),
-  })
+  const [mode, setMode] = useState<'single' | 'bulk'>('single')
+  const recruiter = profile.data?.recruiter
+  const recruiterId = recruiter ? String(recruiter.id) : ''
 
   const { data: cities } = useQuery<CityPayload[]>({
     queryKey: ['cities'],
@@ -87,14 +85,44 @@ export function SlotsCreateForm() {
     enabled: Boolean(canUse),
   })
 
-  const { register, handleSubmit, formState: { errors }, watch } = useForm<FormValues>({
+  const { register, handleSubmit, formState: { errors }, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: { recruiter_id: '', city_id: '' },
+    defaultValues: { recruiter_id: recruiterId, city_id: '' },
   })
 
-  const selectedRecruiter = watch('recruiter_id')
+  const selectedCity = watch('city_id')
+  const date = watch('date')
+  const time = watch('time')
+
+  const cityObj = (cities || []).find((c) => String(c.id) === String(selectedCity))
+
+  useEffect(() => {
+    if (recruiterId) {
+      setValue('recruiter_id', recruiterId)
+    }
+  }, [recruiterId, setValue])
+
+  const singlePreview = useMemo(() => {
+    if (!date || !time || !cityObj?.tz) return null
+    const tzCity = cityObj.tz || 'Europe/Moscow'
+    const tzRecruiter = recruiter?.tz || tzCity
+    const utc = localToUtc(date, time, tzCity)
+    if (!utc) return null
+    return {
+      tzCity,
+      tzRecruiter,
+      cityLabel: formatInTz(utc, tzCity),
+      recruiterLabel: formatInTz(utc, tzRecruiter),
+    }
+  }, [date, time, cityObj?.tz, recruiter?.tz])
 
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+
+  const showToast = (message: string, tone?: 'success' | 'warning' | 'error') => {
+    setToast({ message, tone })
+    window.clearTimeout((showToast as any)._t)
+    ;(showToast as any)._t = window.setTimeout(() => setToast(null), 2800)
+  }
 
   const mutation = useMutation({
     mutationFn: async (data: FormValues) => {
@@ -112,97 +140,162 @@ export function SlotsCreateForm() {
         body: JSON.stringify(payload),
       })
       if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text || 'Ошибка создания')
+        let message = `Ошибка ${res.status}`
+        const contentType = res.headers.get('content-type') || ''
+        if (contentType.includes('application/json')) {
+          const data = await res.json().catch(() => null)
+          if (data && typeof data === 'object') {
+            message = (data.detail || data.message || message) as string
+          }
+        } else {
+          const text = await res.text()
+          if (text) message = text
+        }
+        throw new Error(message || 'Ошибка создания')
       }
       return res.json()
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['slots'] })
       setSuccessMessage('Слот успешно создан')
+      showToast('Слот успешно создан', 'success')
       setTimeout(() => setSuccessMessage(null), 3000)
     },
     onError: (err: unknown) => {
-      setServerError((err as Error).message)
+      const message = (err as Error).message
+      setServerError(message)
+      showToast(message, 'error')
     }
   })
 
   const onSubmit = handleSubmit((values) => mutation.mutate(values))
 
-  const filteredCities = (cities || []).filter((c) => {
-    if (!selectedRecruiter) return true
-    const rec = (recruiters || []).find((r) => String(r.id) === String(selectedRecruiter))
-    if (rec?.city_ids && rec.city_ids.length) {
-      return rec.city_ids.includes(c.id)
-    }
-    return String(c.owner_recruiter_id || '') === String(selectedRecruiter)
-  })
+  const filteredCities = cities || []
 
   return (
     <RoleGuard allow={['recruiter']}>
       <div className="page">
-        <div className="glass panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px' }}>
-          <h1 className="title" style={{ margin: 0 }}>Создание слотов</h1>
+        <div className="glass panel slot-create-header">
+          <div>
+            <h1 className="title">Создание слотов</h1>
+            <p className="subtitle">Создайте один слот или серию, а затем проверьте превью времени.</p>
+          </div>
           <Link to="/app/slots" className="glass action-link">← К списку слотов</Link>
         </div>
 
-        <form onSubmit={onSubmit} className="glass panel" style={{ display: 'grid', gap: 10 }}>
-          <h2 className="title" style={{ fontSize: 18, marginBottom: 4 }}>Один слот</h2>
-          <p className="subtitle" style={{ margin: 0 }}>Создайте единичный слот на конкретную дату и время.</p>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Рекрутёр
-          <select {...register('recruiter_id')}>
-            <option value="">— выберите —</option>
-            {(recruiters || []).map((r) => (
-              <option key={r.id} value={String(r.id)}>{r.name}</option>
-            ))}
-          </select>
-          {errors.recruiter_id && <span style={{ color: '#f07373' }}>{errors.recruiter_id.message}</span>}
-        </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Город
-          <select {...register('city_id')}>
-            <option value="">— выберите —</option>
-            {filteredCities.map((c) => (
-              <option key={c.id} value={String(c.id)}>{c.name}</option>
-            ))}
-          </select>
-          {errors.city_id && <span style={{ color: '#f07373' }}>{errors.city_id.message}</span>}
-        </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Дата
-          <input {...register('date')} type="date" />
-          {errors.date && <span style={{ color: '#f07373' }}>{errors.date.message}</span>}
-        </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Время
-          <input {...register('time')} type="time" />
-          {errors.time && <span style={{ color: '#f07373' }}>{errors.time.message}</span>}
-        </label>
-          <button className="ui-btn ui-btn--primary" type="submit" disabled={mutation.isPending}>
-            {mutation.isPending ? 'Создаём…' : 'Создать'}
+        <div className="slot-create-tabs">
+          <button
+            type="button"
+            className={`slot-create-tab ${mode === 'single' ? 'is-active' : ''}`}
+            onClick={() => setMode('single')}
+          >
+            Один слот
           </button>
-          {serverError && <p style={{ color: '#f07373', margin: 0 }}>{serverError}</p>}
-          {successMessage && (
-            <div style={{ background: 'rgba(100, 200, 100, 0.15)', border: '1px solid rgba(100, 200, 100, 0.3)', borderRadius: 8, padding: 12 }}>
-              <p style={{ color: 'rgb(100, 200, 100)', margin: 0 }}>{successMessage}</p>
+          <button
+            type="button"
+            className={`slot-create-tab ${mode === 'bulk' ? 'is-active' : ''}`}
+            onClick={() => setMode('bulk')}
+          >
+            Серия слотов
+          </button>
+        </div>
+
+        {mode === 'single' && (
+          <form onSubmit={onSubmit} className="glass panel slot-create-form">
+            <div className="slot-create-section">
+              <h2 className="title title--sm">Один слот</h2>
+              <p className="subtitle">Единичная встреча на конкретную дату и время.</p>
             </div>
-          )}
-        </form>
-        <BulkCreateForm recruiters={recruiters || []} cities={cities || []} />
+            <div className="slot-create-grid">
+              <input type="hidden" {...register('recruiter_id')} />
+              <label className="form-group">
+                <span className="form-group__label">Город</span>
+                <select {...register('city_id')}>
+                  <option value="">— выберите —</option>
+                  {filteredCities.map((c) => (
+                    <option key={c.id} value={String(c.id)}>{c.name}</option>
+                  ))}
+                </select>
+                {errors.city_id && <span className="form-group__error">{errors.city_id.message}</span>}
+              </label>
+              <label className="form-group">
+                <span className="form-group__label">Дата</span>
+                <input {...register('date')} type="date" />
+                {errors.date && <span className="form-group__error">{errors.date.message}</span>}
+              </label>
+              <label className="form-group">
+                <span className="form-group__label">Время</span>
+                <input {...register('time')} type="time" />
+                {errors.time && <span className="form-group__error">{errors.time.message}</span>}
+              </label>
+            </div>
+
+            <div className="slot-preview glass glass--subtle">
+              <div>
+                <div className="slot-preview__label">Превью времени</div>
+                <div className="slot-preview__value">
+                  {singlePreview
+                    ? `${singlePreview.cityLabel} · ${singlePreview.tzCity}`
+                    : 'Выберите город, дату и время'}
+                </div>
+                <div className="slot-preview__hint">Время региона (города)</div>
+              </div>
+              {singlePreview && singlePreview.tzRecruiter !== singlePreview.tzCity && (
+                <div>
+                  <div className="slot-preview__label">Ваше время</div>
+                  <div className="slot-preview__value">
+                    {singlePreview.recruiterLabel} · {singlePreview.tzRecruiter}
+                  </div>
+                  <div className="slot-preview__hint">Ваш часовой пояс отличается</div>
+                </div>
+              )}
+            </div>
+
+            <div className="slot-create-actions">
+              <button className="ui-btn ui-btn--primary" type="submit" disabled={mutation.isPending}>
+                {mutation.isPending ? 'Создаём…' : 'Создать'}
+              </button>
+              {serverError && <p className="text-danger text-sm">{serverError}</p>}
+              {successMessage && (
+                <div className="form-success">
+                  <p>{successMessage}</p>
+                </div>
+              )}
+            </div>
+          </form>
+        )}
+
+        {mode === 'bulk' && (
+          <BulkCreateForm recruiter={recruiter || null} recruiterId={recruiterId} cities={cities || []} />
+        )}
+        {toast && (
+          <div className="toast" data-tone={toast.tone}>
+            {toast.message}
+          </div>
+        )}
       </div>
     </RoleGuard>
   )
 }
 
-function BulkCreateForm({ recruiters, cities }: { recruiters: RecruiterPayload[]; cities: CityPayload[] }) {
+function BulkCreateForm({
+  recruiter,
+  recruiterId,
+  cities
+}: {
+  recruiter?: RecruiterPayload | null
+  recruiterId: string
+  cities: CityPayload[]
+}) {
   const qc = useQueryClient()
   const [serverError, setServerError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; tone?: 'success' | 'warning' | 'error' } | null>(null)
 
-  const { register, handleSubmit, watch, formState: { errors } } = useForm<z.infer<typeof bulkSchema>>({
+  const { register, handleSubmit, watch, formState: { errors }, setValue } = useForm<z.infer<typeof bulkSchema>>({
     resolver: zodResolver(bulkSchema),
     defaultValues: {
+      recruiter_id: recruiterId,
       include_weekends: false,
       use_break: true,
       start_time: '10:00',
@@ -213,7 +306,12 @@ function BulkCreateForm({ recruiters, cities }: { recruiters: RecruiterPayload[]
     }
   })
 
-  const selectedRecruiter = watch('recruiter_id')
+  useEffect(() => {
+    if (recruiterId) {
+      setValue('recruiter_id', recruiterId)
+    }
+  }, [recruiterId, setValue])
+
   const startDate = watch('start_date')
   const endDate = watch('end_date')
   const includeWeekends = watch('include_weekends')
@@ -224,16 +322,15 @@ function BulkCreateForm({ recruiters, cities }: { recruiters: RecruiterPayload[]
   const stepMin = Number(watch('step_min') || 30)
   const useBreak = watch('use_break')
 
-  const filteredCities = cities.filter((c) => {
-    if (!selectedRecruiter) return true
-    const rec = recruiters.find((r) => String(r.id) === String(selectedRecruiter))
-    if (rec?.city_ids && rec.city_ids.length) {
-      return rec.city_ids.includes(c.id)
-    }
-    return String(c.owner_recruiter_id || '') === String(selectedRecruiter)
-  })
+  const filteredCities = cities
 
   const preview = computeBulkPreview(startDate, endDate, startTime, endTime, breakStart, breakEnd, stepMin, includeWeekends, useBreak)
+
+  const showToast = (message: string, tone?: 'success' | 'warning' | 'error') => {
+    setToast({ message, tone })
+    window.clearTimeout((showToast as any)._t)
+    ;(showToast as any)._t = window.setTimeout(() => setToast(null), 2800)
+  }
 
   const mutation = useMutation({
     mutationFn: async (data: z.infer<typeof bulkSchema>) => {
@@ -260,7 +357,7 @@ function BulkCreateForm({ recruiters, cities }: { recruiters: RecruiterPayload[]
       })
       if (!res.ok) {
         const text = await res.text()
-        throw new Error(text || 'Ошибка bulk')
+        throw new Error(text || `Ошибка ${res.status}`)
       }
       return true
     },
@@ -268,111 +365,154 @@ function BulkCreateForm({ recruiters, cities }: { recruiters: RecruiterPayload[]
       qc.invalidateQueries({ queryKey: ['slots'] })
       const p = preview
       setSuccessMessage(`Создано ${p.total} слотов (${p.days} дней × ${p.perDay} слотов/день)`)
+      showToast('Серия слотов создана', 'success')
       setTimeout(() => setSuccessMessage(null), 5000)
     },
     onError: (err: unknown) => {
-      setServerError((err as Error).message)
+      const message = (err as Error).message
+      setServerError(message)
+      showToast(message, 'error')
     }
   })
 
+  const cityObj = cities.find((c) => String(c.id) === String(watch('city_id')))
+  const samplePreview = useMemo(() => {
+    if (!startDate || !startTime || !cityObj?.tz) return null
+    const tzCity = cityObj.tz || 'Europe/Moscow'
+    const tzRecruiter = recruiter?.tz || tzCity
+    const utc = localToUtc(startDate, startTime, tzCity)
+    if (!utc) return null
+    return {
+      tzCity,
+      tzRecruiter,
+      cityLabel: formatInTz(utc, tzCity),
+      recruiterLabel: formatInTz(utc, tzRecruiter),
+    }
+  }, [startDate, startTime, cityObj?.tz, recruiter?.tz])
+
   return (
-    <form onSubmit={handleSubmit((values) => mutation.mutate(values))} className="glass panel" style={{ display: 'grid', gap: 10 }}>
-      <h2 className="title" style={{ fontSize: 18, marginBottom: 4 }}>Серия слотов (Bulk)</h2>
-      <p className="subtitle" style={{ margin: 0 }}>Создайте множество слотов на диапазон дат с заданным интервалом.</p>
-      <label style={{ display: 'grid', gap: 4 }}>
-        Рекрутёр
-        <select {...register('recruiter_id')}>
-          <option value="">— выберите —</option>
-          {recruiters.map((r) => (
-            <option key={r.id} value={String(r.id)}>{r.name}</option>
-          ))}
-        </select>
-        {errors.recruiter_id && <span style={{ color: '#f07373' }}>Укажите рекрутёра</span>}
-      </label>
-      <label style={{ display: 'grid', gap: 4 }}>
-        Город
-        <select {...register('city_id')}>
-          <option value="">— выберите —</option>
-          {filteredCities.map((c) => (
-            <option key={c.id} value={String(c.id)}>{c.name}</option>
-          ))}
-        </select>
-        {errors.city_id && <span style={{ color: '#f07373' }}>Укажите город</span>}
-      </label>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Стартовая дата
+    <form onSubmit={handleSubmit((values) => mutation.mutate(values))} className="glass panel slot-create-form">
+      <div className="slot-create-section">
+        <h2 className="title title--sm">Серия слотов</h2>
+        <p className="subtitle">Диапазон дат, окно времени и шаг.</p>
+      </div>
+      <div className="slot-create-grid">
+        <input type="hidden" {...register('recruiter_id')} />
+        <label className="form-group">
+          <span className="form-group__label">Город</span>
+          <select {...register('city_id')}>
+            <option value="">— выберите —</option>
+            {filteredCities.map((c) => (
+              <option key={c.id} value={String(c.id)}>{c.name}</option>
+            ))}
+          </select>
+          {errors.city_id && <span className="form-group__error">Укажите город</span>}
+        </label>
+      </div>
+      <div className="slot-create-grid">
+        <label className="form-group">
+          <span className="form-group__label">Стартовая дата</span>
           <input type="date" {...register('start_date')} />
-          {errors.start_date && <span style={{ color: '#f07373' }}>{errors.start_date.message}</span>}
+          {errors.start_date && <span className="form-group__error">{errors.start_date.message}</span>}
         </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Конечная дата
+        <label className="form-group">
+          <span className="form-group__label">Конечная дата</span>
           <input type="date" {...register('end_date')} />
-          {errors.end_date && <span style={{ color: '#f07373' }}>{errors.end_date.message}</span>}
+          {errors.end_date && <span className="form-group__error">{errors.end_date.message}</span>}
         </label>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Окно (с)
+      <div className="slot-create-grid">
+        <label className="form-group">
+          <span className="form-group__label">Окно (с)</span>
           <input type="time" {...register('start_time')} />
-          {errors.start_time && <span style={{ color: '#f07373' }}>{errors.start_time.message}</span>}
+          {errors.start_time && <span className="form-group__error">{errors.start_time.message}</span>}
         </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Окно (до)
+        <label className="form-group">
+          <span className="form-group__label">Окно (до)</span>
           <input type="time" {...register('end_time')} />
-          {errors.end_time && <span style={{ color: '#f07373' }}>{errors.end_time.message}</span>}
+          {errors.end_time && <span className="form-group__error">{errors.end_time.message}</span>}
         </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Перерыв (с)
+        <label className="form-group">
+          <span className="form-group__label">Перерыв (с)</span>
           <input type="time" {...register('break_start')} />
-          {errors.break_start && <span style={{ color: '#f07373' }}>{errors.break_start.message}</span>}
+          {errors.break_start && <span className="form-group__error">{errors.break_start.message}</span>}
         </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Перерыв (до)
+        <label className="form-group">
+          <span className="form-group__label">Перерыв (до)</span>
           <input type="time" {...register('break_end')} />
-          {errors.break_end && <span style={{ color: '#f07373' }}>{errors.break_end.message}</span>}
+          {errors.break_end && <span className="form-group__error">{errors.break_end.message}</span>}
         </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          Шаг (мин)
+        <label className="form-group">
+          <span className="form-group__label">Шаг (мин)</span>
           <input type="number" {...register('step_min')} />
-          {errors.step_min && <span style={{ color: '#f07373' }}>{errors.step_min.message}</span>}
+          {errors.step_min && <span className="form-group__error">{errors.step_min.message}</span>}
         </label>
       </div>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input type="checkbox" {...register('include_weekends')} />
-        Включать выходные
-      </label>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input type="checkbox" {...register('use_break')} />
-        Учитывать перерыв
-      </label>
-      {/* Preview section */}
-      <div className="glass" style={{ padding: 12, display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div className="subtitle" style={{ fontSize: 11 }}>Дней</div>
-          <div style={{ fontSize: 24, fontWeight: 600, color: preview.days > 0 ? 'var(--accent)' : 'var(--muted)' }}>{preview.days}</div>
+      <div className="slot-create-switches">
+        <label className="toggle-label">
+          <input type="checkbox" {...register('include_weekends')} />
+          Включать выходные
+        </label>
+        <label className="toggle-label">
+          <input type="checkbox" {...register('use_break')} />
+          Учитывать перерыв
+        </label>
+      </div>
+
+      <div className="slot-preview glass glass--subtle">
+        <div>
+          <div className="slot-preview__label">Дней</div>
+          <div className="slot-preview__value">{preview.days}</div>
+          <div className="slot-preview__hint">Рабочие дни в диапазоне</div>
         </div>
-        <div style={{ textAlign: 'center' }}>
-          <div className="subtitle" style={{ fontSize: 11 }}>Слотов/день</div>
-          <div style={{ fontSize: 24, fontWeight: 600, color: preview.perDay > 0 ? 'var(--accent)' : 'var(--muted)' }}>{preview.perDay}</div>
+        <div>
+          <div className="slot-preview__label">Слотов/день</div>
+          <div className="slot-preview__value">{preview.perDay}</div>
+          <div className="slot-preview__hint">С учётом перерыва</div>
         </div>
-        <div style={{ textAlign: 'center' }}>
-          <div className="subtitle" style={{ fontSize: 11 }}>Всего слотов</div>
-          <div style={{ fontSize: 24, fontWeight: 600, color: preview.total > 0 ? 'rgb(100, 200, 100)' : 'var(--muted)' }}>{preview.total}</div>
+        <div>
+          <div className="slot-preview__label">Всего</div>
+          <div className="slot-preview__value">{preview.total}</div>
+          <div className="slot-preview__hint">Суммарно будет создано</div>
         </div>
       </div>
+
+      <div className="slot-preview glass glass--subtle">
+        <div>
+          <div className="slot-preview__label">Пример времени</div>
+          <div className="slot-preview__value">
+            {samplePreview ? `${samplePreview.cityLabel} · ${samplePreview.tzCity}` : '—'}
+          </div>
+          <div className="slot-preview__hint">Время региона</div>
+        </div>
+        <div>
+          <div className="slot-preview__label">Время рекрутёра</div>
+          <div className="slot-preview__value">
+            {samplePreview ? `${samplePreview.recruiterLabel} · ${samplePreview.tzRecruiter}` : '—'}
+          </div>
+          <div className="slot-preview__hint">Для первого слота</div>
+        </div>
+      </div>
+
       {preview.total > 100 && (
-        <div style={{ background: 'rgba(255, 200, 100, 0.15)', border: '1px solid rgba(255, 200, 100, 0.3)', borderRadius: 8, padding: 10, fontSize: 13 }}>
+        <div className="form-warning">
           ⚠️ Будет создано много слотов ({preview.total}). Убедитесь, что параметры верны.
         </div>
       )}
-      <button className="ui-btn ui-btn--primary" type="submit" disabled={mutation.isPending}>
-        {mutation.isPending ? 'Создаём…' : 'Создать серию'}
-      </button>
-      {serverError && <p style={{ color: '#f07373', margin: 0 }}>{serverError}</p>}
-      {successMessage && (
-        <div style={{ background: 'rgba(100, 200, 100, 0.15)', border: '1px solid rgba(100, 200, 100, 0.3)', borderRadius: 8, padding: 12 }}>
-          <p style={{ color: 'rgb(100, 200, 100)', margin: 0 }}>{successMessage}</p>
+      <div className="slot-create-actions">
+        <button className="ui-btn ui-btn--primary" type="submit" disabled={mutation.isPending}>
+          {mutation.isPending ? 'Создаём…' : 'Создать серию'}
+        </button>
+        {serverError && <p className="text-danger text-sm">{serverError}</p>}
+        {successMessage && (
+          <div className="form-success">
+            <p>{successMessage}</p>
+          </div>
+        )}
+      </div>
+      {toast && (
+        <div className="toast" data-tone={toast.tone}>
+          {toast.message}
         </div>
       )}
     </form>
@@ -418,4 +558,52 @@ function computeBulkPreview(
     perDay = before + after
   }
   return { days, perDay, total: days * perDay }
+}
+
+function formatInTz(date: Date, tz: string) {
+  try {
+    return new Intl.DateTimeFormat('ru-RU', {
+      timeZone: tz,
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date)
+  } catch {
+    return date.toISOString()
+  }
+}
+
+function getOffsetMinutes(date: Date, tz: string) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+  const parts = dtf.formatToParts(date)
+  const pick = (type: string) => Number(parts.find((p) => p.type === type)?.value || '0')
+  const asUTC = Date.UTC(
+    pick('year'),
+    pick('month') - 1,
+    pick('day'),
+    pick('hour'),
+    pick('minute'),
+    pick('second')
+  )
+  return (asUTC - date.getTime()) / 60000
+}
+
+function localToUtc(date: string, time: string, tz: string) {
+  if (!date || !time) return null
+  const [y, m, d] = date.split('-').map(Number)
+  const [hh, mm] = time.split(':').map(Number)
+  if (!y || !m || !d) return null
+  const utcGuess = new Date(Date.UTC(y, m - 1, d, hh, mm, 0))
+  const offset = getOffsetMinutes(utcGuess, tz)
+  return new Date(utcGuess.getTime() - offset * 60000)
 }

@@ -16,7 +16,7 @@ type QuestionDetail = {
 }
 
 export function QuestionEditPage() {
-  const params = useParams({ from: 'questionEdit' })
+  const params = useParams({ from: '/app/questions/$questionId/edit' })
   const questionId = Number(params.questionId)
   const navigate = useNavigate()
 

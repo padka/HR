@@ -1,6 +1,7 @@
 import { Link, useParams } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
 
@@ -26,6 +27,8 @@ type CandidateAction = {
   variant?: string | null
   confirmation?: string | null
   target_status?: string | null
+  requires_test2_passed?: boolean
+  requires_slot?: boolean
 }
 
 type CandidateSlot = {
@@ -47,6 +50,23 @@ type TestSection = {
   completed_at?: string | null
   pending_since?: string | null
   report_url?: string | null
+  details?: {
+    stats?: {
+      total_questions?: number
+      correct_answers?: number
+      overtime_questions?: number
+      raw_score?: number
+      final_score?: number
+      total_time?: number
+    }
+  }
+  history?: Array<{
+    id: number
+    completed_at?: string | null
+    raw_score?: number
+    final_score?: number
+    source?: string
+  }>
 }
 
 type CandidateDetail = {
@@ -73,22 +93,35 @@ type CandidateDetail = {
   legacy_status_enabled?: boolean
   slots?: CandidateSlot[]
   test_sections?: TestSection[]
+  test_results?: Record<string, TestSection>
   stats?: { tests_total?: number; average_score?: number | null }
 }
 
-const STATUS_LABELS: Record<string, { label: string; icon: string; tone: string }> = {
-  hired: { label: 'Закреплен на обучение', icon: '🎉', tone: 'success' },
-  not_hired: { label: 'Не закреплен', icon: '⚠️', tone: 'warning' },
-  interview_declined: { label: 'Отказ на собеседовании', icon: '❌', tone: 'danger' },
-  test2_failed: { label: 'Не прошёл тест 2', icon: '❌', tone: 'danger' },
-  waiting_slot: { label: 'Ожидает слот', icon: '⏳', tone: 'info' },
-  slot_booked: { label: 'Слот забронирован', icon: '📅', tone: 'info' },
-  intro_day_scheduled: { label: 'Ознакомительный день назначен', icon: '📅', tone: 'info' },
+const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
+  lead: { label: 'Лид', tone: 'muted' },
+  contacted: { label: 'Контакт установлен', tone: 'info' },
+  invited: { label: 'Приглашён', tone: 'info' },
+  test1_completed: { label: 'Тест 1 пройден', tone: 'success' },
+  waiting_slot: { label: 'Ожидает слот', tone: 'warning' },
+  stalled_waiting_slot: { label: 'Застрял (ожидание слота)', tone: 'warning' },
+  interview_scheduled: { label: 'Собеседование назначено', tone: 'info' },
+  interview_confirmed: { label: 'Собеседование подтверждено', tone: 'info' },
+  interview_declined: { label: 'Отказ на собеседовании', tone: 'danger' },
+  test2_sent: { label: 'Тест 2 отправлен', tone: 'info' },
+  test2_completed: { label: 'Тест 2 пройден', tone: 'success' },
+  test2_failed: { label: 'Тест 2 не пройден', tone: 'danger' },
+  intro_day_scheduled: { label: 'Ознакомительный день назначен', tone: 'info' },
+  intro_day_confirmed_preliminary: { label: 'ОД предварительно подтверждён', tone: 'info' },
+  intro_day_declined_invitation: { label: 'ОД отклонён (приглашение)', tone: 'danger' },
+  intro_day_confirmed_day_of: { label: 'ОД подтверждён (день)', tone: 'success' },
+  intro_day_declined_day_of: { label: 'ОД отклонён (день)', tone: 'danger' },
+  hired: { label: 'Закреплён на обучение', tone: 'success' },
+  not_hired: { label: 'Не закреплён', tone: 'danger' },
 }
 
 function getStatusDisplay(slug: string | null | undefined) {
-  if (!slug) return { label: 'Нет статуса', icon: '—', tone: 'muted' }
-  return STATUS_LABELS[slug] || { label: slug, icon: '•', tone: 'muted' }
+  if (!slug) return { label: 'Нет статуса', tone: 'muted' }
+  return STATUS_LABELS[slug] || { label: slug, tone: 'muted' }
 }
 
 function formatSlotTime(startUtc: string | null | undefined, tz: string | null | undefined): string {
@@ -106,6 +139,12 @@ function formatSlotTime(startUtc: string | null | undefined, tz: string | null |
   } catch {
     return startUtc
   }
+}
+
+function normalizeTelegramUsername(username?: string | null): string | null {
+  if (!username) return null
+  const cleaned = username.trim().replace(/^@/, '')
+  return cleaned || null
 }
 
 type ChatMessage = {
@@ -141,6 +180,41 @@ function getTomorrowDate(): string {
   const d = new Date()
   d.setDate(d.getDate() + 1)
   return d.toISOString().slice(0, 10)
+}
+
+function TestScoreBar({ correct, total, score }: { correct: number; total: number; score?: number | null }) {
+  const pct = total > 0 ? Math.round((correct / total) * 100) : 0
+  const barColor = pct >= 70 ? 'var(--success, #5BE1A5)' : pct >= 40 ? 'var(--warning, #F6C16B)' : 'var(--danger, #F07373)'
+  return (
+    <div className="cd-score">
+      <div className="cd-score__bar">
+        <div className="cd-score__fill" style={{ width: `${pct}%`, background: barColor }} />
+      </div>
+      <div className="cd-score__text">
+        {correct}/{total}
+        {typeof score === 'number' && <span className="cd-score__final"> ({score.toFixed(1)})</span>}
+      </div>
+    </div>
+  )
+}
+
+function SlotStatusBadge({ status }: { status?: string | null }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    FREE: { label: 'Свободен', cls: 'cd-slot-badge--free' },
+    PENDING: { label: 'Ожидание', cls: 'cd-slot-badge--pending' },
+    BOOKED: { label: 'Забронирован', cls: 'cd-slot-badge--booked' },
+    CONFIRMED: { label: 'Подтверждён', cls: 'cd-slot-badge--confirmed' },
+    CONFIRMED_BY_CANDIDATE: { label: 'Подтверждён кандидатом', cls: 'cd-slot-badge--confirmed' },
+    CANCELED: { label: 'Отменён', cls: 'cd-slot-badge--canceled' },
+    COMPLETED: { label: 'Завершён', cls: 'cd-slot-badge--completed' },
+  }
+  const info = status ? map[status] || { label: status, cls: '' } : { label: '—', cls: '' }
+  return <span className={`cd-slot-badge ${info.cls}`}>{info.label}</span>
+}
+
+function ModalPortal({ children }: { children: ReactNode }) {
+  if (typeof document === 'undefined') return null
+  return createPortal(children, document.body)
 }
 
 type ScheduleSlotModalProps = {
@@ -212,107 +286,104 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
   const canSubmit = form.recruiter_id && form.city_id && form.date && form.time
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0, 0, 0, 0.7)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        padding: 16,
-      }}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="glass panel" style={{ maxWidth: 500, width: '100%', maxHeight: '90vh', overflow: 'auto' }}>
-        <h2 className="title" style={{ marginBottom: 4 }}>Назначить собеседование</h2>
-        <p className="subtitle" style={{ marginBottom: 16 }}>
-          Кандидат: <strong>{candidateFio}</strong>
-        </p>
-
-        {error && (
-          <div style={{ background: 'rgba(240, 115, 115, 0.15)', border: '1px solid rgba(240, 115, 115, 0.3)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-            <p style={{ color: '#f07373', margin: 0 }}>{error}</p>
-          </div>
-        )}
-
-        <div style={{ display: 'grid', gap: 12 }}>
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span>Рекрутёр</span>
-            <select
-              value={form.recruiter_id}
-              onChange={(e) => setForm({ ...form, recruiter_id: e.target.value })}
-              disabled={recruitersQuery.isLoading}
-            >
-              <option value="">— выберите рекрутёра —</option>
-              {recruiters.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-          </label>
-
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span>Город</span>
-            <select
-              value={form.city_id}
-              onChange={(e) => setForm({ ...form, city_id: e.target.value })}
-              disabled={citiesQuery.isLoading}
-            >
-              <option value="">— выберите город —</option>
-              {cities.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} {c.tz ? `(${formatTzOffset(c.tz)})` : ''}</option>
-              ))}
-            </select>
-            {selectedCity && (
-              <span className="subtitle">Часовой пояс: {cityTz} ({formatTzOffset(cityTz)})</span>
-            )}
-          </label>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span>Дата</span>
-              <input
-                type="date"
-                value={form.date}
-                onChange={(e) => setForm({ ...form, date: e.target.value })}
-              />
-            </label>
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span>Время</span>
-              <input
-                type="time"
-                value={form.time}
-                onChange={(e) => setForm({ ...form, time: e.target.value })}
-              />
-            </label>
+    <ModalPortal>
+      <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+        <div className="glass glass--elevated modal modal--md">
+          <div className="modal__header">
+            <div>
+              <h2 className="modal__title">Назначить собеседование</h2>
+              <p className="modal__subtitle">
+                Кандидат: <strong>{candidateFio}</strong>
+              </p>
+            </div>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
           </div>
 
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span>Персональное сообщение (опционально)</span>
-            <textarea
-              rows={3}
-              value={form.custom_message}
-              onChange={(e) => setForm({ ...form, custom_message: e.target.value })}
-              placeholder="Введите текст сообщения для кандидата..."
-            />
-          </label>
-        </div>
+          {error && (
+            <div className="glass panel--tight" style={{ borderColor: 'rgba(240, 115, 115, 0.3)' }}>
+              <p style={{ color: '#f07373', margin: 0 }}>{error}</p>
+            </div>
+          )}
 
-        <div className="action-row" style={{ marginTop: 16 }}>
-          <button
-            className="ui-btn ui-btn--primary"
-            onClick={() => mutation.mutate()}
-            disabled={!canSubmit || mutation.isPending}
-          >
-            {mutation.isPending ? 'Назначаем...' : 'Назначить собеседование'}
-          </button>
-          <button className="ui-btn ui-btn--ghost" onClick={onClose}>
-            Отмена
-          </button>
+          <div className="modal__body">
+            <div className="form-grid">
+              <label className="form-group">
+                <span className="form-group__label">Рекрутёр</span>
+                <select
+                  value={form.recruiter_id}
+                  onChange={(e) => setForm({ ...form, recruiter_id: e.target.value })}
+                  disabled={recruitersQuery.isLoading}
+                >
+                  <option value="">— выберите рекрутёра —</option>
+                  {recruiters.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="form-group">
+                <span className="form-group__label">Город</span>
+                <select
+                  value={form.city_id}
+                  onChange={(e) => setForm({ ...form, city_id: e.target.value })}
+                  disabled={citiesQuery.isLoading}
+                >
+                  <option value="">— выберите город —</option>
+                  {cities.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name} {c.tz ? `(${formatTzOffset(c.tz)})` : ''}</option>
+                  ))}
+                </select>
+                {selectedCity && (
+                  <span className="subtitle">Часовой пояс: {cityTz} ({formatTzOffset(cityTz)})</span>
+                )}
+              </label>
+
+              <div className="form-row">
+                <label className="form-group">
+                  <span className="form-group__label">Дата</span>
+                  <input
+                    type="date"
+                    value={form.date}
+                    onChange={(e) => setForm({ ...form, date: e.target.value })}
+                  />
+                </label>
+                <label className="form-group">
+                  <span className="form-group__label">Время</span>
+                  <input
+                    type="time"
+                    value={form.time}
+                    onChange={(e) => setForm({ ...form, time: e.target.value })}
+                  />
+                </label>
+              </div>
+
+              <label className="form-group">
+                <span className="form-group__label">Персональное сообщение (опционально)</span>
+                <textarea
+                  rows={3}
+                  value={form.custom_message}
+                  onChange={(e) => setForm({ ...form, custom_message: e.target.value })}
+                  placeholder="Введите текст сообщения для кандидата..."
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="modal__footer">
+            <button
+              className="ui-btn ui-btn--primary"
+              onClick={() => mutation.mutate()}
+              disabled={!canSubmit || mutation.isPending}
+            >
+              {mutation.isPending ? 'Назначаем...' : 'Назначить собеседование'}
+            </button>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>
+              Отмена
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   )
 }
 
@@ -353,82 +424,77 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, onClo
   const canSubmit = form.date && form.time
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0, 0, 0, 0.7)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        padding: 16,
-      }}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="glass panel" style={{ maxWidth: 400, width: '100%' }}>
-        <h2 className="title" style={{ marginBottom: 4 }}>Назначить ознакомительный день</h2>
-        <p className="subtitle" style={{ marginBottom: 16 }}>
-          Кандидат: <strong>{candidateFio}</strong>
-          {candidateCity && <><br />Город: {candidateCity}</>}
-        </p>
-
-        {error && (
-          <div style={{ background: 'rgba(240, 115, 115, 0.15)', border: '1px solid rgba(240, 115, 115, 0.3)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-            <p style={{ color: '#f07373', margin: 0 }}>{error}</p>
+    <ModalPortal>
+      <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+        <div className="glass glass--elevated modal modal--sm">
+          <div className="modal__header">
+            <div>
+              <h2 className="modal__title">Назначить ознакомительный день</h2>
+              <p className="modal__subtitle">
+                Кандидат: <strong>{candidateFio}</strong>
+                {candidateCity && <><br />Город: {candidateCity}</>}
+              </p>
+            </div>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
           </div>
-        )}
 
-        <div style={{ display: 'grid', gap: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span>Дата</span>
-              <input
-                type="date"
-                value={form.date}
-                onChange={(e) => setForm({ ...form, date: e.target.value })}
-              />
-            </label>
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span>Время</span>
-              <input
-                type="time"
-                value={form.time}
-                onChange={(e) => setForm({ ...form, time: e.target.value })}
-              />
-            </label>
+          {error && (
+            <div className="glass panel--tight" style={{ borderColor: 'rgba(240, 115, 115, 0.3)' }}>
+              <p style={{ color: '#f07373', margin: 0 }}>{error}</p>
+            </div>
+          )}
+
+          <div className="modal__body">
+            <div className="form-row">
+              <label className="form-group">
+                <span className="form-group__label">Дата</span>
+                <input
+                  type="date"
+                  value={form.date}
+                  onChange={(e) => setForm({ ...form, date: e.target.value })}
+                />
+              </label>
+              <label className="form-group">
+                <span className="form-group__label">Время</span>
+                <input
+                  type="time"
+                  value={form.time}
+                  onChange={(e) => setForm({ ...form, time: e.target.value })}
+                />
+              </label>
+            </div>
+            <p className="subtitle" style={{ marginTop: 12 }}>
+              Адрес и контакт руководителя будут взяты из шаблона города.
+            </p>
           </div>
-        </div>
 
-        <p className="subtitle" style={{ marginTop: 12 }}>
-          Адрес и контакт руководителя будут взяты из шаблона города.
-        </p>
-
-        <div className="action-row" style={{ marginTop: 16 }}>
-          <button
-            className="ui-btn ui-btn--primary"
-            onClick={() => mutation.mutate()}
-            disabled={!canSubmit || mutation.isPending}
-          >
-            {mutation.isPending ? 'Назначаем...' : 'Назначить ОД'}
-          </button>
-          <button className="ui-btn ui-btn--ghost" onClick={onClose}>
-            Отмена
-          </button>
+          <div className="modal__footer">
+            <button
+              className="ui-btn ui-btn--primary"
+              onClick={() => mutation.mutate()}
+              disabled={!canSubmit || mutation.isPending}
+            >
+              {mutation.isPending ? 'Назначаем...' : 'Назначить ОД'}
+            </button>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>
+              Отмена
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   )
 }
 
 export function CandidateDetailPage() {
   const queryClient = useQueryClient()
-  const params = useParams({ from: 'candidateDetail' })
+  const params = useParams({ from: '/app/candidates/$candidateId' })
   const candidateId = Number(params.candidateId)
   const [chatText, setChatText] = useState('')
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [showScheduleSlotModal, setShowScheduleSlotModal] = useState(false)
   const [showScheduleIntroDayModal, setShowScheduleIntroDayModal] = useState(false)
+  const [isChatOpen, setIsChatOpen] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [manualStatus, setManualStatus] = useState<string>('')
 
@@ -471,11 +537,25 @@ export function CandidateDetailPage() {
   const detail = detailQuery.data
   const actions = detail?.candidate_actions || []
   const slots = detail?.slots || []
-  const testSections = detail?.test_sections || []
+  const rawTestSections = detail?.test_sections || []
+  const testResultsMap = detail?.test_results || {}
+  const testSections = useMemo(() => {
+    if (rawTestSections.length > 0) return rawTestSections
+    const entries = Object.entries(testResultsMap)
+    if (entries.length === 0) return []
+    return entries.map(([key, value]) => ({
+      key,
+      title: key === 'test1' ? 'Тест 1' : key === 'test2' ? 'Тест 2' : key,
+      ...value,
+    }))
+  }, [rawTestSections, testResultsMap])
+  const test1Section = testSections.find((section) => section.key === 'test1')
+  const test2Section = testSections.find((section) => section.key === 'test2')
   const chatMessages = (chatQuery.data?.messages || []).slice().reverse()
   const allowedNext = detail?.allowed_next_statuses || []
   const pipelineStages = detail?.pipeline_stages || []
   const legacyEnabled = Boolean(detail?.legacy_status_enabled)
+  const lastChatMessage = chatMessages.length > 0 ? chatMessages[chatMessages.length - 1] : null
 
   useEffect(() => {
     if (!detail) return
@@ -499,9 +579,42 @@ export function CandidateDetailPage() {
     actionMutation.mutate(action)
   }
 
-  const statusDisplay = detail ? getStatusDisplay(detail.candidate_status_slug) : null
+  const statusSlug = detail?.candidate_status_slug || null
+  const statusDisplay = detail ? getStatusDisplay(statusSlug) : null
   const hasUpcomingSlot = slots.some((s) => s.status === 'BOOKED' || s.status === 'PENDING')
   const hasIntroDay = slots.some((s) => s.purpose === 'intro_day')
+  const telegramUsername = normalizeTelegramUsername(detail?.telegram_username)
+  const telegramLink = telegramUsername
+    ? `https://t.me/${telegramUsername}`
+    : detail?.telegram_id
+      ? `tg://user?id=${detail.telegram_id}`
+      : null
+  const phoneDigits = detail?.phone ? detail.phone.replace(/[^\d+]/g, '') : null
+  const whatsappLink = phoneDigits ? `https://wa.me/${phoneDigits.replace(/\D/g, '')}` : null
+  const callLink = phoneDigits ? `tel:${phoneDigits}` : null
+  const telemostLink = detail?.telemost_url || null
+
+  const test2Action = actions.find((action) => {
+    const key = action.key?.toLowerCase?.() || ''
+    const label = action.label?.toLowerCase?.() || ''
+    return action.target_status === 'test2_sent' || key.includes('test2') || label.includes('тест 2')
+  })
+  const scheduleAction = actions.find((action) =>
+    ['schedule_interview', 'reschedule_interview'].includes(action.key)
+  )
+  const rejectAction = actions.find((action) => action.key === 'reject' || action.target_status === 'interview_declined')
+  const canSendTest2 = Boolean(test2Action) && statusSlug === 'interview_confirmed'
+  const test2Passed = test2Section?.status === 'passed' || statusSlug === 'test2_completed'
+  const canScheduleIntroDay = Boolean(detail?.telegram_id) && !hasIntroDay && test2Passed
+  const canScheduleInterview = Boolean(detail?.telegram_id) && Boolean(statusSlug)
+    && ['test1_completed', 'waiting_slot', 'stalled_waiting_slot', 'interview_scheduled'].includes(statusSlug || '')
+  const scheduleLabel = scheduleAction?.label
+    || (statusSlug === 'interview_scheduled' ? 'Перенести собеседование' : 'Назначить собеседование')
+  const filteredActions = actions.filter((action) => {
+    if (action === test2Action || action === rejectAction) return false
+    if (['schedule_interview', 'reschedule_interview', 'schedule_intro_day'].includes(action.key)) return false
+    return true
+  })
 
   const legacyStatusMutation = useMutation({
     mutationFn: async (statusSlug: string) => {
@@ -532,294 +645,355 @@ export function CandidateDetailPage() {
   })
 
   return (
-    <RoleGuard allow={['admin', 'recruiter']}>
+    <RoleGuard allow={['recruiter']}>
       <div className="page">
-        <div className="glass panel" style={{ display: 'grid', gap: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <div>
-              <h1 className="title" style={{ margin: 0 }}>{detail?.fio || `Кандидат #${candidateId}`}</h1>
-              <p className="subtitle" style={{ margin: '4px 0 0' }}>
-                {detail?.city || 'Город не указан'}
-                {detail?.telegram_id && (
-                  <> · <a href={`https://t.me/${detail.telegram_id}`} target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>
-                    tg: {detail.telegram_id}
-                  </a></>
-                )}
-                {detail?.phone && <> · тел: {detail.phone}</>}
-              </p>
+        {detailQuery.isLoading && <div className="glass panel" style={{ textAlign: 'center', padding: 48 }}><p className="subtitle">Загрузка...</p></div>}
+        {detailQuery.isError && <div className="glass panel"><p style={{ color: '#f07373' }}>Ошибка: {(detailQuery.error as Error).message}</p></div>}
+
+        {detail && (<>
+        {/* ── Header Card ── */}
+        <div className="glass panel cd-header">
+          <div className="cd-header__top">
+            <div className="cd-header__avatar">
+              {(detail.fio || '?').charAt(0).toUpperCase()}
             </div>
-            <div className="action-row">
-              <Link to="/app/candidates" className="glass action-link">← К списку</Link>
+            <div className="cd-header__info">
+              <div className="cd-header__name-row">
+                <h1 className="cd-header__name">{detail.fio || `Кандидат #${candidateId}`}</h1>
+                {statusDisplay && (
+                  <span className={`status-pill status-pill--${statusDisplay.tone}`}>
+                    <span className={`cd-status-dot cd-status-dot--${statusDisplay.tone}`} />
+                    {statusDisplay.label}
+                  </span>
+                )}
+                {detail.status_is_terminal && (
+                  <span className="cd-badge cd-badge--terminal">Финальный</span>
+                )}
+              </div>
+              <div className="cd-header__meta">
+                {detail.city && <span className="cd-chip">{detail.city}</span>}
+                {detail.responsible_recruiter?.name && (
+                  <span className="cd-chip cd-chip--accent">{detail.responsible_recruiter.name}</span>
+                )}
+                {detail.is_active === false && (
+                  <span className="cd-chip cd-chip--danger">Неактивен</span>
+                )}
+              </div>
+            </div>
+            <div className="cd-header__actions">
+              {telemostLink && (
+                <a href={telemostLink} target="_blank" rel="noopener" className="ui-btn ui-btn--primary">
+                  {detail.telemost_source || 'Telemost'}
+                </a>
+              )}
+              <Link to="/app/candidates" className="ui-btn ui-btn--ghost">К списку</Link>
             </div>
           </div>
 
-          {detailQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-          {detailQuery.isError && <p style={{ color: '#f07373' }}>Ошибка: {(detailQuery.error as Error).message}</p>}
-
-          {detail && (
-            <>
-              {/* Status Badge */}
-              {statusDisplay && (
-                <div
-                  className="glass panel--tight"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '8px 16px',
-                    borderRadius: 12,
-                    background: statusDisplay.tone === 'success'
-                      ? 'rgba(100, 200, 100, 0.15)'
-                      : statusDisplay.tone === 'danger'
-                        ? 'rgba(240, 115, 115, 0.15)'
-                        : statusDisplay.tone === 'warning'
-                          ? 'rgba(255, 200, 100, 0.15)'
-                          : 'rgba(105, 183, 255, 0.1)',
-                    border: `1px solid ${
-                      statusDisplay.tone === 'success'
-                        ? 'rgba(100, 200, 100, 0.3)'
-                        : statusDisplay.tone === 'danger'
-                          ? 'rgba(240, 115, 115, 0.3)'
-                          : statusDisplay.tone === 'warning'
-                            ? 'rgba(255, 200, 100, 0.3)'
-                            : 'rgba(105, 183, 255, 0.2)'
-                    }`,
-                  }}
-                >
-                  <span style={{ fontSize: 18 }}>{statusDisplay.icon}</span>
-                  <span style={{ fontWeight: 600 }}>{statusDisplay.label}</span>
-                </div>
-              )}
-
-              <div className="grid-cards">
-                <div className="glass stat-card">
-                  <div className="stat-label">Стадия воронки</div>
-                  <div className="stat-value">{detail.stage || detail.workflow_status_label || '—'}</div>
-                </div>
-                <div className="glass stat-card">
-                  <div className="stat-label">Тесты пройдено</div>
-                  <div className="stat-value">{detail.stats?.tests_total ?? 0}</div>
-                  <div className="stat-label" style={{ marginTop: 6 }}>
-                    Средний балл: {detail.stats?.average_score ?? '—'}
-                  </div>
-                </div>
-                <div className="glass stat-card">
-                  <div className="stat-label">Ответственный</div>
-                  <div className="stat-value">{detail.responsible_recruiter?.name || '—'}</div>
-                  <div className="stat-label" style={{ marginTop: 6 }}>
-                    Активен: {detail.is_active ? 'да' : 'нет'}
-                  </div>
-                </div>
-                {detail.telemost_url && (
-                  <div className="glass stat-card">
-                    <div className="stat-label">Telemost</div>
-                    <a href={detail.telemost_url} target="_blank" rel="noopener" className="stat-value" style={{ color: 'var(--accent)', fontSize: 14 }}>
-                      Открыть ссылку →
-                    </a>
-                    <div className="stat-label" style={{ marginTop: 6 }}>
-                      Источник: {detail.telemost_source || '—'}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {(pipelineStages.length > 0 || allowedNext.length > 0) && (
-                <div className="glass panel--tight" style={{ display: 'grid', gap: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ width: 10, height: 10, borderRadius: 999, background: 'var(--accent)', display: 'inline-block' }} />
-                      <strong>Статус-центр</strong>
-                    </div>
-                    {detail.status_is_terminal && (
-                      <span className="chip">Финальный</span>
-                    )}
-                  </div>
-
-                  {pipelineStages.length > 0 && (
-                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${pipelineStages.length}, minmax(80px, 1fr))`, gap: 6 }}>
-                      {pipelineStages.map((stage, idx) => {
-                        const state = stage.state || 'pending'
-                        const bg =
-                          state === 'active' ? 'rgba(105, 183, 255, 0.2)' :
-                          state === 'passed' ? 'rgba(100, 200, 100, 0.2)' :
-                          state === 'declined' ? 'rgba(240, 115, 115, 0.2)' :
-                          'rgba(255,255,255,0.06)'
-                        const border =
-                          state === 'active' ? 'rgba(105, 183, 255, 0.4)' :
-                          state === 'passed' ? 'rgba(100, 200, 100, 0.35)' :
-                          state === 'declined' ? 'rgba(240, 115, 115, 0.35)' :
-                          'rgba(255,255,255,0.12)'
-                        return (
-                          <div key={stage.key || idx} className="glass" style={{ padding: '8px 10px', textAlign: 'center', border: `1px solid ${border}`, background: bg }}>
-                            <div style={{ fontSize: 12, fontWeight: 600 }}>{stage.label}</div>
-                            <div className="subtitle" style={{ fontSize: 11 }}>{state}</div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-
-                  <div style={{ display: 'grid', gap: 8 }}>
-                    <p className="subtitle" style={{ margin: 0 }}>Следующий статус:</p>
-                    {nextStatusActions.length === 0 && (
-                      <p className="subtitle">Нет доступных переходов.</p>
-                    )}
-                    {nextStatusActions.length > 0 && (
-                      <div className="action-row" style={{ flexWrap: 'wrap' }}>
-                        {nextStatusActions.map(({ next, action }) => {
-                          const isTerminal = Boolean(next.is_terminal)
-                          const label = next.label || next.slug
-                          if (action) {
-                            return (
-                              <button
-                                key={next.slug}
-                                className={`ui-btn ${isTerminal ? 'ui-btn--danger' : 'ui-btn--primary'}`}
-                                onClick={() => {
-                                  if (isTerminal && !window.confirm(`Установить финальный статус «${label}»?`)) return
-                                  actionMutation.mutate(action)
-                                }}
-                                disabled={actionMutation.isPending}
-                              >
-                                {label}
-                              </button>
-                            )
-                          }
-                          if (legacyEnabled) {
-                            return (
-                              <button
-                                key={next.slug}
-                                className={`ui-btn ${isTerminal ? 'ui-btn--danger' : 'ui-btn--primary'}`}
-                                onClick={() => {
-                                  if (isTerminal && !window.confirm(`Установить финальный статус «${label}»?`)) return
-                                  legacyStatusMutation.mutate(next.slug)
-                                }}
-                                disabled={legacyStatusMutation.isPending}
-                              >
-                                {label}
-                              </button>
-                            )
-                          }
-                          return (
-                            <button key={next.slug} className="ui-btn ui-btn--ghost" disabled>
-                              {label}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  {detail.candidate_status_options && detail.candidate_status_options.length > 0 && (
-                    <div style={{ display: 'grid', gap: 8 }}>
-                      <details>
-                        <summary>Ручная коррекция статуса</summary>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
-                          <select value={manualStatus} onChange={(e) => setManualStatus(e.target.value)}>
-                            {detail.candidate_status_options.map((opt) => (
-                              <option key={opt.slug} value={opt.slug}>{opt.label}</option>
-                            ))}
-                          </select>
-                          <button
-                            className="ui-btn ui-btn--ghost"
-                            onClick={() => legacyStatusMutation.mutate(manualStatus)}
-                            disabled={!legacyEnabled || legacyStatusMutation.isPending}
-                          >
-                            Применить
-                          </button>
-                        </div>
-                        {!legacyEnabled && <p className="subtitle">Ручное изменение отключено в этой среде.</p>}
-                      </details>
-                    </div>
-                  )}
-
-                  {statusError && <p style={{ color: '#f07373' }}>{statusError}</p>}
-                </div>
-              )}
-
-              <div>
-                <h3 className="title" style={{ fontSize: 18, marginBottom: 8 }}>Действия</h3>
-                <div className="action-row" style={{ flexWrap: 'wrap' }}>
-                  {actions.length === 0 && <span className="subtitle">Нет доступных действий</span>}
-                  {actions.map((action) => (
-                    <button
-                      key={action.key}
-                      className={`ui-btn ${action.variant === 'primary' ? 'ui-btn--primary' : action.variant === 'danger' ? 'ui-btn--danger' : 'ui-btn--ghost'}`}
-                      onClick={() => onActionClick(action)}
-                      disabled={actionMutation.isPending}
-                    >
-                      {action.icon ? `${action.icon} ` : ''}{action.label}
-                    </button>
-                  ))}
-                  {/* Scheduling actions - always show */}
-                  {detail.telegram_id && !hasUpcomingSlot && (
-                    <button className="ui-btn ui-btn--ghost" onClick={() => setShowScheduleSlotModal(true)}>
-                      📅 Назначить собеседование
-                    </button>
-                  )}
-                  {detail.telegram_id && !hasIntroDay && detail.candidate_status_slug && ['interview_passed', 'test2_passed'].includes(detail.candidate_status_slug) && (
-                    <button className="ui-btn ui-btn--ghost" onClick={() => setShowScheduleIntroDayModal(true)}>
-                      🏢 Назначить ознакомительный день
-                    </button>
-                  )}
-                </div>
-                {actionMessage && <p className="subtitle" style={{ marginTop: 8 }}>{actionMessage}</p>}
-              </div>
-            </>
-          )}
+          {/* Contacts row */}
+          <div className="cd-contacts">
+            {telegramLink ? (
+              <a href={telegramLink} className="cd-contact-btn" target="_blank" rel="noopener">
+                <span className="cd-contact-btn__icon">TG</span>
+                <span>{telegramUsername ? `@${telegramUsername}` : 'Telegram'}</span>
+              </a>
+            ) : (
+              <span className="cd-contact-btn cd-contact-btn--disabled">
+                <span className="cd-contact-btn__icon">TG</span>
+                <span>Telegram</span>
+              </span>
+            )}
+            <button className="cd-contact-btn" onClick={() => setIsChatOpen(true)} disabled={!detail.telegram_id}>
+              <span className="cd-contact-btn__icon">CH</span>
+              <span>Чат</span>
+            </button>
+            {whatsappLink ? (
+              <a href={whatsappLink} className="cd-contact-btn" target="_blank" rel="noopener">
+                <span className="cd-contact-btn__icon">WA</span>
+                <span>WhatsApp</span>
+              </a>
+            ) : (
+              <span className="cd-contact-btn cd-contact-btn--disabled">
+                <span className="cd-contact-btn__icon">WA</span>
+                <span>WhatsApp</span>
+              </span>
+            )}
+            {callLink ? (
+              <a href={callLink} className="cd-contact-btn">
+                <span className="cd-contact-btn__icon">PH</span>
+                <span>{detail.phone}</span>
+              </a>
+            ) : (
+              <span className="cd-contact-btn cd-contact-btn--disabled">
+                <span className="cd-contact-btn__icon">PH</span>
+                <span>Телефон</span>
+              </span>
+            )}
+            {detail.telegram_id && (
+              <span className="cd-contact-btn cd-contact-btn--disabled" style={{ marginLeft: 'auto' }}>
+                <span className="cd-contact-btn__icon" style={{ fontSize: 10 }}>ID</span>
+                <span>{detail.telegram_id}</span>
+              </span>
+            )}
+          </div>
         </div>
 
+        {/* ── Stat Cards ── */}
+        <div className="cd-stats-grid">
+          <div className="glass cd-stat">
+            <div className="cd-stat__label">Стадия</div>
+            <div className="cd-stat__value">{detail.stage || detail.workflow_status_label || '—'}</div>
+          </div>
+          <div className="glass cd-stat">
+            <div className="cd-stat__label">Тесты пройдено</div>
+            <div className="cd-stat__value">{detail.stats?.tests_total ?? 0}</div>
+            <div className="cd-stat__sub">Средний балл: <strong>{detail.stats?.average_score != null ? String(detail.stats.average_score) : '—'}</strong></div>
+          </div>
+          <div className="glass cd-stat">
+            <div className="cd-stat__label">Тест 1</div>
+            <div className="cd-stat__value">{test1Section?.status_label || '—'}</div>
+            {test1Section?.details?.stats && (
+              <TestScoreBar
+                correct={test1Section.details.stats.correct_answers ?? 0}
+                total={test1Section.details.stats.total_questions ?? 0}
+                score={test1Section.details.stats.final_score}
+              />
+            )}
+            {!test1Section?.details?.stats && <div className="cd-stat__sub">{test1Section?.summary || 'Нет данных'}</div>}
+          </div>
+          <div className="glass cd-stat">
+            <div className="cd-stat__label">Тест 2</div>
+            <div className="cd-stat__value">{test2Section?.status_label || '—'}</div>
+            {test2Section?.details?.stats && (
+              <TestScoreBar
+                correct={test2Section.details.stats.correct_answers ?? 0}
+                total={test2Section.details.stats.total_questions ?? 0}
+                score={test2Section.details.stats.final_score}
+              />
+            )}
+            {!test2Section?.details?.stats && <div className="cd-stat__sub">{test2Section?.summary || 'Нет данных'}</div>}
+          </div>
+        </div>
+
+        {/* ── Pipeline & Status Center ── */}
+        {(pipelineStages.length > 0 || allowedNext.length > 0) && (
+          <div className="glass panel cd-pipeline">
+            <div className="cd-section-header">
+              <h2 className="cd-section-title">Воронка</h2>
+            </div>
+
+            {pipelineStages.length > 0 && (
+              <div className="cd-pipeline__stages">
+                {pipelineStages.map((stage, idx) => {
+                  const state = stage.state || 'pending'
+                  return (
+                    <div key={stage.key || idx} className={`cd-pipeline__stage cd-pipeline__stage--${state}`}>
+                      <div className="cd-pipeline__stage-dot" />
+                      <div className="cd-pipeline__stage-label">{stage.label}</div>
+                      {idx < pipelineStages.length - 1 && <div className="cd-pipeline__connector" />}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {nextStatusActions.length > 0 && (
+              <div className="cd-next-status">
+                <div className="cd-next-status__label">Следующий шаг:</div>
+                <div className="cd-next-status__buttons">
+                  {nextStatusActions.map(({ next, action }) => {
+                    const isTerminal = Boolean(next.is_terminal)
+                    const label = next.label || next.slug
+                    const handleClick = () => {
+                      if (isTerminal && !window.confirm(`Установить финальный статус "${label}"?`)) return
+                      if (action) actionMutation.mutate(action)
+                      else if (legacyEnabled) legacyStatusMutation.mutate(next.slug)
+                    }
+                    const canClick = Boolean(action || legacyEnabled)
+                    return (
+                      <button
+                        key={next.slug}
+                        className={`ui-btn ${isTerminal ? 'ui-btn--danger' : 'ui-btn--primary'}`}
+                        onClick={handleClick}
+                        disabled={!canClick || actionMutation.isPending || legacyStatusMutation.isPending}
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            {nextStatusActions.length === 0 && (
+              <p className="subtitle" style={{ margin: 0 }}>Нет доступных переходов</p>
+            )}
+
+            {detail.candidate_status_options && detail.candidate_status_options.length > 0 && (
+              <details className="cd-manual-status">
+                <summary className="cd-manual-status__summary">Ручная коррекция статуса</summary>
+                <div className="cd-manual-status__body">
+                  <select value={manualStatus} onChange={(e) => setManualStatus(e.target.value)}>
+                    {detail.candidate_status_options.map((opt) => (
+                      <option key={opt.slug} value={opt.slug}>{opt.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    className="ui-btn ui-btn--ghost"
+                    onClick={() => legacyStatusMutation.mutate(manualStatus)}
+                    disabled={!legacyEnabled || legacyStatusMutation.isPending}
+                  >
+                    Применить
+                  </button>
+                </div>
+                {!legacyEnabled && <p className="subtitle">Ручное изменение отключено в этой среде.</p>}
+              </details>
+            )}
+
+            {statusError && <p style={{ color: 'var(--danger, #f07373)' }}>{statusError}</p>}
+          </div>
+        )}
+
+        {/* ── Actions ── */}
+        <div className="glass panel cd-actions-panel">
+          <div className="cd-section-header">
+            <h2 className="cd-section-title">Действия</h2>
+          </div>
+          <div className="cd-actions-grid">
+            {canScheduleInterview && (
+              <button className="ui-btn ui-btn--primary" onClick={() => setShowScheduleSlotModal(true)}>
+                {scheduleLabel}
+              </button>
+            )}
+
+            {test2Action && (
+              <button
+                className={`ui-btn ${canSendTest2 ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+                onClick={() => canSendTest2 && onActionClick(test2Action)}
+                disabled={!canSendTest2 || actionMutation.isPending}
+                title={!canSendTest2 ? 'Тест 2 доступен после подтверждения собеседования' : undefined}
+              >
+                {test2Action.label}
+              </button>
+            )}
+
+            {canScheduleIntroDay && (
+              <button className="ui-btn ui-btn--primary" onClick={() => setShowScheduleIntroDayModal(true)}>
+                Назначить ознакомительный день
+              </button>
+            )}
+
+            {filteredActions.map((action) => (
+              <button
+                key={action.key}
+                className={`ui-btn ${action.variant === 'primary' ? 'ui-btn--primary' : action.variant === 'danger' ? 'ui-btn--danger' : 'ui-btn--ghost'}`}
+                onClick={() => onActionClick(action)}
+                disabled={actionMutation.isPending}
+              >
+                {action.label}
+              </button>
+            ))}
+
+            {rejectAction && (
+              <button
+                className="ui-btn ui-btn--danger"
+                onClick={() => onActionClick(rejectAction)}
+                disabled={actionMutation.isPending}
+              >
+                {rejectAction.label}
+              </button>
+            )}
+
+            {filteredActions.length === 0 && !test2Action && !canScheduleInterview && !rejectAction && !canScheduleIntroDay && (
+              <span className="subtitle">Нет доступных действий</span>
+            )}
+          </div>
+          {actionMessage && <p className="subtitle" style={{ marginTop: 8 }}>{actionMessage}</p>}
+        </div>
+
+        {/* ── Slots Table ── */}
         <div className="glass panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h2 className="title" style={{ fontSize: 20, margin: 0 }}>Слоты и интервью</h2>
-            {detail?.telegram_id && (
-              <button className="ui-btn ui-btn--ghost" style={{ fontSize: 13 }} onClick={() => setShowScheduleSlotModal(true)}>
+          <div className="cd-section-header">
+            <h2 className="cd-section-title">Слоты и интервью</h2>
+            {detail.telegram_id && (
+              <button className="ui-btn ui-btn--ghost" onClick={() => setShowScheduleSlotModal(true)}>
                 + Назначить слот
               </button>
             )}
           </div>
           {slots.length === 0 && <p className="subtitle">Слоты не найдены</p>}
           {slots.length > 0 && (
-            <table className="table slot-table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Тип</th>
-                  <th>Время</th>
-                  <th>Статус</th>
-                  <th>Рекрутёр</th>
-                  <th>Город</th>
-                </tr>
-              </thead>
-              <tbody>
-                {slots.map((slot) => (
-                  <tr key={slot.id} className="glass">
-                    <td>{slot.id}</td>
-                    <td>{slot.purpose === 'intro_day' ? '🏢 ОД' : '📅 Интервью'}</td>
-                    <td>{formatSlotTime(slot.start_utc, slot.candidate_tz)}</td>
-                    <td>{slot.status || '—'}</td>
-                    <td>{slot.recruiter_name || '—'}</td>
-                    <td>{slot.city_name || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="cd-slots-list">
+              {slots.map((slot) => (
+                <div key={slot.id} className="cd-slot-card glass">
+                  <div className="cd-slot-card__type">
+                    {slot.purpose === 'intro_day' ? 'ОД' : 'Интервью'}
+                  </div>
+                  <div className="cd-slot-card__main">
+                    <div className="cd-slot-card__time">{formatSlotTime(slot.start_utc, slot.candidate_tz)}</div>
+                    <div className="cd-slot-card__details">
+                      {slot.recruiter_name && <span>{slot.recruiter_name}</span>}
+                      {slot.city_name && <span>{slot.city_name}</span>}
+                    </div>
+                  </div>
+                  <SlotStatusBadge status={slot.status} />
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
+        {/* ── Tests ── */}
         <div className="glass panel">
-          <h2 className="title" style={{ fontSize: 20 }}>Тесты</h2>
+          <div className="cd-section-header">
+            <h2 className="cd-section-title">Тесты</h2>
+          </div>
           {testSections.length === 0 && <p className="subtitle">Данные по тестам отсутствуют.</p>}
           {testSections.length > 0 && (
-            <div className="grid-cards">
+            <div className="cd-tests-grid">
               {testSections.map((section) => (
-                <div key={section.key} className="glass stat-card">
-                  <div className="stat-label">{section.title}</div>
-                  <div className="stat-value">{section.status_label || section.status}</div>
-                  <div className="stat-label" style={{ marginTop: 6 }}>{section.summary}</div>
+                <div key={section.key} className="cd-test-card glass">
+                  <div className="cd-test-card__header">
+                    <span className="cd-test-card__title">{section.title}</span>
+                    <span className={`cd-test-status cd-test-status--${section.status || 'unknown'}`}>
+                      {section.status_label || section.status || '—'}
+                    </span>
+                  </div>
+                  {section.summary && <div className="cd-test-card__summary">{section.summary}</div>}
+                  {section.details?.stats && (
+                    <TestScoreBar
+                      correct={section.details.stats.correct_answers ?? 0}
+                      total={section.details.stats.total_questions ?? 0}
+                      score={section.details.stats.final_score}
+                    />
+                  )}
+                  {section.details?.stats && (
+                    <div className="cd-test-card__extra">
+                      {typeof section.details.stats.total_time === 'number' && (
+                        <span>Время: {Math.round(section.details.stats.total_time / 60)} мин</span>
+                      )}
+                      {typeof section.details.stats.overtime_questions === 'number' && section.details.stats.overtime_questions > 0 && (
+                        <span>Просрочено: {section.details.stats.overtime_questions}</span>
+                      )}
+                    </div>
+                  )}
                   {section.report_url && (
-                    <a href={section.report_url} className="action-link" style={{ padding: 0, marginTop: 6 }}>
-                      Отчёт →
+                    <a href={section.report_url} className="cd-test-card__report">
+                      Подробный отчёт
                     </a>
+                  )}
+                  {section.history && section.history.length > 1 && (
+                    <details className="cd-test-card__history">
+                      <summary>История попыток ({section.history.length})</summary>
+                      <div className="cd-test-card__history-list">
+                        {section.history.map((h) => (
+                          <div key={h.id} className="cd-test-card__history-item">
+                            <span>{h.completed_at ? new Date(h.completed_at).toLocaleDateString('ru-RU') : '—'}</span>
+                            <span>{typeof h.final_score === 'number' ? h.final_score.toFixed(1) : '—'}</span>
+                            {h.source && <span className="cd-chip cd-chip--small">{h.source}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
                   )}
                 </div>
               ))}
@@ -827,33 +1001,32 @@ export function CandidateDetailPage() {
           )}
         </div>
 
+        {/* ── Chat Summary ── */}
         <div className="glass panel">
-          <h2 className="title" style={{ fontSize: 20 }}>Чат</h2>
-          {chatQuery.isLoading && <p className="subtitle">Загрузка сообщений…</p>}
-          {chatQuery.isError && <p style={{ color: '#f07373' }}>Ошибка: {(chatQuery.error as Error).message}</p>}
-          {chatMessages.length > 0 && (
-            <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-              {chatMessages.map((msg) => (
-                <div key={msg.id} className="glass panel--tight" style={{ display: 'grid', gap: 4 }}>
-                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                    {msg.direction === 'outbound' ? 'Исходящее' : 'Входящее'} · {new Date(msg.created_at).toLocaleString('ru-RU')}
-                  </div>
-                  <div>{msg.text}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          <div style={{ display: 'grid', gap: 8 }}>
-            <textarea rows={3} value={chatText} onChange={(e) => setChatText(e.target.value)} placeholder="Написать сообщение…" />
-            <button
-              className="ui-btn ui-btn--primary"
-              onClick={() => chatText.trim() && sendMutation.mutate(chatText.trim())}
-              disabled={sendMutation.isPending}
-            >
-              {sendMutation.isPending ? 'Отправка…' : 'Отправить'}
+          <div className="cd-section-header">
+            <h2 className="cd-section-title">Чат с кандидатом</h2>
+            <button className="ui-btn ui-btn--ghost" onClick={() => setIsChatOpen(true)} disabled={!detail.telegram_id}>
+              Открыть чат
             </button>
           </div>
+          <p className="subtitle" style={{ margin: 0 }}>Сообщения отправляются через Telegram.</p>
+          {chatQuery.isError && <p style={{ color: 'var(--danger, #f07373)' }}>Ошибка: {(chatQuery.error as Error).message}</p>}
+          {!chatQuery.isError && chatMessages.length === 0 && (
+            <p className="subtitle">Сообщений пока нет.</p>
+          )}
+          {lastChatMessage && (
+            <div className="candidate-chat-preview">
+              <div className="candidate-chat-preview__label">
+                {lastChatMessage.direction === 'outbound' ? 'Вы' : 'Кандидат'}
+                {' · '}
+                {new Date(lastChatMessage.created_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+              </div>
+              <div className="candidate-chat-preview__text">{lastChatMessage.text}</div>
+            </div>
+          )}
         </div>
+
+        </>)}
       </div>
 
       {/* Modals */}
@@ -879,6 +1052,61 @@ export function CandidateDetailPage() {
             queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] })
           }}
         />
+      )}
+
+      {isChatOpen && (
+        <ModalPortal>
+          <div className="drawer-overlay" onClick={(e) => e.target === e.currentTarget && setIsChatOpen(false)}>
+            <aside className="candidate-chat-drawer glass" onClick={(e) => e.stopPropagation()}>
+              <header className="candidate-chat-drawer__header">
+                <div>
+                  <h3 className="candidate-chat-drawer__title">Чат с кандидатом</h3>
+                  <p className="subtitle">Ответ будет отправлен через Telegram</p>
+                </div>
+                <button className="ui-btn ui-btn--ghost" onClick={() => setIsChatOpen(false)}>Закрыть</button>
+              </header>
+
+              <div className="candidate-chat-drawer__body">
+                {chatQuery.isLoading && <p className="subtitle">Загрузка сообщений…</p>}
+                {chatQuery.isError && <p style={{ color: '#f07373' }}>Ошибка: {(chatQuery.error as Error).message}</p>}
+                {chatMessages.length === 0 && !chatQuery.isLoading && (
+                  <p className="subtitle">Сообщений пока нет.</p>
+                )}
+                {chatMessages.length > 0 && (
+                  <div className="candidate-chat-drawer__messages">
+                    {chatMessages.map((msg) => (
+                      <div
+                        key={msg.id}
+                        className={`candidate-chat-message ${msg.direction === 'outbound' ? 'candidate-chat-message--outbound' : 'candidate-chat-message--inbound'}`}
+                      >
+                        <div className="candidate-chat-message__text">{msg.text}</div>
+                        <div className="candidate-chat-message__meta">
+                          {new Date(msg.created_at).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="candidate-chat-drawer__footer">
+                <textarea
+                  rows={3}
+                  value={chatText}
+                  onChange={(e) => setChatText(e.target.value)}
+                  placeholder="Написать сообщение…"
+                />
+                <button
+                  className="ui-btn ui-btn--primary"
+                  onClick={() => chatText.trim() && sendMutation.mutate(chatText.trim())}
+                  disabled={sendMutation.isPending}
+                >
+                  {sendMutation.isPending ? 'Отправка…' : 'Отправить'}
+                </button>
+              </div>
+            </aside>
+          </div>
+        </ModalPortal>
       )}
     </RoleGuard>
   )

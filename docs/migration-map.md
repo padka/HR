@@ -1,6 +1,6 @@
 # Migration Map: Jinja → React/TSX (Admin UI)
 
-> Last updated: 2026-01-24 (Cleanup + API align)
+> Last updated: 2026-01-25 (Dashboard leaderboard)
 
 Status legend:
 - **DONE**: React page covers the legacy feature set for that area. Ready for legacy removal.
@@ -28,7 +28,7 @@ Status legend:
 
 | Area | Legacy Template(s) | SPA Route | Status | Specific Gaps |
 |------|-------------------|-----------|--------|---------------|
-| **Dashboard** | `index.html` | `/app/dashboard` | DONE | ✅ Funnel chart<br>✅ Calendar view<br>✅ Weekly KPIs<br>✅ Date/recruiter filters<br>✅ Summary cards |
+| **Dashboard** | `index.html` | `/app/dashboard` | DONE | ✅ Funnel chart<br>✅ Calendar view<br>✅ Weekly KPIs<br>✅ Date/recruiter filters<br>✅ Summary cards<br>✅ Recruiter leaderboard (admin) |
 | **Candidates list** | `candidates_list.html` | `/app/candidates` | DONE | ✅ Search + status filters<br>✅ Status badges with colors<br>✅ Recruiter column<br>✅ Board/Kanban view<br>✅ Calendar view |
 | **Candidate detail** | `candidates_detail.html` | `/app/candidates/:id` | DONE | ✅ Profile info + stats<br>✅ Actions panel<br>✅ Slots table with purpose<br>✅ Test sections<br>✅ Chat with send<br>✅ Status badge with styling<br>✅ Schedule slot modal<br>✅ Schedule intro day modal<br>✅ Full workflow status center |
 | **Candidate detailization** | `candidates_detailization.html` | `/app/candidates` | DONE | ✅ Merged into candidates list with status filters (hired/not_hired) |
@@ -96,6 +96,7 @@ Status legend:
 2. [x] Calendar view (slots by date)
 3. [x] Weekly KPIs
 4. [x] Date/recruiter filters
+5. [x] Recruiter leaderboard (admin-only)
 
 ### Priority 4: Admin CRUD Parity ✅ DONE
 1. [x] Recruiters: validation, inline deactivation

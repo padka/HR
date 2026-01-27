@@ -48,6 +48,7 @@ export type ProfileResponse = {
       avg_lead_hours?: number | null
     }
   }
+  avatar_url?: string | null
 }
 
 export function useProfile(enabled = true) {

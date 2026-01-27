@@ -45,7 +45,7 @@ function renderPreview(text: string, preview: Record<string, string>) {
 }
 
 export function TemplateEditPage() {
-  const params = useParams({ from: 'templateEdit' })
+  const params = useParams({ from: '/app/templates/$templateId/edit' })
   const templateId = Number(params.templateId)
   const navigate = useNavigate()
 

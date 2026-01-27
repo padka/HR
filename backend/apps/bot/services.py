@@ -1233,6 +1233,7 @@ class NotificationService:
             "slot_assignment_offer": self._process_slot_assignment_offer,
             "slot_assignment_reschedule_approved": self._process_slot_assignment_reschedule_approved,
             "slot_assignment_reschedule_declined": self._process_slot_assignment_reschedule_declined,
+            "slot_assignment_reschedule_requested": self._process_slot_assignment_reschedule_requested,
         }
         handler = handlers.get(item.type)
         previous_message = self._current_message
@@ -2362,6 +2363,88 @@ class NotificationService:
             )
         except Exception:
             logger.exception("Failed to persist message log for reschedule declined")
+
+    async def _process_slot_assignment_reschedule_requested(self, item: OutboxItem) -> None:
+        payload = dict(item.payload or {})
+        recruiter_id = payload.get("recruiter_id")
+        recruiter = await get_recruiter(recruiter_id) if recruiter_id else None
+        if recruiter is None or recruiter.tg_chat_id is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "slot_assignment_reschedule_requested",
+                "slot_assignment_reschedule_requested",
+                "recruiter_chat_missing",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        requested_raw = payload.get("requested_start_utc")
+        try:
+            requested_utc = datetime.fromisoformat(requested_raw) if requested_raw else None
+        except Exception:
+            requested_utc = None
+        if requested_utc is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "slot_assignment_reschedule_requested",
+                "slot_assignment_reschedule_requested",
+                "start_missing",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        candidate_name = payload.get("candidate_name") or payload.get("candidate_id") or "Кандидат"
+        candidate_tz = payload.get("candidate_tz") or recruiter.tz or DEFAULT_TZ
+        dt_label = fmt_dt_local(requested_utc, recruiter.tz or candidate_tz or DEFAULT_TZ)
+        comment = payload.get("comment")
+
+        text = (
+            "🔁 Кандидат запросил другое время\n"
+            f"👤 {escape_html(str(candidate_name))}\n"
+            f"🗓 {dt_label}\n"
+            "Откройте CRM, чтобы подтвердить, предложить другое время или отклонить."
+        )
+        if comment:
+            text += f"\nКомментарий: {escape_html(str(comment))}"
+
+        attempt = item.attempts + 1
+        await self._throttle()
+        try:
+            await get_bot().send_message(recruiter.tg_chat_id, text)
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="slot_assignment_reschedule_requested",
+                notification_type="slot_assignment_reschedule_requested",
+                error=str(exc),
+                rendered=None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=attempt,
+            next_retry_at=None,
+            last_error=None,
+        )
+
+        try:
+            await add_message_log(
+                "slot_assignment_reschedule_requested",
+                recipient_type="recruiter",
+                recipient_id=recruiter.tg_chat_id,
+                slot_assignment_id=payload.get("slot_assignment_id"),
+                payload={"slot_id": payload.get("slot_id"), "text": text},
+            )
+        except Exception:
+            logger.exception("Failed to persist message log for reschedule requested")
 
     async def _process_intro_day_invitation(self, item: OutboxItem) -> None:
         """Process intro day invitation - immediate invitation with confirmation

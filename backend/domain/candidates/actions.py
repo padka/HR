@@ -80,6 +80,16 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
             icon="🕒",
             variant="primary",
         ),
+        CandidateAction(
+            key="reject",
+            label="Отказ",
+            url_pattern="/api/candidates/{id}/actions/reject",
+            icon="🚫",
+            variant="ghost",
+            confirmation="Отклонить кандидата?",
+            method="POST",
+            target_status="interview_declined",
+        ),
     ],
 
     CandidateStatus.STALLED_WAITING_SLOT: [
@@ -89,6 +99,16 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
             url_pattern="/candidates/{id}/schedule-slot",
             icon="⚠️",
             variant="danger",
+        ),
+        CandidateAction(
+            key="reject",
+            label="Отказ",
+            url_pattern="/api/candidates/{id}/actions/reject",
+            icon="🚫",
+            variant="ghost",
+            confirmation="Отклонить кандидата?",
+            method="POST",
+            target_status="interview_declined",
         ),
     ],
 

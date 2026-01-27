@@ -630,18 +630,36 @@ async def delete_past_free_slots(grace_minutes: int = 0) -> Tuple[int, int]:
     """
     threshold = datetime.now(timezone.utc) - timedelta(minutes=max(grace_minutes, 0))
     async with async_session() as session:
-        # Only interview slots participate in the cleanup.
-        stale_query = select(Slot.id).where(
-            func.coalesce(Slot.purpose, "interview") == "interview",
-            slot_status_free_clause(Slot),
-            Slot.start_utc < threshold,
+        # Pull candidate slots that already started, then confirm end time in Python.
+        candidates = await session.execute(
+            select(Slot.id, Slot.start_utc, Slot.duration_min).where(
+                func.coalesce(Slot.purpose, "interview") == "interview",
+                slot_status_free_clause(Slot),
+                Slot.start_utc < threshold,
+            )
         )
-        stale_ids = [row[0] for row in await session.execute(stale_query)]
+        stale_ids: List[int] = []
+        for slot_id, start_utc, duration_min in candidates:
+            start_utc = ensure_aware_utc(start_utc)
+            duration = duration_min or DEFAULT_INTERVIEW_DURATION_MIN
+            end_utc = start_utc + timedelta(minutes=duration)
+            if end_utc <= threshold:
+                stale_ids.append(slot_id)
+
         total = len(stale_ids)
         if total == 0:
             return 0, 0
+
         await session.execute(delete(Slot).where(Slot.id.in_(stale_ids)))
         await session.commit()
+
+    # Cancel reminders if any were scheduled for these slots.
+    if callable(get_reminder_service):
+        for sid in stale_ids:
+            try:
+                await get_reminder_service().cancel_for_slot(sid)
+            except RuntimeError:
+                break
 
     await log_audit_action(
         "slots_past_free_deleted",
@@ -1621,8 +1639,8 @@ async def bulk_create_slots(
         return len(to_insert), None
 
 
-def _format_slot_local_time(slot: Slot) -> str:
-    tz_label = getattr(slot, "tz_name", None) or DEFAULT_SLOT_TZ
+def _format_slot_local_time(slot: Slot, tz_override: Optional[str] = None) -> str:
+    tz_label = tz_override or getattr(slot, "tz_name", None) or DEFAULT_SLOT_TZ
     start = slot.start_utc
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
@@ -1652,17 +1670,27 @@ async def api_slots_payload(
         if limit:
             query = query.limit(max(1, min(500, limit)))
         slots = (await session.scalars(query)).all()
-    return [
-        {
-            "id": sl.id,
-            "recruiter_id": sl.recruiter_id,
-            "recruiter_name": sl.recruiter.name if sl.recruiter else None,
-            "start_utc": sl.start_utc.isoformat(),
-            "status": norm_status(sl.status),
-            "candidate_fio": getattr(sl, "candidate_fio", None),
-            "candidate_tg_id": getattr(sl, "candidate_tg_id", None),
-            "tz_name": getattr(sl, "tz_name", None),
-            "local_time": _format_slot_local_time(sl),
-        }
-        for sl in slots
-    ]
+    payload: List[Dict[str, object]] = []
+    for sl in slots:
+        recruiter_tz = None
+        if sl.recruiter and getattr(sl.recruiter, "tz", None):
+            recruiter_tz = sl.recruiter.tz
+        slot_tz = recruiter_tz or getattr(sl, "tz_name", None) or DEFAULT_SLOT_TZ
+        candidate_tz = getattr(sl, "candidate_tz", None)
+        payload.append(
+            {
+                "id": sl.id,
+                "recruiter_id": sl.recruiter_id,
+                "recruiter_name": sl.recruiter.name if sl.recruiter else None,
+                "start_utc": sl.start_utc.isoformat(),
+                "status": norm_status(sl.status),
+                "candidate_fio": getattr(sl, "candidate_fio", None),
+                "candidate_tg_id": getattr(sl, "candidate_tg_id", None),
+                "candidate_tz": candidate_tz,
+                "tz_name": getattr(sl, "tz_name", None),
+                "recruiter_tz": recruiter_tz,
+                "recruiter_local_time": _format_slot_local_time(sl, slot_tz),
+                "candidate_local_time": _format_slot_local_time(sl, candidate_tz) if candidate_tz else None,
+            }
+        )
+    return payload

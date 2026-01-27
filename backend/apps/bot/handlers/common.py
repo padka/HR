@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from .. import services
+from .. import slot_assignment_flow
 from ..services import show_recruiter_dashboard
 from backend.domain import analytics
 from backend.domain.candidates import bind_telegram_to_candidate, get_user_by_telegram_id
@@ -50,7 +51,19 @@ async def cmd_start(message: Message) -> None:
         )
     except Exception:
         logger.exception("Failed to log BOT_START event", extra={"user_id": user_id})
-    await services.begin_interview(user_id, username=username)
+    try:
+        await services.begin_interview(user_id, username=username)
+    except Exception:
+        logger.exception(
+            "begin_interview failed for user %s", user_id,
+            extra={"user_id": user_id, "username": username},
+        )
+        try:
+            await message.answer(
+                "Произошла ошибка при запуске. Попробуйте /start ещё раз."
+            )
+        except Exception:
+            pass
 
 
 @router.message(Command("admin"))
@@ -166,6 +179,11 @@ async def free_text(message: Message) -> None:
     # Capture причины отказа от ознакомительного дня, если ждём ответ
     if state.get("awaiting_intro_decline_reason"):
         handled = await services.capture_intro_decline_reason(message, state)
+        if handled:
+            return
+
+    if state.get("slot_assignment_state") == slot_assignment_flow.STATE_WAITING_DATETIME:
+        handled = await slot_assignment_flow.handle_datetime_input(message, state)
         if handled:
             return
 

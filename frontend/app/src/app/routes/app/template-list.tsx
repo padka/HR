@@ -212,132 +212,133 @@ export function TemplateListPage() {
   return (
     <RoleGuard allow={['admin']}>
       <div className="page">
-        <div className="glass panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-            <h1 className="title">Шаблоны (CRM)</h1>
-            <Link to="/app/templates/new" className="glass action-link">+ Новый</Link>
-          </div>
-          {overview && (
-            <div className="glass panel--tight" style={{ marginTop: 12, display: 'grid', gap: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <div>
-                  <h2 className="section-title">Stage templates</h2>
-                  <p className="subtitle">Редактируйте шаблоны этапов по городам или глобально.</p>
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <select value={stageCity} onChange={(e) => setStageCity(e.target.value)}>
-                    {stageCityOptions.map((opt) => (
-                      <option key={opt.id} value={opt.id}>{opt.name}</option>
-                    ))}
-                  </select>
-                  <button className="ui-btn ui-btn--primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-                    {saveMutation.isPending ? 'Сохраняем…' : 'Сохранить'}
-                  </button>
-                </div>
+        <header className="glass glass--elevated page-header page-header--row">
+          <h1 className="title">Шаблоны (CRM)</h1>
+          <Link to="/app/templates/new" className="ui-btn ui-btn--primary">+ Новый</Link>
+        </header>
+
+        {overview && (
+          <section className="glass page-section">
+            <div className="page-section__header">
+              <div>
+                <h2 className="section-title">Stage templates</h2>
+                <p className="subtitle">Редактируйте шаблоны этапов по городам или глобально.</p>
               </div>
-              <div style={{ display: 'grid', gap: 12 }}>
-                {(stageCity === 'global' ? overview.global?.stages : (overview.cities || []).find((item: any) => String(item.city?.id) === stageCity)?.stages || []).map((stage: any) => (
-                  <div key={stage.key} className="glass" style={{ padding: 12, display: 'grid', gap: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <div>
-                        <strong>{stage.title}</strong>
-                        <div className="subtitle">{stage.description}</div>
-                      </div>
-                      <span className="chip">{stage.is_custom ? 'custom' : 'default'}</span>
-                    </div>
-                    <textarea
-                      rows={4}
-                      value={stageDrafts[stage.key] ?? ''}
-                      onChange={(e) => setStageDrafts((prev) => ({ ...prev, [stage.key]: e.target.value }))}
-                    />
-                  </div>
-                ))}
+              <div className="toolbar toolbar--compact">
+                <select value={stageCity} onChange={(e) => setStageCity(e.target.value)}>
+                  {stageCityOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.name}</option>
+                  ))}
+                </select>
+                <button className="ui-btn ui-btn--primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+                  {saveMutation.isPending ? 'Сохраняем…' : 'Сохранить'}
+                </button>
               </div>
-              {saveMutation.isError && <p style={{ color: '#f07373' }}>Ошибка: {(saveMutation.error as Error).message}</p>}
             </div>
-          )}
-          {isLoading && <p className="subtitle">Загрузка…</p>}
-          {isError && <p style={{ color: '#f07373' }}>Ошибка: {(error as Error).message}</p>}
+            <div className="page-section__content">
+              {(stageCity === 'global' ? overview.global?.stages : (overview.cities || []).find((item: any) => String(item.city?.id) === stageCity)?.stages || []).map((stage: any) => (
+                <article key={stage.key} className="glass glass--subtle list-item">
+                  <div className="list-item__header">
+                    <div>
+                      <strong className="list-item__title">{stage.title}</strong>
+                      <div className="text-muted text-sm">{stage.description}</div>
+                    </div>
+                    <span className={`chip ${stage.is_custom ? 'chip--accent' : ''}`}>{stage.is_custom ? 'custom' : 'default'}</span>
+                  </div>
+                  <textarea
+                    className="form-group__textarea"
+                    rows={4}
+                    value={stageDrafts[stage.key] ?? ''}
+                    onChange={(e) => setStageDrafts((prev) => ({ ...prev, [stage.key]: e.target.value }))}
+                  />
+                </article>
+              ))}
+            </div>
+            {saveMutation.isError && <p className="text-danger">Ошибка: {(saveMutation.error as Error).message}</p>}
+          </section>
+        )}
+
+        <section className="glass page-section">
+          {isLoading && <p className="text-muted">Загрузка…</p>}
+          {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
           {data && (
             <>
-              <div className="glass panel--tight" style={{ marginTop: 12, display: 'grid', gap: 10 }}>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  <input
-                    placeholder="Поиск по ключу или тексту"
-                    value={filters.search}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
-                  />
-                  <select
-                    value={filters.city}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, city: e.target.value }))}
-                  >
-                    <option value="all">Все города</option>
-                    <option value="global">Только global</option>
-                    {cityFilterOptions.map((city) => (
-                      <option key={city.id} value={city.id}>{city.name}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={filters.key}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, key: e.target.value }))}
-                  >
-                    <option value="">Все ключи</option>
-                    {keyOptions.map((key) => (
-                      <option key={key} value={key}>{key}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-                  <div className="glass stat-card">
-                    <div className="stat-label">Всего шаблонов</div>
-                    <div className="stat-value">{data.custom_templates.length}</div>
-                  </div>
-                  <div className="glass stat-card">
-                    <div className="stat-label">Global</div>
-                    <div className="stat-value">{data.custom_templates.filter((t) => t.is_global).length}</div>
-                  </div>
-                  <div className="glass stat-card">
-                    <div className="stat-label">Городские</div>
-                    <div className="stat-value">{data.custom_templates.filter((t) => !t.is_global).length}</div>
-                  </div>
-                  <div className="glass stat-card">
-                    <div className="stat-label">Missing required (TG)</div>
-                    <div className="stat-value">{messageTemplatesQuery.data?.missing_required?.length ?? '—'}</div>
-                  </div>
-                </div>
+              <div className="filter-bar">
+                <input
+                  placeholder="Поиск по ключу или тексту"
+                  value={filters.search}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
+                  className="filter-bar__search"
+                />
+                <select
+                  value={filters.city}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, city: e.target.value }))}
+                >
+                  <option value="all">Все города</option>
+                  <option value="global">Только global</option>
+                  {cityFilterOptions.map((city) => (
+                    <option key={city.id} value={city.id}>{city.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={filters.key}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, key: e.target.value }))}
+                >
+                  <option value="">Все ключи</option>
+                  {keyOptions.map((key) => (
+                    <option key={key} value={key}>{key}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="data-grid data-grid--4">
+                <article className="glass glass--interactive data-card">
+                  <div className="data-card__label">Всего шаблонов</div>
+                  <div className="data-card__value">{data.custom_templates.length}</div>
+                </article>
+                <article className="glass glass--interactive data-card">
+                  <div className="data-card__label">Global</div>
+                  <div className="data-card__value">{data.custom_templates.filter((t) => t.is_global).length}</div>
+                </article>
+                <article className="glass glass--interactive data-card">
+                  <div className="data-card__label">Городские</div>
+                  <div className="data-card__value">{data.custom_templates.filter((t) => !t.is_global).length}</div>
+                </article>
+                <article className="glass glass--interactive data-card">
+                  <div className="data-card__label">Missing required (TG)</div>
+                  <div className="data-card__value">{messageTemplatesQuery.data?.missing_required?.length ?? '—'}</div>
+                </article>
               </div>
 
-            <div className="glass panel--tight" style={{ marginTop: 12, display: 'grid', gap: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div className="page-section__header">
                 <div>
                   <h2 className="section-title">Уведомления: контроль</h2>
                   <p className="subtitle">Проверка обязательных ключей и покрытие по городам.</p>
                 </div>
-                <Link to="/app/message-templates" className="glass action-link">Открыть уведомления →</Link>
+                <Link to="/app/message-templates" className="ui-btn ui-btn--ghost">Открыть уведомления →</Link>
               </div>
-              {messageTemplatesQuery.isLoading && <p className="subtitle">Загрузка…</p>}
+              {messageTemplatesQuery.isLoading && <p className="text-muted">Загрузка…</p>}
               {messageTemplatesQuery.isError && (
-                <p style={{ color: '#f07373' }}>Ошибка: {(messageTemplatesQuery.error as Error).message}</p>
+                <p className="text-danger">Ошибка: {(messageTemplatesQuery.error as Error).message}</p>
               )}
               {messageTemplatesQuery.data && (
-                <div className="grid-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-                  <div className="glass stat-card">
-                    <div className="stat-label">Missing required keys</div>
-                    <div className="stat-value">
+                <div className="data-grid data-grid--2">
+                  <article className="glass glass--interactive data-card">
+                    <div className="data-card__label">Missing required keys</div>
+                    <div className="data-card__value">
                       {messageTemplatesQuery.data.missing_required.length || 0}
                     </div>
-                    <div className="subtitle" style={{ marginTop: 6 }}>
+                    <div className="data-card__hint">
                       {messageTemplatesQuery.data.missing_required.length
                         ? messageTemplatesQuery.data.missing_required.join(', ')
                         : 'Все обязательные ключи есть'}
                     </div>
-                  </div>
-                  <div className="glass stat-card">
-                    <div className="stat-label">Coverage gaps</div>
-                    <div className="stat-value">
+                  </article>
+                  <article className="glass glass--interactive data-card">
+                    <div className="data-card__label">Coverage gaps</div>
+                    <div className="data-card__value">
                       {messageTemplatesQuery.data.coverage.length || 0}
                     </div>
-                    <div className="subtitle" style={{ marginTop: 6 }}>
+                    <div className="data-card__hint">
                       {messageTemplatesQuery.data.coverage.length
                         ? `Проблемные ключи: ${messageTemplatesQuery.data.coverage
                             .slice(0, 4)
@@ -345,37 +346,36 @@ export function TemplateListPage() {
                             .join(', ')}${messageTemplatesQuery.data.coverage.length > 4 ? '…' : ''}`
                         : 'Покрытие без пропусков'}
                     </div>
-                  </div>
+                  </article>
                 </div>
               )}
-            </div>
 
-            <div className="glass panel--tight" style={{ marginTop: 12, display: 'grid', gap: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div className="page-section__header">
                 <div>
                   <h2 className="section-title">Уведомления</h2>
                   <p className="subtitle">Шаблоны сообщений, которые видят кандидаты и рекрутёры.</p>
                 </div>
-                <Link to="/app/message-templates" className="glass action-link">+ Новое уведомление</Link>
+                <Link to="/app/message-templates" className="ui-btn ui-btn--primary">+ Новое уведомление</Link>
               </div>
-              <div className="grid-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+              <div className="data-grid data-grid--4">
                 {stageSpecs.map((stage) => (
-                  <div key={stage.code} className="glass stat-card">
-                    <div className="stat-label">{stage.title}</div>
-                    <div className="subtitle" style={{ marginTop: 6 }}>{stage.desc}</div>
-                  </div>
+                  <article key={stage.code} className="glass glass--subtle data-card">
+                    <div className="data-card__label">{stage.title}</div>
+                    <div className="data-card__hint">{stage.desc}</div>
+                  </article>
                 ))}
               </div>
-              <div className="glass panel--tight" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div className="filter-bar">
                 <input
                   placeholder="Поиск по ключу или тексту"
                   value={messageFilters.search}
                   onChange={(e) => setMessageFilters((prev) => ({ ...prev, search: e.target.value }))}
+                  className="filter-bar__search"
                 />
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <div className="view-toggle">
                   <button
                     type="button"
-                    className="ui-btn ui-btn--ghost"
+                    className={`ui-btn ui-btn--sm ${messageFilters.stage === 'all' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
                     onClick={() => setMessageFilters((prev) => ({ ...prev, stage: 'all' }))}
                   >
                     Все этапы
@@ -384,7 +384,7 @@ export function TemplateListPage() {
                     <button
                       key={stage.code}
                       type="button"
-                      className="ui-btn ui-btn--ghost"
+                      className={`ui-btn ui-btn--sm ${messageFilters.stage === stage.code ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
                       onClick={() => setMessageFilters((prev) => ({ ...prev, stage: stage.code }))}
                     >
                       {stage.title}
@@ -397,15 +397,15 @@ export function TemplateListPage() {
                 const items = groupedTemplates[stage.code] || []
                 if (!items.length) return null
                 return (
-                  <div key={stage.code} style={{ display: 'grid', gap: 10 }}>
+                  <div key={stage.code} className="page-section__content">
                     <div>
                       <h3 className="section-title">{stage.title}</h3>
-                      <p className="subtitle">{stage.desc}</p>
+                      <p className="text-muted">{stage.desc}</p>
                     </div>
                     <div className="template-grid">
                       {items.map((tmpl) => (
                         <div key={tmpl.id} className="glass template-card">
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <div className="template-card__header">
                             <div>
                               <div className="template-key">
                                 <code>{tmpl.key}</code>
@@ -429,11 +429,11 @@ export function TemplateListPage() {
                           </div>
                           <div className="template-preview">{tmpl.preview || '—'}</div>
                           <div className="template-actions">
-                            <Link to="/app/message-templates" className="ui-btn ui-btn--ghost">
+                            <Link to="/app/message-templates" className="ui-btn ui-btn--ghost ui-btn--sm">
                               Редактировать
                             </Link>
                             <button
-                              className="ui-btn ui-btn--danger"
+                              className="ui-btn ui-btn--danger ui-btn--sm"
                               onClick={() => window.confirm('Удалить шаблон?') && deleteMutation.mutate(tmpl.id)}
                               disabled={deleteMutation.isPending}
                             >
@@ -447,44 +447,45 @@ export function TemplateListPage() {
                 )
               })}
               {filteredMessageTemplates.length === 0 && (
-                <p className="subtitle">По выбранным фильтрам уведомления не найдены.</p>
+                <p className="text-muted">По выбранным фильтрам уведомления не найдены.</p>
               )}
-            </div>
 
-            <table className="table" style={{ marginTop: 12 }}>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Ключ</th>
-                  <th>Город</th>
-                  <th>Preview</th>
-                  <th>Длина</th>
-                  <th>Действия</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTemplates.map((tmpl) => (
-                  <tr key={tmpl.id} className="glass">
-                    <td>{tmpl.id}</td>
-                    <td>{tmpl.key}</td>
-                    <td>{tmpl.city_name || (tmpl.is_global ? 'Global' : '—')}</td>
-                    <td>{tmpl.preview || '—'}</td>
-                    <td>{tmpl.length ?? '—'}</td>
-                    <td>
-                      <Link to="/app/templates/$templateId/edit" params={{ templateId: String(tmpl.id) }}>
-                        Редактировать
-                      </Link>
-                    </td>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Ключ</th>
+                    <th>Город</th>
+                    <th>Preview</th>
+                    <th>Длина</th>
+                    <th>Действия</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {filteredTemplates.length === 0 && (
-              <p className="subtitle">По выбранным фильтрам шаблоны не найдены.</p>
-            )}
-          </>
+                </thead>
+                <tbody>
+                  {filteredTemplates.map((tmpl) => (
+                    <tr key={tmpl.id}>
+                      <td>{tmpl.id}</td>
+                      <td><code className="text-sm">{tmpl.key}</code></td>
+                      <td>{tmpl.city_name || (tmpl.is_global ? 'Global' : '—')}</td>
+                      <td className="text-muted">{tmpl.preview || '—'}</td>
+                      <td>{tmpl.length ?? '—'}</td>
+                      <td>
+                        <Link to="/app/templates/$templateId/edit" params={{ templateId: String(tmpl.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
+                          Редактировать
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filteredTemplates.length === 0 && (
+                <div className="empty-state">
+                  <p className="empty-state__text">По выбранным фильтрам шаблоны не найдены.</p>
+                </div>
+              )}
+            </>
           )}
-        </div>
+        </section>
       </div>
     </RoleGuard>
   )

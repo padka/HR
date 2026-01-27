@@ -87,3 +87,75 @@
 - Legacy `/profile` переведён на redirect → `/app/profile`.
 - Candidate scheduling endpoints (`/candidates/{id}/schedule-slot`, `/schedule-intro-day`) переведены на JSON вход/выход (убраны TemplateResponse).
 - Исправлены артефакты после ранней замены (лишние строки в candidates router), очищены неиспользуемые импорты.
+
+## 2026-01-25
+- Dashboard: добавлен лидерборд эффективности рекрутеров (admin-only) с рейтингом и ключевыми метриками.
+- API: новый endpoint `/api/dashboard/recruiter-performance` с расчётом score, конверсии и заполнения слотов.
+
+## 2026-01-25 (UI/UX Visual Audit & Improvements)
+
+### Tokens System Enhancement (`tokens.ts`)
+- Добавлена **spacing scale** (xs→3xl, 4px base) для консистентных отступов
+- Добавлена **typography scale** (size, leading, weight, tracking)
+- Добавлены **transition tokens** (fast, normal, slow, hover, focus, transform)
+- Расширены **border tokens** (glass, glassStrong, glassSubtle, accent)
+- Расширены **glass tokens** (bgSubtle, bgHover, glowStrong, glowSubtle, gradients)
+- Добавлены дополнительные **color tokens** (bgElevated, accentLight, textSubtle, soft variants)
+
+### CSS Variables Enhancement (`global.css`)
+- Полностью переработаны CSS variables с использованием новых токенов
+- Добавлены spacing variables (--space-xs → --space-3xl)
+- Добавлены typography variables (--text-xs → --text-3xl)
+- Добавлены расширенные glass variables (--glass-subtle, --glass-hover, --glass-glow-strong и др.)
+- Добавлены transition variables (--transition-fast, --transition-hover, --transition-transform)
+
+### Glass System Improvements
+- Улучшены transitions для плавных hover/focus состояний
+- Добавлены glass variants: `glass--elevated`, `glass--subtle`, `glass--interactive`
+- Более тонкие highlight и noise эффекты для премиального вида
+- Улучшенные hover-состояния с glow эффектами
+
+### Typography & Utilities
+- Добавлены utility-классы: `.title--lg`, `.title--sm`, `.subtitle--sm`
+- Добавлены text utilities: `.text-muted`, `.text-subtle`, `.text-accent`, `.text-success`, `.text-warning`, `.text-danger`
+- Добавлены size utilities: `.text-xs`, `.text-sm`, `.text-md`, `.text-lg`
+- Добавлены weight utilities: `.font-medium`, `.font-semibold`, `.font-bold`
+
+### Button System Refinements
+- Улучшены transitions и hover-состояния
+- Добавлены focus-visible стили для accessibility
+- Улучшены `.ui-btn--primary` с gradient и glow эффектами
+- Добавлены размерные варианты: `.ui-btn--sm`, `.ui-btn--lg`
+
+### Dashboard Improvements
+- Hero секция использует `glass--elevated` для большей prominence
+- Улучшены metric cards с radial gradients и hover-эффектами
+- Funnel bars получили shimmer animation и glow
+- KPI cards с улучшенной визуальной иерархией
+- Leaderboard table с refined spacing и hover states
+- Calendar components с улучшенными selected/today states
+
+### Profile Page Cleanup
+- Консолидированы inline-стили в CSS классы
+- Добавлены profile-specific классы: `.profile-hero`, `.profile-section`, `.profile-grid`, `.profile-chips`, `.profile-links`
+- Улучшена visual hierarchy с использованием semantic HTML (`<section>`, `<article>`)
+
+### Recruiter Cards Enhancement
+- Увеличены avatars (44px → 48px) с улучшенными shadows
+- Status indicators получили refined transitions и glow
+- Stats cards с improved hover states
+- Более читаемые labels с uppercase text transform
+
+### Chip Component Enhancement
+- Добавлены variant классы: `.chip--accent`, `.chip--success`, `.chip--warning`, `.chip--danger`
+- Улучшены hover transitions
+
+### Form Elements
+- Improved focus states с accent glow
+- Добавлены hover states для inputs/selects
+- Select с custom arrow indicator
+- Placeholder styling
+
+### Build Status
+- ✅ `npm --prefix frontend/app run build` — успешно
+- CSS bundle: 38.62 kB (gzip: 7.44 kB)

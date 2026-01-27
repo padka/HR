@@ -39,7 +39,7 @@ from backend.apps.bot.notifications.bootstrap import (
     configure_notification_service as bootstrap_notification_service,
     reset_notification_service as reset_bootstrap_notification_service,
 )
-from backend.apps.bot.state_store import build_state_manager
+from backend.apps.bot.state_store import build_state_manager, can_connect_redis
 from backend.core.settings import get_settings
 from backend.apps.bot.broker import InMemoryNotificationBroker, NotificationBroker
 from backend.core.redis_factory import create_redis_client
@@ -340,9 +340,13 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     # if settings.environment == "production" and broker_choice == "redis" and not redis_url:
     #     raise RuntimeError("REDIS_URL is required in production when NOTIFICATION_BROKER=redis")
 
+    redis_state_ok = False
+    if redis_url and settings.bot_enabled and settings.environment != "test":
+        redis_state_ok = await can_connect_redis(redis_url, component="state_store")
     force_memory = (
         settings.environment == "test"
         or not redis_url
+        or not redis_state_ok
         or broker_choice != "redis"
         or not settings.bot_enabled
     )

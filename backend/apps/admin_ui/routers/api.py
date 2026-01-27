@@ -1,10 +1,16 @@
 from datetime import date as date_type, datetime, time, timezone, timedelta
-from typing import Optional
+from pathlib import Path
+from typing import Optional, List
+from zoneinfo import ZoneInfo
+import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.services.cities import (
     api_city_owners_payload,
@@ -14,9 +20,17 @@ from backend.apps.admin_ui.services.cities import (
     update_city_settings,
     delete_city,
 )
-from backend.apps.admin_ui.services.dashboard import dashboard_counts, get_bot_funnel_stats
+from backend.apps.admin_ui.services.dashboard import (
+    dashboard_counts,
+    get_bot_funnel_stats,
+    get_recruiter_leaderboard,
+    get_waiting_candidates,
+)
 from backend.apps.admin_ui.services.dashboard_calendar import (
     dashboard_calendar_snapshot,
+)
+from backend.apps.admin_ui.services.calendar_events import (
+    get_calendar_events,
 )
 from backend.apps.admin_ui.services.candidates import (
     get_candidate_detail,
@@ -30,6 +44,13 @@ from backend.apps.admin_ui.services.chat import (
     send_chat_message,
 )
 from backend.apps.admin_ui.services.slots import execute_bot_dispatch
+from backend.apps.admin_ui.services.slots import (
+    approve_slot_booking,
+    reject_slot_booking,
+    reschedule_slot_booking,
+    set_slot_outcome,
+    delete_slot,
+)
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.recruiters import (
     api_recruiters_payload,
@@ -38,7 +59,7 @@ from backend.apps.admin_ui.services.recruiters import (
     delete_recruiter,
     update_recruiter,
 )
-from backend.apps.admin_ui.services.slots.core import api_slots_payload
+from backend.apps.admin_ui.services.slots.core import api_slots_payload, bulk_delete_slots, bulk_schedule_reminders
 from backend.apps.admin_ui.services.templates import (
     api_templates_payload,
     list_templates,
@@ -58,6 +79,27 @@ from backend.apps.admin_ui.services.message_templates import (
     delete_message_template,
     get_template_history,
 )
+from backend.apps.admin_ui.services.staff_chat import (
+    list_threads as staff_list_threads,
+    create_or_get_direct_thread,
+    create_group_thread,
+    list_messages as staff_list_messages,
+    send_message as staff_send_message,
+    mark_read as staff_mark_read,
+    get_attachment as staff_get_attachment,
+    list_thread_members as staff_list_thread_members,
+    add_thread_members as staff_add_thread_members,
+    remove_thread_member as staff_remove_thread_member,
+    wait_for_thread_updates as staff_wait_thread_updates,
+    wait_for_message_updates as staff_wait_message_updates,
+    send_candidate_task as staff_send_candidate_task,
+    decide_candidate_task as staff_decide_candidate_task,
+)
+from backend.apps.admin_ui.services.recruiter_plan import (
+    get_recruiter_plan,
+    add_recruiter_plan_entry,
+    delete_recruiter_plan_entry,
+)
 from backend.apps.admin_ui.services.questions import (
     list_test_questions,
     get_test_question_detail,
@@ -66,18 +108,48 @@ from backend.apps.admin_ui.services.questions import (
     clone_test_question,
 )
 from backend.core.db import async_session
-from backend.domain.models import Recruiter, Slot, City, recruiter_city_association
+from backend.domain.models import Recruiter, Slot, City, SlotStatus, recruiter_city_association
 from backend.domain.candidates.models import User
-from backend.apps.admin_ui.utils import parse_optional_int, status_filter
+from backend.apps.admin_ui.utils import parse_optional_int, status_filter, recruiter_time_to_utc, norm_status
+from backend.core.guards import ensure_slot_scope
 from backend.apps.admin_ui.security import require_csrf_token, require_principal, require_admin, Principal
+from starlette_wtf import csrf_token
 from backend.domain.errors import CityAlreadyExistsError
 from backend.core.settings import get_settings
 from backend.core.sanitizers import sanitize_plain_text
 from backend.apps.bot.reminders import get_reminder_service
-from zoneinfo import ZoneInfo
 from backend.apps.admin_ui.timezones import timezone_options
 
 router = APIRouter(prefix="/api", tags=["api"])
+logger = logging.getLogger(__name__)
+
+
+def _empty_weekly_kpis(timezone_label: Optional[str]) -> dict[str, object]:
+    placeholder_label = "Нет данных"
+    tz = timezone_label or "Europe/Moscow"
+    return {
+        "timezone": tz,
+        "current": {
+            "week_start": None,
+            "week_end": None,
+            "label": placeholder_label,
+            "metrics": [],
+        },
+        "previous": {
+            "week_start": None,
+            "week_end": None,
+            "label": placeholder_label,
+            "metrics": {},
+            "computed_at": None,
+        },
+        "is_placeholder": True,
+    }
+
+
+@router.get("/csrf")
+async def api_csrf(request: Request):
+    """Return CSRF token for SPA clients."""
+    return JSONResponse({"token": csrf_token(request)})
 
 
 def _parse_bool(value: Optional[str]) -> Optional[bool]:
@@ -89,6 +161,28 @@ def _parse_bool(value: Optional[str]) -> Optional[bool]:
     if value in {"0", "false", "no", "off"}:
         return False
     return None
+
+
+def _avatar_dir() -> Path:
+    settings = get_settings()
+    base_dir = Path(settings.data_dir).resolve()
+    avatar_dir = base_dir / "avatars"
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    return avatar_dir
+
+
+def _avatar_prefix(principal: Principal) -> str:
+    return f"{principal.type}_{principal.id}"
+
+
+def _find_avatar_file(prefix: str) -> Optional[Path]:
+    avatar_dir = _avatar_dir()
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        candidate = avatar_dir / f"{prefix}.{ext}"
+        if candidate.exists():
+            return candidate
+    matches = list(avatar_dir.glob(f"{prefix}.*"))
+    return matches[0] if matches else None
 
 
 def _parse_date_param(value: Optional[str], *, end: bool = False) -> Optional[datetime]:
@@ -105,6 +199,18 @@ def _parse_date_param(value: Optional[str], *, end: bool = False) -> Optional[da
     return dt.replace(tzinfo=timezone.utc)
 
 
+def _parse_datetime_param(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"message": "Некорректный параметр даты"}) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 @router.get("/health")
 async def api_health():
     counts = await dashboard_counts()
@@ -114,6 +220,32 @@ async def api_health():
 @router.get("/dashboard/summary")
 async def api_dashboard_summary(principal: Principal = Depends(require_principal)):
     return JSONResponse(await dashboard_counts(principal=principal))
+
+
+@router.get("/dashboard/incoming")
+async def api_dashboard_incoming(
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    """Candidates who passed test1 and are waiting for a free interview slot."""
+    payload = await get_waiting_candidates(principal=principal)
+    return JSONResponse({"items": payload})
+
+
+@router.get("/dashboard/recruiter-performance")
+async def api_dashboard_recruiter_performance(
+    from_: Optional[str] = Query(default=None, alias="from"),
+    to: Optional[str] = Query(default=None),
+    city: Optional[str] = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> JSONResponse:
+    date_from = _parse_date_param(from_)
+    date_to = _parse_date_param(to, end=True)
+    payload = await get_recruiter_leaderboard(
+        date_from=date_from,
+        date_to=date_to,
+        city=city,
+    )
+    return JSONResponse(payload)
 
 
 async def _profile_snapshot(principal: Principal, request: Request) -> dict:
@@ -361,14 +493,267 @@ async def api_profile(request: Request, principal: Principal = Depends(require_p
 
     stats = await dashboard_counts(principal=principal)
     profile_payload = await _profile_snapshot(principal, request)
+    avatar_file = _find_avatar_file(_avatar_prefix(principal))
+    avatar_url = None
+    if avatar_file is not None:
+        avatar_url = f"/api/profile/avatar?v={int(avatar_file.stat().st_mtime)}"
     return JSONResponse(
         {
             "principal": {"type": principal.type, "id": principal.id},
             "recruiter": recruiter_payload,
             "stats": stats,
             "profile": profile_payload,
+            "avatar_url": avatar_url,
         }
     )
+
+
+@router.get("/profile/avatar")
+async def api_profile_avatar(principal: Principal = Depends(require_principal)) -> FileResponse:
+    avatar_file = _find_avatar_file(_avatar_prefix(principal))
+    if avatar_file is None:
+        raise HTTPException(status_code=404, detail={"message": "Аватар не найден"})
+    return FileResponse(avatar_file)
+
+
+@router.post("/profile/avatar")
+async def api_profile_avatar_upload(
+    file: UploadFile = File(...),
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail={"message": "Можно загрузить только изображение"})
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail={"message": "Файл слишком большой (до 5 МБ)"})
+
+    ext = "png"
+    if file.filename and "." in file.filename:
+        ext = file.filename.rsplit(".", 1)[-1].lower()
+    elif file.content_type and "/" in file.content_type:
+        ext = file.content_type.split("/", 1)[-1].lower()
+    if ext not in {"png", "jpg", "jpeg", "webp"}:
+        ext = "png"
+
+    avatar_dir = _avatar_dir()
+    prefix = _avatar_prefix(principal)
+    for existing in avatar_dir.glob(f"{prefix}.*"):
+        try:
+            existing.unlink()
+        except Exception:
+            pass
+    file_path = avatar_dir / f"{prefix}.{ext}"
+    file_path.write_bytes(content)
+    return JSONResponse({"ok": True, "url": f"/api/profile/avatar?v={int(file_path.stat().st_mtime)}"})
+
+
+class StaffMemberPayload(BaseModel):
+    type: str
+    id: int
+
+
+class StaffThreadCreatePayload(BaseModel):
+    type: str
+    title: Optional[str] = None
+    members: Optional[list[StaffMemberPayload]] = None
+
+
+class StaffThreadMembersPayload(BaseModel):
+    members: list[StaffMemberPayload]
+
+
+class StaffCandidateTaskPayload(BaseModel):
+    candidate_id: int
+    note: Optional[str] = None
+
+
+class StaffCandidateDecisionPayload(BaseModel):
+    comment: Optional[str] = None
+
+
+@router.get("/staff/threads")
+async def api_staff_threads(principal: Principal = Depends(require_principal)) -> JSONResponse:
+    return JSONResponse(await staff_list_threads(principal))
+
+
+@router.post("/staff/threads")
+async def api_staff_threads_create(
+    payload: StaffThreadCreatePayload,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    thread_type = (payload.type or "").strip().lower()
+    members = payload.members or []
+    if thread_type not in {"direct", "group"}:
+        raise HTTPException(status_code=400, detail={"message": "Некорректный тип чата"})
+
+    if thread_type == "direct":
+        if len(members) != 1:
+            raise HTTPException(status_code=400, detail={"message": "Для личного чата нужен один участник"})
+        other = members[0]
+        thread = await create_or_get_direct_thread(principal, other.type, other.id)
+        return JSONResponse(thread)
+
+    if not payload.title:
+        raise HTTPException(status_code=400, detail={"message": "Укажите название группового чата"})
+    if len(members) < 1:
+        raise HTTPException(status_code=400, detail={"message": "Добавьте участников"})
+    thread = await create_group_thread(principal, payload.title, [m.model_dump() for m in members])
+    return JSONResponse(thread)
+
+
+@router.get("/staff/threads/updates")
+async def api_staff_threads_updates(
+    since: Optional[str] = Query(default=None),
+    timeout: int = Query(default=25, ge=5, le=60),
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    since_dt = _parse_datetime_param(since)
+    payload = await staff_wait_thread_updates(principal, since=since_dt, timeout=timeout)
+    return JSONResponse(payload)
+
+
+@router.get("/staff/threads/{thread_id}/messages")
+async def api_staff_messages(
+    thread_id: int,
+    limit: int = Query(default=50, ge=10, le=200),
+    before: Optional[str] = Query(default=None),
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    before_dt = _parse_datetime_param(before)
+    return JSONResponse(await staff_list_messages(thread_id, principal, limit=limit, before=before_dt))
+
+
+@router.post("/staff/threads/{thread_id}/messages")
+async def api_staff_send_message(
+    thread_id: int,
+    request: Request,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    content_type = request.headers.get("content-type", "")
+    text: Optional[str] = None
+    files: Optional[List[UploadFile]] = None
+
+    if "application/json" in content_type:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        if isinstance(data, dict):
+            raw_text = data.get("text")
+            if raw_text is not None:
+                text = str(raw_text)
+    else:
+        form = await request.form()
+        raw_text = form.get("text")
+        if raw_text is not None:
+            text = str(raw_text)
+        uploads = form.getlist("files")
+        if uploads:
+            files = [item for item in uploads if isinstance(item, UploadFile)]
+
+    payload = await staff_send_message(thread_id, principal, text=text, files=files)
+    return JSONResponse(payload)
+
+
+@router.get("/staff/threads/{thread_id}/updates")
+async def api_staff_messages_updates(
+    thread_id: int,
+    since: Optional[str] = Query(default=None),
+    timeout: int = Query(default=25, ge=5, le=60),
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    since_dt = _parse_datetime_param(since)
+    payload = await staff_wait_message_updates(thread_id, principal, since=since_dt, timeout=timeout)
+    return JSONResponse(payload)
+
+
+@router.post("/staff/threads/{thread_id}/read")
+async def api_staff_mark_read(
+    thread_id: int,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    await staff_mark_read(thread_id, principal)
+    return JSONResponse({"ok": True})
+
+
+@router.get("/staff/attachments/{attachment_id}")
+async def api_staff_attachment(
+    attachment_id: int,
+    principal: Principal = Depends(require_principal),
+) -> FileResponse:
+    attachment = await staff_get_attachment(attachment_id, principal)
+    settings = get_settings()
+    base_dir = Path(settings.data_dir).resolve()
+    file_path = (base_dir / attachment.storage_path).resolve()
+    if not str(file_path).startswith(str(base_dir)):
+        raise HTTPException(status_code=403, detail={"message": "Нет доступа"})
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail={"message": "Файл не найден"})
+    return FileResponse(file_path, filename=attachment.filename, media_type=attachment.mime_type or "application/octet-stream")
+
+
+@router.get("/staff/threads/{thread_id}/members")
+async def api_staff_thread_members(
+    thread_id: int,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    members = await staff_list_thread_members(thread_id, principal)
+    return JSONResponse({"members": members})
+
+
+@router.post("/staff/threads/{thread_id}/members")
+async def api_staff_thread_members_add(
+    thread_id: int,
+    payload: StaffThreadMembersPayload,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    members = await staff_add_thread_members(
+        thread_id,
+        principal,
+        [m.model_dump() for m in payload.members],
+    )
+    return JSONResponse({"members": members})
+
+
+@router.delete("/staff/threads/{thread_id}/members/{member_type}/{member_id}")
+async def api_staff_thread_member_remove(
+    thread_id: int,
+    member_type: str,
+    member_id: int,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    members = await staff_remove_thread_member(thread_id, principal, member_type, member_id)
+    return JSONResponse({"members": members})
+
+
+@router.post("/staff/threads/{thread_id}/candidate")
+async def api_staff_candidate_task(
+    thread_id: int,
+    payload: StaffCandidateTaskPayload,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    message = await staff_send_candidate_task(thread_id, principal, payload.candidate_id, payload.note)
+    return JSONResponse(message)
+
+
+@router.post("/staff/messages/{message_id}/candidate/accept")
+async def api_staff_candidate_task_accept(
+    message_id: int,
+    payload: StaffCandidateDecisionPayload,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    message = await staff_decide_candidate_task(message_id, principal, "accepted", payload.comment)
+    return JSONResponse(message)
+
+
+@router.post("/staff/messages/{message_id}/candidate/decline")
+async def api_staff_candidate_task_decline(
+    message_id: int,
+    payload: StaffCandidateDecisionPayload,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    message = await staff_decide_candidate_task(message_id, principal, "declined", payload.comment)
+    return JSONResponse(message)
 
 
 @router.get("/dashboard/calendar")
@@ -389,6 +774,49 @@ async def api_dashboard_calendar(
     recruiter_id = principal.id if principal.type == "recruiter" else parse_optional_int(recruiter)
     snapshot = await dashboard_calendar_snapshot(target_date, days=days, recruiter_id=recruiter_id)
     return JSONResponse(snapshot)
+
+
+@router.get("/calendar/events")
+async def api_calendar_events(
+    start: str = Query(..., description="Start date ISO format (YYYY-MM-DD)"),
+    end: str = Query(..., description="End date ISO format (YYYY-MM-DD)"),
+    recruiter_id: Optional[int] = Query(default=None),
+    city_id: Optional[int] = Query(default=None),
+    status: Optional[List[str]] = Query(default=None),
+    principal: Principal = Depends(require_principal),
+):
+    """
+    Get calendar events in FullCalendar-compatible format.
+
+    Returns all slot statuses (FREE, PENDING, BOOKED, CONFIRMED) with colors.
+    """
+    try:
+        start_date = date_type.fromisoformat(start)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "invalid_start_date"}, status_code=400)
+
+    try:
+        end_date = date_type.fromisoformat(end)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "invalid_end_date"}, status_code=400)
+
+    # Validate date range (max 60 days)
+    if (end_date - start_date).days > 60:
+        return JSONResponse({"ok": False, "error": "date_range_too_large"}, status_code=400)
+
+    # For recruiters, filter to their own slots only
+    effective_recruiter_id = recruiter_id
+    if principal.type == "recruiter":
+        effective_recruiter_id = principal.id
+
+    result = await get_calendar_events(
+        start_date=start_date,
+        end_date=end_date,
+        recruiter_id=effective_recruiter_id,
+        city_id=city_id,
+        statuses=status,
+    )
+    return JSONResponse({"ok": True, **result})
 
 
 @router.get("/dashboard/funnel")
@@ -650,6 +1078,279 @@ async def api_slots(
     status_norm = status_filter(status)
     payload = await api_slots_payload(recruiter, status_norm, limit)
     return JSONResponse(payload)
+
+
+class SlotOutcomePayload(BaseModel):
+    outcome: str
+
+
+class SlotBookPayload(BaseModel):
+    candidate_tg_id: int
+    candidate_fio: Optional[str] = None
+
+
+class SlotReschedulePayload(BaseModel):
+    date: str
+    time: str
+    reason: Optional[str] = None
+
+
+class SlotsBulkPayload(BaseModel):
+    action: str
+    slot_ids: list[int]
+    force: Optional[bool] = None
+
+
+class PlanEntryPayload(BaseModel):
+    last_name: str
+
+
+def _format_time_for_message(dt: datetime, tz_label: str) -> str:
+    try:
+        zone = ZoneInfo(tz_label)
+    except Exception:
+        zone = ZoneInfo("Europe/Moscow")
+    return dt.astimezone(zone).strftime("%d.%m %H:%M")
+
+
+@router.post("/slots/{slot_id}/approve_booking")
+async def api_slot_approve(
+    slot_id: int,
+    request: Request,
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    ok, message, notified = await approve_slot_booking(slot_id, principal=principal)
+    status_code = 200 if ok else (404 if message and "не найден" in message.lower() else 400)
+    return JSONResponse({"ok": ok, "message": message, "bot_notified": notified}, status_code=status_code)
+
+
+@router.post("/slots/{slot_id}/reject_booking")
+async def api_slot_reject(
+    slot_id: int,
+    request: Request,
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    ok, message, notified = await reject_slot_booking(slot_id, principal=principal)
+    status_code = 200 if ok else (404 if message and "не найден" in message.lower() else 400)
+    return JSONResponse({"ok": ok, "message": message, "bot_notified": notified}, status_code=status_code)
+
+
+@router.post("/slots/{slot_id}/reschedule")
+async def api_slot_reschedule(
+    slot_id: int,
+    payload: SlotReschedulePayload,
+    request: Request,
+    bot_service: BotService = Depends(provide_bot_service),
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    async with async_session() as session:
+        slot = await session.scalar(
+            select(Slot)
+            .options(selectinload(Slot.recruiter))
+            .where(Slot.id == slot_id)
+        )
+        if not slot:
+            raise HTTPException(status_code=404, detail="Slot not found")
+        ensure_slot_scope(slot, principal)
+        if not getattr(slot, "candidate_tg_id", None) and not getattr(slot, "candidate_id", None):
+            return JSONResponse({"ok": False, "error": "no_candidate", "message": "Слот не привязан к кандидату"}, status_code=400)
+
+        slot_tz = getattr(slot.recruiter, "tz", None) if slot.recruiter else None
+        slot_tz = slot_tz or getattr(slot, "tz_name", None) or "Europe/Moscow"
+        dt_utc = recruiter_time_to_utc(payload.date, payload.time, slot_tz)
+        if not dt_utc:
+            return JSONResponse({"ok": False, "error": "invalid_datetime", "message": "Некорректная дата/время"}, status_code=400)
+
+        slot.start_utc = dt_utc
+        slot.status = SlotStatus.PENDING
+        await session.commit()
+
+        candidate = None
+        if getattr(slot, "candidate_id", None):
+            candidate = await session.scalar(select(User).where(User.candidate_id == slot.candidate_id))
+        if candidate is None and getattr(slot, "candidate_tg_id", None):
+            candidate = await session.scalar(select(User).where(User.telegram_id == slot.candidate_tg_id))
+
+    reason = sanitize_plain_text(payload.reason or "", max_length=400)
+    candidate_tz = getattr(slot, "candidate_tz", None) or slot_tz
+    recruiter_time = _format_time_for_message(dt_utc, slot_tz)
+    candidate_time = _format_time_for_message(dt_utc, candidate_tz)
+    lines = [
+        "Перенос встречи.",
+        f"Новое время: {candidate_time} ({candidate_tz})",
+    ]
+    if candidate_tz != slot_tz:
+        lines.append(f"Время рекрутёра: {recruiter_time} ({slot_tz})")
+    if reason:
+        lines.append(f"Причина: {reason}")
+    message_text = "\n".join(lines)
+
+    notified = False
+    if candidate is not None:
+        try:
+            await send_chat_message(
+                candidate.id,
+                text=message_text,
+                client_request_id=f"slot_reschedule_{slot_id}_{dt_utc.isoformat()}",
+                author_label=getattr(request.state, "admin_username", None) or principal.type,
+                bot_service=bot_service,
+            )
+            notified = True
+        except Exception:
+            notified = False
+
+    return JSONResponse({"ok": True, "message": "Слот перенесён", "bot_notified": notified})
+
+
+@router.post("/slots/{slot_id}/outcome")
+async def api_slot_outcome(
+    slot_id: int,
+    payload: SlotOutcomePayload,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    bot_service: BotService = Depends(provide_bot_service),
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    ok, message, stored, dispatch = await set_slot_outcome(
+        slot_id,
+        payload.outcome,
+        bot_service=bot_service,
+        principal=principal,
+    )
+    status_code = 200
+    bot_status = dispatch.status if dispatch is not None else "skipped:not_applicable"
+    if ok and dispatch and dispatch.plan is not None:
+        background_tasks.add_task(execute_bot_dispatch, dispatch.plan, stored or "", bot_service)
+    if not ok:
+        status_code = 404 if message and "не найден" in message.lower() else 400
+    response = JSONResponse({"ok": ok, "message": message, "outcome": stored}, status_code=status_code)
+    response.headers["X-Bot"] = bot_status
+    return response
+
+
+@router.post("/slots/{slot_id}/book")
+async def api_slot_book(
+    slot_id: int,
+    payload: SlotBookPayload,
+    request: Request,
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if slot is None:
+            raise HTTPException(status_code=404, detail="Slot not found")
+        ensure_slot_scope(slot, principal)
+
+        if norm_status(slot.status) != "FREE":
+            return JSONResponse({"ok": False, "error": "slot_not_free", "message": "Слот уже занят"}, status_code=400)
+
+        candidate = await session.scalar(select(User).where(User.telegram_id == payload.candidate_tg_id))
+        if candidate is None:
+            return JSONResponse({"ok": False, "error": "candidate_not_found", "message": "Кандидат не найден"}, status_code=404)
+
+        slot.candidate_tg_id = payload.candidate_tg_id
+        slot.candidate_fio = payload.candidate_fio or candidate.fio or ""
+        slot.candidate_tz = slot.tz_name
+        slot.status = SlotStatus.BOOKED
+        await session.commit()
+
+    return JSONResponse({
+        "ok": True,
+        "message": "Кандидат забронирован на слот",
+        "slot_id": slot_id,
+        "candidate_tg_id": payload.candidate_tg_id,
+    })
+
+
+@router.delete("/slots/{slot_id}")
+async def api_slot_delete(
+    slot_id: int,
+    request: Request,
+    force: bool = Query(default=False),
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    if principal.type == "recruiter":
+        async with async_session() as session:
+            slot = await session.get(Slot, slot_id)
+            if not slot:
+                return JSONResponse({"ok": False, "message": "Слот не найден"}, status_code=404)
+            ensure_slot_scope(slot, principal)
+            if norm_status(slot.status) != "FREE":
+                return JSONResponse({"ok": False, "message": "Удалять можно только свободные слоты"}, status_code=400)
+        force = False
+    ok, message = await delete_slot(slot_id, force=force, principal=principal)
+    if not ok:
+        status_code = 404 if message and "не найден" in message.lower() else 400
+        return JSONResponse({"ok": False, "message": message}, status_code=status_code)
+    return JSONResponse({"ok": True})
+
+
+@router.post("/slots/bulk")
+async def api_slots_bulk(
+    payload: SlotsBulkPayload,
+    request: Request,
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    action = (payload.action or "").lower()
+    slot_ids = payload.slot_ids or []
+    if not slot_ids:
+        return JSONResponse({"ok": False, "error": "no_slots"}, status_code=400)
+    if action == "delete":
+        deleted, failed = await bulk_delete_slots(slot_ids, force=bool(payload.force), principal=principal)
+        return JSONResponse({"ok": True, "deleted": deleted, "failed": failed})
+    if action == "remind":
+        scheduled, missing = await bulk_schedule_reminders(slot_ids, principal=principal)
+        return JSONResponse({"ok": True, "scheduled": scheduled, "missing": missing})
+    return JSONResponse({"ok": False, "error": "unsupported_action"}, status_code=400)
+
+
+@router.get("/recruiter-plan")
+async def api_recruiter_plan(principal: Principal = Depends(require_principal)):
+    if principal.type != "recruiter":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    payload = await get_recruiter_plan(principal.id)
+    return JSONResponse(payload)
+
+
+@router.post("/recruiter-plan/{city_id}/entries")
+async def api_recruiter_plan_add(
+    city_id: int,
+    payload: PlanEntryPayload,
+    request: Request,
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    if principal.type != "recruiter":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        entry = await add_recruiter_plan_entry(principal.id, city_id, payload.last_name)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="last_name is required")
+    except LookupError:
+        raise HTTPException(status_code=404, detail="City not found")
+    return JSONResponse(entry, status_code=201)
+
+
+@router.delete("/recruiter-plan/entries/{entry_id}")
+async def api_recruiter_plan_delete(
+    entry_id: int,
+    request: Request,
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    if principal.type != "recruiter":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    ok = await delete_recruiter_plan_entry(principal.id, entry_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return JSONResponse({"ok": True})
 
 
 @router.get("/templates")
@@ -954,9 +1655,16 @@ async def api_weekly_kpis(
     principal: Principal = Depends(require_principal),
 ):
     recruiter_id = parse_optional_int(recruiter) if principal.type == "admin" else None
-    return JSONResponse(
-        await get_weekly_kpis(company_tz, principal=principal, recruiter_id=recruiter_id)
-    )
+    try:
+        payload = await get_weekly_kpis(company_tz, principal=principal, recruiter_id=recruiter_id)
+    except Exception:
+        logger.exception(
+            "kpis.current.failed",
+            extra={"principal": getattr(principal, "type", None), "recruiter_id": recruiter_id},
+        )
+        payload = _empty_weekly_kpis(company_tz)
+        payload["error"] = "kpis_unavailable"
+    return JSONResponse(payload)
 
 
 @router.get("/kpis/history")
@@ -1051,6 +1759,26 @@ async def api_bot_integration_update(request: Request):
         "service_ready": bot_service.is_ready() if bot_service else False,
     }
     return JSONResponse(payload)
+
+
+@router.post("/bot/cities/refresh")
+async def api_bot_cities_refresh(
+    _: Principal = Depends(require_admin),
+    __: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    try:
+        from backend.apps.bot.city_registry import invalidate_candidate_cities_cache
+    except Exception:
+        return JSONResponse(
+            {"ok": False, "error": "bot_runtime_unavailable"}, status_code=503
+        )
+
+    try:
+        await invalidate_candidate_cities_cache()
+    except Exception as exc:  # pragma: no cover - defensive
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+    return JSONResponse({"ok": True})
 
 
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -1379,24 +2107,48 @@ async def api_schedule_slot(
     principal: Principal = Depends(require_principal),
 ):
     """Schedule a slot for an existing candidate (JSON API)."""
-    from backend.apps.admin_ui.services.candidates import get_candidate_detail
     from backend.apps.admin_ui.services.slots import (
         schedule_manual_candidate_slot,
         ManualSlotError,
     )
     from backend.core.time_utils import parse_form_datetime
     from backend.apps.admin_ui.timezones import DEFAULT_TZ
-    from backend.core.guards import ensure_candidate_scope
+    from backend.domain.repositories import find_city_by_plain_name
 
     data = await request.json()
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
 
-    detail = await get_candidate_detail(candidate_id, principal=principal)
-    if not detail:
-        raise HTTPException(status_code=404, detail={"message": "Candidate not found"})
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            raise HTTPException(status_code=404, detail={"message": "Кандидат не найден"})
+        if principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
+            rows = await session.execute(
+                select(recruiter_city_association.c.city_id)
+                .where(recruiter_city_association.c.recruiter_id == principal.id)
+            )
+            allowed_city_ids = {row[0] for row in rows}
+            candidate_city_id = data.get("city_id")
+            if candidate_city_id is not None:
+                try:
+                    candidate_city_id = int(candidate_city_id)
+                except (TypeError, ValueError):
+                    candidate_city_id = None
+            if candidate_city_id is None and user.city:
+                city_record = await find_city_by_plain_name(user.city)
+                candidate_city_id = getattr(city_record, "id", None)
+            if candidate_city_id is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"message": "У кандидата не указан город — назначение недоступно."},
+                )
+            if candidate_city_id not in allowed_city_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"message": "Кандидат из другого города — назначение недоступно."},
+                )
 
-    user = detail["user"]
     if not user.telegram_id:
         return JSONResponse({"ok": False, "error": "missing_telegram"}, status_code=400)
 

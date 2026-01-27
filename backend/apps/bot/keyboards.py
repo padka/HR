@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, List, Optional
 from zoneinfo import ZoneInfo
@@ -164,6 +165,33 @@ def kb_attendance_confirm(slot_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def _slot_assignment_payload(action: str, assignment_id: int, token: str) -> str:
+    # Compact JSON to stay within Telegram 64-byte callback limit.
+    payload = {"a": action, "i": assignment_id, "t": token}
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def kb_slot_assignment_offer(
+    assignment_id: int, *, confirm_token: str, reschedule_token: str
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Подтвердить",
+                    callback_data=_slot_assignment_payload("confirm", assignment_id, confirm_token),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔁 Другое время",
+                    callback_data=_slot_assignment_payload("reschedule", assignment_id, reschedule_token),
+                )
+            ],
+        ]
+    )
+
+
 __all__ = [
     "create_keyboard",
     "fmt_dt_local",
@@ -171,5 +199,6 @@ __all__ = [
     "kb_attendance_confirm",
     "kb_recruiters",
     "kb_slots_for_recruiter",
+    "kb_slot_assignment_offer",
     "kb_start",
 ]

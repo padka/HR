@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { RoleGuard } from '@/app/components/RoleGuard'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { apiFetch } from '@/api/client'
@@ -122,197 +123,187 @@ export function CandidatesPage() {
   ]
 
   return (
-    <div className="page">
-      <div className="glass panel">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <h1 className="title" style={{ margin: 0 }}>Кандидаты</h1>
+    <RoleGuard allow={['recruiter']}>
+      <div className="page">
+        <header className="glass glass--elevated page-header page-header--row">
+          <h1 className="title">Кандидаты</h1>
           <Link to="/app/candidates/new" className="ui-btn ui-btn--primary">+ Новый кандидат</Link>
-        </div>
-        <div className="action-row" style={{ alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
-          <input
-            placeholder="Поиск по ФИО, городу, TG..."
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-            style={{ minWidth: 200 }}
-          />
-          <select
-            value={status}
-            onChange={(e) => { setStatus(e.target.value); setPage(1) }}
-          >
-            {STATUS_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-          <select
-            value={pipeline}
-            onChange={(e) => { setPipeline(e.target.value); setPage(1) }}
-          >
-            {pipelineOptions.map((opt) => (
-              <option key={opt.slug} value={opt.slug}>{opt.label}</option>
-            ))}
-          </select>
-          <div className="action-row" style={{ gap: 6 }}>
-            <button className={`ui-btn ${view === 'list' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('list')}>
-              Список
-            </button>
-            <button className={`ui-btn ${view === 'kanban' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('kanban')}>
-              Канбан
-            </button>
-            <button className={`ui-btn ${view === 'calendar' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('calendar')}>
-              Календарь
-            </button>
-          </div>
-          <span className="subtitle">Всего: {total}</span>
-          <button className="ui-btn ui-btn--ghost" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Назад</button>
-          <span className="subtitle">{page} / {pagesTotal}</span>
-          <button className="ui-btn ui-btn--ghost" disabled={page >= pagesTotal} onClick={() => setPage(page + 1)}>Вперёд →</button>
-          <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}>
-            {[10, 20, 50, 100].map((v) => <option key={v} value={v}>{v} на стр.</option>)}
-          </select>
-        </div>
+        </header>
 
-        {isLoading && <p className="subtitle">Загрузка…</p>}
-        {isError && <p style={{ color: '#f07373' }}>Ошибка: {(error as Error).message}</p>}
-        {data && data.items.length === 0 && (
-          <p className="subtitle" style={{ marginTop: 16 }}>Кандидаты не найдены. Попробуйте изменить фильтры.</p>
-        )}
-        {view === 'calendar' && (
-          <div style={{ marginTop: 16, display: 'grid', gap: 12 }}>
-            <div className="action-row" style={{ gap: 12 }}>
-              <label style={{ display: 'grid', gap: 4 }}>
-                От
-                <input type="date" value={calendarFrom} onChange={(e) => setCalendarFrom(e.target.value)} />
-              </label>
-              <label style={{ display: 'grid', gap: 4 }}>
-                До
-                <input type="date" value={calendarTo} onChange={(e) => setCalendarTo(e.target.value)} />
-              </label>
+        <section className="glass page-section">
+          <div className="filter-bar">
+            <input
+              placeholder="Поиск по ФИО, городу, TG..."
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1) }}
+              className="filter-bar__search"
+            />
+            <select
+              value={status}
+              onChange={(e) => { setStatus(e.target.value); setPage(1) }}
+            >
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <select
+              value={pipeline}
+              onChange={(e) => { setPipeline(e.target.value); setPage(1) }}
+            >
+              {pipelineOptions.map((opt) => (
+                <option key={opt.slug} value={opt.slug}>{opt.label}</option>
+              ))}
+            </select>
+            <div className="view-toggle">
+              <button className={`ui-btn ui-btn--sm ${view === 'list' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('list')}>
+                Список
+              </button>
+              <button className={`ui-btn ui-btn--sm ${view === 'kanban' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('kanban')}>
+                Канбан
+              </button>
+              <button className={`ui-btn ui-btn--sm ${view === 'calendar' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('calendar')}>
+                Календарь
+              </button>
             </div>
-            {calendarDays.length === 0 && (
-              <p className="subtitle">Нет событий за выбранный период.</p>
-            )}
-            {calendarDays.length > 0 && (
-              <div style={{ display: 'grid', gap: 12 }}>
-                {calendarDays.map((day) => (
-                  <div key={day.date} className="glass" style={{ padding: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <strong>{day.label}</strong>
-                      <span className="subtitle">Событий: {day.events.length}</span>
-                    </div>
-                    <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
-                      {day.events.map((ev, idx) => (
-                        <div key={`${day.date}-${idx}`} className="glass" style={{ padding: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div>
-                            <div style={{ fontWeight: 600 }}>{ev.candidate?.fio || 'Кандидат'}</div>
-                            <div className="subtitle">
-                              {ev.candidate?.city || '—'} · {ev.candidate?.recruiter?.name || '—'}
-                            </div>
-                          </div>
-                          {ev.candidate?.id ? (
-                            <Link to="/app/candidates/$candidateId" params={{ candidateId: String(ev.candidate.id) }} className="action-link">
-                              Открыть →
-                            </Link>
-                          ) : (
-                            <span className="subtitle">—</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
-        )}
+          <div className="pagination">
+            <span className="pagination__info">Всего: {total}</span>
+            <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Назад</button>
+            <span className="pagination__info">{page} / {pagesTotal}</span>
+            <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page >= pagesTotal} onClick={() => setPage(page + 1)}>Вперёд →</button>
+            <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}>
+              {[10, 20, 50, 100].map((v) => <option key={v} value={v}>{v} на стр.</option>)}
+            </select>
+          </div>
 
-        {view === 'kanban' && (
-          <div style={{ marginTop: 16, overflowX: 'auto' }}>
-            <div style={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'minmax(260px, 1fr)', gap: 12 }}>
+          {isLoading && <p className="text-muted">Загрузка…</p>}
+          {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
+          {data && data.items.length === 0 && (
+            <div className="empty-state">
+              <p className="empty-state__text">Кандидаты не найдены. Попробуйте изменить фильтры.</p>
+            </div>
+          )}
+          {view === 'calendar' && (
+            <div className="page-section__content">
+              <div className="filter-bar">
+                <label className="form-group">
+                  <span className="form-group__label">От</span>
+                  <input type="date" value={calendarFrom} onChange={(e) => setCalendarFrom(e.target.value)} />
+                </label>
+                <label className="form-group">
+                  <span className="form-group__label">До</span>
+                  <input type="date" value={calendarTo} onChange={(e) => setCalendarTo(e.target.value)} />
+                </label>
+              </div>
+              {calendarDays.length === 0 && (
+                <div className="empty-state">
+                  <p className="empty-state__text">Нет событий за выбранный период.</p>
+                </div>
+              )}
+              {calendarDays.length > 0 && (
+                <div className="page-section__content">
+                  {calendarDays.map((day) => (
+                    <article key={day.date} className="glass glass--subtle list-item">
+                      <div className="list-item__header">
+                        <strong className="list-item__title">{day.label}</strong>
+                        <span className="text-muted">Событий: {day.events.length}</span>
+                      </div>
+                      <div className="page-section__content">
+                        {day.events.map((ev, idx) => (
+                          <div key={`${day.date}-${idx}`} className="glass glass--interactive list-item list-item--horizontal">
+                            <div>
+                              <div className="font-semibold">{ev.candidate?.fio || 'Кандидат'}</div>
+                              <div className="text-muted text-sm">
+                                {ev.candidate?.city || '—'} · {ev.candidate?.recruiter?.name || '—'}
+                              </div>
+                            </div>
+                            {ev.candidate?.id ? (
+                              <Link to="/app/candidates/$candidateId" params={{ candidateId: String(ev.candidate.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
+                                Открыть →
+                              </Link>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {view === 'kanban' && (
+            <div className="kanban">
               {kanbanColumns.map((col) => (
-                <div key={col.slug} className="glass" style={{ padding: 12, display: 'grid', gap: 10, minHeight: 220 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 600 }}>{col.icon ? `${col.icon} ` : ''}{col.label}</span>
-                    <span className="subtitle">{col.total ?? col.candidates.length}</span>
+                <article key={col.slug} className="glass kanban__column">
+                  <div className="kanban__header">
+                    <span className="kanban__title">{col.icon ? `${col.icon} ` : ''}{col.label}</span>
+                    <span className="kanban__count">{col.total ?? col.candidates.length}</span>
                   </div>
-                  <div style={{ display: 'grid', gap: 8 }}>
+                  <div className="kanban__cards">
                     {col.candidates.map((card) => (
-                      <div key={card.id} className="glass" style={{ padding: 10 }}>
-                        <div style={{ fontWeight: 600 }}>{card.fio || '—'}</div>
-                        <div className="subtitle">{card.city || '—'}</div>
-                        <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span className="subtitle">{card.recruiter?.name || '—'}</span>
-                          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(card.id) }} className="action-link">
+                      <div key={card.id} className="glass glass--interactive kanban__card">
+                        <div className="font-semibold">{card.fio || '—'}</div>
+                        <div className="text-muted text-sm">{card.city || '—'}</div>
+                        <div className="kanban__card-footer">
+                          <span className="text-muted text-sm">{card.recruiter?.name || '—'}</span>
+                          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(card.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
                             Открыть →
                           </Link>
                         </div>
                       </div>
                     ))}
                   </div>
-                </div>
+                </article>
               ))}
             </div>
-          </div>
-        )}
+          )}
 
-        {view === 'list' && data && data.items.length > 0 && (
-          <table className="table" style={{ marginTop: 10 }}>
-            <thead>
-              <tr>
-                <th>ФИО</th>
-                <th>Город</th>
-                <th>Статус</th>
-                <th>Рекрутёр</th>
-                <th>Telegram</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.map((c) => {
-                const tone = c.status?.tone
-                const statusStyle = {
-                  display: 'inline-block',
-                  padding: '2px 8px',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  background:
-                    tone === 'success' ? 'rgba(100, 200, 100, 0.15)' :
-                    tone === 'danger' ? 'rgba(240, 115, 115, 0.15)' :
-                    tone === 'warning' ? 'rgba(255, 200, 100, 0.15)' :
-                    'rgba(105, 183, 255, 0.1)',
-                  border: `1px solid ${
-                    tone === 'success' ? 'rgba(100, 200, 100, 0.3)' :
-                    tone === 'danger' ? 'rgba(240, 115, 115, 0.3)' :
-                    tone === 'warning' ? 'rgba(255, 200, 100, 0.3)' :
-                    'rgba(105, 183, 255, 0.2)'
-                  }`,
-                }
-                return (
-                  <tr key={c.id} className="glass">
-                    <td>
-                      <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} style={{ fontWeight: 600 }}>
-                        {c.fio || '—'}
-                      </Link>
-                    </td>
-                    <td>{c.city || '—'}</td>
-                    <td>
-                      <span style={statusStyle}>
-                        {c.status?.label || c.status?.slug || '—'}
-                      </span>
-                    </td>
-                    <td>{c.recruiter_name || '—'}</td>
-                    <td>
-                      {c.telegram_id ? (
-                        <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>
-                          {c.telegram_id}
-                        </a>
-                      ) : '—'}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
+          {view === 'list' && data && data.items.length > 0 && (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>ФИО</th>
+                  <th>Город</th>
+                  <th>Статус</th>
+                  <th>Рекрутёр</th>
+                  <th>Telegram</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((c) => {
+                  const tone = c.status?.tone
+                  return (
+                    <tr key={c.id}>
+                      <td>
+                        <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="font-semibold">
+                          {c.fio || '—'}
+                        </Link>
+                      </td>
+                      <td>{c.city || '—'}</td>
+                      <td>
+                        <span className={`status-badge status-badge--${tone || 'muted'}`}>
+                          {c.status?.label || c.status?.slug || '—'}
+                        </span>
+                      </td>
+                      <td>{c.recruiter_name || '—'}</td>
+                      <td>
+                        {c.telegram_id ? (
+                          <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="text-accent">
+                            {c.telegram_id}
+                          </a>
+                        ) : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </section>
       </div>
-    </div>
+    </RoleGuard>
   )
 }

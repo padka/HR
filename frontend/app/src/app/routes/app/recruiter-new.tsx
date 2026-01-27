@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { getTzPreview, validateRecruiterForm } from './recruiter-form'
 
 type City = { id: number; name: string; tz?: string | null }
 type TimezoneOption = { value: string; label: string; region?: string; offset?: string }
@@ -18,7 +19,7 @@ export function RecruiterNewPage() {
     queryFn: () => apiFetch('/timezones'),
   })
 
-  const [form, setForm] = useState({
+  const initialForm = useRef({
     name: '',
     tz: 'Europe/Moscow',
     tg_chat_id: '',
@@ -27,24 +28,23 @@ export function RecruiterNewPage() {
     city_ids: [] as number[],
   })
 
+  const [form, setForm] = useState(initialForm.current)
   const [citySearch, setCitySearch] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
-  const [fieldError, setFieldError] = useState<{ name?: string; tz?: string; tg_chat_id?: string; telemost_url?: string }>({})
+  const [fieldError, setFieldError] = useState<{
+    name?: string
+    tz?: string
+    tg_chat_id?: string
+    telemost_url?: string
+  }>({})
 
   const mutation = useMutation({
     mutationFn: async () => {
       setFormError(null)
       setFieldError({})
-      if (!form.name.trim()) {
-        setFieldError({ name: 'Укажите имя' })
-        throw new Error('invalid_form')
-      }
-      if (!form.tz.trim()) {
-        setFieldError({ tz: 'Укажите часовой пояс' })
-        throw new Error('invalid_form')
-      }
-      if (form.tg_chat_id && Number.isNaN(Number(form.tg_chat_id))) {
-        setFieldError({ tg_chat_id: 'TG chat ID должен быть числом' })
+      const validation = validateRecruiterForm(form)
+      if (!validation.valid) {
+        setFieldError(validation.errors)
         throw new Error('invalid_form')
       }
       const payload = {
@@ -77,24 +77,24 @@ export function RecruiterNewPage() {
       setFormError(message)
     },
   })
+  const isSaving = mutation.isPending
 
   const cityList = useMemo(() => cities || [], [cities])
-
   const filteredCities = useMemo(() => {
     const term = citySearch.toLowerCase().trim()
     if (!term) return cityList
-    return cityList.filter(c =>
+    return cityList.filter((c) =>
       c.name.toLowerCase().includes(term) ||
       (c.tz && c.tz.toLowerCase().includes(term))
     )
   }, [cityList, citySearch])
 
   const toggleCity = (id: number) => {
-    setForm(prev => ({
+    setForm((prev) => ({
       ...prev,
       city_ids: prev.city_ids.includes(id)
-        ? prev.city_ids.filter(x => x !== id)
-        : [...prev.city_ids, id]
+        ? prev.city_ids.filter((x) => x !== id)
+        : [...prev.city_ids, id],
     }))
   }
 
@@ -107,192 +107,252 @@ export function RecruiterNewPage() {
   }, [timezones, form.tz])
 
   const selectedCount = form.city_ids.length
-  const counterText = selectedCount === 0 ? '0 выбрано' : selectedCount === 1 ? '1 выбран' : `${selectedCount} выбрано`
+  const counterText =
+    selectedCount === 0 ? '0 выбрано' : selectedCount === 1 ? '1 выбран' : `${selectedCount} выбрано`
+
+  const initials = useMemo(() => {
+    const parts = (form.name || '').trim().split(/\s+/)
+    if (!parts[0]) return 'R'
+    const first = parts[0][0] || ''
+    const second = parts[1]?.[0] || ''
+    return (first + second).toUpperCase() || 'R'
+  }, [form.name])
+
+  const isDirty = useMemo(() => {
+    const base = initialForm.current
+    return (
+      base.name !== form.name ||
+      base.tz !== form.tz ||
+      base.tg_chat_id !== form.tg_chat_id ||
+      base.telemost_url !== form.telemost_url ||
+      base.active !== form.active ||
+      base.city_ids.join(',') !== form.city_ids.join(',')
+    )
+  }, [form])
+
+  const selectedCities = useMemo(() => {
+    return cityList.filter((city) => form.city_ids.includes(city.id))
+  }, [cityList, form.city_ids])
+  const tzPreview = useMemo(() => getTzPreview(form.tz), [form.tz])
 
   return (
     <RoleGuard allow={['admin']}>
-      <div className="page">
-        <div className="glass panel" style={{ display: 'grid', gap: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+      <div className="page recruiter-edit">
+        <div className="glass panel recruiter-edit__panel">
+          <div className="recruiter-edit__header">
             <div>
+              <Link to="/app/recruiters" className="glass action-link">← К списку рекрутёров</Link>
               <h1 className="title">Новый рекрутёр</h1>
-              <p className="subtitle">Создайте запись, чтобы бот мог назначать встречи.</p>
+              <p className="subtitle">Создайте профиль и подключите его к городам и слотам.</p>
             </div>
-            <Link to="/app/recruiters" className="glass action-link">← Назад</Link>
-          </div>
-
-          {/* Basic info section */}
-          <div className="glass" style={{ padding: 16 }}>
-            <h3 style={{ marginBottom: 12 }}>Основные данные</h3>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-              <label style={{ display: 'grid', gap: 6 }}>
-                <span>Имя <span style={{ color: 'var(--accent)' }}>*</span></span>
-                <input
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="Например: Анна Соколова"
-                  required
-                />
-                {fieldError.name && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.name}</span>}
-              </label>
-
-              <label style={{ display: 'grid', gap: 6 }}>
-                <span>Регион <span style={{ color: 'var(--accent)' }}>*</span></span>
-                <select value={form.tz} onChange={(e) => setForm({ ...form, tz: e.target.value })} required>
-                  {tzOptions.map((tz) => (
-                    <option key={tz.value} value={tz.value}>{tz.label}</option>
-                  ))}
-                </select>
-                <span className="subtitle" style={{ fontSize: 11 }}>Определяет локальное время при создании слотов</span>
-                {fieldError.tz && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.tz}</span>}
-              </label>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={form.active}
-                  onChange={(e) => setForm({ ...form, active: e.target.checked })}
-                />
-                <span>Активен</span>
-              </label>
-              <span className="subtitle" style={{ fontSize: 11 }}>Неактивные рекрутёры скрываются из расписаний</span>
+            <div className="recruiter-edit__header-actions">
+              {isDirty && <span className="badge badge--soft">Есть несохранённые изменения</span>}
+              <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={isSaving}>
+                {isSaving ? 'Сохраняем…' : 'Создать'}
+              </button>
             </div>
           </div>
 
-          {/* Contacts section */}
-          <div className="glass" style={{ padding: 16 }}>
-            <h3 style={{ marginBottom: 12 }}>Контакты</h3>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-              <label style={{ display: 'grid', gap: 6 }}>
-                <span>Ссылка на Телемост</span>
-                <input
-                  type="url"
-                  value={form.telemost_url}
-                  onChange={(e) => setForm({ ...form, telemost_url: e.target.value })}
-                  placeholder="https://telemost.yandex.ru/j/XXXXX"
-                />
-                {fieldError.telemost_url && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.telemost_url}</span>}
-              </label>
-
-              <label style={{ display: 'grid', gap: 6 }}>
-                <span>Telegram chat_id</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={form.tg_chat_id}
-                  onChange={(e) => setForm({ ...form, tg_chat_id: e.target.value })}
-                  placeholder="Например: 7588303412"
-                />
-                <span className="subtitle" style={{ fontSize: 11 }}>Только цифры; можно оставить пустым</span>
-                {fieldError.tg_chat_id && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.tg_chat_id}</span>}
-              </label>
+          <div className="glass recruiter-edit__hero">
+            <div className="recruiter-edit__hero-main">
+              <div className="recruiter-avatar is-away" aria-hidden="true">
+                {initials}
+              </div>
+              <div>
+                <p className="subtitle">Новый рекрутёр</p>
+                <h2 className="recruiter-edit__name">{form.name || 'Без имени'}</h2>
+                <div className="recruiter-edit__meta">
+                  <span className="chip">{form.tz}</span>
+                  <span className="chip">Черновик</span>
+                </div>
+              </div>
+            </div>
+            <div className="recruiter-edit__hero-stats">
+              <div className="recruiter-edit__stat">
+                <span>Города</span>
+                <strong>{selectedCount}</strong>
+              </div>
+              <div className="recruiter-edit__stat">
+                <span>Telegram</span>
+                <strong>{form.tg_chat_id ? 'Подключен' : '—'}</strong>
+              </div>
+              <div className="recruiter-edit__stat">
+                <span>Статус</span>
+                <strong>{form.active ? 'Активен' : 'Отключен'}</strong>
+              </div>
             </div>
           </div>
 
-          {/* Cities section */}
-          <div className="glass" style={{ padding: 16 }}>
-            <h3 style={{ marginBottom: 4 }}>Ответственные города</h3>
-            <p className="subtitle" style={{ marginBottom: 12 }}>Выберите один или несколько городов</p>
-
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-              <input
-                type="search"
-                placeholder="Поиск города"
-                value={citySearch}
-                onChange={(e) => setCitySearch(e.target.value)}
-                style={{ flex: 1, minWidth: 180 }}
-              />
-              <span
-                style={{
-                  background: 'var(--accent)',
-                  color: 'white',
-                  padding: '6px 12px',
-                  borderRadius: 16,
-                  fontSize: 14,
-                  fontWeight: 600,
-                  minWidth: 70,
-                  textAlign: 'center'
-                }}
-              >
-                {counterText}
-              </span>
-            </div>
-
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                gap: 8,
-                maxHeight: 300,
-                overflowY: 'auto',
-                padding: 4
-              }}
-            >
-              {filteredCities.map(city => {
-                const selected = form.city_ids.includes(city.id)
-                return (
-                  <label
-                    key={city.id}
-                    style={{
-                      display: 'grid',
-                      gap: 2,
-                      padding: '10px 12px',
-                      borderRadius: 8,
-                      cursor: 'pointer',
-                      background: selected ? 'rgba(105, 183, 255, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                      border: selected ? '2px solid var(--accent)' : '2px solid transparent',
-                      position: 'relative',
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
+          <div className="recruiter-edit__grid">
+            <div className="recruiter-edit__main">
+              <div className="glass recruiter-edit__section">
+                <div className="recruiter-edit__section-header">
+                  <div>
+                    <h3>Основные данные</h3>
+                    <p className="subtitle">Имя и рабочий регион для расчёта локального времени.</p>
+                  </div>
+                  <label className="recruiter-edit__toggle">
                     <input
                       type="checkbox"
-                      checked={selected}
-                      onChange={() => toggleCity(city.id)}
-                      style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
+                      checked={form.active}
+                      disabled={isSaving}
+                      onChange={(e) => setForm({ ...form, active: e.target.checked })}
                     />
-                    {selected && (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          top: 6,
-                          right: 6,
-                          width: 18,
-                          height: 18,
-                          borderRadius: 4,
-                          background: 'var(--accent)',
-                          color: 'white',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 12,
-                          fontWeight: 'bold'
-                        }}
-                      >
-                        ✓
-                      </span>
-                    )}
-                    <span style={{ fontWeight: 500 }}>{city.name}</span>
-                    <span className="subtitle" style={{ fontSize: 11 }}>{city.tz || '—'}</span>
+                    <span>{form.active ? 'Активен' : 'Отключен'}</span>
                   </label>
-                )
-              })}
+                </div>
+                <div className="recruiter-edit__fields">
+                  <label className="recruiter-edit__field">
+                    <span>Имя <span className="required">*</span></span>
+                    <input
+                      value={form.name}
+                      disabled={isSaving}
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
+                      placeholder="Например: Анна Соколова"
+                      required
+                    />
+                    {fieldError.name && <span className="field-error">{fieldError.name}</span>}
+                  </label>
+                  <label className="recruiter-edit__field">
+                    <span>Регион <span className="required">*</span></span>
+                    <select value={form.tz} onChange={(e) => setForm({ ...form, tz: e.target.value })} required disabled={isSaving}>
+                      {tzOptions.map((tz) => (
+                        <option key={tz.value} value={tz.value}>{tz.label}</option>
+                      ))}
+                    </select>
+                    <span className="subtitle">
+                      Определяет локальное время при создании слотов.
+                      {tzPreview && ` Сейчас: ${tzPreview}`}
+                    </span>
+                    {fieldError.tz && <span className="field-error">{fieldError.tz}</span>}
+                  </label>
+                </div>
+              </div>
+
+              <div className="glass recruiter-edit__section">
+                <div className="recruiter-edit__section-header">
+                  <div>
+                    <h3>Контакты</h3>
+                    <p className="subtitle">Телемост и chat_id для интеграции с ботом.</p>
+                  </div>
+                </div>
+                <div className="recruiter-edit__fields">
+                  <label className="recruiter-edit__field">
+                    <span>Ссылка на Телемост</span>
+                      <input
+                        type="url"
+                        value={form.telemost_url}
+                        disabled={isSaving}
+                        onChange={(e) => setForm({ ...form, telemost_url: e.target.value })}
+                        placeholder="https://telemost.yandex.ru/j/XXXXX"
+                      />
+                    {fieldError.telemost_url && <span className="field-error">{fieldError.telemost_url}</span>}
+                  </label>
+
+                  <label className="recruiter-edit__field">
+                    <span>Telegram chat_id</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={form.tg_chat_id}
+                        disabled={isSaving}
+                        onChange={(e) => setForm({ ...form, tg_chat_id: e.target.value })}
+                        placeholder="Например: 7588303412"
+                      />
+                    <span className="subtitle">Только цифры; можно оставить пустым.</span>
+                    {fieldError.tg_chat_id && <span className="field-error">{fieldError.tg_chat_id}</span>}
+                  </label>
+                </div>
+              </div>
+
+              <div className="glass recruiter-edit__section">
+                <div className="recruiter-edit__section-header">
+                  <div>
+                    <h3>Ответственные города</h3>
+                    <p className="subtitle">Выберите города, где рекрутёр работает с кандидатами.</p>
+                  </div>
+                  <span className="recruiter-edit__counter">{counterText}</span>
+                </div>
+
+                <div className="recruiter-edit__search">
+                  <input
+                    type="search"
+                    placeholder="Поиск города"
+                    value={citySearch}
+                    disabled={isSaving}
+                    onChange={(e) => setCitySearch(e.target.value)}
+                  />
+                  <button
+                    className="ui-btn ui-btn--ghost"
+                    onClick={() => setForm((prev) => ({ ...prev, city_ids: [] }))}
+                    disabled={isSaving}
+                    type="button"
+                  >
+                    Очистить
+                  </button>
+                </div>
+
+                <div className="recruiter-edit__chips">
+                  {selectedCities.length === 0 && (
+                    <span className="subtitle">Города пока не выбраны</span>
+                  )}
+                  {selectedCities.slice(0, 6).map((city) => (
+                    <span key={city.id} className="chip chip--soft">{city.name}</span>
+                  ))}
+                  {selectedCities.length > 6 && (
+                    <span className="chip chip--soft">+{selectedCities.length - 6}</span>
+                  )}
+                </div>
+
+                <div className="recruiter-edit__cities">
+                  {filteredCities.map(city => {
+                    const selected = form.city_ids.includes(city.id)
+                    return (
+                      <label key={city.id} className={`recruiter-edit__city ${selected ? 'is-selected' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={isSaving}
+                        onChange={() => toggleCity(city.id)}
+                      />
+                        <span>{city.name}</span>
+                        <small>{city.tz || '—'}</small>
+                      </label>
+                    )
+                  })}
+                </div>
+
+                {filteredCities.length === 0 && (
+                  <p className="subtitle" style={{ marginTop: 8 }}>Совпадений не найдено</p>
+                )}
+              </div>
             </div>
 
-            {filteredCities.length === 0 && (
-              <p className="subtitle" style={{ marginTop: 8 }}>Совпадений не найдено</p>
-            )}
-
-            <p className="subtitle" style={{ marginTop: 12, fontSize: 12 }}>
-              💡 Совет: используйте поиск или кликайте по карточкам для выбора
-            </p>
+            <aside className="recruiter-edit__aside">
+              <div className="glass recruiter-edit__section recruiter-edit__aside-card">
+                <h3>Сводка</h3>
+                <p className="subtitle">Проверьте данные перед сохранением.</p>
+                <div className="recruiter-edit__list">
+                  <div>Города: {selectedCount}</div>
+                  <div>Телемост: {form.telemost_url ? 'подключен' : 'нет ссылки'}</div>
+                  <div>Telegram: {form.tg_chat_id ? 'подключен' : 'нет chat_id'}</div>
+                  <div>Статус: {form.active ? 'активен' : 'отключен'}</div>
+                </div>
+              </div>
+            </aside>
           </div>
 
-          <div className="action-row">
-            <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-              {mutation.isPending ? 'Сохраняем…' : 'Создать'}
+          <div className="action-row recruiter-edit__actions">
+            <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={isSaving}>
+              {isSaving ? 'Сохраняем…' : 'Создать'}
+            </button>
+            <button
+              className="ui-btn ui-btn--ghost"
+              onClick={() => setForm(initialForm.current)}
+              disabled={!isDirty || isSaving}
+              type="button"
+            >
+              Сбросить
             </button>
             <Link to="/app/recruiters" className="ui-btn ui-btn--ghost">Отмена</Link>
           </div>

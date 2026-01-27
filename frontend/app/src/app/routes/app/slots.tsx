@@ -494,7 +494,7 @@ export function SlotsPage() {
   return (
     <RoleGuard allow={['recruiter']}>
       <div className="page">
-        <header className="glass glass--elevated page-header page-header--row">
+        <section className="glass glass--elevated page-header page-header--row">
           <div>
             <h1 className="title">Слоты</h1>
             <div className="slots-summary" role="group" aria-label="Сводка слотов">

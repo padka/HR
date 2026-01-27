@@ -123,13 +123,19 @@ class NotificationBroker(NotificationBrokerProtocol):
     async def read(self, *, count: int, block_ms: int) -> List[BrokerMessage]:
         if self._closed:
             return []
-        response = await self._redis.xreadgroup(
-            groupname=self._group,
-            consumername=self._consumer,
-            streams={self._stream_key: ">"},
-            count=count,
-            block=block_ms,
-        )
+        try:
+            response = await self._redis.xreadgroup(
+                groupname=self._group,
+                consumername=self._consumer,
+                streams={self._stream_key: ">"},
+                count=count,
+                block=block_ms,
+            )
+        except ResponseError as exc:
+            if "NOGROUP" in str(exc):
+                await self.start()
+                return []
+            raise
         if not response:
             return []
         messages: List[BrokerMessage] = []

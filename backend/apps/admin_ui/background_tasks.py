@@ -3,6 +3,7 @@
 This module contains periodic tasks that run in the background:
 - Stalled candidate detection (marks candidates waiting >24h for slots)
 - Hourly digest of waiting candidates for recruiters
+- Cleanup of past free slots (auto-removal once time has passed)
 """
 
 import asyncio
@@ -24,6 +25,7 @@ from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import City, Recruiter
 from backend.domain.repositories import get_active_recruiters_for_city
 from backend.domain.candidate_status_service import CandidateStatusService
+from backend.apps.admin_ui.services.slots import delete_past_free_slots
 
 logger = logging.getLogger(__name__)
 _candidate_status_service = CandidateStatusService()
@@ -168,4 +170,58 @@ async def periodic_stalled_candidate_checker(
             await asyncio.sleep(interval_hours * 3600)
         except asyncio.CancelledError:
             logger.info("Stalled candidate checker cancelled during sleep")
+            raise
+
+
+@resilient_task(
+    task_name="periodic_past_free_slot_cleanup",
+    retry_on_error=True,
+    retry_delay=300.0,
+    log_errors=True,
+)
+async def periodic_past_free_slot_cleanup(
+    interval_minutes: int = 5,
+    grace_minutes: int = 0,
+    *,
+    app: Optional[FastAPI] = None,
+) -> None:
+    """Remove FREE slots once their end time is in the past."""
+    logger.info(
+        "Started past free slot cleanup (interval: %dm, grace: %dm)",
+        interval_minutes,
+        grace_minutes,
+    )
+    last_db_warning = 0.0
+    warning_interval = 600.0
+
+    while True:
+        try:
+            if app is not None and not getattr(app.state, "db_available", True):
+                now = time.monotonic()
+                if now - last_db_warning >= warning_interval:
+                    logger.warning("DB unavailable, slot cleanup paused")
+                    last_db_warning = now
+                await asyncio.sleep(min(warning_interval, interval_minutes * 60))
+                continue
+
+            deleted, total = await delete_past_free_slots(grace_minutes=grace_minutes)
+            if app is not None:
+                app.state.db_available = True
+            if deleted > 0:
+                logger.info("Deleted %d past free slots (checked=%d)", deleted, total)
+        except asyncio.CancelledError:
+            logger.info("Past free slot cleanup cancelled, shutting down")
+            raise
+        except Exception as exc:
+            if app is not None:
+                app.state.db_available = False
+            now = time.monotonic()
+            if now - last_db_warning >= warning_interval:
+                logger.warning("Past free slot cleanup skipped due to DB error: %s", exc)
+                last_db_warning = now
+
+        try:
+            await asyncio.sleep(interval_minutes * 60)
+        except asyncio.CancelledError:
+            logger.info("Past free slot cleanup cancelled during sleep")
             raise

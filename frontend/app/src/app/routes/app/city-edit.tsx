@@ -43,7 +43,7 @@ function formatTimeInTz(tz: string): string {
 }
 
 export function CityEditPage() {
-  const params = useParams({ from: 'cityEdit' })
+  const params = useParams({ from: '/app/cities/$cityId/edit' })
   const cityId = Number(params.cityId)
   const navigate = useNavigate()
 

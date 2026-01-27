@@ -32,7 +32,7 @@ from backend.core.dependencies import get_async_session
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/webapp", tags=["webapp"])
+router = APIRouter(tags=["webapp"])
 
 
 def _safe_text(sql: str, params: tuple[str, ...]):
@@ -141,13 +141,13 @@ async def get_me(
     query = _safe_text(
         """
         SELECT
-            c.id as candidate_id,
-            c.city_id,
+            u.id as candidate_id,
+            ci.id as city_id,
             ci.name as city_name,
-            c.status
-        FROM candidates c
-        LEFT JOIN cities ci ON c.city_id = ci.id
-        WHERE c.telegram_id = :telegram_id
+            u.candidate_status
+        FROM users u
+        LEFT JOIN cities ci ON LOWER(ci.name) = LOWER(u.city)
+        WHERE u.telegram_id = :telegram_id
         LIMIT 1
         """,
         ("telegram_id",),
@@ -279,7 +279,13 @@ async def create_booking(
     """
     # Get candidate_id from telegram_id
     candidate_query = _safe_text(
-        "SELECT id, city_id FROM candidates WHERE telegram_id = :telegram_id LIMIT 1",
+        """
+        SELECT u.id, u.candidate_id, ci.id
+        FROM users u
+        LEFT JOIN cities ci ON LOWER(ci.name) = LOWER(u.city)
+        WHERE u.telegram_id = :telegram_id
+        LIMIT 1
+        """,
         ("telegram_id",),
     )
     candidate_result = await session.execute(candidate_query, {"telegram_id": user.user_id})
@@ -291,7 +297,7 @@ async def create_booking(
             detail="Candidate not found. Please complete registration first.",
         )
 
-    candidate_id, candidate_city_id = candidate_row
+    candidate_id, candidate_uuid, candidate_city_id = candidate_row
 
     # Check if slot is available
     slot_query = _safe_text(
@@ -330,32 +336,13 @@ async def create_booking(
     except SlotStatusTransitionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    # Create booking
-    booking_query = _safe_text(
-        """
-        INSERT INTO bookings (candidate_id, slot_id, recruiter_id, status, created_at)
-        VALUES (:candidate_id, :slot_id, :recruiter_id, 'pending', :created_at)
-        RETURNING id
-        """,
-        ("candidate_id", "slot_id", "recruiter_id", "created_at"),
-    )
-
-    booking_result = await session.execute(
-        booking_query,
-        {
-            "candidate_id": candidate_id,
-            "slot_id": slot_id,
-            "recruiter_id": recruiter_id,
-            "created_at": now_utc,
-        },
-    )
-    booking_id = booking_result.fetchone()[0]
-
     # Mark slot as booked (status-based) and attach candidate info
+    effective_city_id = candidate_city_id or slot_city_id
     update_slot_query = _safe_text(
         """
         UPDATE slots
         SET status = :status_pending,
+            candidate_id = :candidate_uuid,
             candidate_tg_id = :candidate_tg_id,
             candidate_city_id = :candidate_city_id,
             candidate_fio = :candidate_fio,
@@ -363,21 +350,31 @@ async def create_booking(
             updated_at = :updated_at
         WHERE id = :slot_id
         """,
-        ("status_pending", "candidate_tg_id", "candidate_city_id", "candidate_fio", "updated_at", "slot_id"),
+        (
+            "status_pending",
+            "candidate_uuid",
+            "candidate_tg_id",
+            "candidate_city_id",
+            "candidate_fio",
+            "updated_at",
+            "slot_id",
+        ),
     )
     await session.execute(
         update_slot_query,
         {
             "slot_id": slot_id,
             "status_pending": next_status,
+            "candidate_uuid": candidate_uuid,
             "candidate_tg_id": user.user_id,
-            "candidate_city_id": candidate_city_id,
+            "candidate_city_id": effective_city_id,
             "candidate_fio": user.full_name,
             "updated_at": now_utc,
         },
     )
 
     await session.commit()
+    booking_id = slot_id
 
     # Log analytics event
     await analytics.log_slot_booked(
@@ -423,7 +420,13 @@ async def reschedule_booking(
     """
     # Get candidate_id
     candidate_query = _safe_text(
-        "SELECT id, city_id FROM candidates WHERE telegram_id = :telegram_id LIMIT 1",
+        """
+        SELECT u.id, u.candidate_id, ci.id
+        FROM users u
+        LEFT JOIN cities ci ON LOWER(ci.name) = LOWER(u.city)
+        WHERE u.telegram_id = :telegram_id
+        LIMIT 1
+        """,
         ("telegram_id",),
     )
     candidate_result = await session.execute(candidate_query, {"telegram_id": user.user_id})
@@ -432,43 +435,30 @@ async def reschedule_booking(
     if not candidate_row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
-    candidate_id, candidate_city_id = candidate_row
+    candidate_id, candidate_uuid, candidate_city_id = candidate_row
 
-    # Check if booking belongs to user
-    booking_query = _safe_text(
-        """
-        SELECT id, slot_id FROM bookings
-        WHERE id = :booking_id AND candidate_id = :candidate_id
-        FOR UPDATE
-        """,
-        ("booking_id", "candidate_id"),
-    )
-    booking_result = await session.execute(
-        booking_query,
-        {"booking_id": request.booking_id, "candidate_id": candidate_id},
-    )
-    booking_row = booking_result.fetchone()
-
-    if not booking_row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Booking not found or does not belong to you",
-        )
-
-    old_slot_id = booking_row[1]
+    old_slot_id = request.booking_id
 
     # Load current status of the old slot to validate transition to FREE
     old_slot_query = _safe_text(
         """
         SELECT status FROM slots
-        WHERE id = :slot_id
+        WHERE id = :slot_id AND candidate_tg_id = :telegram_id
         FOR UPDATE
         """,
-        ("slot_id",),
+        ("slot_id", "telegram_id"),
     )
-    old_slot_result = await session.execute(old_slot_query, {"slot_id": old_slot_id})
+    old_slot_result = await session.execute(
+        old_slot_query,
+        {"slot_id": old_slot_id, "telegram_id": user.user_id},
+    )
     old_slot_row = old_slot_result.fetchone()
-    old_slot_status = (old_slot_row[0] if old_slot_row else None) if old_slot_row else None
+    if not old_slot_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Booking not found or does not belong to you",
+        )
+    old_slot_status = old_slot_row[0]
 
     # Check if new slot is available
     new_slot_query = _safe_text(
@@ -507,32 +497,14 @@ async def reschedule_booking(
             detail=str(exc),
         ) from exc
 
-    # Update booking
     now_utc = datetime.now(timezone.utc)
-
-    update_booking_query = _safe_text(
-        """
-        UPDATE bookings
-        SET slot_id = :new_slot_id, recruiter_id = :recruiter_id, updated_at = :updated_at
-        WHERE id = :booking_id
-        """,
-        ("new_slot_id", "recruiter_id", "updated_at", "booking_id"),
-    )
-    await session.execute(
-        update_booking_query,
-        {
-            "booking_id": request.booking_id,
-            "new_slot_id": new_slot_id,
-            "recruiter_id": recruiter_id,
-            "updated_at": now_utc,
-        },
-    )
 
     # Free old slot
     free_old_slot_query = _safe_text(
         """
         UPDATE slots
         SET status = :status_free,
+            candidate_id = NULL,
             candidate_tg_id = NULL,
             candidate_city_id = NULL,
             candidate_fio = NULL,
@@ -548,10 +520,12 @@ async def reschedule_booking(
     )
 
     # Book new slot
+    effective_city_id = candidate_city_id or new_slot_city_id
     book_new_slot_query = _safe_text(
         """
         UPDATE slots
         SET status = :status_pending,
+            candidate_id = :candidate_uuid,
             candidate_tg_id = :candidate_tg_id,
             candidate_city_id = :candidate_city_id,
             candidate_fio = :candidate_fio,
@@ -559,15 +533,24 @@ async def reschedule_booking(
             updated_at = :updated_at
         WHERE id = :slot_id
         """,
-        ("status_pending", "candidate_tg_id", "candidate_city_id", "candidate_fio", "updated_at", "slot_id"),
+        (
+            "status_pending",
+            "candidate_uuid",
+            "candidate_tg_id",
+            "candidate_city_id",
+            "candidate_fio",
+            "updated_at",
+            "slot_id",
+        ),
     )
     await session.execute(
         book_new_slot_query,
         {
             "slot_id": new_slot_id,
             "status_pending": new_status,
+            "candidate_uuid": candidate_uuid,
             "candidate_tg_id": user.user_id,
-            "candidate_city_id": candidate_city_id,
+            "candidate_city_id": effective_city_id,
             "candidate_fio": user.full_name,
             "updated_at": now_utc,
         },
@@ -579,14 +562,14 @@ async def reschedule_booking(
     await analytics.log_slot_rescheduled(
         user_id=user.user_id,
         candidate_id=candidate_id,
-        old_booking_id=request.booking_id,
-        new_booking_id=request.booking_id,
+        old_booking_id=old_slot_id,
+        new_booking_id=new_slot_id,
         new_slot_id=new_slot_id,
         metadata={"old_slot_id": old_slot_id, "source": "webapp"},
     )
 
     return BookingInfo(
-        booking_id=request.booking_id,
+        booking_id=new_slot_id,
         slot_id=new_slot_id,
         candidate_id=candidate_id,
         recruiter_name=recruiter_name,
@@ -616,7 +599,12 @@ async def cancel_booking(
     """
     # Get candidate_id
     candidate_query = _safe_text(
-        "SELECT id FROM candidates WHERE telegram_id = :telegram_id LIMIT 1",
+        """
+        SELECT u.id
+        FROM users u
+        WHERE u.telegram_id = :telegram_id
+        LIMIT 1
+        """,
         ("telegram_id",),
     )
     candidate_result = await session.execute(candidate_query, {"telegram_id": user.user_id})
@@ -627,41 +615,27 @@ async def cancel_booking(
 
     candidate_id = candidate_row[0]
 
-    # Check if booking belongs to user
-    booking_query = _safe_text(
-        """
-        SELECT id, slot_id FROM bookings
-        WHERE id = :booking_id AND candidate_id = :candidate_id
-        FOR UPDATE
-        """,
-        ("booking_id", "candidate_id"),
-    )
-    booking_result = await session.execute(
-        booking_query,
-        {"booking_id": request.booking_id, "candidate_id": candidate_id},
-    )
-    booking_row = booking_result.fetchone()
-
-    if not booking_row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Booking not found or does not belong to you",
-        )
-
-    slot_id = booking_row[1]
+    slot_id = request.booking_id
 
     # Load slot status to validate transition
     slot_query = _safe_text(
         """
         SELECT status FROM slots
-        WHERE id = :slot_id
+        WHERE id = :slot_id AND candidate_tg_id = :telegram_id
         FOR UPDATE
         """,
-        ("slot_id",),
+        ("slot_id", "telegram_id"),
     )
-    slot_result = await session.execute(slot_query, {"slot_id": slot_id})
+    slot_result = await session.execute(
+        slot_query, {"slot_id": slot_id, "telegram_id": user.user_id}
+    )
     slot_row = slot_result.fetchone()
-    slot_status = slot_row[0] if slot_row else None
+    if not slot_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Booking not found or does not belong to you",
+        )
+    slot_status = slot_row[0]
 
     try:
         enforce_slot_transition(slot_status, SlotStatus.FREE)
@@ -671,23 +645,6 @@ async def cancel_booking(
             detail=str(exc),
         ) from exc
 
-    # Update booking status
-    update_booking_query = _safe_text(
-        """
-        UPDATE bookings
-        SET status = 'canceled', updated_at = :updated_at
-        WHERE id = :booking_id
-        """,
-        ("updated_at", "booking_id"),
-    )
-    await session.execute(
-        update_booking_query,
-        {
-            "booking_id": request.booking_id,
-            "updated_at": datetime.now(timezone.utc),
-        },
-    )
-
     now_utc = datetime.now(timezone.utc)
 
     # Free slot
@@ -695,6 +652,7 @@ async def cancel_booking(
         """
         UPDATE slots
         SET status = :status_free,
+            candidate_id = NULL,
             candidate_tg_id = NULL,
             candidate_city_id = NULL,
             candidate_fio = NULL,
@@ -714,7 +672,7 @@ async def cancel_booking(
     await analytics.log_slot_canceled(
         user_id=user.user_id,
         candidate_id=candidate_id,
-        booking_id=request.booking_id,
+        booking_id=slot_id,
         slot_id=slot_id,
         reason=request.reason,
         metadata={"source": "webapp"},

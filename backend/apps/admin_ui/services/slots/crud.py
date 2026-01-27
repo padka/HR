@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, or_, literal
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 
@@ -18,6 +18,7 @@ from backend.apps.admin_ui.utils import (
 )
 from backend.core.db import async_session
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.candidates.models import User
 
 try:  # pragma: no cover - optional dependency during tests
     from backend.apps.bot.reminders import get_reminder_service
@@ -255,6 +256,25 @@ async def api_slots_payload(
         if limit:
             query = query.limit(max(1, min(500, limit)))
         slots = (await session.scalars(query)).all()
+
+        candidate_ids = {sl.candidate_id for sl in slots if getattr(sl, "candidate_id", None)}
+        candidate_tg_ids = {sl.candidate_tg_id for sl in slots if getattr(sl, "candidate_tg_id", None)}
+
+        candidate_id_map: Dict[str, int] = {}
+        candidate_tg_map: Dict[int, int] = {}
+
+        if candidate_ids or candidate_tg_ids:
+            users_query = select(User.id, User.candidate_id, User.telegram_id).where(
+                or_(
+                    User.candidate_id.in_(candidate_ids) if candidate_ids else literal(False),
+                    User.telegram_id.in_(candidate_tg_ids) if candidate_tg_ids else literal(False),
+                )
+            )
+            for user_id, candidate_uuid, telegram_id in (await session.execute(users_query)).all():
+                if candidate_uuid:
+                    candidate_id_map[str(candidate_uuid)] = int(user_id)
+                if telegram_id:
+                    candidate_tg_map[int(telegram_id)] = int(user_id)
     return [
         {
             "id": sl.id,
@@ -264,6 +284,8 @@ async def api_slots_payload(
             "status": norm_status(sl.status),
             "candidate_fio": getattr(sl, "candidate_fio", None),
             "candidate_tg_id": getattr(sl, "candidate_tg_id", None),
+            "candidate_id": candidate_id_map.get(str(sl.candidate_id))
+            or (candidate_tg_map.get(int(sl.candidate_tg_id)) if sl.candidate_tg_id else None),
             "tz_name": getattr(sl, "tz_name", None) or (sl.city.tz if getattr(sl, "city", None) else None),
             "local_time": _slot_local_time(sl),
         }

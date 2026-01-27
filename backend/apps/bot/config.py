@@ -19,6 +19,7 @@ DEFAULT_TZ = settings.timezone or "Europe/Moscow"
 TIME_FMT = "%d.%m %H:%M"
 BOT_TOKEN = settings.bot_token
 DEFAULT_BOT_PROPERTIES = DefaultBotProperties(parse_mode=ParseMode.HTML)
+BOT_BACKEND_URL = settings.bot_backend_url
 
 # Порог прохождения теста 2 (доля правильных)
 PASS_THRESHOLD = 0.75
@@ -58,6 +59,11 @@ class State(TypedDict, total=False):
     manual_contact_prompt_sent: bool
     manual_availability_expected: bool
     manual_availability_last_note: Optional[str]
+
+    slot_assignment_id: Optional[int]
+    slot_assignment_state: Optional[str]
+    slot_assignment_action_token: Optional[str]
+    slot_assignment_candidate_tz: Optional[str]
 
 
 logger = logging.getLogger(__name__)
@@ -141,6 +147,7 @@ FOLLOWUP_STUDY_FLEX = {
 
 __all__ = [
     "BOT_TOKEN",
+    "BOT_BACKEND_URL",
     "DEFAULT_BOT_PROPERTIES",
     "DEFAULT_TZ",
     "FOLLOWUP_NOTICE_PERIOD",

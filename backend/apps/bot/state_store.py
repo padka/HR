@@ -358,8 +358,32 @@ def build_state_manager(
     return StateManager(store)
 
 
+async def can_connect_redis(redis_url: Optional[str], *, component: str = "state_store") -> bool:
+    """Check Redis reachability to decide whether to use it for state storage."""
+    if not redis_url:
+        return False
+    try:
+        parse_redis_target(redis_url, component=component)
+        client = aioredis.from_url(redis_url, decode_responses=False)
+        await client.ping()
+        return True
+    except Exception as exc:
+        logger.warning("Redis %s unavailable; falling back to memory: %s", component, exc)
+        return False
+    finally:
+        try:
+            if "client" in locals():
+                if hasattr(client, "aclose"):
+                    await client.aclose()
+                else:
+                    await client.close()
+        except Exception:
+            logger.debug("redis_state_store_close_error", exc_info=True)
+
+
 __all__ = [
     "build_state_manager",
+    "can_connect_redis",
     "InMemoryStateStore",
     "Mutator",
     "RedisStateStore",

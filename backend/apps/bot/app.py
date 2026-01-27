@@ -30,7 +30,7 @@ from .notifications.bootstrap import (
     configure_notification_service as bootstrap_notification_service,
     reset_notification_service as reset_bootstrap_notification_service,
 )
-from .state_store import build_state_manager
+from .state_store import build_state_manager, can_connect_redis
 
 __all__ = ["create_application", "create_bot", "create_dispatcher", "main"]
 
@@ -75,11 +75,13 @@ async def create_application(
     bot = create_bot(token)
     dispatcher = create_dispatcher()
     settings = get_settings()
+    redis_url = getattr(settings, "redis_url", None)
+    redis_state_ok = await can_connect_redis(redis_url, component="state_store")
     state_manager = build_state_manager(
-        redis_url=getattr(settings, "redis_url", None),
+        redis_url=redis_url if redis_state_ok else None,
         ttl_seconds=getattr(settings, "state_ttl_seconds", 604800),
     )
-    scheduler = create_scheduler(getattr(settings, "redis_url", None))
+    scheduler = create_scheduler(redis_url if redis_state_ok else None)
     reminder_service = ReminderService(scheduler=scheduler)
     configure_reminder_service(reminder_service)
     await reminder_service.sync_jobs()

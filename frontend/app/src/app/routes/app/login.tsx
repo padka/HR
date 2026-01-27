@@ -41,33 +41,35 @@ export function LoginPage() {
   }
 
   return (
-    <div className="page">
-      <div className="glass panel" style={{ maxWidth: 420 }}>
-        <h1 className="title">Вход</h1>
+    <div className="login-page">
+      <div className="glass glass--elevated login-card">
+        <h1 className="title">Вход в систему</h1>
         <p className="subtitle">Используйте учётные данные администратора или рекрутёра.</p>
-        <form onSubmit={submit} style={{ display: 'grid', gap: 12, marginTop: 16 }}>
-          <label style={{ display: 'grid', gap: 6 }}>
-            Логин
+        <form onSubmit={submit} className="login-form">
+          <div className="form-group">
+            <label className="form-group__label">Логин</label>
             <input
               value={form.username}
               onChange={(e) => setForm({ ...form, username: e.target.value })}
               autoComplete="username"
+              placeholder="admin"
             />
-          </label>
-          <label style={{ display: 'grid', gap: 6 }}>
-            Пароль
+          </div>
+          <div className="form-group">
+            <label className="form-group__label">Пароль</label>
             <input
               type="password"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               autoComplete="current-password"
+              placeholder="••••••••"
             />
-          </label>
-          <button className="ui-btn ui-btn--primary" type="submit" disabled={loading}>
+          </div>
+          <button className="ui-btn ui-btn--primary ui-btn--lg" type="submit" disabled={loading}>
             {loading ? 'Вход...' : 'Войти'}
           </button>
-          {error && <p style={{ color: '#f07373' }}>{error}</p>}
-          <a href="/auth/login?redirect_to=/app" style={{ color: 'var(--fg)', textDecoration: 'underline' }}>
+          {error && <p className="form-group__error">{error}</p>}
+          <a href="/auth/login?redirect_to=/app" className="text-muted text-sm" style={{ textAlign: 'center' }}>
             Открыть legacy страницу входа
           </a>
         </form>

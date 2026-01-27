@@ -17,24 +17,15 @@ __all__ = ["dashboard_calendar_snapshot"]
 
 
 TRACKED_STATUSES: List[str] = [
-    getattr(SlotStatus, "PENDING", "pending"),
-    getattr(SlotStatus, "BOOKED", "booked"),
     getattr(SlotStatus, "CONFIRMED_BY_CANDIDATE", "confirmed_by_candidate"),
-    getattr(SlotStatus, "CANCELED", "canceled"),
 ]
 
 STATUS_LABELS = {
-    "PENDING": "Ожидает подтверждения",
-    "BOOKED": "Назначено",
     "CONFIRMED_BY_CANDIDATE": "Подтверждено кандидатом",
-    "CANCELED": "Отменено",
 }
 
 STATUS_VARIANTS = {
-    "PENDING": "warning",
-    "BOOKED": "accent",
     "CONFIRMED_BY_CANDIDATE": "success",
-    "CANCELED": "muted",
 }
 
 WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -144,11 +135,16 @@ async def dashboard_calendar_snapshot(
         )
         candidate_profile_url: Optional[str]
         if candidate_user:
-            candidate_profile_url = f"/candidates/{candidate_user.id}"
+            candidate_profile_url = f"/app/candidates/{candidate_user.id}"
         elif getattr(slot, "candidate_tg_id", None):
-            candidate_profile_url = f"/candidates?search={slot.candidate_tg_id}"
+            candidate_profile_url = f"/app/candidates?search={slot.candidate_tg_id}"
         else:
             candidate_profile_url = None
+
+        candidate_status = None
+        if candidate_user is not None:
+            raw_status = getattr(candidate_user, "candidate_status", None)
+            candidate_status = raw_status.value if hasattr(raw_status, "value") else raw_status
 
         events_payload.append(
             {
@@ -170,9 +166,11 @@ async def dashboard_calendar_snapshot(
                     "name": city.name if city else "",
                 },
                 "candidate": {
+                    "id": candidate_user.id if candidate_user else None,
                     "name": candidate_name or "Без имени",
                     "profile_url": candidate_profile_url,
                     "telegram_id": getattr(slot, "candidate_tg_id", None),
+                    "status_slug": candidate_status,
                 },
             }
         )
@@ -187,12 +185,6 @@ async def dashboard_calendar_snapshot(
         meta_parts.append(
             f"Подтверждено: {status_summary['CONFIRMED_BY_CANDIDATE']}"
         )
-    if status_summary.get("BOOKED"):
-        meta_parts.append(f"Назначено: {status_summary['BOOKED']}")
-    if status_summary.get("PENDING"):
-        meta_parts.append(f"Ожидает подтверждения: {status_summary['PENDING']}")
-    if status_summary.get("CANCELED"):
-        meta_parts.append(f"Отменено: {status_summary['CANCELED']}")
     meta_text = " • ".join(meta_parts) if meta_parts else "Нет назначенных интервью"
 
     generated_at = datetime.now(timezone.utc)

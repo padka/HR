@@ -169,13 +169,16 @@ STATUS_TRANSITIONS: Dict[CandidateStatus, List[CandidateStatus]] = {
     CandidateStatus.TEST1_COMPLETED: [
         CandidateStatus.WAITING_SLOT,
         CandidateStatus.INTERVIEW_SCHEDULED,
+        CandidateStatus.INTERVIEW_DECLINED,
     ],
     CandidateStatus.WAITING_SLOT: [
         CandidateStatus.STALLED_WAITING_SLOT,
         CandidateStatus.INTERVIEW_SCHEDULED,
+        CandidateStatus.INTERVIEW_DECLINED,
     ],
     CandidateStatus.STALLED_WAITING_SLOT: [
         CandidateStatus.INTERVIEW_SCHEDULED,
+        CandidateStatus.INTERVIEW_DECLINED,
     ],
     CandidateStatus.INTERVIEW_SCHEDULED: [
         CandidateStatus.INTERVIEW_CONFIRMED,

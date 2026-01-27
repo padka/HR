@@ -150,7 +150,7 @@ export function CandidateNewPage() {
   }
 
   return (
-    <RoleGuard allow={['admin', 'recruiter']}>
+    <RoleGuard allow={['recruiter']}>
       <div className="page">
         <form onSubmit={handleSubmit}>
           <div className="glass panel" style={{ display: 'grid', gap: 16 }}>
@@ -171,7 +171,7 @@ export function CandidateNewPage() {
             {cities.length === 0 && !citiesQuery.isLoading && (
               <div className="glass panel--tight" style={{ background: 'rgba(240, 115, 115, 0.1)', border: '1px solid rgba(240, 115, 115, 0.3)' }}>
                 <p style={{ color: '#f07373', margin: 0 }}>
-                  Нет городов. <Link to="/app/cities/new">Добавьте город</Link>, чтобы создать кандидата.
+                  Нет доступных городов. Обратитесь к администратору, чтобы продолжить работу.
                 </p>
               </div>
             )}

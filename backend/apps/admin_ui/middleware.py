@@ -18,7 +18,16 @@ logger = logging.getLogger(__name__)
 class DegradedDatabaseMiddleware(BaseHTTPMiddleware):
     """Short-circuit requests when DB is unavailable to avoid noisy 500s."""
 
-    _allow_prefixes = ("/static", "/health", "/metrics", "/docs", "/redoc", "/openapi.json")
+    _allow_prefixes = (
+        "/static",
+        "/assets",
+        "/app",
+        "/health",
+        "/metrics",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+    )
     _allow_paths = (
         "/",
         "/favicon.ico",
@@ -47,24 +56,45 @@ class DegradedDatabaseMiddleware(BaseHTTPMiddleware):
 class SecureHeadersMiddleware(BaseHTTPMiddleware):
     """Apply a baseline of security headers for every response."""
 
+    # SPA routes don't use nonce-based CSP (Vite build doesn't support it)
+    _spa_prefixes = ("/app", "/assets")
+
     async def dispatch(self, request: Request, call_next):
         nonce = secrets.token_urlsafe(16)
         request.state.csp_nonce = nonce
 
         response: Response = await call_next(request)
 
-        csp = (
-            "default-src 'self'; "
-            f"script-src 'self' 'nonce-{nonce}'; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "img-src 'self' data: https:; "
-            "font-src 'self' data: https://fonts.gstatic.com; "
-            "connect-src 'self'; "
-            "frame-ancestors 'none'; "
-            "form-action 'self'; "
-            "base-uri 'self'; "
-            "object-src 'none';"
-        )
+        path = request.url.path
+        is_spa = any(path.startswith(prefix) for prefix in self._spa_prefixes)
+
+        if is_spa:
+            # SPA uses module scripts from Vite build - allow without nonce
+            csp = (
+                "default-src 'self'; "
+                "script-src 'self'; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "img-src 'self' data: https:; "
+                "font-src 'self' data: https://fonts.gstatic.com; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'; "
+                "form-action 'self'; "
+                "base-uri 'self'; "
+                "object-src 'none';"
+            )
+        else:
+            csp = (
+                "default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}'; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "img-src 'self' data: https:; "
+                "font-src 'self' data: https://fonts.gstatic.com; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'; "
+                "form-action 'self'; "
+                "base-uri 'self'; "
+                "object-src 'none';"
+            )
         response.headers.setdefault("Content-Security-Policy", csp)
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("X-Content-Type-Options", "nosniff")

@@ -1,5 +1,5 @@
-import { ReactNode } from 'react'
-import { Link } from '@tanstack/react-router'
+import { ReactNode, useEffect } from 'react'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { useProfile } from '@/app/hooks/useProfile'
 
 type RoleGuardProps = {
@@ -9,6 +9,7 @@ type RoleGuardProps = {
 
 export function RoleGuard({ allow, children }: RoleGuardProps) {
   const { data, isLoading, isError, error, refetch } = useProfile()
+  const navigate = useNavigate()
 
   if (isLoading) {
     return (
@@ -44,14 +45,21 @@ export function RoleGuard({ allow, children }: RoleGuardProps) {
   }
 
   const role = data?.principal.type
-  if (role && !allow.includes(role)) {
+  const shouldRedirect = Boolean(role && !allow.includes(role))
+
+  useEffect(() => {
+    if (shouldRedirect) {
+      navigate({ to: '/app/dashboard', replace: true })
+    }
+  }, [shouldRedirect, navigate])
+
+  if (shouldRedirect) {
     return (
       <div className="glass panel empty-state">
-        <h2 className="title">Недоступно</h2>
-        <p className="subtitle">Этот раздел доступен только для роли: {allow.join(', ')}.</p>
+        <h2 className="title">Перенаправляем…</h2>
+        <p className="subtitle">Раздел недоступен для текущей роли.</p>
         <div className="action-row" style={{ justifyContent: 'center' }}>
-          <Link to="/app/profile" className="glass action-link">Перейти в профиль</Link>
-          <Link to="/app" className="glass action-link">На главную</Link>
+          <Link to="/app/dashboard" className="glass action-link">Вернуться на дашборд</Link>
         </div>
       </div>
     )

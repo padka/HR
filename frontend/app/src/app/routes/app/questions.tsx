@@ -24,19 +24,20 @@ export function QuestionsPage() {
   return (
     <RoleGuard allow={['admin']}>
       <div className="page">
-        <div className="glass panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-            <h1 className="title">Вопросы</h1>
-            <Link to="/app/questions/new" className="glass action-link">+ Новый вопрос</Link>
-          </div>
+        <header className="glass glass--elevated page-header page-header--row">
+          <h1 className="title">Вопросы</h1>
+          <Link to="/app/questions/new" className="ui-btn ui-btn--primary">+ Новый вопрос</Link>
+        </header>
+
+        <section className="glass page-section">
           {isLoading && <p className="subtitle">Загрузка…</p>}
-          {isError && <p style={{ color: '#f07373' }}>Ошибка: {(error as Error).message}</p>}
+          {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
           {data && (
-            <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+            <div className="page-section__content">
               {(data as any[]).map((group) => (
-                <div key={group.test_id} className="glass panel--tight" style={{ display: 'grid', gap: 8 }}>
-                  <div style={{ fontWeight: 700 }}>{group.title}</div>
-                  <table className="table">
+                <article key={group.test_id} className="glass glass--subtle data-card">
+                  <h3 className="data-card__title">{group.title}</h3>
+                  <table className="data-table">
                     <thead>
                       <tr>
                         <th>ID</th>
@@ -48,18 +49,26 @@ export function QuestionsPage() {
                     </thead>
                     <tbody>
                       {group.questions.map((q: any) => (
-                        <tr key={q.id} className="glass">
+                        <tr key={q.id}>
                           <td>{q.id}</td>
                           <td>{q.index}</td>
                           <td>{q.title}</td>
-                          <td>{q.is_active ? 'Активен' : 'Отключён'}</td>
                           <td>
-                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                              <Link to="/app/questions/$questionId/edit" params={{ questionId: String(q.id) }}>
+                            <span className={`status-badge status-badge--${q.is_active ? 'success' : 'muted'}`}>
+                              {q.is_active ? 'Активен' : 'Отключён'}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="toolbar toolbar--compact">
+                              <Link
+                                to="/app/questions/$questionId/edit"
+                                params={{ questionId: String(q.id) }}
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
+                              >
                                 Редактировать
                               </Link>
                               <button
-                                className="ui-btn ui-btn--ghost"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                                 onClick={() => cloneMutation.mutate(q.id)}
                                 disabled={cloneMutation.isPending}
                               >
@@ -71,11 +80,11 @@ export function QuestionsPage() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </article>
               ))}
             </div>
           )}
-        </div>
+        </section>
       </div>
     </RoleGuard>
   )

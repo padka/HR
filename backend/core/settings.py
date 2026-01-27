@@ -28,6 +28,7 @@ class Settings:
     bot_provider: str
     bot_token: str
     bot_api_base: str
+    bot_backend_url: str
     bot_callback_secret: str
     redis_url: str
     notification_broker: str
@@ -438,6 +439,7 @@ def get_settings() -> Settings:
     bot_provider = os.getenv("BOT_PROVIDER", "telegram").strip().lower() or "telegram"
     bot_token = os.getenv("BOT_TOKEN", "")
     bot_api_base = os.getenv("BOT_API_BASE", "").strip()
+    bot_backend_url = os.getenv("BOT_BACKEND_URL", "").strip()
     redis_url = os.getenv("REDIS_URL", "").strip()
     if redis_url.startswith("redis://redis_notifications") and environment != "production":
         redis_url = redis_url.replace("redis_notifications", "localhost", 1)
@@ -569,6 +571,7 @@ def get_settings() -> Settings:
         bot_provider=bot_provider,
         bot_token=bot_token,
         bot_api_base=bot_api_base,
+        bot_backend_url=bot_backend_url,
         bot_callback_secret=bot_callback_secret,
         redis_url=redis_url,
         notification_broker=notification_broker,

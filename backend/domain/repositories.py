@@ -27,6 +27,7 @@ from .models import (
     MessageTemplate,
     NotificationLog,
     BotMessageLog,
+    MessageLog,
     OutboxNotification,
     Recruiter,
     Slot,
@@ -114,14 +115,11 @@ async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
 
 
 async def get_candidate_cities() -> List[City]:
-    """Return active cities that have an available recruiter relation.
+    """Return active cities for the bot city picker.
 
-    A city is considered available if it is active and either has an active
-    responsible recruiter assigned in the admin panel or it has at least one
-    future free slot owned by an active recruiter. This mirrors the logic used
-    by the bot when presenting recruiters, ensuring the city picker stays in
-    sync with the admin data and avoids mismatches between candidate input and
-    recruiter availability.
+    We still compute "available" cities (with responsible recruiters or future
+    free slots) but return the full active list so candidates can select any
+    city configured in the system. Available cities are sorted first.
     """
 
     now = datetime.now(timezone.utc)
@@ -167,15 +165,22 @@ async def get_candidate_cities() -> List[City]:
             .group_by(City.id)
             .order_by(City.name.asc())
         )
-        result = list(await session.scalars(city_query))
-        if result:
-            return result
+        available = list(await session.scalars(city_query))
+        available_ids = {city.id for city in available if city.id is not None}
 
-        # Fallback: return all active cities to avoid empty bot dropdowns
-        fallback = await session.scalars(
-            select(City).where(City.active.is_(True)).order_by(City.name.asc())
+        all_cities = list(
+            await session.scalars(
+                select(City).where(City.active.is_(True)).order_by(City.name.asc())
+            )
         )
-        return list(fallback)
+        if not available_ids:
+            return all_cities
+
+        # Stable sort: available cities first, then the rest (both name-ordered already).
+        return [
+            *[city for city in all_cities if city.id in available_ids],
+            *[city for city in all_cities if city.id not in available_ids],
+        ]
 
 
 async def get_recruiter(recruiter_id: int) -> Optional[Recruiter]:
@@ -663,6 +668,32 @@ async def add_bot_message_log(
                 slot_id=slot_id,
                 payload_json=payload,
                 sent_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+
+
+async def add_message_log(
+    message_type: str,
+    *,
+    recipient_type: str,
+    recipient_id: Optional[int] = None,
+    slot_assignment_id: Optional[int] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    status: str = "sent",
+    channel: str = "tg",
+) -> None:
+    async with async_session() as session:
+        session.add(
+            MessageLog(
+                channel=channel,
+                recipient_type=recipient_type,
+                recipient_id=recipient_id,
+                slot_assignment_id=slot_assignment_id,
+                message_type=message_type,
+                payload_json=payload,
+                delivery_status=status,
+                created_at=datetime.now(timezone.utc),
             )
         )
         await session.commit()

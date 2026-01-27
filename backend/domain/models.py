@@ -117,11 +117,16 @@ class Recruiter(Base):
     tz: Mapped[str] = mapped_column(String(64), default="Europe/Moscow", nullable=False)
     telemost_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     slots: Mapped[List["Slot"]] = relationship(back_populates="recruiter", cascade="all, delete-orphan")
     cities: Mapped[List["City"]] = relationship(
         secondary=lambda: recruiter_city_association,
         back_populates="recruiters",
+    )
+    plan_entries: Mapped[List["RecruiterPlanEntry"]] = relationship(
+        back_populates="recruiter",
+        cascade="all, delete-orphan",
     )
 
     @validates("tz")
@@ -159,6 +164,10 @@ class City(Base):
         secondary=lambda: recruiter_city_association,
         back_populates="cities",
     )
+    plan_entries: Mapped[List["RecruiterPlanEntry"]] = relationship(
+        back_populates="city",
+        cascade="all, delete-orphan",
+    )
     responsible_recruiter: Mapped[Optional["Recruiter"]] = relationship(
         "Recruiter",
         foreign_keys=[responsible_recruiter_id],
@@ -189,6 +198,26 @@ class City(Base):
 
     def __repr__(self) -> str:
         return f"<City {self.name} ({self.tz})>"
+
+
+class RecruiterPlanEntry(Base):
+    __tablename__ = "recruiter_plan_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recruiter_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("recruiters.id", ondelete="CASCADE"), nullable=False
+    )
+    city_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("cities.id", ondelete="CASCADE"), nullable=False
+    )
+    last_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    recruiter: Mapped["Recruiter"] = relationship(back_populates="plan_entries")
+    city: Mapped["City"] = relationship(back_populates="plan_entries")
+
+    def __repr__(self) -> str:
+        return f"<RecruiterPlanEntry {self.id} recruiter={self.recruiter_id} city={self.city_id}>"
 
 
 class Template(Base):
@@ -229,6 +258,24 @@ class SlotStatus:
     CONFIRMED_BY_CANDIDATE = "confirmed_by_candidate"  # legacy alias
     CANCELED = "canceled"
     CANCELLED = CANCELED  # spelling alias
+
+
+class SlotAssignmentStatus:
+    OFFERED = "offered"
+    CONFIRMED = "confirmed"
+    RESCHEDULE_REQUESTED = "reschedule_requested"
+    RESCHEDULE_CONFIRMED = "reschedule_confirmed"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+    NO_SHOW = "no_show"
+    COMPLETED = "completed"
+
+
+class RescheduleRequestStatus:
+    PENDING = "pending"
+    APPROVED = "approved"
+    DECLINED = "declined"
+    EXPIRED = "expired"
 
 
 class SlotStatusTransitionError(ValueError):
@@ -295,6 +342,7 @@ class Slot(Base):
 
     start_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_min: Mapped[int] = mapped_column(Integer, default=DEFAULT_INTERVIEW_DURATION_MIN, nullable=False)
+    capacity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     status: Mapped[str] = mapped_column(String(32), default=SlotStatus.FREE, nullable=False)
 
@@ -455,6 +503,175 @@ class SlotReminderJob(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class SlotAssignment(Base):
+    __tablename__ = "slot_assignments"
+    __table_args__ = (
+        Index("ix_slot_assignments_slot_status", "slot_id", "status"),
+        Index("ix_slot_assignments_candidate_status", "candidate_id", "status"),
+        Index("ix_slot_assignments_recruiter_status", "recruiter_id", "status"),
+        Index(
+            "uq_slot_assignments_candidate_active",
+            "candidate_id",
+            unique=True,
+            postgresql_where=(
+                "status IN ('offered', 'confirmed', 'reschedule_requested', 'reschedule_confirmed')"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slot_id: Mapped[int] = mapped_column(
+        ForeignKey("slots.id", ondelete="CASCADE"), nullable=False
+    )
+    recruiter_id: Mapped[int] = mapped_column(
+        ForeignKey("recruiters.id", ondelete="CASCADE"), nullable=False
+    )
+    candidate_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.candidate_id", ondelete="SET NULL"), nullable=True
+    )
+    candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    candidate_tz: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default=SlotAssignmentStatus.OFFERED, nullable=False
+    )
+    status_before_reschedule: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    offered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reschedule_requested_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    slot: Mapped["Slot"] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<SlotAssignment {self.id} slot={self.slot_id} status={self.status}>"
+
+
+class RescheduleRequest(Base):
+    __tablename__ = "slot_reschedule_requests"
+    __table_args__ = (
+        Index("ix_slot_reschedule_assignment_status", "slot_assignment_id", "status"),
+        Index(
+            "uq_slot_reschedule_pending",
+            "slot_assignment_id",
+            unique=True,
+            postgresql_where="status = 'pending'",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slot_assignment_id: Mapped[int] = mapped_column(
+        ForeignKey("slot_assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    requested_start_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    requested_tz: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    candidate_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default=RescheduleRequestStatus.PENDING, nullable=False
+    )
+    decided_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    decided_by_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    decided_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    recruiter_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    alternative_slot_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("slots.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    slot_assignment: Mapped["SlotAssignment"] = relationship()
+    alternative_slot: Mapped[Optional["Slot"]] = relationship(foreign_keys=[alternative_slot_id])
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<RescheduleRequest {self.id} assignment={self.slot_assignment_id} status={self.status}>"
+
+
+class ActionToken(Base):
+    __tablename__ = "action_tokens"
+    __table_args__ = (
+        Index("ix_action_tokens_action_entity", "action", "entity_id"),
+    )
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<ActionToken action={self.action} entity={self.entity_id} used={bool(self.used_at)}>"
+
+
+class MessageLog(Base):
+    __tablename__ = "message_logs"
+    __table_args__ = (
+        Index("ix_message_logs_assignment", "slot_assignment_id"),
+        Index("ix_message_logs_recipient", "recipient_type", "recipient_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel: Mapped[str] = mapped_column(String(16), nullable=False, default="tg")
+    recipient_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    recipient_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    slot_assignment_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("slot_assignments.id", ondelete="SET NULL"), nullable=True
+    )
+    message_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    delivery_status: Mapped[str] = mapped_column(
+        "status", String(20), nullable=False, default="sent"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    slot_assignment: Mapped[Optional["SlotAssignment"]] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<MessageLog {self.id} type={self.message_type} status={self.delivery_status}>"
 
 
 class TestQuestion(Base):
@@ -713,6 +930,142 @@ class ManualSlotAuditLog(Base):
 
     def __repr__(self) -> str:
         return f"<ManualSlotAuditLog slot={self.slot_id} candidate={self.candidate_tg_id} by={self.admin_username}>"
+
+
+class StaffThread(Base):
+    __tablename__ = "staff_threads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    thread_type: Mapped[str] = mapped_column(String(16), nullable=False, default="direct")
+    title: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    members: Mapped[List["StaffThreadMember"]] = relationship(
+        back_populates="thread",
+        cascade="all, delete-orphan",
+    )
+    messages: Mapped[List["StaffMessage"]] = relationship(
+        back_populates="thread",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<StaffThread {self.id} type={self.thread_type}>"
+
+
+class StaffThreadMember(Base):
+    __tablename__ = "staff_thread_members"
+    __table_args__ = (
+        Index("ix_staff_thread_members_principal", "principal_type", "principal_id"),
+    )
+
+    thread_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("staff_threads.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    principal_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    principal_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    role: Mapped[str] = mapped_column(String(16), default="member", nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    last_read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    thread: Mapped["StaffThread"] = relationship(back_populates="members")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<StaffThreadMember thread={self.thread_id} {self.principal_type}:{self.principal_id}>"
+
+
+class StaffMessage(Base):
+    __tablename__ = "staff_messages"
+    __table_args__ = (
+        Index("ix_staff_messages_thread_created_at", "thread_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("staff_threads.id", ondelete="CASCADE"), nullable=False)
+    sender_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    sender_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    message_type: Mapped[str] = mapped_column(String(24), nullable=False, default="text")
+    text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    edited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    thread: Mapped["StaffThread"] = relationship(back_populates="messages")
+    attachments: Mapped[List["StaffMessageAttachment"]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+    )
+    task: Mapped[Optional["StaffMessageTask"]] = relationship(
+        back_populates="message",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<StaffMessage {self.id} thread={self.thread_id} sender={self.sender_type}:{self.sender_id}>"
+
+
+class StaffMessageAttachment(Base):
+    __tablename__ = "staff_message_attachments"
+    __table_args__ = (
+        Index("ix_staff_message_attachments_message", "message_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("staff_messages.id", ondelete="CASCADE"), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    storage_path: Mapped[str] = mapped_column(String(400), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    message: Mapped["StaffMessage"] = relationship(back_populates="attachments")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<StaffMessageAttachment {self.id} message={self.message_id}>"
+
+
+class StaffMessageTask(Base):
+    __tablename__ = "staff_message_tasks"
+
+    message_id: Mapped[int] = mapped_column(
+        ForeignKey("staff_messages.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    candidate_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    decided_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    decision_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    message: Mapped["StaffMessage"] = relationship(back_populates="task")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<StaffMessageTask message={self.message_id} candidate={self.candidate_id} status={self.status}>"
 
 
 class AuditLog(Base):

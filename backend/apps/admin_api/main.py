@@ -11,6 +11,7 @@ from sqlalchemy import text
 from backend.core.db import async_engine, async_session
 from backend.apps.admin_api.admin import mount_admin
 from backend.apps.admin_api.webapp.routers import router as webapp_router
+from backend.apps.admin_api.slot_assignments import router as slot_assignments_router
 from backend.core.settings import get_settings
 from backend.core.cache import CacheConfig, init_cache, connect_cache, disconnect_cache, get_cache
 
@@ -65,6 +66,9 @@ def create_app() -> FastAPI:
     # Mount WebApp API endpoints for Telegram Mini App
     app.include_router(webapp_router, prefix="/api/webapp", tags=["webapp"])
     logger.info("WebApp API router mounted at /api/webapp")
+
+    # Bot-facing slot assignment endpoints
+    app.include_router(slot_assignments_router)
 
     @app.get("/")
     async def root():
