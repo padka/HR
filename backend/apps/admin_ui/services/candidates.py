@@ -1749,6 +1749,7 @@ async def list_candidates(
         candidate_cards.append(
             {
                 'id': user.id,
+                'candidate_id': user.candidate_id,
                 'telegram_id': user.telegram_id,
                  'telegram_user_id': user.telegram_user_id or user.telegram_id,
                  'telegram_username': user.telegram_username or user.username,
@@ -3072,6 +3073,14 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
             return None
         return _ensure_aware(value).isoformat()
 
+    def _normalize_username(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        cleaned = value.strip()
+        if cleaned.startswith("@"):
+            cleaned = cleaned[1:]
+        return cleaned or None
+
     test_results_payload: Dict[str, Dict[str, Any]] = {}
     for slug, section in sections_map.items():
         details_block = section.get("details", {})
@@ -3160,6 +3169,8 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "fio": user.fio,
         "city": user.city,
         "telegram_id": user.telegram_id,
+        "telegram_username": _normalize_username(user.telegram_username or user.username),
+        "phone": user.phone,
         "is_active": user.is_active,
         "test1_report_url": f"/candidates/{user.id}/reports/test1"
         if getattr(user, "test1_report_url", None)
