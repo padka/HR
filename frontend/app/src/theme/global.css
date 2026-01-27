@@ -282,6 +282,56 @@ body {
   justify-content: flex-end;
 }
 
+.app-nav-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 999px;
+  background: var(--glass-gradient);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+}
+
+.app-nav__item {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--fg);
+  text-decoration: none;
+  background: var(--glass-subtle);
+  border: 1px solid transparent;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.app-nav__item:hover {
+  transform: translateY(-1px);
+  background: var(--glass-bg-elevated);
+  border-color: var(--glass-border-strong);
+  box-shadow: var(--glass-glow-subtle);
+}
+
+.app-nav__item.is-active {
+  background: var(--glass-gradient-strong);
+  border-color: var(--glass-border-strong);
+  box-shadow: var(--glass-glow);
+}
+
+.app-nav__icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--glass-gradient);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-inset);
+}
+
 .breadcrumb-separator {
   color: rgba(255, 255, 255, 0.2);
   margin: 0 4px;
@@ -456,34 +506,44 @@ body {
 }
 
 .app-nav__item[data-tone="blue"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(210,230,255,0.95), rgba(145,185,255,0.95));
+  background: linear-gradient(135deg, rgba(123,177,255,0.22), rgba(123,177,255,0.06));
+  border-color: rgba(123,177,255,0.35);
 }
 .app-nav__item[data-tone="violet"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(220,215,255,0.95), rgba(170,150,255,0.95));
+  background: linear-gradient(135deg, rgba(170,150,255,0.22), rgba(170,150,255,0.06));
+  border-color: rgba(170,150,255,0.35);
 }
 .app-nav__item[data-tone="mint"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(195,250,235,0.95), rgba(130,210,195,0.95));
+  background: linear-gradient(135deg, rgba(130,210,195,0.22), rgba(130,210,195,0.06));
+  border-color: rgba(130,210,195,0.35);
 }
 .app-nav__item[data-tone="sky"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(210,240,255,0.95), rgba(150,205,245,0.95));
+  background: linear-gradient(135deg, rgba(150,205,245,0.22), rgba(150,205,245,0.06));
+  border-color: rgba(150,205,245,0.35);
 }
 .app-nav__item[data-tone="indigo"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(215,220,255,0.95), rgba(140,145,210,0.95));
+  background: linear-gradient(135deg, rgba(140,145,210,0.22), rgba(140,145,210,0.06));
+  border-color: rgba(140,145,210,0.35);
 }
 .app-nav__item[data-tone="sunset"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(255,230,200,0.95), rgba(245,185,140,0.95));
+  background: linear-gradient(135deg, rgba(245,185,140,0.22), rgba(245,185,140,0.06));
+  border-color: rgba(245,185,140,0.35);
 }
 .app-nav__item[data-tone="slate"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(220,230,240,0.95), rgba(170,180,200,0.95));
+  background: linear-gradient(135deg, rgba(170,180,200,0.22), rgba(170,180,200,0.06));
+  border-color: rgba(170,180,200,0.35);
 }
 .app-nav__item[data-tone="rose"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(255,210,220,0.95), rgba(220,145,165,0.95));
+  background: linear-gradient(135deg, rgba(220,145,165,0.22), rgba(220,145,165,0.06));
+  border-color: rgba(220,145,165,0.35);
 }
 .app-nav__item[data-tone="amber"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(255,235,200,0.95), rgba(230,175,120,0.95));
+  background: linear-gradient(135deg, rgba(230,175,120,0.22), rgba(230,175,120,0.06));
+  border-color: rgba(230,175,120,0.35);
 }
 .app-nav__item[data-tone="steel"] .app-nav__icon {
-  background: linear-gradient(135deg, rgba(215,230,250,0.95), rgba(140,170,210,0.95));
+  background: linear-gradient(135deg, rgba(140,170,210,0.22), rgba(140,170,210,0.06));
+  border-color: rgba(140,170,210,0.35);
 }
 
 .app-nav__label { display: none; }
