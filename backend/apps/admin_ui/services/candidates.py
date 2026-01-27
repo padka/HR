@@ -2450,7 +2450,7 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         query = (
             select(User)
             .options(
-                selectinload(User.tests).selectinload(TestResult.answers),
+                selectinload(User.test_results).selectinload(TestResult.answers),
             )
             .where(User.id == user_id)
         )
@@ -2464,7 +2464,7 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
                 return None
 
         interview_note = await _load_interview_note(session, user_id)
-        test_results = sorted(user.tests, key=lambda r: (r.created_at or datetime.min, r.id), reverse=True)
+        test_results = sorted(user.test_results, key=lambda r: (r.created_at or datetime.min, r.id), reverse=True)
 
         answers_by_result: Dict[int, List[QuestionAnswer]] = {
             res.id: list(res.answers) for res in test_results
