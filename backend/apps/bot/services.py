@@ -2132,6 +2132,7 @@ class NotificationService:
         tokens = (payload.get("action_tokens") or {})
         confirm_token = tokens.get("confirm")
         reschedule_token = tokens.get("reschedule")
+        decline_token = tokens.get("decline")
         if not assignment_id or not confirm_token or not reschedule_token:
             await self._mark_failed(
                 item,
@@ -2176,12 +2177,16 @@ class NotificationService:
             text += f"\n📍 {escape_html(city_name)}"
         if comment:
             text += f"\n\nКомментарий: {escape_html(str(comment))}"
-        text += "\n\nПодтвердите или выберите другое время."
+        if decline_token:
+            text += "\n\nПодтвердите, выберите другое время или откажитесь."
+        else:
+            text += "\n\nПодтвердите или выберите другое время."
 
         keyboard = kb_slot_assignment_offer(
             int(assignment_id),
             confirm_token=str(confirm_token),
             reschedule_token=str(reschedule_token),
+            decline_token=str(decline_token) if decline_token else None,
         )
 
         attempt = item.attempts + 1

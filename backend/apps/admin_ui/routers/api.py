@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional, List
 from zoneinfo import ZoneInfo
 import logging
+import secrets
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.encoders import jsonable_encoder
@@ -109,7 +110,7 @@ from backend.apps.admin_ui.services.questions import (
     clone_test_question,
 )
 from backend.core.db import async_session
-from backend.domain.models import Recruiter, Slot, City, SlotStatus, recruiter_city_association
+from backend.domain.models import Recruiter, Slot, City, SlotStatus, SlotAssignment, ActionToken, recruiter_city_association
 from backend.domain.candidates.models import User
 from backend.apps.admin_ui.utils import parse_optional_int, status_filter, recruiter_time_to_utc, norm_status
 from backend.core.guards import ensure_slot_scope
@@ -1167,13 +1168,79 @@ async def api_slot_reschedule(
 
         slot.start_utc = dt_utc
         slot.status = SlotStatus.PENDING
-        await session.commit()
 
         candidate = None
         if getattr(slot, "candidate_id", None):
             candidate = await session.scalar(select(User).where(User.candidate_id == slot.candidate_id))
         if candidate is None and getattr(slot, "candidate_tg_id", None):
             candidate = await session.scalar(select(User).where(User.telegram_id == slot.candidate_tg_id))
+        if candidate is None:
+            await session.commit()
+            return JSONResponse({"ok": False, "error": "candidate_not_found", "message": "Кандидат не найден"}, status_code=404)
+
+        candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id
+        if candidate_tg_id is None:
+            await session.commit()
+            return JSONResponse({"ok": False, "error": "no_candidate_tg", "message": "У кандидата нет Telegram ID"}, status_code=400)
+
+        candidate_id = candidate.candidate_id
+        if not candidate_id:
+            await session.commit()
+            return JSONResponse({"ok": False, "error": "no_candidate_id", "message": "У кандидата нет candidate_id"}, status_code=400)
+
+        now = datetime.now(timezone.utc)
+        active_statuses = ("offered", "confirmed", "reschedule_requested", "reschedule_confirmed")
+        assignment = await session.scalar(
+            select(SlotAssignment)
+            .where(SlotAssignment.candidate_id == candidate_id)
+            .where(SlotAssignment.status.in_(active_statuses))
+        )
+        if assignment is None:
+            assignment = SlotAssignment(
+                slot_id=slot.id,
+                recruiter_id=slot.recruiter_id,
+                candidate_id=candidate_id,
+                candidate_tg_id=candidate_tg_id,
+                candidate_tz=getattr(slot, "candidate_tz", None) or slot_tz,
+                status="offered",
+                offered_at=now,
+            )
+            session.add(assignment)
+            await session.flush()
+        else:
+            assignment.slot_id = slot.id
+            assignment.recruiter_id = slot.recruiter_id
+            assignment.status = "offered"
+            assignment.offered_at = now
+            assignment.confirmed_at = None
+            assignment.reschedule_requested_at = None
+            assignment.status_before_reschedule = None
+
+        expires_at = now + timedelta(days=2)
+        confirm_token = ActionToken(
+            token=secrets.token_urlsafe(16),
+            action="confirm_assignment",
+            entity_id=str(assignment.id),
+            expires_at=expires_at,
+        )
+        reschedule_token = ActionToken(
+            token=secrets.token_urlsafe(16),
+            action="reschedule_assignment",
+            entity_id=str(assignment.id),
+            expires_at=expires_at,
+        )
+        decline_token = ActionToken(
+            token=secrets.token_urlsafe(16),
+            action="decline_assignment",
+            entity_id=str(assignment.id),
+            expires_at=expires_at,
+        )
+        session.add_all([confirm_token, reschedule_token, decline_token])
+        await session.commit()
+        assignment_id = assignment.id
+        confirm_token_value = confirm_token.token
+        reschedule_token_value = reschedule_token.token
+        decline_token_value = decline_token.token
 
     reason = sanitize_plain_text(payload.reason or "", max_length=400)
     candidate_tz = getattr(slot, "candidate_tz", None) or slot_tz
@@ -1182,6 +1249,7 @@ async def api_slot_reschedule(
     lines = [
         "Перенос встречи.",
         f"Новое время: {candidate_time} ({candidate_tz})",
+        "Подтвердите участие, выберите другое время или откажитесь через кнопки ниже.",
     ]
     if candidate_tz != slot_tz:
         lines.append(f"Время рекрутёра: {recruiter_time} ({slot_tz})")
@@ -1191,6 +1259,18 @@ async def api_slot_reschedule(
 
     notified = False
     if candidate is not None:
+        reply_markup = None
+        try:
+            from backend.apps.bot.keyboards import kb_slot_assignment_offer
+
+            reply_markup = kb_slot_assignment_offer(
+                assignment_id,
+                confirm_token=confirm_token_value,
+                reschedule_token=reschedule_token_value,
+                decline_token=decline_token_value,
+            )
+        except Exception:
+            reply_markup = None
         try:
             await send_chat_message(
                 candidate.id,
@@ -1198,6 +1278,7 @@ async def api_slot_reschedule(
                 client_request_id=f"slot_reschedule_{slot_id}_{dt_utc.isoformat()}",
                 author_label=getattr(request.state, "admin_username", None) or principal.type,
                 bot_service=bot_service,
+                reply_markup=reply_markup,
             )
             notified = True
         except Exception:

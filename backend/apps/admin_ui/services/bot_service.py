@@ -371,6 +371,8 @@ class BotService:
         self,
         telegram_id: int,
         text: str,
+        *,
+        reply_markup: Optional[object] = None,
     ) -> BotSendResult:
         """Send a plain text message to candidate via bot."""
 
@@ -399,7 +401,7 @@ class BotService:
             )
 
         try:
-            response = await bot.send_message(telegram_id, text)
+            response = await bot.send_message(telegram_id, text, reply_markup=reply_markup)
         except Exception as exc:  # pragma: no cover - network errors
             if _is_transient_error(exc):
                 logger.exception("Transient error while sending chat message")

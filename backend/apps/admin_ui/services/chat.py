@@ -156,6 +156,7 @@ async def send_chat_message(
     client_request_id: Optional[str],
     author_label: Optional[str],
     bot_service: BotService,
+    reply_markup: Optional[object] = None,
 ) -> Dict[str, object]:
     candidate = await _load_candidate(candidate_id)
     if not candidate.telegram_user_id and not candidate.telegram_id:
@@ -200,7 +201,11 @@ async def send_chat_message(
         await session.refresh(message)
         message_id = message.id
 
-    send_result = await bot_service.send_chat_message(candidate.telegram_user_id or candidate.telegram_id, text)
+    send_result = await bot_service.send_chat_message(
+        candidate.telegram_user_id or candidate.telegram_id,
+        text,
+        reply_markup=reply_markup,
+    )
     if send_result.ok:
         # Record successful send for rate limiting
         _record_message_sent(candidate_id)

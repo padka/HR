@@ -77,6 +77,9 @@ async def handle_slot_assignment_callback(callback: CallbackQuery) -> bool:
     if action == "reschedule":
         await _handle_reschedule_prompt(callback, assignment_id, action_token, candidate_id)
         return True
+    if action == "decline":
+        await _handle_decline(callback, assignment_id, action_token, candidate_id)
+        return True
 
     await callback.answer("Неизвестное действие", show_alert=True)
     return True
@@ -157,6 +160,59 @@ async def _handle_reschedule_prompt(
         "Введите желаемые дату и время в формате «дд.мм чч:мм».\n"
         f"Например: {datetime.now().strftime(TIME_FMT)}",
     )
+
+
+async def _handle_decline(
+    callback: CallbackQuery,
+    assignment_id: int,
+    action_token: str,
+    candidate_id: int,
+) -> None:
+    client = BackendClient()
+    if not client.configured:
+        await callback.answer("Сервис временно недоступен", show_alert=True)
+        return
+
+    try:
+        status, data = await client.post_json(
+            f"/api/slot-assignments/{assignment_id}/decline",
+            {
+                "action_token": action_token,
+                "candidate_tg_id": candidate_id,
+            },
+        )
+    except BackendClientError:
+        await callback.answer("Сервис недоступен. Попробуйте позже.", show_alert=True)
+        return
+
+    if status == 409:
+        detail = data.get("detail") if isinstance(data, dict) else None
+        await callback.answer(detail or "Действие недоступно.", show_alert=True)
+        return
+    if status >= 400:
+        detail = data.get("detail") if isinstance(data, dict) else None
+        await callback.answer(detail or "Не удалось оформить отказ.", show_alert=True)
+        return
+
+    state_manager = get_state_manager()
+    await state_manager.update(
+        candidate_id,
+        {
+            "slot_assignment_state": "declined",
+            "slot_assignment_id": assignment_id,
+        },
+    )
+
+    try:
+        if callback.message:
+            await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+    await callback.answer("Отказ принят")
+    bot = get_bot()
+    message_text = data.get("message") if isinstance(data, dict) else None
+    await bot.send_message(candidate_id, message_text or "Мы зафиксировали отказ. Спасибо за ответ.")
 
 
 def _parse_datetime_input(text: str, tz_name: Optional[str]) -> Optional[datetime]:

@@ -172,24 +172,36 @@ def _slot_assignment_payload(action: str, assignment_id: int, token: str) -> str
 
 
 def kb_slot_assignment_offer(
-    assignment_id: int, *, confirm_token: str, reschedule_token: str
+    assignment_id: int,
+    *,
+    confirm_token: str,
+    reschedule_token: str,
+    decline_token: str | None = None,
 ) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: List[List[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="✅ Подтвердить",
+                callback_data=_slot_assignment_payload("confirm", assignment_id, confirm_token),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔁 Другое время",
+                callback_data=_slot_assignment_payload("reschedule", assignment_id, reschedule_token),
+            )
+        ],
+    ]
+    if decline_token:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text="✅ Подтвердить",
-                    callback_data=_slot_assignment_payload("confirm", assignment_id, confirm_token),
+                    text="⛔️ Отказ",
+                    callback_data=_slot_assignment_payload("decline", assignment_id, decline_token),
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔁 Другое время",
-                    callback_data=_slot_assignment_payload("reschedule", assignment_id, reschedule_token),
-                )
-            ],
-        ]
-    )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 __all__ = [
