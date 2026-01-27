@@ -114,7 +114,6 @@ export function RootLayout() {
       ? [
           { to: '/app/dashboard', label: 'Дашборд', icon: ICONS.dashboard, tone: 'blue' },
           { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
-          { to: '/app/slots/create', label: 'Создать', icon: ICONS.slots, tone: 'mint' },
           { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
           { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
         ]

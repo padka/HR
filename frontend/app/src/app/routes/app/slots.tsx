@@ -523,10 +523,10 @@ export function SlotsPage() {
               })}
             </div>
           </div>
-          <Link to="/app/slots/create" className="ui-btn ui-btn--primary">+ Создать слоты</Link>
-        </header>
+          <Link to="/app/slots/create" className="ui-btn ui-btn--primary" style={{ marginBottom: '16px' }}>
+            + Создать слоты
+          </Link>
 
-        <section className="glass page-section">
           <div className="filter-bar">
             <label className="filter-bar__item">
               <span className="filter-bar__label">Статус</span>
