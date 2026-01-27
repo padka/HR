@@ -495,8 +495,6 @@ export function CandidateDetailPage() {
   const [showScheduleSlotModal, setShowScheduleSlotModal] = useState(false)
   const [showScheduleIntroDayModal, setShowScheduleIntroDayModal] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
-  const [statusError, setStatusError] = useState<string | null>(null)
-  const [manualStatus, setManualStatus] = useState<string>('')
 
   const detailQuery = useQuery<CandidateDetail>({
     queryKey: ['candidate-detail', candidateId],
@@ -552,19 +550,8 @@ export function CandidateDetailPage() {
   const test1Section = testSections.find((section) => section.key === 'test1')
   const test2Section = testSections.find((section) => section.key === 'test2')
   const chatMessages = (chatQuery.data?.messages || []).slice().reverse()
-  const allowedNext = detail?.allowed_next_statuses || []
   const pipelineStages = detail?.pipeline_stages || []
-  const legacyEnabled = Boolean(detail?.legacy_status_enabled)
   const lastChatMessage = chatMessages.length > 0 ? chatMessages[chatMessages.length - 1] : null
-
-  useEffect(() => {
-    if (!detail) return
-    if (detail.candidate_status_slug && !manualStatus) {
-      setManualStatus(detail.candidate_status_slug)
-    } else if (!manualStatus && detail.candidate_status_options?.length) {
-      setManualStatus(detail.candidate_status_options[0].slug)
-    }
-  }, [detail, manualStatus])
 
   const onActionClick = (action: CandidateAction) => {
     if ((action.method || 'GET').toUpperCase() === 'GET') {
@@ -581,7 +568,10 @@ export function CandidateDetailPage() {
 
   const statusSlug = detail?.candidate_status_slug || null
   const statusDisplay = detail ? getStatusDisplay(statusSlug) : null
-  const hasUpcomingSlot = slots.some((s) => s.status === 'BOOKED' || s.status === 'PENDING')
+  const hasUpcomingSlot = slots.some((s) => {
+    const status = String(s.status || '').toUpperCase()
+    return ['BOOKED', 'PENDING', 'CONFIRMED', 'CONFIRMED_BY_CANDIDATE'].includes(status)
+  })
   const hasIntroDay = slots.some((s) => s.purpose === 'intro_day')
   const telegramUsername = normalizeTelegramUsername(detail?.telegram_username)
   const telegramLink = telegramUsername
@@ -603,45 +593,17 @@ export function CandidateDetailPage() {
     ['schedule_interview', 'reschedule_interview'].includes(action.key)
   )
   const rejectAction = actions.find((action) => action.key === 'reject' || action.target_status === 'interview_declined')
-  const canSendTest2 = Boolean(test2Action) && statusSlug === 'interview_confirmed'
+  const canSendTest2 = Boolean(test2Action)
   const test2Passed = test2Section?.status === 'passed' || statusSlug === 'test2_completed'
   const canScheduleIntroDay = Boolean(detail?.telegram_id) && !hasIntroDay && test2Passed
-  const canScheduleInterview = Boolean(detail?.telegram_id) && Boolean(statusSlug)
-    && ['test1_completed', 'waiting_slot', 'stalled_waiting_slot', 'interview_scheduled'].includes(statusSlug || '')
+  const canScheduleInterview = Boolean(detail?.telegram_id) && Boolean(scheduleAction)
+    && (scheduleAction?.key === 'reschedule_interview' || !hasUpcomingSlot)
   const scheduleLabel = scheduleAction?.label
     || (statusSlug === 'interview_scheduled' ? 'Перенести собеседование' : 'Назначить собеседование')
   const filteredActions = actions.filter((action) => {
     if (action === test2Action || action === rejectAction) return false
     if (['schedule_interview', 'reschedule_interview', 'schedule_intro_day'].includes(action.key)) return false
     return true
-  })
-
-  const legacyStatusMutation = useMutation({
-    mutationFn: async (statusSlug: string) => {
-      setStatusError(null)
-      const response = await fetch(`/candidates/${candidateId}/status`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: statusSlug }),
-      })
-      if (!response.ok) {
-        const text = await response.text()
-        throw new Error(text || 'Ошибка смены статуса')
-      }
-      return response.json().catch(() => ({}))
-    },
-    onSuccess: () => {
-      detailQuery.refetch()
-    },
-    onError: (err: unknown) => {
-      setStatusError((err as Error).message)
-    },
-  })
-
-  const nextStatusActions = allowedNext.map((next) => {
-    const action = actions.find((a) => a.target_status === next.slug)
-    return { next, action }
   })
 
   return (
@@ -776,7 +738,7 @@ export function CandidateDetailPage() {
         </div>
 
         {/* ── Pipeline & Status Center ── */}
-        {(pipelineStages.length > 0 || allowedNext.length > 0) && (
+        {pipelineStages.length > 0 && (
           <div className="glass panel cd-pipeline">
             <div className="cd-section-header">
               <h2 className="cd-section-title">Воронка</h2>
@@ -796,60 +758,6 @@ export function CandidateDetailPage() {
                 })}
               </div>
             )}
-
-            {nextStatusActions.length > 0 && (
-              <div className="cd-next-status">
-                <div className="cd-next-status__label">Следующий шаг:</div>
-                <div className="cd-next-status__buttons">
-                  {nextStatusActions.map(({ next, action }) => {
-                    const isTerminal = Boolean(next.is_terminal)
-                    const label = next.label || next.slug
-                    const handleClick = () => {
-                      if (isTerminal && !window.confirm(`Установить финальный статус "${label}"?`)) return
-                      if (action) actionMutation.mutate(action)
-                      else if (legacyEnabled) legacyStatusMutation.mutate(next.slug)
-                    }
-                    const canClick = Boolean(action || legacyEnabled)
-                    return (
-                      <button
-                        key={next.slug}
-                        className={`ui-btn ${isTerminal ? 'ui-btn--danger' : 'ui-btn--primary'}`}
-                        onClick={handleClick}
-                        disabled={!canClick || actionMutation.isPending || legacyStatusMutation.isPending}
-                      >
-                        {label}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-            {nextStatusActions.length === 0 && (
-              <p className="subtitle" style={{ margin: 0 }}>Нет доступных переходов</p>
-            )}
-
-            {detail.candidate_status_options && detail.candidate_status_options.length > 0 && (
-              <details className="cd-manual-status">
-                <summary className="cd-manual-status__summary">Ручная коррекция статуса</summary>
-                <div className="cd-manual-status__body">
-                  <select value={manualStatus} onChange={(e) => setManualStatus(e.target.value)}>
-                    {detail.candidate_status_options.map((opt) => (
-                      <option key={opt.slug} value={opt.slug}>{opt.label}</option>
-                    ))}
-                  </select>
-                  <button
-                    className="ui-btn ui-btn--ghost"
-                    onClick={() => legacyStatusMutation.mutate(manualStatus)}
-                    disabled={!legacyEnabled || legacyStatusMutation.isPending}
-                  >
-                    Применить
-                  </button>
-                </div>
-                {!legacyEnabled && <p className="subtitle">Ручное изменение отключено в этой среде.</p>}
-              </details>
-            )}
-
-            {statusError && <p style={{ color: 'var(--danger, #f07373)' }}>{statusError}</p>}
           </div>
         )}
 
@@ -914,7 +822,7 @@ export function CandidateDetailPage() {
         <div className="glass panel">
           <div className="cd-section-header">
             <h2 className="cd-section-title">Слоты и интервью</h2>
-            {detail.telegram_id && (
+            {detail.telegram_id && !hasUpcomingSlot && (
               <button className="ui-btn ui-btn--ghost" onClick={() => setShowScheduleSlotModal(true)}>
                 + Назначить слот
               </button>

@@ -2389,10 +2389,24 @@ async def update_candidate_status(
             return True, "Статус обновлён", normalized, None
 
         if normalized in STATUS_DEFINITIONS:
+            dispatch = None
             try:
                 target_status = CandidateStatus(normalized)
             except ValueError:
                 target_status = None
+
+            if target_status == CandidateStatus.TEST2_SENT:
+                if target_slot is None:
+                    return False, "Для кандидата не найден подходящий слот", None, None
+                from backend.apps.admin_ui.services.slots import set_slot_outcome
+                ok, message, _, dispatch = await set_slot_outcome(
+                    target_slot.id,
+                    "success",
+                    bot_service=bot_service,
+                    principal=principal,
+                )
+                if not ok:
+                    return False, message or "Не удалось отправить Тест 2.", None, None
 
             if target_status == user.candidate_status:
                 user.status_changed_at = datetime.now(timezone.utc)
@@ -2439,7 +2453,7 @@ async def update_candidate_status(
                     "slot_id": getattr(target_slot, "id", None),
                 },
             )
-            return True, "Статус обновлён", normalized, None
+            return True, "Статус обновлён", normalized, dispatch
 
     return False, "Этот статус нельзя установить вручную", None, None
 
