@@ -1998,107 +1998,79 @@ select {
 
 .recruiter-edit__list {
   margin: 8px 0 0;
-  padding-left: 18px;
-  color: var(--muted);
-  font-size: 12px;
-  display: grid;
-  gap: 6px;
 }
 
-/* === Animated Glassmorphism Background === */
-.background-bubbles {
+/* === Layered 3D Glassmorphism Background === */
+.background-scene {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: -1; /* Behind everything */
-  overflow: hidden; /* Hide bubbles that go off-screen */
+  z-index: -1;
+  overflow: hidden;
+  will-change: transform;
+}
+
+.bubbles-layer {
+  position: absolute;
+  inset: 0;
 }
 
 .bubble {
   position: absolute;
-  bottom: -150px; /* Start below the screen */
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  bottom: -200px;
   border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.25), rgba(255, 255, 255, 0.05));
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2), inset 0 1px 2px rgba(255,255,255,0.3);
+  will-change: transform;
+}
+
+/* Layer 1: Far back, large, slow, very blurred */
+.layer-1 .bubble {
+  animation: float-up-slow 40s infinite linear;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.layer-1 .bubble:nth-child(1) { width: 180px; height: 180px; left: 15%; animation-delay: -2s; animation-duration: 45s; }
+.layer-1 .bubble:nth-child(2) { width: 220px; height: 220px; left: 70%; animation-delay: -10s; animation-duration: 50s; }
+.layer-1 .bubble:nth-child(3) { width: 150px; height: 150px; left: 40%; animation-delay: -25s; animation-duration: 40s; }
+
+/* Layer 2: Mid-ground, medium size, medium speed, medium blur */
+.layer-2 .bubble {
+  animation: float-up-medium 30s infinite linear;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  animation: float-up 25s infinite linear;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.08));
+}
+.layer-2 .bubble:nth-child(1) { width: 100px; height: 100px; left: 5%; animation-delay: -5s; animation-duration: 35s; }
+.layer-2 .bubble:nth-child(2) { width: 80px; height: 80px; left: 30%; animation-delay: -15s; animation-duration: 30s; }
+.layer-2 .bubble:nth-child(3) { width: 120px; height: 120px; left: 60%; animation-delay: -8s; animation-duration: 28s; }
+.layer-2 .bubble:nth-child(4) { width: 70px; height: 70px; left: 85%; animation-delay: -20s; animation-duration: 32s; }
+
+/* Layer 3: Front, small, faster, sharpest */
+.layer-3 .bubble {
+  animation: float-up-fast 20s infinite linear;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.15));
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.layer-3 .bubble:nth-child(1) { width: 50px; height: 50px; left: 25%; animation-delay: -3s; animation-duration: 22s; }
+.layer-3 .bubble:nth-child(2) { width: 65px; height: 65px; left: 75%; animation-delay: -12s; animation-duration: 18s; }
+
+/* Keyframes for different layers to create parallax */
+@keyframes float-up-slow {
+  100% { transform: translateY(-120vh) translateX(5vw) rotate(60deg); opacity: 0; }
+}
+@keyframes float-up-medium {
+  100% { transform: translateY(-120vh) translateX(-8vw) rotate(80deg); opacity: 0; }
+}
+@keyframes float-up-fast {
+  100% { transform: translateY(-120vh) translateX(10vw) rotate(100deg); opacity: 0; }
 }
 
-/* Unique properties for each bubble */
-.bubble:nth-child(1) {
-  width: 80px;
-  height: 80px;
-  left: 10%;
-  animation-duration: 22s;
-  animation-delay: 0s;
-}
-.bubble:nth-child(2) {
-  width: 100px;
-  height: 100px;
-  left: 20%;
-  animation-duration: 25s;
-  animation-delay: 3s;
-}
-.bubble:nth-child(3) {
-  width: 50px;
-  height: 50px;
-  left: 35%;
-  animation-duration: 18s;
-  animation-delay: 7s;
-}
-.bubble:nth-child(4) {
-  width: 120px;
-  height: 120px;
-  left: 50%;
-  animation-duration: 30s;
-  animation-delay: 2s;
-}
-.bubble:nth-child(5) {
-  width: 60px;
-  height: 60px;
-  left: 65%;
-  animation-duration: 15s;
-  animation-delay: 5s;
-}
-.bubble:nth-child(6) {
-  width: 90px;
-  height: 90px;
-  left: 80%;
-  animation-duration: 28s;
-  animation-delay: 1s;
-}
-.bubble:nth-child(7) {
-  width: 40px;
-  height: 40px;
-  left: 90%;
-  animation-duration: 20s;
-  animation-delay: 8s;
-}
-.bubble:nth-child(8) {
-  width: 70px;
-  height: 70px;
-  left: 5%;
-  animation-duration: 26s;
-  animation-delay: 10s;
-}
-
-@keyframes float-up {
-  0% {
-    transform: translateY(0) translateX(0);
-    opacity: 0.7;
-  }
-  50% {
-    transform: translateY(-50vh) translateX(20px);
-    opacity: 0.5;
-  }
-  100% {
-    transform: translateY(-100vh) translateX(-20px);
-    opacity: 0;
-  }
-}
 
 .recruiter-edit__actions {
   align-items: center;

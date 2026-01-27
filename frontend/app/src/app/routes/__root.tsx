@@ -129,15 +129,22 @@ export function RootLayout() {
 
   return (
     <div className="app-shell">
-      <div className="background-bubbles">
-        <span className="bubble"></span>
-        <span className="bubble"></span>
-        <span className="bubble"></span>
-        <span className="bubble"></span>
-        <span className="bubble"></span>
-        <span className="bubble"></span>
-        <span className="bubble"></span>
-        <span className="bubble"></span>
+      <div className="background-scene">
+        <div className="bubbles-layer layer-1">
+          <span className="bubble"></span>
+          <span className="bubble"></span>
+          <span className="bubble"></span>
+        </div>
+        <div className="bubbles-layer layer-2">
+          <span className="bubble"></span>
+          <span className="bubble"></span>
+          <span className="bubble"></span>
+          <span className="bubble"></span>
+        </div>
+        <div className="bubbles-layer layer-3">
+          <span className="bubble"></span>
+          <span className="bubble"></span>
+        </div>
       </div>
       {!hideNav && (
         <header className="app-header glass">
