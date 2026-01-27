@@ -711,7 +711,7 @@ export function DashboardPage() {
                           )}
                         </div>
                         {candidate.availability_note && (
-                          <div className="text-muted text-sm">
+                          <div className="incoming-card__note">
                             ✉️ {candidate.availability_note}
                           </div>
                         )}

@@ -40,6 +40,13 @@ const ICONS = {
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   ),
+  incoming: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h10" />
+      <path d="M16 3h5v5" />
+      <path d="M21 3l-7 7" />
+    </svg>
+  ),
   profile: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
@@ -84,6 +91,7 @@ export function RootLayout() {
     principalType === 'recruiter'
       ? [
           { to: '/app/dashboard', label: 'Дашборд', icon: ICONS.dashboard, tone: 'blue' },
+          { to: '/app/incoming', label: 'Входящие', icon: ICONS.incoming, tone: 'amber' },
           { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
           { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
           { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },

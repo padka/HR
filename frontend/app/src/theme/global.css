@@ -1511,6 +1511,12 @@ body {
   min-height: 32px;
 }
 
+.incoming-card__note {
+  margin-top: var(--space-xs);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
 .dashboard-kpi .kpi-card {
   background:
     radial-gradient(100% 100% at 0% 0%, rgba(255,255,255,0.06), transparent 50%),
