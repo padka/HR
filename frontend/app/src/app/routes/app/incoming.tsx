@@ -18,6 +18,8 @@ type IncomingCandidate = {
   availability_note?: string | null
   telegram_id?: number | null
   telegram_username?: string | null
+  last_message?: string | null
+  last_message_at?: string | null
   profile_url?: string | null
 }
 
@@ -192,6 +194,11 @@ export function IncomingPage() {
                         {candidate.availability_note && (
                           <div className="incoming-card__note">
                             ✉️ {candidate.availability_note}
+                          </div>
+                        )}
+                        {candidate.last_message && candidate.last_message !== candidate.availability_note && (
+                          <div className="incoming-card__note">
+                            💬 {candidate.last_message}
                           </div>
                         )}
                       </div>

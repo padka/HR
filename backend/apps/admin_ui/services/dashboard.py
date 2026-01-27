@@ -25,7 +25,7 @@ from backend.apps.admin_ui.utils import fmt_local, safe_zone
 from backend.core.db import async_session
 from backend.domain.base import Base
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
-from backend.domain.candidates.models import User
+from backend.domain.candidates.models import User, ChatMessage, ChatMessageDirection
 from backend.domain.analytics import FunnelEvent
 from backend.domain.candidates.status import (
     get_status_label,
@@ -182,6 +182,7 @@ def _format_waiting_window(user: User, tz_label: str) -> Optional[str]:
 
 
 async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, object]:
+    last_message_map: Dict[int, dict] = {}
     async with async_session() as session:
         principal_type = getattr(principal, "type", None)
         principal_id = getattr(principal, "id", None)
@@ -285,6 +286,23 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
         result = await session.execute(stmt)
         users = result.scalars().all()
 
+        user_ids = [u.id for u in users]
+        if user_ids:
+            rows = await session.execute(
+                select(ChatMessage.candidate_id, ChatMessage.text, ChatMessage.created_at)
+                .where(
+                    ChatMessage.candidate_id.in_(user_ids),
+                    ChatMessage.direction == ChatMessageDirection.INBOUND.value,
+                )
+                .order_by(ChatMessage.candidate_id.asc(), ChatMessage.created_at.desc())
+            )
+            for candidate_id, text, created_at in rows:
+                if candidate_id not in last_message_map:
+                    last_message_map[candidate_id] = {
+                        "text": text,
+                        "created_at": created_at,
+                    }
+
     now = datetime.now(timezone.utc)
     tz_cache: Dict[str, str] = {}
 
@@ -321,6 +339,8 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
             waiting_hours = max(0, int(delta.total_seconds() // 3600))
 
         waiting_since_iso = waiting_since.isoformat() if waiting_since else None
+        last_msg = last_message_map.get(user.id)
+        last_msg_at = last_msg.get("created_at") if last_msg else None
         waiting_rows.append(
             {
                 "id": user.id,
@@ -339,6 +359,8 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                 "telegram_id": user.telegram_id,
                 "telegram_user_id": user.telegram_user_id or user.telegram_id,
                 "telegram_username": user.telegram_username or user.username,
+                "last_message": last_msg.get(\"text\") if last_msg else None,
+                "last_message_at": last_msg_at.isoformat() if last_msg_at else None,
                 "schedule_url": f"/candidates/{user.id}/schedule-slot",
                 "profile_url": f"/candidates/{user.id}",
                 "priority_score": 0,  # will be updated below
