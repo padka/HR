@@ -609,7 +609,7 @@ async def api_staff_threads_updates(
 ) -> JSONResponse:
     since_dt = _parse_datetime_param(since)
     payload = await staff_wait_thread_updates(principal, since=since_dt, timeout=timeout)
-    return JSONResponse(payload)
+    return JSONResponse(jsonable_encoder(payload))
 
 
 @router.get("/staff/threads/{thread_id}/messages")
@@ -1904,7 +1904,7 @@ async def api_candidates_list(
         "pages_total": data.get("pages_total", 1),
         "filters": data.get("filters", {}),
     }
-    return JSONResponse(payload)
+    return JSONResponse(jsonable_encoder(payload))
 
 
 @router.post("/candidates/{candidate_id}/actions/{action_key}")
