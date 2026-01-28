@@ -84,6 +84,7 @@ class User(Base):
     )
     workflow_status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     rejection_stage: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rejected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     rejected_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 

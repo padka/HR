@@ -226,165 +226,281 @@ type ScheduleSlotModalProps = {
 }
 
 function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, onSuccess }: ScheduleSlotModalProps) {
+
   const [form, setForm] = useState({
-    recruiter_id: '',
+
     city_id: '',
+
     date: getTomorrowDate(),
+
     time: '10:00',
+
     custom_message: '',
+
   })
+
   const [error, setError] = useState<string | null>(null)
 
-  const citiesQuery = useQuery<City[]>({
+
+
+  const citiesQuery = useQuery<City[]> ({
+
     queryKey: ['cities'],
+
     queryFn: () => apiFetch('/cities'),
+
   })
 
-  const recruitersQuery = useQuery<Recruiter[]>({
-    queryKey: ['recruiters'],
-    queryFn: () => apiFetch('/recruiters'),
-  })
+
 
   const cities = citiesQuery.data || []
-  const recruiters = (recruitersQuery.data || []).filter((r) => r.active !== false)
+
+
 
   // Auto-select city based on candidate's city
+
   useEffect(() => {
+
     if (candidateCity && cities.length > 0 && !form.city_id) {
+
       const match = cities.find((c) => c.name.toLowerCase() === candidateCity.toLowerCase())
+
       if (match) {
+
         setForm((f) => ({ ...f, city_id: String(match.id) }))
+
       }
+
     }
+
   }, [candidateCity, cities, form.city_id])
 
+
+
   const selectedCity = useMemo(() => cities.find((c) => String(c.id) === form.city_id), [cities, form.city_id])
+
   const cityTz = selectedCity?.tz || 'Europe/Moscow'
 
+
+
   const mutation = useMutation({
+
     mutationFn: async () => {
+
       return apiFetch(`/candidates/${candidateId}/schedule-slot`, {
+
         method: 'POST',
+
         body: JSON.stringify({
-          recruiter_id: Number(form.recruiter_id),
+
           city_id: Number(form.city_id),
+
           date: form.date,
+
           time: form.time,
+
           custom_message: form.custom_message || null,
+
         }),
+
       })
+
     },
+
     onSuccess: () => {
+
       onSuccess()
+
       onClose()
+
     },
+
     onError: (err: Error) => {
+
       setError(err.message)
+
     },
+
   })
 
-  const canSubmit = form.recruiter_id && form.city_id && form.date && form.time
+
+
+  const canSubmit = form.city_id && form.date && form.time
+
+
 
   return (
+
     <ModalPortal>
+
       <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+
         <div className="glass glass--elevated modal modal--md">
+
           <div className="modal__header">
+
             <div>
+
               <h2 className="modal__title">Назначить собеседование</h2>
+
               <p className="modal__subtitle">
+
                 Кандидат: <strong>{candidateFio}</strong>
+
               </p>
+
             </div>
+
             <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
+
           </div>
+
+
 
           {error && (
+
             <div className="glass panel--tight" style={{ borderColor: 'rgba(240, 115, 115, 0.3)' }}>
+
               <p style={{ color: '#f07373', margin: 0 }}>{error}</p>
+
             </div>
+
           )}
 
+
+
           <div className="modal__body">
+
             <div className="form-grid">
-              <label className="form-group">
-                <span className="form-group__label">Рекрутёр</span>
-                <select
-                  value={form.recruiter_id}
-                  onChange={(e) => setForm({ ...form, recruiter_id: e.target.value })}
-                  disabled={recruitersQuery.isLoading}
-                >
-                  <option value="">— выберите рекрутёра —</option>
-                  {recruiters.map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-                </select>
-              </label>
 
               <label className="form-group">
+
                 <span className="form-group__label">Город</span>
+
                 <select
+
                   value={form.city_id}
+
                   onChange={(e) => setForm({ ...form, city_id: e.target.value })}
+
                   disabled={citiesQuery.isLoading}
+
                 >
+
                   <option value="">— выберите город —</option>
+
                   {cities.map((c) => (
+
                     <option key={c.id} value={c.id}>{c.name} {c.tz ? `(${formatTzOffset(c.tz)})` : ''}</option>
+
                   ))}
+
                 </select>
+
                 {selectedCity && (
+
                   <span className="subtitle">Часовой пояс: {cityTz} ({formatTzOffset(cityTz)})</span>
+
                 )}
+
               </label>
+
+
 
               <div className="form-row">
+
                 <label className="form-group">
+
                   <span className="form-group__label">Дата</span>
+
                   <input
+
                     type="date"
+
                     value={form.date}
+
                     onChange={(e) => setForm({ ...form, date: e.target.value })}
+
                   />
+
                 </label>
+
                 <label className="form-group">
+
                   <span className="form-group__label">Время</span>
+
                   <input
+
                     type="time"
+
                     value={form.time}
+
                     onChange={(e) => setForm({ ...form, time: e.target.value })}
+
                   />
+
                 </label>
+
               </div>
 
+
+
               <label className="form-group">
+
                 <span className="form-group__label">Персональное сообщение (опционально)</span>
+
                 <textarea
+
                   rows={3}
+
                   value={form.custom_message}
+
                   onChange={(e) => setForm({ ...form, custom_message: e.target.value })}
+
                   placeholder="Введите текст сообщения для кандидата..."
+
                 />
+
               </label>
+
             </div>
+
           </div>
 
+
+
           <div className="modal__footer">
+
             <button
+
               className="ui-btn ui-btn--primary"
+
               onClick={() => mutation.mutate()}
+
               disabled={!canSubmit || mutation.isPending}
+
             >
+
               {mutation.isPending ? 'Назначаем...' : 'Назначить собеседование'}
+
             </button>
+
             <button className="ui-btn ui-btn--ghost" onClick={onClose}>
+
               Отмена
+
             </button>
+
           </div>
+
         </div>
+
       </div>
+
     </ModalPortal>
+
   )
+
 }
 
 type ScheduleIntroDayModalProps = {
@@ -486,6 +602,70 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, onClo
   )
 }
 
+type RejectModalProps = {
+  candidateId: number
+  onClose: () => void
+  onSuccess: () => void
+  title?: string
+  actionKey: string
+}
+
+function RejectModal({ candidateId, onClose, onSuccess, title, actionKey }: RejectModalProps) {
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      return apiFetch(`/candidates/${candidateId}/actions/${actionKey}`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      })
+    },
+    onSuccess: () => {
+      onSuccess()
+      onClose()
+    },
+    onError: (err: Error) => {
+      setError(err.message)
+    },
+  })
+
+  return (
+    <ModalPortal>
+      <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+        <div className="glass glass--elevated modal modal--sm">
+          <div className="modal__header">
+            <h2 className="modal__title">{title || 'Укажите причину отказа'}</h2>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
+          </div>
+          <div className="modal__body">
+            {error && <p style={{ color: '#f07373', marginBottom: 12 }}>{error}</p>}
+            <textarea
+              rows={4}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Причина отказа..."
+              className="ui-input"
+              autoFocus
+              style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)', color: 'inherit' }}
+            />
+          </div>
+          <div className="modal__footer">
+            <button
+              className="ui-btn ui-btn--danger"
+              onClick={() => mutation.mutate()}
+              disabled={!reason.trim() || mutation.isPending}
+            >
+              Подтвердить отказ
+            </button>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>Отмена</button>
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
+  )
+}
+
 export function CandidateDetailPage() {
   const queryClient = useQueryClient()
   const params = useParams({ from: '/app/candidates/$candidateId' })
@@ -494,6 +674,7 @@ export function CandidateDetailPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [showScheduleSlotModal, setShowScheduleSlotModal] = useState(false)
   const [showScheduleIntroDayModal, setShowScheduleIntroDayModal] = useState(false)
+  const [showRejectModal, setShowRejectModal] = useState<{ actionKey: string; title?: string } | null>(null)
   const [isChatOpen, setIsChatOpen] = useState(false)
 
   const detailQuery = useQuery<CandidateDetail>({
@@ -520,8 +701,11 @@ export function CandidateDetailPage() {
   })
 
   const actionMutation = useMutation({
-    mutationFn: async (action: CandidateAction) => {
-      return apiFetch(`/candidates/${candidateId}/actions/${action.key}`, { method: 'POST' })
+    mutationFn: async ({ actionKey, payload }: { actionKey: string; payload?: any }) => {
+      return apiFetch(`/candidates/${candidateId}/actions/${actionKey}`, {
+        method: 'POST',
+        body: payload ? JSON.stringify(payload) : undefined,
+      })
     },
     onSuccess: () => {
       setActionMessage('Действие выполнено')
@@ -542,9 +726,9 @@ export function CandidateDetailPage() {
     const entries = Object.entries(testResultsMap)
     if (entries.length === 0) return []
     return entries.map(([key, value]) => ({
-      key,
-      title: key === 'test1' ? 'Тест 1' : key === 'test2' ? 'Тест 2' : key,
       ...value,
+      key,
+      title: key === 'test1' ? 'Тест 1' : key === 'test2' ? 'Тест 2' : (value.title || key),
     }))
   }, [rawTestSections, testResultsMap])
   const test1Section = testSections.find((section) => section.key === 'test1')
@@ -554,6 +738,19 @@ export function CandidateDetailPage() {
   const lastChatMessage = chatMessages.length > 0 ? chatMessages[chatMessages.length - 1] : null
 
   const onActionClick = (action: CandidateAction) => {
+    const isRejection =
+      action.key === 'reject' ||
+      action.key === 'interview_outcome_failed' ||
+      action.key === 'interview_declined' ||
+      action.key === 'mark_not_hired' ||
+      action.key === 'decline_after_intro' ||
+      action.variant === 'danger'
+
+    if (isRejection) {
+      setShowRejectModal({ actionKey: action.key, title: action.label })
+      return
+    }
+
     if ((action.method || 'GET').toUpperCase() === 'GET') {
       if (action.url) {
         window.location.href = action.url
@@ -563,7 +760,7 @@ export function CandidateDetailPage() {
     if (action.confirmation && !window.confirm(action.confirmation)) {
       return
     }
-    actionMutation.mutate(action)
+    actionMutation.mutate({ actionKey: action.key })
   }
 
   const statusSlug = detail?.candidate_status_slug || null
@@ -737,36 +934,28 @@ export function CandidateDetailPage() {
           </div>
         </div>
 
-        {/* ── Pipeline & Status Center ── */}
-        {pipelineStages.length > 0 && (
-          <div className="glass panel cd-pipeline">
-            <div className="cd-section-header">
-              <h2 className="cd-section-title">Воронка</h2>
-            </div>
-
-            {pipelineStages.length > 0 && (
-              <div className="cd-pipeline__stages">
-                {pipelineStages.map((stage, idx) => {
-                  const state = stage.state || 'pending'
-                  return (
-                    <div key={stage.key || idx} className={`cd-pipeline__stage cd-pipeline__stage--${state}`}>
-                      <div className="cd-pipeline__stage-dot" />
-                      <div className="cd-pipeline__stage-label">{stage.label}</div>
-                      {idx < pipelineStages.length - 1 && <div className="cd-pipeline__connector" />}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Actions ── */}
-        <div className="glass panel cd-actions-panel">
+        {/* ── Pipeline & Status Center (Funnel) ── */}
+        <div className="glass panel cd-pipeline">
           <div className="cd-section-header">
-            <h2 className="cd-section-title">Действия</h2>
+            <h2 className="cd-section-title">Воронка</h2>
           </div>
-          <div className="cd-actions-grid">
+
+          {pipelineStages.length > 0 && (
+            <div className="cd-pipeline__stages">
+              {pipelineStages.map((stage, idx) => {
+                const state = stage.state || 'pending'
+                return (
+                  <div key={stage.key || idx} className={`cd-pipeline__stage cd-pipeline__stage--${state}`}>
+                    <div className="cd-pipeline__stage-dot" />
+                    <div className="cd-pipeline__stage-label">{stage.label}</div>
+                    {idx < pipelineStages.length - 1 && <div className="cd-pipeline__connector" />}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          <div className="cd-pipeline__actions" style={{ marginTop: 24, display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
             {canScheduleInterview && (
               <button className="ui-btn ui-btn--primary" onClick={() => setShowScheduleSlotModal(true)}>
                 {scheduleLabel}
@@ -778,7 +967,6 @@ export function CandidateDetailPage() {
                 className={`ui-btn ${canSendTest2 ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
                 onClick={() => canSendTest2 && onActionClick(test2Action)}
                 disabled={!canSendTest2 || actionMutation.isPending}
-                title={!canSendTest2 ? 'Тест 2 доступен после подтверждения собеседования' : undefined}
               >
                 {test2Action.label}
               </button>
@@ -811,11 +999,8 @@ export function CandidateDetailPage() {
               </button>
             )}
 
-            {filteredActions.length === 0 && !test2Action && !canScheduleInterview && !rejectAction && !canScheduleIntroDay && (
-              <span className="subtitle">Нет доступных действий</span>
-            )}
+            {actionMessage && <p className="subtitle" style={{ width: '100%', textAlign: 'center', marginTop: 8 }}>{actionMessage}</p>}
           </div>
-          {actionMessage && <p className="subtitle" style={{ marginTop: 8 }}>{actionMessage}</p>}
         </div>
 
         {/* ── Slots Table ── */}
@@ -908,32 +1093,6 @@ export function CandidateDetailPage() {
             </div>
           )}
         </div>
-
-        {/* ── Chat Summary ── */}
-        <div className="glass panel">
-          <div className="cd-section-header">
-            <h2 className="cd-section-title">Чат с кандидатом</h2>
-            <button className="ui-btn ui-btn--ghost" onClick={() => setIsChatOpen(true)} disabled={!detail.telegram_id}>
-              Открыть чат
-            </button>
-          </div>
-          <p className="subtitle" style={{ margin: 0 }}>Сообщения отправляются через Telegram.</p>
-          {chatQuery.isError && <p style={{ color: 'var(--danger, #f07373)' }}>Ошибка: {(chatQuery.error as Error).message}</p>}
-          {!chatQuery.isError && chatMessages.length === 0 && (
-            <p className="subtitle">Сообщений пока нет.</p>
-          )}
-          {lastChatMessage && (
-            <div className="candidate-chat-preview">
-              <div className="candidate-chat-preview__label">
-                {lastChatMessage.direction === 'outbound' ? 'Вы' : 'Кандидат'}
-                {' · '}
-                {new Date(lastChatMessage.created_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-              </div>
-              <div className="candidate-chat-preview__text">{lastChatMessage.text}</div>
-            </div>
-          )}
-        </div>
-
         </>)}
       </div>
 
@@ -956,6 +1115,18 @@ export function CandidateDetailPage() {
           candidateFio={detail.fio || `Кандидат #${candidateId}`}
           candidateCity={detail.city}
           onClose={() => setShowScheduleIntroDayModal(false)}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] })
+          }}
+        />
+      )}
+
+      {showRejectModal && (
+        <RejectModal
+          candidateId={candidateId}
+          actionKey={showRejectModal.actionKey}
+          title={showRejectModal.title}
+          onClose={() => setShowRejectModal(null)}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] })
           }}

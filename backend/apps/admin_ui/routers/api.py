@@ -2005,6 +2005,14 @@ async def api_candidate_action(
             detail={"message": "Кандидат не найден"},
         )
 
+    # Try to parse optional payload from request body
+    payload = {}
+    if request.method == "POST":
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+
     actions = detail.get("candidate_actions") or []
     action = next((item for item in actions if getattr(item, "key", None) == action_key), None)
     if not action:
@@ -2020,7 +2028,11 @@ async def api_candidate_action(
 
     if action.target_status:
         ok, message, stored_status, dispatch = await update_candidate_status(
-            candidate_id, action.target_status, bot_service=bot_service
+            candidate_id,
+            action.target_status,
+            bot_service=bot_service,
+            reason=payload.get("reason"),
+            comment=payload.get("comment"),
         )
         if dispatch is not None and ok:
             plan = getattr(dispatch, "plan", None)

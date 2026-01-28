@@ -2267,6 +2267,8 @@ async def update_candidate_status(
     *,
     bot_service: Optional["BotService"] = None,
     principal: Optional[Principal] = None,
+    reason: Optional[str] = None,
+    comment: Optional[str] = None,
 ) -> Tuple[bool, str, Optional[str], Optional[object]]:
     """Update candidate workflow status via slot updates or outcomes."""
 
@@ -2296,6 +2298,19 @@ async def update_candidate_status(
             return False, "Кандидат не найден", None, None
         if user.telegram_id is None and normalized not in STATUS_DEFINITIONS:
             return False, "Для кандидата не указан Telegram ID", None, None
+        
+        # Store reason/comment if provided
+        if reason:
+            user.rejection_reason = reason
+        if comment:
+            # Append comment to existing manual_slot_comment or similar if appropriate, 
+            # or just set it if we have a specific field. 
+            # For now, let's just use rejection_reason if it's a rejection.
+            if not user.rejection_reason and normalized in {"interview_declined", "test2_failed", "not_hired", "intro_day_declined_day_of"}:
+                user.rejection_reason = comment
+            elif comment:
+                 user.manual_slot_comment = (user.manual_slot_comment or "") + f"\n{comment}"
+
         previous_status = getattr(user, "candidate_status", None)
         previous_status_slug = getattr(previous_status, "value", None) if previous_status else None
         if previous_status_slug is None and isinstance(previous_status, str):
