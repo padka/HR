@@ -2745,6 +2745,16 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
     ]
     status_is_terminal = is_terminal_status(candidate_status) if candidate_status else False
 
+    intro_day_template = None
+    if user.city:
+        city_obj = await find_city_by_plain_name(user.city)
+        if city_obj:
+            async with async_session() as city_session:
+                city_result = await city_session.execute(select(City).where(func.lower(City.name) == user.city.lower()))
+                city_record = city_result.scalars().first()
+                if city_record:
+                    intro_day_template = city_record.intro_day_template
+
     settings = get_settings()
 
     return {
@@ -2769,28 +2779,21 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         "workflow_status": workflow_state.status.value,
         "workflow_status_label": workflow_status_label,
         "workflow_status_color": workflow_status_color,
-        "candidate_status_options": [
-            {"slug": slug, "label": meta.get("label", slug)}
-            for slug, meta in STATUS_DEFINITIONS.items()
-        ],
-        # Status Center data
-        "allowed_next_statuses": allowed_next_statuses,
         "pipeline_stages": pipeline_stages,
+        "allowed_next_statuses": allowed_next_statuses,
         "status_is_terminal": status_is_terminal,
-        "test2_passed": test2_passed,
         "stats": {
-            "tests_total": int(tests_total or 0),
-            "average_score": float(avg_score) if avg_score is not None else None,
+            "tests_total": tests_total,
+            "avg_score": float(avg_score) if avg_score is not None else None,
         },
         "telemost_url": telemost_url,
         "telemost_source": telemost_source,
         "responsible_recruiter": responsible_recruiter,
-        "interview_form_sections": INTERVIEW_FORM_SECTIONS,
-        "interview_recommendation_choices": INTERVIEW_RECOMMENDATION_CHOICES,
-        "interview_recommendation_lookup": INTERVIEW_RECOMMENDATION_LOOKUP,
-        "interview_notes": _serialize_interview_note(interview_note),
-        "chat_templates": get_chat_templates(),
+        "candidate_status_options": [
+            {"value": s.value, "label": s.value} for s in CandidateStatus
+        ],
         "legacy_status_enabled": settings.enable_legacy_status_api,
+        "intro_day_template": intro_day_template,
     }
 
 
@@ -3271,6 +3274,7 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "status_is_terminal": detail.get("status_is_terminal", False),
         "candidate_status_options": detail.get("candidate_status_options", []),
         "legacy_status_enabled": detail.get("legacy_status_enabled", False),
+        "intro_day_template": detail.get("intro_day_template"),
     }
 
 

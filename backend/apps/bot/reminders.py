@@ -98,6 +98,7 @@ from backend.apps.bot.metrics import (
     record_reminder_skipped,
 )
 from backend.core.db import async_session
+from backend.core.settings import get_settings
 from backend.core.redis_factory import parse_redis_target
 from backend.domain.models import SlotReminderJob, SlotStatus, Slot
 from backend.domain.repositories import add_outbox_notification, get_slot
@@ -745,19 +746,31 @@ def create_scheduler(redis_url: Optional[str]) -> AsyncIOScheduler:
             )
         return AsyncIOScheduler()
 
-    if redis_url:
+    # Ensure we have a Redis URL, preferring the argument but falling back to settings
+    settings = get_settings()
+    effective_redis_url = redis_url or settings.redis_url
+
+    if effective_redis_url:
         try:
-            parse_redis_target(redis_url, component="jobstore")
-            if hasattr(RedisJobStore, "from_url"):
-                jobstores = {"default": RedisJobStore.from_url(redis_url)}
-            else:
-                logger.warning("RedisJobStore.from_url is unavailable; falling back to in-memory job store")
-                jobstores = {"default": MemoryJobStore()}
+            target = parse_redis_target(effective_redis_url, component="jobstore")
+            jobstores = {
+                "default": RedisJobStore(
+                    jobs_key="bot_jobs",
+                    run_times_key="bot_running",
+                    host=target.host,
+                    port=target.port,
+                    db=target.db,
+                    password=target.password,
+                )
+            }
+            logger.info("Scheduler configured with RedisJobStore")
         except Exception:
             logger.exception("Failed to create RedisJobStore; falling back to in-memory job store")
             jobstores = {"default": MemoryJobStore()}
     else:
+        logger.warning("No REDIS_URL found; falling back to MemoryJobStore")
         jobstores = {"default": MemoryJobStore()}
+        
     return AsyncIOScheduler(jobstores=jobstores, timezone="UTC")
 
 

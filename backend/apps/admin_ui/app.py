@@ -29,9 +29,7 @@ from backend.apps.admin_ui.background_tasks import (
     periodic_past_free_slot_cleanup,
 )
 from backend.apps.admin_ui.config import STATIC_DIR, register_template_globals
-from pathlib import Path
-from pathlib import Path
-from pathlib import Path
+from backend.domain.tests.bootstrap import bootstrap_test_questions
 from pathlib import Path
 from backend.apps.admin_ui.routers import (
     api,
@@ -46,7 +44,6 @@ from backend.apps.admin_ui.routers import (
     slot_assignments,
     system,
     templates,
-    workflow,
     workflow,
     profile,
     assignments,
@@ -311,12 +308,21 @@ async def lifespan(app: FastAPI):
     app.state.notification_broker_available = False
     app.state.bot_enabled = settings.bot_enabled
 
-    if _auto_upgrade_schema_if_needed(settings):
-        logger.info("Development database migrated to latest revision")
-
     # Detect test mode
     import os
     is_test_mode = bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("ENVIRONMENT") == "test"
+
+    if _auto_upgrade_schema_if_needed(settings):
+        logger.info("Development database migrated to latest revision")
+
+    # Initialize test questions
+    if not is_test_mode:
+        try:
+            async with async_session() as session:
+                await bootstrap_test_questions(session)
+            logger.info("Test questions bootstrapped")
+        except Exception as exc:
+            logger.error("Failed to bootstrap test questions: %s", exc)
 
     # Check DB availability early to avoid crashing on startup.
     if not is_test_mode:
