@@ -135,6 +135,11 @@ INTRO_DAY_MESSAGE_TEMPLATE: str = (
     "возьмите документ и задайте вопросы — мы на связи 🙂"
 )
 
+DEFAULT_INTRO_DAY_INVITATION_TEMPLATE: str = (
+    "Здравствуйте, [Имя]! Приглашаем вас на ознакомительный день [Дата] в [Время]. "
+    "Пожалуйста, возьмите с собой документ, удостоверяющий личность. Ждём вас!"
+)
+
 
 STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
     [
@@ -2754,6 +2759,8 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
                 city_record = city_result.scalars().first()
                 if city_record:
                     intro_day_template = city_record.intro_day_template
+    if not intro_day_template:
+        intro_day_template = DEFAULT_INTRO_DAY_INVITATION_TEMPLATE
 
     settings = get_settings()
 

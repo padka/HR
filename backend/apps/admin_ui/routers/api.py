@@ -74,6 +74,10 @@ from backend.apps.admin_ui.services.templates import (
     update_templates_for_city,
     notify_templates_changed,
 )
+from backend.apps.admin_ui.services.kpis import (
+    get_weekly_kpis,
+    list_weekly_history,
+)
 from backend.apps.admin_ui.services.message_templates import (
     list_message_templates,
     create_message_template,
@@ -1446,7 +1450,7 @@ async def api_templates(city_id: Optional[int] = None, key: Optional[str] = None
 
 @router.get("/templates/list")
 async def api_templates_list(_: Principal = Depends(require_admin)):
-    return JSONResponse(await list_templates())
+    return JSONResponse(jsonable_encoder(await list_templates()))
 
 
 @router.post("/templates/save")
@@ -1562,7 +1566,7 @@ async def api_message_templates(
     _: Principal = Depends(require_admin),
 ):
     payload = await list_message_templates(city=city, key_query=key, channel=channel, status=status)
-    return JSONResponse(payload)
+    return JSONResponse(jsonable_encoder(payload))
 
 
 @router.post("/message-templates", status_code=201)
@@ -2399,6 +2403,14 @@ async def api_schedule_intro_day(
                 recruiter = rec
                 break
 
+    # Fallback: city's responsible recruiter, then candidate's responsible recruiter
+    if not recruiter:
+        async with async_session() as session:
+            if getattr(city_record, "responsible_recruiter_id", None):
+                recruiter = await session.get(Recruiter, city_record.responsible_recruiter_id)
+            if not recruiter and getattr(user, "responsible_recruiter_id", None):
+                recruiter = await session.get(Recruiter, user.responsible_recruiter_id)
+
     if not recruiter:
         return JSONResponse({"ok": False, "error": "no_recruiter_for_city"}, status_code=400)
 
@@ -2410,6 +2422,10 @@ async def api_schedule_intro_day(
     dt_utc = recruiter_time_to_utc(date_str, time_str, slot_tz)
     if not dt_utc:
         return JSONResponse({"ok": False, "error": "invalid_datetime"}, status_code=400)
+
+    custom_message = data.get("custom_message")
+    if custom_message:
+        custom_message = str(custom_message).strip()
 
     async with async_session() as session:
         # Check for existing intro_day slot
@@ -2451,22 +2467,26 @@ async def api_schedule_intro_day(
 
         # Add notification
         try:
+            payload = {}
+            if custom_message:
+                payload["custom_message"] = custom_message
+
             await add_outbox_notification(
                 notification_type="intro_day_invitation",
                 booking_id=slot.id,
                 candidate_tg_id=user.telegram_id,
-                payload={},
+                payload=payload,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to enqueue intro day notification: %s", exc)
 
         # Schedule reminders
         try:
             from backend.apps.bot.reminders import get_reminder_service
             reminder_service = get_reminder_service()
             await reminder_service.schedule_for_slot(slot.id, skip_confirmation_prompts=False)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to schedule reminders for intro day: %s", exc)
 
     return JSONResponse({
         "ok": True,
