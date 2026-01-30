@@ -44,7 +44,7 @@ from backend.apps.admin_ui.security import require_principal, Principal, princip
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain.slot_service import ensure_slot_not_in_past, SlotValidationError
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 logger = logging.getLogger(__name__)
@@ -59,6 +59,20 @@ def _parse_checkbox(value: Optional[str]) -> bool:
 
 
 from backend.core.guards import ensure_slot_scope
+from sqlalchemy import select as sa_select
+
+
+async def _recruiter_has_city(session, recruiter_id: int, city_id: int, city: City) -> bool:
+    """Check if recruiter is assigned to city via M2M table or responsible_recruiter_id."""
+    m2m = await session.scalar(
+        sa_select(recruiter_city_association.c.city_id).where(
+            recruiter_city_association.c.recruiter_id == recruiter_id,
+            recruiter_city_association.c.city_id == city_id,
+        ).limit(1)
+    )
+    if m2m is not None:
+        return True
+    return city.responsible_recruiter_id == recruiter_id
 
 
 def _pop_flash(request: Request) -> Optional[Dict[str, str]]:
@@ -266,7 +280,7 @@ async def slots_api_create(payload: SlotCreatePayload, principal: Principal = De
         city = await session.get(City, region_id)
         if city is None:
             raise HTTPException(status_code=422, detail="Region not found")
-        if city.responsible_recruiter_id != recruiter.id:
+        if not await _recruiter_has_city(session, recruiter.id, region_id, city):
             raise HTTPException(
                 status_code=422,
                 detail="Region is not assigned to the recruiter",
@@ -337,7 +351,7 @@ async def slots_api_update(slot_id: int, payload: SlotUpdatePayload, principal: 
         city = await session.get(City, region_id)
         if city is None:
             raise HTTPException(status_code=422, detail="Region not found")
-        if city.responsible_recruiter_id != recruiter.id:
+        if not await _recruiter_has_city(session, recruiter.id, region_id, city):
             raise HTTPException(
                 status_code=422,
                 detail="Region is not assigned to the recruiter",

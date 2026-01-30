@@ -17,7 +17,7 @@ from backend.apps.admin_ui.utils import (
     validate_timezone_name,
 )
 from backend.core.db import async_session
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
 from backend.domain.candidates.models import User
 
 try:  # pragma: no cover - optional dependency during tests
@@ -124,7 +124,16 @@ async def create_slot(
         if not recruiter:
             return False, None
         city = await session.get(City, city_id)
-        if not city or city.responsible_recruiter_id != recruiter_id:
+        if not city:
+            return False, None
+        # Check M2M recruiter_cities association (not just responsible_recruiter_id)
+        m2m = await session.scalar(
+            select(recruiter_city_association.c.city_id).where(
+                recruiter_city_association.c.recruiter_id == recruiter_id,
+                recruiter_city_association.c.city_id == city_id,
+            ).limit(1)
+        )
+        if m2m is None and city.responsible_recruiter_id != recruiter_id:
             return False, None
         try:
             tz_name = validate_timezone_name(city.tz)

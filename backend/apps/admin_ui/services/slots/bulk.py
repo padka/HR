@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from backend.apps.admin_ui.utils import local_naive_to_utc, validate_timezone_name
 from backend.core.db import async_session
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
 
 
 def _normalize_utc(dt: datetime) -> datetime:
@@ -50,7 +50,15 @@ async def bulk_create_slots(
         city = await session.get(City, city_id)
         if not city:
             return 0, "Город не найден"
-        if city.responsible_recruiter_id != recruiter_id:
+
+        # Check M2M recruiter_cities association (not just responsible_recruiter_id)
+        m2m = await session.scalar(
+            select(recruiter_city_association.c.city_id).where(
+                recruiter_city_association.c.recruiter_id == recruiter_id,
+                recruiter_city_association.c.city_id == city_id,
+            ).limit(1)
+        )
+        if m2m is None and city.responsible_recruiter_id != recruiter_id:
             return 0, "Город не привязан к выбранному рекрутёру"
 
         try:
