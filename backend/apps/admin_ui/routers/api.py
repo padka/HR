@@ -2337,6 +2337,10 @@ async def api_schedule_slot(
         )
     except ManualSlotError as exc:
         return JSONResponse({"ok": False, "error": "slot_conflict", "message": str(exc)}, status_code=409)
+    except Exception:
+        logger.exception("schedule-slot: slot created but post-processing failed (e.g. reminder scheduling)")
+        # Slot was likely created; return partial success so UI doesn't show a hard error
+        return JSONResponse({"ok": True, "warning": "slot_created_reminder_failed"}, status_code=201)
 
     # Ensure recruiter is linked to candidate after successful scheduling
     try:
