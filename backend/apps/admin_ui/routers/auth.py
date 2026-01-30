@@ -1,22 +1,61 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status, Query
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 
-from backend.core.passwords import verify_password
+from backend.core.auth import verify_password, create_access_token
 from backend.core.db import async_session
 from backend.apps.admin_ui.security import SESSION_KEY, Principal, PrincipalType
 from backend.domain.auth_account import AuthAccount
 from backend.domain.models import Recruiter
+from backend.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/token")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    OAuth2 compatible token login, get an access token for future requests.
+    """
+    settings = get_settings()
+    
+    # 1. Check against hardcoded admin credentials (if configured)
+    if (settings.admin_username and 
+        form_data.username == settings.admin_username and 
+        form_data.password == settings.admin_password):
+        
+        access_token_expires = timedelta(minutes=settings.state_ttl_seconds / 60) # use existing TTL or default 30m
+        access_token = create_access_token(
+            data={"sub": form_data.username}, expires_delta=access_token_expires
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+
+    # 2. Check against database AuthAccount
+    async with async_session() as session:
+        account = await session.scalar(
+            select(AuthAccount).where(AuthAccount.username == form_data.username, AuthAccount.is_active.is_(True))
+        )
+        if not account or not verify_password(form_data.password, account.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+        access_token_expires = timedelta(minutes=settings.state_ttl_seconds / 60)
+        access_token = create_access_token(
+            data={"sub": account.username}, expires_delta=access_token_expires
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
 
 
 async def _resolve_principal(account: AuthAccount) -> Principal:

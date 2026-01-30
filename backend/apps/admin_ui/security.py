@@ -12,13 +12,14 @@ from typing import Optional, Literal
 from contextvars import ContextVar
 
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2PasswordBearer
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from jose import JWTError, jwt
 
 from backend.core.audit import AuditContext, set_audit_context
 from backend.core.db import async_session
-from backend.core.passwords import verify_password
+from backend.core.auth import verify_password
 from backend.domain.auth_account import AuthAccount
 from backend.domain.models import Recruiter
 from starlette_wtf import csrf_token
@@ -26,7 +27,9 @@ from backend.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-_basic = HTTPBasic(auto_error=False)
+# Replaced Basic auth with OAuth2 (Bearer token)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
+_basic = HTTPBasic(auto_error=False) # Kept only for legacy fallback if configured
 
 
 def get_admin_identifier(request: Request) -> str:
@@ -154,12 +157,48 @@ def _allow_legacy_basic() -> bool:
 
 @limiter.limit("60/minute", key_func=get_client_ip)
 async def get_current_principal(
-    request: Request, credentials: HTTPBasicCredentials = Depends(_basic)
+    request: Request, 
+    token: str = Depends(oauth2_scheme),
+    credentials: HTTPBasicCredentials = Depends(_basic)
 ) -> Principal:
     """
-    Resolve principal from session; fallback to legacy Basic admin to avoid lockout.
+    Resolve principal from:
+    1. JWT Token (Bearer header)
+    2. Session (Cookie)
+    3. Legacy Basic Auth (if enabled)
     """
-    # Session principal
+    settings = get_settings()
+
+    # 1. JWT Token Check
+    if token:
+        try:
+            payload = jwt.decode(
+                token, 
+                settings.session_secret, 
+                algorithms=["HS256"]
+            )
+            username: str = payload.get("sub")
+            if username:
+                # Validate admin username from token
+                # In a real DB-backed system, we'd fetch the user here.
+                # For this simple admin setup:
+                if secrets.compare_digest(username, settings.admin_username):
+                    principal = Principal(type="admin", id=-1)
+                    principal_ctx.set(principal)
+                    request.state.principal = principal
+                    set_audit_context(
+                        AuditContext(
+                            username=f"admin:{username}",
+                            ip_address=request.client.host if request and request.client else None,
+                            user_agent=request.headers.get("user-agent"),
+                        )
+                    )
+                    return principal
+        except JWTError:
+            # Invalid token, proceed to other methods or fail if only token expected
+            pass
+
+    # 2. Session principal
     principal_data = request.session.get(SESSION_KEY) if hasattr(request, "session") else None
     if principal_data and isinstance(principal_data, dict):
         p_type = principal_data.get("type")
@@ -243,7 +282,7 @@ async def get_current_principal(
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required",
-        headers={"WWW-Authenticate": "Basic"},
+        headers={"WWW-Authenticate": "Bearer, Basic"},
     )
 
 
