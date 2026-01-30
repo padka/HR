@@ -854,7 +854,7 @@ export function DashboardPage() {
                           <Link
                             className="ui-btn ui-btn--ghost ui-btn--sm"
                             to="/app/candidates/$candidateId"
-                            params={{ candidateId: event.candidate.id }}
+                            params={{ candidateId: String(event.candidate.id) }}
                           >
                             Профиль
                           </Link>

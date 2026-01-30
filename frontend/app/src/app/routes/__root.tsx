@@ -129,18 +129,18 @@ export function RootLayout() {
         <header className="app-header">
           <div className="app-header-left" />
           
-          <nav className="app-nav-pill glass" aria-label="Основная навигация">
+          <nav className="vision-nav-pill" aria-label="Основная навигация">
             {navItems.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
-                className="app-nav__item"
-                activeProps={{ className: 'app-nav__item is-active' }}
+                className="vision-nav__item"
+                activeProps={{ className: 'vision-nav__item is-active' }}
                 data-tone={item.tone}
                 title={item.label}
               >
-                <span className="app-nav__icon">{item.icon}</span>
-                <span className="app-nav__label">{item.label}</span>
+                <span className="vision-nav__icon">{item.icon}</span>
+                <span className="vision-nav__label">{item.label}</span>
               </Link>
             ))}
           </nav>

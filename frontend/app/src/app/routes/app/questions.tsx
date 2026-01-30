@@ -7,7 +7,7 @@ export function QuestionsPage() {
   const navigate = useNavigate()
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['questions'],
-    queryFn: () => apiFetch('/questions'),
+    queryFn: () => apiFetch<any[]>('/questions'),
   })
 
   const cloneMutation = useMutation({

@@ -43,7 +43,7 @@ export function TemplateNewPage() {
     queryKey: ['cities'],
     queryFn: () => apiFetch('/cities'),
   })
-  const { data: presets } = useQuery<Record<string, string>>({
+  const { data: presets } = useQuery<Array<{ key: string; label: string; text: string }>>({
     queryKey: ['template-presets'],
     queryFn: () => apiFetch('/template_presets'),
   })
@@ -76,7 +76,7 @@ export function TemplateNewPage() {
         throw new Error('Выберите город или отметьте шаблон как глобальный')
       }
       const payload = {
-        key: form.key || null,
+        key: null, // Always auto-generate for new UI
         text: form.text,
         city_id: form.is_global ? null : form.city_id ? Number(form.city_id) : null,
       }
@@ -138,25 +138,21 @@ export function TemplateNewPage() {
           </div>
 
           <label style={{ display: 'grid', gap: 6 }}>
-            Ключ
-            <input value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} />
-          </label>
-
-          <label style={{ display: 'grid', gap: 6 }}>
             Быстрый пресет
             <select
               value={presetKey}
               onChange={(e) => {
                 const key = e.target.value
                 setPresetKey(key)
-                if (key && presets?.[key]) {
-                  setForm((prev) => ({ ...prev, key, text: presets[key] }))
+                const selected = presets?.find(p => p.key === key)
+                if (selected) {
+                  setForm((prev) => ({ ...prev, text: selected.text }))
                 }
               }}
             >
               <option value="">— не выбирать —</option>
-              {presets && Object.keys(presets).map((key) => (
-                <option key={key} value={key}>{key}</option>
+              {presets?.map((p) => (
+                <option key={p.key} value={p.key}>{p.label}</option>
               ))}
             </select>
           </label>

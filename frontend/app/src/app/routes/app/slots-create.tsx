@@ -293,7 +293,7 @@ function BulkCreateForm({
   const [toast, setToast] = useState<{ message: string; tone?: 'success' | 'warning' | 'error' } | null>(null)
 
   const { register, handleSubmit, watch, formState: { errors }, setValue } = useForm<z.infer<typeof bulkSchema>>({
-    resolver: zodResolver(bulkSchema),
+    resolver: zodResolver(bulkSchema) as any,
     defaultValues: {
       recruiter_id: recruiterId,
       include_weekends: false,

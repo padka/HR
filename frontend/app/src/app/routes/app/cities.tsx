@@ -178,36 +178,6 @@ export function CitiesPage() {
                         />
                         <span>{(edits[c.id]?.active ?? c.active) ? 'Активен' : 'Не активен'}</span>
                       </label>
-                      <input
-                        className="form-group__input form-group__input--inline"
-                        placeholder="План/нед"
-                        value={edits[c.id]?.plan_week ?? (c.plan_week ?? '')}
-                        onChange={(e) =>
-                          setEdits((prev) => ({ ...prev, [c.id]: { ...prev[c.id], plan_week: e.target.value } }))
-                        }
-                      />
-                      <input
-                        className="form-group__input form-group__input--inline"
-                        placeholder="План/мес"
-                        value={edits[c.id]?.plan_month ?? (c.plan_month ?? '')}
-                        onChange={(e) =>
-                          setEdits((prev) => ({ ...prev, [c.id]: { ...prev[c.id], plan_month: e.target.value } }))
-                        }
-                      />
-                      <button
-                        className="ui-btn ui-btn--ghost"
-                        onClick={() =>
-                          updateMutation.mutate({
-                            city: c,
-                            plan_week: edits[c.id]?.plan_week,
-                            plan_month: edits[c.id]?.plan_month,
-                            active: edits[c.id]?.active,
-                          })
-                        }
-                        disabled={updateMutation.isPending}
-                      >
-                        Сохранить
-                      </button>
                       <Link to="/app/cities/$cityId/edit" params={{ cityId: String(c.id) }} className="ui-btn ui-btn--ghost">
                         Настроить
                       </Link>

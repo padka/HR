@@ -108,7 +108,7 @@ export function CandidateNewPage() {
         interview_date: form.interview_date,
         interview_time: form.interview_time,
       }
-      return apiFetch('/candidates', {
+      return apiFetch<{ id: number }>('/candidates', {
         method: 'POST',
         body: JSON.stringify(payload),
       })

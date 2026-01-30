@@ -222,13 +222,13 @@ export function MessengerPage() {
         const form = new FormData()
         if (text) form.append('text', text)
         files.forEach((file) => form.append('files', file))
-        return apiFetch(`/staff/threads/${activeThreadId}/messages`, {
+        return apiFetch<MessageItem>(`/staff/threads/${activeThreadId}/messages`, {
           method: 'POST',
           body: form,
         })
       }
 
-      return apiFetch(`/staff/threads/${activeThreadId}/messages`, {
+      return apiFetch<MessageItem>(`/staff/threads/${activeThreadId}/messages`, {
         method: 'POST',
         body: JSON.stringify({ text }),
       })
@@ -279,7 +279,7 @@ export function MessengerPage() {
   const addMembersMutation = useMutation({
     mutationFn: async (memberIds: number[]) => {
       if (!activeThreadId) throw new Error('Чат не выбран')
-      return apiFetch(`/staff/threads/${activeThreadId}/members`, {
+      return apiFetch<{ members: ThreadMember[] }>(`/staff/threads/${activeThreadId}/members`, {
         method: 'POST',
         body: JSON.stringify({ members: memberIds.map((id) => ({ type: 'recruiter', id })) }),
       })
@@ -297,7 +297,7 @@ export function MessengerPage() {
   const removeMemberMutation = useMutation({
     mutationFn: async (member: ThreadMember) => {
       if (!activeThreadId) throw new Error('Чат не выбран')
-      return apiFetch(`/staff/threads/${activeThreadId}/members/${member.type}/${member.id}`, { method: 'DELETE' })
+      return apiFetch<{ members: ThreadMember[] }>(`/staff/threads/${activeThreadId}/members/${member.type}/${member.id}`, { method: 'DELETE' })
     },
     onSuccess: (data: { members: ThreadMember[] }) => {
       queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) =>
@@ -311,7 +311,7 @@ export function MessengerPage() {
   const sendCandidateMutation = useMutation({
     mutationFn: async (candidateId: number) => {
       if (!activeThreadId) throw new Error('Чат не выбран')
-      return apiFetch(`/staff/threads/${activeThreadId}/candidate`, {
+      return apiFetch<MessageItem>(`/staff/threads/${activeThreadId}/candidate`, {
         method: 'POST',
         body: JSON.stringify({ candidate_id: candidateId, note: candidateNote.trim() || null }),
       })
@@ -332,7 +332,7 @@ export function MessengerPage() {
 
   const acceptTaskMutation = useMutation({
     mutationFn: async (messageId: number) =>
-      apiFetch(`/staff/messages/${messageId}/candidate/accept`, {
+      apiFetch<MessageItem>(`/staff/messages/${messageId}/candidate/accept`, {
         method: 'POST',
         body: JSON.stringify({ comment: null }),
       }),
@@ -349,7 +349,7 @@ export function MessengerPage() {
 
   const declineTaskMutation = useMutation({
     mutationFn: async ({ messageId, comment }: { messageId: number; comment: string }) =>
-      apiFetch(`/staff/messages/${messageId}/candidate/decline`, {
+      apiFetch<MessageItem>(`/staff/messages/${messageId}/candidate/decline`, {
         method: 'POST',
         body: JSON.stringify({ comment }),
       }),

@@ -669,7 +669,7 @@ export function SlotsPage() {
                         row.status === 'BOOKED' ? 'success' :
                         row.status === 'FREE' ? 'info' : 'muted'
                       }`}>
-                        {statusLabel(row.status)}
+                        {statusLabel(row.status || undefined)}
                       </span>
                     </td>
                     <td>
@@ -677,7 +677,7 @@ export function SlotsPage() {
                         {candidateProfileId ? (
                           <Link
                             to="/app/candidates/$candidateId"
-                            params={{ candidateId: candidateProfileId }}
+                            params={{ candidateId: String(candidateProfileId) }}
                             className="ui-btn ui-btn--ghost ui-btn--sm"
                           >
                             Профиль
@@ -757,7 +757,7 @@ export function SlotsPage() {
                       : (sheetSlot.candidate_tz ? formatLocal(sheetSlot.start_utc, sheetSlot.candidate_tz) : '—')} · {sheetSlot.candidate_tz || '—'}
                   </div>
                   <div className="modal__row"><strong>Кандидат:</strong> {sheetSlot.candidate_fio || 'Нет брони'} · tg_id: {sheetSlot.candidate_tg_id || '—'}</div>
-                  <div className="modal__row"><strong>Статус:</strong> {statusLabel(sheetSlot.status)}</div>
+                  <div className="modal__row"><strong>Статус:</strong> {statusLabel(sheetSlot.status || undefined)}</div>
                 </div>
                 <div className="modal__footer">
                   {sheetSlot.status === 'FREE' && (

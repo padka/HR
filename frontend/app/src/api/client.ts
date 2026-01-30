@@ -34,8 +34,22 @@ async function fetchCsrfToken(): Promise<string> {
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase()
   const needsCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method)
-  const headerObj =
-    init?.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : (init?.headers || {})
+  
+  let headerObj: Record<string, string> = {}
+  if (init?.headers) {
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((value, key) => {
+        headerObj[key] = value
+      })
+    } else if (Array.isArray(init.headers)) {
+      init.headers.forEach(([key, value]) => {
+        headerObj[key] = value
+      })
+    } else {
+      headerObj = init.headers as Record<string, string>
+    }
+  }
+
   const isFormData = typeof FormData !== 'undefined' && init?.body instanceof FormData
   let headers = new Headers({
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
