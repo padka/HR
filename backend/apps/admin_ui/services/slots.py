@@ -1659,7 +1659,7 @@ async def api_slots_payload(
     async with async_session() as session:
         query = (
             select(Slot)
-            .options(selectinload(Slot.recruiter))
+            .options(selectinload(Slot.recruiter), selectinload(Slot.city))
             .order_by(Slot.start_utc.asc())
             .where(func.coalesce(Slot.purpose, "interview") == "interview")
         )
@@ -1691,6 +1691,7 @@ async def api_slots_payload(
                 "recruiter_tz": recruiter_tz,
                 "recruiter_local_time": _format_slot_local_time(sl, slot_tz),
                 "candidate_local_time": _format_slot_local_time(sl, candidate_tz) if candidate_tz else None,
+                "city_name": sl.city.name if sl.city else None,
             }
         )
     return payload

@@ -30,6 +30,7 @@ type SlotApiItem = {
   recruiter_local_time?: string | null
   candidate_tz?: string | null
   candidate_local_time?: string | null
+  city_name?: string | null
 }
 
 function statusLabel(status?: string) {
@@ -612,6 +613,7 @@ export function SlotsPage() {
                     />
                   </th>
                   <th>Кандидат</th>
+                  <th>Город</th>
                   <th>Время</th>
                   <th>Статус</th>
                   <th>Действия</th>
@@ -648,6 +650,7 @@ export function SlotsPage() {
                         </div>
                       </div>
                     </td>
+                    <td>{row.city_name || '—'}</td>
                     <td>
                   <div className="slot-time">
                     <div className="slot-time__primary">
