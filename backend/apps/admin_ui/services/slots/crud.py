@@ -255,7 +255,7 @@ async def api_slots_payload(
     async with async_session() as session:
         query = (
             select(Slot)
-            .options(selectinload(Slot.recruiter))
+            .options(selectinload(Slot.recruiter), selectinload(Slot.city))
             .order_by(Slot.start_utc.asc())
         )
         if recruiter_id is not None:
@@ -297,6 +297,7 @@ async def api_slots_payload(
             or (candidate_tg_map.get(int(sl.candidate_tg_id)) if sl.candidate_tg_id else None),
             "tz_name": getattr(sl, "tz_name", None) or (sl.city.tz if getattr(sl, "city", None) else None),
             "local_time": _slot_local_time(sl),
+            "city_name": sl.city.name if sl.city else None,
         }
         for sl in slots
     ]
