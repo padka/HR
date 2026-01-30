@@ -2286,6 +2286,10 @@ async def api_schedule_slot(
     time_str = data.get("time")
     custom_message = data.get("custom_message")
 
+    # Auto-resolve recruiter from principal when not explicitly provided
+    if not recruiter_id and principal.type == "recruiter":
+        recruiter_id = principal.id
+
     if not recruiter_id or not city_id or not date_str or not time_str:
         return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=400)
 
