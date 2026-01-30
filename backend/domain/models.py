@@ -23,6 +23,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, validates, objec
 from markupsafe import Markup
 
 from .base import Base
+# Ensure CityExpert/Executive are registered
+import backend.domain.cities.models  # noqa
 
 # Slot duration constraints and defaults (in minutes)
 DEFAULT_INTERVIEW_DURATION_MIN = 10  # Standard interview length
@@ -145,6 +147,7 @@ class City(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     tz: Mapped[Optional[str]] = mapped_column(String(64), default="Europe/Moscow", nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    intro_day_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     criteria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     experts: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     plan_week: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -171,6 +174,16 @@ class City(Base):
     responsible_recruiter: Mapped[Optional["Recruiter"]] = relationship(
         "Recruiter",
         foreign_keys=[responsible_recruiter_id],
+    )
+    city_experts: Mapped[List["CityExpert"]] = relationship(
+        "CityExpert",
+        back_populates="city",
+        cascade="all, delete-orphan",
+    )
+    executives: Mapped[List["CityExecutive"]] = relationship(
+        "CityExecutive",
+        back_populates="city",
+        cascade="all, delete-orphan",
     )
 
     @validates("name")

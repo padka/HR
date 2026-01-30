@@ -10,7 +10,6 @@ from aiogram.client.bot import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from backend.core.settings import get_settings
-from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS
 from backend.domain.test_questions import load_all_test_questions
 
 settings = get_settings()
@@ -85,14 +84,14 @@ def refresh_questions_bank(*, include_inactive: bool = False) -> None:
         loaded = load_all_test_questions(include_inactive=include_inactive)
     except Exception as exc:  # pragma: no cover - fallback for missing DB tables
         logger.warning(
-            "Falling back to default test questions; database is not available. error=%s",
+            "Falling back to empty questions; database is not available. error=%s",
             exc,
         )
-        loaded = DEFAULT_TEST_QUESTIONS
+        loaded = {}
 
     _QUESTIONS_BANK = loaded
-    TEST1_QUESTIONS = _QUESTIONS_BANK.get("test1", DEFAULT_TEST_QUESTIONS.get("test1", [])).copy()
-    TEST2_QUESTIONS = _QUESTIONS_BANK.get("test2", DEFAULT_TEST_QUESTIONS.get("test2", [])).copy()
+    TEST1_QUESTIONS = _QUESTIONS_BANK.get("test1", []).copy()
+    TEST2_QUESTIONS = _QUESTIONS_BANK.get("test2", []).copy()
 
 
 # Prime question bank at import so existing imports keep working

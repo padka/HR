@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable
 import sqlalchemy as sa
 
 from backend.domain.default_data import DEFAULT_CITIES, default_recruiters
-from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS
+# from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS  # DEPRECATED
 
 revision = "0002_seed_defaults"
 down_revision = "0001_initial_schema"
@@ -46,17 +46,7 @@ def upgrade(conn):
         sa.Column("telemost_url", sa.String),
         sa.Column("active", sa.Boolean),
     )
-    test_questions = _table(
-        "test_questions",
-        sa.Column("id", sa.Integer),
-        sa.Column("test_id", sa.String),
-        sa.Column("question_index", sa.Integer),
-        sa.Column("title", sa.String),
-        sa.Column("payload", sa.Text),
-        sa.Column("is_active", sa.Boolean),
-        sa.Column("created_at", sa.DateTime(timezone=True)),
-        sa.Column("updated_at", sa.DateTime(timezone=True)),
-    )
+    # test_questions table is deprecated and replaced by tests/questions/answer_options tables
 
     city_rows = [dict(row, active=row.get("active", True)) for row in DEFAULT_CITIES]
     _ensure_entries(conn, cities, unique_field="name", rows=city_rows)
@@ -64,31 +54,10 @@ def upgrade(conn):
     if recruiter_rows:
         _ensure_entries(conn, recruiters, unique_field="name", rows=recruiter_rows)
 
-    existing_questions = conn.execute(sa.select(sa.func.count()).select_from(test_questions)).scalar()
-    if existing_questions:
-        return
-
-    for test_id, questions in DEFAULT_TEST_QUESTIONS.items():
-        for idx, question in enumerate(questions, start=1):
-            title = question.get("prompt") or question.get("text") or f"Вопрос {idx}"
-            conn.execute(
-                sa.insert(test_questions).values(
-                    test_id=test_id,
-                    question_index=idx,
-                    title=title,
-                    payload=json.dumps(question, ensure_ascii=False),
-                    is_active=True,
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc),
-                )
-            )
+    # Legacy test_questions seeding removed.
+    # New installs will have empty test_questions table, which is fine as we use new tables.
 
 
 def downgrade(conn):  # pragma: no cover - provided for completeness
-    test_questions = _table(
-        "test_questions",
-        sa.Column("test_id", sa.String),
-    )
-    conn.execute(
-        sa.delete(test_questions).where(test_questions.c.test_id.in_(list(DEFAULT_TEST_QUESTIONS.keys())))
-    )
+    pass
+

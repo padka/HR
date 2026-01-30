@@ -139,6 +139,7 @@ async def init_models() -> None:
         from backend.domain import auth_account as _auth_account  # noqa: F401
         from backend.domain import models as _models  # noqa: F401
         from backend.domain.candidates import models as _candidate_models  # noqa: F401
+        from backend.domain.tests import models as _test_models  # noqa: F401
         from backend.domain.base import Base
 
         await asyncio.to_thread(Base.metadata.create_all, sync_engine)

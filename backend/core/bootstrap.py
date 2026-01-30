@@ -15,8 +15,7 @@ from sqlalchemy.orm import Session
 from backend.core.db import init_models, sync_engine, sync_session
 from backend.domain.base import Base
 from backend.domain.default_data import DEFAULT_CITIES, default_recruiters
-from backend.domain.default_questions import DEFAULT_TEST_QUESTIONS
-from backend.domain.models import City, Recruiter, TestQuestion
+from backend.domain.models import City, Recruiter
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +63,6 @@ def _seed_defaults() -> None:
 
             created |= _seed_cities(session)
             created |= _seed_recruiters(session)
-            created |= _seed_test_questions(session)
 
             if created:
                 session.commit()
@@ -108,44 +106,6 @@ def _seed_recruiters(session: Session) -> bool:
     session.add_all(to_create)
     logger.info("Seeded %s default recruiters", len(to_create))
     return True
-
-
-def _seed_test_questions(session: Session) -> bool:
-    count = session.execute(select(func.count()).select_from(TestQuestion)).scalar_one()
-    if count:
-        return False
-
-    now = datetime.now(timezone.utc)
-    records: List[TestQuestion] = []
-    for test_id, questions in DEFAULT_TEST_QUESTIONS.items():
-        for index, question in enumerate(questions, start=1):
-            title = _question_title(question, index)
-            records.append(
-                TestQuestion(
-                    test_id=test_id,
-                    question_index=index,
-                    title=title,
-                    payload=json.dumps(question, ensure_ascii=False),
-                    is_active=True,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
-
-    if not records:
-        return False
-
-    session.add_all(records)
-    logger.info("Seeded %s default test questions", len(records))
-    return True
-
-
-def _question_title(question: Dict[str, object], fallback_index: int) -> str:
-    for key in ("prompt", "text", "title"):
-        value = question.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return f"Вопрос {fallback_index}"
 
 
 __all__ = ["ensure_database_ready"]
