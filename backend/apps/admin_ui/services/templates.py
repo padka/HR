@@ -53,8 +53,31 @@ def list_known_template_keys() -> List[str]:
     return sorted(keys)
 
 
-def known_template_presets() -> Dict[str, str]:
-    """Return default texts for known template keys."""
+PRESET_LABELS = {
+    "intro_day_invitation": "Приглашение на ознакомительный день",
+    "intro_day_reminder": "Напоминание об ОД (за 3 часа)",
+    "approved_msg": "Встреча подтверждена",
+    "result_fail": "Отказ (общий)",
+    "t1_intro": "Тест 1: Приветствие",
+    "t1_done": "Тест 1: Завершение",
+    "t2_intro": "Тест 2: Приветствие",
+    "t2_result": "Тест 2: Результат",
+    "slot_proposal_candidate": "Предложение слота (кандидату)",
+    "slot_confirmed_recruiter": "Слот подтвержден (рекрутеру)",
+    "reschedule_requested_recruiter": "Запрос переноса (рекрутеру)",
+    "reschedule_approved_candidate": "Перенос одобрен (кандидату)",
+    "reschedule_declined_candidate": "Перенос отклонен (кандидату)",
+    "manual_schedule_prompt": "Запрос ручного выбора времени",
+    "choose_recruiter": "Выбор рекрутера",
+    "reminder_2h": "Напоминание за 2ч",
+    "reminder_30m": "Напоминание за 30мин",
+    "confirm_6h": "Запрос подтверждения (за 6ч)",
+    "confirm_2h": "Запрос подтверждения (за 2ч)",
+}
+
+
+def known_template_presets() -> List[Dict[str, str]]:
+    """Return default texts and labels for known template keys."""
 
     presets: Dict[str, str] = {}
     try:  # pragma: no cover - optional bot runtime
@@ -64,14 +87,26 @@ def known_template_presets() -> Dict[str, str]:
     else:
         presets.update(bot_templates.DEFAULT_TEMPLATES)
 
+    # Stage defaults might override or add to bot defaults
     for stage in CITY_TEMPLATE_STAGES:
-        presets.setdefault(stage.key, stage.default_text)
+        presets[stage.key] = stage.default_text
 
-    ordered: Dict[str, str] = {}
-    for key in list_known_template_keys():
-        if key in presets:
-            ordered[key] = presets[key]
-    return ordered
+    result: List[Dict[str, str]] = []
+    
+    # Process stage templates first to prioritize them and use their titles
+    stage_map = {s.key: s.title for s in CITY_TEMPLATE_STAGES}
+    
+    for key, text in presets.items():
+        label = stage_map.get(key) or PRESET_LABELS.get(key) or key
+        result.append({
+            "key": key,
+            "label": label,
+            "text": text,
+        })
+
+    # Sort by label for easier finding in UI
+    result.sort(key=lambda x: x["label"])
+    return result
 
 
 def notify_templates_changed() -> None:
@@ -170,7 +205,10 @@ async def templates_overview() -> Dict[str, object]:
         "global": {
             "stages": global_payload,
         },
-        "stage_meta": CITY_TEMPLATE_STAGES,
+        "stage_meta": [
+            {"key": s.key, "title": s.title, "description": s.description, "default_text": s.default_text}
+            for s in CITY_TEMPLATE_STAGES
+        ],
     }
 
 

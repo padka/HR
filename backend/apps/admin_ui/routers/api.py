@@ -960,6 +960,10 @@ async def api_cities(principal: Principal = Depends(require_principal)):
                 "plan_week": getattr(city, "plan_week", None),
                 "plan_month": getattr(city, "plan_month", None),
                 "recruiter_ids": [rec.id for rec in getattr(city, "recruiters", [])],
+                "recruiters": [
+                    {"id": rec.id, "name": getattr(rec, "name", None) or f"Рекрутер {rec.id}"}
+                    for rec in getattr(city, "recruiters", [])
+                ],
             }
         )
     return JSONResponse(payload)
@@ -2396,20 +2400,17 @@ async def api_schedule_intro_day(
     if not city_record:
         return JSONResponse({"ok": False, "error": "city_not_found"}, status_code=400)
 
+    # Resolve recruiter: city FK → city M2M (no user fallback)
     recruiter = None
-    if getattr(city_record, "recruiters", None):
+    if getattr(city_record, "responsible_recruiter_id", None):
+        async with async_session() as session:
+            recruiter = await session.get(Recruiter, city_record.responsible_recruiter_id)
+
+    if not recruiter and getattr(city_record, "recruiters", None):
         for rec in city_record.recruiters:
             if rec is not None and getattr(rec, "active", True):
                 recruiter = rec
                 break
-
-    # Fallback: city's responsible recruiter, then candidate's responsible recruiter
-    if not recruiter:
-        async with async_session() as session:
-            if getattr(city_record, "responsible_recruiter_id", None):
-                recruiter = await session.get(Recruiter, city_record.responsible_recruiter_id)
-            if not recruiter and getattr(user, "responsible_recruiter_id", None):
-                recruiter = await session.get(Recruiter, user.responsible_recruiter_id)
 
     if not recruiter:
         return JSONResponse({"ok": False, "error": "no_recruiter_for_city"}, status_code=400)

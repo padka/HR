@@ -84,11 +84,12 @@ class CacheClient:
         self._client = Redis(connection_pool=self._pool)
         try:
             await self._client.ping()
+            logger.info("Redis cache connected")
         except RedisError as exc:
             logger.warning("Redis cache ping failed during connect: %s", exc)
-            await self.disconnect()
-            raise
-        logger.info("Redis cache connected")
+            # Do not raise; allow running without cache
+            # self._client remains set, but operations might fail or we can check connectivity
+            pass
 
     async def disconnect(self) -> None:
         """Close Redis connection."""
@@ -105,7 +106,7 @@ class CacheClient:
     async def ping(self) -> bool:
         """Check Redis availability."""
         if self._client is None:
-            raise RuntimeError("Cache client not connected. Call connect() first.")
+            return False
         try:
             result = await self._client.ping()
             return bool(result)
@@ -114,10 +115,8 @@ class CacheClient:
             return False
 
     @property
-    def client(self) -> Redis:
+    def client(self) -> Optional[Redis]:
         """Get Redis client (must be connected first)."""
-        if self._client is None:
-            raise RuntimeError("Cache client not connected. Call connect() first.")
         return self._client
 
     async def get(
@@ -133,6 +132,9 @@ class CacheClient:
         Returns:
             Result with cached value or default
         """
+        if self.client is None:
+            return success(default)
+
         try:
             value = await self.client.get(key)
 
@@ -172,6 +174,9 @@ class CacheClient:
         Returns:
             Result indicating success
         """
+        if self.client is None:
+            return success(False)
+
         try:
             # Serialize to JSON
             serialized = json.dumps(value, default=str)
@@ -205,6 +210,9 @@ class CacheClient:
         Returns:
             Result indicating if key was deleted
         """
+        if self.client is None:
+            return success(False)
+
         try:
             deleted = await self.client.delete(key)
             return success(deleted > 0)
@@ -231,6 +239,9 @@ class CacheClient:
         Returns:
             Result with count of deleted keys
         """
+        if self.client is None:
+            return success(0)
+
         try:
             keys = []
             async for key in self.client.scan_iter(match=pattern):
@@ -265,6 +276,9 @@ class CacheClient:
         Returns:
             Result indicating if key exists
         """
+        if self.client is None:
+            return success(False)
+
         try:
             exists = await self.client.exists(key)
             return success(exists > 0)
@@ -288,6 +302,9 @@ class CacheClient:
         Returns:
             Result indicating success
         """
+        if self.client is None:
+            return success(False)
+
         try:
             await self.client.flushdb()
             logger.warning("Cache cleared (all keys deleted)")

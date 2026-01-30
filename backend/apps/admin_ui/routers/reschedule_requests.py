@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.core.db import async_session
 from backend.domain.models import RescheduleRequest, Slot, SlotAssignment, OutboxNotification, Recruiter
@@ -45,7 +45,7 @@ async def approve_reschedule_request(request_id: int, principal: Principal = Dep
 
         # 1. Update request status
         request.status = "approved"
-        request.decided_at = datetime.utcnow()
+        request.decided_at = datetime.now(timezone.utc)
         # decided_by_id logic here
 
         # 2. Free up the old slot
@@ -104,7 +104,7 @@ async def propose_new_time(request_id: int, payload: NewProposalPayload, princip
         # TODO: Check authorization
 
         request.status = "declined"
-        request.decided_at = datetime.utcnow()
+        request.decided_at = datetime.now(timezone.utc)
         request.recruiter_comment = payload.recruiter_comment
         
         # Here we should create a new Slot and SlotAssignment, then notify the user.

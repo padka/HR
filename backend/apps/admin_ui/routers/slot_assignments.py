@@ -8,11 +8,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.security import Principal, require_principal, require_csrf_token
 from backend.core.db import async_session
 from backend.core.time_utils import ensure_aware_utc
-from backend.domain.models import SlotAssignment, Slot
+from backend.domain.models import SlotAssignment, Slot, Recruiter
+from backend.domain.candidates.models import User
 from backend.domain.slot_assignment_service import (
     ServiceResult,
     approve_reschedule,
@@ -70,11 +72,37 @@ async def api_create_slot_assignment(
 ):
     await require_csrf_token(request)
     async with async_session() as session:
+        # 1. Validate Slot ownership
         slot = await session.get(Slot, payload.slot_id)
         if slot is None:
             raise HTTPException(status_code=404, detail="Слот не найден.")
         if principal.type == "recruiter" and slot.recruiter_id != principal.id:
             raise HTTPException(status_code=404, detail="Слот не найден.")
+
+        # 2. City Scoping Rule (Strict)
+        if principal.type == "recruiter":
+            # Fetch Recruiter with cities
+            recruiter = await session.scalar(
+                select(Recruiter)
+                .options(selectinload(Recruiter.cities))
+                .where(Recruiter.id == principal.id)
+            )
+            if not recruiter:
+                raise HTTPException(status_code=403, detail="Рекрутер не найден.")
+
+            # Fetch Candidate
+            candidate = await session.scalar(
+                select(User).where(User.candidate_id == payload.candidate_id)
+            )
+            if not candidate:
+                raise HTTPException(status_code=404, detail="Кандидат не найден.")
+
+            # Check City Match
+            # Allow access if candidate has no city (edge case) or cities match
+            if candidate.city:
+                allowed_cities = {c.name for c in recruiter.cities}
+                if candidate.city not in allowed_cities:
+                    raise HTTPException(status_code=403, detail="Access Denied: Different City")
 
     result = await create_slot_assignment(
         slot_id=payload.slot_id,

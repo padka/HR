@@ -859,17 +859,23 @@ async def candidates_schedule_slot_submit(
         form = await request.form()
         payload = dict(form)
 
+    # 1. Resolve Recruiter (Implicit from Session)
     recruiter_raw = payload.get("recruiter_id")
+    recruiter_id = _parse_int(str(recruiter_raw)) if recruiter_raw is not None else None
+    
+    if principal.type == "recruiter":
+        recruiter_id = principal.id  # Force implicit ID for recruiters
+    
     city_raw = payload.get("city_id")
     date = payload.get("date")
     time = payload.get("time")
     send_custom_message = payload.get("send_custom_message")
     custom_message = payload.get("custom_message")
 
-    recruiter_id = _parse_int(str(recruiter_raw)) if recruiter_raw is not None else None
     city_id = _parse_int(str(city_raw)) if city_raw is not None else None
+    
     if not (recruiter_id and city_id and date and time):
-        return PlainTextResponse("Заполните рекрутёра, город, дату и время", status_code=400)
+        return PlainTextResponse("Заполните город, дату и время", status_code=400)
 
     detail = await get_candidate_detail(candidate_id, principal=principal)
     if not detail:
@@ -877,8 +883,18 @@ async def candidates_schedule_slot_submit(
     candidate = detail["user"]
 
     async with async_session() as session:
-        recruiter = await session.get(Recruiter, recruiter_id)
+        recruiter = await session.scalar(
+            select(Recruiter)
+            .options(selectinload(Recruiter.cities))
+            .where(Recruiter.id == recruiter_id)
+        )
         city = await session.get(City, city_id)
+
+        # 2. City Scoping Validation
+        if principal.type == "recruiter" and recruiter:
+            allowed_cities = {c.id for c in recruiter.cities}
+            if city and city.id not in allowed_cities:
+                return PlainTextResponse(f"Ошибка доступа: вы не привязаны к городу {city.name}", status_code=403)
 
     if recruiter is None or city is None:
         return PlainTextResponse("Некорректные рекрутёр или город", status_code=400)

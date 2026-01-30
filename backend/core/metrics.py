@@ -13,7 +13,7 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, DefaultDict
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ class PerformanceStats:
             QueryMetrics(
                 operation=operation,
                 duration_ms=duration_ms,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 slow_query=is_slow,
             )
         )
@@ -197,7 +197,7 @@ class PerformanceStats:
             "endpoints": self.get_all_endpoint_stats(),
             "queries": self.get_query_stats(),
             "cache": self.get_cache_stats(),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     def reset(self) -> None:
@@ -208,7 +208,7 @@ class PerformanceStats:
 
     def cleanup_old_data(self, max_age: timedelta = timedelta(hours=1)) -> None:
         """Remove metrics older than max_age."""
-        cutoff = datetime.utcnow() - max_age
+        cutoff = datetime.now(timezone.utc) - max_age
 
         # Clean up old queries
         self.queries = [q for q in self.queries if q.timestamp > cutoff]
