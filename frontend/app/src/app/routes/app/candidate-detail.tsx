@@ -95,6 +95,7 @@ type CandidateDetail = {
   test_sections?: TestSection[]
   test_results?: Record<string, TestSection>
   stats?: { tests_total?: number; average_score?: number | null }
+  intro_day_template?: string | null
 }
 
 const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
@@ -229,8 +230,6 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
   const [form, setForm] = useState({
 
-    city_id: '',
-
     date: getTomorrowDate(),
 
     time: '10:00',
@@ -238,6 +237,8 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
     custom_message: '',
 
   })
+
+  const [resolvedCityId, setResolvedCityId] = useState<number | null>(null)
 
   const [error, setError] = useState<string | null>(null)
 
@@ -257,27 +258,27 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
 
 
-  // Auto-select city based on candidate's city
+  // Auto-resolve city based on candidate's city
 
   useEffect(() => {
 
-    if (candidateCity && cities.length > 0 && !form.city_id) {
+    if (candidateCity && cities.length > 0 && resolvedCityId === null) {
 
       const match = cities.find((c) => c.name.toLowerCase() === candidateCity.toLowerCase())
 
       if (match) {
 
-        setForm((f) => ({ ...f, city_id: String(match.id) }))
+        setResolvedCityId(match.id)
 
       }
 
     }
 
-  }, [candidateCity, cities, form.city_id])
+  }, [candidateCity, cities, resolvedCityId])
 
 
 
-  const selectedCity = useMemo(() => cities.find((c) => String(c.id) === form.city_id), [cities, form.city_id])
+  const selectedCity = useMemo(() => cities.find((c) => c.id === resolvedCityId), [cities, resolvedCityId])
 
   const cityTz = selectedCity?.tz || 'Europe/Moscow'
 
@@ -293,7 +294,7 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
         body: JSON.stringify({
 
-          city_id: Number(form.city_id),
+          city_id: resolvedCityId,
 
           date: form.date,
 
@@ -325,7 +326,7 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
 
 
-  const canSubmit = form.city_id && form.date && form.time
+  const canSubmit = resolvedCityId && form.date && form.time
 
 
 
@@ -373,37 +374,17 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
             <div className="form-grid">
 
-              <label className="form-group">
+              {selectedCity && (
 
-                <span className="form-group__label">Город</span>
+                <div className="form-group">
 
-                <select
+                  <span className="form-group__label">Город</span>
 
-                  value={form.city_id}
+                  <span>{selectedCity.name} — {cityTz} ({formatTzOffset(cityTz)})</span>
 
-                  onChange={(e) => setForm({ ...form, city_id: e.target.value })}
+                </div>
 
-                  disabled={citiesQuery.isLoading}
-
-                >
-
-                  <option value="">— выберите город —</option>
-
-                  {cities.map((c) => (
-
-                    <option key={c.id} value={c.id}>{c.name} {c.tz ? `(${formatTzOffset(c.tz)})` : ''}</option>
-
-                  ))}
-
-                </select>
-
-                {selectedCity && (
-
-                  <span className="subtitle">Часовой пояс: {cityTz} ({formatTzOffset(cityTz)})</span>
-
-                )}
-
-              </label>
+              )}
 
 
 
@@ -507,16 +488,61 @@ type ScheduleIntroDayModalProps = {
   candidateId: number
   candidateFio: string
   candidateCity?: string | null
+  introDayTemplate?: string | null
   onClose: () => void
   onSuccess: () => void
 }
 
-function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, onClose, onSuccess }: ScheduleIntroDayModalProps) {
+function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, introDayTemplate, onClose, onSuccess }: ScheduleIntroDayModalProps) {
   const [form, setForm] = useState({
     date: getTomorrowDate(),
     time: '10:00',
+    customMessage: '',
   })
   const [error, setError] = useState<string | null>(null)
+  const [template, setTemplate] = useState<string>('')
+
+  // Helper to generate message
+  const generateMessage = (tmpl: string, dateStr: string, timeStr: string) => {
+    if (!tmpl) return ''
+    let msg = tmpl.replace(/\[Имя\]/g, candidateFio.split(' ')[1] || candidateFio.split(' ')[0] || 'Кандидат') // Try to get first name
+    
+    // Format date: YYYY-MM-DD -> dd.mm
+    let formattedDate = dateStr
+    try {
+        const [y, m, d] = dateStr.split('-')
+        if (y && m && d) formattedDate = `${d}.${m}`
+    } catch (e) {}
+
+    msg = msg.replace(/\[Дата\]/g, formattedDate)
+    msg = msg.replace(/\[Время\]/g, timeStr)
+    return msg
+  }
+
+  useEffect(() => {
+    if (introDayTemplate) {
+      setTemplate(introDayTemplate)
+      setForm(prev => ({ ...prev, customMessage: generateMessage(introDayTemplate, prev.date, prev.time) }))
+    } else {
+      apiFetch('/templates?key=intro_day_invitation')
+        .then((data: any) => {
+          if (data && data.text) {
+            setTemplate(data.text)
+            setForm(prev => ({ ...prev, customMessage: generateMessage(data.text, prev.date, prev.time) }))
+          }
+        })
+        .catch(() => {
+          // Ignore template fetch errors
+        })
+    }
+  }, [introDayTemplate])
+
+  // Update message when date/time changes
+  useEffect(() => {
+      if (template) {
+          setForm(prev => ({ ...prev, customMessage: generateMessage(template, prev.date, prev.time) }))
+      }
+  }, [form.date, form.time, template])
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -525,6 +551,7 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, onClo
         body: JSON.stringify({
           date: form.date,
           time: form.time,
+          custom_message: form.customMessage,
         }),
       })
     },
@@ -579,6 +606,19 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, onClo
                 />
               </label>
             </div>
+            
+            <label className="form-group" style={{ marginTop: 12 }}>
+              <span className="form-group__label">Сообщение кандидату</span>
+              <textarea
+                rows={6}
+                value={form.customMessage}
+                onChange={(e) => setForm({ ...form, customMessage: e.target.value })}
+                placeholder="Текст приглашения..."
+                className="ui-input"
+                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)', color: 'inherit' }}
+              />
+            </label>
+
             <p className="subtitle" style={{ marginTop: 12 }}>
               Адрес и контакт руководителя будут взяты из шаблона города.
             </p>
@@ -792,7 +832,8 @@ export function CandidateDetailPage() {
   const rejectAction = actions.find((action) => action.key === 'reject' || action.target_status === 'interview_declined')
   const canSendTest2 = Boolean(test2Action)
   const test2Passed = test2Section?.status === 'passed' || statusSlug === 'test2_completed'
-  const canScheduleIntroDay = Boolean(detail?.telegram_id) && !hasIntroDay && test2Passed
+  const isWaitingIntroDay = statusSlug === 'test2_completed'
+  const canScheduleIntroDay = Boolean(detail?.telegram_id) && !hasIntroDay && test2Passed && isWaitingIntroDay
   const canScheduleInterview = Boolean(detail?.telegram_id) && Boolean(scheduleAction)
     && (scheduleAction?.key === 'reschedule_interview' || !hasUpcomingSlot)
   const scheduleLabel = scheduleAction?.label
@@ -1109,14 +1150,16 @@ export function CandidateDetailPage() {
         />
       )}
 
-      {showScheduleIntroDayModal && detail && (
+      {showScheduleIntroDayModal && (
         <ScheduleIntroDayModal
           candidateId={candidateId}
-          candidateFio={detail.fio || `Кандидат #${candidateId}`}
-          candidateCity={detail.city}
+          candidateFio={detailQuery.data?.fio || 'Кандидат'}
+          candidateCity={detailQuery.data?.city}
+          introDayTemplate={detailQuery.data?.intro_day_template}
           onClose={() => setShowScheduleIntroDayModal(false)}
           onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] })
+            detailQuery.refetch()
+            setActionMessage('Ознакомительный день назначен')
           }}
         />
       )}
