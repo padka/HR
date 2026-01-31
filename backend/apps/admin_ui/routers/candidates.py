@@ -798,6 +798,51 @@ async def candidates_approve_slot(
     return _redirect(result.status, result.message)
 
 
+@router.post("/{candidate_id}/actions/approve_upcoming_slot")
+async def candidates_approve_upcoming_slot(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+):
+    """Approve the first upcoming pending slot for the candidate."""
+    redirect_base = f"/candidates/{candidate_id}"
+
+    def _redirect(status: str, message: str) -> RedirectResponse:
+        encoded = quote_plus(message or "")
+        return RedirectResponse(
+            url=f"{redirect_base}?approval={status}&approval_message={encoded}",
+            status_code=303,
+        )
+
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            return _redirect("candidate_missing", "Кандидат не найден.")
+        ensure_candidate_scope(user, principal)
+        
+        # Find pending slot
+        slot = await session.scalar(
+            select(Slot)
+            .where(
+                or_(
+                    Slot.candidate_id == user.candidate_id,
+                    Slot.candidate_tg_id == user.telegram_id,
+                ),
+                func.lower(Slot.status) == SlotStatus.PENDING,
+                Slot.start_utc >= datetime.now(timezone.utc)
+            )
+            .order_by(Slot.start_utc.asc())
+            .limit(1)
+        )
+        
+        if not slot:
+            return _redirect("no_pending_slot", "Нет слотов, ожидающих подтверждения.")
+            
+        slot_id = slot.id
+
+    result = await approve_slot_and_notify(slot_id, force_notify=True)
+    return _redirect(result.status, result.message)
+
+
 @router.post("/{candidate_id}/delete")
 async def candidates_delete(candidate_id: int, principal: Principal = Depends(require_principal)):
     await delete_candidate(candidate_id, principal=principal)
@@ -826,13 +871,24 @@ async def candidates_download_report(
         raise HTTPException(status_code=404)
     user = detail["user"]
     field = "test1_report_url" if report_key == "test1" else "test2_report_url"
-    rel_path = getattr(user, field, None)
-    if not rel_path:
-        raise HTTPException(status_code=404)
+    
     settings = get_settings()
-    file_path = Path(settings.data_dir) / rel_path
-    if not file_path.is_file():
-        raise HTTPException(status_code=404)
+    base_dir = Path(settings.data_dir)
+    
+    # 1. Try path from DB
+    rel_path = getattr(user, field, None)
+    file_path = (base_dir / rel_path).resolve() if rel_path else None
+    
+    # 2. Fallback to standard location
+    if not file_path or not file_path.is_file():
+        fallback_path = base_dir / "reports" / str(user.id) / f"{report_key}.txt"
+        if fallback_path.is_file():
+            file_path = fallback_path
+            
+    if not file_path or not file_path.is_file():
+        logger.warning(f"Report {report_key} not found for candidate {candidate_id}. DB: {rel_path}")
+        raise HTTPException(status_code=404, detail="File not found on server")
+        
     media_type = "application/pdf" if file_path.suffix.lower() == ".pdf" else "text/plain"
     return FileResponse(file_path, filename=file_path.name, media_type=media_type)
 
@@ -1072,11 +1128,15 @@ async def candidates_schedule_intro_day_submit(
             logger.exception("Failed to mark old intro_day notifications as stale")
 
         try:
+            outbox_payload = {}
+            custom_message = payload.get("custom_message")
+            if custom_message and str(custom_message).strip():
+                outbox_payload["custom_message"] = str(custom_message).strip()
             await add_outbox_notification(
                 notification_type="intro_day_invitation",
                 booking_id=slot.id,
                 candidate_tg_id=user.telegram_id,
-                payload={},
+                payload=outbox_payload,
             )
         except Exception as e:
             # Log error but don't fail the request
@@ -1095,3 +1155,62 @@ async def candidates_schedule_intro_day_submit(
             logger.exception("Failed to schedule reminders for intro day", extra={"slot_id": slot.id})
 
     return JSONResponse({"ok": True, "slot_id": slot.id})
+
+
+@router.post("/{candidate_id}/actions/{action_key}")
+async def api_candidate_action(
+    candidate_id: int,
+    action_key: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    bot_service: BotService = Depends(provide_bot_service),
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    
+    # 1. Get candidate and allowed actions
+    detail = await get_candidate_detail(candidate_id, principal=principal)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    
+    # 2. Find matching action definition
+    actions = detail.get("candidate_actions", [])
+    action_def = next((a for a in actions if a.key == action_key), None)
+    
+    if not action_def:
+        # Fallback: check if it's a legacy or special action not in the list but valid?
+        # For now, strict validation against allowed actions for current status
+        logger.warning(f"Action {action_key} not allowed for candidate {candidate_id}")
+        return JSONResponse(
+            {"ok": False, "message": "Действие недоступно в текущем статусе"}, 
+            status_code=400
+        )
+
+    target_status = action_def.target_status
+    
+    if not target_status:
+        # Action without status change (e.g. just logic)
+        # Currently not implemented for generic handler
+        return JSONResponse({"ok": True, "message": "Action executed"})
+
+    # 3. Execute status change
+    ok, message, stored_status, dispatch = await update_candidate_status(
+        candidate_id, 
+        target_status, 
+        bot_service=bot_service, 
+        principal=principal
+    )
+    
+    if not ok:
+        return JSONResponse({"ok": False, "message": message}, status_code=400)
+        
+    # 4. Handle side effects (Bot)
+    if dispatch and dispatch.plan:
+        background_tasks.add_task(execute_bot_dispatch, dispatch.plan, stored_status or "", bot_service)
+        
+    return JSONResponse({
+        "ok": True, 
+        "message": message, 
+        "status": stored_status,
+        "action": action_key
+    })

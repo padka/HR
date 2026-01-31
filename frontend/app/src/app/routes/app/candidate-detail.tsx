@@ -69,6 +69,11 @@ type TestSection = {
   }>
 }
 
+type ReportPreviewState = {
+  title: string
+  url: string
+}
+
 type CandidateDetail = {
   id: number
   fio?: string | null
@@ -105,6 +110,7 @@ const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
   test1_completed: { label: 'Тест 1 пройден', tone: 'success' },
   waiting_slot: { label: 'Ожидает слот', tone: 'warning' },
   stalled_waiting_slot: { label: 'Застрял (ожидание слота)', tone: 'warning' },
+  slot_pending: { label: 'Выбрал время, ждёт подтверждения', tone: 'warning' },
   interview_scheduled: { label: 'Собеседование назначено', tone: 'info' },
   interview_confirmed: { label: 'Собеседование подтверждено', tone: 'info' },
   interview_declined: { label: 'Отказ на собеседовании', tone: 'danger' },
@@ -216,6 +222,114 @@ function SlotStatusBadge({ status }: { status?: string | null }) {
 function ModalPortal({ children }: { children: ReactNode }) {
   if (typeof document === 'undefined') return null
   return createPortal(children, document.body)
+}
+
+type ReportPreviewModalProps = {
+  title: string
+  url: string
+  onClose: () => void
+}
+
+function ReportPreviewModal({ title, url, onClose }: ReportPreviewModalProps) {
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [contentType, setContentType] = useState<string>('')
+  const [text, setText] = useState<string>('')
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const controller = new AbortController()
+    setStatus('loading')
+    setError(null)
+    setText('')
+    setContentType('')
+    setBlobUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return null
+    })
+
+    fetch(url, { credentials: 'include', signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) {
+          const msg = await res.text().catch(() => '')
+          throw new Error(msg || res.statusText)
+        }
+        const ct = res.headers.get('content-type') || ''
+        if (!active) return
+        setContentType(ct)
+        if (ct.includes('application/pdf')) {
+          const blob = await res.blob()
+          if (!active) return
+          const objectUrl = URL.createObjectURL(blob)
+          setBlobUrl(objectUrl)
+          setStatus('ready')
+          return
+        }
+        const bodyText = await res.text()
+        if (!active) return
+        setText(bodyText)
+        setStatus('ready')
+      })
+      .catch((err: unknown) => {
+        if (!active) return
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        setError(err instanceof Error ? err.message : 'Не удалось загрузить отчёт')
+        setStatus('error')
+      })
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [url])
+
+  useEffect(() => {
+    return () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl)
+    }
+  }, [blobUrl])
+
+  const isPdf = contentType.includes('application/pdf')
+
+  return (
+    <ModalPortal>
+      <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+        <div className="glass glass--elevated modal">
+          <div className="modal__header">
+            <div>
+              <h2 className="modal__title">Отчёт · {title}</h2>
+              <p className="modal__subtitle">{isPdf ? 'PDF-документ' : 'Текстовый отчёт'}</p>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <a href={url} className="ui-btn ui-btn--ghost" target="_blank" rel="noopener">
+                Скачать
+              </a>
+              <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
+            </div>
+          </div>
+
+          <div className="modal__body">
+            {status === 'loading' && <p className="subtitle">Загрузка отчёта...</p>}
+            {status === 'error' && (
+              <div className="glass panel--tight" style={{ borderColor: 'rgba(240, 115, 115, 0.3)' }}>
+                <p style={{ color: '#f07373', margin: 0 }}>{error}</p>
+              </div>
+            )}
+            {status === 'ready' && (
+              <div className="report-preview__frame">
+                {isPdf && blobUrl ? (
+                  <iframe className="report-preview__pdf" title={title} src={blobUrl} />
+                ) : (
+                  <pre className="report-preview__text">{text || 'Отчёт пустой.'}</pre>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
+  )
 }
 
 type ScheduleSlotModalProps = {
@@ -715,6 +829,7 @@ export function CandidateDetailPage() {
   const [showScheduleSlotModal, setShowScheduleSlotModal] = useState(false)
   const [showScheduleIntroDayModal, setShowScheduleIntroDayModal] = useState(false)
   const [showRejectModal, setShowRejectModal] = useState<{ actionKey: string; title?: string } | null>(null)
+  const [reportPreview, setReportPreview] = useState<ReportPreviewState | null>(null)
   const [isChatOpen, setIsChatOpen] = useState(false)
 
   const detailQuery = useQuery<CandidateDetail>({
@@ -845,7 +960,7 @@ export function CandidateDetailPage() {
   })
 
   return (
-    <RoleGuard allow={['recruiter']}>
+    <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
         {detailQuery.isLoading && <div className="glass panel" style={{ textAlign: 'center', padding: 48 }}><p className="subtitle">Загрузка...</p></div>}
         {detailQuery.isError && <div className="glass panel"><p style={{ color: '#f07373' }}>Ошибка: {(detailQuery.error as Error).message}</p></div>}
@@ -881,11 +996,6 @@ export function CandidateDetailPage() {
               </div>
             </div>
             <div className="cd-header__actions">
-              {telemostLink && (
-                <a href={telemostLink} target="_blank" rel="noopener" className="ui-btn ui-btn--primary">
-                  {detail.telemost_source || 'Telemost'}
-                </a>
-              )}
               <Link to="/app/candidates" className="ui-btn ui-btn--ghost">К списку</Link>
             </div>
           </div>
@@ -907,15 +1017,15 @@ export function CandidateDetailPage() {
               <span className="cd-contact-btn__icon">CH</span>
               <span>Чат</span>
             </button>
-            {whatsappLink ? (
-              <a href={whatsappLink} className="cd-contact-btn" target="_blank" rel="noopener">
-                <span className="cd-contact-btn__icon">WA</span>
-                <span>WhatsApp</span>
+            {telemostLink ? (
+              <a href={telemostLink} className="cd-contact-btn" target="_blank" rel="noopener">
+                <span className="cd-contact-btn__icon">VC</span>
+                <span>{detail.telemost_source || 'Видеозвонок'}</span>
               </a>
             ) : (
               <span className="cd-contact-btn cd-contact-btn--disabled">
-                <span className="cd-contact-btn__icon">WA</span>
-                <span>WhatsApp</span>
+                <span className="cd-contact-btn__icon">VC</span>
+                <span>Видеозвонок</span>
               </span>
             )}
             {callLink ? (
@@ -1111,9 +1221,13 @@ export function CandidateDetailPage() {
                     </div>
                   )}
                   {section.report_url && (
-                    <a href={section.report_url} className="cd-test-card__report">
+                    <button
+                      type="button"
+                      className="cd-test-card__report"
+                      onClick={() => setReportPreview({ title: section.title || 'Отчёт', url: section.report_url || '' })}
+                    >
                       Подробный отчёт
-                    </a>
+                    </button>
                   )}
                   {section.history && section.history.length > 1 && (
                     <details className="cd-test-card__history">
@@ -1173,6 +1287,14 @@ export function CandidateDetailPage() {
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] })
           }}
+        />
+      )}
+
+      {reportPreview && (
+        <ReportPreviewModal
+          title={reportPreview.title}
+          url={reportPreview.url}
+          onClose={() => setReportPreview(null)}
         />
       )}
 

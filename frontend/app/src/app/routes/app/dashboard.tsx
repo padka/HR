@@ -170,6 +170,7 @@ function ModalPortal({ children }: { children: ReactNode }) {
 
 export function DashboardPage() {
   const profile = useProfile()
+  const profileReady = profile.isSuccess
   const isAdmin = profile.data?.principal.type === 'admin'
   const initialRange = useMemo(() => getDefaultRange(), [])
   const [rangeFrom, setRangeFrom] = useState(initialRange.from)
@@ -196,13 +197,13 @@ export function DashboardPage() {
   const summaryQuery = useQuery<SummaryPayload>({
     queryKey: ['dashboard-summary'],
     queryFn: () => apiFetch('/dashboard/summary'),
-    enabled: Boolean(isAdmin),
+    enabled: profileReady && Boolean(isAdmin),
   })
 
   const recruitersQuery = useQuery<RecruiterOption[]>({
     queryKey: ['dashboard-recruiters'],
     queryFn: () => apiFetch('/recruiters'),
-    enabled: Boolean(isAdmin),
+    enabled: profileReady && Boolean(isAdmin),
     staleTime: 60_000,
   })
 
@@ -217,19 +218,19 @@ export function DashboardPage() {
   const calendarQuery = useQuery<CalendarPayload>({
     queryKey: ['dashboard-calendar', calendarParams],
     queryFn: () => apiFetch(`/dashboard/calendar?${calendarParams}`),
-    enabled: !isAdmin,
+    enabled: profileReady && !isAdmin,
   })
 
   const planQuery = useQuery<RecruiterCityPlan[]>({
     queryKey: ['recruiter-plan'],
     queryFn: () => apiFetch('/recruiter-plan'),
-    enabled: !isAdmin,
+    enabled: profileReady && !isAdmin,
   })
 
   const incomingQuery = useQuery<IncomingPayload>({
     queryKey: ['dashboard-incoming'],
     queryFn: () => apiFetch('/dashboard/incoming'),
-    enabled: !isAdmin,
+    enabled: profileReady && !isAdmin,
     refetchInterval: 20000,
   })
 
@@ -243,7 +244,7 @@ export function DashboardPage() {
   const kpiQuery = useQuery<KPIResponse>({
     queryKey: ['dashboard-kpis', kpiParams],
     queryFn: () => apiFetch(`/kpis/current${kpiParams}`),
-    enabled: Boolean(isAdmin),
+    enabled: profileReady && Boolean(isAdmin),
   })
 
   const leaderboardParams = useMemo(() => {
@@ -256,7 +257,7 @@ export function DashboardPage() {
   const leaderboardQuery = useQuery<LeaderboardPayload>({
     queryKey: ['dashboard-leaderboard', leaderboardParams],
     queryFn: () => apiFetch(`/dashboard/recruiter-performance?${leaderboardParams}`),
-    enabled: Boolean(isAdmin),
+    enabled: profileReady && Boolean(isAdmin),
   })
 
   const addPlanEntry = useMutation({

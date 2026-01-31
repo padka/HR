@@ -7,7 +7,7 @@ test.describe("/app/cities focus and navigation", () => {
     await page.waitForTimeout(500);
 
     // Find a city card or row
-    const cityLink = page.locator("a[href*='/cities/'], button").filter({ hasText: /редактировать|изменить/i }).first();
+    const cityLink = page.locator("a[href*='/app/cities/'][href*='/edit']").first();
     if (await cityLink.count() > 0) {
       await cityLink.click();
       await page.waitForURL(/\/app\/cities\/\d+\/edit/);

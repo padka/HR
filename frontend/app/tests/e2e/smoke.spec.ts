@@ -7,7 +7,7 @@ type SmokeRoute = {
 
 // SPA routes are now at /app/*
 const routes: SmokeRoute[] = [
-  { path: '/app/dashboard', heading: 'Dashboard' },
+  { path: '/app/dashboard', heading: 'Дашборд' },
   { path: '/app/slots', heading: 'Слоты' },
   { path: '/app/candidates', heading: 'Кандидаты' },
   { path: '/app/recruiters', heading: 'Рекрутёры' },

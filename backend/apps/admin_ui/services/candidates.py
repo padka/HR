@@ -153,6 +153,7 @@ STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
         ("test1_completed", {"label": "Прошел тестирование", "icon": "📝", "tone": "info"}),
         ("waiting_slot", {"label": "Ждет назначения слота", "icon": "⏳", "tone": "warning"}),
         ("stalled_waiting_slot", {"label": "Долго ждет слота (>24ч)", "icon": "⚠️", "tone": "danger"}),
+        ("slot_pending", {"label": "Выбрал время, ждет подтверждения", "icon": "🕐", "tone": "warning"}),
         ("interview_scheduled", {"label": "Назначено собеседование", "icon": "📅", "tone": "primary"}),
         ("interview_confirmed", {"label": "Подтвердился (собес)", "icon": "✅", "tone": "success"}),
         ("test2_sent", {"label": "Прошел собес (Тест 2)", "icon": "📨", "tone": "primary"}),

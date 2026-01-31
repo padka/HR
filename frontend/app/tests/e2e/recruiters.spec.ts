@@ -6,8 +6,11 @@ test.describe("/app/recruiters", () => {
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(500);
 
-    // Check for cards or list
-    await expect(page.locator("[data-rec-card], .grid-cards, table").first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("heading", { name: "Рекрутёры", exact: false })).toBeVisible({ timeout: 10000 });
+
+    // Check for cards or empty state
+    const listOrEmpty = page.locator(".recruiter-card, .panel--tight, .empty-state").first();
+    await expect(listOrEmpty).toBeVisible({ timeout: 10000 });
   });
 
   test("can navigate to new recruiter form", async ({ page }) => {
@@ -27,6 +30,6 @@ test.describe("/app/recruiters", () => {
     await page.waitForTimeout(500);
 
     // Check for city tiles or checkboxes
-    await expect(page.locator("input[type='checkbox'], [data-city-tile], .city-tile").first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(".recruiter-edit__cities, input[type='checkbox']").first()).toBeVisible({ timeout: 10000 });
   });
 });

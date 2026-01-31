@@ -173,7 +173,7 @@ export function SlotsCreateForm() {
   const filteredCities = cities || []
 
   return (
-    <RoleGuard allow={['recruiter']}>
+    <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
         <div className="glass panel slot-create-header">
           <div>

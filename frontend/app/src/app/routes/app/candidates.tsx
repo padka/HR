@@ -123,7 +123,7 @@ export function CandidatesPage() {
   ]
 
   return (
-    <RoleGuard allow={['recruiter']}>
+    <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
         <header className="glass glass--elevated page-header page-header--row">
           <h1 className="title">Кандидаты</h1>
@@ -139,6 +139,7 @@ export function CandidatesPage() {
               className="filter-bar__search"
             />
             <select
+              aria-label="Статус кандидата"
               value={status}
               onChange={(e) => { setStatus(e.target.value); setPage(1) }}
             >
@@ -147,6 +148,7 @@ export function CandidatesPage() {
               ))}
             </select>
             <select
+              aria-label="Воронка"
               value={pipeline}
               onChange={(e) => { setPipeline(e.target.value); setPage(1) }}
             >
@@ -171,7 +173,11 @@ export function CandidatesPage() {
             <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Назад</button>
             <span className="pagination__info">{page} / {pagesTotal}</span>
             <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page >= pagesTotal} onClick={() => setPage(page + 1)}>Вперёд →</button>
-            <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}>
+            <select
+              aria-label="Кандидатов на странице"
+              value={perPage}
+              onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}
+            >
               {[10, 20, 50, 100].map((v) => <option key={v} value={v}>{v} на стр.</option>)}
             </select>
           </div>

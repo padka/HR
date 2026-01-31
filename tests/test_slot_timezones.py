@@ -11,7 +11,7 @@ from backend.domain.models import City, Recruiter, Slot
 
 @pytest.mark.asyncio
 async def test_generate_default_day_stores_utc_times():
-    target_day = date(2025, 12, 1)
+    target_day = date.today() + timedelta(days=30)
     async with async_session() as session:
         city = City(name="TZ City", tz="Europe/Moscow", active=True)
         recruiter = Recruiter(name="TZ Recruiter", tz="Europe/Moscow", active=True)
@@ -56,7 +56,7 @@ async def test_candidate_sees_local_time_labels():
 
 @pytest.mark.asyncio
 async def test_slots_list_date_filter_in_msk_range():
-    target_day = date(2025, 12, 1)
+    target_day = date.today() + timedelta(days=30)
     msk = ZoneInfo("Europe/Moscow")
     # Slot exactly at start of day in MSK (00:00) => 21:00 previous UTC day
     start_local = datetime.combine(target_day, datetime.min.time(), tzinfo=msk)

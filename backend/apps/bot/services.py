@@ -2529,54 +2529,64 @@ class NotificationService:
             }
         )
 
-        # Try to render a city-specific template only when it actually exists to avoid
-        # silently downgrading to the generic status message.
-        template_key = await _resolve_intro_day_template_key(slot.candidate_city_id)
-        rendered = await self._template_provider.render(
-            template_key, context, city_id=slot.candidate_city_id
-        )
-
-        # If a city-specific template failed to render, fall back to the generic one.
-        if rendered is None and template_key != "intro_day_invitation":
+        # Use custom_message from admin UI when provided (preview = actual text)
+        custom_message = (item.payload or {}).get("custom_message")
+        if custom_message and str(custom_message).strip():
+            from types import SimpleNamespace
+            rendered = SimpleNamespace(
+                text=str(custom_message).strip(),
+                key="intro_day_invitation_custom",
+                version=None,
+            )
+        else:
+            # Try to render a city-specific template only when it actually exists to avoid
+            # silently downgrading to the generic status message.
+            template_key = await _resolve_intro_day_template_key(slot.candidate_city_id)
             rendered = await self._template_provider.render(
-                "intro_day_invitation", context, city_id=slot.candidate_city_id
+                template_key, context, city_id=slot.candidate_city_id
             )
 
-        if rendered is None:
-            # Fallback to old template system (city-specific templates)
-            fallback_text = await templates.tpl(
-                slot.candidate_city_id,
-                "intro_day_invitation",  # Key in old templates table
-                candidate_fio=context["candidate_fio"],
-                candidate_name=context["candidate_name"],
-                recruiter_name=context["recruiter_name"],
-                dt_local=context["dt_local"],
-                city_name=city_name,
-                intro_address=intro_address_safe,
-                intro_contact=intro_contact_safe,
-                address=intro_address_safe,
-                city_address=intro_address_safe,
-                recruiter_contact=intro_contact_safe,
-                **labels,
-            )
-            if fallback_text:
-                from types import SimpleNamespace
-                rendered = SimpleNamespace(
-                    text=fallback_text,
-                    key="intro_day_invitation",
-                    version=None,
+            # If a city-specific template failed to render, fall back to the generic one.
+            if rendered is None and template_key != "intro_day_invitation":
+                rendered = await self._template_provider.render(
+                    "intro_day_invitation", context, city_id=slot.candidate_city_id
                 )
-            else:
-                await self._mark_failed(
-                    item,
-                    item.attempts,
-                    log_type,
-                    notification_type,
-                    "template_missing",
-                    None,
-                    candidate_tg_id=candidate_id,
+
+            if rendered is None:
+                # Fallback to old template system (city-specific templates)
+                fallback_text = await templates.tpl(
+                    slot.candidate_city_id,
+                    "intro_day_invitation",  # Key in old templates table
+                    candidate_fio=context["candidate_fio"],
+                    candidate_name=context["candidate_name"],
+                    recruiter_name=context["recruiter_name"],
+                    dt_local=context["dt_local"],
+                    city_name=city_name,
+                    intro_address=intro_address_safe,
+                    intro_contact=intro_contact_safe,
+                    address=intro_address_safe,
+                    city_address=intro_address_safe,
+                    recruiter_contact=intro_contact_safe,
+                    **labels,
                 )
-                return
+                if fallback_text:
+                    from types import SimpleNamespace
+                    rendered = SimpleNamespace(
+                        text=fallback_text,
+                        key="intro_day_invitation",
+                        version=None,
+                    )
+                else:
+                    await self._mark_failed(
+                        item,
+                        item.attempts,
+                        log_type,
+                        notification_type,
+                        "template_missing",
+                        None,
+                        candidate_tg_id=candidate_id,
+                    )
+                    return
 
         attempt = item.attempts + 1
         await self._ensure_log(

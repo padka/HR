@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
 import logging
@@ -11,6 +12,7 @@ from aiogram.enums import ParseMode
 
 from backend.core.settings import get_settings
 from backend.domain.test_questions import load_all_test_questions
+from backend.domain.tests.bootstrap import DEFAULT_TEST_QUESTIONS
 
 settings = get_settings()
 
@@ -87,7 +89,14 @@ def refresh_questions_bank(*, include_inactive: bool = False) -> None:
             "Falling back to empty questions; database is not available. error=%s",
             exc,
         )
-        loaded = {}
+        loaded = deepcopy(DEFAULT_TEST_QUESTIONS)
+
+    if not loaded:
+        loaded = deepcopy(DEFAULT_TEST_QUESTIONS)
+    else:
+        for key, default_questions in DEFAULT_TEST_QUESTIONS.items():
+            if not loaded.get(key):
+                loaded[key] = deepcopy(default_questions)
 
     _QUESTIONS_BANK = loaded
     TEST1_QUESTIONS = _QUESTIONS_BANK.get("test1", []).copy()

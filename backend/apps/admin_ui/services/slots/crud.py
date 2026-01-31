@@ -298,6 +298,7 @@ async def api_slots_payload(
             "tz_name": getattr(sl, "tz_name", None) or (sl.city.tz if getattr(sl, "city", None) else None),
             "local_time": _slot_local_time(sl),
             "city_name": sl.city.name if sl.city else None,
+            "purpose": getattr(sl, "purpose", None) or "interview",
         }
         for sl in slots
     ]

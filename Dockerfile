@@ -10,12 +10,23 @@ RUN apt-get update \
 
 WORKDIR /app
 
+FROM node:20-alpine AS frontend-build
+
+WORKDIR /build/frontend/app
+
+COPY frontend/app/package.json frontend/app/package-lock.json ./
+RUN npm ci
+
+COPY frontend/app ./
+RUN npm run build
+
 FROM base AS prod
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+COPY --from=frontend-build /build/frontend/dist /app/frontend/dist
 
 CMD ["uvicorn", "backend.apps.admin_ui.app:app", "--host", "0.0.0.0", "--port", "8000"]
 

@@ -27,6 +27,9 @@ class CandidateStatus(str, Enum):
     # 1.2 Waiting for slot >24h (stalled, needs attention)
     STALLED_WAITING_SLOT = "stalled_waiting_slot"
 
+    # 1.3 Candidate picked a slot, waiting for recruiter approval
+    SLOT_PENDING = "slot_pending"
+
     # 2. Interview scheduled (slot approved by recruiter)
     INTERVIEW_SCHEDULED = "interview_scheduled"
 
@@ -75,6 +78,7 @@ STATUS_LABELS: Dict[CandidateStatus, str] = {
     CandidateStatus.TEST1_COMPLETED: "Прошел тестирование",
     CandidateStatus.WAITING_SLOT: "Ждет назначения слота",
     CandidateStatus.STALLED_WAITING_SLOT: "Долго ждет слота (>24ч)",
+    CandidateStatus.SLOT_PENDING: "Выбрал время, ждет подтверждения",
     CandidateStatus.INTERVIEW_SCHEDULED: "Назначено собеседование",
     CandidateStatus.INTERVIEW_CONFIRMED: "Подтвердился (собес)",
     CandidateStatus.INTERVIEW_DECLINED: "Отказ на этапе собеседования",
@@ -111,6 +115,7 @@ STATUS_CATEGORIES: Dict[CandidateStatus, StatusCategory] = {
     CandidateStatus.TEST1_COMPLETED: StatusCategory.TESTING,
     CandidateStatus.WAITING_SLOT: StatusCategory.TESTING,
     CandidateStatus.STALLED_WAITING_SLOT: StatusCategory.TESTING,
+    CandidateStatus.SLOT_PENDING: StatusCategory.INTERVIEW,
     CandidateStatus.INTERVIEW_SCHEDULED: StatusCategory.INTERVIEW,
     CandidateStatus.INTERVIEW_CONFIRMED: StatusCategory.INTERVIEW,
     CandidateStatus.INTERVIEW_DECLINED: StatusCategory.DECLINED,
@@ -135,6 +140,7 @@ STATUS_COLORS: Dict[CandidateStatus, str] = {
     CandidateStatus.TEST1_COMPLETED: "info",  # Blue
     CandidateStatus.WAITING_SLOT: "warning",  # Amber
     CandidateStatus.STALLED_WAITING_SLOT: "danger",  # Red (needs attention)
+    CandidateStatus.SLOT_PENDING: "warning",  # Amber (awaiting recruiter approval)
     CandidateStatus.INTERVIEW_SCHEDULED: "primary",  # Blue
     CandidateStatus.INTERVIEW_CONFIRMED: "success",  # Green
     CandidateStatus.INTERVIEW_DECLINED: "danger",  # Red
@@ -168,15 +174,22 @@ STATUS_TRANSITIONS: Dict[CandidateStatus, List[CandidateStatus]] = {
     ],
     CandidateStatus.TEST1_COMPLETED: [
         CandidateStatus.WAITING_SLOT,
+        CandidateStatus.SLOT_PENDING,
         CandidateStatus.INTERVIEW_SCHEDULED,
         CandidateStatus.INTERVIEW_DECLINED,
     ],
     CandidateStatus.WAITING_SLOT: [
         CandidateStatus.STALLED_WAITING_SLOT,
+        CandidateStatus.SLOT_PENDING,
         CandidateStatus.INTERVIEW_SCHEDULED,
         CandidateStatus.INTERVIEW_DECLINED,
     ],
     CandidateStatus.STALLED_WAITING_SLOT: [
+        CandidateStatus.SLOT_PENDING,
+        CandidateStatus.INTERVIEW_SCHEDULED,
+        CandidateStatus.INTERVIEW_DECLINED,
+    ],
+    CandidateStatus.SLOT_PENDING: [
         CandidateStatus.INTERVIEW_SCHEDULED,
         CandidateStatus.INTERVIEW_DECLINED,
     ],
@@ -226,6 +239,7 @@ STATUS_PROGRESS_SEQUENCE: List[CandidateStatus] = [
     CandidateStatus.TEST1_COMPLETED,
     CandidateStatus.WAITING_SLOT,
     CandidateStatus.STALLED_WAITING_SLOT,
+    CandidateStatus.SLOT_PENDING,
     CandidateStatus.INTERVIEW_SCHEDULED,
     CandidateStatus.INTERVIEW_CONFIRMED,
     CandidateStatus.INTERVIEW_DECLINED,
@@ -311,6 +325,7 @@ def get_funnel_stages() -> List[Tuple[str, List[CandidateStatus]]]:
             CandidateStatus.TEST2_FAILED,
         ]),
         ("Собеседование", [
+            CandidateStatus.SLOT_PENDING,
             CandidateStatus.INTERVIEW_SCHEDULED,
             CandidateStatus.INTERVIEW_CONFIRMED,
             CandidateStatus.INTERVIEW_DECLINED,

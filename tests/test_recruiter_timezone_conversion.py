@@ -4,7 +4,7 @@
 Сценарий: Рекрутер в Москве (UTC+3) создает слот для Новосибирска (UTC+7) на 10:00.
 Ожидаемый результат: Слот сохраняется в UTC как 07:00, кандидату показывается 14:00.
 """
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -23,7 +23,7 @@ async def test_recruiter_time_converts_to_candidate_timezone():
     Рекрутер в Москве (UTC+3) создает слот на 10:00 для Новосибирска (UTC+7).
     Ожидаем: UTC время = 07:00, кандидат видит 14:00 по Новосибирску.
     """
-    target_day = date(2025, 6, 15)  # Летнее время
+    target_day = date.today() + timedelta(days=30)
 
     async with async_session() as session:
         # Москва (UTC+3 летом)
@@ -84,7 +84,7 @@ async def test_same_timezone_no_conversion():
 
     Рекрутер и кандидат в Москве. Слот на 15:00 должен остаться 15:00.
     """
-    target_day = date(2025, 6, 15)
+    target_day = date.today() + timedelta(days=30)
 
     async with async_session() as session:
         moscow_city = City(name="Test Moscow", tz="Europe/Moscow", active=True)
@@ -137,7 +137,7 @@ async def test_ekaterinburg_timezone_conversion():
     Рекрутер в Москве (UTC+3) создает слот на 09:00 для Екатеринбурга (UTC+5).
     Ожидаем: UTC = 06:00, кандидат видит 11:00.
     """
-    target_day = date(2025, 6, 15)
+    target_day = date.today() + timedelta(days=30)
 
     async with async_session() as session:
         ekb_city = City(name="Екатеринбург", tz="Asia/Yekaterinburg", active=True)

@@ -10,6 +10,14 @@ type RoleGuardProps = {
 export function RoleGuard({ allow, children }: RoleGuardProps) {
   const { data, isLoading, isError, error, refetch } = useProfile()
   const navigate = useNavigate()
+  const role = data?.principal.type
+  const shouldRedirect = Boolean(role && !allow.includes(role))
+
+  useEffect(() => {
+    if (shouldRedirect) {
+      navigate({ to: '/app/dashboard', replace: true })
+    }
+  }, [shouldRedirect, navigate])
 
   if (isLoading) {
     return (
@@ -43,15 +51,6 @@ export function RoleGuard({ allow, children }: RoleGuardProps) {
       </div>
     )
   }
-
-  const role = data?.principal.type
-  const shouldRedirect = Boolean(role && !allow.includes(role))
-
-  useEffect(() => {
-    if (shouldRedirect) {
-      navigate({ to: '/app/dashboard', replace: true })
-    }
-  }, [shouldRedirect, navigate])
 
   if (shouldRedirect) {
     return (

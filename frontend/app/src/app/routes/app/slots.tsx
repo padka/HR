@@ -31,6 +31,7 @@ type SlotApiItem = {
   candidate_tz?: string | null
   candidate_local_time?: string | null
   city_name?: string | null
+  purpose?: string | null
 }
 
 function statusLabel(status?: string) {
@@ -324,6 +325,7 @@ export function SlotsPage() {
   const profile = useProfile()
   const canUse = profile.data?.principal.type === 'recruiter'
   const [status, setStatus] = useState<string | undefined>(undefined)
+  const [purposeFilter, setPurposeFilter] = useState<string>('interview')
   const [limit, setLimit] = useState<number>(100)
   const [page, setPage] = useState<number>(1)
   const [perPage, setPerPage] = useState<number>(20)
@@ -350,19 +352,34 @@ export function SlotsPage() {
     enabled: Boolean(canUse),
   })
 
-  const total = data?.length || 0
+  const filteredByPurpose = useMemo(() => {
+    if (!data) return []
+    if (purposeFilter === 'all') return data
+    return data.filter((item) => (item.purpose || 'interview') === purposeFilter)
+  }, [data, purposeFilter])
+
+  const total = filteredByPurpose.length
   const pagesTotal = Math.max(1, Math.ceil(total / perPage))
-  const pagedItems = data ? data.slice((page - 1) * perPage, page * perPage) : []
+  const pagedItems = filteredByPurpose.slice((page - 1) * perPage, page * perPage)
+
+  const purposeCounts = useMemo(() => {
+    if (!data) return { interview: 0, intro_day: 0 }
+    let interview = 0, intro_day = 0
+    data.forEach((item) => {
+      if ((item.purpose || 'interview') === 'intro_day') intro_day++
+      else interview++
+    })
+    return { interview, intro_day }
+  }, [data])
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {}
-    if (!data) return counts
-    data.forEach((item) => {
+    filteredByPurpose.forEach((item) => {
       const key = String(item.status || 'UNKNOWN')
       counts[key] = (counts[key] || 0) + 1
     })
     return counts
-  }, [data])
+  }, [filteredByPurpose])
 
   const canPrev = page > 1
   const canNext = page < pagesTotal
@@ -493,11 +510,32 @@ export function SlotsPage() {
   }
 
   return (
-    <RoleGuard allow={['recruiter']}>
+    <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
         <section className="glass glass--elevated page-header page-header--row">
           <div>
             <h1 className="title">Слоты</h1>
+            <div className="slots-summary" role="group" aria-label="Тип слотов" style={{ marginBottom: 8 }}>
+              {[
+                { key: 'interview', label: 'Собеседования', value: purposeCounts.interview, tone: 'accent' },
+                { key: 'intro_day', label: 'Ознакомительные дни', value: purposeCounts.intro_day, tone: 'success' },
+                { key: 'all', label: 'Все', value: (data?.length || 0), tone: 'neutral' },
+              ].map((item) => {
+                const isActive = item.key === purposeFilter
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={`slots-summary__card slots-summary__card--${item.tone} ${isActive ? 'is-active' : ''}`}
+                    onClick={() => { setPurposeFilter(item.key); setPage(1) }}
+                    aria-pressed={isActive}
+                  >
+                    <span className="slots-summary__label">{item.label}</span>
+                    <span className="slots-summary__value">{item.value}</span>
+                  </button>
+                )
+              })}
+            </div>
             <div className="slots-summary" role="group" aria-label="Сводка слотов">
               {[
                 { key: 'all', label: 'Всего', value: total, status: undefined, tone: 'neutral' },
@@ -612,6 +650,7 @@ export function SlotsPage() {
                       title="Выбрать все"
                     />
                   </th>
+                  <th>Тип</th>
                   <th>Кандидат</th>
                   <th>Город</th>
                   <th>Время</th>
@@ -639,6 +678,11 @@ export function SlotsPage() {
                         checked={selectedIds.has(row.id)}
                         onChange={() => toggleSelect(row.id)}
                       />
+                    </td>
+                    <td>
+                      <span className={`cd-chip ${(row.purpose || 'interview') === 'intro_day' ? 'cd-chip--accent' : ''}`}>
+                        {(row.purpose || 'interview') === 'intro_day' ? 'ОД' : 'Собес'}
+                      </span>
                     </td>
                     <td>
                       <div className="slot-candidate">

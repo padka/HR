@@ -6,6 +6,7 @@ from typing import Dict, Any
 
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
+from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import text
 
 from backend.core.db import async_engine, async_session
@@ -60,7 +61,14 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
     app = FastAPI(title="TG Bot Admin API", lifespan=lifespan)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.session_secret,
+        same_site=settings.session_cookie_samesite,
+        https_only=settings.session_cookie_secure,
+    )
     mount_admin(app, async_engine)
 
     # Mount WebApp API endpoints for Telegram Mini App

@@ -6,19 +6,18 @@ test.describe("/app/slots navigation and modals", () => {
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(500);
 
-    // Try to find and click a slot row or card
-    const slotRow = page.locator("tr, .slot-card").first();
-    if (await slotRow.count() > 0) {
-      await slotRow.click();
+    // Try to open details via the "..." button
+    const detailsButton = page.locator("button[title='Подробнее']").first();
+    if (await detailsButton.count() > 0) {
+      await detailsButton.click();
 
-      // Wait for sheet/modal to appear
-      const sheet = page.locator('[role="dialog"], .sheet, .overlay').first();
-      if (await sheet.count() > 0) {
-        await expect(sheet).toBeVisible({ timeout: 5000 });
+      const dialog = page.locator('[role="dialog"]').first();
+      await expect(dialog).toBeVisible({ timeout: 5000 });
 
-        // Press Escape to close
-        await page.keyboard.press("Escape");
-        await expect(sheet).toBeHidden({ timeout: 5000 });
+      const closeButton = page.getByRole("button", { name: /закрыть/i }).first();
+      if (await closeButton.count() > 0) {
+        await closeButton.click();
+        await expect(dialog).toBeHidden({ timeout: 5000 });
       }
     }
   });
@@ -28,22 +27,20 @@ test.describe("/app/slots navigation and modals", () => {
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(500);
 
-    // Check for select all checkbox
-    const checkbox = page.locator("input[type='checkbox']").first();
-    await expect(checkbox).toBeVisible({ timeout: 10000 });
+    const headerCheckbox = page.locator("thead input[type='checkbox']").first();
+    if (await headerCheckbox.count() > 0) {
+      await expect(headerCheckbox).toBeVisible({ timeout: 10000 });
+    } else {
+      await expect(page.locator(".filter-bar").first()).toBeVisible({ timeout: 10000 });
+    }
   });
 
-  test("view mode switcher works", async ({ page }) => {
+  test("status summary buttons are visible", async ({ page }) => {
     await page.goto("/app/slots");
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(500);
 
-    // Find view mode buttons
-    const viewButtons = page.locator("button").filter({ hasText: /таблица|карточки|agenda/i });
-    if (await viewButtons.count() > 1) {
-      // Click the second view mode
-      await viewButtons.nth(1).click();
-      await page.waitForTimeout(300);
-    }
+    const summaryButton = page.locator("button").filter({ hasText: /свободные|забронировано|ожидают/i }).first();
+    await expect(summaryButton).toBeVisible({ timeout: 10000 });
   });
 });

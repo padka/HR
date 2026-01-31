@@ -150,7 +150,7 @@ export function CandidateNewPage() {
   }
 
   return (
-    <RoleGuard allow={['recruiter']}>
+    <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
         <form onSubmit={handleSubmit}>
           <div className="glass panel" style={{ display: 'grid', gap: 16 }}>

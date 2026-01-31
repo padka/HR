@@ -230,14 +230,12 @@ async def generate_default_day_slots(
         existing = {ensure_aware_utc(row[0]) for row in existing_rows if row and row[0] is not None}
 
         created = 0
-        allow_past = bool(os.getenv("PYTEST_CURRENT_TEST"))
 
         for start_utc in start_utc_list:
             try:
                 ensure_slot_not_in_past(
                     start_utc,
                     slot_tz=recruiter_tz,
-                    allow_past=allow_past,
                 )
             except SlotValidationError:
                 # Stop generation once we hit a past slot to match previous behaviour.
@@ -464,10 +462,8 @@ async def create_slot(
             return False
 
         # Проверка, что слот не в прошлом (в UTC).
-        test_ctx = os.getenv("PYTEST_CURRENT_TEST", "")
-        allow_past = bool(test_ctx and "test_create_slot_rejects_past_time" not in test_ctx)
         try:
-            ensure_slot_not_in_past(dt_utc, slot_tz=recruiter_tz, allow_past=allow_past)
+            ensure_slot_not_in_past(dt_utc, slot_tz=recruiter_tz)
         except SlotValidationError:
             return False
 
@@ -619,55 +615,61 @@ async def delete_all_slots(*, force: bool = False, principal: Optional[Principal
     return deleted, remaining_after
 
 
-async def delete_past_free_slots(grace_minutes: int = 0) -> Tuple[int, int]:
+from sqlalchemy.ext.asyncio import AsyncSession
+
+async def delete_past_free_slots(
+    grace_minutes: int = 1,
+    session: Optional[AsyncSession] = None,
+    now_utc: Optional[datetime] = None,
+) -> Tuple[int, int]:
     """
     Delete free interview slots that are already in the past.
 
+    Deletes slots where:
+    - start_time < (now - grace_minutes)
+    - status is FREE
+    - no candidate is assigned (candidate_id IS NULL AND candidate_tg_id IS NULL)
+
     Args:
-        grace_minutes: optional grace period to keep very recent slots (default 0)
+        grace_minutes: optional grace period (default 1)
+        session: optional DB session (for testing)
+        now_utc: optional reference time (for testing)
     Returns:
         (deleted_count, total_checked)
     """
-    threshold = datetime.now(timezone.utc) - timedelta(minutes=max(grace_minutes, 0))
-    async with async_session() as session:
-        # Pull candidate slots that already started, then confirm end time in Python.
-        candidates = await session.execute(
-            select(Slot.id, Slot.start_utc, Slot.duration_min).where(
-                func.coalesce(Slot.purpose, "interview") == "interview",
+    now = now_utc or datetime.now(timezone.utc)
+    threshold = now - timedelta(minutes=max(grace_minutes, 0))
+
+    # Helper to run logic with a given session
+    async def _process(sess: AsyncSession) -> Tuple[int, int]:
+        # Strict query: only genuinely free slots
+        candidates = await sess.execute(
+            select(Slot.id, Slot.start_utc).where(
                 slot_status_free_clause(Slot),
+                Slot.candidate_id.is_(None),
+                Slot.candidate_tg_id.is_(None),
                 Slot.start_utc < threshold,
             )
         )
         stale_ids: List[int] = []
-        for slot_id, start_utc, duration_min in candidates:
-            start_utc = ensure_aware_utc(start_utc)
-            duration = duration_min or DEFAULT_INTERVIEW_DURATION_MIN
-            end_utc = start_utc + timedelta(minutes=duration)
-            if end_utc <= threshold:
+        for slot_id, start_utc in candidates:
+            # Verify in Python to ensure timezone-aware comparison matches
+            if ensure_aware_utc(start_utc) < threshold:
                 stale_ids.append(slot_id)
 
-        total = len(stale_ids)
-        if total == 0:
+        count = len(stale_ids)
+        if count == 0:
             return 0, 0
 
-        await session.execute(delete(Slot).where(Slot.id.in_(stale_ids)))
-        await session.commit()
+        await sess.execute(delete(Slot).where(Slot.id.in_(stale_ids)))
+        await sess.commit()
+        return count, count
 
-    # Cancel reminders if any were scheduled for these slots.
-    if callable(get_reminder_service):
-        for sid in stale_ids:
-            try:
-                await get_reminder_service().cancel_for_slot(sid)
-            except RuntimeError:
-                break
-
-    await log_audit_action(
-        "slots_past_free_deleted",
-        "slot",
-        None,
-        changes={"deleted": total, "threshold_utc": threshold.isoformat()},
-    )
-    return total, total
+    if session:
+        return await _process(session)
+    
+    async with async_session() as sess:
+        return await _process(sess)
 
 
 def _reservation_error_message(status: str) -> str:
@@ -1536,7 +1538,6 @@ async def bulk_create_slots(
 
         planned_pairs: List[Tuple[datetime, datetime]] = []  # (original, normalized)
         planned_norms = set()
-        is_pytest = bool(os.getenv("PYTEST_CURRENT_TEST"))
         current_date = start
         while current_date <= end:
             if include_weekends or current_date.weekday() < 5:
@@ -1558,13 +1559,14 @@ async def bulk_create_slots(
                     )
                     if not dt_utc:
                         return 0, "Не удалось преобразовать время в UTC"
-                    # Пропускаем прошлые даты/время в локальной зоне рекрутера.
-                    local_dt = datetime.combine(
-                        current_date, time_type(hour=hours, minute=minutes), tzinfo=ZoneInfo(recruiter_tz)
-                    )
-                    if not is_pytest and local_dt <= datetime.now(ZoneInfo(recruiter_tz)):
+
+                    # Пропускаем прошлые даты/время (валидация через domain service).
+                    try:
+                        ensure_slot_not_in_past(dt_utc, slot_tz=recruiter_tz)
+                    except SlotValidationError:
                         current_minutes += step_min
                         continue
+
                     norm_dt = _normalize_utc(dt_utc)
                     if norm_dt not in planned_norms:
                         planned_norms.add(norm_dt)

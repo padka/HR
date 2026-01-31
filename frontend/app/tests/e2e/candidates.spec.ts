@@ -8,8 +8,11 @@ test.describe("/app/candidates", () => {
     // Wait for lazy loading
     await page.waitForTimeout(500);
 
-    // Check for table or card list
-    await expect(page.locator("table, [data-view]")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("heading", { name: "Кандидаты", exact: false })).toBeVisible({ timeout: 10000 });
+
+    // Check for table or empty state
+    const listOrEmpty = page.locator("table.data-table, .empty-state").first();
+    await expect(listOrEmpty).toBeVisible({ timeout: 10000 });
   });
 
   test("has view mode switcher", async ({ page }) => {
@@ -17,7 +20,7 @@ test.describe("/app/candidates", () => {
     await page.waitForLoadState("networkidle");
 
     // Should have view mode buttons (list/kanban/calendar)
-    const viewButtons = page.locator("button").filter({ hasText: /список|kanban|календарь/i });
+    const viewButtons = page.locator("button").filter({ hasText: /список|канбан|календарь/i });
     await expect(viewButtons.first()).toBeVisible({ timeout: 10000 });
   });
 

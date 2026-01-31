@@ -1999,69 +1999,82 @@ async def api_candidates_list(
 
 @router.post("/candidates/{candidate_id}/actions/{action_key}")
 async def api_candidate_action(
-    request: Request,
     candidate_id: int,
     action_key: str,
+    request: Request,
     background_tasks: BackgroundTasks,
     bot_service: BotService = Depends(provide_bot_service),
-    _: None = Depends(require_csrf_token),
-) -> JSONResponse:
-    detail = await get_candidate_detail(candidate_id)
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+    
+    # 1. Get candidate and allowed actions
+    detail = await get_candidate_detail(candidate_id, principal=principal)
     if not detail:
-        raise HTTPException(
-            status_code=404,
-            detail={"message": "Кандидат не найден"},
-        )
-
-    # Try to parse optional payload from request body
-    payload = {}
-    if request.method == "POST":
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-
-    actions = detail.get("candidate_actions") or []
-    action = next((item for item in actions if getattr(item, "key", None) == action_key), None)
-    if not action:
-        raise HTTPException(
-            status_code=400,
-            detail={"message": "Действие недоступно для текущего статуса"},
-        )
-    if (action.method or "GET").upper() != "POST":
-        raise HTTPException(
-            status_code=400,
-            detail={"message": "Действие выполняется как переход по ссылке"},
-        )
-
-    if action.target_status:
-        ok, message, stored_status, dispatch = await update_candidate_status(
-            candidate_id,
-            action.target_status,
-            bot_service=bot_service,
-            reason=payload.get("reason"),
-            comment=payload.get("comment"),
-        )
-        if dispatch is not None and ok:
-            plan = getattr(dispatch, "plan", None)
-            if plan is not None:
-                background_tasks.add_task(
-                    execute_bot_dispatch, plan, stored_status or "", bot_service
-                )
-        status_code = 200 if ok else 400
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    
+    # 2. Find matching action definition
+    # detail["candidate_actions"] is a list of CandidateAction objects
+    actions = detail.get("candidate_actions", [])
+    action_def = next((a for a in actions if a.key == action_key), None)
+    
+    if not action_def:
+        logger.warning(f"Action {action_key} not allowed for candidate {candidate_id}")
         return JSONResponse(
-            {
-                "ok": ok,
-                "message": message or "",
-                "status": stored_status or action.target_status,
-            },
-            status_code=status_code,
+            {"ok": False, "message": "Действие недоступно в текущем статусе"}, 
+            status_code=400
         )
 
-    raise HTTPException(
-        status_code=400,
-        detail={"message": "Действие не поддерживается"},
+    # Special handling for approve_upcoming_slot
+    if action_key == "approve_upcoming_slot":
+        user = detail["user"]
+        from sqlalchemy import select as sql_select
+        from sqlalchemy.orm import selectinload as sl_load
+        async with async_session() as session:
+            pending_slot = await session.scalar(
+                sql_select(Slot)
+                .where(
+                    Slot.candidate_tg_id == user.telegram_id,
+                    func.lower(Slot.status) == SlotStatus.PENDING,
+                    Slot.start_utc >= datetime.now(timezone.utc),
+                )
+                .order_by(Slot.start_utc.asc())
+                .limit(1)
+            )
+        if not pending_slot:
+            return JSONResponse({"ok": False, "message": "Нет слотов, ожидающих подтверждения"}, status_code=400)
+        ok, message, notified = await approve_slot_booking(pending_slot.id, principal=principal)
+        if not ok:
+            return JSONResponse({"ok": False, "message": message}, status_code=400)
+        return JSONResponse({"ok": True, "message": "Собеседование подтверждено", "action": action_key})
+
+    target_status = action_def.target_status
+
+    if not target_status:
+        # Action without status change
+        return JSONResponse({"ok": True, "message": "Action executed"})
+
+    # 3. Execute status change
+    ok, message, stored_status, dispatch = await update_candidate_status(
+        candidate_id, 
+        target_status, 
+        bot_service=bot_service, 
+        principal=principal
     )
+    
+    if not ok:
+        return JSONResponse({"ok": False, "message": message}, status_code=400)
+        
+    # 4. Handle side effects (Bot)
+    if dispatch and dispatch.plan:
+        background_tasks.add_task(execute_bot_dispatch, dispatch.plan, stored_status or "", bot_service)
+        
+    return JSONResponse({
+        "ok": True, 
+        "message": message, 
+        "status": stored_status,
+        "action": action_key
+    })
 
 
 @router.post("/candidates/{candidate_id}/assign-recruiter")

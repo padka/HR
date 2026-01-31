@@ -13,7 +13,7 @@ class _DummyBotService:
         self.ok = ok
         self.calls = []
 
-    async def send_chat_message(self, telegram_id: int, text: str):
+    async def send_chat_message(self, telegram_id: int, text: str, reply_markup=None):
         self.calls.append((telegram_id, text))
         if self.ok:
             return SimpleNamespace(

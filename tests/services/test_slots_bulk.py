@@ -1,5 +1,5 @@
 import pytest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -30,7 +30,13 @@ async def test_bulk_create_slots_creates_unique_series():
         await session.refresh(city)
         city_tz_value = city.tz
 
-    start = date(2024, 1, 8)
+    def _future_weekday(days_ahead: int = 1) -> date:
+        day = date.today() + timedelta(days=days_ahead)
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        return day
+
+    start = _future_weekday()
 
     created, error = await bulk_create_slots(
         recruiter_id=recruiter.id,

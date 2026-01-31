@@ -37,7 +37,7 @@ async def test_dashboard_calendar_snapshot_links_candidates():
                     recruiter_id=recruiter.id,
                     city_id=city.id,
                     start_utc=start_today,
-                    status=models.SlotStatus.BOOKED,
+                    status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
                     candidate_tg_id=candidate.telegram_id,
                     candidate_fio=candidate.fio,
                 ),
@@ -54,8 +54,7 @@ async def test_dashboard_calendar_snapshot_links_candidates():
     snapshot = await dashboard_calendar_snapshot(start_today.date())
     assert snapshot["selected_date"] == start_today.date().isoformat()
     assert snapshot["events_total"] == 1
-    assert snapshot["status_summary"]["BOOKED"] == 1
-    assert snapshot["status_summary"]["PENDING"] >= 0
+    assert snapshot["status_summary"]["CONFIRMED_BY_CANDIDATE"] == 1
     assert any(day["is_selected"] for day in snapshot["days"])
     assert snapshot["events"], "expected events for selected date"
     event = snapshot["events"][0]

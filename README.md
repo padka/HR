@@ -12,7 +12,7 @@
 - DevEx notes: [docs/DEVEX.md](docs/DEVEX.md)
 - UI strategy: [docs/TECH_STRATEGY.md](docs/TECH_STRATEGY.md)
 
-## Локальная разработка (без PostgreSQL/Redis)
+## Локальная разработка (PostgreSQL обязателен)
 
 Для локальной разработки создайте файл `.env.local` для переопределения настроек production:
 
@@ -23,7 +23,7 @@ cp .env.development.example .env.local
 
 Файл `.env.local` автоматически загружается после `.env` и может переопределять настройки. Он не коммитится в git.
 
-**Важно:** Файл `.env` содержит настройки production (`ENVIRONMENT=production`), что требует PostgreSQL и Redis. Файл `.env.local` переопределяет это на `ENVIRONMENT=development`, что позволяет использовать SQLite и memory broker.
+**Важно:** Файл `.env` содержит настройки production (`ENVIRONMENT=production`), что требует PostgreSQL и Redis. Файл `.env.local` переопределяет это на `ENVIRONMENT=development`, но **PostgreSQL остаётся обязательным**. В development допускается in‑memory брокер уведомлений, но не SQLite как основная БД.
 
 ## Быстрый старт (dev/test)
 
@@ -31,10 +31,10 @@ cp .env.development.example .env.local
 python3 -m venv .venv
 . .venv/bin/activate
 make install            # ставит dev-зависимости (pytest и пр.)
-make test               # прогоны на SQLite + in-memory broker, без Redis/Postgres
+make test               # тесты используют временную SQLite (без Redis/Postgres)
 ```
 
-Переменные окружения для тестов выставляются автоматически (ENVIRONMENT=test, DATABASE_URL=sqlite+aiosqlite:///./data/test.db, NOTIFICATION_BROKER=memory, ADMIN_USER/PASSWORD=admin). Брокер уведомлений и бот отключены, используется in-memory state/store.
+Переменные окружения для тестов выставляются автоматически (ENVIRONMENT=test, DATABASE_URL=sqlite+aiosqlite:///... , NOTIFICATION_BROKER=memory, ADMIN_USER/PASSWORD=admin). Брокер уведомлений и бот отключены, используется in‑memory state/store.
 
 ## Ветки и CI (обязательно)
 
@@ -86,9 +86,6 @@ Migrations are managed using Alembic and should be executed separately to preven
 ```bash
 # Run migrations
 python scripts/run_migrations.py
-
-# Or apply to local SQLite test DB
-make migrate-test
 ```
 
 For detailed migration documentation, Docker/K8s setup, and troubleshooting, see [docs/MIGRATIONS.md](docs/MIGRATIONS.md).
@@ -194,8 +191,9 @@ production-like deployments or staging smoke tests. It creates five services:
 # Build the shared image once
 docker compose build
 
-# Run migrations against the Postgres container
-docker compose run --rm admin_ui python scripts/run_migrations.py
+# Run migrations (one-off). The admin_ui/admin_api/bot services
+# depend on this step via the migrate service.
+docker compose up -d migrate
 
 # Start everything (-d for detached)
 docker compose up -d
@@ -365,56 +363,23 @@ export BOT_TOKEN="your-telegram-bot-token"
 
 ## Runtime data storage
 
-All runtime artefacts (SQLite databases, generated reports, uploaded resumes)
-are stored under the directory specified by the `DATA_DIR` environment
-variable. If the variable is not provided, the project falls back to
+All runtime artefacts (generated reports, uploaded resumes, logs) are stored
+under the directory specified by the `DATA_DIR` environment variable. If the
+variable is not provided, the project falls back to
 `~/.recruitsmart_admin/data` (outside the repository tree). Within this
 directory the following sub-folders are used:
 
 - `reports/` – generated recruiter reports (`report_*.txt`).
 - `test1/` – interview questionnaires saved as text files (`test1_*.txt`).
 - `uploads/` – user-uploaded files such as resumes.
+- `logs/` – application logs.
 
-The directories are created automatically on startup. If you prefer another
-location, point `DATA_DIR` to it before launching the server. Avoid storing
-`bot.db` inside the project tree when running with `uvicorn --reload`: every
-write operation triggers the file watcher and the dev server restarts. The
-development preset intentionally keeps the SQLite file at `<repo>/data/bot.db`
-so that `make dev` works out of the box even when `asyncpg` is not installed.
-If reload churn becomes annoying, set `DATABASE_URL` to a path outside the
-checkout, for example:
-
-```bash
-export DATA_DIR="$HOME/hr-bot-data"
-mkdir -p "$DATA_DIR"/reports "$DATA_DIR"/test1 "$DATA_DIR"/uploads
-python -c "from backend.migrations.runner import upgrade_to_head; upgrade_to_head(f'sqlite+aiosqlite:///{'$'}DATA_DIR/bot.db')"
-```
-
-The bot uses SQLite by default:
-
-- `ENVIRONMENT=development` + no `DATABASE_URL` → `sqlite+aiosqlite:///<repo>/data/bot.db`
-  (the bundled `aiosqlite` dependency covers this case).
-- Other environments + no `DATABASE_URL` → `sqlite+aiosqlite:///${DATA_DIR}/bot.db`.
-
-Provide a `DATABASE_URL` to move the SQLite file elsewhere or to switch to
-PostgreSQL/MySQL. The async SQLAlchemy engine expects explicit driver names
-such as `sqlite+aiosqlite` or `postgresql+asyncpg`.
+The directories are created automatically on startup. In production, mount
+`DATA_DIR` as a persistent volume to avoid losing reports and logs on restart.
 
 ### Database quick start
 
-**SQLite dev (default):**
-
-```bash
-# Comment out DATABASE_URL in .env or override it with an empty value
-DATABASE_URL="" make dev
-```
-
-This resolves to `sqlite+aiosqlite:///./data/bot.db` when the project is run
-from the repository root. `aiosqlite` ships in the base dependencies declared
-in `pyproject.toml`, so no extra packages are required after installing
-`pip install -e ".[dev]"`.
-
-**PostgreSQL (docker compose / staging):**
+**PostgreSQL (local docker / staging):**
 
 ```bash
 python -m pip install asyncpg
@@ -423,8 +388,7 @@ DATABASE_URL=postgresql+asyncpg://recruitsmart:recruitsmart@localhost:5432/recru
 ```
 
 The Admin UI logs the active dialect (passwords are masked) and fails fast with
-a short `RuntimeError` if the required async driver (`asyncpg` or `aiosqlite`)
-is missing.
+a short `RuntimeError` if the required async driver (`asyncpg`) is missing.
 
 ## Self-healing dev server
 
@@ -436,14 +400,12 @@ and watching the project tree for changes:
 ```bash
 # installs the watcher dependencies and launches the resilient server
 pip install -e ".[dev]"
-make dev-sqlite
+make dev
 ```
 
-`make dev-sqlite` clears `DATABASE_URL` and always uses the bundled SQLite
-database (`sqlite+aiosqlite:///./data/bot.db`). Use `make dev` (or the verbose
-`make dev-postgres` helper) when you want the supervisor to respect the
-`DATABASE_URL` from your shell or `.env` — for example, to connect to a local
-PostgreSQL instance.
+`make dev` respects `DATABASE_URL` from your shell or `.env` — for example,
+to connect to a local PostgreSQL instance. Use `make dev-postgres` to keep
+the same settings but print a reminder about asyncpg requirements.
 
 The helper does three things for you:
 
@@ -475,9 +437,8 @@ an automatic restart, so you can concentrate on coding rather than retyping
 commands.
 
 If the child process crashes three times within 10 seconds, or if the database
-driver is missing (`asyncpg`/`aiosqlite`), the supervisor prints actionable
-hints (including `DATABASE_URL='' make dev-sqlite`) and exits instead of
-looping endlessly.
+driver is missing (`asyncpg`), the supervisor prints actionable hints and exits
+instead of looping endlessly.
 
 ## Running tests
 Project level tests should be executed with the Python module runner to avoid

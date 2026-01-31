@@ -27,9 +27,10 @@ async def test_delete_slot_allows_free_and_pending_blocks_booked():
     recruiter_id, city_id = await _setup_recruiter_with_city()
 
     # FREE slot via public API helper
+    future_day = (datetime.now(timezone.utc) + timedelta(days=1)).date()
     created = await create_slot(
         recruiter_id,
-        datetime.now().date().isoformat(),
+        future_day.isoformat(),
         "09:00",
         city_id=city_id,
     )

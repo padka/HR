@@ -112,6 +112,27 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         ),
     ],
 
+    CandidateStatus.SLOT_PENDING: [
+        CandidateAction(
+            key="schedule_interview",
+            label="Назначить собеседование",
+            url_pattern="/candidates/{id}/schedule-slot",
+            icon="🕒",
+            variant="primary",
+            method="GET",
+        ),
+        CandidateAction(
+            key="reject",
+            label="Отказ",
+            url_pattern="/api/candidates/{id}/actions/reject",
+            icon="🚫",
+            variant="ghost",
+            confirmation="Отклонить кандидата?",
+            method="POST",
+            target_status="interview_declined",
+        ),
+    ],
+
     # Interview stages
     CandidateStatus.INTERVIEW_SCHEDULED: [
         CandidateAction(
@@ -307,6 +328,29 @@ def get_candidate_actions(
 
     # Filter actions based on additional conditions
     filtered_actions = []
+    
+    # Robustness: if candidate has an upcoming slot but status implies waiting,
+    # offer an action to approve/confirm that slot.
+    if has_upcoming_slot and status in {
+        CandidateStatus.WAITING_SLOT,
+        CandidateStatus.STALLED_WAITING_SLOT,
+        CandidateStatus.SLOT_PENDING,
+    }:
+        # Check if we already have a schedule action (remove it if so, to replace or keep? 
+        # Usually schedule is "manual". We want "approve pending".
+        # Let's prepend the approval action.
+        filtered_actions.append(
+            CandidateAction(
+                key="approve_upcoming_slot",
+                label="Согласовать время",
+                url_pattern="/api/candidates/{id}/actions/approve_upcoming_slot",
+                icon="✅",
+                variant="primary",
+                method="POST",
+                confirmation="Подтвердить выбранное время собеседования?",
+            )
+        )
+
     for action in actions:
         # Skip intro day scheduling if already scheduled
         if action.key == "schedule_intro_day" and has_intro_day_slot:
@@ -318,6 +362,10 @@ def get_candidate_actions(
 
         # Skip actions requiring test2 if not passed
         if action.requires_test2_passed and not has_test2_passed:
+            continue
+
+        # Avoid duplicates if we manually added approve action
+        if action.key == "approve_upcoming_slot":
             continue
 
         filtered_actions.append(action)

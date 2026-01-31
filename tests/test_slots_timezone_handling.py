@@ -1,6 +1,6 @@
 """Test timezone handling for slots."""
 import pytest
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -31,10 +31,11 @@ async def test_single_slot_uses_city_timezone():
         await session.refresh(city)
 
     # Create slot for 14:00 in recruiter's time (Moscow)
+    target_day = date.today() + timedelta(days=30)
     success = await create_slot(
         recruiter_id=recruiter.id,
         city_id=city.id,
-        date="2024-06-15",
+        date=target_day.isoformat(),
         time="14:00",
     )
     assert success is True
@@ -52,7 +53,14 @@ async def test_single_slot_uses_city_timezone():
 
         # 14:00 MSK (recruiter time) = 11:00 UTC (Moscow is UTC+3)
         # Candidate in Yekaterinburg (UTC+5) will see this as 16:00 YEKT
-        expected_utc = datetime(2024, 6, 15, 11, 0, tzinfo=timezone.utc)
+        expected_utc = datetime(
+            target_day.year,
+            target_day.month,
+            target_day.day,
+            11,
+            0,
+            tzinfo=timezone.utc,
+        )
 
         # Ensure slot.start_utc is timezone-aware
         start_utc = slot.start_utc
@@ -84,11 +92,12 @@ async def test_bulk_slots_use_city_timezone():
         await session.refresh(city)
 
     # Create slots for 14:00 and 15:00 in recruiter's time (Moscow)
+    target_day = date.today() + timedelta(days=30)
     created, error = await bulk_create_slots(
         recruiter_id=recruiter.id,
         city_id=city.id,
-        start_date="2024-06-15",
-        end_date="2024-06-15",
+        start_date=target_day.isoformat(),
+        end_date=target_day.isoformat(),
         start_time="14:00",
         end_time="16:00",
         break_start="10:00",
@@ -116,9 +125,23 @@ async def test_bulk_slots_use_city_timezone():
             assert slot.tz_name == "Asia/Yekaterinburg"
 
         # 14:00 MSK (recruiter time) = 11:00 UTC
-        expected_start_utc = datetime(2024, 6, 15, 11, 0, tzinfo=timezone.utc)
+        expected_start_utc = datetime(
+            target_day.year,
+            target_day.month,
+            target_day.day,
+            11,
+            0,
+            tzinfo=timezone.utc,
+        )
         # 15:00 MSK (recruiter time) = 12:00 UTC
-        expected_second_utc = datetime(2024, 6, 15, 12, 0, tzinfo=timezone.utc)
+        expected_second_utc = datetime(
+            target_day.year,
+            target_day.month,
+            target_day.day,
+            12,
+            0,
+            tzinfo=timezone.utc,
+        )
 
         start_utc_first = slots[0].start_utc
         if start_utc_first.tzinfo is None:
@@ -154,10 +177,11 @@ async def test_slot_fallback_to_recruiter_timezone_if_city_has_none():
         await session.refresh(city)
 
     # Create slot for 14:00 - should use recruiter's timezone (Moscow)
+    target_day = date.today() + timedelta(days=30)
     success = await create_slot(
         recruiter_id=recruiter.id,
         city_id=city.id,
-        date="2024-06-15",
+        date=target_day.isoformat(),
         time="14:00",
     )
     assert success is True
@@ -174,7 +198,14 @@ async def test_slot_fallback_to_recruiter_timezone_if_city_has_none():
         assert slot.tz_name == "Europe/Moscow"  # Fallback to recruiter timezone
 
         # 14:00 MSK = 11:00 UTC (Moscow is UTC+3)
-        expected_utc = datetime(2024, 6, 15, 11, 0, tzinfo=timezone.utc)
+        expected_utc = datetime(
+            target_day.year,
+            target_day.month,
+            target_day.day,
+            11,
+            0,
+            tzinfo=timezone.utc,
+        )
 
         start_utc = slot.start_utc
         if start_utc.tzinfo is None:

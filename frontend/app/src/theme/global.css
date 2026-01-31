@@ -4436,6 +4436,14 @@ body {
   text-decoration: underline;
 }
 
+button.cd-test-card__report {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
 .cd-test-card__history {
   border-top: 1px solid rgba(255,255,255,0.06);
   padding-top: 8px;
@@ -4451,6 +4459,32 @@ body {
   display: grid;
   gap: 4px;
   margin-top: 6px;
+}
+
+.report-preview__frame {
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(10,14,22,0.55);
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.report-preview__text {
+  margin: 0;
+  padding: var(--space-md);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(232,236,245,0.85);
+}
+
+.report-preview__pdf {
+  width: 100%;
+  height: min(70vh, 720px);
+  border: 0;
+  display: block;
 }
 
 .cd-test-card__history-item {

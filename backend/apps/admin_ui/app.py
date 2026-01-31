@@ -376,7 +376,7 @@ async def lifespan(app: FastAPI):
     if not is_test_mode:
         try:
             slot_cleanup_task = asyncio.create_task(
-                periodic_past_free_slot_cleanup(interval_minutes=1, grace_minutes=0, app=app),
+                periodic_past_free_slot_cleanup(app=app),
                 name="past_free_slot_cleanup",
             )
             app.state.slot_cleanup_task = slot_cleanup_task
@@ -496,9 +496,9 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router, dependencies=[Depends(require_principal)])
     app.include_router(slots.router, dependencies=[Depends(require_principal)])
     app.include_router(slot_assignments.router, dependencies=[Depends(require_principal)])
+    app.include_router(workflow.router, dependencies=[Depends(require_admin)])
     app.include_router(candidates.router, dependencies=[Depends(require_principal)])
     app.include_router(profile.router, dependencies=[Depends(require_principal)])
-    app.include_router(workflow.router, dependencies=[Depends(require_admin)])
     app.include_router(recruiters.router, dependencies=[Depends(require_admin)])
     app.include_router(cities.router, dependencies=[Depends(require_principal)])
     app.include_router(templates.router, dependencies=[Depends(require_admin)])

@@ -1272,6 +1272,13 @@ async def reserve_slot(
         except Exception:
             # Candidate directory sync should not break reservation flow
             pass
+        # Update candidate status to SLOT_PENDING (picked a slot, awaiting recruiter approval)
+        if purpose == "interview":
+            try:
+                from backend.domain.candidates.status_service import set_status_slot_pending
+                await set_status_slot_pending(candidate_tg_id)
+            except Exception:
+                logger.exception("Failed to update candidate status to SLOT_PENDING for %s", candidate_tg_id)
     return ReservationResult(status="reserved", slot=slot)
 
 

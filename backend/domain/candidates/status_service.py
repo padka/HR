@@ -159,10 +159,14 @@ async def get_candidate_status(telegram_id: int) -> Optional[CandidateStatus]:
 
 
 async def set_status_test1_completed(telegram_id: int) -> bool:
-    """Set status when candidate completes Test 1."""
+    """Set status when candidate completes Test 1.
+
+    Uses force=True to support returning candidates who re-take tests.
+    Their historical data is preserved but the current status is reset.
+    """
     try:
         return await update_candidate_status(
-            telegram_id, CandidateStatus.TEST1_COMPLETED
+            telegram_id, CandidateStatus.TEST1_COMPLETED, force=True
         )
     except StatusTransitionError as e:
         logger.error(f"Failed to set TEST1_COMPLETED: {e}")
@@ -177,6 +181,17 @@ async def set_status_waiting_slot(telegram_id: int) -> bool:
         )
     except StatusTransitionError as e:
         logger.error(f"Failed to set WAITING_SLOT: {e}")
+        return False
+
+
+async def set_status_slot_pending(telegram_id: int) -> bool:
+    """Set status when candidate picks a slot, awaiting recruiter approval."""
+    try:
+        return await update_candidate_status(
+            telegram_id, CandidateStatus.SLOT_PENDING, force=True
+        )
+    except StatusTransitionError as e:
+        logger.error(f"Failed to set SLOT_PENDING: {e}")
         return False
 
 
@@ -345,6 +360,7 @@ __all__ = [
     "get_candidate_status",
     "set_status_test1_completed",
     "set_status_waiting_slot",
+    "set_status_slot_pending",
     "set_status_interview_scheduled",
     "set_status_interview_confirmed",
     "set_status_interview_declined",

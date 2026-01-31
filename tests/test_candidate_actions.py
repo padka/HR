@@ -118,12 +118,12 @@ def test_get_candidate_actions_stalled_waiting_slot():
         has_intro_day_slot=False,
     )
 
-    assert len(actions) == 1
-    schedule_action = actions[0]
-    assert schedule_action.key == "schedule_interview"
+    assert len(actions) == 2
+    schedule_action = next(a for a in actions if a.key == "schedule_interview")
     assert schedule_action.variant == "danger"  # Urgent!
     assert "СРОЧНО" in schedule_action.label
     assert schedule_action.icon == "⚠️"
+    assert any(a.key == "reject" for a in actions)
 
 
 def test_get_candidate_actions_intro_day_confirmed():

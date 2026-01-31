@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -9,7 +9,7 @@ from backend.domain.models import City, Recruiter, SlotStatus
 
 @pytest.mark.asyncio
 async def test_generate_default_day_creates_slots_visible_in_list():
-    day = date(2025, 1, 2)
+    day = date.today() + timedelta(days=30)
     async with async_session() as session:
         city = City(name="Gen City", tz="Europe/Moscow", active=True)
         recruiter = Recruiter(name="Generator", tz="Europe/Moscow", active=True)
@@ -45,7 +45,7 @@ async def test_generate_default_day_creates_slots_visible_in_list():
 
 @pytest.mark.asyncio
 async def test_generate_default_day_auto_city_uses_first_recruiter_city():
-    day = date(2025, 2, 3)
+    day = date.today() + timedelta(days=31)
     async with async_session() as session:
         city = City(name="Auto City", tz="Europe/Samara", active=True)
         recruiter = Recruiter(name="Auto Recruiter", tz="Europe/Moscow", active=True)

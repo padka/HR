@@ -1,9 +1,38 @@
+import secrets
 from sqladmin import Admin, ModelView
+from sqladmin.authentication import AuthenticationBackend
+from starlette.requests import Request
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend.domain.models import Recruiter, City, Template, Slot, SlotStatus
 from backend.domain.cities.models import CityExpert, CityExecutive
 from backend.apps.admin_ui.views.tests import TestAdmin, QuestionAdmin, AnswerOptionAdmin
+from backend.core.settings import get_settings
+
+
+class AdminAuth(AuthenticationBackend):
+    async def login(self, request: Request) -> bool:
+        form = await request.form()
+        username = str(form.get("username") or "")
+        password = str(form.get("password") or "")
+        settings = get_settings()
+        if not settings.admin_username or not settings.admin_password:
+            return False
+        user_ok = secrets.compare_digest(username, settings.admin_username)
+        pass_ok = secrets.compare_digest(password, settings.admin_password)
+        if user_ok and pass_ok:
+            request.session["sqladmin_auth"] = True
+            request.session["sqladmin_user"] = username
+            return True
+        return False
+
+    async def logout(self, request: Request) -> bool:
+        request.session.pop("sqladmin_auth", None)
+        request.session.pop("sqladmin_user", None)
+        return True
+
+    async def authenticate(self, request: Request) -> bool:
+        return bool(request.session.get("sqladmin_auth"))
 
 
 class RecruiterAdmin(ModelView, model=Recruiter):
@@ -92,7 +121,8 @@ class SlotAdmin(ModelView, model=Slot):
 
 
 def mount_admin(app, engine: AsyncEngine):
-    admin = Admin(app, engine)
+    settings = get_settings()
+    admin = Admin(app, engine, authentication_backend=AdminAuth(secret_key=settings.session_secret))
     admin.add_view(RecruiterAdmin)
     admin.add_view(CityAdmin)
     admin.add_view(CityExpertAdmin)

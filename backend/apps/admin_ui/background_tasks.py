@@ -180,16 +180,20 @@ async def periodic_stalled_candidate_checker(
     log_errors=True,
 )
 async def periodic_past_free_slot_cleanup(
-    interval_minutes: int = 5,
-    grace_minutes: int = 0,
     *,
     app: Optional[FastAPI] = None,
 ) -> None:
-    """Remove FREE slots once their end time is in the past."""
+    """Remove FREE slots once their start time is in the past."""
+    from backend.core.settings import get_settings
+    settings = get_settings()
+    
+    interval = settings.slots_cleanup_interval_seconds
+    grace = settings.slots_cleanup_grace_minutes
+
     logger.info(
-        "Started past free slot cleanup (interval: %dm, grace: %dm)",
-        interval_minutes,
-        grace_minutes,
+        "Started past free slot cleanup (interval: %ds, grace: %dm)",
+        interval,
+        grace,
     )
     last_db_warning = 0.0
     warning_interval = 600.0
@@ -201,10 +205,10 @@ async def periodic_past_free_slot_cleanup(
                 if now - last_db_warning >= warning_interval:
                     logger.warning("DB unavailable, slot cleanup paused")
                     last_db_warning = now
-                await asyncio.sleep(min(warning_interval, interval_minutes * 60))
+                await asyncio.sleep(min(warning_interval, interval))
                 continue
 
-            deleted, total = await delete_past_free_slots(grace_minutes=grace_minutes)
+            deleted, total = await delete_past_free_slots(grace_minutes=grace)
             if app is not None:
                 app.state.db_available = True
             if deleted > 0:
@@ -221,7 +225,7 @@ async def periodic_past_free_slot_cleanup(
                 last_db_warning = now
 
         try:
-            await asyncio.sleep(interval_minutes * 60)
+            await asyncio.sleep(interval)
         except asyncio.CancelledError:
             logger.info("Past free slot cleanup cancelled during sleep")
             raise

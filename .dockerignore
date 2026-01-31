@@ -1,6 +1,9 @@
 .venv
 .git
 .gitignore
+.env
+.env.local
+.env.*
 .pytest_cache
 __pycache__
 data

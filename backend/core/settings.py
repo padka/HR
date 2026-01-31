@@ -67,6 +67,8 @@ class Settings:
     rate_limit_redis_url: str
     trust_proxy_headers: bool
     enable_legacy_status_api: bool
+    slots_cleanup_grace_minutes: int
+    slots_cleanup_interval_seconds: int
     sentry_dsn: str
     sentry_traces_sample_rate: float
 
@@ -555,6 +557,9 @@ def get_settings() -> Settings:
         default_prod=False,
     )
 
+    slots_cleanup_grace_minutes = _get_int("SLOTS_CLEANUP_GRACE_MINUTES", 1, minimum=0)
+    slots_cleanup_interval_seconds = _get_int("SLOTS_CLEANUP_INTERVAL_SECONDS", 60, minimum=10)
+
     # Sentry error tracking (optional)
     sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
     sentry_traces_sample_rate = _get_float("SENTRY_TRACES_SAMPLE_RATE", 0.1, minimum=0.0)
@@ -610,6 +615,8 @@ def get_settings() -> Settings:
         rate_limit_redis_url=rate_limit_redis_url,
         trust_proxy_headers=trust_proxy_headers,
         enable_legacy_status_api=enable_legacy_status_api,
+        slots_cleanup_grace_minutes=slots_cleanup_grace_minutes,
+        slots_cleanup_interval_seconds=slots_cleanup_interval_seconds,
         sentry_dsn=sentry_dsn,
         sentry_traces_sample_rate=sentry_traces_sample_rate,
     )

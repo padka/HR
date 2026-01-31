@@ -25,7 +25,11 @@ async def list_reschedule_requests(principal: Principal = Depends(require_princi
         .where(RescheduleRequest.status == "pending")
         .options(selectinload(RescheduleRequest.slot_assignment).selectinload(SlotAssignment.slot))
     )
-    # TODO: Add recruiter scoping for non-admins
+    if principal.type == "recruiter":
+        query = (
+            query.join(SlotAssignment, RescheduleRequest.slot_assignment_id == SlotAssignment.id)
+            .where(SlotAssignment.recruiter_id == principal.id)
+        )
     async with async_session() as session:
         requests = await session.scalars(query)
         return requests.all()
@@ -38,7 +42,10 @@ async def approve_reschedule_request(request_id: int, principal: Principal = Dep
         if not request:
             raise HTTPException(status_code=404, detail="Request not found")
         
-        # TODO: Check if principal is authorized for this request
+        if principal.type == "recruiter":
+            assignment = request.slot_assignment
+            if not assignment or assignment.recruiter_id != principal.id:
+                raise HTTPException(status_code=403, detail="Not authorized to approve this request")
 
         if request.status != "pending":
             raise HTTPException(status_code=409, detail="Request is not pending")
@@ -101,7 +108,10 @@ async def propose_new_time(request_id: int, payload: NewProposalPayload, princip
         if not request:
             raise HTTPException(status_code=404, detail="Request not found")
 
-        # TODO: Check authorization
+        if principal.type == "recruiter":
+            assignment = await session.get(SlotAssignment, request.slot_assignment_id)
+            if not assignment or assignment.recruiter_id != principal.id:
+                raise HTTPException(status_code=403, detail="Not authorized to update this request")
 
         request.status = "declined"
         request.decided_at = datetime.now(timezone.utc)

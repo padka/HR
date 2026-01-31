@@ -66,7 +66,7 @@ class DummyBotService:
     def is_ready(self) -> bool:  # pragma: no cover - compatibility
         return True
 
-    async def send_chat_message(self, telegram_id: int, text: str) -> BotSendResult:
+    async def send_chat_message(self, telegram_id: int, text: str, reply_markup=None) -> BotSendResult:
         self.calls.append({"telegram_id": telegram_id, "text": text})
         return BotSendResult(ok=True, status="sent", telegram_message_id=777)
 

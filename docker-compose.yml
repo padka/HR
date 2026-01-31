@@ -8,6 +8,7 @@ x-app-env: &app-env
   SESSION_SECRET: ${SESSION_SECRET}
   BOT_CALLBACK_SECRET: ${BOT_CALLBACK_SECRET}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DATA_DIR: ${DATA_DIR:-/var/lib/recruitsmart_admin}
 
 services:
   postgres:
@@ -61,6 +62,21 @@ services:
     networks:
       - recruitsmart
 
+  migrate:
+    build:
+      context: .
+      target: prod
+    image: recruitsmart-admin:latest
+    command: ["python", "scripts/run_migrations.py"]
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - recruitsmart
+
   admin_ui:
     build:
       context: .
@@ -73,12 +89,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis_notifications:
         condition: service_healthy
       redis_cache:
         condition: service_healthy
     ports:
       - "8000:8000"
+    volumes:
+      - recruitsmart_data:/var/lib/recruitsmart_admin
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 15s
@@ -96,10 +116,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis_notifications:
         condition: service_healthy
     ports:
       - "8100:8100"
+    volumes:
+      - recruitsmart_data:/var/lib/recruitsmart_admin
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8100/ || exit 1"]
       interval: 15s
@@ -121,6 +145,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis_notifications:
         condition: service_healthy
     healthcheck:
@@ -135,11 +161,15 @@ services:
     restart: unless-stopped
     networks:
       - recruitsmart
+    volumes:
+      - recruitsmart_data:/var/lib/recruitsmart_admin
 
 volumes:
   postgres_data:
     driver: local
   redis_notifications_data:
+    driver: local
+  recruitsmart_data:
     driver: local
 
 networks:
