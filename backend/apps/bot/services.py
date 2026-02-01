@@ -6224,7 +6224,7 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
                 current_status = await get_candidate_status(slot.candidate_tg_id)
 
                 if current_status == CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY:
-                    # This is a day-of confirmation (responding to 3H reminder)
+                    # This is the day-of confirmation (responding to 3H reminder)
                     await set_status_intro_day_confirmed_day_of(slot.candidate_tg_id, force=True)
                 else:
                     # This is the initial confirmation
@@ -6394,113 +6394,6 @@ async def capture_intro_decline_reason(message, state) -> bool:
     return True
 
 
-    async def _process_slot_proposal(self, item: OutboxItem) -> None:
-        """Processes a slot proposal notification to a candidate."""
-        payload = dict(item.payload or {})
-        candidate_id = item.candidate_tg_id
-        if not candidate_id:
-            await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "candidate_missing", None, candidate_tg_id=None)
-            return
-
-        assignment_id = payload.get("assignment_id")
-        start_utc_str = payload.get("start_utc")
-        
-        if not assignment_id or not start_utc_str:
-            await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "payload_incomplete", None, candidate_tg_id=candidate_id)
-            return
-            
-        start_utc = datetime.fromisoformat(start_utc_str)
-
-        candidate_tz = "Europe/Moscow" 
-        context = {"dt_local": fmt_dt_local(start_utc, candidate_tz)}
-        
-        rendered = await self._template_provider.render("slot_proposal_candidate", context)
-
-        if rendered is None:
-            await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "template_missing", None, candidate_tg_id=candidate_id)
-            return
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_assignment:{assignment_id}")],
-            [InlineKeyboardButton(text="🗓️ Другое время", callback_data=f"reschedule_assignment:{assignment_id}")]
-        ])
-
-        attempt = item.attempts + 1
-        try:
-            await get_bot().send_message(candidate_id, rendered.text, reply_markup=keyboard)
-        except Exception as exc:
-            await self._schedule_retry(item, attempt=attempt, log_type="slot_proposal", notification_type="slot_proposal", error=str(exc), rendered=rendered, candidate_tg_id=candidate_id)
-            return
-
-        await self._mark_sent(item, attempt, "slot_proposal", "slot_proposal", rendered, candidate_id)
-
-    async def _process_slot_confirmed_recruiter(self, item: OutboxItem) -> None:
-        """Notifies a recruiter that a candidate has confirmed a slot."""
-        recruiter_id = item.recruiter_tg_id
-        payload = dict(item.payload or {})
-        if not recruiter_id:
-            return
-            
-        context = {"candidate_name": "Кандидат", "dt_local": "???"}
-        rendered = await self._template_provider.render("slot_confirmed_recruiter", context)
-        
-        if rendered and rendered.text:
-            await get_bot().send_message(recruiter_id, rendered.text)
-        
-        await self._mark_sent(item, item.attempts + 1, "slot_confirmed_recruiter", "slot_confirmed_recruiter", rendered, item.candidate_tg_id)
-
-    async def _process_reschedule_requested_recruiter(self, item: OutboxItem) -> None:
-        """Notifies a recruiter that a candidate has requested a reschedule."""
-        recruiter_id = item.recruiter_tg_id
-        payload = dict(item.payload or {})
-        if not recruiter_id:
-            return
-
-        requested_time_utc = datetime.fromisoformat(payload.get("requested_time_utc", ""))
-        
-        context = {
-            "candidate_name": "Кандидат", 
-            "requested_time_local": fmt_dt_local(requested_time_utc, "Europe/Moscow")
-        }
-        rendered = await self._template_provider.render("reschedule_requested_recruiter", context)
-
-        if rendered and rendered.text:
-            await get_bot().send_message(recruiter_id, rendered.text)
-
-        await self._mark_sent(item, item.attempts + 1, "reschedule_requested_recruiter", "reschedule_requested_recruiter", rendered, item.candidate_tg_id)
-        
-    async def _process_reschedule_approved_candidate(self, item: OutboxItem) -> None:
-        """Notifies a candidate their reschedule request was approved."""
-        candidate_id = item.candidate_tg_id
-        payload = dict(item.payload or {})
-        if not candidate_id:
-            return
-            
-        new_time_utc = datetime.fromisoformat(payload.get("new_time_utc", ""))
-        context = {"new_time_local": fmt_dt_local(new_time_utc, "Europe/Moscow")}
-        rendered = await self._template_provider.render("reschedule_approved_candidate", context)
-        
-        if rendered and rendered.text:
-            await get_bot().send_message(candidate_id, rendered.text)
-        
-        await self._mark_sent(item, item.attempts + 1, "reschedule_approved_candidate", "reschedule_approved_candidate", rendered, candidate_id)
-
-    async def _process_reschedule_declined_candidate(self, item: OutboxItem) -> None:
-        """Notifies a candidate their reschedule request was declined."""
-        candidate_id = item.candidate_tg_id
-        payload = dict(item.payload or {})
-        if not candidate_id:
-            return
-            
-        context = {"recruiter_comment": payload.get("recruiter_comment", "Причина не указана.")}
-        rendered = await self._template_provider.render("reschedule_declined_candidate", context)
-
-        if rendered and rendered.text:
-            await get_bot().send_message(candidate_id, rendered.text)
-
-        await self._mark_sent(item, item.attempts + 1, "reschedule_declined_candidate", "reschedule_declined_candidate", rendered, candidate_id)
-
-
 def get_rating(score: float) -> str:
     if score >= 6.5:
         return "⭐⭐⭐⭐⭐ "
@@ -6513,6 +6406,12 @@ def get_rating(score: float) -> str:
     return "⭐ (Не рекомендован)"
 
 
+def configure_template_provider() -> None:
+    from .template_provider import Jinja2TemplateProvider
+    global _template_provider
+    _template_provider = Jinja2TemplateProvider()
+
+
 __all__ = [
     "StateManager",
     "BookingNotificationStatus",
@@ -6523,6 +6422,7 @@ __all__ = [
     "reset_notification_service",
     "calculate_score",
     "configure",
+    "configure_template_provider",
     "finalize_test1",
     "finalize_test2",
     "fmt_dt_local",
