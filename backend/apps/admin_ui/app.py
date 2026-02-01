@@ -509,6 +509,15 @@ def create_app() -> FastAPI:
     app.include_router(slot_assignments_api.router, prefix="/api")
     app.include_router(reschedule_requests.router, prefix="/api/v1/admin", dependencies=[Depends(require_principal)])
 
+    @app.get("/api/templates/list", dependencies=[Depends(require_principal)])
+    async def list_templates():
+        templates_dir = BASE_DIR / "backend" / "apps" / "bot" / "templates"
+        items = []
+        if templates_dir.exists():
+            for f in templates_dir.glob("*.html"):
+                items.append({"id": f.stem, "name": f.name})
+        return JSONResponse({"items": items})
+
     if SPA_DIST_DIR.exists():
         @app.get("/app", include_in_schema=False)
         async def spa_index() -> Response:
@@ -552,7 +561,10 @@ def create_app() -> FastAPI:
         request_id = getattr(request.state, "request_id", None)
         try:
             response = await call_next(request)
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, RuntimeError) and str(exc) == "No response returned.":
+                return Response(status_code=204)
+
             duration = (time.perf_counter() - start) * 1000
             request_logger.exception(
                 "HTTP %s %s failed [%s]",
