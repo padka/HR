@@ -32,7 +32,6 @@ from backend.domain.models import (
     City,
     Recruiter,
     Slot,
-    Template,
     MessageTemplate,
 )
 from backend.domain.candidates.models import User, TestResult, AutoMessage
@@ -119,7 +118,6 @@ class UnitOfWork:
             RecruiterRepository,
             CityRepository,
             SlotRepository,
-            TemplateRepository,
             UserRepository,
             TestResultRepository,
             AutoMessageRepository,
@@ -132,7 +130,6 @@ class UnitOfWork:
         self.recruiters = RecruiterRepository(self._session)
         self.cities = CityRepository(self._session)
         self.slots = SlotRepository(self._session)
-        self.templates = TemplateRepository(self._session)
         self.users = UserRepository(self._session)
         self.test_results = TestResultRepository(self._session)
         self.auto_messages = AutoMessageRepository(self._session)
