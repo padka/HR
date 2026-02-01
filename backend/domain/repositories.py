@@ -841,8 +841,8 @@ async def claim_outbox_batch(
                         attempts=row.attempts,
                         created_at=row.created_at,
                         next_retry_at=row.next_retry_at,
+                    )
                 )
-        )
         return items
 
 

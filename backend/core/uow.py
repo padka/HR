@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from types import TracebackType
-from typing import Any, Type
+from typing import Any, List, Type
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
