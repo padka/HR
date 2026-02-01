@@ -57,6 +57,7 @@ from backend.apps.admin_ui.security import (
     require_principal,
 )
 from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
+from backend.apps.bot.services import configure_template_provider
 from backend.apps.admin_ui.calendar_hub import calendar_hub
 from backend.apps.admin_ui.middleware import SecureHeadersMiddleware, DegradedDatabaseMiddleware, RequestIDMiddleware
 from backend.core.logging import configure_logging
@@ -389,6 +390,7 @@ async def lifespan(app: FastAPI):
     # Initialize templates and bot integration
     try:
         register_template_globals()
+        configure_template_provider()
         integration: BotIntegration = await setup_bot_state(app)
         logger.info("Bot integration initialized")
     except Exception as exc:
