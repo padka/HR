@@ -34,7 +34,6 @@ from .models import (
     SlotReservationLock,
     SlotStatus,
     TelegramCallbackLog,
-    Template,
     recruiter_city_association,
 )
 
@@ -394,19 +393,7 @@ async def get_slot(slot_id: int) -> Optional[Slot]:
         return slot
 
 
-async def get_template(city_id: Optional[int], key: str) -> Optional[Template]:
-    async with async_session() as session:
-        base = select(Template).where(Template.key == key)
-        if city_id is None:
-            res = await session.scalars(base.where(Template.city_id.is_(None)))
-            return res.first()
 
-        res = await session.scalars(base.where(Template.city_id == city_id))
-        tmpl = res.first()
-        if tmpl:
-            return tmpl
-        fallback = await session.scalars(base.where(Template.city_id.is_(None)))
-        return fallback.first()
 
 
 async def get_message_template(
