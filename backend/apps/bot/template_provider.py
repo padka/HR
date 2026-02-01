@@ -6,7 +6,10 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Dict, Optional, Tuple
+
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from backend.domain.repositories import get_message_template
 from backend.utils.jinja_renderer import render_template
@@ -147,8 +150,68 @@ class TemplateProvider:
             for cache_key in targets:
                 self._cache.pop(cache_key, None)
 
+
+class Jinja2TemplateProvider:
+    """
+    Template provider that renders templates from the filesystem using Jinja2.
+    """
+    def __init__(self, template_dir: Optional[Path] = None) -> None:
+        if template_dir is None:
+            template_dir = Path(__file__).parent / "templates"
+        
+        self._env = Environment(
+            loader=FileSystemLoader(template_dir),
+            autoescape=select_autoescape(['html', 'xml']),
+            enable_async=True
+        )
+
+    async def render(
+        self,
+        key: str,
+        context: Dict[str, object],
+        *,
+        locale: str = "ru",
+        channel: str = "tg",
+        city_id: Optional[int] = None,
+        strict: bool = False,
+    ) -> Optional[RenderedTemplate]:
+        # Strategy:
+        # 1. {key}_{city_id}.html (if city_id)
+        # 2. {key}.html
+        
+        template_names = []
+        if city_id is not None:
+            template_names.append(f"{key}_{city_id}.html")
+        template_names.append(f"{key}.html")
+        
+        template = None
+        for name in template_names:
+            try:
+                template = self._env.get_template(name)
+                break
+            except Exception:
+                continue
+        
+        if template is None:
+            logger.warning(f"Template not found: {key} (city={city_id})")
+            return None
+
+        try:
+            text = await template.render_async(context)
+            return RenderedTemplate(
+                key=key,
+                version=1,
+                city_id=city_id,
+                text=text,
+            )
+        except Exception:
+            logger.exception("Failed to render template %s", key)
+            return None
+
+
 __all__ = [
     "TemplateProvider",
+    "Jinja2TemplateProvider",
     "TemplateRecord",
     "RenderedTemplate",
     "TemplateResolutionError",
