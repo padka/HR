@@ -944,6 +944,8 @@ async def reset_outbox_entry(outbox_id: int) -> None:
             entry.next_retry_at = None
             entry.attempts = 0
             entry.last_error = None
+
+
 async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult:
     async with async_session() as session:
         try:
