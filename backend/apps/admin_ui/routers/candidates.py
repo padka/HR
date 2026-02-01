@@ -35,6 +35,8 @@ from backend.apps.admin_ui.services.candidates import (
     upsert_candidate,
     PIPELINE_DEFINITIONS,
     DEFAULT_PIPELINE,
+    DEFAULT_INTRO_DAY_INVITATION_TEMPLATE,
+    render_intro_day_invitation,
 )
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.security import require_principal, Principal, require_admin
@@ -1028,10 +1030,51 @@ async def candidates_schedule_intro_day_submit(
         raise HTTPException(status_code=404, detail="Candidate not found")
 
     user = detail["user"]
+    candidate_tg_id = user.telegram_user_id or user.telegram_id
     errors = []
 
     city_record = await _load_city_with_recruiters(user.city)
+    latest_slot = None
+    if (candidate_tg_id or user.candidate_id) and city_record is None:
+        async with async_session() as session:
+            latest_slot = await session.scalar(
+                select(Slot)
+                .where(
+                    or_(
+                        Slot.candidate_id == user.candidate_id,
+                        Slot.candidate_tg_id == candidate_tg_id,
+                    )
+                )
+                .order_by(Slot.start_utc.desc(), Slot.id.desc())
+            )
+            if latest_slot:
+                fallback_city_id = latest_slot.candidate_city_id or latest_slot.city_id
+                if fallback_city_id:
+                    city_record = await session.get(
+                        City,
+                        fallback_city_id,
+                        options=(selectinload(City.recruiters),),
+                    )
+
     recruiter = _select_primary_recruiter(city_record)
+    if recruiter is None:
+        async with async_session() as session:
+            if user.responsible_recruiter_id:
+                recruiter = await session.get(Recruiter, user.responsible_recruiter_id)
+            if recruiter is None:
+                if latest_slot is None and (candidate_tg_id or user.candidate_id):
+                    latest_slot = await session.scalar(
+                        select(Slot)
+                        .where(
+                            or_(
+                                Slot.candidate_id == user.candidate_id,
+                                Slot.candidate_tg_id == candidate_tg_id,
+                            )
+                        )
+                        .order_by(Slot.start_utc.desc(), Slot.id.desc())
+                    )
+                if latest_slot and latest_slot.recruiter_id:
+                    recruiter = await session.get(Recruiter, latest_slot.recruiter_id)
     slot_tz = (
         getattr(city_record, "tz", None)
         or (getattr(recruiter, "tz", None) if recruiter else None)
@@ -1041,6 +1084,8 @@ async def candidates_schedule_intro_day_submit(
 
     if principal.type == "recruiter" and recruiter and recruiter.id != principal.id:
         errors.append("Недостаточно прав для назначения ознакомительного дня другому рекрутёру.")
+    if not candidate_tg_id:
+        errors.append("У кандидата нет Telegram ID")
     if not date or not time:
         errors.append("Укажите дату и время ознакомительного дня")
     if city_record is None:
@@ -1057,13 +1102,27 @@ async def candidates_schedule_intro_day_submit(
     if errors:
         return PlainTextResponse("; ".join(errors), status_code=400)
 
+    custom_message = payload.get("custom_message")
+    custom_message = str(custom_message).strip() if custom_message else ""
+    if not custom_message:
+        template_source = (
+            getattr(city_record, "intro_day_template", None)
+            or DEFAULT_INTRO_DAY_INVITATION_TEMPLATE
+        )
+        custom_message = render_intro_day_invitation(
+            template_source,
+            candidate_fio=user.fio or "Кандидат",
+            date_str=str(date),
+            time_str=str(time),
+        )
+
     async with async_session() as session:
         city_id = city_record.id
         candidate_tz = slot_tz
 
         # Check if intro_day slot already exists for this candidate+recruiter
         existing_slot_query = select(Slot).where(
-            Slot.candidate_tg_id == user.telegram_id,
+            Slot.candidate_tg_id == candidate_tg_id,
             Slot.recruiter_id == recruiter.id,
             Slot.purpose == "intro_day",
         )
@@ -1087,7 +1146,8 @@ async def candidates_schedule_intro_day_submit(
             start_utc=dt_utc,
             duration_min=DEFAULT_INTRO_DAY_DURATION_MIN,
             status=SlotStatus.BOOKED,
-            candidate_tg_id=user.telegram_id,
+            candidate_id=user.candidate_id,
+            candidate_tg_id=candidate_tg_id,
             candidate_fio=user.fio,
             candidate_tz=candidate_tz,
             intro_address=None,
@@ -1100,11 +1160,11 @@ async def candidates_schedule_intro_day_submit(
         # Mark candidate as приглашён на ОД даже если предыдущие этапы не были сохранены
         try:
             from backend.domain.candidates.status_service import set_status_intro_day_scheduled
-            await set_status_intro_day_scheduled(user.telegram_id, force=True)
+            await set_status_intro_day_scheduled(candidate_tg_id, force=True)
         except Exception:
             logger.exception(
                 "Failed to update candidate status to intro_day_scheduled",
-                extra={"candidate_id": candidate_id, "telegram_id": user.telegram_id},
+                extra={"candidate_id": candidate_id, "telegram_id": candidate_tg_id},
             )
 
         # Send invitation notification
@@ -1114,7 +1174,7 @@ async def candidates_schedule_intro_day_submit(
             stale_update = (
                 update(OutboxNotification)
                 .where(
-                    OutboxNotification.candidate_tg_id == user.telegram_id,
+                    OutboxNotification.candidate_tg_id == candidate_tg_id,
                     OutboxNotification.type == "intro_day_invitation",
                     OutboxNotification.booking_id != slot.id,  # Only old notifications
                 )
@@ -1129,13 +1189,12 @@ async def candidates_schedule_intro_day_submit(
 
         try:
             outbox_payload = {}
-            custom_message = payload.get("custom_message")
-            if custom_message and str(custom_message).strip():
-                outbox_payload["custom_message"] = str(custom_message).strip()
+            if custom_message:
+                outbox_payload["custom_message"] = custom_message
             await add_outbox_notification(
                 notification_type="intro_day_invitation",
                 booking_id=slot.id,
-                candidate_tg_id=user.telegram_id,
+                candidate_tg_id=candidate_tg_id,
                 payload=outbox_payload,
             )
         except Exception as e:

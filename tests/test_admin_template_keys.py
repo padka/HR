@@ -73,7 +73,7 @@ _ensure_router_stubs()
 
 
 from backend.apps.admin_ui.routers.api import api_template_keys
-from backend.apps.admin_ui.services.templates import list_known_template_keys
+from backend.apps.admin_ui.services.message_templates_presets import list_known_template_keys
 
 
 def test_template_keys_endpoint_matches_runtime() -> None:

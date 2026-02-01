@@ -7,6 +7,14 @@ import { getTzPreview, validateRecruiterForm } from './recruiter-form'
 
 type City = { id: number; name: string; tz?: string | null }
 type TimezoneOption = { value: string; label: string; region?: string; offset?: string }
+type RecruiterCreateResponse = {
+  ok?: boolean
+  recruiter_id?: number
+  id?: number
+  login?: string
+  temp_password?: string | null
+  auth_account_created?: boolean
+}
 
 export function RecruiterNewPage() {
   const navigate = useNavigate()
@@ -31,6 +39,12 @@ export function RecruiterNewPage() {
   const [form, setForm] = useState(initialForm.current)
   const [citySearch, setCitySearch] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
+  const [createdCredentials, setCreatedCredentials] = useState<{
+    login: string
+    password?: string | null
+    recruiterId?: number
+    created?: boolean
+  } | null>(null)
   const [fieldError, setFieldError] = useState<{
     name?: string
     tz?: string
@@ -55,9 +69,20 @@ export function RecruiterNewPage() {
         active: form.active,
         city_ids: form.city_ids,
       }
-      return apiFetch('/recruiters', { method: 'POST', body: JSON.stringify(payload) })
+      return apiFetch<RecruiterCreateResponse>('/recruiters', { method: 'POST', body: JSON.stringify(payload) })
     },
-    onSuccess: () => navigate({ to: '/app/recruiters' }),
+    onSuccess: (result) => {
+      if (result?.login) {
+        setCreatedCredentials({
+          login: String(result.login),
+          password: result.temp_password ?? null,
+          recruiterId: result.recruiter_id ?? result.id,
+          created: Boolean(result.auth_account_created),
+        })
+        return
+      }
+      navigate({ to: '/app/recruiters' })
+    },
     onError: (err) => {
       if (err instanceof Error && err.message === 'invalid_form') return
       let message = err instanceof Error ? err.message : 'Ошибка'
@@ -135,10 +160,61 @@ export function RecruiterNewPage() {
   }, [cityList, form.city_ids])
   const tzPreview = useMemo(() => getTzPreview(form.tz), [form.tz])
 
+  const copyCredentials = async () => {
+    if (!createdCredentials) return
+    const lines = [
+      `login: ${createdCredentials.login}`,
+      `password: ${createdCredentials.password || 'уже задан'}`,
+    ]
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'))
+      window.alert('Доступ скопирован в буфер обмена.')
+    } catch {
+      window.alert('Не удалось скопировать. Скопируйте вручную.')
+    }
+  }
+
   return (
     <RoleGuard allow={['admin']}>
       <div className="page recruiter-edit">
         <div className="glass panel recruiter-edit__panel">
+          {createdCredentials && (
+            <div className="glass recruiter-edit__section" style={{ marginBottom: 16 }}>
+              <div className="recruiter-edit__section-header">
+                <div>
+                  <h3>Доступ рекрутёра создан</h3>
+                  <p className="subtitle">
+                    Логин соответствует ID рекрутёра.
+                    {createdCredentials.created
+                      ? ' Пароль создан и показан ниже.'
+                      : ' Аккаунт уже существовал, пароль не меняли.'}
+                  </p>
+                </div>
+                <button className="ui-btn ui-btn--primary" onClick={copyCredentials} type="button">
+                  Скопировать
+                </button>
+              </div>
+              <div className="recruiter-edit__fields">
+                <label className="recruiter-edit__field">
+                  <span>Логин</span>
+                  <input value={createdCredentials.login} readOnly />
+                </label>
+                <label className="recruiter-edit__field">
+                  <span>Пароль</span>
+                  <input value={createdCredentials.password || 'уже задан'} readOnly />
+                </label>
+              </div>
+              <div className="action-row" style={{ justifyContent: 'flex-end' }}>
+                <button
+                  className="ui-btn ui-btn--ghost"
+                  type="button"
+                  onClick={() => navigate({ to: '/app/recruiters' })}
+                >
+                  Перейти к списку
+                </button>
+              </div>
+            </div>
+          )}
           <div className="recruiter-edit__header">
             <div>
               <Link to="/app/recruiters" className="glass action-link">← К списку рекрутёров</Link>

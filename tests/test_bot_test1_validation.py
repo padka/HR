@@ -110,7 +110,7 @@ async def test_format_not_ready_triggers_rejection(bot_context, monkeypatch):
     async def fake_tpl(*_args, **_kwargs):
         return "Мы вернёмся, когда формат будет удобен."
 
-    monkeypatch.setattr("backend.apps.bot.services.templates.tpl", fake_tpl)
+    monkeypatch.setattr("backend.apps.bot.services._render_tpl", fake_tpl)
     monkeypatch.setattr("backend.apps.bot.services.get_bot", lambda: dummy_bot)
 
     await manager.set(
@@ -321,7 +321,7 @@ async def test_send_test1_question_uses_display_name_in_buttons(bot_context, mon
         return "1/5"
 
     monkeypatch.setattr("backend.apps.bot.services.list_candidate_cities", fake_list)
-    monkeypatch.setattr("backend.apps.bot.services.templates.tpl", fake_tpl)
+    monkeypatch.setattr("backend.apps.bot.services._render_tpl", fake_tpl)
 
     await manager.set(
         USER_ID,

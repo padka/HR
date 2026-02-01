@@ -28,6 +28,11 @@ indent-style = "space"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "no_db_cleanup: skip database setup/teardown for lightweight tests",
+    "notifications: tests related to the notification subsystem",
+    "integration: integration tests requiring external services (Redis, etc.)",
+]
 [build-system]
 requires = ["setuptools>=65", "wheel"]
 build-backend = "setuptools.build_meta"

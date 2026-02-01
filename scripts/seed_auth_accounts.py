@@ -32,12 +32,20 @@ async def _upsert_account(
     password_hash = hash_password(raw_password)
     async with async_session() as session:
         existing = await session.scalar(
-            select(AuthAccount).where(AuthAccount.username == username)
+            select(AuthAccount).where(
+                AuthAccount.principal_type == principal_type,
+                AuthAccount.principal_id == principal_id,
+            )
         )
+        if not existing:
+            existing = await session.scalar(
+                select(AuthAccount).where(AuthAccount.username == username)
+            )
         if existing:
             existing.password_hash = password_hash
             existing.principal_type = principal_type
             existing.principal_id = principal_id
+            existing.username = username
             existing.is_active = True
             action = "updated"
         else:
@@ -65,16 +73,14 @@ async def seed_admin() -> Tuple[str, str]:
 
 async def seed_recruiters() -> Tuple[int, int]:
     """Create recruiter accounts for all active recruiters."""
-    default_password = os.getenv("RECRUITER_PASSWORD", "recruiter123")
+    default_password = os.getenv("RECRUITER_PASSWORD", "smart123")
     created = updated = 0
     async with async_session() as session:
         recruiters = await session.scalars(
             select(Recruiter).where(Recruiter.active.is_(True))
         )
         for rec in recruiters:
-            username = getattr(rec, "email", None) or getattr(rec, "tg_chat_id", None)
-            if not username:
-                username = f"recruiter{rec.id}"
+            username = str(rec.id)
             action = await _upsert_account(
                 str(username),
                 default_password,

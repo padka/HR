@@ -93,12 +93,18 @@ function ModalPortal({ children }: { children: ReactNode }) {
 
 function BookingModal({ slot, onClose, onSuccess, showToast }: BookingModalProps) {
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selectedCandidate, setSelectedCandidate] = useState<CandidateSearchItem | null>(null)
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => clearTimeout(timer)
+  }, [search])
+
   const searchQuery = useQuery<{ items: CandidateSearchItem[] }>({
-    queryKey: ['candidates-search', search],
-    queryFn: () => apiFetch(`/candidates?search=${encodeURIComponent(search)}&per_page=10`),
-    enabled: search.length >= 2,
+    queryKey: ['candidates-search', debouncedSearch],
+    queryFn: () => apiFetch(`/candidates?search=${encodeURIComponent(debouncedSearch)}&per_page=10`),
+    enabled: debouncedSearch.length >= 2,
   })
 
   const candidates = searchQuery.data?.items || []

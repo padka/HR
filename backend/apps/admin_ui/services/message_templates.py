@@ -17,7 +17,7 @@ from backend.domain.models import City, MessageTemplate, MessageTemplateHistory
 logger = logging.getLogger(__name__)
 
 
-ALLOWED_CHANNELS: Sequence[str] = ("tg", "email", "whatsapp")
+ALLOWED_CHANNELS: Sequence[str] = ("tg", "email", "whatsapp", "sms")
 DEFAULT_CHANNEL = "tg"
 DEFAULT_LOCALE = "ru"
 DEFAULT_VERSION = 1
@@ -423,10 +423,10 @@ async def update_message_template(
     channel: str,
     body: str,
     is_active: bool,
-    bump_version: bool,
+    expected_version: Optional[int] = None,
     city_id: Optional[int] = None,
     updated_by: Optional[str] = None,
-) -> Tuple[bool, List[str]]:
+) -> Tuple[bool, List[str], Optional[MessageTemplate]]:
     errors: List[str] = []
     key_value = (key or "").strip()
     locale_value = (locale or DEFAULT_LOCALE).strip() or DEFAULT_LOCALE
@@ -463,7 +463,7 @@ async def update_message_template(
     errors.extend(_validate_template_markup(body_value))
 
     if errors:
-        return False, errors
+        return False, errors, None
 
     now = datetime.now(timezone.utc)
     actor = _normalize_actor(updated_by)
@@ -471,13 +471,22 @@ async def update_message_template(
         template = await session.get(MessageTemplate, template_id)
         if template is None:
             errors.append("Шаблон не найден или был удалён.")
-            return False, errors
+            return False, errors, None
+
+        if expected_version is not None:
+            current_ver = template.version or 0
+            if current_ver != expected_version:
+                errors.append(
+                    f"Конфликт редактирования: текущая версия {current_ver}, вы редактируете {expected_version}. "
+                    "Пожалуйста, обновите страницу."
+                )
+                return False, errors, None
 
         if city_value is not None:
             city_obj = await session.get(City, city_value)
             if city_obj is None:
                 errors.append("Указанный город не найден.")
-                return False, errors
+                return False, errors, None
 
         previous_city_id = template.city_id
         template.key = key_value
@@ -487,8 +496,7 @@ async def update_message_template(
         template.is_active = bool(is_active)
         template.city_id = city_value
         template.updated_by = actor
-        if bump_version:
-            template.version = (template.version or 0) + 1
+        template.version = (template.version or 0) + 1
         template.updated_at = now
 
         if is_active:
@@ -508,7 +516,7 @@ async def update_message_template(
                     "Уже есть активный шаблон для этой комбинации города, ключа и канала. "
                     "Выключите или обновите существующий шаблон."
                 )
-                return False, errors
+                return False, errors, None
 
         try:
             await session.flush()
@@ -519,12 +527,12 @@ async def update_message_template(
             errors.append(
                 "Невозможно сохранить: комбинация ключа, локали, канала, города и версии уже используется."
             )
-            return False, errors
+            return False, errors, None
 
         await _invalidate_cache(template.key, template.locale, template.channel, city_id=template.city_id)
         if previous_city_id != template.city_id:
             await _invalidate_cache(template.key, template.locale, template.channel, city_id=previous_city_id)
-        return True, []
+        return True, [], template
 
 
 async def delete_message_template(template_id: int) -> None:

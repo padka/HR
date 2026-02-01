@@ -17,10 +17,10 @@ except Exception:  # pragma: no cover - optional dependency
     _AioHttpClientError = Exception  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency handling
-    from backend.apps.bot import templates as bot_templates, services
+    from backend.apps.bot import services
     from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS
     from backend.apps.bot.config import State as BotState
-    from backend.apps.bot.services import StateManager, get_bot, start_test2
+    from backend.apps.bot.services import StateManager, get_bot, start_test2, get_template_provider
     from backend.apps.bot.events import InterviewSuccessEvent
 
     BOT_RUNTIME_AVAILABLE = True
@@ -336,7 +336,10 @@ class BotService:
                 error=self.rejection_failure_message,
             )
 
-        text = await bot_templates.tpl(city_id, template_key, **context)
+        provider = get_template_provider()
+        rendered = await provider.render(template_key, context, city_id=city_id)
+        text = rendered.text if rendered else ""
+        
         if not text.strip():
             logger.warning("Rejection template '%s' produced empty text", template_key)
             return BotSendResult(

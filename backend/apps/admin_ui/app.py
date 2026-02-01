@@ -43,7 +43,6 @@ from backend.apps.admin_ui.routers import (
     slots,
     slot_assignments,
     system,
-    templates,
     workflow,
     profile,
     assignments,
@@ -501,7 +500,6 @@ def create_app() -> FastAPI:
     app.include_router(profile.router, dependencies=[Depends(require_principal)])
     app.include_router(recruiters.router, dependencies=[Depends(require_admin)])
     app.include_router(cities.router, dependencies=[Depends(require_principal)])
-    app.include_router(templates.router, dependencies=[Depends(require_admin)])
     app.include_router(message_templates.router, dependencies=[Depends(require_admin)])
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
     app.include_router(api.router, dependencies=[Depends(require_principal)])

@@ -147,7 +147,6 @@ class City(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     tz: Mapped[Optional[str]] = mapped_column(String(64), default="Europe/Moscow", nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    intro_day_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     criteria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     experts: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     plan_week: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -156,9 +155,9 @@ class City(Base):
         Integer,
         ForeignKey("recruiters.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
 
-    templates: Mapped[List["Template"]] = relationship(back_populates="city", cascade="all, delete-orphan")
     message_templates: Mapped[List["MessageTemplate"]] = relationship(
         back_populates="city", cascade="all, delete-orphan"
     )
@@ -233,21 +232,7 @@ class RecruiterPlanEntry(Base):
         return f"<RecruiterPlanEntry {self.id} recruiter={self.recruiter_id} city={self.city_id}>"
 
 
-class Template(Base):
-    __tablename__ = "templates"
-    __table_args__ = (UniqueConstraint("city_id", "key", name="uq_city_key"),)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    city_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("cities.id", ondelete="CASCADE"), nullable=True
-    )
-    key: Mapped[str] = mapped_column(String(50), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-
-    city: Mapped["City"] = relationship(back_populates="templates")
-
-    def __repr__(self) -> str:
-        return f"<Template {self.key} city={self.city_id}>"
 
 
 @event.listens_for(Recruiter.cities, "append")
@@ -342,6 +327,7 @@ class Slot(Base):
         Index("ix_slots_status", "status"),
         Index("ix_slots_recruiter_start", "recruiter_id", "start_utc"),
         Index("ix_slots_candidate_id", "candidate_id"),
+        Index("ix_slots_city_id", "city_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -801,6 +787,7 @@ class MessageTemplate(Base):
     city_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("cities.id", ondelete="SET NULL"), nullable=True
     )
+    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     updated_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
@@ -830,6 +817,7 @@ class MessageTemplateHistory(Base):
     body_md: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     updated_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

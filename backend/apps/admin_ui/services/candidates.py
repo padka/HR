@@ -141,6 +141,35 @@ DEFAULT_INTRO_DAY_INVITATION_TEMPLATE: str = (
 )
 
 
+def _intro_day_first_name(fio: str) -> str:
+    parts = str(fio or "").strip().split()
+    if len(parts) >= 2:
+        return parts[1]
+    if parts:
+        return parts[0]
+    return "Кандидат"
+
+
+def render_intro_day_invitation(
+    template: str, *, candidate_fio: str, date_str: str, time_str: str
+) -> str:
+    if not template:
+        return ""
+    name = _intro_day_first_name(candidate_fio)
+    formatted_date = date_str or ""
+    try:
+        year, month, day = (date_str or "").split("-")
+        if year and month and day:
+            formatted_date = f"{day}.{month}"
+    except ValueError:
+        pass
+    return (
+        template.replace("[Имя]", name)
+        .replace("[Дата]", formatted_date)
+        .replace("[Время]", time_str or "")
+    )
+
+
 STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
     [
         # Fallback for candidates without статус
@@ -2755,11 +2784,7 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
     if user.city:
         city_obj = await find_city_by_plain_name(user.city)
         if city_obj:
-            async with async_session() as city_session:
-                city_result = await city_session.execute(select(City).where(func.lower(City.name) == user.city.lower()))
-                city_record = city_result.scalars().first()
-                if city_record:
-                    intro_day_template = city_record.intro_day_template
+            intro_day_template = city_obj.intro_day_template
     if not intro_day_template:
         intro_day_template = DEFAULT_INTRO_DAY_INVITATION_TEMPLATE
 

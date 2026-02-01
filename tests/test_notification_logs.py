@@ -6,13 +6,12 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from backend.apps.bot import templates
 from backend.apps.bot.services import (
-    StateManager,
+    NotificationService,
+    get_notification_service,
     configure,
-    handle_approve_slot,
 )
-from backend.apps.bot.state_store import InMemoryStateStore
+from backend.apps.bot.state_store import InMemoryStateStore, StateManager
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.models import SlotStatus

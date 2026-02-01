@@ -16,7 +16,6 @@ from backend.domain.repositories import city_has_available_slots, slot_status_fr
 from backend.domain.errors import CityAlreadyExistsError
 from backend.apps.admin_ui.security import principal_ctx, Principal
 
-from .templates import update_templates_for_city
 
 __all__ = [
     "list_cities",
@@ -43,7 +42,22 @@ async def list_cities(order_by_name: bool = True, principal: Optional[Principal]
             query = query.join(City.recruiters).where(Recruiter.id == principal.id)
         if order_by_name:
             query = query.order_by(City.name.asc())
-        return (await session.scalars(query)).all()
+        cities = (await session.scalars(query)).all()
+        changed = False
+        for city in cities:
+            if city.recruiters:
+                primary = city.recruiters[0]
+                if city.responsible_recruiter_id != primary.id:
+                    city.responsible_recruiter_id = primary.id
+                    changed = True
+            elif city.responsible_recruiter_id:
+                recruiter = await session.get(Recruiter, city.responsible_recruiter_id)
+                if recruiter:
+                    city.recruiters = [recruiter]
+                    changed = True
+        if changed:
+            await session.commit()
+        return cities
 
 
 async def get_city(city_id: int, principal: Optional[Principal] = None) -> Optional[City]:
@@ -59,7 +73,20 @@ async def get_city(city_id: int, principal: Optional[Principal] = None) -> Optio
         if principal and principal.type == "recruiter":
             query = query.join(City.recruiters).where(Recruiter.id == principal.id)
         result = await session.execute(query)
-        return result.scalar_one_or_none()
+        city = result.scalar_one_or_none()
+        if not city:
+            return None
+        if city.recruiters:
+            primary = city.recruiters[0]
+            if city.responsible_recruiter_id != primary.id:
+                city.responsible_recruiter_id = primary.id
+                await session.commit()
+        elif city.responsible_recruiter_id:
+            recruiter = await session.get(Recruiter, city.responsible_recruiter_id)
+            if recruiter:
+                city.recruiters = [recruiter]
+                await session.commit()
+        return city
 
 
 def normalize_city_timezone(value: Optional[str]) -> str:
@@ -75,7 +102,12 @@ def normalize_city_timezone(value: Optional[str]) -> str:
     return tz_candidate
 
 
-async def create_city(name: str, tz: str) -> None:
+async def create_city(
+    name: str,
+    tz: str,
+    *,
+    recruiter_ids: Optional[List[int]] = None,
+) -> Optional[City]:
     """Create a new city ensuring that basic validation is applied."""
 
     clean_name = sanitize_plain_text(name)
@@ -84,9 +116,21 @@ async def create_city(name: str, tz: str) -> None:
     clean_tz = normalize_city_timezone(tz)
 
     async with async_session() as session:
-        session.add(City(name=clean_name, tz=clean_tz))
+        city = City(name=clean_name, tz=clean_tz)
+        session.add(city)
         try:
+            await session.flush()
+            if recruiter_ids:
+                recruiters_list = list(
+                    await session.scalars(select(Recruiter).where(Recruiter.id.in_(recruiter_ids)))
+                )
+                if recruiters_list:
+                    await session.refresh(city, attribute_names=["recruiters"])
+                    city.recruiters = recruiters_list
+                    city.responsible_recruiter = recruiters_list[0]
             await session.commit()
+            await session.refresh(city)
+            return city
         except IntegrityError as exc:
             await session.rollback()
             raise CityAlreadyExistsError(clean_name) from exc
@@ -98,7 +142,6 @@ async def update_city_settings(
     name: Optional[str],
     recruiter_ids: Optional[List[int]] = None,
     responsible_id: Optional[int] = None,
-    templates: Dict[str, Optional[str]],
     criteria: Optional[str],
     experts: Optional[str],
     plan_week: Optional[int],
@@ -134,8 +177,10 @@ async def update_city_settings(
                     return "Recruiter not found", None, None
                 city.recruiters = recruiters_list
                 assigned_recruiter = recruiters_list[0]  # Primary recruiter
+                city.responsible_recruiter = assigned_recruiter
             else:
                 city.recruiters = []
+                city.responsible_recruiter_id = None
 
             clean_criteria = (criteria or "").strip() or None
             clean_experts = (experts or "").strip() or None
@@ -162,11 +207,6 @@ async def update_city_settings(
                     return str(exc), None, None
             if active is not None:
                 city.active = bool(active)
-
-            error = await update_templates_for_city(city_id, templates, session=session)
-            if error:
-                await session.rollback()
-                return error, None, None
 
             try:
                 await session.commit()
@@ -197,8 +237,10 @@ async def update_city_owner(
                 if not recruiter_obj:
                     return "Recruiter not found", None, None
                 city.recruiters = [recruiter_obj]
+                city.responsible_recruiter = recruiter_obj
             else:
                 city.recruiters = []
+                city.responsible_recruiter_id = None
             await session.commit()
             await session.refresh(city)
         except Exception:

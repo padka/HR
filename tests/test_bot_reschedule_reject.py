@@ -3,12 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.apps.bot import templates
 from backend.apps.bot.services import (
-    StateManager,
-    configure as configure_bot_services,
-    handle_reschedule_slot,
     handle_reject_slot,
+    handle_reschedule_slot,
+    show_recruiter_menu,
 )
 from backend.apps.bot.state_store import InMemoryStateStore
 from backend.core.db import async_session

@@ -10,7 +10,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.services.cities import (
@@ -62,17 +62,9 @@ from backend.apps.admin_ui.services.recruiters import (
     update_recruiter,
 )
 from backend.apps.admin_ui.services.slots.core import api_slots_payload, bulk_delete_slots, bulk_schedule_reminders
-from backend.apps.admin_ui.services.templates import (
-    api_templates_payload,
-    list_templates,
-    create_template,
-    get_template,
-    update_template,
-    delete_template,
+from backend.apps.admin_ui.services.message_templates_presets import (
     list_known_template_keys,
     known_template_presets,
-    update_templates_for_city,
-    notify_templates_changed,
 )
 from backend.apps.admin_ui.services.kpis import (
     get_weekly_kpis,
@@ -306,6 +298,7 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
 
             slot_rows = await session.execute(
                 select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
                 .where(Slot.recruiter_id == principal.id)
                 .order_by(Slot.start_utc.asc())
                 .limit(10)
@@ -333,6 +326,7 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
             # planner for 7 days
             planner_rows = await session.execute(
                 select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
                 .where(
                     Slot.recruiter_id == principal.id,
                     Slot.start_utc >= datetime.now(timezone.utc),
@@ -394,6 +388,7 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
             now_utc = datetime.now(timezone.utc)
             global_slots = await session.execute(
                 select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
                 .where(Slot.start_utc >= now_utc)
                 .order_by(Slot.start_utc.asc())
                 .limit(8)
@@ -1003,7 +998,14 @@ async def api_create_city(
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
     try:
-        await create_city(name=str(data.get("name") or ""), tz=str(data.get("tz") or "Europe/Moscow"))
+        recruiter_ids = data.get("recruiter_ids")
+        if recruiter_ids is not None and not isinstance(recruiter_ids, list):
+            recruiter_ids = []
+        await create_city(
+            name=str(data.get("name") or ""),
+            tz=str(data.get("tz") or "Europe/Moscow"),
+            recruiter_ids=recruiter_ids,
+        )
     except CityAlreadyExistsError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
     except ValueError as exc:
@@ -1029,7 +1031,6 @@ async def api_update_city(
         name=data.get("name"),
         recruiter_ids=recruiter_ids,
         responsible_id=None,
-        templates={},
         criteria=data.get("criteria"),
         experts=data.get("experts"),
         plan_week=data.get("plan_week"),
@@ -1443,122 +1444,7 @@ async def api_recruiter_plan_delete(
     return JSONResponse({"ok": True})
 
 
-@router.get("/templates")
-async def api_templates(city_id: Optional[int] = None, key: Optional[str] = None):
-    payload = await api_templates_payload(city_id, key)
-    status_code = 200
-    if isinstance(payload, dict) and payload.get("found") is False:
-        status_code = 404
-    return JSONResponse(payload, status_code=status_code)
 
-
-@router.get("/templates/list")
-async def api_templates_list(_: Principal = Depends(require_admin)):
-    return JSONResponse(jsonable_encoder(await list_templates()))
-
-
-@router.post("/templates/save")
-async def api_templates_save(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    payload = await request.json()
-    city_raw = payload.get("city_id")
-    if city_raw in (None, "", "null"):
-        city_id: Optional[int] = None
-    else:
-        try:
-            city_id = int(city_raw)
-        except (TypeError, ValueError):
-            return JSONResponse({"ok": False, "error": "invalid_city"}, status_code=400)
-
-    templates_payload = payload.get("templates") or {}
-    if not isinstance(templates_payload, dict):
-        templates_payload = {}
-
-    error = await update_templates_for_city(city_id, templates_payload)
-    if error:
-        return JSONResponse({"ok": False, "error": error}, status_code=400)
-    notify_templates_changed()
-    return JSONResponse({"ok": True})
-
-@router.post("/templates", status_code=201)
-async def api_create_template(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    text = str(data.get("text") or "")
-    if not text.strip():
-        return JSONResponse({"ok": False, "error": "empty_text"}, status_code=400)
-    city_id = data.get("city_id")
-    if city_id in ("", "null", None):
-        city_id = None
-    else:
-        city_id = int(city_id)
-    key = data.get("key")
-    try:
-        final_key = await create_template(text, city_id, key=key)
-    except Exception as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    return JSONResponse({"ok": True, "key": final_key}, status_code=201)
-
-
-@router.get("/templates/{template_id}")
-async def api_template_detail(
-    template_id: int,
-    _: Principal = Depends(require_admin),
-):
-    tmpl = await get_template(template_id)
-    if not tmpl:
-        raise HTTPException(status_code=404, detail="Template not found")
-    return JSONResponse(
-        {
-            "id": tmpl.id,
-            "key": tmpl.key,
-            "text": tmpl.content,
-            "city_id": tmpl.city_id,
-            "is_global": tmpl.city_id is None,
-        }
-    )
-
-
-@router.put("/templates/{template_id}")
-async def api_update_template(
-    template_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    key = str(data.get("key") or "").strip()
-    text = str(data.get("text") or "")
-    city_id = data.get("city_id")
-    if city_id in ("", "null", None):
-        city_id = None
-    else:
-        city_id = int(city_id)
-    ok = await update_template(template_id, key=key, text=text, city_id=city_id)
-    if not ok:
-        return JSONResponse({"ok": False, "error": "update_failed"}, status_code=400)
-    return JSONResponse({"ok": True})
-
-
-@router.delete("/templates/{template_id}")
-async def api_delete_template(
-    template_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    await delete_template(template_id)
-    return JSONResponse({"ok": True})
 
 
 @router.get("/message-templates")
@@ -1616,7 +1502,7 @@ async def api_update_message_template(
         is_active=bool(data.get("is_active", True)),
         city_id=data.get("city_id"),
         updated_by=str(data.get("updated_by") or "admin"),
-        version=data.get("version"),
+        expected_version=data.get("version"),
     )
     if not ok:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
@@ -1772,7 +1658,36 @@ async def api_template_keys():
 
 @router.get("/template_presets")
 async def api_template_presets():
-    return JSONResponse(known_template_presets())
+    presets_list = known_template_presets()
+    presets_dict = {item["key"]: item["text"] for item in presets_list}
+    return JSONResponse(presets_dict)
+
+
+@router.get("/message-templates/context-keys")
+async def api_message_template_context_keys(
+    _: Principal = Depends(require_admin),
+):
+    from backend.domain.template_contexts import TEMPLATE_CONTEXTS
+    return JSONResponse(TEMPLATE_CONTEXTS)
+
+
+@router.post("/message-templates/preview")
+async def api_message_template_preview(
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    _ = await require_csrf_token(request)
+    data = await request.json()
+    text = str(data.get("text") or "")
+    
+    from backend.utils.jinja_renderer import render_template
+    from backend.apps.admin_ui.services.message_templates import MOCK_CONTEXT
+    
+    try:
+        rendered = render_template(text, MOCK_CONTEXT)
+        return JSONResponse({"ok": True, "html": rendered})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
 @router.get("/timezones")
@@ -2381,7 +2296,11 @@ async def api_schedule_intro_day(
 ):
     """Schedule intro day for a candidate (JSON API)."""
     from datetime import timezone as tz_utc
-    from backend.apps.admin_ui.services.candidates import get_candidate_detail
+    from backend.apps.admin_ui.services.candidates import (
+        get_candidate_detail,
+        DEFAULT_INTRO_DAY_INVITATION_TEMPLATE,
+        render_intro_day_invitation,
+    )
     from backend.apps.admin_ui.services.slots import recruiter_time_to_utc
     from backend.apps.admin_ui.timezones import DEFAULT_TZ
     from backend.domain.repositories import find_city_by_plain_name, add_outbox_notification
@@ -2397,17 +2316,33 @@ async def api_schedule_intro_day(
         raise HTTPException(status_code=404, detail={"message": "Candidate not found"})
 
     user = detail["user"]
-    if not user.telegram_id:
-        return JSONResponse({"ok": False, "error": "missing_telegram"}, status_code=400)
+    candidate_tg_id = user.telegram_user_id or user.telegram_id
+    if not candidate_tg_id:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "missing_telegram",
+                "message": "У кандидата нет Telegram ID",
+            },
+            status_code=400,
+        )
 
     date_str = data.get("date")
     time_str = data.get("time")
 
     if not date_str or not time_str:
-        return JSONResponse({"ok": False, "error": "missing_datetime"}, status_code=400)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "missing_datetime",
+                "message": "Укажите дату и время ознакомительного дня",
+            },
+            status_code=400,
+        )
 
     # Find city and recruiter
     city_record = None
+    latest_slot = None
     if user.city:
         city_record = await find_city_by_plain_name(user.city)
         if city_record:
@@ -2418,8 +2353,36 @@ async def api_schedule_intro_day(
                     options=(selectinload(City.recruiters),),
                 )
 
+    if city_record is None:
+        async with async_session() as session:
+            latest_slot = await session.scalar(
+                select(Slot)
+                .where(
+                    or_(
+                        Slot.candidate_id == user.candidate_id,
+                        Slot.candidate_tg_id == candidate_tg_id,
+                    )
+                )
+                .order_by(Slot.start_utc.desc(), Slot.id.desc())
+            )
+            if latest_slot:
+                fallback_city_id = latest_slot.candidate_city_id or latest_slot.city_id
+                if fallback_city_id:
+                    city_record = await session.get(
+                        City,
+                        fallback_city_id,
+                        options=(selectinload(City.recruiters),),
+                    )
+
     if not city_record:
-        return JSONResponse({"ok": False, "error": "city_not_found"}, status_code=400)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "city_not_found",
+                "message": "Не удалось определить город кандидата. Укажите город в карточке кандидата.",
+            },
+            status_code=400,
+        )
 
     # Resolve recruiter: city FK → city M2M (no user fallback)
     recruiter = None
@@ -2434,33 +2397,90 @@ async def api_schedule_intro_day(
                 break
 
     if not recruiter:
-        return JSONResponse({"ok": False, "error": "no_recruiter_for_city"}, status_code=400)
+        async with async_session() as session:
+            if user.responsible_recruiter_id:
+                recruiter = await session.get(Recruiter, user.responsible_recruiter_id)
+            if recruiter is None:
+                if latest_slot is None:
+                    latest_slot = await session.scalar(
+                        select(Slot)
+                        .where(
+                            or_(
+                                Slot.candidate_id == user.candidate_id,
+                                Slot.candidate_tg_id == candidate_tg_id,
+                            )
+                        )
+                        .order_by(Slot.start_utc.desc(), Slot.id.desc())
+                    )
+                if latest_slot and latest_slot.recruiter_id:
+                    recruiter = await session.get(Recruiter, latest_slot.recruiter_id)
+
+    if not recruiter:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "no_recruiter_for_city",
+                "message": "К городу не привязан ни один активный рекрутёр. Добавьте рекрутёра на странице города.",
+            },
+            status_code=400,
+        )
 
     # Recruiter scoping
     if principal.type == "recruiter" and recruiter.id != principal.id:
-        return JSONResponse({"ok": False, "error": "permission_denied"}, status_code=403)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "permission_denied",
+                "message": "Недостаточно прав для назначения ознакомительного дня другому рекрутёру.",
+            },
+            status_code=403,
+        )
 
     slot_tz = getattr(city_record, "tz", None) or getattr(recruiter, "tz", None) or DEFAULT_TZ
     dt_utc = recruiter_time_to_utc(date_str, time_str, slot_tz)
     if not dt_utc:
-        return JSONResponse({"ok": False, "error": "invalid_datetime"}, status_code=400)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "invalid_datetime",
+                "message": "Некорректная дата или время",
+            },
+            status_code=400,
+        )
 
     custom_message = data.get("custom_message")
-    if custom_message:
-        custom_message = str(custom_message).strip()
+    custom_message = str(custom_message).strip() if custom_message else ""
+    if not custom_message:
+        template_source = (
+            getattr(city_record, "intro_day_template", None)
+            or DEFAULT_INTRO_DAY_INVITATION_TEMPLATE
+        )
+        custom_message = render_intro_day_invitation(
+            template_source,
+            candidate_fio=user.fio or "Кандидат",
+            date_str=str(date_str),
+            time_str=str(time_str),
+        )
 
     async with async_session() as session:
         # Check for existing intro_day slot
         from sqlalchemy import select as sql_select
         existing = await session.scalar(
             sql_select(Slot).where(
-                Slot.candidate_tg_id == user.telegram_id,
+                Slot.candidate_tg_id == candidate_tg_id,
                 Slot.recruiter_id == recruiter.id,
                 Slot.purpose == "intro_day",
             )
         )
         if existing:
-            return JSONResponse({"ok": False, "error": "intro_day_already_scheduled"}, status_code=409)
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "intro_day_already_scheduled",
+                    "message": "Ознакомительный день уже назначен для этого кандидата.",
+                },
+                status_code=409,
+            )
 
         # Create slot
         slot = Slot(
@@ -2472,7 +2492,8 @@ async def api_schedule_intro_day(
             start_utc=dt_utc,
             duration_min=DEFAULT_INTRO_DAY_DURATION_MIN,
             status=SlotStatus.BOOKED,
-            candidate_tg_id=user.telegram_id,
+            candidate_id=user.candidate_id,
+            candidate_tg_id=candidate_tg_id,
             candidate_fio=user.fio,
             candidate_tz=slot_tz,
         )
@@ -2483,7 +2504,7 @@ async def api_schedule_intro_day(
         # Update candidate status
         try:
             from backend.domain.candidates.status_service import set_status_intro_day_scheduled
-            await set_status_intro_day_scheduled(user.telegram_id, force=True)
+            await set_status_intro_day_scheduled(candidate_tg_id, force=True)
         except Exception:
             pass
 
@@ -2496,7 +2517,7 @@ async def api_schedule_intro_day(
             await add_outbox_notification(
                 notification_type="intro_day_invitation",
                 booking_id=slot.id,
-                candidate_tg_id=user.telegram_id,
+                candidate_tg_id=candidate_tg_id,
                 payload=payload,
             )
         except Exception as exc:

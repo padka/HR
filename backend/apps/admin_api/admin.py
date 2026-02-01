@@ -4,7 +4,7 @@ from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from backend.domain.models import Recruiter, City, Template, Slot, SlotStatus
+from backend.domain.models import Recruiter, City, Slot, SlotStatus
 from backend.domain.cities.models import CityExpert, CityExecutive
 from backend.apps.admin_ui.views.tests import TestAdmin, QuestionAdmin, AnswerOptionAdmin
 from backend.core.settings import get_settings
@@ -70,17 +70,7 @@ class CityAdmin(ModelView, model=City):
     column_list = [City.id, City.name, City.tz, City.active]
     column_searchable_list = [City.name]
     column_sortable_list = [City.id, City.name, City.active]
-    form_columns = [City.name, City.tz, City.active, City.intro_day_template]
-
-
-class TemplateAdmin(ModelView, model=Template):
-    name = "Template"
-    name_plural = "Templates"
-    icon = "fa-regular fa-message"
-
-    column_list = [Template.id, Template.city_id, Template.key]
-    column_searchable_list = [Template.key]
-    form_columns = [Template.city_id, Template.key, Template.content]
+    form_columns = [City.name, City.tz, City.active]
 
 
 class SlotAdmin(ModelView, model=Slot):
@@ -127,7 +117,6 @@ def mount_admin(app, engine: AsyncEngine):
     admin.add_view(CityAdmin)
     admin.add_view(CityExpertAdmin)
     admin.add_view(CityExecutiveAdmin)
-    admin.add_view(TemplateAdmin)
     admin.add_view(SlotAdmin)
     admin.add_view(TestAdmin)
     admin.add_view(QuestionAdmin)

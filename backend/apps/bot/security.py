@@ -12,11 +12,11 @@ SIGNATURE_LENGTH = 32
 
 
 def _should_sign() -> bool:
-    """Only sign callbacks in production to keep dev/tests readable."""
+    """Sign callbacks in all environments except test."""
     try:
-        return get_settings().environment.lower() == "production"
+        return get_settings().environment.lower() != "test"
     except Exception:
-        return False
+        return True
 
 
 def _secret_bytes() -> bytes:

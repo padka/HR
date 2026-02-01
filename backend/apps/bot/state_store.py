@@ -5,8 +5,8 @@ from __future__ import annotations
 import abc
 import asyncio
 import copy
+import json
 import logging
-import pickle
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -110,10 +110,12 @@ class InMemoryStateStore(StateStore):
         value: State
         expires_at: Optional[float]
 
+    _MAX_LOCKS = 10_000
+
     def __init__(self, ttl_seconds: int, *, namespace: str = "bot:state") -> None:
         super().__init__(ttl_seconds, namespace=namespace)
         self._data: Dict[int, InMemoryStateStore._Entry] = {}
-        self._locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._locks: Dict[int, asyncio.Lock] = {}
 
     # Helpers -------------------------------------------------------------
 
@@ -126,6 +128,22 @@ class InMemoryStateStore(StateStore):
             return None
         return self._now() + float(self.ttl_seconds)
 
+    def _cleanup_lock(self, user_id: int) -> None:
+        lock = self._locks.get(user_id)
+        if lock is not None and not lock.locked():
+            self._locks.pop(user_id, None)
+
+    def _get_lock(self, user_id: int) -> asyncio.Lock:
+        lock = self._locks.get(user_id)
+        if lock is None:
+            if len(self._locks) >= self._MAX_LOCKS:
+                unlocked = [k for k, v in self._locks.items() if not v.locked()]
+                for k in unlocked[:len(self._locks) // 2]:
+                    del self._locks[k]
+            lock = asyncio.Lock()
+            self._locks[user_id] = lock
+        return lock
+
     async def get(self, user_id: int) -> Optional[State]:
         entry = self._data.get(user_id)
         if entry is None:
@@ -135,6 +153,7 @@ class InMemoryStateStore(StateStore):
         if entry.expires_at is not None and entry.expires_at <= self._now():
             # TTL eviction
             self._data.pop(user_id, None)
+            self._cleanup_lock(user_id)
             self._record_eviction(user_id)
             return None
 
@@ -147,6 +166,7 @@ class InMemoryStateStore(StateStore):
 
     async def delete(self, user_id: int) -> Optional[State]:
         entry = self._data.pop(user_id, None)
+        self._cleanup_lock(user_id)
         if entry is None:
             self._record_miss()
             return None
@@ -155,9 +175,10 @@ class InMemoryStateStore(StateStore):
 
     async def clear(self) -> None:
         self._data.clear()
+        self._locks.clear()
 
     async def atomic_update(self, user_id: int, mutator: Mutator[T]) -> T:
-        lock = self._locks[user_id]
+        lock = self._get_lock(user_id)
         async with lock:
             entry = self._data.get(user_id)
             if entry is None:
@@ -211,10 +232,10 @@ class RedisStateStore(StateStore):
         return f"{self._prefix}{user_id}"
 
     def _serialize(self, state: State) -> bytes:
-        return pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
+        return json.dumps(state, ensure_ascii=False, default=str).encode("utf-8")
 
     def _deserialize(self, payload: bytes) -> State:
-        return cast(State, pickle.loads(payload))
+        return cast(State, json.loads(payload))
 
     async def get(self, user_id: int) -> Optional[State]:
         key = self._key(user_id)

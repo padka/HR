@@ -1,6 +1,6 @@
 import { Link, useParams } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, useMemo, useEffect, type ReactNode } from 'react'
+import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
@@ -831,6 +831,7 @@ export function CandidateDetailPage() {
   const [showRejectModal, setShowRejectModal] = useState<{ actionKey: string; title?: string } | null>(null)
   const [reportPreview, setReportPreview] = useState<ReportPreviewState | null>(null)
   const [isChatOpen, setIsChatOpen] = useState(false)
+  const chatMessagesRef = useRef<HTMLDivElement | null>(null)
 
   const detailQuery = useQuery<CandidateDetail>({
     queryKey: ['candidate-detail', candidateId],
@@ -840,6 +841,10 @@ export function CandidateDetailPage() {
   const chatQuery = useQuery<ChatPayload>({
     queryKey: ['candidate-chat', candidateId],
     queryFn: () => apiFetch(`/candidates/${candidateId}/chat?limit=50`),
+    enabled: isChatOpen,
+    refetchInterval: isChatOpen ? 3000 : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: isChatOpen,
   })
 
   const sendMutation = useMutation({
@@ -891,6 +896,20 @@ export function CandidateDetailPage() {
   const chatMessages = (chatQuery.data?.messages || []).slice().reverse()
   const pipelineStages = detail?.pipeline_stages || []
   const lastChatMessage = chatMessages.length > 0 ? chatMessages[chatMessages.length - 1] : null
+
+  useEffect(() => {
+    if (!isChatOpen) return
+    chatQuery.refetch()
+  }, [isChatOpen, chatQuery.refetch])
+
+  useEffect(() => {
+    if (!isChatOpen) return
+    const container = chatMessagesRef.current
+    if (!container) return
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight
+    })
+  }, [isChatOpen, chatMessages.length])
 
   const onActionClick = (action: CandidateAction) => {
     const isRejection =
@@ -1317,7 +1336,7 @@ export function CandidateDetailPage() {
                   <p className="subtitle">Сообщений пока нет.</p>
                 )}
                 {chatMessages.length > 0 && (
-                  <div className="candidate-chat-drawer__messages">
+                  <div className="candidate-chat-drawer__messages" ref={chatMessagesRef}>
                     {chatMessages.map((msg) => (
                       <div
                         key={msg.id}

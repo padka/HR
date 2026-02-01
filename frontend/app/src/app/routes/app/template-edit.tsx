@@ -58,6 +58,23 @@ export function TemplateEditPage() {
     queryFn: () => apiFetch('/template_presets'),
   })
 
+  const { data: contextMap } = useQuery<Record<string, string[]>>({
+    queryKey: ['template-context-keys'],
+    queryFn: () => apiFetch('/message-templates/context-keys'),
+  })
+
+  const availableVars = useMemo(() => {
+    if (!contextMap) return []
+    const k = form.key.toLowerCase()
+    let type = 'other'
+    if (k.includes('intro')) type = 'intro_day'
+    else if (k.includes('interview') || k.includes('reschedule') || k.includes('invite')) type = 'interview'
+    else if (k.includes('remind') || k.includes('confirm')) type = 'reminder'
+    else if (k.includes('reject') || k.includes('fail')) type = 'rejection'
+    
+    return contextMap[type] || contextMap['other'] || []
+  }, [form.key, contextMap])
+
   const detailQuery = useQuery<TemplateDetail>({
     queryKey: ['template-detail', templateId],
     queryFn: () => apiFetch(`/templates/${templateId}`),
@@ -153,8 +170,15 @@ export function TemplateEditPage() {
     })
   }
 
-  const previewText = renderPreview(form.text, preview)
-  const charCount = form.text.length
+  const [serverPreview, setServerPreview] = useState<string | null>(null)
+  
+  const previewMutation = useMutation({
+    mutationFn: async () => apiFetch('/message-templates/preview', {
+        method: 'POST', 
+        body: JSON.stringify({ text: form.text })
+    }),
+    onSuccess: (data) => setServerPreview(data.html)
+  })
 
   return (
     <RoleGuard allow={['admin']}>
@@ -206,9 +230,9 @@ export function TemplateEditPage() {
                   onChange={(e) => setForm({ ...form, text: e.target.value })}
                 />
                 <div className="action-row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  {PLACEHOLDERS.map((token) => (
-                    <button key={token} type="button" className="ui-btn ui-btn--ghost" onClick={() => insertToken(token)}>
-                      {token}
+                  {availableVars.map((v) => (
+                    <button key={v} type="button" className="ui-btn ui-btn--ghost" onClick={() => insertToken(`{{${v}}}`)}>
+                      {v}
                     </button>
                   ))}
                 </div>
@@ -246,19 +270,23 @@ export function TemplateEditPage() {
               )}
 
               <details className="glass panel--tight">
-                <summary>Предпросмотр</summary>
-                <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
-                    {Object.entries(preview).map(([key, value]) => (
-                      <label key={key} style={{ display: 'grid', gap: 4 }}>
-                        {key}
-                        <input value={value} onChange={(e) => setPreview((prev) => ({ ...prev, [key]: e.target.value }))} />
-                      </label>
-                    ))}
-                  </div>
-                  <div className="glass" style={{ padding: 12, whiteSpace: 'pre-wrap' }}>
-                    {previewText || '—'}
-                  </div>
+                <summary>Предпросмотр (Jinja2)</summary>
+                <div style={{ padding: 12 }}>
+                    <button 
+                        type="button"
+                        className="ui-btn ui-btn--ghost ui-btn--sm" 
+                        onClick={() => previewMutation.mutate()} 
+                        disabled={previewMutation.isPending}
+                    >
+                        {previewMutation.isPending ? 'Загрузка...' : 'Обновить'}
+                    </button>
+                    {serverPreview && (
+                        <div 
+                            className="glass" 
+                            style={{ marginTop: 12, padding: 12, whiteSpace: 'pre-wrap' }} 
+                            dangerouslySetInnerHTML={{ __html: serverPreview }} 
+                        />
+                    )}
                 </div>
               </details>
 

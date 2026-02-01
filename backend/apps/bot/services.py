@@ -42,7 +42,10 @@ from backend.core.settings import get_settings
 from backend.domain import analytics
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.status import CandidateStatus
-from backend.domain.candidates.status_service import set_status_waiting_slot
+from backend.domain.candidates.status_service import (
+    set_status_waiting_slot,
+    set_status_interview_scheduled,
+)
 from backend.domain.models import SlotStatus, Slot
 from backend.apps.bot.events import InterviewSuccessEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -90,7 +93,7 @@ from backend.apps.bot.utils.text import escape_html
 if TYPE_CHECKING:
     from aiogram import Dispatcher
 
-from . import templates
+
 from .config import (
     DEFAULT_TZ,
     FOLLOWUP_NOTICE_PERIOD,
@@ -275,10 +278,35 @@ _interview_success_handlers: List[
 
 
 def get_template_provider() -> TemplateProvider:
-    global _template_provider
     if _template_provider is None:
-        _template_provider = TemplateProvider()
+        raise RuntimeError("Template provider is not configured")
     return _template_provider
+
+
+def _normalize_format_context(fmt: Dict[str, Any]) -> Dict[str, Any]:
+    data = dict(fmt)
+    if "candidate_name" not in data and "candidate_fio" in data:
+        data["candidate_name"] = data["candidate_fio"]
+    if "candidate_fio" not in data and "candidate_name" in data:
+        data["candidate_fio"] = data["candidate_name"]
+    if "dt_local" not in data and "slot_datetime_local" in data:
+        data["dt_local"] = data["slot_datetime_local"]
+    if "slot_datetime_local" not in data and "dt_local" in data:
+        data["slot_datetime_local"] = data["dt_local"]
+    if "dt" not in data and "dt_local" in data:
+        data["dt"] = data["dt_local"]
+    if "dt_local" not in data and "dt" in data:
+        data["dt_local"] = data["dt"]
+    if "interview_dt_hint" not in data:
+        data["interview_dt_hint"] = data.get("dt_local") or data.get("slot_datetime_local") or ""
+    return data
+
+
+async def _render_tpl(city_id: Optional[int], key: str, **fmt: Any) -> str:
+    provider = get_template_provider()
+    context = _normalize_format_context(fmt)
+    res = await provider.render(key, context, city_id=city_id)
+    return res.text if res else ""
 
 
 def reset_template_provider() -> None:
@@ -728,6 +756,17 @@ class NotificationService:
                 queued_reason="reschedule_prompt_queued",
             )
 
+        if status_value is BookingNotificationStatus.APPROVED:
+            return await self._queue_with_direct_fallback(
+                notification_type="interview_confirmed_candidate",
+                booking_id=booking_id,
+                candidate_id=candidate_id,
+                payload=payload,
+                snapshot=snapshot,
+                status_value=status_value,
+                queued_reason="interview_confirmed_queued",
+            )
+
         if status_value is BookingNotificationStatus.CANCELLED:
             return await self._queue_with_direct_fallback(
                 notification_type="candidate_rejection",
@@ -827,6 +866,23 @@ class NotificationService:
         await self._throttle()
         if status_value is BookingNotificationStatus.RESCHEDULE_REQUESTED:
             return await notify_reschedule(snapshot)
+        if status_value is BookingNotificationStatus.APPROVED:
+            slot = await get_slot(snapshot.slot_id)
+            if not slot or not slot.candidate_tg_id:
+                return False
+            rendered_text, _candidate_tz, _candidate_city, _template_key, _template_version = await _render_candidate_notification(
+                slot
+            )
+            try:
+                await _send_with_retry(
+                    get_bot(),
+                    SendMessage(chat_id=slot.candidate_tg_id, text=rendered_text),
+                    correlation_id=f"direct-approve:{slot.id}:{uuid.uuid4().hex}",
+                )
+            except Exception:
+                logger.exception("Failed direct delivery for approved booking", extra={"slot_id": slot.id})
+                return False
+            return True
         if status_value is BookingNotificationStatus.CANCELLED:
             return await notify_rejection(snapshot)
         return False
@@ -2541,52 +2597,22 @@ class NotificationService:
         else:
             # Try to render a city-specific template only when it actually exists to avoid
             # silently downgrading to the generic status message.
-            template_key = await _resolve_intro_day_template_key(slot.candidate_city_id)
+            template_key = "intro_day_invite"
             rendered = await self._template_provider.render(
                 template_key, context, city_id=slot.candidate_city_id
             )
 
-            # If a city-specific template failed to render, fall back to the generic one.
-            if rendered is None and template_key != "intro_day_invitation":
-                rendered = await self._template_provider.render(
-                    "intro_day_invitation", context, city_id=slot.candidate_city_id
-                )
-
             if rendered is None:
-                # Fallback to old template system (city-specific templates)
-                fallback_text = await templates.tpl(
-                    slot.candidate_city_id,
-                    "intro_day_invitation",  # Key in old templates table
-                    candidate_fio=context["candidate_fio"],
-                    candidate_name=context["candidate_name"],
-                    recruiter_name=context["recruiter_name"],
-                    dt_local=context["dt_local"],
-                    city_name=city_name,
-                    intro_address=intro_address_safe,
-                    intro_contact=intro_contact_safe,
-                    address=intro_address_safe,
-                    city_address=intro_address_safe,
-                    recruiter_contact=intro_contact_safe,
-                    **labels,
+                await self._mark_failed(
+                    item,
+                    item.attempts,
+                    log_type,
+                    notification_type,
+                    "template_missing",
+                    None,
+                    candidate_tg_id=candidate_id,
                 )
-                if fallback_text:
-                    from types import SimpleNamespace
-                    rendered = SimpleNamespace(
-                        text=fallback_text,
-                        key="intro_day_invitation",
-                        version=None,
-                    )
-                else:
-                    await self._mark_failed(
-                        item,
-                        item.attempts,
-                        log_type,
-                        notification_type,
-                        "template_missing",
-                        None,
-                        candidate_tg_id=candidate_id,
-                    )
-                    return
+                return
 
         attempt = item.attempts + 1
         await self._ensure_log(
@@ -3269,7 +3295,7 @@ async def _handle_test1_rejection(user_id: int, result: Test1AnswerResult) -> No
     context = dict(result.template_context)
     context.pop("city_id", None)
     context.setdefault("city_name", state.get("city_name") or "")
-    message = await templates.tpl(city_id, template_key or "t1_schedule_reject", **context)
+    message = await _render_tpl(city_id, template_key or "t1_schedule_reject", **context)
     if not message:
         message = (
             "Спасибо за ответы! На данном этапе мы не продолжаем процесс."
@@ -3311,7 +3337,7 @@ async def _resolve_followup_message(
         city_id = state.get("city_id")
 
     if result.template_key:
-        text = await templates.tpl(city_id, result.template_key, **template_context)
+        text = await _render_tpl(city_id, result.template_key, **template_context)
         if text:
             return text
 
@@ -3324,7 +3350,7 @@ async def _notify_existing_reservation(callback: CallbackQuery, slot: Slot) -> N
     state = await state_manager.get(user_id) or {}
     tz = state.get("candidate_tz") or slot.candidate_tz or DEFAULT_TZ
     labels = slot_local_labels(slot.start_utc, tz)
-    message = await templates.tpl(
+    message = await _render_tpl(
         getattr(slot, "candidate_city_id", None),
         "existing_reservation",
         recruiter_name=slot.recruiter.name if slot.recruiter else "",
@@ -3359,6 +3385,25 @@ def get_state_manager() -> StateManager:
     if _state_manager is None:
         raise RuntimeError("State manager is not configured")
     return _state_manager
+
+
+async def clear_candidate_chat_state(user_id: int) -> None:
+    """Clear transient chat state once interview is scheduled to avoid stale prompts."""
+    state_manager = get_state_manager()
+
+    def _clear_state(st: State) -> Tuple[State, None]:
+        if not isinstance(st, dict):
+            return st, None
+        st["manual_availability_expected"] = False
+        st["manual_contact_prompt_sent"] = False
+        st["slot_assignment_state"] = None
+        st["slot_assignment_action_token"] = None
+        st["slot_assignment_id"] = None
+        st["awaiting_intro_decline_reason"] = False
+        st["flow"] = "scheduled"
+        return st, None
+
+    await state_manager.atomic_update(user_id, _clear_state)
 
 async def set_pending_test2(candidate_id: int, context: Dict[str, object]) -> None:
     state_manager = get_state_manager()
@@ -3656,7 +3701,7 @@ async def _send_reschedule_prompt(snapshot: SlotSnapshot) -> bool:
 
     await _update_candidate_state(snapshot.candidate_id, _clear_slot)
 
-    notice = await templates.tpl(
+    notice = await _render_tpl(
         snapshot.candidate_city_id,
         "slot_reschedule",
         recruiter_name=snapshot.recruiter_name or "",
@@ -3679,15 +3724,25 @@ async def _send_final_rejection_notice(snapshot: SlotSnapshot) -> bool:
 
     state = await _load_candidate_state(snapshot.candidate_id)
     context = {
+        "candidate_name": snapshot.candidate_fio or state.get("fio", "") or str(snapshot.candidate_id),
         "candidate_fio": snapshot.candidate_fio or state.get("fio", ""),
         "city_name": state.get("city_name") or "",
         "recruiter_name": snapshot.recruiter_name or "",
     }
-    text = await templates.tpl(snapshot.candidate_city_id, "result_fail", **context)
-    text = text.strip()
-    if not text:
+    
+    provider = get_template_provider()
+    rendered = await provider.render(
+        "candidate_rejection",
+        context,
+        city_id=snapshot.candidate_city_id,
+        channel="tg",
+        locale="ru",
+    )
+    if not rendered or not rendered.text.strip():
         logger.warning("Rejection template produced empty message for candidate %s", snapshot.candidate_id)
         return False
+        
+    text = rendered.text.strip()
 
     bot = get_bot()
     if not hasattr(bot, "send_message"):
@@ -3942,7 +3997,7 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
         )
     except Exception:
         logger.exception("Failed to log TEST1_STARTED for user %s", user_id)
-    intro = await templates.tpl(None, "t1_intro")
+    intro = await _render_tpl(None, "t1_intro")
     await bot.send_message(user_id, intro)
     await send_test1_question(user_id)
 
@@ -4105,7 +4160,7 @@ async def send_test1_question(user_id: int) -> None:
     question: Dict[str, Any] = ctx["question"]
     city_id = ctx.get("city_id")
 
-    progress = await templates.tpl(city_id, "t1_progress", n=idx + 1, total=total)
+    progress = await _render_tpl(city_id, "t1_progress", n=idx + 1, total=total)
     progress_bar = create_progress_bar(idx, total)
     helper = question.get("helper")
     base_text = f"{progress}\n{progress_bar}\n\n{_format_prompt(question['prompt'])}"
@@ -4617,7 +4672,7 @@ async def finalize_test1(user_id: int) -> None:
 
             await state_manager.atomic_update(user_id, _mark_shared)
 
-    done_text = await templates.tpl(state.get("city_id"), "t1_done")
+    done_text = await _render_tpl(state.get("city_id"), "t1_done")
     if done_text:
         await bot.send_message(user_id, done_text)
 
@@ -4771,7 +4826,7 @@ async def start_test2(user_id: int) -> None:
         )
     except Exception:
         logger.exception("Failed to log TEST2_STARTED for user %s", user_id)
-    intro = await templates.tpl(
+    intro = await _render_tpl(
         ctx.get("city_id"),
         "t2_intro",
         qcount=len(TEST2_QUESTIONS),
@@ -5021,7 +5076,7 @@ async def finalize_test2(user_id: int) -> None:
         except Exception:
             logger.exception("Failed to persist Test 2 report for candidate %s", candidate.id)
 
-    result_text = await templates.tpl(
+    result_text = await _render_tpl(
         state.get("city_id"),
         "t2_result",
         correct=correct_answers,
@@ -5046,8 +5101,16 @@ async def finalize_test2(user_id: int) -> None:
     except Exception:
         logger.exception("Failed to log TEST2_COMPLETED for user %s", user_id)
     if pct < PASS_THRESHOLD:
-        fail_text = await templates.tpl(state.get("city_id"), "result_fail")
-        await bot.send_message(user_id, fail_text)
+        provider = get_template_provider()
+        candidate_name = (candidate.fio if candidate else "") or str(user_id)
+        ctx = {"candidate_name": candidate_name, "candidate_fio": candidate_name}
+        rendered = await provider.render(
+            "candidate_rejection", 
+            ctx, 
+            city_id=state.get("city_id")
+        )
+        if rendered:
+            await bot.send_message(user_id, rendered.text)
 
         # Update candidate status to TEST2_FAILED
         try:
@@ -5059,7 +5122,7 @@ async def finalize_test2(user_id: int) -> None:
         await state_manager.delete(user_id)
         return
 
-    final_notice = await templates.tpl(state.get("city_id"), "slot_sent")
+    final_notice = await _render_tpl(state.get("city_id"), "slot_sent")
     if not final_notice:
         final_notice = "Заявка отправлена. Ожидайте подтверждения."
     await bot.send_message(user_id, final_notice)
@@ -5078,7 +5141,7 @@ async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> 
     state = await state_manager.get(user_id) or {}
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
     kb = await kb_recruiters(tz_label, city_id=state.get("city_id"))
-    text = await templates.tpl(state.get("city_id"), "choose_recruiter")
+    text = await _render_tpl(state.get("city_id"), "choose_recruiter")
     if notice:
         text = f"{notice}\n\n{text}"
     await bot.send_message(user_id, text, reply_markup=kb)
@@ -5209,7 +5272,7 @@ async def send_manual_scheduling_prompt(user_id: int) -> bool:
     if manual_prompt_sent:
         return False
 
-    message = await templates.tpl(city_id, "manual_schedule_prompt")
+    message = await _render_tpl(city_id, "manual_schedule_prompt")
     if not message:
         message = (
             "Свободных слотов в вашем городе сейчас нет.\n"
@@ -5331,7 +5394,7 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
     if rid_s == "__again__":
         tz_label = (state or {}).get("candidate_tz", DEFAULT_TZ)
         kb = await kb_recruiters(tz_label, city_id=(state or {}).get("city_id"))
-        text = await templates.tpl(state.get("city_id") if state else None, "choose_recruiter")
+        text = await _render_tpl(state.get("city_id") if state else None, "choose_recruiter")
         if state is not None:
             def _clear_pick(st: State) -> Tuple[State, None]:
                 st["picked_recruiter_id"] = None
@@ -5379,7 +5442,7 @@ async def handle_pick_recruiter(callback: CallbackQuery) -> None:
     kb = await kb_slots_for_recruiter(rid, tz_label, slots=slots_list, city_id=city_id)
     text = _recruiter_header(rec.name, tz_label)
     if not slots_list:
-        text = f"{text}\n\n{await templates.tpl(state.get('city_id'), 'no_slots')}"
+        text = f"{text}\n\n{await _render_tpl(state.get('city_id'), 'no_slots')}"
     try:
         await callback.message.edit_text(text, reply_markup=kb)
     except TelegramBadRequest:
@@ -5417,7 +5480,7 @@ async def handle_refresh_slots(callback: CallbackQuery) -> None:
     rec = await get_recruiter(rid)
     text = _recruiter_header(rec.name if rec else str(rid), tz_label)
     if not slots_list:
-        text = f"{text}\n\n{await templates.tpl(state.get('city_id'), 'no_slots')}"
+        text = f"{text}\n\n{await _render_tpl(state.get('city_id'), 'no_slots')}"
     try:
         await callback.message.edit_text(text, reply_markup=kb)
     except TelegramBadRequest:
@@ -5483,7 +5546,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
     )
 
     if reservation.status == "slot_taken":
-        text = await templates.tpl(state.get("city_id"), "slot_taken")
+        text = await _render_tpl(state.get("city_id"), "slot_taken")
         if is_intro:
             try:
                 await callback.message.edit_text(text)
@@ -5573,7 +5636,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         )
 
     await callback.message.edit_text(
-        await templates.tpl(state.get("city_id"), "slot_sent")
+        await _render_tpl(state.get("city_id"), "slot_sent")
     )
     try:
         city_name = state.get("city_name")
@@ -5663,7 +5726,7 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
             }
         )
     if is_intro_day:
-        template_key = await _resolve_intro_day_template_key(getattr(slot, "candidate_city_id", None))
+        template_key = "intro_day_invite"
     else:
         template_key = "interview_confirmed_candidate"
     provider = get_template_provider()
@@ -5677,29 +5740,10 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
     if rendered is not None:
         return rendered.text, tz, city_name, rendered.key, rendered.version
 
-    legacy_keys = (
-        ["intro_day_invitation", "stage3_intro_invite"]
-        if is_intro_day
-        else ["approved_msg"]
+    logger.error(
+        "Notification template not found",
+        extra={"key": template_key, "slot_id": slot.id, "city_id": getattr(slot, "candidate_city_id", None)},
     )
-    city_id = getattr(slot, "candidate_city_id", None)
-    for legacy_key in legacy_keys:
-        fallback_text = await templates.tpl(
-            city_id,
-            legacy_key,
-            candidate_fio=candidate_name,
-            city_name=city_name,
-            dt=context["dt_local"],
-            intro_address=intro_address_safe,
-            intro_contact=intro_contact_safe,
-            address=intro_address_safe,
-            city_address=intro_address_safe,
-            recruiter_contact=intro_contact_safe,
-            **labels,
-        )
-        if fallback_text:
-            return fallback_text, tz, city_name, template_key, None
-
     return "", tz, city_name, template_key, None
 
 
@@ -5719,6 +5763,14 @@ async def approve_slot_and_notify(slot_id: int, *, force_notify: bool = False) -
             message="Слот уже согласован.",
             slot=slot,
         )
+    if already_booked and slot.candidate_tg_id is not None:
+        try:
+            await set_status_interview_scheduled(slot.candidate_tg_id)
+        except Exception:
+            logger.exception(
+                "Failed to sync candidate status for booked slot",
+                extra={"slot_id": slot.id, "candidate_tg_id": slot.candidate_tg_id},
+            )
     if status_value == SlotStatus.FREE:
         return SlotApprovalResult(
             status="slot_free",
@@ -5740,6 +5792,15 @@ async def approve_slot_and_notify(slot_id: int, *, force_notify: bool = False) -
                 message="Не удалось согласовать слот.",
             )
 
+    if slot.candidate_tg_id is not None:
+        try:
+            await clear_candidate_chat_state(slot.candidate_tg_id)
+        except Exception:
+            logger.exception(
+                "Failed to clear candidate chat state after approval",
+                extra={"slot_id": slot.id, "candidate_tg_id": slot.candidate_tg_id},
+            )
+
     candidate_label = (
         slot.candidate_fio
         or (str(slot.candidate_tg_id) if slot.candidate_tg_id is not None else "—")
@@ -5758,47 +5819,103 @@ async def approve_slot_and_notify(slot_id: int, *, force_notify: bool = False) -
         slot.id,
         candidate_tg_id=slot.candidate_tg_id,
     )
+    if not already_sent:
+        already_sent = await notification_log_exists(
+            "interview_confirmed_candidate",
+            slot.id,
+            candidate_tg_id=slot.candidate_tg_id,
+        )
 
     should_notify = force_notify or (not already_sent)
 
     if should_notify:
-        bot = None
+        notify_status: Optional[str] = None
+        notify_note: Optional[str] = None
         try:
-            bot = get_bot()
+            notification_service = get_notification_service()
         except RuntimeError:
-            logger.warning("Bot is not configured; cannot send approval notification.")
+            notification_service = None
 
-        if bot is None:
-            failure_parts = [
-                "⚠️ Слот подтверждён, но бот недоступен и отправить сообщение кандидату невозможно.",
-                f"👤 {html.escape(candidate_label)}",
-                f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
-            ]
-            if candidate_city:
-                failure_parts.append(f"📍 {html.escape(candidate_city)}")
-            failure_parts.extend(
-                [
-                    "",
-                    "<b>Текст сообщения:</b>",
-                    f"<blockquote>{message_text}</blockquote>",
-                    "Свяжитесь с кандидатом вручную и передайте детали встречи.",
+        if notification_service is not None:
+            try:
+                snapshot = await capture_slot_snapshot(slot)
+                notify_result = await notification_service.on_booking_status_changed(
+                    slot.id,
+                    BookingNotificationStatus.APPROVED,
+                    snapshot=snapshot,
+                )
+            except Exception:
+                logger.exception("Failed to enqueue approval notification")
+                notify_result = None
+            if notify_result and notify_result.status in {"queued", "sent"}:
+                notify_status = "sent"
+                notify_note = "queued" if notify_result.status == "queued" else "sent"
+            else:
+                notify_status = "failed"
+        else:
+            bot = None
+            try:
+                bot = get_bot()
+            except RuntimeError:
+                logger.warning("Bot is not configured; cannot send approval notification.")
+
+            if bot is None:
+                failure_parts = [
+                    "⚠️ Слот подтверждён, но бот недоступен и отправить сообщение кандидату невозможно.",
+                    f"👤 {html.escape(candidate_label)}",
+                    f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
                 ]
-            )
-            return SlotApprovalResult(
-                status="notify_failed",
-                message="Слот подтверждён, но бот недоступен. Свяжитесь с кандидатом вручную.",
-                slot=slot,
-                summary_html="\n".join(failure_parts),
-            )
+                if candidate_city:
+                    failure_parts.append(f"📍 {html.escape(candidate_city)}")
+                failure_parts.extend(
+                    [
+                        "",
+                        "<b>Текст сообщения:</b>",
+                        f"<blockquote>{message_text}</blockquote>",
+                        "Свяжитесь с кандидатом вручную и передайте детали встречи.",
+                    ]
+                )
+                return SlotApprovalResult(
+                    status="notify_failed",
+                    message="Слот подтверждён, но бот недоступен. Свяжитесь с кандидатом вручную.",
+                    slot=slot,
+                    summary_html="\n".join(failure_parts),
+                )
 
-        try:
-            await _send_with_retry(
-                bot,
-                SendMessage(chat_id=slot.candidate_tg_id, text=message_text),
-                correlation_id=f"approve:{slot.id}:{uuid.uuid4().hex}",
-            )
-        except Exception:
-            logger.exception("Failed to send approval message to candidate")
+            try:
+                await _send_with_retry(
+                    bot,
+                    SendMessage(chat_id=slot.candidate_tg_id, text=message_text),
+                    correlation_id=f"approve:{slot.id}:{uuid.uuid4().hex}",
+                )
+                notify_status = "sent"
+            except Exception:
+                logger.exception("Failed to send approval message to candidate")
+                notify_status = "failed"
+
+            if notify_status == "sent":
+                logged = await add_notification_log(
+                    "candidate_interview_confirmed",
+                    slot.id,
+                    candidate_tg_id=slot.candidate_tg_id,
+                    payload=message_text,
+                    template_key=template_key,
+                    template_version=template_version,
+                    overwrite=force_notify,
+                )
+                if not logged:
+                    logger.warning("Notification log already exists for slot %s", slot.id)
+
+                await mark_outbox_notification_sent(
+                    "interview_confirmed_candidate",
+                    slot.id,
+                    candidate_tg_id=slot.candidate_tg_id,
+                )
+
+                if reminder_service is not None:
+                    await reminder_service.schedule_for_slot(slot.id)
+
+        if notify_status != "sent":
             failure_parts = [
                 "⚠️ Слот подтверждён, но отправить сообщение кандидату не удалось.",
                 f"👤 {html.escape(candidate_label)}",
@@ -5821,29 +5938,13 @@ async def approve_slot_and_notify(slot_id: int, *, force_notify: bool = False) -
                 summary_html="\n".join(failure_parts),
             )
 
-        logged = await add_notification_log(
-            "candidate_interview_confirmed",
-            slot.id,
-            candidate_tg_id=slot.candidate_tg_id,
-            payload=message_text,
-            template_key=template_key,
-            template_version=template_version,
-            overwrite=force_notify,
+        summary_head = (
+            "✅ Слот подтверждён. Сообщение поставлено в очередь на отправку."
+            if notify_note == "queued"
+            else "✅ Слот подтверждён. Сообщение отправлено кандидату автоматически."
         )
-        if not logged:
-            logger.warning("Notification log already exists for slot %s", slot.id)
-
-        await mark_outbox_notification_sent(
-            "interview_confirmed_candidate",
-            slot.id,
-            candidate_tg_id=slot.candidate_tg_id,
-        )
-
-        if reminder_service is not None:
-            await reminder_service.schedule_for_slot(slot.id)
-
         summary_parts = [
-            "✅ Слот подтверждён. Сообщение отправлено кандидату автоматически.",
+            summary_head,
             f"👤 {html.escape(candidate_label)}",
             f"🕒 {fmt_dt_local(slot.start_utc, candidate_tz)} ({candidate_tz})",
         ]
@@ -6077,7 +6178,7 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
     dt_local = fmt_dt_local(slot.start_utc, tz)
     city_id = getattr(slot, "candidate_city_id", None)
     labels = slot_local_labels(slot.start_utc, tz)
-    link_text = await templates.tpl(
+    link_text = await _render_tpl(
         city_id,
         "att_confirmed_link",
         link=link,
@@ -6131,7 +6232,7 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
             except Exception:
                 logger.exception("Failed to update intro day confirmation status for candidate %s", slot.candidate_tg_id)
 
-        ack_text = await templates.tpl(
+        ack_text = await _render_tpl(
             city_id,
             "att_confirmed_ack",
             dt=dt_local,
@@ -6185,7 +6286,7 @@ async def handle_attendance_no(callback: CallbackQuery) -> None:
             )
 
     st = await get_state_manager().get(callback.from_user.id) or {}
-    prompt = await templates.tpl(
+    prompt = await _render_tpl(
         getattr(slot, "candidate_city_id", None),
         "att_declined_reason_prompt",
     )
@@ -6438,6 +6539,7 @@ __all__ = [
     "get_bot",
     "get_rating",
     "get_state_manager",
+    "clear_candidate_chat_state",
     "now_utc",
     "save_test1_answer",
     "send_test1_question",

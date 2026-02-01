@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 import html
+import os
 
 from sqlalchemy import case, func, select, delete, insert
 from sqlalchemy.inspection import inspect as sa_inspect
@@ -12,8 +13,10 @@ from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.utils import format_optional_local
 from backend.core.audit import log_audit_action
+from backend.core.passwords import hash_password
 from backend.core.db import async_session
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
+from backend.domain.auth_account import AuthAccount
 from backend.core.sanitizers import sanitize_plain_text
 from markupsafe import Markup
 
@@ -144,6 +147,37 @@ async def create_recruiter(
             # Flush to get recruiter.id
             await session.flush()
 
+            # Create recruiter auth account (login = recruiter.id)
+            login = str(recruiter.id)
+            default_password = os.getenv("RECRUITER_DEFAULT_PASSWORD", "smart123")
+            auth_created = False
+            temp_password: Optional[str] = None
+            existing_account = await session.scalar(
+                select(AuthAccount).where(
+                    AuthAccount.principal_type == "recruiter",
+                    AuthAccount.principal_id == recruiter.id,
+                )
+            )
+            if existing_account:
+                if existing_account.username != login:
+                    existing_account.username = login
+            else:
+                username_conflict = await session.scalar(
+                    select(AuthAccount).where(AuthAccount.username == login)
+                )
+                if not username_conflict:
+                    session.add(
+                        AuthAccount(
+                            username=login,
+                            password_hash=hash_password(default_password),
+                            principal_type="recruiter",
+                            principal_id=recruiter.id,
+                            is_active=True,
+                        )
+                    )
+                    auth_created = True
+                    temp_password = default_password
+
             if selected_ids:
                 # Clear any existing associations (defensive)
                 await session.execute(
@@ -170,7 +204,13 @@ async def create_recruiter(
         recruiter.id,
         changes={"city_ids": selected_ids},
     )
-    return {"ok": True, "recruiter_id": recruiter.id}
+    return {
+        "ok": True,
+        "recruiter_id": recruiter.id,
+        "login": login,
+        "temp_password": temp_password,
+        "auth_account_created": auth_created,
+    }
 
 
 async def get_recruiter_detail(rec_id: int) -> Optional[Dict[str, object]]:

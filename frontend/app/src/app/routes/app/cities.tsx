@@ -154,19 +154,6 @@ export function CitiesPage() {
                     {c.experts && (
                       <div className="text-muted text-sm">Эксперты: {c.experts}</div>
                     )}
-                    {stages.length > 0 && (
-                      <details className="details-summary">
-                        <summary>Этапы найма: {stages.length} {customCount ? `(кастомных ${customCount})` : ''}</summary>
-                        <div className="details-summary__content">
-                          {stages.map((s) => (
-                            <div key={s.key} className="glass glass--subtle details-summary__item">
-                              <div className="font-semibold">{s.title}</div>
-                              <div className="text-muted">{s.value || s.default || '—'}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
                     <div className="toolbar">
                       <label className="form-group__checkbox">
                         <input

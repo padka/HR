@@ -68,11 +68,24 @@ async def cmd_start(message: Message) -> None:
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message) -> None:
-    """Show recruiter dashboard if chat belongs to recruiter."""
+    """Show recruiter dashboard if chat belongs to recruiter.
+
+    Non-recruiter users receive a generic "unknown command" reply to avoid
+    leaking the existence of staff-only functionality.
+    """
     user = message.from_user
     if user is None:
         return
-    await show_recruiter_dashboard(user.id)
+
+    from backend.apps.bot.services import get_recruiter_by_chat_id
+
+    recruiter = await get_recruiter_by_chat_id(user.id)
+    if recruiter is None:
+        logger.info("Unauthorized /admin attempt", extra={"user_id": user.id})
+        await message.answer("Неизвестная команда. Введите /start для начала.")
+        return
+
+    await show_recruiter_dashboard(user.id, recruiter=recruiter)
 
 
 @router.message(Command("invite"))

@@ -18,6 +18,7 @@ from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain.models import Slot
 from backend.domain.repositories import reject_slot
+from backend.domain.candidates.status_service import set_status_interview_scheduled
 
 try:  # pragma: no cover - optional dependency during tests
     from backend.apps.bot.reminders import get_reminder_service
@@ -29,6 +30,7 @@ from backend.apps.bot.services import (
     NotificationService,
     SlotSnapshot,
     cancel_slot_reminders,
+    clear_candidate_chat_state,
     capture_slot_snapshot,
     get_notification_service,
     get_state_manager as _get_state_manager,
@@ -419,9 +421,24 @@ async def approve_slot_booking(slot_id: int, principal: Optional[Principal] = No
     try:
         notification_service = get_notification_service()
         snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
+        if slot.candidate_tg_id is not None:
+            try:
+                await set_status_interview_scheduled(slot.candidate_tg_id)
+            except Exception:
+                logger.exception(
+                    "Failed to update candidate status to INTERVIEW_SCHEDULED",
+                    extra={"slot_id": slot_id, "candidate_tg_id": slot.candidate_tg_id},
+                )
+            try:
+                await clear_candidate_chat_state(slot.candidate_tg_id)
+            except Exception:
+                logger.exception(
+                    "Failed to clear candidate chat state after approval",
+                    extra={"slot_id": slot_id, "candidate_tg_id": slot.candidate_tg_id},
+                )
         result = await notification_service.on_booking_status_changed(
             slot_id,
-            BookingNotificationStatus.CONFIRMED,
+            BookingNotificationStatus.APPROVED,
             snapshot=snapshot,
         )
         if result.status == "sent":

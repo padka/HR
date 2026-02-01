@@ -89,7 +89,7 @@ except Exception:  # pragma: no cover - fallback when apscheduler is missing
                 "APScheduler with redis extra is required for Redis job store",
             )
 
-from backend.apps.bot import templates
+
 from backend.apps.bot.config import DEFAULT_TZ
 from backend.apps.bot.keyboards import kb_attendance_confirm
 from backend.apps.bot.metrics import (
@@ -180,11 +180,11 @@ class ReminderService:
                             job_id = self._job_id(slot_id, plan.kind)
                             if self._scheduler.get_job(job_id) is None and plan.run_at_utc > datetime.now(timezone.utc):
                                 self._scheduler.add_job(
-                                    self._execute_job,
+                                    execute_reminder_job,
                                     "date",
                                     run_date=_ensure_aware(plan.run_at_utc),
                                     id=job_id,
-                                    args=[slot_id, plan.kind],
+                                    args=[slot_id, plan.kind.value],
                                     replace_existing=True,
                                 )
                                 await session.execute(
@@ -225,11 +225,11 @@ class ReminderService:
                 if run_at <= datetime.now(timezone.utc):
                     continue
                 self._scheduler.add_job(
-                    self._execute_job,
+                    execute_reminder_job,
                     "date",
                     run_date=run_at,
                     id=job_id,
-                    args=[row.slot_id, kind],
+                    args=[row.slot_id, kind.value],
                     replace_existing=True,
                 )
 
@@ -250,11 +250,11 @@ class ReminderService:
                     run_at = datetime.now(timezone.utc) + timedelta(minutes=5)
                 job_id = row.job_id or f"{slot_prefix}:{kind.value}"
                 self._scheduler.add_job(
-                    self._execute_job,
+                    execute_reminder_job,
                     "date",
                     run_date=run_at,
                     id=job_id,
-                    args=[row.slot_id, kind],
+                    args=[row.slot_id, kind.value],
                     replace_existing=True,
                 )
                 current_ids.add(job_id)
@@ -271,11 +271,11 @@ class ReminderService:
                     run_at = datetime.now(timezone.utc) + timedelta(minutes=5)
                 job_id = row.job_id
                 self._scheduler.add_job(
-                    self._execute_job,
+                    execute_reminder_job,
                     "date",
                     run_date=run_at,
                     id=job_id,
-                    args=[row.slot_id, kind],
+                    args=[row.slot_id, kind.value],
                     replace_existing=True,
                 )
 
@@ -299,11 +299,11 @@ class ReminderService:
                                 continue
                             job_id = self._job_id(slot.id, plan.kind)
                             self._scheduler.add_job(
-                                self._execute_job,
+                                execute_reminder_job,
                                 "date",
                                 run_date=_ensure_aware(plan.run_at_utc),
                                 id=job_id,
-                                args=[slot.id, plan.kind],
+                                args=[slot.id, plan.kind.value],
                                 replace_existing=True,
                             )
                             await session.execute(
@@ -344,11 +344,11 @@ class ReminderService:
                     if self._scheduler.get_job(job_id):
                         continue
                     self._scheduler.add_job(
-                        self._execute_job,
+                        execute_reminder_job,
                         "date",
                         run_date=datetime.now(timezone.utc) + timedelta(minutes=5),
                         id=job_id,
-                        args=[sid, ReminderKind.CONFIRM_2H],
+                        args=[sid, ReminderKind.CONFIRM_2H.value],
                         replace_existing=True,
                     )
             except Exception:
@@ -454,11 +454,11 @@ class ReminderService:
                     )
                     job_id = self._job_id(slot_id, plan.kind)
                     self._scheduler.add_job(
-                        self._execute_job,
+                        execute_reminder_job,
                         "date",
                         run_date=_ensure_aware(plan.run_at_utc),
                         id=job_id,
-                        args=[slot_id, plan.kind],
+                        args=[slot_id, plan.kind.value],
                         replace_existing=True,
                     )
                     await session.execute(
@@ -736,6 +736,26 @@ def get_reminder_service() -> ReminderService:
     if _reminder_service is None:
         raise RuntimeError("Reminder service is not configured")
     return _reminder_service
+
+
+async def execute_reminder_job(slot_id: int, kind_value: str) -> None:
+    try:
+        kind = ReminderKind(kind_value)
+    except Exception:
+        logger.warning(
+            "reminder.job.invalid_kind",
+            extra={"slot_id": slot_id, "kind": kind_value},
+        )
+        return
+    try:
+        service = get_reminder_service()
+    except RuntimeError:
+        logger.warning(
+            "reminder.job.service_unconfigured",
+            extra={"slot_id": slot_id, "kind": kind.value},
+        )
+        return
+    await service._execute_job(slot_id, kind)
 
 
 def create_scheduler(redis_url: Optional[str]) -> AsyncIOScheduler:

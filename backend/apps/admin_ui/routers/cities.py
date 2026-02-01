@@ -14,10 +14,6 @@ from backend.apps.admin_ui.services.cities import (
 )
 from backend.apps.admin_ui.services.recruiters import list_recruiters
 from backend.apps.admin_ui.services.message_templates import AVAILABLE_VARIABLES, MOCK_CONTEXT
-from backend.apps.admin_ui.services.templates import (
-    get_stage_templates,
-    stage_payload_for_ui,
-)
 from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 
@@ -160,10 +156,9 @@ async def _prepare_city_edit_context(
     if not city:
         raise HTTPException(status_code=404, detail="City not found")
 
-    stage_map = await get_stage_templates(city_ids=[city_id], include_global=True)
     recruiter_rows = await list_recruiters()
     owner_id = _primary_recruiter_id(city)
-    city_templates = stage_map.get(city.id, {})
+    city_templates: Dict[str, str] = {}
     rec_map = {row["rec"].id: row["rec"] for row in recruiter_rows if row.get("rec")}
     owner_lookup = rec_map.get(owner_id)
 
@@ -174,7 +169,7 @@ async def _prepare_city_edit_context(
         "form_error": form_error,
         "success_message": success_message,
         "stage_meta": CITY_TEMPLATE_STAGES,
-        "global_templates": stage_map.get(None, {}),
+        "global_templates": {},
         "recruiter_rows": recruiter_rows,
         "owner_lookup": owner_lookup,
         "template_vars": list(AVAILABLE_VARIABLES),
@@ -233,52 +228,9 @@ async def update_city_settings(city_id: int, request: Request):
             except (TypeError, ValueError):
                 continue
 
-    templates_payload = payload.get("templates") or {}
-    if not isinstance(templates_payload, dict):
-        templates_payload = {}
-
-    criteria = (payload.get("criteria") or "").strip()
-    experts = (payload.get("experts") or "").strip()
-    try:
-        plan_week = _parse_plan_value(payload.get("plan_week"))
-    except ValueError:
-        return JSONResponse(
-            {"ok": False, "error": {"field": "plan_week", "message": PLAN_ERROR_MESSAGE}},
-            status_code=422,
-        )
-    try:
-        plan_month = _parse_plan_value(payload.get("plan_month"))
-    except ValueError:
-        return JSONResponse(
-            {"ok": False, "error": {"field": "plan_month", "message": PLAN_ERROR_MESSAGE}},
-            status_code=422,
-        )
-
-    tz_normalized: Optional[str] = None
-    if "tz" in payload:
-        try:
-            tz_normalized = normalize_city_timezone(payload.get("tz"))
-        except ValueError as exc:
-            return JSONResponse(
-                {"ok": False, "error": {"field": "tz", "message": str(exc)}},
-                status_code=422,
-            )
-
-    try:
-        active_value = _coerce_bool(payload.get("active"))
-    except ValueError:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": {"field": "active", "message": "Укажите корректный статус активности"},
-            },
-            status_code=422,
-        )
-
     error, city, owner = await update_city_settings_service(
         city_id,
         recruiter_ids=recruiter_ids,
-        templates=templates_payload,
         criteria=criteria,
         experts=experts,
         plan_week=plan_week,
