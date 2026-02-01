@@ -1,3 +1,4 @@
+from typing import List, Dict
 
 from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 from backend.apps.bot.defaults import DEFAULT_TEMPLATES
