@@ -87,9 +87,9 @@ docker-logs:
 
 DEV_ENV_FILE := $(if $(wildcard .env.local),.env.local,.env.local.example)
 
-dev-migrate:
+dev-migrate: ensure-venv
 	@echo "Using env file: $(DEV_ENV_FILE)"
-	@bash -c 'set -a; source $(DEV_ENV_FILE); set +a; ENVIRONMENT=$${ENVIRONMENT:-development} python scripts/run_migrations.py'
+	@bash -c 'set -a; source $(DEV_ENV_FILE); set +a; ENVIRONMENT=$${ENVIRONMENT:-development} $(PYTHON) scripts/run_migrations.py'
 
 dev-admin:
 	./scripts/dev_admin.sh
