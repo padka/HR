@@ -182,7 +182,7 @@ STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
         ("test1_completed", {"label": "Прошел тестирование", "icon": "📝", "tone": "info"}),
         ("waiting_slot", {"label": "Ждет назначения слота", "icon": "⏳", "tone": "warning"}),
         ("stalled_waiting_slot", {"label": "Долго ждет слота (>24ч)", "icon": "⚠️", "tone": "danger"}),
-        ("slot_pending", {"label": "Выбрал время, ждет подтверждения", "icon": "🕐", "tone": "warning"}),
+        ("slot_pending", {"label": "Ожидает подтверждения времени", "icon": "🕐", "tone": "info"}),
         ("interview_scheduled", {"label": "Назначено собеседование", "icon": "📅", "tone": "primary"}),
         ("interview_confirmed", {"label": "Подтвердился (собес)", "icon": "✅", "tone": "success"}),
         ("test2_sent", {"label": "Прошел собес (Тест 2)", "icon": "📨", "tone": "primary"}),
@@ -357,7 +357,7 @@ FUNNEL_STAGES: List[Dict[str, Any]] = [
         "label": "Собеседование",
         "icon": "📅",
         "tone": "primary",
-        "statuses": ["interview_scheduled", "interview_confirmed"],
+        "statuses": ["slot_pending", "interview_scheduled", "interview_confirmed"],
         "track_conversion": True,
     },
     {
@@ -462,6 +462,7 @@ INTERVIEW_PIPELINE_STATUSES = [
     "test1_completed",
     "waiting_slot",
     "stalled_waiting_slot",
+    "slot_pending",
     "interview_scheduled",
     "interview_confirmed",
     "test2_sent",
@@ -518,6 +519,7 @@ PIPELINE_DEFINITIONS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict(
                     "test1_completed",
                     "waiting_slot",
                     "stalled_waiting_slot",
+                    "slot_pending",
                     "interview_scheduled",
                     "interview_confirmed",
                     "test2_sent",
@@ -575,6 +577,7 @@ STATUSES_ARCHIVE_ON_DECLINE: Set[CandidateStatus] = {
 LEGACY_TO_WORKFLOW: Dict[str, WorkflowStatus] = {
     CandidateStatus.WAITING_SLOT.value: WorkflowStatus.WAITING_FOR_SLOT,
     CandidateStatus.STALLED_WAITING_SLOT.value: WorkflowStatus.WAITING_FOR_SLOT,
+    CandidateStatus.SLOT_PENDING.value: WorkflowStatus.INTERVIEW_SCHEDULED,
     CandidateStatus.INTERVIEW_SCHEDULED.value: WorkflowStatus.INTERVIEW_SCHEDULED,
     CandidateStatus.INTERVIEW_CONFIRMED.value: WorkflowStatus.INTERVIEW_CONFIRMED,
     CandidateStatus.INTERVIEW_DECLINED.value: WorkflowStatus.REJECTED,
@@ -2479,6 +2482,61 @@ async def update_candidate_status(
                 user.is_active = False
 
             await session.commit()
+            stored_rejection_reason = (getattr(user, "rejection_reason", None) or "").strip()
+            rejection_reason = (
+                (reason or "").strip()
+                or (comment or "").strip()
+                or stored_rejection_reason
+                or None
+            )
+            if dispatch is None and target_status in STATUSES_ARCHIVE_ON_DECLINE and user.telegram_id is not None:
+                try:
+                    from backend.apps.admin_ui.services.slots import BotDispatch, BotDispatchPlan
+
+                    template_key = get_settings().rejection_template_key or "candidate_rejection"
+                    if template_key == "rejection_generic":
+                        template_key = "candidate_rejection"
+
+                    city_name = ""
+                    city_id = None
+                    if target_slot is not None:
+                        city_id = getattr(target_slot, "candidate_city_id", None) or getattr(target_slot, "city_id", None)
+                        if getattr(target_slot, "city", None):
+                            city_name = (
+                                getattr(target_slot.city, "name_plain", "")
+                                or getattr(target_slot.city, "name", "")
+                                or ""
+                            )
+                    if not city_name and getattr(user, "city", None):
+                        city_name = user.city or ""
+
+                    candidate_name = user.fio or getattr(user, "name", "") or ""
+                    template_context = {
+                        "candidate_name": candidate_name,
+                        "candidate_fio": candidate_name,
+                        "city_name": city_name,
+                    }
+                    if rejection_reason:
+                        template_context["rejection_reason"] = rejection_reason
+
+                    dispatch = BotDispatch(
+                        status="sent_rejection",
+                        plan=BotDispatchPlan(
+                            kind="rejection",
+                            slot_id=target_slot.id if target_slot is not None else 0,
+                            candidate_id=int(user.telegram_id),
+                            candidate_name=candidate_name,
+                            candidate_city_id=city_id,
+                            template_key=template_key,
+                            template_context=template_context,
+                            scheduled_at=datetime.now(timezone.utc),
+                        ),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to build rejection dispatch plan",
+                        extra={"candidate_id": user.id, "status": normalized},
+                    )
             funnel_event = FUNNEL_STATUS_EVENTS.get(user.candidate_status) if user.candidate_status else None
             if funnel_event:
                 try:
@@ -2685,11 +2743,9 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         if getattr(user, "responsible_recruiter_id", None):
             responsible_recruiter = await session.get(Recruiter, user.responsible_recruiter_id)
 
-        # Autofix статус, если реальный результат теста выше, чем зафиксированный статус
+        # Autofix статус, если результат теста выше, но статус ещё не был закреплён вручную
         if test2_status == "passed" and candidate_status in {
-            CandidateStatus.TEST2_FAILED,
             CandidateStatus.TEST2_SENT,
-            CandidateStatus.INTERVIEW_DECLINED,
             None,
         }:
             try:
@@ -2784,7 +2840,7 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
     if user.city:
         city_obj = await find_city_by_plain_name(user.city)
         if city_obj:
-            intro_day_template = city_obj.intro_day_template
+            intro_day_template = getattr(city_obj, "intro_day_template", None)
     if not intro_day_template:
         intro_day_template = DEFAULT_INTRO_DAY_INVITATION_TEMPLATE
 

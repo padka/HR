@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { STAGE_LABELS, TEMPLATE_META, type TemplateStage } from './template_meta'
 
 type City = { id: number; name: string }
 
@@ -28,6 +29,30 @@ const DEFAULT_PREVIEW = {
   whatsapp_link: 'https://wa.me/79000000000',
 }
 
+const TEMPLATE_GROUPS = (() => {
+  const grouped = new Map<TemplateStage, Array<{ key: string; title: string; desc: string }>>()
+  Object.entries(TEMPLATE_META).forEach(([key, meta]) => {
+    const items = grouped.get(meta.stage) || []
+    items.push({ key, title: meta.title, desc: meta.desc })
+    grouped.set(meta.stage, items)
+  })
+  const stageOrder = Object.keys(STAGE_LABELS) as TemplateStage[]
+  stageOrder.forEach((stage) => {
+    const items = grouped.get(stage)
+    if (items) {
+      items.sort((a, b) => a.title.localeCompare(b.title, 'ru'))
+    }
+  })
+  return stageOrder
+    .map((stage) => ({
+      stage,
+      title: STAGE_LABELS[stage].title,
+      desc: STAGE_LABELS[stage].desc,
+      items: grouped.get(stage) || [],
+    }))
+    .filter((group) => group.items.length > 0)
+})()
+
 function renderPreview(text: string, preview: Record<string, string>) {
   let output = text || ''
   Object.entries(preview).forEach(([key, value]) => {
@@ -39,46 +64,55 @@ function renderPreview(text: string, preview: Record<string, string>) {
 
 export function TemplateNewPage() {
   const navigate = useNavigate()
+  const search = useSearch({ from: '/app/templates/new' }) as { city_id?: string | number; key?: string }
+  const initialCityId =
+    typeof search.city_id === 'number'
+      ? String(search.city_id)
+      : typeof search.city_id === 'string'
+        ? search.city_id
+        : ''
+  const initialKey = typeof search.key === 'string' ? search.key : ''
   const { data: cities } = useQuery<City[]>({
     queryKey: ['cities'],
     queryFn: () => apiFetch('/cities'),
   })
-  const { data: presets } = useQuery<Array<{ key: string; label: string; text: string }>>({
-    queryKey: ['template-presets'],
-    queryFn: () => apiFetch('/template_presets'),
-  })
   const [form, setForm] = useState({
-    key: '',
+    key: initialKey,
     text: '',
-    city_id: '',
-    is_global: true,
+    city_id: initialCityId,
+    is_active: true,
   })
   const [formError, setFormError] = useState<string | null>(null)
-  const [presetKey, setPresetKey] = useState('')
-  const [cityFilter, setCityFilter] = useState('')
   const [preview, setPreview] = useState(DEFAULT_PREVIEW)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const hasCities = (cities?.length || 0) > 0
 
   useEffect(() => {
-    if (!hasCities) {
-      setForm((prev) => ({ ...prev, is_global: true, city_id: '' }))
-    }
-  }, [hasCities])
+    if (!initialCityId) return
+    setForm((prev) => (prev.city_id === initialCityId ? prev : { ...prev, city_id: initialCityId }))
+  }, [initialCityId])
+
+  useEffect(() => {
+    if (!initialKey) return
+    setForm((prev) => (prev.key === initialKey ? prev : { ...prev, key: initialKey }))
+  }, [initialKey])
 
   const mutation = useMutation({
     mutationFn: async () => {
       setFormError(null)
+      if (!form.key) {
+        throw new Error('Выберите тип сообщения')
+      }
       if (!form.text.trim()) {
         throw new Error('Введите текст шаблона')
       }
-      if (!form.is_global && !form.city_id) {
-        throw new Error('Выберите город или отметьте шаблон как глобальный')
-      }
       const payload = {
-        key: null, // Always auto-generate for new UI
+        key: form.key,
         text: form.text,
-        city_id: form.is_global ? null : form.city_id ? Number(form.city_id) : null,
+        city_id: form.city_id ? Number(form.city_id) : null,
+        locale: 'ru',
+        channel: 'tg',
+        version: 1,
+        is_active: form.is_active,
       }
       return apiFetch('/templates', { method: 'POST', body: JSON.stringify(payload) })
     },
@@ -97,12 +131,13 @@ export function TemplateNewPage() {
     },
   })
 
-  const cityOptions = useMemo(() => (cities || []).map((c) => ({ value: c.id, label: c.name })), [cities])
-  const filteredCities = useMemo(() => {
-    if (!cityFilter.trim()) return cityOptions
-    const needle = cityFilter.toLowerCase()
-    return cityOptions.filter((c) => c.label.toLowerCase().includes(needle))
-  }, [cityFilter, cityOptions])
+  const cityOptions = useMemo(
+    () => [{ value: '', label: 'Общий' }, ...(cities || []).map((c) => ({ value: String(c.id), label: c.name }))],
+    [cities],
+  )
+
+  const templateGroups = TEMPLATE_GROUPS
+  const selectedMeta = form.key ? TEMPLATE_META[form.key] : undefined
 
   const insertToken = (token: string) => {
     const el = textareaRef.current
@@ -137,25 +172,36 @@ export function TemplateNewPage() {
             <Link to="/app/templates" className="glass action-link">← Назад</Link>
           </div>
 
-          <label style={{ display: 'grid', gap: 6 }}>
-            Быстрый пресет
-            <select
-              value={presetKey}
-              onChange={(e) => {
-                const key = e.target.value
-                setPresetKey(key)
-                const selected = presets?.find(p => p.key === key)
-                if (selected) {
-                  setForm((prev) => ({ ...prev, text: selected.text }))
-                }
-              }}
-            >
-              <option value="">— не выбирать —</option>
-              {presets?.map((p) => (
-                <option key={p.key} value={p.key}>{p.label}</option>
-              ))}
-            </select>
-          </label>
+          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+            <label style={{ display: 'grid', gap: 6 }}>
+              Город
+              <select value={form.city_id} onChange={(e) => setForm({ ...form, city_id: e.target.value })}>
+                {cityOptions.map((c) => (
+                  <option key={c.value || 'global'} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: 'grid', gap: 6 }}>
+              Тип сообщения
+              <select value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })}>
+                <option value="">— выберите тип —</option>
+                {templateGroups.map((group) => (
+                  <optgroup key={group.stage} label={group.title}>
+                    {group.items.map((item) => (
+                      <option key={item.key} value={item.key}>{item.title}</option>
+                    ))}
+                  </optgroup>
+                ))}
+                {form.key && !selectedMeta && (
+                  <optgroup label="Другое">
+                    <option value={form.key}>{form.key}</option>
+                  </optgroup>
+                )}
+              </select>
+              {selectedMeta && <span className="subtitle">{selectedMeta.desc}</span>}
+            </label>
+          </div>
 
           <label style={{ display: 'grid', gap: 6 }}>
             Текст шаблона
@@ -178,33 +224,6 @@ export function TemplateNewPage() {
             </div>
           </label>
 
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              type="checkbox"
-              checked={form.is_global}
-              onChange={(e) => setForm({ ...form, is_global: e.target.checked })}
-              disabled={!hasCities}
-            />
-            Глобальный шаблон
-          </label>
-
-          {!form.is_global && (
-            <label style={{ display: 'grid', gap: 6 }}>
-              Город
-              <input
-                placeholder="Поиск по городам…"
-                value={cityFilter}
-                onChange={(e) => setCityFilter(e.target.value)}
-              />
-              <select value={form.city_id} onChange={(e) => setForm({ ...form, city_id: e.target.value })}>
-                <option value="">— выберите —</option>
-                {filteredCities.map((c) => (
-                  <option key={c.value} value={String(c.value)}>{c.label}</option>
-                ))}
-              </select>
-            </label>
-          )}
-
           <details className="glass panel--tight">
             <summary>Предпросмотр</summary>
             <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
@@ -222,9 +241,19 @@ export function TemplateNewPage() {
             </div>
           </details>
 
-          <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-            {mutation.isPending ? 'Сохраняем…' : 'Создать'}
-          </button>
+          <div className="action-row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={form.is_active}
+                onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
+              />
+              Активен
+            </label>
+            <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+              {mutation.isPending ? 'Сохраняем…' : 'Создать'}
+            </button>
+          </div>
           {formError && <p style={{ color: '#f07373' }}>Ошибка: {formError}</p>}
         </div>
       </div>

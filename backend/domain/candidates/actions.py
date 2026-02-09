@@ -54,7 +54,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
     CandidateStatus.TEST1_COMPLETED: [
         CandidateAction(
             key="schedule_interview",
-            label="Назначить собеседование",
+            label="Предложить время",
             url_pattern="/candidates/{id}/schedule-slot",
             icon="🕒",
             variant="primary",
@@ -115,7 +115,7 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
     CandidateStatus.SLOT_PENDING: [
         CandidateAction(
             key="schedule_interview",
-            label="Назначить собеседование",
+            label="Предложить другое время",
             url_pattern="/candidates/{id}/schedule-slot",
             icon="🕒",
             variant="primary",

@@ -64,6 +64,7 @@ const STATUS_OPTIONS = [
   { value: 'hired', label: '🎉 Закреплён' },
   { value: 'not_hired', label: '⚠️ Не закреплён' },
   { value: 'waiting_slot', label: '⏳ Ожидает слот' },
+  { value: 'slot_pending', label: '⌛ Ожидает подтверждения' },
   { value: 'slot_booked', label: '📅 Слот забронирован' },
   { value: 'interview_passed', label: '✅ Интервью пройдено' },
   { value: 'test2_passed', label: '✅ Тест 2 пройден' },

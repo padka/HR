@@ -7,6 +7,20 @@ import { RootLayout } from './routes/__root'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { queryClient } from '@/api/client'
 
+if (import.meta.env.PROD && typeof window !== 'undefined') {
+  const reloadKey = 'spa_chunk_reload'
+  window.addEventListener('vite:preloadError', () => {
+    if (sessionStorage.getItem(reloadKey) === '1') {
+      return
+    }
+    sessionStorage.setItem(reloadKey, '1')
+    window.location.reload()
+  })
+  window.addEventListener('load', () => {
+    sessionStorage.removeItem(reloadKey)
+  })
+}
+
 // Lightweight pages - load eagerly
 import { IndexPage } from './routes/app'
 import { LoginPage } from './routes/app/login'

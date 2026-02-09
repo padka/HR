@@ -151,6 +151,9 @@ class City(Base):
     experts: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     plan_week: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     plan_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    intro_address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     responsible_recruiter_id: Mapped[Optional[int]] = mapped_column(
         Integer,
         ForeignKey("recruiters.id", ondelete="SET NULL"),

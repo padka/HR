@@ -8,12 +8,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from backend.domain.repositories import get_message_template
+from backend.apps.bot.defaults import DEFAULT_TEMPLATES
 from backend.utils.jinja_renderer import render_template
 from backend.apps.bot.metrics import record_template_fallback
+from backend.apps.bot.config import DEFAULT_TZ, TIME_FMT
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,14 @@ class TemplateProvider:
             Tuple[str, str, str, Optional[int]], Tuple[Optional[TemplateRecord], datetime]
         ] = {}
         self._lock = asyncio.Lock()
+
+    @staticmethod
+    def format_local_dt(dt_utc: datetime, tz: str) -> str:
+        try:
+            zone = ZoneInfo(tz or DEFAULT_TZ)
+        except Exception:
+            zone = ZoneInfo(DEFAULT_TZ)
+        return dt_utc.astimezone(zone).strftime(TIME_FMT)
 
     async def get(
         self,
@@ -112,14 +123,35 @@ class TemplateProvider:
         try:
             template = await self.get(key, locale=locale, channel=channel, city_id=city_id, strict=strict)
         except TemplateResolutionError:
-             logger.warning(f"Template not found: {key} (city={city_id})")
-             return None
+            if strict:
+                raise
+            logger.warning(f"Template not found: {key} (city={city_id})")
+            fallback_text = DEFAULT_TEMPLATES.get(key) or f"Шаблон '{key}' не найден."
+            try:
+                text = render_template(fallback_text, context)
+            except Exception:
+                logger.exception("Failed to render fallback template %s", key)
+                text = fallback_text
+            return RenderedTemplate(
+                key=key,
+                version=0,
+                city_id=city_id,
+                text=text,
+            )
 
         try:
             text = render_template(template.body, context)
         except Exception:
             logger.exception("Failed to render template %s", key)
             text = template.body
+        if not str(text or "").strip():
+            fallback_text = DEFAULT_TEMPLATES.get(key)
+            if fallback_text:
+                try:
+                    text = render_template(fallback_text, context)
+                except Exception:
+                    logger.exception("Failed to render fallback template %s", key)
+                    text = fallback_text
 
         return RenderedTemplate(
             key=template.key,
@@ -194,10 +226,31 @@ class Jinja2TemplateProvider:
         
         if template is None:
             logger.warning(f"Template not found: {key} (city={city_id})")
-            return None
+            if strict:
+                raise TemplateResolutionError(key, locale=locale, channel=channel, city_id=city_id)
+            fallback_text = DEFAULT_TEMPLATES.get(key) or f"Шаблон '{key}' не найден."
+            try:
+                text = render_template(fallback_text, context)
+            except Exception:
+                logger.exception("Failed to render fallback template %s", key)
+                text = fallback_text
+            return RenderedTemplate(
+                key=key,
+                version=0,
+                city_id=city_id,
+                text=text,
+            )
 
         try:
             text = await template.render_async(context)
+            if not str(text or "").strip():
+                fallback_text = DEFAULT_TEMPLATES.get(key)
+                if fallback_text:
+                    try:
+                        text = render_template(fallback_text, context)
+                    except Exception:
+                        logger.exception("Failed to render fallback template %s", key)
+                        text = fallback_text
             return RenderedTemplate(
                 key=key,
                 version=1,
@@ -207,6 +260,17 @@ class Jinja2TemplateProvider:
         except Exception:
             logger.exception("Failed to render template %s", key)
             return None
+
+    async def invalidate(
+        self,
+        *,
+        key: Optional[str] = None,
+        locale: str = "ru",
+        channel: str = "tg",
+        city_id: Optional[int] = None,
+    ) -> None:
+        """No-op for Jinja2 provider: filesystem templates auto-reload."""
+        pass
 
 
 __all__ = [

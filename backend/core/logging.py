@@ -5,6 +5,7 @@ import json
 import logging
 import logging.config
 import hashlib
+import re
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -122,6 +123,62 @@ class PIIFilter(logging.Filter):
         return True
 
 
+class PhoneMaskingFilter(logging.Filter):
+    """Mask phone numbers in log messages to protect PII.
+
+    Matches common formats:
+    - +7 (999) 123-45-67
+    - +79991234567
+    - 8 999 123 45 67
+    - 89991234567
+    - 7-999-123-45-67
+    """
+
+    # Regex for Russian phone numbers in various formats
+    _PHONE_PATTERN = re.compile(
+        r"""
+        (?<!\d)                           # Not preceded by digit
+        (?:
+            \+?[78]                        # Country code +7, 7, +8, 8
+            [\s\-\.]?
+            \(?[0-9]{3}\)?                 # Area code with optional parens
+            [\s\-\.]?
+            [0-9]{3}                       # First 3 digits
+            [\s\-\.]?
+            [0-9]{2}                       # Next 2 digits
+            [\s\-\.]?
+            [0-9]{2}                       # Last 2 digits
+        )
+        (?!\d)                            # Not followed by digit
+        """,
+        re.VERBOSE,
+    )
+
+    def _mask_phones(self, text: str) -> str:
+        """Replace phone numbers with masked version."""
+        def replacer(match: re.Match) -> str:
+            phone = match.group(0)
+            # Keep first 2 and last 2 chars, mask the rest
+            if len(phone) >= 6:
+                return phone[:2] + "*" * (len(phone) - 4) + phone[-2:]
+            return "***"
+        return self._PHONE_PATTERN.sub(replacer, text)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = self._mask_phones(record.msg)
+        if getattr(record, "args", None):
+            record.args = tuple(
+                self._mask_phones(arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        # Also check extra fields
+        for key, value in list(record.__dict__.items()):
+            if isinstance(value, str) and not key.startswith("_"):
+                record.__dict__[key] = self._mask_phones(value)
+        return True
+
+
 class SecretsFilter(logging.Filter):
     """Mask known secrets if they accidentally end up in logs."""
 
@@ -189,6 +246,7 @@ def configure_logging(settings=None) -> None:
 
     filters = {
         "pii": {"()": "backend.core.logging.PIIFilter"},
+        "phone": {"()": "backend.core.logging.PhoneMaskingFilter"},
         "secrets": {"()": "backend.core.logging.SecretsFilter", "secrets": sensitive_values},
     }
 
@@ -197,7 +255,7 @@ def configure_logging(settings=None) -> None:
             "class": "logging.StreamHandler",
             "level": log_level,
             "formatter": formatter_name,
-            "filters": ["pii", "secrets"],
+            "filters": ["pii", "phone", "secrets"],
         },
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
@@ -207,7 +265,7 @@ def configure_logging(settings=None) -> None:
             "maxBytes": 5 * 1024 * 1024,
             "backupCount": 5,
             "encoding": "utf-8",
-            "filters": ["pii", "secrets"],
+            "filters": ["pii", "phone", "secrets"],
         },
     }
 
@@ -232,6 +290,7 @@ __all__ = [
     "configure_logging",
     "get_request_id",
     "JsonFormatter",
+    "PhoneMaskingFilter",
     "PIIFilter",
     "pseudonymize",
     "reset_request_id",

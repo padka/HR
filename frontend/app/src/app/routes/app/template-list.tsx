@@ -1,489 +1,285 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import {
+  STAGE_LABELS,
+  TEMPLATE_META,
+  templateDesc,
+  templateStage,
+  templateTitle,
+  type TemplateStage,
+} from './template_meta'
 
-type TemplateItem = {
+type MessageTemplate = {
   id: number
   key: string
+  locale: string
+  channel: string
   city_id?: number | null
   city_name?: string | null
-  city_name_plain?: string | null
-  is_global?: boolean
-  preview?: string
-  length?: number
+  version?: number
+  is_active?: boolean
+  preview?: string | null
+  body?: string | null
 }
 
-type StageItem = {
-  key: string
-  title: string
-  description: string
-  value: string
-  default: string
-  is_custom: boolean
+type MessageTemplatesPayload = {
+  templates: MessageTemplate[]
+  cities: Array<{ id: number | null; name: string }>
 }
 
-type StageCity = {
-  city: { id: number; name: string; tz?: string | null }
-  stages: StageItem[]
+type TemplateIndexEntry = {
+  global?: MessageTemplate
+  city: Map<number, MessageTemplate>
 }
 
-type TemplatesOverview = {
-  cities: StageCity[]
-  global: { stages: StageItem[] }
-}
+const ALL_STAGES: TemplateStage[] = [
+  'registration',
+  'testing',
+  'interview',
+  'intro_day',
+  'reminders',
+  'results',
+  'service',
+]
 
-type TemplateOverview = {
-  overview?: TemplatesOverview
-  custom_templates: TemplateItem[]
-}
+const DEFAULT_LOCALE = 'ru'
+const DEFAULT_CHANNEL = 'tg'
 
-type MessageTemplateSummary = {
-  templates: Array<{
-    id: number
-    key: string
-    locale: string
-    channel: string
-    city_id?: number | null
-    city_name?: string | null
-    version?: number
-    is_active?: boolean
-    updated_by?: string | null
-    preview?: string | null
-    body?: string | null
-    stage?: string
-  }>
-  missing_required: string[]
-  coverage: Array<{ key: string; missing_default: boolean; missing_cities: { id: number; name: string }[] }>
+function pickLatest(current: MessageTemplate | undefined, candidate: MessageTemplate): MessageTemplate {
+  if (!current) return candidate
+  const currentVersion = current.version ?? 0
+  const nextVersion = candidate.version ?? 0
+  return nextVersion >= currentVersion ? candidate : current
 }
 
 export function TemplateListPage() {
-  const queryClient = useQueryClient()
-  const { data, isLoading, isError, error } = useQuery<TemplateOverview>({
-    queryKey: ['templates-list'],
-    queryFn: () => apiFetch('/templates/list'),
-  })
-  const messageTemplatesQuery = useQuery<MessageTemplateSummary>({
+  const { data, isLoading, isError, error } = useQuery<MessageTemplatesPayload>({
     queryKey: ['message-templates-summary'],
     queryFn: () => apiFetch('/message-templates'),
   })
 
-  const overview = data?.overview
-  const [stageCity, setStageCity] = useState<string>('global')
-  const [stageDrafts, setStageDrafts] = useState<Record<string, string>>({})
-  const [filters, setFilters] = useState({ search: '', city: 'all', key: '' })
-  const [messageFilters, setMessageFilters] = useState({ search: '', stage: 'all' })
+  const [selectedCity, setSelectedCity] = useState<string>('global')
+  const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({})
 
-  const stageCityOptions = useMemo(() => {
-    const cityList = overview?.cities || []
-    return [
-      { id: 'global', name: 'Глобальные' },
-      ...cityList.map((item: any) => ({ id: String(item.city?.id ?? ''), name: item.city?.name ?? 'Город' })),
-    ]
-  }, [overview])
-
-  useEffect(() => {
-    if (!overview) return
-    const cityEntry =
-      stageCity === 'global'
-        ? overview.global
-        : (overview.cities || []).find((item: any) => String(item.city?.id) === stageCity)
-    const stages = cityEntry?.stages || []
-    const nextDrafts: Record<string, string> = {}
-    stages.forEach((stage: any) => {
-      nextDrafts[stage.key] = stage.value || ''
-    })
-    setStageDrafts(nextDrafts)
-  }, [overview, stageCity])
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      const payload = {
-        city_id: stageCity === 'global' ? null : Number(stageCity),
-        templates: stageDrafts,
-      }
-      return apiFetch('/templates/save', { method: 'POST', body: JSON.stringify(payload) })
-    },
-  })
-
-  const cityFilterOptions = useMemo(() => {
-    const cities = data?.custom_templates || []
-    const unique = new Map<number, string>()
-    cities.forEach((tmpl) => {
-      if (tmpl.city_id != null) {
-        unique.set(tmpl.city_id, tmpl.city_name_plain || tmpl.city_name || `Город ${tmpl.city_id}`)
-      }
-    })
-    return Array.from(unique.entries()).map(([id, name]) => ({ id: String(id), name }))
-  }, [data?.custom_templates])
-
-  const keyOptions = useMemo(() => {
-    const keys = new Set<string>()
-    ;(data?.custom_templates || []).forEach((tmpl) => keys.add(tmpl.key))
-    return Array.from(keys.values()).sort()
-  }, [data?.custom_templates])
+  const cityOptions = useMemo(() => {
+    const cities = data?.cities || []
+    return cities
+      .filter((c) => c.id != null)
+      .map((c) => ({ id: String(c.id), name: c.name }))
+  }, [data?.cities])
 
   const filteredTemplates = useMemo(() => {
-    const items = data?.custom_templates || []
-    const search = filters.search.trim().toLowerCase()
-    return items.filter((tmpl) => {
-      const matchesSearch =
-        !search ||
-        tmpl.key.toLowerCase().includes(search) ||
-        (tmpl.preview || '').toLowerCase().includes(search)
-      const matchesCity =
-        filters.city === 'all' ||
-        (filters.city === 'global' ? tmpl.is_global : String(tmpl.city_id) === filters.city)
-      const matchesKey = !filters.key || tmpl.key === filters.key
-      return matchesSearch && matchesCity && matchesKey
+    const items = data?.templates || []
+    return items.filter((tmpl) => tmpl.locale === DEFAULT_LOCALE && tmpl.channel === DEFAULT_CHANNEL)
+  }, [data?.templates])
+
+  const templateIndex = useMemo(() => {
+    const index = new Map<string, TemplateIndexEntry>()
+    filteredTemplates.forEach((tmpl) => {
+      const entry = index.get(tmpl.key) || { city: new Map<number, MessageTemplate>() }
+      if (tmpl.city_id == null) {
+        entry.global = pickLatest(entry.global, tmpl)
+      } else {
+        const current = entry.city.get(tmpl.city_id)
+        entry.city.set(tmpl.city_id, pickLatest(current, tmpl))
+      }
+      index.set(tmpl.key, entry)
     })
-  }, [data?.custom_templates, filters])
+    return index
+  }, [filteredTemplates])
 
-  const stageSpecs = useMemo(
-    () => [
-      { code: 'interview', title: 'Этап 1: Собеседование', desc: 'Приглашения, подтверждения слота, итоги.' },
-      { code: 'intro', title: 'Этап 2: Ознакомительный день', desc: 'Приглашения, адреса, инструкции.' },
-      { code: 'reminder', title: 'Напоминания', desc: 'Сообщения за 6/2 часа, подтверждения.' },
-      { code: 'other', title: 'Прочее', desc: 'Сервисные тексты, отказы, общие уведомления.' },
-    ],
-    [],
-  )
+  const allKeys = useMemo(() => {
+    const keys = new Set<string>(Object.keys(TEMPLATE_META))
+    filteredTemplates.forEach((tmpl) => keys.add(tmpl.key))
+    return Array.from(keys)
+  }, [filteredTemplates])
 
-  const filteredMessageTemplates = useMemo(() => {
-    const items = messageTemplatesQuery.data?.templates || []
-    const search = messageFilters.search.trim().toLowerCase()
-    return items.filter((tmpl) => {
-      const matchesStage =
-        messageFilters.stage === 'all' || (tmpl.stage || 'other') === messageFilters.stage
-      const matchesSearch =
-        !search ||
-        tmpl.key.toLowerCase().includes(search) ||
-        (tmpl.preview || '').toLowerCase().includes(search) ||
-        (tmpl.body || '').toLowerCase().includes(search)
-      return matchesStage && matchesSearch
-    })
-  }, [messageTemplatesQuery.data?.templates, messageFilters])
-
-  const groupedTemplates = useMemo(() => {
-    const grouped: Record<string, MessageTemplateSummary['templates']> = {
+  const groupedKeys = useMemo(() => {
+    const groups: Record<TemplateStage, string[]> = {
+      registration: [],
+      testing: [],
       interview: [],
-      intro: [],
-      reminder: [],
-      other: [],
+      intro_day: [],
+      reminders: [],
+      results: [],
+      service: [],
     }
-    filteredMessageTemplates.forEach((tmpl) => {
-      const key = tmpl.stage || 'other'
-      if (!grouped[key]) {
-        grouped[key] = []
-      }
-      grouped[key].push(tmpl)
+    allKeys.forEach((key) => {
+      const stage = templateStage(key)
+      groups[stage].push(key)
     })
-    return grouped
-  }, [filteredMessageTemplates])
+    ALL_STAGES.forEach((stage) => {
+      groups[stage].sort((a, b) => templateTitle(a).localeCompare(templateTitle(b), 'ru'))
+    })
+    return groups
+  }, [allKeys])
 
-  const toggleMutation = useMutation({
-    mutationFn: async (tmpl: MessageTemplateSummary['templates'][number]) => {
-      const payload = {
-        key: tmpl.key,
-        locale: tmpl.locale,
-        channel: tmpl.channel,
-        body: tmpl.body || '',
-        is_active: !tmpl.is_active,
-        city_id: tmpl.city_id ?? null,
-        updated_by: 'admin',
-        version: tmpl.version ?? null,
+  const selectedCityId = selectedCity === 'global' ? null : Number(selectedCity)
+  const selectedCityName = selectedCityId != null
+    ? cityOptions.find((c) => Number(c.id) === selectedCityId)?.name || `Город #${selectedCityId}`
+    : 'Глобальные настройки'
+
+  const toggleStage = (stage: string) =>
+    setCollapsedStages((prev) => ({ ...prev, [stage]: !prev[stage] }))
+
+  const renderRow = (key: string) => {
+    const entry = templateIndex.get(key)
+    const globalTemplate = entry?.global
+    const cityTemplate = selectedCityId != null ? entry?.city.get(selectedCityId) : undefined
+    const effectiveTemplate = selectedCityId != null ? (cityTemplate ?? globalTemplate) : globalTemplate
+    const isOverride = Boolean(cityTemplate)
+    const isFallback = selectedCityId != null && !cityTemplate && Boolean(globalTemplate)
+    const overrideCount = entry?.city.size ?? 0
+    const isActive = effectiveTemplate?.is_active ?? false
+    const title = templateTitle(key)
+    const desc = templateDesc(key)
+
+    const statusChip = effectiveTemplate
+      ? (isActive ? ['Активен', 'chip chip--success'] : ['Отключён', 'chip chip--danger'])
+      : ['Нет шаблона', 'chip chip--warning']
+
+    const scopeChip = selectedCityId != null
+      ? (isOverride
+        ? ['Переопределён', 'chip chip--accent']
+        : (globalTemplate ? ['Глобальный', 'chip'] : ['Нет', 'chip chip--warning']))
+      : (globalTemplate ? ['Глобальный', 'chip'] : ['Нет', 'chip chip--warning'])
+
+    let actionLabel = 'Создать'
+    let actionTo: { to: string; params?: Record<string, string>; search?: Record<string, string | number> }
+
+    if (selectedCityId != null) {
+      if (cityTemplate) {
+        actionLabel = 'Редактировать'
+        actionTo = { to: '/app/templates/$templateId/edit', params: { templateId: String(cityTemplate.id) } }
+      } else {
+        actionLabel = globalTemplate ? `Переопределить для ${selectedCityName}` : `Создать для ${selectedCityName}`
+        actionTo = { to: '/app/templates/new', search: { city_id: selectedCityId, key } }
       }
-      return apiFetch(`/message-templates/${tmpl.id}`, { method: 'PUT', body: JSON.stringify(payload) })
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['message-templates-summary'] })
-    },
-  })
+    } else {
+      if (globalTemplate) {
+        actionLabel = 'Редактировать'
+        actionTo = { to: '/app/templates/$templateId/edit', params: { templateId: String(globalTemplate.id) } }
+      } else {
+        actionLabel = 'Создать'
+        actionTo = { to: '/app/templates/new', search: { key } }
+      }
+    }
 
-  const deleteMutation = useMutation({
-    mutationFn: async (tmplId: number) =>
-      apiFetch(`/message-templates/${tmplId}`, { method: 'DELETE' }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['message-templates-summary'] })
-    },
-  })
+    const rowStyle = {
+      display: 'grid',
+      gridTemplateColumns: 'minmax(240px, 2fr) minmax(180px, 1fr) minmax(160px, 0.6fr)',
+      gap: 12,
+      alignItems: 'center',
+      padding: '10px 12px',
+      borderBottom: '1px solid rgba(255,255,255,0.06)',
+      background: isOverride ? 'rgba(106, 165, 255, 0.08)' : 'transparent',
+      opacity: isFallback ? 0.6 : 1,
+    }
+
+    return (
+      <div key={key} style={rowStyle}>
+        <div>
+          <div style={{ fontWeight: 600 }}>{title}</div>
+          {desc && <div className="text-muted" style={{ fontSize: 12 }}>{desc}</div>}
+          <div className="text-muted" style={{ fontSize: 11 }}><code>{key}</code></div>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <span className={statusChip[1]}>{statusChip[0]}</span>
+          <span className={scopeChip[1]}>{scopeChip[0]}</span>
+          {selectedCityId == null && overrideCount > 0 && (
+            <span className="chip chip--accent">+{overrideCount} город(а)</span>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Link
+            to={actionTo.to}
+            params={actionTo.params}
+            search={actionTo.search}
+            className={`ui-btn ui-btn--sm ${actionLabel.startsWith('Редактировать') ? 'ui-btn--ghost' : 'ui-btn--primary'}`}
+          >
+            {actionLabel}
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <RoleGuard allow={['admin']}>
       <div className="page">
         <header className="glass glass--elevated page-header page-header--row">
-          <h1 className="title">Шаблоны (CRM)</h1>
-          <Link to="/app/templates/new" className="ui-btn ui-btn--primary">+ Новый</Link>
+          <div>
+            <h1 className="title">Шаблоны сообщений</h1>
+            <p className="subtitle">Единая консоль управления текстами по городам и этапам.</p>
+          </div>
+          <div className="toolbar" style={{ gap: 8 }}>
+            <select value={selectedCity} onChange={(e) => setSelectedCity(e.target.value)}>
+              <option value="global">Глобальные настройки</option>
+              {cityOptions.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <Link to="/app/templates/new" className="ui-btn ui-btn--primary">+ Новый шаблон</Link>
+          </div>
         </header>
 
-        {overview && (
-          <section className="glass page-section">
-            <div className="page-section__header">
-              <div>
-                <h2 className="section-title">Stage templates</h2>
-                <p className="subtitle">Редактируйте шаблоны этапов по городам или глобально.</p>
-              </div>
-              <div className="toolbar toolbar--compact">
-                <select value={stageCity} onChange={(e) => setStageCity(e.target.value)}>
-                  {stageCityOptions.map((opt) => (
-                    <option key={opt.id} value={opt.id}>{opt.name}</option>
-                  ))}
-                </select>
-                <button className="ui-btn ui-btn--primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-                  {saveMutation.isPending ? 'Сохраняем…' : 'Сохранить'}
-                </button>
-              </div>
-            </div>
-            <div className="page-section__content">
-              {(stageCity === 'global' ? overview.global?.stages : (overview.cities || []).find((item: any) => String(item.city?.id) === stageCity)?.stages || []).map((stage: any) => (
-                <article key={stage.key} className="glass glass--subtle list-item">
-                  <div className="list-item__header">
-                    <div>
-                      <strong className="list-item__title">{stage.title}</strong>
-                      <div className="text-muted text-sm">{stage.description}</div>
-                    </div>
-                    <span className={`chip ${stage.is_custom ? 'chip--accent' : ''}`}>{stage.is_custom ? 'custom' : 'default'}</span>
-                  </div>
-                  <textarea
-                    className="form-group__textarea"
-                    rows={4}
-                    value={stageDrafts[stage.key] ?? ''}
-                    onChange={(e) => setStageDrafts((prev) => ({ ...prev, [stage.key]: e.target.value }))}
-                  />
-                </article>
-              ))}
-            </div>
-            {saveMutation.isError && <p className="text-danger">Ошибка: {(saveMutation.error as Error).message}</p>}
-          </section>
-        )}
-
         <section className="glass page-section">
-          {isLoading && <p className="text-muted">Загрузка…</p>}
+          {isLoading && <p className="subtitle">Загрузка…</p>}
           {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
-          {data && (
-            <>
-              <div className="filter-bar">
-                <input
-                  placeholder="Поиск по ключу или тексту"
-                  value={filters.search}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
-                  className="filter-bar__search"
-                />
-                <select
-                  value={filters.city}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, city: e.target.value }))}
-                >
-                  <option value="all">Все города</option>
-                  <option value="global">Только global</option>
-                  {cityFilterOptions.map((city) => (
-                    <option key={city.id} value={city.id}>{city.name}</option>
-                  ))}
-                </select>
-                <select
-                  value={filters.key}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, key: e.target.value }))}
-                >
-                  <option value="">Все ключи</option>
-                  {keyOptions.map((key) => (
-                    <option key={key} value={key}>{key}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="data-grid data-grid--4">
-                <article className="glass glass--interactive data-card">
-                  <div className="data-card__label">Всего шаблонов</div>
-                  <div className="data-card__value">{data.custom_templates.length}</div>
-                </article>
-                <article className="glass glass--interactive data-card">
-                  <div className="data-card__label">Global</div>
-                  <div className="data-card__value">{data.custom_templates.filter((t) => t.is_global).length}</div>
-                </article>
-                <article className="glass glass--interactive data-card">
-                  <div className="data-card__label">Городские</div>
-                  <div className="data-card__value">{data.custom_templates.filter((t) => !t.is_global).length}</div>
-                </article>
-                <article className="glass glass--interactive data-card">
-                  <div className="data-card__label">Missing required (TG)</div>
-                  <div className="data-card__value">{messageTemplatesQuery.data?.missing_required?.length ?? '—'}</div>
-                </article>
-              </div>
 
-              <div className="page-section__header">
-                <div>
-                  <h2 className="section-title">Уведомления: контроль</h2>
-                  <p className="subtitle">Проверка обязательных ключей и покрытие по городам.</p>
-                </div>
-                <Link to="/app/message-templates" className="ui-btn ui-btn--ghost">Открыть уведомления →</Link>
-              </div>
-              {messageTemplatesQuery.isLoading && <p className="text-muted">Загрузка…</p>}
-              {messageTemplatesQuery.isError && (
-                <p className="text-danger">Ошибка: {(messageTemplatesQuery.error as Error).message}</p>
-              )}
-              {messageTemplatesQuery.data && (
-                <div className="data-grid data-grid--2">
-                  <article className="glass glass--interactive data-card">
-                    <div className="data-card__label">Missing required keys</div>
-                    <div className="data-card__value">
-                      {messageTemplatesQuery.data.missing_required.length || 0}
-                    </div>
-                    <div className="data-card__hint">
-                      {messageTemplatesQuery.data.missing_required.length
-                        ? messageTemplatesQuery.data.missing_required.join(', ')
-                        : 'Все обязательные ключи есть'}
-                    </div>
-                  </article>
-                  <article className="glass glass--interactive data-card">
-                    <div className="data-card__label">Coverage gaps</div>
-                    <div className="data-card__value">
-                      {messageTemplatesQuery.data.coverage.length || 0}
-                    </div>
-                    <div className="data-card__hint">
-                      {messageTemplatesQuery.data.coverage.length
-                        ? `Проблемные ключи: ${messageTemplatesQuery.data.coverage
-                            .slice(0, 4)
-                            .map((item) => item.key)
-                            .join(', ')}${messageTemplatesQuery.data.coverage.length > 4 ? '…' : ''}`
-                        : 'Покрытие без пропусков'}
-                    </div>
-                  </article>
-                </div>
-              )}
-
-              <div className="page-section__header">
-                <div>
-                  <h2 className="section-title">Уведомления</h2>
-                  <p className="subtitle">Шаблоны сообщений, которые видят кандидаты и рекрутёры.</p>
-                </div>
-                <Link to="/app/message-templates" className="ui-btn ui-btn--primary">+ Новое уведомление</Link>
-              </div>
-              <div className="data-grid data-grid--4">
-                {stageSpecs.map((stage) => (
-                  <article key={stage.code} className="glass glass--subtle data-card">
-                    <div className="data-card__label">{stage.title}</div>
-                    <div className="data-card__hint">{stage.desc}</div>
-                  </article>
-                ))}
-              </div>
-              <div className="filter-bar">
-                <input
-                  placeholder="Поиск по ключу или тексту"
-                  value={messageFilters.search}
-                  onChange={(e) => setMessageFilters((prev) => ({ ...prev, search: e.target.value }))}
-                  className="filter-bar__search"
-                />
-                <div className="view-toggle">
-                  <button
-                    type="button"
-                    className={`ui-btn ui-btn--sm ${messageFilters.stage === 'all' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
-                    onClick={() => setMessageFilters((prev) => ({ ...prev, stage: 'all' }))}
-                  >
-                    Все этапы
-                  </button>
-                  {stageSpecs.map((stage) => (
-                    <button
-                      key={stage.code}
-                      type="button"
-                      className={`ui-btn ui-btn--sm ${messageFilters.stage === stage.code ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
-                      onClick={() => setMessageFilters((prev) => ({ ...prev, stage: stage.code }))}
-                    >
-                      {stage.title}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {stageSpecs.map((stage) => {
-                const items = groupedTemplates[stage.code] || []
-                if (!items.length) return null
+          {!isLoading && !isError && (
+            <div className="page-section__content" style={{ display: 'grid', gap: 16 }}>
+              {ALL_STAGES.map((stage) => {
+                const keys = groupedKeys[stage] || []
+                if (!keys.length) return null
+                const label = STAGE_LABELS[stage]
+                const collapsed = collapsedStages[stage]
                 return (
-                  <div key={stage.code} className="page-section__content">
-                    <div>
-                      <h3 className="section-title">{stage.title}</h3>
-                      <p className="text-muted">{stage.desc}</p>
+                  <div key={stage}>
+                    <div
+                      style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                      onClick={() => toggleStage(stage)}
+                    >
+                      <div>
+                        <h3 className="section-title" style={{ margin: 0 }}>
+                          {collapsed ? '▸' : '▾'} {label.title}
+                          <span className="text-muted" style={{ fontWeight: 400, fontSize: 13, marginLeft: 8 }}>
+                            ({keys.length})
+                          </span>
+                        </h3>
+                        <p className="text-muted" style={{ margin: '2px 0 0 0' }}>{label.desc}</p>
+                      </div>
                     </div>
-                    <div className="template-grid">
-                      {items.map((tmpl) => (
-                        <div key={tmpl.id} className="glass template-card">
-                          <div className="template-card__header">
-                            <div>
-                              <div className="template-key">
-                                <code>{tmpl.key}</code>
-                              </div>
-                              <div className="template-tags">
-                                <span className="chip">{tmpl.channel?.toUpperCase?.() || 'TG'}</span>
-                                <span className="chip">{tmpl.locale || 'ru'}</span>
-                                <span className="chip">{tmpl.city_name || 'Общий'}</span>
-                                <span className="chip">v{tmpl.version ?? '—'}</span>
-                              </div>
-                            </div>
-                            <label className="template-toggle">
-                              <input
-                                type="checkbox"
-                                checked={Boolean(tmpl.is_active)}
-                                onChange={() => toggleMutation.mutate(tmpl)}
-                                disabled={toggleMutation.isPending}
-                              />
-                              <span>{tmpl.is_active ? 'Активен' : 'Отключён'}</span>
-                            </label>
-                          </div>
-                          <div className="template-preview">{tmpl.preview || '—'}</div>
-                          <div className="template-actions">
-                            <Link to="/app/message-templates" className="ui-btn ui-btn--ghost ui-btn--sm">
-                              Редактировать
-                            </Link>
-                            <button
-                              className="ui-btn ui-btn--danger ui-btn--sm"
-                              onClick={() => window.confirm('Удалить шаблон?') && deleteMutation.mutate(tmpl.id)}
-                              disabled={deleteMutation.isPending}
-                            >
-                              Удалить
-                            </button>
-                          </div>
+
+                    {!collapsed && (
+                      <div style={{ marginTop: 10 }}>
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'minmax(240px, 2fr) minmax(180px, 1fr) minmax(160px, 0.6fr)',
+                            gap: 12,
+                            padding: '6px 12px',
+                            fontSize: 11,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.04em',
+                            color: 'var(--muted)',
+                            borderBottom: '1px solid rgba(255,255,255,0.08)',
+                          }}
+                        >
+                          <span>Шаблон</span>
+                          <span>Статус</span>
+                          <span style={{ textAlign: 'right' }}>Действия</span>
                         </div>
-                      ))}
-                    </div>
+                        {keys.map((key) => renderRow(key))}
+                      </div>
+                    )}
                   </div>
                 )
               })}
-              {filteredMessageTemplates.length === 0 && (
-                <p className="text-muted">По выбранным фильтрам уведомления не найдены.</p>
-              )}
-
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Ключ</th>
-                    <th>Город</th>
-                    <th>Preview</th>
-                    <th>Длина</th>
-                    <th>Действия</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredTemplates.map((tmpl) => (
-                    <tr key={tmpl.id}>
-                      <td>{tmpl.id}</td>
-                      <td><code className="text-sm">{tmpl.key}</code></td>
-                      <td>{tmpl.city_name || (tmpl.is_global ? 'Global' : '—')}</td>
-                      <td className="text-muted">{tmpl.preview || '—'}</td>
-                      <td>{tmpl.length ?? '—'}</td>
-                      <td>
-                        <Link to="/app/templates/$templateId/edit" params={{ templateId: String(tmpl.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
-                          Редактировать
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {filteredTemplates.length === 0 && (
-                <div className="empty-state">
-                  <p className="empty-state__text">По выбранным фильтрам шаблоны не найдены.</p>
-                </div>
-              )}
-            </>
+            </div>
           )}
         </section>
       </div>

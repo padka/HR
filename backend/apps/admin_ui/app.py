@@ -506,17 +506,82 @@ def create_app() -> FastAPI:
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
     app.include_router(api.router, dependencies=[Depends(require_principal)])
     app.include_router(assignments.router, prefix="/api/v1")
-    app.include_router(slot_assignments_api.router, prefix="/api")
+    app.include_router(slot_assignments_api.router)
     app.include_router(reschedule_requests.router, prefix="/api/v1/admin", dependencies=[Depends(require_principal)])
 
     @app.get("/api/templates/list", dependencies=[Depends(require_principal)])
     async def list_templates():
-        templates_dir = BASE_DIR / "backend" / "apps" / "bot" / "templates"
-        items = []
-        if templates_dir.exists():
-            for f in templates_dir.glob("*.html"):
-                items.append({"id": f.stem, "name": f.name})
-        return JSONResponse({"items": items})
+        from backend.domain.template_stages import CITY_TEMPLATE_STAGES
+        from backend.apps.bot.defaults import DEFAULT_TEMPLATES
+        from backend.domain.models import City, MessageTemplate
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        async with async_session() as session:
+            cities = (
+                await session.scalars(
+                    select(City)
+                    .where(City.active.is_(True))
+                    .options(selectinload(City.message_templates))
+                    .order_by(City.name)
+                )
+            ).all()
+
+            all_custom = (
+                await session.scalars(
+                    select(MessageTemplate)
+                    .where(MessageTemplate.is_active.is_(True))
+                    .order_by(MessageTemplate.key)
+                )
+            ).all()
+
+        def _build_stages(city_id):
+            """Build stage items for a city (or global when city_id=None)."""
+            # Index DB templates by key for this scope
+            city_tmpls = {
+                t.key: t for t in all_custom
+                if t.city_id == city_id
+            }
+            stages = []
+            for stage in CITY_TEMPLATE_STAGES:
+                db_tpl = city_tmpls.get(stage.key)
+                value = db_tpl.body_md if db_tpl else stage.default_text
+                stages.append({
+                    "key": stage.key,
+                    "title": stage.title,
+                    "value": value,
+                    "default": stage.default_text,
+                    "is_custom": db_tpl is not None,
+                })
+            return stages
+
+        city_entries = []
+        for city in cities:
+            city_entries.append({
+                "city": {"id": city.id, "name": city.name, "tz": city.tz},
+                "stages": _build_stages(city.id),
+            })
+
+        custom_templates = []
+        for t in all_custom:
+            city_obj = next((c for c in cities if c.id == t.city_id), None)
+            custom_templates.append({
+                "id": t.id,
+                "key": t.key,
+                "city_id": t.city_id,
+                "city_name": city_obj.name if city_obj else None,
+                "is_global": t.city_id is None,
+                "preview": (t.body_md or "")[:120],
+                "length": len(t.body_md or ""),
+            })
+
+        return JSONResponse({
+            "overview": {
+                "cities": city_entries,
+                "global": {"stages": _build_stages(None)},
+            },
+            "custom_templates": custom_templates,
+        })
 
     if SPA_DIST_DIR.exists():
         @app.get("/app", include_in_schema=False)

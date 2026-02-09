@@ -11,32 +11,50 @@ from sqlalchemy import select
 
 from backend.core.auth import verify_password, create_access_token
 from backend.core.db import async_session
-from backend.apps.admin_ui.security import SESSION_KEY, Principal, PrincipalType
+from backend.apps.admin_ui.security import SESSION_KEY, Principal, PrincipalType, limiter, get_client_ip
+from backend.core.audit import log_audit_action, AuditContext
 from backend.domain.auth_account import AuthAccount
 from backend.domain.models import Recruiter
 from backend.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+
+def _get_audit_context(request: Request, username: str) -> AuditContext:
+    return AuditContext(
+        username=username,
+        ip_address=get_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+# Rate limit key function for failed login attempts - uses IP to prevent brute force
+def _login_key_func(request: Request) -> str:
+    return f"login:{get_client_ip(request)}"
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/token")
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit("5/minute", key_func=_login_key_func)
+async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     """
     OAuth2 compatible token login, get an access token for future requests.
     """
     settings = get_settings()
     
+    audit_ctx = _get_audit_context(request, form_data.username)
+
     # 1. Check against hardcoded admin credentials (if configured)
-    if (settings.admin_username and 
-        form_data.username == settings.admin_username and 
+    if (settings.admin_username and
+        form_data.username == settings.admin_username and
         form_data.password == settings.admin_password):
-        
+
         access_token_expires = timedelta(minutes=settings.state_ttl_seconds / 60) # use existing TTL or default 30m
         access_token = create_access_token(
             data={"sub": form_data.username}, expires_delta=access_token_expires
         )
+        await log_audit_action("login_success", "auth", None, ctx=audit_ctx, changes={"method": "token", "role": "admin"})
         return {"access_token": access_token, "token_type": "bearer"}
 
     # 2. Check against database AuthAccount
@@ -45,16 +63,18 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             select(AuthAccount).where(AuthAccount.username == form_data.username, AuthAccount.is_active.is_(True))
         )
         if not account or not verify_password(form_data.password, account.password_hash):
+            await log_audit_action("login_failed", "auth", None, ctx=audit_ctx, changes={"method": "token", "reason": "invalid_credentials"})
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect username or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-            
+
         access_token_expires = timedelta(minutes=settings.state_ttl_seconds / 60)
         access_token = create_access_token(
             data={"sub": account.username}, expires_delta=access_token_expires
         )
+        await log_audit_action("login_success", "auth", account.id, ctx=audit_ctx, changes={"method": "token", "role": account.principal_type})
         return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -66,39 +86,48 @@ async def _resolve_principal(account: AuthAccount) -> Principal:
 
 
 @router.post("/login")
+@limiter.limit("5/minute", key_func=_login_key_func)
 async def login(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
     redirect_to: Optional[str] = Form("/"),
 ):
+    audit_ctx = _get_audit_context(request, username)
+
     async with async_session() as session:
         account = await session.scalar(
             select(AuthAccount).where(AuthAccount.username == username, AuthAccount.is_active.is_(True))
         )
         if not account or not verify_password(password, account.password_hash):
+            await log_audit_action("login_failed", "auth", None, ctx=audit_ctx, changes={"method": "form", "reason": "invalid_credentials"})
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
         principal = await _resolve_principal(account)
         # optional: ensure recruiter exists
         if principal.type == "recruiter":
             recruiter = await session.get(Recruiter, principal.id)
             if not recruiter:
+                await log_audit_action("login_failed", "auth", account.id, ctx=audit_ctx, changes={"method": "form", "reason": "recruiter_not_found"})
                 raise HTTPException(status_code=401, detail="Recruiter not found")
             recruiter.last_seen_at = datetime.now(timezone.utc)
             await session.commit()
 
+    await log_audit_action("login_success", "auth", account.id, ctx=audit_ctx, changes={"method": "form", "role": principal.type})
     request.session[SESSION_KEY] = {"type": principal.type, "id": principal.id}
-    
+
     # Security fix: prevent open redirects
     target = redirect_to or "/"
     if not target.startswith("/") or target.startswith("//"):
         target = "/"
-        
+
     return RedirectResponse(url=target, status_code=303)
 
 
 @router.post("/logout")
 async def logout(request: Request):
+    principal_data = request.session.get(SESSION_KEY)
+    username = f"{principal_data.get('type', 'unknown')}:{principal_data.get('id', 'unknown')}" if principal_data else "anonymous"
+    await log_audit_action("logout", "auth", None, ctx=_get_audit_context(request, username))
     request.session.pop(SESSION_KEY, None)
     return RedirectResponse(url="/auth/login?logged_out=1", status_code=303)
 

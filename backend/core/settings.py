@@ -442,6 +442,8 @@ def get_settings() -> Settings:
     bot_token = os.getenv("BOT_TOKEN", "")
     bot_api_base = os.getenv("BOT_API_BASE", "").strip()
     bot_backend_url = os.getenv("BOT_BACKEND_URL", "").strip()
+    if not bot_backend_url and environment in {"development", "local"}:
+        bot_backend_url = "http://localhost:8000"
     redis_url = os.getenv("REDIS_URL", "").strip()
     if redis_url.startswith("redis://redis_notifications") and environment != "production":
         redis_url = redis_url.replace("redis_notifications", "localhost", 1)
@@ -507,7 +509,7 @@ def get_settings() -> Settings:
     if notification_retry_max_seconds < notification_retry_base_seconds:
         notification_retry_max_seconds = notification_retry_base_seconds
     notification_max_attempts = _get_int("NOTIFICATION_MAX_ATTEMPTS", 8, minimum=1)
-    rejection_template_key = os.getenv("REJECTION_TEMPLATE_KEY", "rejection_generic").strip() or "rejection_generic"
+    rejection_template_key = os.getenv("REJECTION_TEMPLATE_KEY", "candidate_rejection").strip() or "candidate_rejection"
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
     log_json = _get_bool("LOG_JSON", default=False)
     log_file = os.getenv("LOG_FILE", "").strip()

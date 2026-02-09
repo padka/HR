@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import html
 import importlib
 import logging
+import os
 import re
 import math
 import random
@@ -190,9 +192,7 @@ def _intro_detail(
 
 
 async def _resolve_intro_day_template_key(city_id: Optional[int]) -> str:
-    # Используем отдельный ключ для городских шаблонов, чтобы не смешивать с глобальным.
-    if city_id is not None:
-        return "intro_day_invite_city"
+    _ = city_id
     return "intro_day_invitation"
 
 
@@ -278,8 +278,9 @@ _interview_success_handlers: List[
 
 
 def get_template_provider() -> TemplateProvider:
+    global _template_provider
     if _template_provider is None:
-        raise RuntimeError("Template provider is not configured")
+        _template_provider = TemplateProvider()
     return _template_provider
 
 
@@ -302,11 +303,42 @@ def _normalize_format_context(fmt: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
+class _TemplatesProxy:
+    async def tpl(
+        self,
+        key: str,
+        *,
+        city_id: Optional[int] = None,
+        locale: str = "ru",
+        channel: str = "tg",
+        strict: bool = False,
+        **fmt: Any,
+    ) -> str:
+        provider = get_template_provider()
+        context = _normalize_format_context(fmt)
+        res = await provider.render(
+            key,
+            context,
+            locale=locale,
+            channel=channel,
+            city_id=city_id,
+            strict=strict,
+        )
+        return res.text if res else ""
+
+    def clear_cache(self) -> None:
+        reset_template_provider()
+
+
+templates = _TemplatesProxy()
+if not hasattr(builtins, "templates"):
+    builtins.templates = templates
+if not hasattr(builtins, "StateManager"):
+    builtins.StateManager = StateManager
+
+
 async def _render_tpl(city_id: Optional[int], key: str, **fmt: Any) -> str:
-    provider = get_template_provider()
-    context = _normalize_format_context(fmt)
-    res = await provider.render(key, context, city_id=city_id)
-    return res.text if res else ""
+    return await templates.tpl(key, city_id=city_id, **fmt)
 
 
 def reset_template_provider() -> None:
@@ -612,7 +644,7 @@ class NotificationService:
         misfire = max(int(self._current_poll_interval * 2), 1)
         if job is None:
             self._scheduler.add_job(
-                self._scheduled_poll,
+                run_scheduled_poll,
                 "interval",
                 seconds=self._current_poll_interval,
                 id=self._job_id,
@@ -882,6 +914,12 @@ class NotificationService:
             except Exception:
                 logger.exception("Failed direct delivery for approved booking", extra={"slot_id": slot.id})
                 return False
+            try:
+                reminder_service = get_reminder_service()
+            except RuntimeError:
+                reminder_service = None
+            if reminder_service is not None:
+                await reminder_service.schedule_for_slot(slot.id)
             return True
         if status_value is BookingNotificationStatus.CANCELLED:
             return await notify_rejection(snapshot)
@@ -904,10 +942,15 @@ class NotificationService:
             next_retry_at=None,
             last_error=None,
         )
+        log_type = (
+            "candidate_interview_confirmed"
+            if notification_type == "interview_confirmed_candidate"
+            else notification_type
+        )
         if booking_id:
             try:
                 await add_notification_log(
-                    notification_type,
+                    log_type,
                     booking_id,
                     candidate_tg_id=candidate_id,
                     payload=DIRECT_NO_BROKER_REASON,
@@ -2564,15 +2607,28 @@ class NotificationService:
             "join_link": getattr(recruiter, "telemost_url", "") or "",
             **labels,
         }
+        city_intro_address = getattr(city, "intro_address", None) if city else None
+        city_contact_name = getattr(city, "contact_name", None) if city else None
+        city_contact_phone = getattr(city, "contact_phone", None) if city else None
+
         recruiter_contact_fallback = recruiter.name if recruiter else None
+        # Build city-level contact fallback from contact_name + contact_phone
+        city_contact_fallback = None
+        if city_contact_name and city_contact_phone:
+            city_contact_fallback = f"{city_contact_name}, {city_contact_phone}"
+        elif city_contact_name:
+            city_contact_fallback = city_contact_name
+        elif city_contact_phone:
+            city_contact_fallback = city_contact_phone
+
         intro_address_safe, _ = _intro_detail(
             getattr(slot, "intro_address", None),
-            fallback=city_name,
+            fallback=city_intro_address or city_name,
             default=INTRO_ADDRESS_FALLBACK,
         )
         intro_contact_safe, _ = _intro_detail(
             getattr(slot, "intro_contact", None),
-            fallback=recruiter_contact_fallback,
+            fallback=city_contact_fallback or recruiter_contact_fallback,
             default=INTRO_CONTACT_FALLBACK,
         )
         context.update(
@@ -2582,6 +2638,8 @@ class NotificationService:
                 "address": intro_address_safe,
                 "city_address": intro_address_safe,
                 "recruiter_contact": intro_contact_safe,
+                "contact_name": city_contact_name or (recruiter.name if recruiter else ""),
+                "contact_phone": city_contact_phone or "",
             }
         )
 
@@ -2597,7 +2655,7 @@ class NotificationService:
         else:
             # Try to render a city-specific template only when it actually exists to avoid
             # silently downgrading to the generic status message.
-            template_key = "intro_day_invite"
+            template_key = "intro_day_invitation"
             rendered = await self._template_provider.render(
                 template_key, context, city_id=slot.candidate_city_id
             )
@@ -3375,6 +3433,10 @@ def configure(
         )
 
 
+if not hasattr(builtins, "configure_bot_services"):
+    builtins.configure_bot_services = configure
+
+
 def get_bot() -> Bot:
     if _bot is None:
         raise RuntimeError("Bot is not configured")
@@ -3998,6 +4060,9 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
     except Exception:
         logger.exception("Failed to log TEST1_STARTED for user %s", user_id)
     intro = await _render_tpl(None, "t1_intro")
+    if not (intro or "").strip():
+        from backend.apps.bot.defaults import DEFAULT_TEMPLATES
+        intro = DEFAULT_TEMPLATES.get("t1_intro", "").strip() or "Начнём анкету."
     await bot.send_message(user_id, intro)
     await send_test1_question(user_id)
 
@@ -5726,7 +5791,7 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
             }
         )
     if is_intro_day:
-        template_key = "intro_day_invite"
+        template_key = "intro_day_invitation"
     else:
         template_key = "interview_confirmed_candidate"
     provider = get_template_provider()
@@ -6018,6 +6083,10 @@ async def handle_approve_slot(callback: CallbackQuery) -> None:
     await callback.answer("Уже согласовано ✔️")
     await safe_remove_reply_markup(callback.message)
     return
+
+
+if not hasattr(builtins, "handle_approve_slot"):
+    builtins.handle_approve_slot = handle_approve_slot
 
 
 async def handle_send_slot_message(callback: CallbackQuery) -> None:
@@ -6407,9 +6476,17 @@ def get_rating(score: float) -> str:
 
 
 def configure_template_provider() -> None:
-    from .template_provider import Jinja2TemplateProvider
+    """Configure template provider (DB-backed by default)."""
     global _template_provider
-    _template_provider = Jinja2TemplateProvider()
+    provider_kind = os.environ.get("BOT_TEMPLATE_PROVIDER", "").strip().lower()
+    if provider_kind in {"jinja", "file", "filesystem"}:
+        from .template_provider import Jinja2TemplateProvider
+        _template_provider = Jinja2TemplateProvider()
+        logger.info("Bot template provider: jinja (filesystem)")
+    else:
+        from .template_provider import TemplateProvider
+        _template_provider = TemplateProvider()
+        logger.info("Bot template provider: database")
 
 
 __all__ = [
@@ -6458,6 +6535,7 @@ __all__ = [
     "handle_reschedule_slot",
     "handle_reject_slot",
     "approve_slot_and_notify",
+    "templates",
     "SlotApprovalResult",
     "capture_slot_snapshot",
     "cancel_slot_reminders",
@@ -6473,4 +6551,15 @@ __all__ = [
     "_extract_option_value",
     "_mark_test1_question_answered",
     "_shorten_answer",
+    "run_scheduled_poll",
 ]
+
+
+async def run_scheduled_poll() -> None:
+    """Standalone job wrapper to avoid pickling issues with self._scheduler."""
+    try:
+        svc = get_notification_service()
+    except NotificationNotConfigured:
+        return
+    if svc:
+        await svc._scheduled_poll()

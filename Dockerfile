@@ -6,7 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1000 appgroup \
+    && useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser
 
 WORKDIR /app
 
@@ -25,8 +27,16 @@ FROM base AS prod
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
-COPY --from=frontend-build /build/frontend/dist /app/frontend/dist
+COPY --chown=appuser:appgroup . .
+COPY --from=frontend-build --chown=appuser:appgroup /build/frontend/dist /app/frontend/dist
+
+# Create data directory with proper permissions
+RUN mkdir -p /app/data/logs && chown -R appuser:appgroup /app/data
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/ready || exit 1
 
 CMD ["uvicorn", "backend.apps.admin_ui.app:app", "--host", "0.0.0.0", "--port", "8000"]
 
@@ -35,6 +45,11 @@ FROM base AS dev
 COPY requirements-dev.txt .
 RUN pip install --no-cache-dir -r requirements-dev.txt
 
-COPY . .
+COPY --chown=appuser:appgroup . .
+
+# Create data directory with proper permissions
+RUN mkdir -p /app/data/logs && chown -R appuser:appgroup /app/data
+
+USER appuser
 
 CMD ["uvicorn", "backend.apps.admin_ui.app:app", "--host", "0.0.0.0", "--port", "8000"]

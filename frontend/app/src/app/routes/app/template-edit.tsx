@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { STAGE_LABELS, TEMPLATE_META, templateTitle, type TemplateStage } from './template_meta'
 
 type City = { id: number; name: string }
 type TemplateDetail = {
@@ -11,6 +12,7 @@ type TemplateDetail = {
   text: string
   city_id?: number | null
   is_global?: boolean
+  is_active?: boolean
 }
 
 const PLACEHOLDERS = [
@@ -24,25 +26,29 @@ const PLACEHOLDERS = [
   '{{whatsapp_link}}',
 ]
 
-const DEFAULT_PREVIEW = {
-  candidate_fio: 'Иван Иванов',
-  city_name: 'Москва',
-  slot_date_local: '21.09',
-  slot_time_local: '10:30',
-  recruiter_name: 'Михаил',
-  recruiter_phone: '+7 (900) 000-00-00',
-  address: 'ул. Пушкина, 10',
-  whatsapp_link: 'https://wa.me/79000000000',
-}
-
-function renderPreview(text: string, preview: Record<string, string>) {
-  let output = text || ''
-  Object.entries(preview).forEach(([key, value]) => {
-    const token = `{{${key}}}`
-    output = output.split(token).join(value)
+const TEMPLATE_GROUPS = (() => {
+  const grouped = new Map<TemplateStage, Array<{ key: string; title: string; desc: string }>>()
+  Object.entries(TEMPLATE_META).forEach(([key, meta]) => {
+    const items = grouped.get(meta.stage) || []
+    items.push({ key, title: meta.title, desc: meta.desc })
+    grouped.set(meta.stage, items)
   })
-  return output
-}
+  const stageOrder = Object.keys(STAGE_LABELS) as TemplateStage[]
+  stageOrder.forEach((stage) => {
+    const items = grouped.get(stage)
+    if (items) {
+      items.sort((a, b) => a.title.localeCompare(b.title, 'ru'))
+    }
+  })
+  return stageOrder
+    .map((stage) => ({
+      stage,
+      title: STAGE_LABELS[stage].title,
+      desc: STAGE_LABELS[stage].desc,
+      items: grouped.get(stage) || [],
+    }))
+    .filter((group) => group.items.length > 0)
+})()
 
 export function TemplateEditPage() {
   const params = useParams({ from: '/app/templates/$templateId/edit' })
@@ -53,15 +59,27 @@ export function TemplateEditPage() {
     queryKey: ['cities'],
     queryFn: () => apiFetch('/cities'),
   })
-  const { data: presets } = useQuery<Record<string, string>>({
-    queryKey: ['template-presets'],
-    queryFn: () => apiFetch('/template_presets'),
-  })
-
   const { data: contextMap } = useQuery<Record<string, string[]>>({
     queryKey: ['template-context-keys'],
     queryFn: () => apiFetch('/message-templates/context-keys'),
   })
+
+  const detailQuery = useQuery<TemplateDetail>({
+    queryKey: ['template-detail', templateId],
+    queryFn: () => apiFetch(`/templates/${templateId}`),
+  })
+
+  // State declarations BEFORE any useMemo that depends on them
+  const [form, setForm] = useState({
+    key: '',
+    text: '',
+    city_id: '',
+    is_active: true,
+  })
+  const [formError, setFormError] = useState<string | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  const charCount = form.text.length
 
   const availableVars = useMemo(() => {
     if (!contextMap) return []
@@ -71,27 +89,9 @@ export function TemplateEditPage() {
     else if (k.includes('interview') || k.includes('reschedule') || k.includes('invite')) type = 'interview'
     else if (k.includes('remind') || k.includes('confirm')) type = 'reminder'
     else if (k.includes('reject') || k.includes('fail')) type = 'rejection'
-    
+
     return contextMap[type] || contextMap['other'] || []
   }, [form.key, contextMap])
-
-  const detailQuery = useQuery<TemplateDetail>({
-    queryKey: ['template-detail', templateId],
-    queryFn: () => apiFetch(`/templates/${templateId}`),
-  })
-
-  const [form, setForm] = useState({
-    key: '',
-    text: '',
-    city_id: '',
-    is_global: true,
-  })
-  const [formError, setFormError] = useState<string | null>(null)
-  const [presetKey, setPresetKey] = useState('')
-  const [cityFilter, setCityFilter] = useState('')
-  const [preview, setPreview] = useState(DEFAULT_PREVIEW)
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const hasCities = (cities?.length || 0) > 0
 
   useEffect(() => {
     if (!detailQuery.data) return
@@ -99,29 +99,27 @@ export function TemplateEditPage() {
       key: detailQuery.data.key,
       text: detailQuery.data.text,
       city_id: detailQuery.data.city_id != null ? String(detailQuery.data.city_id) : '',
-      is_global: Boolean(detailQuery.data.is_global),
+      is_active: detailQuery.data.is_active ?? true,
     })
   }, [detailQuery.data])
-
-  useEffect(() => {
-    if (!hasCities) {
-      setForm((prev) => ({ ...prev, is_global: true, city_id: '' }))
-    }
-  }, [hasCities])
 
   const mutation = useMutation({
     mutationFn: async () => {
       setFormError(null)
+      if (!form.key) {
+        throw new Error('Выберите тип сообщения')
+      }
       if (!form.text.trim()) {
         throw new Error('Введите текст шаблона')
-      }
-      if (!form.is_global && !form.city_id) {
-        throw new Error('Выберите город или отметьте шаблон как глобальный')
       }
       const payload = {
         key: form.key,
         text: form.text,
-        city_id: form.is_global ? null : form.city_id ? Number(form.city_id) : null,
+        city_id: form.city_id ? Number(form.city_id) : null,
+        locale: 'ru',
+        channel: 'tg',
+        version: 1,
+        is_active: form.is_active,
       }
       return apiFetch(`/templates/${templateId}`, { method: 'PUT', body: JSON.stringify(payload) })
     },
@@ -145,12 +143,13 @@ export function TemplateEditPage() {
     onSuccess: () => navigate({ to: '/app/templates' }),
   })
 
-  const cityOptions = useMemo(() => (cities || []).map((c) => ({ value: c.id, label: c.name })), [cities])
-  const filteredCities = useMemo(() => {
-    if (!cityFilter.trim()) return cityOptions
-    const needle = cityFilter.toLowerCase()
-    return cityOptions.filter((c) => c.label.toLowerCase().includes(needle))
-  }, [cityFilter, cityOptions])
+  const cityOptions = useMemo(
+    () => [{ value: '', label: 'Общий' }, ...(cities || []).map((c) => ({ value: String(c.id), label: c.name }))],
+    [cities],
+  )
+
+  const templateGroups = TEMPLATE_GROUPS
+  const selectedMeta = form.key ? TEMPLATE_META[form.key] : undefined
 
   const insertToken = (token: string) => {
     const el = textareaRef.current
@@ -171,14 +170,17 @@ export function TemplateEditPage() {
   }
 
   const [serverPreview, setServerPreview] = useState<string | null>(null)
-  
+
   const previewMutation = useMutation({
     mutationFn: async () => apiFetch('/message-templates/preview', {
-        method: 'POST', 
-        body: JSON.stringify({ text: form.text })
+      method: 'POST',
+      body: JSON.stringify({ text: form.text }),
     }),
-    onSuccess: (data) => setServerPreview(data.html)
+    onSuccess: (data: any) => setServerPreview(data.html),
   })
+
+  const title = templateTitle(form.key)
+  const hasHumanTitle = title !== form.key
 
   return (
     <RoleGuard allow={['admin']}>
@@ -186,40 +188,52 @@ export function TemplateEditPage() {
         <div className="glass panel" style={{ display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <div>
-              <h1 className="title">Редактирование шаблона</h1>
-              <p className="subtitle">ID: {templateId}</p>
+              <h1 className="title">
+                {hasHumanTitle ? title : 'Редактирование шаблона'}
+              </h1>
+              <p className="subtitle">
+                ID: {templateId}
+                {hasHumanTitle && <> &middot; <code>{form.key}</code></>}
+              </p>
             </div>
             <Link to="/app/templates" className="glass action-link">← Назад</Link>
           </div>
 
-          {detailQuery.isLoading && <p className="subtitle">Загрузка…</p>}
+          {detailQuery.isLoading && <p className="subtitle">Загрузка...</p>}
           {detailQuery.isError && <p style={{ color: '#f07373' }}>Ошибка: {(detailQuery.error as Error).message}</p>}
 
-          {!detailQuery.isLoading && (
+          {!detailQuery.isLoading && detailQuery.data && (
             <>
-              <label style={{ display: 'grid', gap: 6 }}>
-                Ключ
-                <input value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} />
-              </label>
+              <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  Город
+                  <select value={form.city_id} onChange={(e) => setForm({ ...form, city_id: e.target.value })}>
+                    {cityOptions.map((c) => (
+                      <option key={c.value || 'global'} value={c.value}>{c.label}</option>
+                    ))}
+                  </select>
+                </label>
 
-              <label style={{ display: 'grid', gap: 6 }}>
-                Быстрый пресет
-                <select
-                  value={presetKey}
-                  onChange={(e) => {
-                    const key = e.target.value
-                    setPresetKey(key)
-                    if (key && presets?.[key]) {
-                      setForm((prev) => ({ ...prev, key, text: presets[key] }))
-                    }
-                  }}
-                >
-                  <option value="">— не выбирать —</option>
-                  {presets && Object.keys(presets).map((key) => (
-                    <option key={key} value={key}>{key}</option>
-                  ))}
-                </select>
-              </label>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  Тип сообщения
+                  <select value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })}>
+                    <option value="">— выберите тип —</option>
+                    {templateGroups.map((group) => (
+                      <optgroup key={group.stage} label={group.title}>
+                        {group.items.map((item) => (
+                          <option key={item.key} value={item.key}>{item.title}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    {form.key && !selectedMeta && (
+                      <optgroup label="Другое">
+                        <option value={form.key}>{form.key}</option>
+                      </optgroup>
+                    )}
+                  </select>
+                  {selectedMeta && <span className="subtitle">{selectedMeta.desc}</span>}
+                </label>
+              </div>
 
               <label style={{ display: 'grid', gap: 6 }}>
                 Текст шаблона
@@ -230,11 +244,18 @@ export function TemplateEditPage() {
                   onChange={(e) => setForm({ ...form, text: e.target.value })}
                 />
                 <div className="action-row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  {availableVars.map((v) => (
-                    <button key={v} type="button" className="ui-btn ui-btn--ghost" onClick={() => insertToken(`{{${v}}}`)}>
-                      {v}
-                    </button>
-                  ))}
+                  {availableVars.length > 0
+                    ? availableVars.map((v) => (
+                        <button key={v} type="button" className="ui-btn ui-btn--ghost" onClick={() => insertToken(`{{${v}}}`)}>
+                          {v}
+                        </button>
+                      ))
+                    : PLACEHOLDERS.map((token) => (
+                        <button key={token} type="button" className="ui-btn ui-btn--ghost" onClick={() => insertToken(token)}>
+                          {token}
+                        </button>
+                      ))
+                  }
                 </div>
                 <div className="action-row" style={{ justifyContent: 'space-between' }}>
                   <span className="subtitle">Символы: {charCount} / 4096</span>
@@ -242,69 +263,56 @@ export function TemplateEditPage() {
                 </div>
               </label>
 
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={form.is_global}
-                  onChange={(e) => setForm({ ...form, is_global: e.target.checked })}
-                  disabled={!hasCities}
-                />
-                Глобальный шаблон
-              </label>
-
-              {!form.is_global && (
-                <label style={{ display: 'grid', gap: 6 }}>
-                  Город
-                  <input
-                    placeholder="Поиск по городам…"
-                    value={cityFilter}
-                    onChange={(e) => setCityFilter(e.target.value)}
-                  />
-                  <select value={form.city_id} onChange={(e) => setForm({ ...form, city_id: e.target.value })}>
-                    <option value="">— выберите —</option>
-                    {filteredCities.map((c) => (
-                      <option key={c.value} value={String(c.value)}>{c.label}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
               <details className="glass panel--tight">
                 <summary>Предпросмотр (Jinja2)</summary>
                 <div style={{ padding: 12 }}>
-                    <button 
-                        type="button"
-                        className="ui-btn ui-btn--ghost ui-btn--sm" 
-                        onClick={() => previewMutation.mutate()} 
-                        disabled={previewMutation.isPending}
-                    >
-                        {previewMutation.isPending ? 'Загрузка...' : 'Обновить'}
-                    </button>
-                    {serverPreview && (
-                        <div 
-                            className="glass" 
-                            style={{ marginTop: 12, padding: 12, whiteSpace: 'pre-wrap' }} 
-                            dangerouslySetInnerHTML={{ __html: serverPreview }} 
-                        />
-                    )}
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn--ghost ui-btn--sm"
+                    onClick={() => previewMutation.mutate()}
+                    disabled={previewMutation.isPending}
+                  >
+                    {previewMutation.isPending ? 'Загрузка...' : 'Обновить'}
+                  </button>
+                  {serverPreview && (
+                    <div
+                      className="glass"
+                      style={{ marginTop: 12, padding: 12, whiteSpace: 'pre-wrap' }}
+                      dangerouslySetInnerHTML={{ __html: serverPreview }}
+                    />
+                  )}
                 </div>
               </details>
 
-              <div className="action-row">
-                <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-                  {mutation.isPending ? 'Сохраняем…' : 'Сохранить'}
-                </button>
-                <button
-                  className="ui-btn ui-btn--danger"
-                  onClick={() => window.confirm('Удалить шаблон?') && deleteMutation.mutate()}
-                  disabled={deleteMutation.isPending}
-                >
-                  {deleteMutation.isPending ? 'Удаляем…' : 'Удалить'}
-                </button>
+              <div className="action-row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={form.is_active}
+                    onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
+                  />
+                  Активен
+                </label>
+                <div className="action-row">
+                  <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+                    {mutation.isPending ? 'Сохраняем...' : 'Сохранить'}
+                  </button>
+                  <button
+                    className="ui-btn ui-btn--danger"
+                    onClick={() => window.confirm('Удалить шаблон?') && deleteMutation.mutate()}
+                    disabled={deleteMutation.isPending}
+                  >
+                    {deleteMutation.isPending ? 'Удаляем...' : 'Удалить'}
+                  </button>
+                </div>
               </div>
               {formError && <p style={{ color: '#f07373' }}>Ошибка: {formError}</p>}
               {deleteMutation.isError && <p style={{ color: '#f07373' }}>Ошибка: {(deleteMutation.error as Error).message}</p>}
             </>
+          )}
+
+          {!detailQuery.isLoading && !detailQuery.data && !detailQuery.isError && (
+            <p className="text-muted">Шаблон не найден.</p>
           )}
         </div>
       </div>

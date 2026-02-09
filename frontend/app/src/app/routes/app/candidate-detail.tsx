@@ -110,7 +110,7 @@ const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
   test1_completed: { label: 'Тест 1 пройден', tone: 'success' },
   waiting_slot: { label: 'Ожидает слот', tone: 'warning' },
   stalled_waiting_slot: { label: 'Застрял (ожидание слота)', tone: 'warning' },
-  slot_pending: { label: 'Выбрал время, ждёт подтверждения', tone: 'warning' },
+  slot_pending: { label: 'Ожидает подтверждения времени', tone: 'info' },
   interview_scheduled: { label: 'Собеседование назначено', tone: 'info' },
   interview_confirmed: { label: 'Собеседование подтверждено', tone: 'info' },
   interview_declined: { label: 'Отказ на собеседовании', tone: 'danger' },
@@ -456,7 +456,7 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
             <div>
 
-              <h2 className="modal__title">Назначить собеседование</h2>
+              <h2 className="modal__title">Предложить время собеседования</h2>
 
               <p className="modal__subtitle">
 
@@ -485,6 +485,10 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
 
           <div className="modal__body">
+
+            <p className="text-muted text-sm" style={{ marginTop: 0 }}>
+              Кандидату придёт предложение времени. После подтверждения отправится приглашение на собеседование.
+            </p>
 
             <div className="form-grid">
 
@@ -542,7 +546,7 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
               <label className="form-group">
 
-                <span className="form-group__label">Персональное сообщение (опционально)</span>
+                <span className="form-group__label">Сообщение кандидату (опционально)</span>
 
                 <textarea
 
@@ -552,7 +556,7 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
                   onChange={(e) => setForm({ ...form, custom_message: e.target.value })}
 
-                  placeholder="Введите текст сообщения для кандидата..."
+                  placeholder="Например: Мы предлагаем собеседование в это время. Подойдёт ли вам?"
 
                 />
 
@@ -576,7 +580,7 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
             >
 
-              {mutation.isPending ? 'Назначаем...' : 'Назначить собеседование'}
+              {mutation.isPending ? 'Отправляем...' : 'Отправить предложение'}
 
             </button>
 
@@ -970,8 +974,9 @@ export function CandidateDetailPage() {
   const canScheduleIntroDay = Boolean(detail?.telegram_id) && !hasIntroDay && test2Passed && isWaitingIntroDay
   const canScheduleInterview = Boolean(detail?.telegram_id) && Boolean(scheduleAction)
     && (scheduleAction?.key === 'reschedule_interview' || !hasUpcomingSlot)
-  const scheduleLabel = scheduleAction?.label
-    || (statusSlug === 'interview_scheduled' ? 'Перенести собеседование' : 'Назначить собеседование')
+  const scheduleLabel = scheduleAction?.key === 'reschedule_interview' || statusSlug === 'slot_pending'
+    ? 'Предложить другое время'
+    : 'Предложить время'
   const filteredActions = actions.filter((action) => {
     if (action === test2Action || action === rejectAction) return false
     if (['schedule_interview', 'reschedule_interview', 'schedule_intro_day'].includes(action.key)) return false
@@ -1179,7 +1184,7 @@ export function CandidateDetailPage() {
             <h2 className="cd-section-title">Слоты и интервью</h2>
             {detail.telegram_id && !hasUpcomingSlot && (
               <button className="ui-btn ui-btn--ghost" onClick={() => setShowScheduleSlotModal(true)}>
-                + Назначить слот
+                + Предложить время
               </button>
             )}
           </div>
@@ -1279,6 +1284,7 @@ export function CandidateDetailPage() {
           onClose={() => setShowScheduleSlotModal(false)}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] })
+            setActionMessage('Предложение отправлено кандидату')
           }}
         />
       )}

@@ -148,6 +148,9 @@ async def update_city_settings(
     plan_month: Optional[int],
     tz: Optional[str] = None,
     active: Optional[bool] = None,
+    intro_address: Optional[str] = None,
+    contact_name: Optional[str] = None,
+    contact_phone: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[City], Optional[Recruiter]]:
     async with async_session() as session:
         try:
@@ -186,6 +189,9 @@ async def update_city_settings(
             clean_experts = (experts or "").strip() or None
             city.criteria = clean_criteria
             city.experts = clean_experts
+            city.intro_address = (intro_address or "").strip() or None
+            city.contact_name = (contact_name or "").strip() or None
+            city.contact_phone = (contact_phone or "").strip() or None
 
             normalized_week = plan_week if plan_week is None or plan_week >= 0 else None
             normalized_month = plan_month if plan_month is None or plan_month >= 0 else None

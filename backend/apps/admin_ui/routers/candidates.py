@@ -442,6 +442,8 @@ async def candidates_set_status(
             parsed = json.loads(raw_body)
             if isinstance(parsed, dict):
                 status_slug = parsed.get("status") or None
+                reject_reason = parsed.get("reason") or parsed.get("reject_reason")
+                reject_comment = parsed.get("comment") or parsed.get("reject_comment")
         except json.JSONDecodeError:
             pass
         # Make body readable again for later form parsing
@@ -482,7 +484,12 @@ async def candidates_set_status(
             await set_status_interview_declined(user.telegram_id)
 
     ok, message, stored_status, dispatch = await update_candidate_status(
-        candidate_id, normalized_slug, bot_service=bot_service, principal=principal
+        candidate_id,
+        normalized_slug,
+        bot_service=bot_service,
+        principal=principal,
+        reason=reject_reason,
+        comment=reject_comment,
     )
 
     bot_header = "skipped:not_applicable"
@@ -1226,6 +1233,19 @@ async def api_candidate_action(
     principal: Principal = Depends(require_principal),
 ):
     _ = await require_csrf_token(request)
+    payload = {}
+    try:
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            payload = await request.json()
+        else:
+            payload = dict(await request.form())
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    reason = payload.get("reason") or payload.get("reject_reason")
+    comment = payload.get("comment") or payload.get("reject_comment")
     
     # 1. Get candidate and allowed actions
     detail = await get_candidate_detail(candidate_id, principal=principal)
@@ -1254,10 +1274,12 @@ async def api_candidate_action(
 
     # 3. Execute status change
     ok, message, stored_status, dispatch = await update_candidate_status(
-        candidate_id, 
-        target_status, 
-        bot_service=bot_service, 
-        principal=principal
+        candidate_id,
+        target_status,
+        bot_service=bot_service,
+        principal=principal,
+        reason=reason,
+        comment=comment,
     )
     
     if not ok:

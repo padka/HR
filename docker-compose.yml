@@ -100,10 +100,11 @@ services:
     volumes:
       - recruitsmart_data:/var/lib/recruitsmart_admin
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/ready || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 5
+      start_period: 10s
+      retries: 3
     restart: unless-stopped
     networks:
       - recruitsmart

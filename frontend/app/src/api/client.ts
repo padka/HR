@@ -109,6 +109,12 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
         message = typeof data.detail === 'string' ? data.detail : data.detail.message || ''
       } else if (data.message) {
         message = data.message
+      } else if (Array.isArray(data.errors)) {
+        message = data.errors.join(', ')
+      } else if (data.error) {
+        if (typeof data.error === 'string') message = data.error
+        else if (data.error.message) message = data.error.message
+        else message = JSON.stringify(data.error)
       }
     }
     const err = new Error(message || res.statusText) as Error & { status?: number; data?: any }

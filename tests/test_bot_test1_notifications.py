@@ -4,11 +4,11 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from backend.apps.bot import templates
 from backend.apps.bot.config import TEST1_QUESTIONS
 from backend.apps.bot.services import (
     StateManager,
     configure as configure_bot_services,
+    configure_template_provider,
     finalize_test1,
 )
 from backend.apps.bot.state_store import InMemoryStateStore
@@ -29,9 +29,13 @@ class DummyBot:
         self.documents.append((chat_id, document, caption))
 
 
+@pytest.fixture(autouse=True)
+def _setup_template_provider():
+    configure_template_provider()
+
+
 @pytest.mark.asyncio
 async def test_finalize_test1_notifies_recruiter():
-    templates.clear_cache()
 
     async with async_session() as session:
         recruiter = models.Recruiter(
@@ -86,7 +90,6 @@ async def test_finalize_test1_notifies_recruiter():
 
 @pytest.mark.asyncio
 async def test_finalize_test1_deduplicates_by_chat_id(monkeypatch):
-    templates.clear_cache()
 
     async with async_session() as session:
         shared_chat = 5555
@@ -157,8 +160,16 @@ async def test_finalize_test1_deduplicates_by_chat_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_finalize_test1_prompts_candidate_to_schedule():
-    templates.clear_cache()
+async def test_finalize_test1_prompts_candidate_to_schedule(monkeypatch):
+    from backend.apps.bot.defaults import DEFAULT_TEMPLATES
+
+    async def _fake_render_tpl(_city_id, key, **_fmt):
+        return DEFAULT_TEMPLATES.get(key, "")
+
+    monkeypatch.setattr(
+        "backend.apps.bot.services._render_tpl",
+        _fake_render_tpl,
+    )
 
     async with async_session() as session:
         recruiter = models.Recruiter(

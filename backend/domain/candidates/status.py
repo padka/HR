@@ -78,7 +78,7 @@ STATUS_LABELS: Dict[CandidateStatus, str] = {
     CandidateStatus.TEST1_COMPLETED: "Прошел тестирование",
     CandidateStatus.WAITING_SLOT: "Ждет назначения слота",
     CandidateStatus.STALLED_WAITING_SLOT: "Долго ждет слота (>24ч)",
-    CandidateStatus.SLOT_PENDING: "Выбрал время, ждет подтверждения",
+    CandidateStatus.SLOT_PENDING: "Ожидает подтверждения времени",
     CandidateStatus.INTERVIEW_SCHEDULED: "Назначено собеседование",
     CandidateStatus.INTERVIEW_CONFIRMED: "Подтвердился (собес)",
     CandidateStatus.INTERVIEW_DECLINED: "Отказ на этапе собеседования",
@@ -140,7 +140,7 @@ STATUS_COLORS: Dict[CandidateStatus, str] = {
     CandidateStatus.TEST1_COMPLETED: "info",  # Blue
     CandidateStatus.WAITING_SLOT: "warning",  # Amber
     CandidateStatus.STALLED_WAITING_SLOT: "danger",  # Red (needs attention)
-    CandidateStatus.SLOT_PENDING: "warning",  # Amber (awaiting recruiter approval)
+    CandidateStatus.SLOT_PENDING: "info",  # Awaiting candidate confirmation
     CandidateStatus.INTERVIEW_SCHEDULED: "primary",  # Blue
     CandidateStatus.INTERVIEW_CONFIRMED: "success",  # Green
     CandidateStatus.INTERVIEW_DECLINED: "danger",  # Red

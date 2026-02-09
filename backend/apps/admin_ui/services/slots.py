@@ -813,46 +813,45 @@ async def schedule_manual_candidate_slot(
         await session.refresh(slot)
         slot_id = slot.id
 
-    reserve_fn = _resolve_hook("reserve_slot", reserve_slot)
-    reservation = await reserve_fn(
-        slot_id,
-        candidate.telegram_id,
-        candidate.fio,
-        slot_tz,
+    from backend.domain.slot_assignment_service import create_slot_assignment
+    assignment_result = await create_slot_assignment(
+        slot_id=slot_id,
         candidate_id=candidate.candidate_id,
-        candidate_city_id=city.id,
-        candidate_username=candidate.username,
-        purpose="interview",
-        expected_recruiter_id=recruiter.id,
-        expected_city_id=city.id,
-        allow_candidate_replace=False,  # Manual scheduling should fail if candidate already has a slot
+        candidate_tg_id=candidate.telegram_id,
+        candidate_tz=slot_tz,
+        created_by=admin_username,
+    )
+    if not assignment_result.ok:
+        await delete_slot(slot_id, force=True)
+        raise ManualSlotError(assignment_result.message or "Не удалось отправить предложение кандидату.")
+
+    try:
+        from backend.domain.candidates.status_service import set_status_slot_pending
+        await set_status_slot_pending(candidate.telegram_id)
+    except Exception:
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to update candidate status to SLOT_PENDING for %s", candidate.telegram_id)
+
+    await _log_manual_slot_assignment(
+        slot_id=slot_id,
+        candidate_tg_id=candidate.telegram_id,
+        recruiter_id=recruiter.id,
+        city_id=city.id,
+        slot_datetime_utc=normalized_dt,
+        slot_tz=slot_tz,
+        admin_username=admin_username,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        custom_message_sent=custom_message_sent,
+        custom_message_text=custom_message_text,
+        candidate_previous_status=candidate.candidate_status.value if candidate.candidate_status else None,
     )
 
-    if reservation.status != "reserved":
-        await delete_slot(slot_id, force=True)
-        raise ManualSlotError(_reservation_error_message(reservation.status))
-
-    approve_fn = _resolve_hook("approve_slot_and_notify", approve_slot_and_notify)
-    result = await approve_fn(slot_id, force_notify=True)
-    if result.status in {"approved", "notify_failed", "already"}:
-        # Log manual slot assignment to audit table
-        await _log_manual_slot_assignment(
-            slot_id=slot_id,
-            candidate_tg_id=candidate.telegram_id,
-            recruiter_id=recruiter.id,
-            city_id=city.id,
-            slot_datetime_utc=normalized_dt,
-            slot_tz=slot_tz,
-            admin_username=admin_username,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            custom_message_sent=custom_message_sent,
-            custom_message_text=custom_message_text,
-            candidate_previous_status=candidate.candidate_status.value if candidate.candidate_status else None,
-        )
-        return result
-
-    raise ManualSlotError(result.message or "Не удалось согласовать слот.")
+    return SlotApprovalResult(
+        status="pending_offer",
+        message="Предложение отправлено кандидату",
+        slot=slot,
+    )
 
 
 async def schedule_manual_candidate_slot_silent(

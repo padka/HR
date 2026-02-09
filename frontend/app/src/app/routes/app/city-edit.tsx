@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { STAGE_LABELS, TEMPLATE_META, templateStage, type TemplateStage } from './template_meta'
 
 type Recruiter = { id: number; name: string; tz?: string | null }
 type TimezoneOption = { value: string; label: string; region?: string; offset?: string }
@@ -15,8 +16,31 @@ type CityDetail = {
   plan_month?: number | null
   criteria?: string | null
   experts?: string | null
+  intro_address?: string | null
+  contact_name?: string | null
+  contact_phone?: string | null
   recruiter_ids?: number[]
 }
+
+type TemplateItem = {
+  id: number
+  key: string
+  city_id?: number | null
+  city_name?: string | null
+  is_global?: boolean
+  preview?: string
+  length?: number
+}
+
+const ALL_STAGES: TemplateStage[] = [
+  'registration',
+  'testing',
+  'interview',
+  'intro_day',
+  'reminders',
+  'results',
+  'service',
+]
 
 function isValidTimezone(tz: string): boolean {
   try {
@@ -55,6 +79,10 @@ export function CityEditPage() {
     queryKey: ['timezones'],
     queryFn: () => apiFetch('/timezones'),
   })
+  const templatesQuery = useQuery<{ custom_templates: TemplateItem[] }>({
+    queryKey: ['templates-list'],
+    queryFn: () => apiFetch('/templates/list'),
+  })
 
   const detailQuery = useQuery<CityDetail>({
     queryKey: ['city-detail', cityId],
@@ -69,9 +97,13 @@ export function CityEditPage() {
     plan_month: '',
     criteria: '',
     experts: '',
+    intro_address: '',
+    contact_name: '',
+    contact_phone: '',
     recruiter_ids: [] as number[],
   })
   const [recruiterSearch, setRecruiterSearch] = useState('')
+  const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [fieldError, setFieldError] = useState<{ name?: string; tz?: string; plan_week?: string; plan_month?: string }>({})
 
@@ -85,6 +117,9 @@ export function CityEditPage() {
       plan_month: detailQuery.data.plan_month != null ? String(detailQuery.data.plan_month) : '',
       criteria: detailQuery.data.criteria || '',
       experts: detailQuery.data.experts || '',
+      intro_address: detailQuery.data.intro_address || '',
+      contact_name: detailQuery.data.contact_name || '',
+      contact_phone: detailQuery.data.contact_phone || '',
       recruiter_ids: detailQuery.data.recruiter_ids || [],
     })
   }, [detailQuery.data])
@@ -121,6 +156,9 @@ export function CityEditPage() {
         plan_month: form.plan_month ? Number(form.plan_month) : null,
         criteria: form.criteria || null,
         experts: form.experts || null,
+        intro_address: form.intro_address || null,
+        contact_name: form.contact_name || null,
+        contact_phone: form.contact_phone || null,
         recruiter_ids: form.recruiter_ids,
       }
       return apiFetch(`/cities/${cityId}`, { method: 'PUT', body: JSON.stringify(payload) })
@@ -147,6 +185,38 @@ export function CityEditPage() {
   })
 
   const recruiterList = useMemo(() => recruiters || [], [recruiters])
+
+  const cityTemplates = useMemo(() => {
+    const items = templatesQuery.data?.custom_templates || []
+    return items.filter((tmpl) => tmpl.city_id === cityId)
+  }, [templatesQuery.data?.custom_templates, cityId])
+
+  const groupedCityTemplates = useMemo(() => {
+    const groups: Record<TemplateStage, TemplateItem[]> = {
+      registration: [],
+      testing: [],
+      interview: [],
+      intro_day: [],
+      reminders: [],
+      results: [],
+      service: [],
+    }
+    cityTemplates.forEach((tmpl) => {
+      const stage = templateStage(tmpl.key)
+      groups[stage].push(tmpl)
+    })
+    ALL_STAGES.forEach((stage) => {
+      groups[stage].sort((a, b) => {
+        const titleA = TEMPLATE_META[a.key]?.title ?? a.key
+        const titleB = TEMPLATE_META[b.key]?.title ?? b.key
+        return titleA.localeCompare(titleB, 'ru')
+      })
+    })
+    return groups
+  }, [cityTemplates])
+
+  const toggleStage = (stage: string) =>
+    setCollapsedStages((prev) => ({ ...prev, [stage]: !prev[stage] }))
 
   const filteredRecruiters = useMemo(() => {
     const term = recruiterSearch.toLowerCase().trim()
@@ -246,6 +316,96 @@ export function CityEditPage() {
                 <Link to="/app/templates" search={{ city_id: cityId }} className="ui-btn ui-btn--ghost">
                   Шаблоны города →
                 </Link>
+              </div>
+
+              {/* City message templates */}
+              <div className="glass" style={{ padding: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div>
+                    <h3 style={{ marginBottom: 4 }}>Шаблоны сообщений</h3>
+                    <p className="subtitle" style={{ marginBottom: 0 }}>
+                      Только персональные шаблоны для города — общие применяются автоматически.
+                    </p>
+                  </div>
+                  <Link to="/app/templates/new" search={{ city_id: cityId }} className="ui-btn ui-btn--primary">
+                    Переопределить шаблон
+                  </Link>
+                </div>
+
+                {templatesQuery.isLoading && <p className="subtitle" style={{ marginTop: 12 }}>Загрузка шаблонов…</p>}
+                {templatesQuery.isError && (
+                  <p style={{ color: '#f07373', marginTop: 12 }}>Ошибка: {(templatesQuery.error as Error).message}</p>
+                )}
+
+                {!templatesQuery.isLoading && !templatesQuery.isError && cityTemplates.length === 0 && (
+                  <p className="subtitle" style={{ marginTop: 12 }}>
+                    Нет персональных шаблонов (используются общие).
+                  </p>
+                )}
+
+                {!templatesQuery.isLoading && !templatesQuery.isError && cityTemplates.length > 0 && (
+                  <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+                    {ALL_STAGES.map((stage) => {
+                      const items = groupedCityTemplates[stage] || []
+                      if (!items.length) return null
+                      const label = STAGE_LABELS[stage]
+                      const collapsed = collapsedStages[stage]
+                      return (
+                        <div key={stage}>
+                          <div
+                            style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                            onClick={() => toggleStage(stage)}
+                          >
+                            <div>
+                              <h4 className="section-title" style={{ margin: 0 }}>
+                                {collapsed ? '▸' : '▾'} {label.title}
+                                <span className="text-muted" style={{ fontWeight: 400, fontSize: 13, marginLeft: 8 }}>
+                                  ({items.length})
+                                </span>
+                              </h4>
+                              <p className="text-muted" style={{ margin: '2px 0 0 0' }}>{label.desc}</p>
+                            </div>
+                          </div>
+                          {!collapsed && (
+                            <div className="template-grid" style={{ marginTop: 10 }}>
+                              {items.map((tmpl) => {
+                                const meta = TEMPLATE_META[tmpl.key]
+                                return (
+                                  <div key={tmpl.id} className="glass template-card">
+                                    <div className="template-card__header">
+                                      <div>
+                                        <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                                          {meta?.title ?? tmpl.key}
+                                        </div>
+                                        {meta?.desc && (
+                                          <div className="text-muted" style={{ fontSize: 12, marginBottom: 4 }}>{meta.desc}</div>
+                                        )}
+                                        <div className="template-tags">
+                                          <span className="chip">{tmpl.key}</span>
+                                          <span className="chip">ID #{tmpl.id}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="template-preview">{tmpl.preview || '—'}</div>
+                                    <div className="template-actions">
+                                      <Link
+                                        to="/app/templates/$templateId/edit"
+                                        params={{ templateId: String(tmpl.id) }}
+                                        className="ui-btn ui-btn--ghost ui-btn--sm"
+                                      >
+                                        Редактировать
+                                      </Link>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Basic parameters */}
@@ -386,6 +546,38 @@ export function CityEditPage() {
                       value={form.experts}
                       onChange={(e) => setForm({ ...form, experts: e.target.value })}
                       placeholder="Контактные лица или эксперты для города"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Intro day section */}
+              <div className="glass" style={{ padding: 16 }}>
+                <h3 style={{ marginBottom: 4 }}>Ознакомительный день</h3>
+                <p className="subtitle" style={{ marginBottom: 12 }}>Адрес и контактное лицо для приглашений на ознакомительный день</p>
+                <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span>Адрес проведения</span>
+                    <input
+                      value={form.intro_address}
+                      onChange={(e) => setForm({ ...form, intro_address: e.target.value })}
+                      placeholder="ул. Примерная, д. 1"
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span>Контактное лицо</span>
+                    <input
+                      value={form.contact_name}
+                      onChange={(e) => setForm({ ...form, contact_name: e.target.value })}
+                      placeholder="Иванов Иван Иванович"
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span>Телефон контактного лица</span>
+                    <input
+                      value={form.contact_phone}
+                      onChange={(e) => setForm({ ...form, contact_phone: e.target.value })}
+                      placeholder="+7 (999) 123-45-67"
                     />
                   </label>
                 </div>

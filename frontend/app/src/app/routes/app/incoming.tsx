@@ -104,7 +104,7 @@ export function IncomingPage() {
       })
     },
     onSuccess: (data: any) => {
-      showToast(data?.message || 'Собеседование назначено')
+      showToast(data?.message || 'Предложение отправлено кандидату')
       setIncomingTarget(null)
       incomingQuery.refetch()
     },
@@ -249,7 +249,11 @@ export function IncomingPage() {
                       {candidate.status_display && (
                         <span
                           className={`status-pill status-pill--${
-                            candidate.status_slug === 'stalled_waiting_slot' ? 'danger' : 'warning'
+                            candidate.status_slug === 'stalled_waiting_slot'
+                              ? 'danger'
+                              : candidate.status_slug === 'slot_pending'
+                                ? 'info'
+                                : 'warning'
                           }`}
                         >
                           {candidate.status_display}
@@ -300,7 +304,7 @@ export function IncomingPage() {
                           type="button"
                           onClick={() => openIncomingSchedule(candidate)}
                         >
-                          Назначить
+                          Предложить время
                         </button>
                       )}
                       <button
@@ -330,7 +334,7 @@ export function IncomingPage() {
             <div className="glass glass--elevated modal modal--sm" onClick={(e) => e.stopPropagation()}>
               <div className="modal__header">
                 <div>
-                  <h2 className="modal__title">Назначить собеседование</h2>
+                  <h2 className="modal__title">Предложить время собеседования</h2>
                   <p className="modal__subtitle">{incomingTarget.name || 'Кандидат'}</p>
                 </div>
                 <button className="ui-btn ui-btn--ghost" onClick={() => setIncomingTarget(null)}>
@@ -354,7 +358,7 @@ export function IncomingPage() {
                     rows={3}
                     value={incomingMessage}
                     onChange={(e) => setIncomingMessage(e.target.value)}
-                    placeholder="Например: подойдёт ли это время?"
+                    placeholder="Например: Мы предлагаем собеседование в это время. Подойдёт ли вам?"
                   />
                 </label>
               </div>
@@ -375,7 +379,7 @@ export function IncomingPage() {
                   }}
                   disabled={scheduleIncoming.isPending}
                 >
-                  {scheduleIncoming.isPending ? 'Отправка…' : 'Назначить'}
+                  {scheduleIncoming.isPending ? 'Отправка…' : 'Отправить предложение'}
                 </button>
                 <button className="ui-btn ui-btn--ghost" onClick={() => setIncomingTarget(null)}>
                   Отмена

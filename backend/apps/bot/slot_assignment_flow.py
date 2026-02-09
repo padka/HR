@@ -157,7 +157,7 @@ async def _handle_reschedule_prompt(
     bot = get_bot()
     await bot.send_message(
         candidate_id,
-        "Введите желаемые дату и время в формате «дд.мм чч:мм».\n"
+        "Введите желаемые дату и время. Можно так: «дд.мм чч:мм», «дд.мм.гггг чч:мм» или просто «чч:мм».\n"
         f"Например: {datetime.now().strftime(TIME_FMT)}",
     )
 
@@ -219,21 +219,79 @@ def _parse_datetime_input(text: str, tz_name: Optional[str]) -> Optional[datetim
     value = (text or "").strip()
     if not value:
         return None
-    match = re.search(r"(\d{1,2}\.\d{1,2})\s+(\d{1,2}:\d{2})", value)
-    if not match:
+
+    time_matches = list(re.finditer(r"(\d{1,2})\s*[:.]\s*(\d{2})", value))
+    if not time_matches:
         return None
 
-    raw = f"{match.group(1)} {match.group(2)}"
+    time_match = time_matches[-1]
     try:
-        naive = datetime.strptime(raw, TIME_FMT)
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2))
     except ValueError:
         return None
 
+    if hour > 23 or minute > 59:
+        return None
+
+    time_span = time_match.span()
+    date_match = None
+    for match in re.finditer(r"(\d{1,2})\s*[./-]\s*(\d{1,2})(?:\s*[./-]\s*(\d{2,4}))?", value):
+        span = match.span()
+        if span[1] <= time_span[0] or span[0] >= time_span[1]:
+            date_match = match
+            break
+
     zone = _safe_zone(tz_name)
     now_local = datetime.now(zone)
-    candidate_dt = naive.replace(year=now_local.year, tzinfo=zone)
+
+    lowered = value.lower()
+    relative_days = 0
+    if "послезавтра" in lowered:
+        relative_days = 2
+    elif "завтра" in lowered:
+        relative_days = 1
+    elif "сегодня" in lowered:
+        relative_days = 0
+
+    if date_match:
+        try:
+            day = int(date_match.group(1))
+            month = int(date_match.group(2))
+        except ValueError:
+            return None
+
+        year_raw = date_match.group(3)
+        if year_raw:
+            try:
+                year = int(year_raw)
+            except ValueError:
+                return None
+            if year < 100:
+                year += 2000
+        else:
+            year = now_local.year
+
+        try:
+            candidate_dt = datetime(year, month, day, hour, minute, tzinfo=zone)
+        except ValueError:
+            return None
+
+        if candidate_dt < now_local:
+            return None
+        return candidate_dt
+
+    base_date = now_local.date() + timedelta(days=relative_days)
+    candidate_dt = datetime(
+        base_date.year,
+        base_date.month,
+        base_date.day,
+        hour,
+        minute,
+        tzinfo=zone,
+    )
     if candidate_dt < now_local:
-        return None
+        candidate_dt = candidate_dt + timedelta(days=1)
     return candidate_dt
 
 
@@ -251,19 +309,10 @@ async def handle_datetime_input(message: Message, state: Dict[str, Any]) -> bool
 
     local_dt = _parse_datetime_input(text, candidate_tz)
     if local_dt is None:
-        await message.answer("Не удалось распознать дату. Формат: «дд.мм чч:мм».")
-        return True
-
-    if local_dt.time() < WORKDAY_START or local_dt.time() > WORKDAY_END:
-        await message.answer("Введите время в рабочем диапазоне 09:00–20:00.")
-        return True
-
-    if local_dt.minute % MINUTE_STEP != 0:
-        await message.answer("Пожалуйста, укажите время с шагом 15 минут.")
-        return True
-
-    if local_dt > datetime.now(_safe_zone(candidate_tz)) + timedelta(days=MAX_DAYS_AHEAD):
-        await message.answer("Дата слишком далеко. Укажите время в пределах 60 дней.")
+        await message.answer(
+            "Не удалось распознать дату и время. Пример: «02.02 14:00», "
+            "«02.02.2026 14:00» или просто «14:00»."
+        )
         return True
 
     requested_utc = local_dt.astimezone(timezone.utc)
@@ -293,6 +342,9 @@ async def handle_datetime_input(message: Message, state: Dict[str, Any]) -> bool
         await message.answer("Сервис недоступен. Попробуйте позже.")
         return True
 
+    if status == 404:
+        await message.answer("Ссылка устарела. Попросите рекрутёра прислать новое предложение времени.")
+        return True
     if status == 409:
         detail = data.get("detail") if isinstance(data, dict) else None
         alternatives = data.get("alternatives") if isinstance(data, dict) else None

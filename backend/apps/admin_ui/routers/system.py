@@ -34,6 +34,30 @@ async def devtools_probe() -> Response:
     return Response(status_code=204)
 
 
+@router.get("/healthz", include_in_schema=False)
+async def liveness_probe() -> PlainTextResponse:
+    """Kubernetes liveness probe - always returns 200 if process is alive."""
+    return PlainTextResponse("ok")
+
+
+@router.get("/ready", include_in_schema=False)
+async def readiness_probe(request: Request) -> PlainTextResponse:
+    """Kubernetes readiness probe - checks critical dependencies."""
+    try:
+        async with async_session() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception:
+        return PlainTextResponse("database unavailable", status_code=503)
+
+    state_manager = getattr(request.app.state, "state_manager", None)
+    import os
+    is_test_mode = bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("ENVIRONMENT") == "test"
+    if state_manager is None and not is_test_mode:
+        return PlainTextResponse("state manager not initialized", status_code=503)
+
+    return PlainTextResponse("ok")
+
+
 @router.get("/health", include_in_schema=False)
 async def health_check(request: Request) -> JSONResponse:
     checks = {

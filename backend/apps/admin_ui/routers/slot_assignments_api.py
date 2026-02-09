@@ -1,13 +1,19 @@
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from backend.core.db import async_session
+from backend.core.time_utils import ensure_aware_utc
+from backend.domain.slot_assignment_service import request_reschedule as request_reschedule_service
+from backend.domain.candidates.status_service import set_status_waiting_slot
+from backend.domain.candidates.services import save_manual_slot_response
 from backend.domain.models import SlotAssignment, RescheduleRequest, OutboxNotification, Recruiter, ActionToken, Slot, SlotStatus
 from sqlalchemy import select, and_
-from backend.domain.repositories import reject_slot
+from backend.domain.repositories import reject_slot, reserve_slot
 from backend.domain.candidates.status_service import set_status_interview_confirmed
+from backend.apps.bot.services import approve_slot_and_notify
+from backend.domain.candidates.models import User
 
 router = APIRouter(prefix="/api/slot-assignments", tags=["slot-assignments"])
 logger = logging.getLogger(__name__)
@@ -21,12 +27,12 @@ class ReschedulePayload(ActionPayload):
     requested_tz: str
     comment: str | None = None
 
-async def _validate_token(session, token: str, action: str, entity_id: int) -> bool:
+async def _validate_token(session, token: str, actions: set[str], entity_id: int) -> bool:
     action_token = await session.scalar(
         select(ActionToken).where(
             and_(
                 ActionToken.token == token,
-                ActionToken.action == action,
+                ActionToken.action.in_(actions),
                 ActionToken.entity_id == str(entity_id),
                 ActionToken.expires_at > datetime.now(timezone.utc),
                 ActionToken.used_at == None,
@@ -42,87 +48,106 @@ async def _validate_token(session, token: str, action: str, entity_id: int) -> b
 @router.post("/{assignment_id}/confirm")
 async def confirm_assignment(assignment_id: int, payload: ActionPayload):
     async with async_session() as session:
-        if not await _validate_token(session, payload.action_token, "confirm_assignment", assignment_id):
+        if not await _validate_token(
+            session,
+            payload.action_token,
+            {"confirm_assignment", "slot_assignment_confirm"},
+            assignment_id,
+        ):
             raise HTTPException(status_code=403, detail="Invalid or expired token")
 
         assignment = await session.get(SlotAssignment, assignment_id)
         if not assignment or assignment.candidate_tg_id != payload.candidate_tg_id:
             raise HTTPException(status_code=404, detail="Assignment not found")
 
-        if assignment.status != "offered":
+        if assignment.status not in {"offered", "confirmed"}:
             raise HTTPException(status_code=409, detail="Assignment not in offered state")
 
         assignment.status = "confirmed"
         assignment.confirmed_at = datetime.now(timezone.utc)
 
         slot = await session.get(Slot, assignment.slot_id)
-        if slot:
-            slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
-            if payload.candidate_tg_id:
-                slot.candidate_tg_id = payload.candidate_tg_id
-
-        # Notify recruiter
-        recruiter = await session.get(Recruiter, assignment.recruiter_id)
-        if recruiter and recruiter.tg_chat_id:
-            session.add(OutboxNotification(
-                type="slot_confirmed_recruiter",
-                recruiter_tg_id=recruiter.tg_chat_id,
-                payload_json={"assignment_id": assignment.id}
-            ))
-
+        candidate = None
+        if assignment.candidate_id:
+            candidate = await session.scalar(select(User).where(User.candidate_id == assignment.candidate_id))
         await session.commit()
+
+    if slot is None:
+        raise HTTPException(status_code=404, detail="Slot not found")
+
+    if payload.candidate_tg_id:
+        if slot.status in {SlotStatus.FREE, SlotStatus.PENDING, SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE}:
+            if slot.status == SlotStatus.FREE:
+                reservation = await reserve_slot(
+                    slot.id,
+                    payload.candidate_tg_id,
+                    candidate.fio if candidate else "",
+                    slot.tz_name,
+                    candidate_id=assignment.candidate_id,
+                    candidate_city_id=slot.city_id,
+                    candidate_username=getattr(candidate, "username", None) if candidate else None,
+                    purpose="interview",
+                    expected_recruiter_id=assignment.recruiter_id,
+                    expected_city_id=slot.city_id,
+                    allow_candidate_replace=False,
+                )
+                if reservation.status != "reserved":
+                    raise HTTPException(status_code=409, detail="Slot is no longer available")
+
+            result = await approve_slot_and_notify(slot.id, force_notify=True)
+            if result.status not in {"approved", "already", "notify_failed"}:
+                raise HTTPException(status_code=409, detail="Failed to finalize slot")
+
     if payload.candidate_tg_id:
         await set_status_interview_confirmed(payload.candidate_tg_id)
-    return {"ok": True}
+    return {"ok": True, "message": "Время подтверждено. Приглашение отправлено."}
 
 @router.post("/{assignment_id}/request-reschedule")
 async def request_reschedule(assignment_id: int, payload: ReschedulePayload):
+    requested_start = ensure_aware_utc(payload.requested_start_utc)
+    result = await request_reschedule_service(
+        assignment_id=assignment_id,
+        action_token=payload.action_token,
+        candidate_tg_id=payload.candidate_tg_id,
+        requested_start_utc=requested_start,
+        requested_tz=payload.requested_tz,
+        comment=payload.comment,
+    )
+    if not result.ok:
+        raise HTTPException(status_code=result.status_code, detail=result.message or result.status)
+
+    if payload.candidate_tg_id:
+        await set_status_waiting_slot(payload.candidate_tg_id)
+
     async with async_session() as session:
-        if not await _validate_token(session, payload.action_token, "reschedule_assignment", assignment_id):
-            raise HTTPException(status_code=403, detail="Invalid or expired token")
-
         assignment = await session.get(SlotAssignment, assignment_id)
-        if not assignment or assignment.candidate_tg_id != payload.candidate_tg_id:
-            raise HTTPException(status_code=404, detail="Assignment not found")
-
-        # Guard: allow rescheduling only from valid active states
-        if assignment.status not in {"offered", "confirmed"}:
-            raise HTTPException(
-                status_code=409, 
-                detail=f"Cannot request reschedule for assignment in status: {assignment.status}"
-            )
-
-        assignment.status = "reschedule_requested"
-        
-        req = RescheduleRequest(
-            slot_assignment_id=assignment_id,
-            requested_start_utc=payload.requested_start_utc,
-            requested_tz=payload.requested_tz,
-            candidate_comment=payload.comment,
-            status="pending",
+        slot = await session.get(Slot, assignment.slot_id) if assignment else None
+    if assignment and slot and payload.candidate_tg_id:
+        duration = slot.duration_min or 30
+        await save_manual_slot_response(
+            payload.candidate_tg_id,
+            window_start=requested_start,
+            window_end=requested_start + timedelta(minutes=duration),
+            note=payload.comment,
+            timezone_label=payload.requested_tz,
         )
-        session.add(req)
-        
-        # Notify recruiter
-        recruiter = await session.get(Recruiter, assignment.recruiter_id)
-        if recruiter and recruiter.tg_chat_id:
-            session.add(OutboxNotification(
-                type="reschedule_requested_recruiter",
-                recruiter_tg_id=recruiter.tg_chat_id,
-                payload_json={
-                    "assignment_id": assignment.id,
-                    "requested_start_utc": payload.requested_start_utc.isoformat(),
-                }
-            ))
 
-        await session.commit()
-    return {"ok": True}
+    response = {"ok": True, "status": result.status}
+    if result.message:
+        response["message"] = result.message
+    response.update(result.payload or {})
+    return response
 
 
 @router.post("/{assignment_id}/decline")
 async def decline_assignment(assignment_id: int, payload: ActionPayload):
     async with async_session() as session:
-        if not await _validate_token(session, payload.action_token, "decline_assignment", assignment_id):
+        if not await _validate_token(
+            session,
+            payload.action_token,
+            {"decline_assignment", "slot_assignment_decline"},
+            assignment_id,
+        ):
             raise HTTPException(status_code=403, detail="Invalid or expired token")
 
         assignment = await session.get(SlotAssignment, assignment_id)

@@ -134,6 +134,7 @@ class UnitOfWork:
         self.test_results = TestResultRepository(self._session)
         self.auto_messages = AutoMessageRepository(self._session)
         self.message_templates = MessageTemplateRepository(self._session)
+        self.templates = self.message_templates
 
     @property
     def session(self) -> AsyncSession:
