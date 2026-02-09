@@ -31,10 +31,11 @@ cp .env.development.example .env.local
 python3 -m venv .venv
 . .venv/bin/activate
 make install            # ставит dev-зависимости (pytest и пр.)
-make test               # тесты используют временную SQLite (без Redis/Postgres)
+docker compose up -d postgres
+make test               # тесты используют PostgreSQL (DATABASE_URL=.../rs_test из Makefile)
 ```
 
-Переменные окружения для тестов выставляются автоматически (ENVIRONMENT=test, DATABASE_URL=sqlite+aiosqlite:///... , NOTIFICATION_BROKER=memory, ADMIN_USER/PASSWORD=admin). Брокер уведомлений и бот отключены, используется in‑memory state/store.
+Переменные окружения для `make test` выставляются автоматически (ENVIRONMENT=test, DATABASE_URL=postgresql+asyncpg://rs:pass@localhost:5432/rs_test, NOTIFICATION_BROKER=memory, ADMIN_USER/PASSWORD=admin). Брокер уведомлений и бот отключены.
 
 ## Ветки и CI (обязательно)
 
@@ -57,6 +58,7 @@ make test               # тесты используют временную SQL
   - Локально можно запустить:
     - `pip-audit -r requirements.txt -r requirements-dev.txt`
     - `npm audit --audit-level=high`
+- Перед релизом используйте чеклист: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md).
 
 ## Локальный запуск (Postgres + Redis в Docker)
 
