@@ -31,6 +31,13 @@ type RecruiterSummary = {
   next_is_future?: boolean
 }
 
+type ResetPasswordResponse = {
+  ok: boolean
+  recruiter_id: number
+  login: string
+  temp_password: string
+}
+
 export function RecruiterEditPage() {
   const params = useParams({ from: '/app/recruiters/$recruiterId/edit' })
   const recruiterId = Number(params.recruiterId)
@@ -66,6 +73,7 @@ export function RecruiterEditPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [fieldError, setFieldError] = useState<{ name?: string; tz?: string; tg_chat_id?: string; telemost_url?: string }>({})
   const initialForm = useRef(form)
+  const [resetCredentials, setResetCredentials] = useState<{ login: string; password: string } | null>(null)
 
   useEffect(() => {
     if (!detailQuery.data) return
@@ -128,6 +136,33 @@ export function RecruiterEditPage() {
     },
     onSuccess: () => navigate({ to: '/app/recruiters' }),
   })
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: async () => {
+      setResetCredentials(null)
+      return apiFetch<ResetPasswordResponse>(`/recruiters/${recruiterId}/reset-password`, { method: 'POST' })
+    },
+    onSuccess: (result) => {
+      if (result?.ok && result.login && result.temp_password) {
+        setResetCredentials({ login: String(result.login), password: String(result.temp_password) })
+      }
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : 'Ошибка сброса пароля'
+      window.alert(message || 'Ошибка сброса пароля')
+    },
+  })
+
+  const copyResetCredentials = async () => {
+    if (!resetCredentials) return
+    const text = `login: ${resetCredentials.login}\npassword: ${resetCredentials.password}`
+    try {
+      await navigator.clipboard.writeText(text)
+      window.alert('Доступ скопирован в буфер обмена.')
+    } catch {
+      window.alert('Не удалось скопировать. Скопируйте вручную.')
+    }
+  }
 
   const cityList = useMemo(() => cities || [], [cities])
 
@@ -450,6 +485,43 @@ export function RecruiterEditPage() {
                       <li>Telegram: {form.tg_chat_id ? 'подключен' : 'нет chat_id'}</li>
                       <li>Аккаунт: {form.active ? 'активен' : 'выключен'}</li>
                     </ul>
+                    <div style={{ marginTop: 12 }}>
+                      <div className="subtitle" style={{ marginBottom: 6 }}>Доступ</div>
+                      <div className="recruiter-edit__fields" style={{ padding: 0 }}>
+                        <label className="recruiter-edit__field">
+                          <span>Логин</span>
+                          <input value={String(recruiterId)} readOnly />
+                        </label>
+                        <label className="recruiter-edit__field">
+                          <span>Пароль</span>
+                          <input value={resetCredentials ? resetCredentials.password : '—'} readOnly />
+                          <span className="subtitle">
+                            Сброс пароля выдаёт временный пароль. Старый пароль перестанет работать.
+                          </span>
+                        </label>
+                      </div>
+                      <div className="action-row" style={{ justifyContent: 'flex-start', gap: 12 }}>
+                        <button
+                          className="ui-btn ui-btn--danger"
+                          type="button"
+                          onClick={() =>
+                            window.confirm('Сбросить пароль рекрутёра? Старый пароль перестанет работать.')
+                            && resetPasswordMutation.mutate()
+                          }
+                          disabled={resetPasswordMutation.isPending}
+                        >
+                          {resetPasswordMutation.isPending ? 'Сбрасываем…' : 'Reset password'}
+                        </button>
+                        <button
+                          className="ui-btn ui-btn--ghost"
+                          type="button"
+                          onClick={copyResetCredentials}
+                          disabled={!resetCredentials}
+                        >
+                          Скопировать
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </aside>
               </div>

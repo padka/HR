@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { apiFetch } from '@/api/client'
@@ -62,6 +62,27 @@ type ReminderPolicyUpdatePayload = {
   reschedule_failed: number
 }
 
+type OutboxItem = {
+  id: number
+  type: string
+  status: string
+  attempts: number
+  created_at: string | null
+  locked_at: string | null
+  next_retry_at: string | null
+  last_error: string | null
+  booking_id: number | null
+  candidate_tg_id: number | null
+  recruiter_tg_id: number | null
+  correlation_id: string | null
+}
+
+type OutboxFeedPayload = {
+  items: OutboxItem[]
+  latest_id: number
+  degraded: boolean
+}
+
 export function SystemPage() {
   const healthQuery = useQuery<HealthPayload>({
     queryKey: ['system-health'],
@@ -76,6 +97,32 @@ export function SystemPage() {
   const reminderPolicyQuery = useQuery<ReminderPolicyPayload>({
     queryKey: ['system-bot-reminder-policy'],
     queryFn: () => apiFetch('/bot/reminder-policy'),
+  })
+
+  const [outboxStatusFilter, setOutboxStatusFilter] = useState<string>('')
+  const [outboxTypeFilter, setOutboxTypeFilter] = useState<string>('')
+
+  const outboxQuery = useQuery<OutboxFeedPayload>({
+    queryKey: ['system-outbox-feed', outboxStatusFilter, outboxTypeFilter],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      params.set('after_id', '0')
+      params.set('limit', '50')
+      if (outboxStatusFilter) params.set('status', outboxStatusFilter)
+      if (outboxTypeFilter.trim()) params.set('type', outboxTypeFilter.trim())
+      return apiFetch(`/notifications/feed?${params.toString()}`)
+    },
+    refetchInterval: 10_000,
+  })
+
+  const retryOutboxMutation = useMutation({
+    mutationFn: async (id: number) => apiFetch(`/notifications/${id}/retry`, { method: 'POST' }),
+    onSuccess: () => outboxQuery.refetch(),
+  })
+
+  const cancelOutboxMutation = useMutation({
+    mutationFn: async (id: number) => apiFetch(`/notifications/${id}/cancel`, { method: 'POST' }),
+    onSuccess: () => outboxQuery.refetch(),
   })
 
   const [refreshingCities, setRefreshingCities] = useState(false)
@@ -397,6 +444,116 @@ export function SystemPage() {
                 {policyResult && <span className="subtitle">{policyResult}</span>}
               </div>
             </div>
+          )}
+        </section>
+
+        <section className="glass page-section">
+          <h2 className="section-title">Доставка уведомлений (Outbox)</h2>
+          <p className="subtitle">
+            Очередь уведомлений Telegram. Используйте фильтры и ручной retry/cancel для triage.
+          </p>
+
+          <div className="form-row" style={{ alignItems: 'flex-end' }}>
+            <label className="form-group" style={{ minWidth: 220 }}>
+              <span className="form-group__label">Статус</span>
+              <select value={outboxStatusFilter} onChange={(e) => setOutboxStatusFilter(e.target.value)}>
+                <option value="">Все</option>
+                <option value="pending">pending</option>
+                <option value="failed">failed</option>
+                <option value="sent">sent</option>
+              </select>
+            </label>
+            <label className="form-group" style={{ flex: 1, minWidth: 260 }}>
+              <span className="form-group__label">Тип</span>
+              <input
+                value={outboxTypeFilter}
+                onChange={(e) => setOutboxTypeFilter(e.target.value)}
+                placeholder="Например: slot_assignment_offer"
+              />
+            </label>
+            <button className="ui-btn ui-btn--ghost" onClick={() => outboxQuery.refetch()}>
+              Обновить
+            </button>
+          </div>
+
+          {outboxQuery.isLoading && <p className="subtitle">Загрузка outbox…</p>}
+          {outboxQuery.isError && <p className="text-danger">Ошибка: {(outboxQuery.error as Error).message}</p>}
+
+          {outboxQuery.data?.degraded && (
+            <p className="text-danger">DB degraded: данные outbox недоступны.</p>
+          )}
+
+          {outboxQuery.data && (
+            <>
+              <p className="subtitle">Latest ID: {outboxQuery.data.latest_id}</p>
+              <div className="glass panel--tight" style={{ overflowX: 'auto' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th>Attempts</th>
+                      <th>Next retry</th>
+                      <th>Last error</th>
+                      <th>Target</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {outboxQuery.data.items.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="subtitle">Пусто</td>
+                      </tr>
+                    )}
+                    {outboxQuery.data.items.map((item) => {
+                      const target = item.candidate_tg_id
+                        ? `cand:${item.candidate_tg_id}`
+                        : item.recruiter_tg_id
+                          ? `rec:${item.recruiter_tg_id}`
+                          : '-'
+                      const canRetry = item.status !== 'sent'
+                      const canCancel = item.status === 'pending' || item.status === 'failed'
+                      return (
+                        <tr key={item.id}>
+                          <td>{item.id}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{item.type}</td>
+                          <td>{item.status}</td>
+                          <td>{item.attempts}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{item.next_retry_at || '-'}</td>
+                          <td style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {item.last_error || '-'}
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{target}</td>
+                          <td>
+                            <div className="toolbar toolbar--compact">
+                              <button
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
+                                onClick={() => retryOutboxMutation.mutate(item.id)}
+                                disabled={!canRetry || retryOutboxMutation.isPending}
+                              >
+                                Retry
+                              </button>
+                              <button
+                                className="ui-btn ui-btn--danger ui-btn--sm"
+                                onClick={() =>
+                                  canCancel
+                                  && window.confirm(`Cancel outbox #${item.id}?`)
+                                  && cancelOutboxMutation.mutate(item.id)
+                                }
+                                disabled={!canCancel || cancelOutboxMutation.isPending}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
       </div>
