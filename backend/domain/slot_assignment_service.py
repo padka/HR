@@ -97,7 +97,11 @@ async def _consume_action_token(
         return False, "mismatch"
     if row.used_at is not None:
         return False, "used"
-    if row.expires_at <= _now():
+    # Defensive: some DBs/drivers (or legacy schemas) may return naive timestamps.
+    expires_at = row.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= _now():
         return False, "expired"
     row.used_at = _now()
     return True, "ok"

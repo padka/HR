@@ -433,7 +433,18 @@ class ReminderService:
 
                     group = _immediate_group(plan.kind)
                     current = immediate_map.get(group)
-                    if current is None or plan.run_at_local > current.run_at_local:
+                    if current is None:
+                        immediate_map[group] = plan
+                    elif group == "confirm":
+                        # Quiet-hours adjustments may reorder plans; pick the most urgent prompt
+                        # instead of relying on adjusted timestamps (see test_reminders_sent_immediately_for_past_targets).
+                        new_prio = _confirm_immediate_priority(plan.kind)
+                        cur_prio = _confirm_immediate_priority(current.kind)
+                        if new_prio > cur_prio or (
+                            new_prio == cur_prio and plan.run_at_local > current.run_at_local
+                        ):
+                            immediate_map[group] = plan
+                    elif plan.run_at_local > current.run_at_local:
                         immediate_map[group] = plan
                 else:
                     future_plans.append(plan)
@@ -1044,3 +1055,15 @@ def _immediate_group(kind: ReminderKind) -> str:
     if kind is ReminderKind.INTRO_REMIND_3H:
         return "intro"
     return kind.value
+
+
+_CONFIRM_IMMEDIATE_PRIORITY: dict[ReminderKind, int] = {
+    ReminderKind.CONFIRM_2H: 30,
+    ReminderKind.REMIND_2H: 30,
+    ReminderKind.CONFIRM_3H: 20,
+    ReminderKind.CONFIRM_6H: 10,
+}
+
+
+def _confirm_immediate_priority(kind: ReminderKind) -> int:
+    return _CONFIRM_IMMEDIATE_PRIORITY.get(kind, 0)
