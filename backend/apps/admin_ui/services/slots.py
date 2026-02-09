@@ -871,13 +871,22 @@ async def schedule_manual_candidate_slot(
 
     from backend.domain.slot_assignment_service import create_slot_assignment
 
-    assignment_result = await create_slot_assignment(
-        slot_id=slot_id,
-        candidate_id=candidate.candidate_id,
-        candidate_tg_id=candidate.telegram_id,
-        candidate_tz=slot_tz,
-        created_by=admin_username,
-    )
+    try:
+        assignment_result = await create_slot_assignment(
+            slot_id=slot_id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz=slot_tz,
+            created_by=admin_username,
+        )
+    except Exception as exc:
+        # Slot was created but we failed to create the assignment/outbox.
+        # Best effort cleanup to avoid leaving an orphaned slot in the schedule.
+        try:
+            await delete_slot(slot_id, force=True)
+        except Exception:
+            logger.exception("Failed to cleanup slot after create_slot_assignment crash", extra={"slot_id": slot_id})
+        raise ManualSlotError("Не удалось отправить предложение кандидату.") from exc
     if not assignment_result.ok:
         await delete_slot(slot_id, force=True)
         raise ManualSlotError(

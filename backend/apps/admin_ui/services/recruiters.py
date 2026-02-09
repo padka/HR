@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 import html
 import os
+import secrets
 
 from sqlalchemy import case, func, select, delete, insert
 from sqlalchemy.inspection import inspect as sa_inspect
@@ -26,6 +27,7 @@ __all__ = [
     "get_recruiter_detail",
     "update_recruiter",
     "delete_recruiter",
+    "reset_recruiter_password",
     "build_recruiter_payload",
     "api_recruiters_payload",
     "api_get_recruiter",
@@ -211,6 +213,54 @@ async def create_recruiter(
         "temp_password": temp_password,
         "auth_account_created": auth_created,
     }
+
+
+async def reset_recruiter_password(recruiter_id: int) -> Dict[str, object]:
+    """Reset recruiter password and return temporary credentials.
+
+    The login is the recruiter numeric id (string), consistent with create_recruiter().
+    """
+
+    login = str(int(recruiter_id))
+    temp_password = secrets.token_urlsafe(12)
+
+    async with async_session() as session:
+        recruiter = await session.get(Recruiter, recruiter_id)
+        if recruiter is None:
+            return {"ok": False, "error": {"type": "not_found", "message": "Рекрутёр не найден."}}
+
+        account = await session.scalar(
+            select(AuthAccount).where(
+                AuthAccount.principal_type == "recruiter",
+                AuthAccount.principal_id == recruiter_id,
+            )
+        )
+        if account is None:
+            # Create a new auth account if missing (defensive).
+            account = AuthAccount(
+                username=login,
+                password_hash=hash_password(temp_password),
+                principal_type="recruiter",
+                principal_id=recruiter_id,
+                is_active=True,
+            )
+            session.add(account)
+        else:
+            # Keep username in sync with current policy (id).
+            account.username = login
+            account.password_hash = hash_password(temp_password)
+            account.is_active = True
+
+        await session.commit()
+
+    await log_audit_action(
+        "recruiter_password_reset",
+        "recruiter",
+        recruiter_id,
+        changes={"login": login},
+    )
+
+    return {"ok": True, "recruiter_id": recruiter_id, "login": login, "temp_password": temp_password}
 
 
 async def get_recruiter_detail(rec_id: int) -> Optional[Dict[str, object]]:

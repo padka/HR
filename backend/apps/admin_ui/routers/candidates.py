@@ -975,6 +975,57 @@ async def candidates_schedule_slot_submit(
     user_agent = request.headers.get("user-agent", None)
 
     try:
+        # Reuse existing reschedule request when present to avoid blocking the flow.
+        candidate_key = getattr(candidate, "candidate_id", None)
+        if candidate_key:
+            from backend.domain.models import (
+                RescheduleRequest,
+                RescheduleRequestStatus,
+                Slot,
+                SlotAssignment,
+                SlotAssignmentStatus,
+            )
+            from backend.domain.slot_assignment_service import propose_alternative
+            from backend.domain.candidates.status_service import set_status_slot_pending
+            from backend.core.time_utils import ensure_aware_utc
+
+            async with async_session() as session:
+                assignment = await session.scalar(
+                    select(SlotAssignment)
+                    .join(
+                        RescheduleRequest,
+                        RescheduleRequest.slot_assignment_id == SlotAssignment.id,
+                    )
+                    .where(
+                        SlotAssignment.candidate_id == candidate_key,
+                        SlotAssignment.status == SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+                        RescheduleRequest.status == RescheduleRequestStatus.PENDING,
+                    )
+                    .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
+                )
+                slot = await session.get(Slot, assignment.slot_id) if assignment is not None else None
+
+            if assignment is not None and slot is not None:
+                if int(recruiter.id) != int(assignment.recruiter_id):
+                    return PlainTextResponse("Запрос переноса привязан к другому рекрутёру.", status_code=409)
+                if getattr(slot, "city_id", None) is not None and int(city.id) != int(slot.city_id):
+                    return PlainTextResponse("Запрос переноса привязан к другому городу.", status_code=409)
+
+                result = await propose_alternative(
+                    assignment_id=int(assignment.id),
+                    decided_by_id=int(principal.id),
+                    decided_by_type=str(principal.type),
+                    new_start_utc=ensure_aware_utc(dt_utc),
+                    comment=custom_message if send_flag else None,
+                )
+                if not result.ok:
+                    return PlainTextResponse(result.message or "Не удалось перенести слот.", status_code=result.status_code or 409)
+                try:
+                    await set_status_slot_pending(candidate.telegram_id)
+                except Exception:
+                    logger.exception("Failed to set SLOT_PENDING after reschedule propose", extra={"candidate_id": candidate_id})
+                return JSONResponse({"ok": True, "slot_id": result.payload.get("slot_id") if isinstance(result.payload, dict) else None})
+
         result = await schedule_manual_candidate_slot(
             candidate=candidate,
             recruiter=recruiter,

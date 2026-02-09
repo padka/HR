@@ -61,6 +61,7 @@ from backend.apps.admin_ui.services.recruiters import (
     create_recruiter,
     delete_recruiter,
     update_recruiter,
+    reset_recruiter_password,
 )
 from backend.apps.admin_ui.services.slots.core import api_slots_payload, bulk_delete_slots, bulk_schedule_reminders
 from backend.apps.admin_ui.services.message_templates_presets import (
@@ -940,6 +941,20 @@ async def api_update_recruiter(
     result["tz"] = payload["tz"]
     result["tg_chat_id"] = payload["tg_chat_id"]
     result["active"] = payload["active"]
+    return JSONResponse(result, status_code=200)
+
+
+@router.post("/recruiters/{recruiter_id}/reset-password")
+async def api_reset_recruiter_password(
+    recruiter_id: int,
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    _ = await require_csrf_token(request)
+    result = await reset_recruiter_password(recruiter_id)
+    if not result.get("ok"):
+        status_code = 404 if result.get("error", {}).get("type") == "not_found" else 400
+        return JSONResponse(result, status_code=status_code)
     return JSONResponse(result, status_code=200)
 
 
@@ -1910,10 +1925,66 @@ async def api_city_owners():
 async def api_notifications_feed(
     request: Request,
     after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    status: Optional[str] = Query(default=None),
+    type: Optional[str] = Query(default=None),
+    _: Principal = Depends(require_admin),
 ):
     if getattr(request.app.state, "db_available", True) is False:
         return JSONResponse({"items": [], "latest_id": after_id, "degraded": True})
-    return JSONResponse({"items": [], "latest_id": after_id, "degraded": False})
+    from backend.apps.admin_ui.services.notifications_ops import list_outbox_notifications
+
+    payload = await list_outbox_notifications(
+        after_id=after_id,
+        limit=limit,
+        status=status,
+        type=type,
+    )
+    return JSONResponse({**payload, "degraded": False})
+
+
+@router.post("/notifications/{notification_id}/retry")
+async def api_notifications_retry(
+    notification_id: int,
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    _ = await require_csrf_token(request)
+    from backend.apps.admin_ui.services.notifications_ops import retry_outbox_notification
+
+    ok, error = await retry_outbox_notification(notification_id)
+    if not ok:
+        status_code = 404 if error == "not_found" else 409
+        return JSONResponse({"ok": False, "error": error}, status_code=status_code)
+    await log_audit_action(
+        "outbox_retry",
+        "outbox_notification",
+        notification_id,
+        changes={"action": "retry"},
+    )
+    return JSONResponse({"ok": True})
+
+
+@router.post("/notifications/{notification_id}/cancel")
+async def api_notifications_cancel(
+    notification_id: int,
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    _ = await require_csrf_token(request)
+    from backend.apps.admin_ui.services.notifications_ops import cancel_outbox_notification
+
+    ok, error = await cancel_outbox_notification(notification_id)
+    if not ok:
+        status_code = 404 if error == "not_found" else 409
+        return JSONResponse({"ok": False, "error": error}, status_code=status_code)
+    await log_audit_action(
+        "outbox_cancel",
+        "outbox_notification",
+        notification_id,
+        changes={"action": "cancel"},
+    )
+    return JSONResponse({"ok": True})
 
 
 @router.get("/bot/integration")
@@ -2524,6 +2595,100 @@ async def api_schedule_slot(
     custom_message_sent = bool(custom_message)
     custom_message_text = custom_message.strip() if custom_message else None
 
+    # If the candidate has an active reschedule request, reuse the existing slot assignment
+    # instead of creating a new one (otherwise we block on "candidate_has_active_assignment").
+    try:
+        candidate_key = getattr(user, "candidate_id", None)
+        assignment = None
+        slot = None
+        if candidate_key:
+            from backend.domain.models import (
+                RescheduleRequest,
+                RescheduleRequestStatus,
+                Slot,
+                SlotAssignment,
+                SlotAssignmentStatus,
+            )
+            from backend.domain.slot_assignment_service import propose_alternative
+            from backend.domain.candidates.status_service import set_status_slot_pending
+            from backend.core.time_utils import ensure_aware_utc
+
+            async with async_session() as session:
+                assignment = await session.scalar(
+                    select(SlotAssignment)
+                    .join(
+                        RescheduleRequest,
+                        RescheduleRequest.slot_assignment_id == SlotAssignment.id,
+                    )
+                    .where(
+                        SlotAssignment.candidate_id == candidate_key,
+                        SlotAssignment.status == SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+                        RescheduleRequest.status == RescheduleRequestStatus.PENDING,
+                    )
+                    .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
+                )
+                if assignment is not None:
+                    slot = await session.get(Slot, assignment.slot_id)
+                    if slot is None:
+                        assignment = None
+
+            if assignment is not None and slot is not None:
+                if int(recruiter.id) != int(assignment.recruiter_id):
+                    return JSONResponse(
+                        {
+                            "ok": False,
+                            "error": "assignment_recruiter_mismatch",
+                            "message": "Запрос переноса привязан к другому рекрутёру.",
+                        },
+                        status_code=409,
+                    )
+                if getattr(slot, "city_id", None) is not None and int(city.id) != int(slot.city_id):
+                    return JSONResponse(
+                        {
+                            "ok": False,
+                            "error": "assignment_city_mismatch",
+                            "message": "Запрос переноса привязан к другому городу.",
+                        },
+                        status_code=409,
+                    )
+
+                result = await propose_alternative(
+                    assignment_id=int(assignment.id),
+                    decided_by_id=int(principal.id),
+                    decided_by_type=str(principal.type),
+                    new_start_utc=ensure_aware_utc(dt_utc),
+                    comment=custom_message_text,
+                )
+                if not result.ok:
+                    return JSONResponse(
+                        {
+                            "ok": False,
+                            "error": result.status,
+                            "message": result.message or "Не удалось перенести слот.",
+                        },
+                        status_code=result.status_code or 409,
+                    )
+                try:
+                    await set_status_slot_pending(user.telegram_id)
+                except Exception:
+                    logger.exception(
+                        "Failed to set SLOT_PENDING after reschedule propose",
+                        extra={"candidate_id": candidate_id},
+                    )
+                return JSONResponse(
+                    {
+                        "ok": True,
+                        "status": "pending_offer",
+                        "message": "Предложение отправлено кандидату",
+                        "slot_id": result.payload.get("slot_id") if isinstance(result.payload, dict) else None,
+                        "slot_assignment_id": int(assignment.id),
+                    },
+                    status_code=201,
+                )
+    except Exception:
+        logger.exception("schedule-slot: reschedule probe failed", extra={"candidate_id": candidate_id})
+        return JSONResponse({"ok": False, "error": "reschedule_probe_failed"}, status_code=500)
+
     try:
         result = await schedule_manual_candidate_slot(
             candidate=user,
@@ -2541,9 +2706,8 @@ async def api_schedule_slot(
     except ManualSlotError as exc:
         return JSONResponse({"ok": False, "error": "slot_conflict", "message": str(exc)}, status_code=409)
     except Exception:
-        logger.exception("schedule-slot: slot created but post-processing failed (e.g. reminder scheduling)")
-        # Slot was likely created; return partial success so UI doesn't show a hard error
-        return JSONResponse({"ok": True, "warning": "slot_created_reminder_failed"}, status_code=201)
+        logger.exception("schedule-slot: unexpected error", extra={"candidate_id": candidate_id})
+        return JSONResponse({"ok": False, "error": "internal_error"}, status_code=500)
 
     # Ensure recruiter is linked to candidate after successful scheduling
     try:
