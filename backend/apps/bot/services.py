@@ -1444,32 +1444,278 @@ class NotificationService:
 
     async def _process_slot_confirmed_recruiter(self, item: OutboxItem) -> None:
         """Notifies a recruiter that a candidate has confirmed a slot."""
-        # Simplified implementation
-        recruiter_id = item.recruiter_tg_id
-        if not recruiter_id:
+        recruiter_chat_id = item.recruiter_tg_id
+        if not recruiter_chat_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "slot_confirmed_recruiter",
+                "slot_confirmed_recruiter",
+                "recruiter_missing",
+                None,
+            )
             return
-        await get_bot().send_message(recruiter_id, "Кандидат подтвердил слот.")
+
+        payload = dict(item.payload or {})
+        slot_id = payload.get("slot_id") or item.booking_id
+        slot = await get_slot(int(slot_id)) if slot_id else None
+        candidate_name = "Кандидат"
+        dt_local = None
+        if slot is not None:
+            candidate_name = slot.candidate_fio or slot.candidate_id or candidate_name
+            dt_local = fmt_dt_local(slot.start_utc, slot.candidate_tz or DEFAULT_TZ)
+
+        context = {
+            "candidate_name": escape_html(str(candidate_name)),
+            "dt_local": dt_local or "",
+        }
+        rendered = await self._template_provider.render("slot_confirmed_recruiter", context)
+        text = rendered.text if rendered is not None else "Кандидат подтвердил слот."
+
+        attempt = item.attempts + 1
+        await self._throttle()
+        try:
+            await _send_with_retry(
+                get_bot(),
+                SendMessage(chat_id=recruiter_chat_id, text=text),
+                correlation_id=f"outbox:{item.type}:{item.id}:{uuid.uuid4().hex}",
+            )
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="slot_confirmed_recruiter",
+                notification_type="slot_confirmed_recruiter",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        self._last_delivery_error = None
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=attempt,
+            next_retry_at=None,
+            last_error=None,
+        )
+        await record_notification_sent("slot_confirmed_recruiter")
 
     async def _process_reschedule_requested_recruiter(self, item: OutboxItem) -> None:
         """Notifies a recruiter that a candidate has requested a reschedule."""
-        recruiter_id = item.recruiter_tg_id
-        if not recruiter_id:
+        recruiter_chat_id = item.recruiter_tg_id
+        if not recruiter_chat_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "reschedule_requested_recruiter",
+                "reschedule_requested_recruiter",
+                "recruiter_missing",
+                None,
+            )
             return
-        await get_bot().send_message(recruiter_id, "Кандидат запросил другое время.")
+
+        payload = dict(item.payload or {})
+        assignment_id_raw = payload.get("slot_assignment_id") or payload.get("assignment_id")
+        assignment_id = None
+        try:
+            assignment_id = int(assignment_id_raw) if assignment_id_raw is not None else None
+        except (TypeError, ValueError):
+            assignment_id = None
+
+        # Legacy outbox entries may outlive their originating assignment; don't spam recruiters in that case.
+        if assignment_id is not None:
+            from backend.domain.models import SlotAssignment
+            from backend.core.db import async_session
+
+            async with async_session() as session:
+                assignment = await session.get(SlotAssignment, assignment_id)
+            if assignment is None:
+                await self._mark_failed(
+                    item,
+                    max(1, item.attempts + 1),
+                    "reschedule_requested_recruiter",
+                    "reschedule_requested_recruiter",
+                    "assignment_missing",
+                    None,
+                )
+                return
+
+        requested_raw = (
+            payload.get("requested_start_utc")
+            or payload.get("requested_time_utc")
+            or payload.get("requested_time")
+        )
+        requested_utc = None
+        if requested_raw:
+            try:
+                requested_utc = datetime.fromisoformat(str(requested_raw))
+                if requested_utc.tzinfo is None:
+                    requested_utc = requested_utc.replace(tzinfo=timezone.utc)
+                else:
+                    requested_utc = requested_utc.astimezone(timezone.utc)
+            except Exception:
+                requested_utc = None
+
+        recruiter = await get_recruiter_by_chat_id(recruiter_chat_id)
+        tz_label = (getattr(recruiter, "tz", None) or DEFAULT_TZ) if recruiter else DEFAULT_TZ
+        requested_time_local = (
+            fmt_dt_local(requested_utc, tz_label) if requested_utc is not None else ""
+        )
+        candidate_name = payload.get("candidate_name") or payload.get("candidate_fio") or "Кандидат"
+
+        context = {
+            "candidate_name": escape_html(str(candidate_name)),
+            "requested_time_local": requested_time_local,
+        }
+        rendered = await self._template_provider.render("reschedule_requested_recruiter", context)
+        text = rendered.text if rendered is not None else "Кандидат запросил другое время."
+
+        attempt = item.attempts + 1
+        await self._throttle()
+        try:
+            await _send_with_retry(
+                get_bot(),
+                SendMessage(chat_id=recruiter_chat_id, text=text),
+                correlation_id=f"outbox:{item.type}:{item.id}:{uuid.uuid4().hex}",
+            )
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="reschedule_requested_recruiter",
+                notification_type="reschedule_requested_recruiter",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        self._last_delivery_error = None
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=attempt,
+            next_retry_at=None,
+            last_error=None,
+        )
+        await record_notification_sent("reschedule_requested_recruiter")
         
     async def _process_reschedule_approved_candidate(self, item: OutboxItem) -> None:
         """Notifies a candidate their reschedule request was approved."""
         candidate_id = item.candidate_tg_id
         if not candidate_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "reschedule_approved_candidate",
+                "reschedule_approved_candidate",
+                "candidate_missing",
+                None,
+                candidate_tg_id=None,
+            )
             return
-        await get_bot().send_message(candidate_id, "Ваш запрос на перенос одобрен.")
+
+        payload = dict(item.payload or {})
+        new_time_raw = payload.get("new_time_utc") or payload.get("new_start_utc")
+        new_time_utc = None
+        if new_time_raw:
+            try:
+                new_time_utc = datetime.fromisoformat(str(new_time_raw))
+                if new_time_utc.tzinfo is None:
+                    new_time_utc = new_time_utc.replace(tzinfo=timezone.utc)
+                else:
+                    new_time_utc = new_time_utc.astimezone(timezone.utc)
+            except Exception:
+                new_time_utc = None
+
+        tz_label = payload.get("candidate_tz") or DEFAULT_TZ
+        new_time_local = fmt_dt_local(new_time_utc, tz_label) if new_time_utc else ""
+        context = {"new_time_local": new_time_local}
+        rendered = await self._template_provider.render("reschedule_approved_candidate", context)
+        text = rendered.text if rendered is not None else "Ваш запрос на перенос одобрен."
+
+        attempt = item.attempts + 1
+        await self._throttle()
+        try:
+            await _send_with_retry(
+                get_bot(),
+                SendMessage(chat_id=candidate_id, text=text),
+                correlation_id=f"outbox:{item.type}:{item.id}:{uuid.uuid4().hex}",
+            )
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="reschedule_approved_candidate",
+                notification_type="reschedule_approved_candidate",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        self._last_delivery_error = None
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=attempt,
+            next_retry_at=None,
+            last_error=None,
+        )
+        await record_notification_sent("reschedule_approved_candidate")
 
     async def _process_reschedule_declined_candidate(self, item: OutboxItem) -> None:
         """Notifies a candidate their reschedule request was declined."""
         candidate_id = item.candidate_tg_id
         if not candidate_id:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "reschedule_declined_candidate",
+                "reschedule_declined_candidate",
+                "candidate_missing",
+                None,
+                candidate_tg_id=None,
+            )
             return
-        await get_bot().send_message(candidate_id, "Ваш запрос на перенос отклонен.")
+
+        payload = dict(item.payload or {})
+        recruiter_comment = payload.get("recruiter_comment") or ""
+        context = {"recruiter_comment": escape_html(str(recruiter_comment))}
+        rendered = await self._template_provider.render("reschedule_declined_candidate", context)
+        text = rendered.text if rendered is not None else "Ваш запрос на перенос отклонен."
+
+        attempt = item.attempts + 1
+        await self._throttle()
+        try:
+            await _send_with_retry(
+                get_bot(),
+                SendMessage(chat_id=candidate_id, text=text),
+                correlation_id=f"outbox:{item.type}:{item.id}:{uuid.uuid4().hex}",
+            )
+        except Exception as exc:
+            await self._schedule_retry(
+                item,
+                attempt=attempt,
+                log_type="reschedule_declined_candidate",
+                notification_type="reschedule_declined_candidate",
+                error=str(exc),
+                rendered=rendered,
+                candidate_tg_id=candidate_id,
+            )
+            return
+
+        self._last_delivery_error = None
+        await update_outbox_entry(
+            item.id,
+            status="sent",
+            attempts=attempt,
+            next_retry_at=None,
+            last_error=None,
+        )
+        await record_notification_sent("reschedule_declined_candidate")
 
     async def _process_candidate_confirmation(self, item: OutboxItem) -> None:
         slot = await get_slot(item.booking_id) if item.booking_id is not None else None

@@ -892,6 +892,148 @@ async def test_direct_fallback_failure_sets_error(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.notifications
+async def test_reschedule_requested_recruiter_marks_failed_when_assignment_missing(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    configure(dummy_bot, manager)
+
+    service = NotificationService(poll_interval=0.05, rate_limit_per_sec=10)
+    configure_notification_service(service)
+
+    async def fake_send(_bot, _method, _correlation_id):
+        raise AssertionError("send should not be called when assignment is missing")
+
+    monkeypatch.setattr("backend.apps.bot.services._send_with_retry", fake_send)
+
+    await add_outbox_notification(
+        notification_type="reschedule_requested_recruiter",
+        booking_id=None,
+        recruiter_tg_id=123456,
+        payload={
+            "assignment_id": 99999,
+            "requested_start_utc": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        },
+    )
+
+    try:
+        await service._poll_once()
+
+        async with async_session() as session:
+            outbox = await session.scalar(
+                select(OutboxNotification)
+                .where(OutboxNotification.type == "reschedule_requested_recruiter")
+                .order_by(OutboxNotification.id.desc())
+            )
+            assert outbox is not None
+            assert outbox.status == "failed"
+            assert outbox.last_error == "assignment_missing"
+            assert outbox.attempts >= 1
+    finally:
+        await service.shutdown()
+        await manager.clear()
+        await manager.close()
+        import backend.apps.bot.services as bot_services
+
+        bot_services._notification_service = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.notifications
+async def test_reschedule_requested_recruiter_marks_sent(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    configure(dummy_bot, manager)
+
+    service = NotificationService(poll_interval=0.05, rate_limit_per_sec=10)
+    configure_notification_service(service)
+
+    send_calls = []
+
+    async def fake_send(_bot, method, correlation_id):
+        send_calls.append((method, correlation_id))
+        return SimpleNamespace(message_id=777)
+
+    monkeypatch.setattr("backend.apps.bot.services._send_with_retry", fake_send)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Рекрутер",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example",
+            active=True,
+            tg_chat_id=777000,
+        )
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            status=SlotStatus.PENDING,
+            candidate_tg_id=999,
+            candidate_fio="Тестовый кандидат",
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=None,
+            candidate_tg_id=slot.candidate_tg_id,
+            candidate_tz=slot.candidate_tz,
+            status="offered",
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+
+    await add_outbox_notification(
+        notification_type="reschedule_requested_recruiter",
+        booking_id=slot.id,
+        recruiter_tg_id=recruiter.tg_chat_id,
+        payload={
+            "assignment_id": assignment.id,
+            "requested_start_utc": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+            "candidate_name": "Тестовый кандидат",
+        },
+    )
+
+    try:
+        await service._poll_once()
+
+        async with async_session() as session:
+            outbox = await session.scalar(
+                select(OutboxNotification)
+                .where(OutboxNotification.type == "reschedule_requested_recruiter")
+                .where(OutboxNotification.status == "sent")
+                .order_by(OutboxNotification.id.desc())
+            )
+            assert outbox is not None
+            assert outbox.attempts == 1
+            assert outbox.last_error is None
+
+        assert len(send_calls) == 1
+        method, _ = send_calls[0]
+        assert isinstance(method, SendMessage)
+        assert method.chat_id == recruiter.tg_chat_id
+    finally:
+        await service.shutdown()
+        await manager.clear()
+        await manager.close()
+        import backend.apps.bot.services as bot_services
+
+        bot_services._notification_service = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_notification_service_health_snapshot_reports_broker():
     broker = InMemoryNotificationBroker()
     await broker.start()
