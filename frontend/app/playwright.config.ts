@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const port = Number(process.env.PORT || 8000);
+const port = Number(process.env.PORT || 18000);
 const host = process.env.HOST || '127.0.0.1';
 const baseURL = `http://${host}:${port}`;
 const __filename = fileURLToPath(import.meta.url);
@@ -44,7 +44,7 @@ export default defineConfig({
     command: `${pythonBin} scripts/run_migrations.py && ${pythonBin} -m uvicorn backend.apps.admin_ui.app:app --host 0.0.0.0 --port ${port}`,
     cwd: repoRoot,
     url: `${baseURL}/health`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     stdout: 'pipe',
     stderr: 'pipe',
     timeout: 120 * 1000,
