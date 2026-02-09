@@ -67,7 +67,6 @@ async def test_confirm_assignment_replaces_existing_slot_during_reschedule():
             candidate_tg_id=candidate_tg_id,
             candidate_tz="Europe/Moscow",
             status=models.SlotAssignmentStatus.OFFERED,
-            reschedule_requested_at=now,  # marks reschedule flow in API handler
         )
         session.add(assignment)
         await session.commit()
@@ -104,4 +103,3 @@ async def test_confirm_assignment_replaces_existing_slot_during_reschedule():
         assert new_slot_db.status == models.SlotStatus.BOOKED
         assert new_slot_db.candidate_id == candidate.candidate_id
         assert new_slot_db.candidate_tg_id == candidate_tg_id
-

@@ -70,7 +70,6 @@ async def confirm_assignment(assignment_id: int, payload: ActionPayload):
         candidate = None
         if assignment.candidate_id:
             candidate = await session.scalar(select(User).where(User.candidate_id == assignment.candidate_id))
-        allow_reschedule_replace = bool(getattr(assignment, "reschedule_requested_at", None))
         await session.commit()
 
     if slot is None:
@@ -92,9 +91,9 @@ async def confirm_assignment(assignment_id: int, payload: ActionPayload):
                     expected_city_id=slot.city_id,
                     allow_candidate_replace=False,
                 )
-                if reservation.status == "duplicate_candidate" and allow_reschedule_replace:
-                    # Reschedule flow: candidate might already have an active slot with the same recruiter.
-                    # Replace the old slot atomically in reserve_slot() to avoid blocking negotiation.
+                if reservation.status == "duplicate_candidate":
+                    # Reschedule / re-offer flow: candidate may already have an active slot with the same recruiter.
+                    # Replace the old slot atomically in reserve_slot() to avoid blocking confirmation.
                     reservation = await reserve_slot(
                         slot.id,
                         payload.candidate_tg_id,

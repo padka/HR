@@ -1073,7 +1073,7 @@ async def reserve_slot(
     city_name: Optional[str] = None
     candidate_uuid: Optional[str] = None
     slot_recruiter_id: Optional[int] = None
-    slot_purpose = purpose or "interview"
+    slot_purpose = (purpose or "interview").strip().lower()
 
     async with async_session() as session:
         try:
@@ -1136,6 +1136,7 @@ async def reserve_slot(
                     .where(
                         Slot.candidate_id == candidate_uuid,
                         Slot.recruiter_id == slot.recruiter_id,  # Same recruiter only
+                        func.lower(Slot.purpose) == slot_purpose,
                         Slot.id != slot.id,
                         func.lower(Slot.status).in_(
                             [
