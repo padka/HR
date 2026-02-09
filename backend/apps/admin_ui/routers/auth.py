@@ -1,21 +1,27 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status, Query
-from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 
-from backend.core.auth import verify_password, create_access_token
+from backend.apps.admin_ui.security import (
+    SESSION_KEY,
+    Principal,
+    PrincipalType,
+    get_client_ip,
+    limiter,
+)
+from backend.core.audit import AuditContext, log_audit_action
+from backend.core.auth import create_access_token, verify_password
 from backend.core.db import async_session
-from backend.apps.admin_ui.security import SESSION_KEY, Principal, PrincipalType, limiter, get_client_ip
-from backend.core.audit import log_audit_action, AuditContext
+from backend.core.settings import get_settings
 from backend.domain.auth_account import AuthAccount
 from backend.domain.models import Recruiter
-from backend.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,38 +38,63 @@ def _get_audit_context(request: Request, username: str) -> AuditContext:
 def _login_key_func(request: Request) -> str:
     return f"login:{get_client_ip(request)}"
 
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/token")
 @limiter.limit("5/minute", key_func=_login_key_func)
-async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
+async def login_for_access_token(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(OAuth2PasswordRequestForm),
+):
     """
     OAuth2 compatible token login, get an access token for future requests.
     """
     settings = get_settings()
-    
+
     audit_ctx = _get_audit_context(request, form_data.username)
 
     # 1. Check against hardcoded admin credentials (if configured)
-    if (settings.admin_username and
-        form_data.username == settings.admin_username and
-        form_data.password == settings.admin_password):
+    if (
+        settings.admin_username
+        and form_data.username == settings.admin_username
+        and form_data.password == settings.admin_password
+    ):
 
-        access_token_expires = timedelta(minutes=settings.state_ttl_seconds / 60) # use existing TTL or default 30m
+        access_token_expires = timedelta(
+            minutes=settings.state_ttl_seconds / 60
+        )  # use existing TTL or default 30m
         access_token = create_access_token(
             data={"sub": form_data.username}, expires_delta=access_token_expires
         )
-        await log_audit_action("login_success", "auth", None, ctx=audit_ctx, changes={"method": "token", "role": "admin"})
+        await log_audit_action(
+            "login_success",
+            "auth",
+            None,
+            ctx=audit_ctx,
+            changes={"method": "token", "role": "admin"},
+        )
         return {"access_token": access_token, "token_type": "bearer"}
 
     # 2. Check against database AuthAccount
     async with async_session() as session:
         account = await session.scalar(
-            select(AuthAccount).where(AuthAccount.username == form_data.username, AuthAccount.is_active.is_(True))
+            select(AuthAccount).where(
+                AuthAccount.username == form_data.username,
+                AuthAccount.is_active.is_(True),
+            )
         )
-        if not account or not verify_password(form_data.password, account.password_hash):
-            await log_audit_action("login_failed", "auth", None, ctx=audit_ctx, changes={"method": "token", "reason": "invalid_credentials"})
+        if not account or not verify_password(
+            form_data.password, account.password_hash
+        ):
+            await log_audit_action(
+                "login_failed",
+                "auth",
+                None,
+                ctx=audit_ctx,
+                changes={"method": "token", "reason": "invalid_credentials"},
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect username or password",
@@ -74,7 +105,13 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         access_token = create_access_token(
             data={"sub": account.username}, expires_delta=access_token_expires
         )
-        await log_audit_action("login_success", "auth", account.id, ctx=audit_ctx, changes={"method": "token", "role": account.principal_type})
+        await log_audit_action(
+            "login_success",
+            "auth",
+            account.id,
+            ctx=audit_ctx,
+            changes={"method": "token", "role": account.principal_type},
+        )
         return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -97,22 +134,44 @@ async def login(
 
     async with async_session() as session:
         account = await session.scalar(
-            select(AuthAccount).where(AuthAccount.username == username, AuthAccount.is_active.is_(True))
+            select(AuthAccount).where(
+                AuthAccount.username == username, AuthAccount.is_active.is_(True)
+            )
         )
         if not account or not verify_password(password, account.password_hash):
-            await log_audit_action("login_failed", "auth", None, ctx=audit_ctx, changes={"method": "form", "reason": "invalid_credentials"})
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            await log_audit_action(
+                "login_failed",
+                "auth",
+                None,
+                ctx=audit_ctx,
+                changes={"method": "form", "reason": "invalid_credentials"},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
         principal = await _resolve_principal(account)
         # optional: ensure recruiter exists
         if principal.type == "recruiter":
             recruiter = await session.get(Recruiter, principal.id)
             if not recruiter:
-                await log_audit_action("login_failed", "auth", account.id, ctx=audit_ctx, changes={"method": "form", "reason": "recruiter_not_found"})
+                await log_audit_action(
+                    "login_failed",
+                    "auth",
+                    account.id,
+                    ctx=audit_ctx,
+                    changes={"method": "form", "reason": "recruiter_not_found"},
+                )
                 raise HTTPException(status_code=401, detail="Recruiter not found")
             recruiter.last_seen_at = datetime.now(timezone.utc)
             await session.commit()
 
-    await log_audit_action("login_success", "auth", account.id, ctx=audit_ctx, changes={"method": "form", "role": principal.type})
+    await log_audit_action(
+        "login_success",
+        "auth",
+        account.id,
+        ctx=audit_ctx,
+        changes={"method": "form", "role": principal.type},
+    )
     request.session[SESSION_KEY] = {"type": principal.type, "id": principal.id}
 
     # Security fix: prevent open redirects
@@ -126,14 +185,22 @@ async def login(
 @router.post("/logout")
 async def logout(request: Request):
     principal_data = request.session.get(SESSION_KEY)
-    username = f"{principal_data.get('type', 'unknown')}:{principal_data.get('id', 'unknown')}" if principal_data else "anonymous"
-    await log_audit_action("logout", "auth", None, ctx=_get_audit_context(request, username))
+    username = (
+        f"{principal_data.get('type', 'unknown')}:{principal_data.get('id', 'unknown')}"
+        if principal_data
+        else "anonymous"
+    )
+    await log_audit_action(
+        "logout", "auth", None, ctx=_get_audit_context(request, username)
+    )
     request.session.pop(SESSION_KEY, None)
     return RedirectResponse(url="/auth/login?logged_out=1", status_code=303)
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_form(redirect_to: str = Query("/", alias="redirect_to")) -> HTMLResponse:
+async def login_form(
+    redirect_to: str = Query("/", alias="redirect_to")
+) -> HTMLResponse:
     html = f"""
     <!doctype html>
     <html lang="ru">

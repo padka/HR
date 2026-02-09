@@ -1,19 +1,22 @@
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from backend.apps.admin_ui.services.cities import (
+    delete_city,
     get_city,
     list_cities,
-    update_city_settings as update_city_settings_service,
-    update_city_owner as update_city_owner_service,
-    set_city_active as set_city_active_service,
-    delete_city,
     normalize_city_timezone,
+    set_city_active as set_city_active_service,
+    update_city_owner as update_city_owner_service,
+    update_city_settings as update_city_settings_service,
+)
+from backend.apps.admin_ui.services.message_templates import (
+    AVAILABLE_VARIABLES,
+    MOCK_CONTEXT,
 )
 from backend.apps.admin_ui.services.recruiters import list_recruiters
-from backend.apps.admin_ui.services.message_templates import AVAILABLE_VARIABLES, MOCK_CONTEXT
 from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 
@@ -165,7 +168,9 @@ async def _prepare_city_edit_context(
     context = {
         "request": request,
         "city": city,
-        "form_state": _build_city_form_state(city, owner_id, city_templates, overrides=form_state),
+        "form_state": _build_city_form_state(
+            city, owner_id, city_templates, overrides=form_state
+        ),
         "form_error": form_error,
         "success_message": success_message,
         "stage_meta": CITY_TEMPLATE_STAGES,
@@ -209,7 +214,61 @@ async def update_city_settings(city_id: int, request: Request):
     name_raw = (payload.get("name") or "").strip()
     name_clean = sanitize_plain_text(name_raw) if name_raw else None
     if name_raw and not name_clean:
-        return JSONResponse({"ok": False, "error": {"field": "name", "message": "Название города не может быть пустым"}}, status_code=422)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": {
+                    "field": "name",
+                    "message": "Название города не может быть пустым",
+                },
+            },
+            status_code=422,
+        )
+    criteria_raw = payload.get("criteria")
+    criteria = (str(criteria_raw).strip() if criteria_raw is not None else "") or None
+    experts_raw = payload.get("experts")
+    experts = (str(experts_raw).strip() if experts_raw is not None else "") or None
+    try:
+        plan_week = _parse_plan_value(payload.get("plan_week"))
+    except ValueError:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": {"field": "plan_week", "message": PLAN_ERROR_MESSAGE},
+            },
+            status_code=422,
+        )
+    try:
+        plan_month = _parse_plan_value(payload.get("plan_month"))
+    except ValueError:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": {"field": "plan_month", "message": PLAN_ERROR_MESSAGE},
+            },
+            status_code=422,
+        )
+    tz_raw = payload.get("tz")
+    if tz_raw is None or str(tz_raw).strip() == "":
+        tz_normalized = None
+    else:
+        try:
+            tz_normalized = normalize_city_timezone(str(tz_raw))
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "error": {"field": "tz", "message": str(exc)}},
+                status_code=422,
+            )
+    try:
+        active_value = _coerce_bool(payload.get("active"))
+    except ValueError:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": {"field": "active", "message": "Укажите корректный статус"},
+            },
+            status_code=422,
+        )
     recruiter_ids_payload = payload.get("recruiter_ids")
     recruiter_ids: List[int] = []
     if recruiter_ids_payload is None:
@@ -218,10 +277,14 @@ async def update_city_settings(city_id: int, request: Request):
             try:
                 recruiter_ids = [int(recruiter_raw)]
             except (TypeError, ValueError):
-                return JSONResponse({"ok": False, "error": "invalid_recruiter"}, status_code=400)
+                return JSONResponse(
+                    {"ok": False, "error": "invalid_recruiter"}, status_code=400
+                )
     else:
         if not isinstance(recruiter_ids_payload, list):
-            return JSONResponse({"ok": False, "error": "invalid_recruiter_ids"}, status_code=400)
+            return JSONResponse(
+                {"ok": False, "error": "invalid_recruiter_ids"}, status_code=400
+            )
         for raw in recruiter_ids_payload:
             try:
                 recruiter_ids.append(int(raw))
@@ -244,7 +307,9 @@ async def update_city_settings(city_id: int, request: Request):
         return JSONResponse({"ok": False, "error": error}, status_code=status)
     effective_owner = owner or (_primary_recruiter(city) if city else None)
     owner_id = effective_owner.id if effective_owner else None
-    recruiter_ids_resp = [rec.id for rec in getattr(city, "recruiters", [])] if city else []
+    recruiter_ids_resp = (
+        [rec.id for rec in getattr(city, "recruiters", [])] if city else []
+    )
     city_payload: Dict[str, object] = {
         "id": city.id if city else city_id,
         "name": city.name_plain if city else "",
@@ -280,7 +345,9 @@ async def update_city_owner(city_id: int, request: Request):
         try:
             responsible_id = int(recruiter_raw)
         except (TypeError, ValueError):
-            return JSONResponse({"ok": False, "error": "invalid_recruiter"}, status_code=400)
+            return JSONResponse(
+                {"ok": False, "error": "invalid_recruiter"}, status_code=400
+            )
 
     error, city, owner = await update_city_owner_service(city_id, responsible_id)
     if error:

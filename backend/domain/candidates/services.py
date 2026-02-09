@@ -1,24 +1,26 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
 import secrets
 import uuid
-from typing import List, Optional, Sequence, TYPE_CHECKING
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, List, Optional, Sequence
 
 from sqlalchemy import func, select, update
 
 from backend.core.db import async_session
 from backend.domain import analytics
+
 from .models import (
     AutoMessage,
+    CandidateInviteToken,
+    ChatMessage,
+    ChatMessageDirection,
+    ChatMessageStatus,
+    InterviewNote,
     Notification,
     QuestionAnswer,
     TestResult,
     User,
-    ChatMessage,
-    ChatMessageDirection,
-    ChatMessageStatus,
-    CandidateInviteToken,
 )
 
 if TYPE_CHECKING:
@@ -318,7 +320,9 @@ async def create_candidate_invite_token(candidate_id: str) -> CandidateInviteTok
             token_value = _generate_invite_token()
             for _ in range(5):
                 exists = await session.scalar(
-                    select(func.count()).where(CandidateInviteToken.token == token_value)
+                    select(func.count()).where(
+                        CandidateInviteToken.token == token_value
+                    )
                 )
                 if not exists:
                     break
@@ -554,7 +558,9 @@ async def mark_manual_slot_requested(
 ) -> None:
     """Store the moment when a manual slot was requested from the candidate."""
     async with async_session() as session:
-        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        result = await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )
         user = result.scalar_one_or_none()
         if not user:
             return
@@ -574,7 +580,9 @@ async def save_manual_slot_response(
 ) -> Optional[User]:
     """Persist candidate-provided availability for manual slot assignment."""
     async with async_session() as session:
-        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        result = await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )
         user = result.scalar_one_or_none()
         if not user:
             return None

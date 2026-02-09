@@ -2,21 +2,22 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-
 from sqlalchemy import func, select
 
 from backend.apps.admin_ui.services.candidates import (
     delete_all_candidates,
     get_candidate_detail,
     list_candidates,
-    upsert_candidate,
     update_candidate_status,
+    upsert_candidate,
 )
-from backend.domain.candidates import services as candidate_services
-from backend.domain.candidates import models as candidate_models
-from backend.domain.candidates.status import CandidateStatus
 from backend.core.db import async_session
-from backend.domain.models import Recruiter, Slot, SlotStatus, City
+from backend.domain.candidates import (
+    models as candidate_models,
+    services as candidate_services,
+)
+from backend.domain.candidates.status import CandidateStatus
+from backend.domain.models import City, Recruiter, Slot, SlotStatus
 
 
 @pytest.mark.asyncio
@@ -197,7 +198,9 @@ async def test_update_candidate_status_changes_slot_and_outcome():
     )
 
     async with async_session() as session:
-        recruiter = Recruiter(name="Status Recruiter", tz="Europe/Moscow", telemost_url=None, active=True)
+        recruiter = Recruiter(
+            name="Status Recruiter", tz="Europe/Moscow", telemost_url=None, active=True
+        )
         session.add(recruiter)
         await session.flush()
         slot = Slot(
@@ -214,7 +217,9 @@ async def test_update_candidate_status_changes_slot_and_outcome():
         session.add(slot)
         await session.commit()
 
-    ok, message, stored_status, dispatch = await update_candidate_status(candidate.id, "assigned")
+    ok, message, stored_status, dispatch = await update_candidate_status(
+        candidate.id, "assigned"
+    )
     assert ok is True
     assert stored_status == "assigned"
     assert dispatch is None
@@ -226,7 +231,9 @@ async def test_update_candidate_status_changes_slot_and_outcome():
         assert refreshed is not None
         assert refreshed.status == SlotStatus.BOOKED
 
-    ok, message, stored_status, dispatch = await update_candidate_status(candidate.id, "accepted")
+    ok, message, stored_status, dispatch = await update_candidate_status(
+        candidate.id, "accepted"
+    )
     assert ok is True
     assert stored_status == "accepted"
     async with async_session() as session:
@@ -252,10 +259,14 @@ async def test_list_candidates_pipeline_filters_renders_correct_stage():
 
     async with async_session() as session:
         city = City(name="Фантомный город", tz="Europe/Moscow", active=True)
-        recruiter = Recruiter(name="Pipeline Recruiter", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(
+            name="Pipeline Recruiter", tz="Europe/Moscow", active=True
+        )
         session.add_all([city, recruiter])
         await session.flush()
-        interview_user = await session.get(candidate_models.User, interview_candidate.id)
+        interview_user = await session.get(
+            candidate_models.User, interview_candidate.id
+        )
         intro_user = await session.get(candidate_models.User, intro_candidate.id)
         interview_user.candidate_status = CandidateStatus.INTERVIEW_SCHEDULED
         intro_user.candidate_status = CandidateStatus.INTRO_DAY_SCHEDULED
@@ -307,8 +318,14 @@ async def test_list_candidates_pipeline_filters_renders_correct_stage():
         pipeline="interview",
     )
     assert interview_payload["total"] == 1
-    assert interview_payload["summary"]["raw_status_totals"].get("interview_scheduled") == 1
-    assert interview_payload["summary"]["raw_status_totals"].get("intro_day_scheduled", 0) == 0
+    assert (
+        interview_payload["summary"]["raw_status_totals"].get("interview_scheduled")
+        == 1
+    )
+    assert (
+        interview_payload["summary"]["raw_status_totals"].get("intro_day_scheduled", 0)
+        == 0
+    )
     assert interview_payload["summary"]["funnel"]
     assert interview_payload["summary"]["funnel"][0]["statuses"]
 
@@ -336,7 +353,9 @@ async def test_list_candidates_pipeline_filters_renders_correct_stage():
     )
     assert intro_payload["total"] == 1
     assert intro_payload["summary"]["raw_status_totals"].get("intro_day_scheduled") == 1
-    assert intro_payload["summary"]["raw_status_totals"].get("interview_scheduled", 0) == 0
+    assert (
+        intro_payload["summary"]["raw_status_totals"].get("interview_scheduled", 0) == 0
+    )
     intro_rows = intro_payload["views"]["table"]["rows"]
     assert intro_rows
     assert intro_rows[0]["intro_day"] is not None
@@ -382,7 +401,9 @@ async def test_update_candidate_status_assigned_sends_notification(monkeypatch):
         fake_approve,
     )
 
-    ok, message, stored_status, dispatch = await update_candidate_status(candidate.id, "assigned")
+    ok, message, stored_status, dispatch = await update_candidate_status(
+        candidate.id, "assigned"
+    )
     assert ok is True
     assert stored_status == "assigned"
     assert dispatch is None
@@ -440,10 +461,13 @@ async def test_update_candidate_status_declined_without_slot():
         city="Москва",
     )
 
-    ok, message, stored_status, dispatch = await update_candidate_status(candidate.id, "interview_declined")
+    ok, message, stored_status, dispatch = await update_candidate_status(
+        candidate.id, "interview_declined"
+    )
     assert ok is True
     assert stored_status == "interview_declined"
-    assert dispatch is None
+    assert dispatch is not None
+    assert dispatch.status == "sent_rejection"
 
     async with async_session() as session:
         refreshed = await session.get(candidate_models.User, candidate.id)
