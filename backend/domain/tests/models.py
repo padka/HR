@@ -24,11 +24,13 @@ class Question(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     test_id: Mapped[int] = mapped_column(ForeignKey("tests.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     text: Mapped[str] = mapped_column(Text, nullable=False)
     key: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     type: Mapped[str] = mapped_column(String(32), nullable=False, default="single_choice")
     order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     test: Mapped["Test"] = relationship(back_populates="questions")
     answer_options: Mapped[List["AnswerOption"]] = relationship(
@@ -47,6 +49,7 @@ class AnswerOption(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     is_correct: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     points: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     question: Mapped["Question"] = relationship(back_populates="answer_options")
 

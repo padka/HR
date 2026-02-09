@@ -175,11 +175,13 @@ async def bootstrap_test_questions(session: AsyncSession) -> None:
                 
                 question = Question(
                     test_id=test.id,
+                    title=(q_data.get("text") or q_data.get("prompt") or text),
                     text=text,
                     key=q_key,
                     type=q_type,
                     order=idx,
-                    payload=payload if payload else None
+                    payload=payload if payload else None,
+                    is_active=True,
                 )
                 session.add(question)
                 await session.flush()
@@ -200,7 +202,8 @@ async def bootstrap_test_questions(session: AsyncSession) -> None:
                             question_id=question.id,
                             text=opt_text,
                             is_correct=is_correct,
-                            points=points
+                            points=points,
+                            sort_order=opt_idx,
                         )
                         session.add(answer)
             

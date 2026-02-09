@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Dict, List, Set, Any
 
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -27,14 +28,11 @@ def load_test_questions(test_id: str, *, include_inactive: bool = False) -> List
         stmt = (
             select(Question)
             .where(Question.test_id == test.id)
+            .where(sa.true() if include_inactive else Question.is_active.is_(True))
             .options(selectinload(Question.answer_options))
             .order_by(Question.order.asc())
         )
-        
-        # Note: Question model doesn't have is_active, assuming all are active or controlled by Test?
-        # The prompt asked for Test to have is_active, but my previous implementation of Test didn't include is_active.
-        # I will proceed with what is available.
-        
+
         rows = session.execute(stmt).scalars().all()
 
     if not rows:
@@ -66,7 +64,10 @@ def load_all_test_questions(*, include_inactive: bool = False) -> Dict[str, List
     for t in tests:
         questions_list = []
         # Sort questions by order (already sorted in relationship if configured, but safe to sort here)
-        sorted_qs = sorted(t.questions, key=lambda x: x.order)
+        sorted_qs = sorted(
+            (q for q in t.questions if include_inactive or getattr(q, "is_active", True)),
+            key=lambda x: x.order,
+        )
         for q in sorted_qs:
             questions_list.append(_format_question(q))
         grouped[t.slug] = questions_list
@@ -103,7 +104,10 @@ def _format_question(q: Question) -> Dict[str, Any]:
         options = []
         correct_idx = -1
         # Sort options? No explicit order column in AnswerOption, assuming insertion order or ID
-        sorted_opts = sorted(q.answer_options, key=lambda x: x.id)
+        sorted_opts = sorted(
+            q.answer_options,
+            key=lambda x: (getattr(x, "sort_order", 0), getattr(x, "id", 0)),
+        )
         
         for idx, opt in enumerate(sorted_opts):
             options.append(opt.text)
