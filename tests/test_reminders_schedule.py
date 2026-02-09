@@ -4,6 +4,7 @@ from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from backend.apps.bot.reminders import ReminderKind, ReminderService
+from backend.apps.bot.runtime_config import DEFAULT_REMINDER_POLICY
 
 
 def _service() -> ReminderService:
@@ -40,3 +41,39 @@ def test_quiet_hours_adjustment_moves_to_previous_evening():
     expected_local = start_local.replace(day=1, hour=21, minute=30)  # previous day
     assert six_hour_plan.run_at_local == expected_local
     assert six_hour_plan.adjusted_reason == "quiet_hours"
+
+
+def test_policy_can_disable_interview_reminders():
+    svc = _service()
+    start = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
+    policy = {
+        **DEFAULT_REMINDER_POLICY,
+        "interview": {
+            "confirm_6h": {"enabled": False, "offset_hours": 6},
+            "confirm_3h": {"enabled": True, "offset_hours": 3},
+            "confirm_2h": {"enabled": True, "offset_hours": 2},
+        },
+    }
+    plans = svc._build_schedule(start, "Europe/Moscow", "interview", policy=policy)
+    kinds = {plan.kind for plan in plans}
+    assert ReminderKind.CONFIRM_6H not in kinds
+    assert ReminderKind.CONFIRM_3H in kinds
+    assert ReminderKind.CONFIRM_2H in kinds
+
+
+def test_policy_can_adjust_reminder_offsets():
+    svc = _service()
+    start = datetime(2025, 1, 1, 20, 0, tzinfo=timezone.utc)
+    policy = {
+        **DEFAULT_REMINDER_POLICY,
+        "interview": {
+            "confirm_6h": {"enabled": True, "offset_hours": 5.5},
+            "confirm_3h": {"enabled": True, "offset_hours": 2.5},
+            "confirm_2h": {"enabled": True, "offset_hours": 1.5},
+        },
+    }
+    plans = svc._build_schedule(start, "UTC", "interview", policy=policy)
+    by_kind = {plan.kind: plan for plan in plans}
+    assert by_kind[ReminderKind.CONFIRM_6H].run_at_utc == start - timedelta(hours=5.5)
+    assert by_kind[ReminderKind.CONFIRM_3H].run_at_utc == start - timedelta(hours=2.5)
+    assert by_kind[ReminderKind.CONFIRM_2H].run_at_utc == start - timedelta(hours=1.5)

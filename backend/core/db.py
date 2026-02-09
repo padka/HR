@@ -113,7 +113,6 @@ elif _settings.environment == "test":
         "echo": _settings.sql_echo,
         "future": True,
         "poolclass": NullPool,
-        "connect_args": {"timeout": 5},
     }
 
 sync_engine = create_engine(

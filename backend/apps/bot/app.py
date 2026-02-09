@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import time
+from contextlib import suppress
+from pathlib import Path
 from typing import Tuple
 
 from aiogram import Bot, Dispatcher
@@ -35,6 +39,33 @@ from .state_store import build_state_manager, can_connect_redis
 __all__ = ["create_application", "create_bot", "create_dispatcher", "main"]
 
 configure_logging()
+
+
+def _heartbeat_path() -> Path:
+    settings = get_settings()
+    configured = os.getenv("BOT_HEARTBEAT_FILE", "").strip()
+    if configured:
+        return Path(configured)
+    return settings.data_dir / "bot_heartbeat"
+
+
+def _write_heartbeat(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(f"{time.time():.6f}", encoding="utf-8")
+    tmp_path.replace(path)
+
+
+async def _heartbeat_loop(stop_event: asyncio.Event, path: Path) -> None:
+    while not stop_event.is_set():
+        try:
+            _write_heartbeat(path)
+        except Exception:
+            logging.debug("bot.heartbeat_write_failed", exc_info=True)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            continue
 
 def create_bot(token: str | None = None) -> Bot:
     actual_token = token or BOT_TOKEN
@@ -95,6 +126,12 @@ async def create_application(
 
 async def main() -> None:
     settings = get_settings()
+    heartbeat_file = _heartbeat_path()
+    heartbeat_stop = asyncio.Event()
+    heartbeat_task: asyncio.Task | None = None
+    bot: Bot | None = None
+    reminder_service: ReminderService | None = None
+    notification_service: NotificationService | None = None
 
     # Initialize Phase 2 Performance Cache
     redis_url = settings.redis_url
@@ -121,8 +158,8 @@ async def main() -> None:
     else:
         logging.info("Cache disabled (no REDIS_URL)")
 
-    bot, dispatcher, _, reminder_service, notification_service = await create_application()
     try:
+        bot, dispatcher, _, reminder_service, notification_service = await create_application()
         # Start notification service to process outbox queue
         notification_service.start()
         logging.info("✓ Notification service started")
@@ -130,13 +167,27 @@ async def main() -> None:
         await bot.delete_webhook(drop_pending_updates=True)
         me = await bot.get_me()
         logging.warning("BOOT: using bot id=%s, username=@%s", me.id, me.username)
+        _write_heartbeat(heartbeat_file)
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(heartbeat_stop, heartbeat_file))
         # NOTE: Database migrations should be run separately before starting the bot
         # Run: python scripts/run_migrations.py
         await dispatcher.start_polling(bot)
     finally:
-        await reminder_service.shutdown()
-        await notification_service.shutdown()
+        heartbeat_stop.set()
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
+        with suppress(FileNotFoundError):
+            heartbeat_file.unlink()
+        if reminder_service is not None:
+            await reminder_service.shutdown()
+        if notification_service is not None:
+            await notification_service.shutdown()
         reset_bootstrap_notification_service()
+        if bot is not None:
+            with suppress(Exception):
+                await bot.session.close()
         # Disconnect cache
         try:
             if redis_url:

@@ -151,6 +151,13 @@ async def bot_health(request: Request) -> JSONResponse:
     runtime_enabled = (
         switch.is_enabled() if switch else settings.bot_integration_enabled
     )
+    switch_source = switch.source if switch else "operator"
+    switch_reason = switch.reason if switch else None
+    disabled_by = None
+    if not enabled:
+        disabled_by = "config"
+    elif not runtime_enabled:
+        disabled_by = "runtime" if switch_source == "runtime" else "operator"
     service_health = bot_service.health_status if bot_service else "missing"
     service_ready = bot_service.is_ready() if bot_service else False
     mode = (
@@ -195,7 +202,18 @@ async def bot_health(request: Request) -> JSONResponse:
     else:
         queues = {"total": 0, "confirm_prompts": 0, "reminders": 0}
 
+    status = "ok"
+    if disabled_by in {"config", "operator"}:
+        status = "disabled"
+    elif disabled_by == "runtime":
+        status = "error"
+    elif service_health in {"missing", "unavailable", "unconfigured"}:
+        status = "degraded"
+    elif not service_ready or not telegram_probe.get("ok", False):
+        status = "degraded"
+
     payload = {
+        "status": status,
         "config": {
             "bot_enabled": enabled,
             "integration_enabled": settings.bot_integration_enabled,
@@ -203,6 +221,9 @@ async def bot_health(request: Request) -> JSONResponse:
         "runtime": {
             "switch_enabled": runtime_enabled,
             "switch_updated_at": switch.updated_at.isoformat() if switch else None,
+            "switch_source": switch_source,
+            "switch_reason": switch_reason,
+            "disabled_by": disabled_by,
             "service_health": service_health,
             "service_ready": service_ready,
             "mode": mode,
@@ -216,15 +237,32 @@ async def bot_health(request: Request) -> JSONResponse:
 
 @router.get("/health/notifications", include_in_schema=False)
 async def notifications_health(request: Request) -> JSONResponse:
+    settings = get_settings()
+    switch: IntegrationSwitch | None = getattr(
+        request.app.state, "bot_integration_switch", None
+    )
     bot_service = getattr(request.app.state, "bot_service", None)
     bot_runner_task = getattr(request.app.state, "bot_runner_task", None)
     notification_service = getattr(request.app.state, "notification_service", None)
     reminder_service = getattr(request.app.state, "reminder_service", None)
+    runtime_enabled = (
+        switch.is_enabled() if switch else settings.bot_integration_enabled
+    )
+    switch_source = switch.source if switch else "operator"
+    switch_reason = switch.reason if switch else None
+    disabled_by = None
+    if not settings.bot_enabled:
+        disabled_by = "config"
+    elif not runtime_enabled:
+        disabled_by = "runtime" if switch_source == "runtime" else "operator"
 
     bot_info = {
         "health": bot_service.health_status if bot_service else "missing",
         "ready": bot_service.is_ready() if bot_service else False,
         "polling": bool(bot_runner_task) and not getattr(bot_runner_task, "done", lambda: False)(),
+        "switch_source": switch_source,
+        "switch_reason": switch_reason,
+        "disabled_by": disabled_by,
     }
 
     reminder_info = {"status": "missing"}
@@ -235,26 +273,60 @@ async def notifications_health(request: Request) -> JSONResponse:
             "status": "ok" if reminder_snapshot.get("scheduler_running") else "stopped",
         }
 
-    notification_info = {"status": "missing", "metrics": {}}
+    notification_info = {
+        "status": "missing",
+        "metrics": {},
+        "fatal_error_code": None,
+        "fatal_error_at": None,
+        "delivery_state": "unknown",
+    }
     status_code = 503
     if notification_service is not None:
         snapshot = await notification_service.health_snapshot()
         broker_ping = await notification_service.broker_ping()
+        fatal_error_code = snapshot.get("fatal_error_code")
+        fatal_error_at = snapshot.get("fatal_error_at")
         metrics_payload = snapshot.pop("metrics", {})
         if snapshot.get("seconds_since_poll") is not None:
             metrics_payload.setdefault("seconds_since_poll", snapshot["seconds_since_poll"])
+        delivery_state = "ok"
+        if fatal_error_code:
+            delivery_state = "fatal"
+        elif not snapshot.get("started"):
+            delivery_state = "stopped"
+        elif broker_ping is False:
+            delivery_state = "degraded"
         notification_info = {
             **snapshot,
             "metrics": metrics_payload,
             "broker_ping": (
                 "ok" if broker_ping else "error" if broker_ping is False else "skipped"
             ),
+            "fatal_error_code": fatal_error_code,
+            "fatal_error_at": fatal_error_at,
+            "delivery_state": delivery_state,
         }
-        is_ok = snapshot.get("started") and (broker_ping is not False)
-        notification_info["status"] = "ok" if is_ok else "error"
-        status_code = 200 if is_ok else 503
+        if disabled_by in {"config", "operator"}:
+            notification_info["status"] = "disabled"
+            notification_info["delivery_state"] = "disabled"
+            status_code = 200
+        else:
+            is_ok = (
+                snapshot.get("started")
+                and (broker_ping is not False)
+                and not fatal_error_code
+            )
+            notification_info["status"] = "ok" if is_ok else "error"
+            status_code = 200 if is_ok else 503
+    elif disabled_by in {"config", "operator"}:
+        notification_info["status"] = "disabled"
+        notification_info["delivery_state"] = "disabled"
+        status_code = 200
 
-    overall_status = "ok" if status_code == 200 else "error"
+    if disabled_by in {"config", "operator"}:
+        overall_status = "disabled"
+    else:
+        overall_status = "ok" if status_code == 200 else "error"
 
     payload = {
         "status": overall_status,

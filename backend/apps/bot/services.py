@@ -27,6 +27,7 @@ from aiogram.exceptions import (
     TelegramBadRequest,
     TelegramRetryAfter,
     TelegramServerError,
+    TelegramUnauthorizedError,
 )
 from aiogram.methods import SendMessage
 from aiogram.types import (
@@ -48,7 +49,7 @@ from backend.domain.candidates.status_service import (
     set_status_waiting_slot,
     set_status_interview_scheduled,
 )
-from backend.domain.models import SlotStatus, Slot
+from backend.domain.models import Recruiter, Slot, SlotStatus
 from backend.apps.bot.events import InterviewSuccessEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import SchedulerAlreadyRunningError
@@ -441,6 +442,9 @@ class NotificationService:
         self._idle_log_interval = 60.0
         self._last_db_error_ts: float = 0.0
         self._db_error_log_interval = 300.0
+        self._fatal_error_code: Optional[str] = None
+        self._fatal_error_at: Optional[datetime] = None
+        self._last_delivery_error: Optional[str] = None
 
     def start(self, *, allow_poll_loop: bool = False) -> None:
         self._shutting_down = False
@@ -693,6 +697,11 @@ class NotificationService:
             "rate_limit_per_sec": rate_limit,
             "rate_limit_capacity": rate_capacity,
             "worker_concurrency": self._worker_concurrency,
+            "fatal_error_code": self._fatal_error_code,
+            "fatal_error_at": (
+                self._fatal_error_at.isoformat() if self._fatal_error_at is not None else None
+            ),
+            "last_delivery_error": self._last_delivery_error,
             "metrics": {
                 "outbox_queue_depth": metrics.outbox_queue_depth,
                 "poll_skipped_total": metrics.poll_skipped_total,
@@ -1350,6 +1359,16 @@ class NotificationService:
                 )
                 return
             await handler(item)
+        except TelegramUnauthorizedError:
+            await self._mark_failed(
+                item,
+                max(1, item.attempts + 1),
+                item.type,
+                item.type,
+                "telegram_unauthorized",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
         except Exception as exc:
             logger.exception(
                 "notification.worker.process_item_error",
@@ -2857,6 +2876,7 @@ class NotificationService:
         rendered: object,
         candidate_tg_id: Optional[int],
     ) -> None:
+        self._last_delivery_error = None
         rendered_text, template_key, template_version = self._rendered_components(rendered)
         await update_outbox_entry(
             item.id,
@@ -2923,6 +2943,10 @@ class NotificationService:
         *,
         candidate_tg_id: Optional[int] = None,
     ) -> None:
+        self._last_delivery_error = error
+        if error == "telegram_unauthorized":
+            self._fatal_error_code = error
+            self._fatal_error_at = datetime.now(timezone.utc)
         rendered_text, template_key, template_version = self._rendered_components(rendered)
         await update_outbox_entry(
             item.id,
@@ -2987,6 +3011,13 @@ class NotificationService:
                     extra={"outbox_id": item.id, "message_id": self._current_message.id},
                 )
 
+    @staticmethod
+    def _fatal_error_code_for_retry(error: str) -> Optional[str]:
+        normalized = (error or "").strip().lower()
+        if "unauthorized" in normalized:
+            return "telegram_unauthorized"
+        return None
+
     async def _schedule_retry(
         self,
         item: OutboxItem,
@@ -3000,6 +3031,20 @@ class NotificationService:
         candidate_tg_id: Optional[int] = None,
         count_failure: bool = True,
     ) -> None:
+        self._last_delivery_error = error
+        fatal_error_code = self._fatal_error_code_for_retry(error)
+        if fatal_error_code is not None:
+            await self._mark_failed(
+                item,
+                attempt,
+                log_type,
+                notification_type,
+                fatal_error_code,
+                rendered,
+                candidate_tg_id=candidate_tg_id,
+            )
+            return
+
         if attempt >= self._max_attempts:
             await self._mark_failed(
                 item,

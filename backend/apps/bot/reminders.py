@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from enum import Enum
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 from sqlalchemy import select
 
@@ -97,6 +97,12 @@ from backend.apps.bot.metrics import (
     record_reminder_scheduled,
     record_reminder_skipped,
 )
+from backend.apps.bot.runtime_config import (
+    get_reminder_policy_config,
+    is_reminder_kind_enabled,
+    min_time_before_immediate_hours,
+    reminder_kind_offset_hours,
+)
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.core.redis_factory import parse_redis_target
@@ -155,6 +161,7 @@ class ReminderService:
     async def sync_jobs(self) -> None:
         """Ensure persisted jobs exist in the scheduler."""
 
+        reminder_policy, _ = await get_reminder_policy_config()
         try:
             async with async_session() as session:
                 result = await session.execute(SlotReminderJob.__table__.select())
@@ -173,7 +180,12 @@ class ReminderService:
                     for slot in slot_rows:
                         slot_id = slot.id
                         try:
-                            plans = self._build_schedule(slot.start_utc, slot.candidate_tz or DEFAULT_TZ, getattr(slot, "purpose", None) or "interview")
+                            plans = self._build_schedule(
+                                slot.start_utc,
+                                slot.candidate_tz or DEFAULT_TZ,
+                                getattr(slot, "purpose", None) or "interview",
+                                policy=reminder_policy,
+                            )
                         except Exception:
                             continue
                         for plan in plans:
@@ -370,10 +382,12 @@ class ReminderService:
             }:
                 return
 
+            reminder_policy, _ = await get_reminder_policy_config()
             plans = self._build_schedule(
                 slot.start_utc,
                 slot.candidate_tz or DEFAULT_TZ,
                 getattr(slot, "purpose", "interview") or "interview",
+                policy=reminder_policy,
             )
             if skip_confirmation_prompts:
                 confirm_kinds = {
@@ -394,6 +408,9 @@ class ReminderService:
             now_local = datetime.now(candidate_zone)
             start_local = slot.start_utc.astimezone(candidate_zone)
             time_until_meeting = start_local - now_local
+            immediate_threshold = timedelta(
+                hours=min_time_before_immediate_hours(reminder_policy)
+            )
 
             immediate_map: Dict[str, ReminderPlan] = {}
             future_plans: List[ReminderPlan] = []
@@ -402,7 +419,7 @@ class ReminderService:
                 if plan.run_at_local <= now_local:
                     # Если время напоминания уже прошло, проверяем сколько времени до встречи
                     # Не отправляем immediate, если до встречи еще достаточно времени
-                    if time_until_meeting > _MIN_TIME_BEFORE_IMMEDIATE:
+                    if time_until_meeting > immediate_threshold:
                         logger.info(
                             "reminder.schedule.skip_immediate",
                             extra={
@@ -513,6 +530,35 @@ class ReminderService:
             "reminders": total - confirm,
         }
 
+    async def reschedule_active_slots(self) -> Dict[str, int]:
+        """Rebuild reminder jobs for all active slots."""
+
+        async with async_session() as session:
+            slot_ids = list(
+                await session.scalars(
+                    select(Slot.id).where(
+                        Slot.candidate_tg_id.is_not(None),
+                        Slot.status.in_(
+                            [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
+                        ),
+                        Slot.start_utc >= datetime.now(timezone.utc),
+                    )
+                )
+            )
+        scheduled = 0
+        failed = 0
+        for slot_id in slot_ids:
+            try:
+                await self.schedule_for_slot(slot_id)
+                scheduled += 1
+            except Exception:
+                failed += 1
+                logger.exception(
+                    "reminder.reschedule.failed",
+                    extra={"slot_id": slot_id},
+                )
+        return {"scheduled": scheduled, "failed": failed}
+
     async def _cancel_jobs(self, slot_id: int) -> None:
         async with async_session() as session:
             result = await session.execute(
@@ -550,6 +596,23 @@ class ReminderService:
             logger.info(
                 "reminder.job.skip",
                 extra={"slot_id": slot_id, "kind": kind.value, "reason": "slot_missing"},
+            )
+            return
+        purpose = getattr(slot, "purpose", None) or "interview"
+        reminder_policy, _ = await get_reminder_policy_config()
+        if not is_reminder_kind_enabled(
+            reminder_policy,
+            purpose=purpose,
+            kind=kind.value,
+        ):
+            await record_reminder_skipped(kind, "disabled_by_policy")
+            logger.info(
+                "reminder.job.skip",
+                extra={
+                    "slot_id": slot_id,
+                    "kind": kind.value,
+                    "reason": "disabled_by_policy",
+                },
             )
             return
         status = (slot.status or "").lower()
@@ -648,20 +711,50 @@ class ReminderService:
         start_utc: datetime,
         tz: Optional[str],
         purpose: str,
+        *,
+        policy: Optional[Dict[str, Any]] = None,
     ) -> List[ReminderPlan]:
         zone = _safe_zone(tz)
         start_local = start_utc.astimezone(zone)
         normalized_purpose = (purpose or "interview").strip().lower() or "interview"
+        effective_policy = policy or {}
         if normalized_purpose == "intro_day":
-            targets: List[tuple[ReminderKind, timedelta]] = [
-                (ReminderKind.INTRO_REMIND_3H, timedelta(hours=3)),
-            ]
+            targets: List[tuple[ReminderKind, timedelta]] = []
+            if is_reminder_kind_enabled(
+                effective_policy,
+                purpose=normalized_purpose,
+                kind=ReminderKind.INTRO_REMIND_3H.value,
+            ):
+                offset = reminder_kind_offset_hours(
+                    effective_policy,
+                    purpose=normalized_purpose,
+                    kind=ReminderKind.INTRO_REMIND_3H.value,
+                )
+                if offset > 0:
+                    targets.append(
+                        (ReminderKind.INTRO_REMIND_3H, timedelta(hours=offset))
+                    )
         else:
-            targets = [
-                (ReminderKind.CONFIRM_6H, timedelta(hours=6)),
-                (ReminderKind.CONFIRM_3H, timedelta(hours=3)),
-                (ReminderKind.CONFIRM_2H, timedelta(hours=2)),
-            ]
+            targets = []
+            for kind in (
+                ReminderKind.CONFIRM_6H,
+                ReminderKind.CONFIRM_3H,
+                ReminderKind.CONFIRM_2H,
+            ):
+                if not is_reminder_kind_enabled(
+                    effective_policy,
+                    purpose=normalized_purpose,
+                    kind=kind.value,
+                ):
+                    continue
+                offset = reminder_kind_offset_hours(
+                    effective_policy,
+                    purpose=normalized_purpose,
+                    kind=kind.value,
+                )
+                if offset <= 0:
+                    continue
+                targets.append((kind, timedelta(hours=offset)))
         plans: List[ReminderPlan] = []
         seen: set[ReminderKind] = set()
         seen_times: set[datetime] = set()
@@ -721,6 +814,9 @@ class NullReminderService:
 
     def health_snapshot(self) -> Dict[str, Any]:
         return {"scheduler_running": False, "job_count": 0}
+
+    async def reschedule_active_slots(self) -> Dict[str, int]:
+        return {"scheduled": 0, "failed": 0}
 
 
 _reminder_service: Optional[ReminderService] = None

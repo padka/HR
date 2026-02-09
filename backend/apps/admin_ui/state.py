@@ -316,7 +316,11 @@ async def _run_bot_polling(
                 "Bot polling disabled: Telegram rejected BOT_TOKEN. Update the token and restart.",
             )
             if integration_switch is not None:
-                integration_switch.set(False)
+                integration_switch.set(
+                    False,
+                    source="runtime",
+                    reason="telegram_unauthorized",
+                )
             stop_event.set()
             break
         except Exception:

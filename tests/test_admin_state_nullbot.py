@@ -135,7 +135,13 @@ class DummyTask:
         return False
 
 
-def test_notifications_health_endpoint_ok():
+def test_notifications_health_endpoint_ok(monkeypatch):
+    class EnabledSettings:
+        bot_enabled = True
+        bot_integration_enabled = True
+
+    monkeypatch.setattr(system_router, "get_settings", lambda: EnabledSettings())
+
     app = FastAPI()
     app.include_router(system_router.router)
     app.state.notification_service = StubNotificationService()
@@ -151,7 +157,13 @@ def test_notifications_health_endpoint_ok():
     assert data["bot"]["polling"] is True
 
 
-def test_notifications_health_endpoint_missing_service():
+def test_notifications_health_endpoint_missing_service(monkeypatch):
+    class EnabledSettings:
+        bot_enabled = True
+        bot_integration_enabled = True
+
+    monkeypatch.setattr(system_router, "get_settings", lambda: EnabledSettings())
+
     app = FastAPI()
     app.include_router(system_router.router)
     client = TestClient(app)

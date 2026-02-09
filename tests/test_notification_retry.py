@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from typing import List
 
 import pytest
-from aiogram.exceptions import TelegramBadRequest, TelegramServerError
+from aiogram.exceptions import TelegramBadRequest, TelegramServerError, TelegramUnauthorizedError
 from aiogram.methods import SendMessage
 from sqlalchemy import select, update, func, delete
 from sqlalchemy.exc import IntegrityError
@@ -469,6 +469,85 @@ async def test_fatal_error_marks_outbox_failed(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.notifications
+async def test_unauthorized_error_marks_outbox_failed_without_retry(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    configure(dummy_bot, manager)
+
+    service = NotificationService(poll_interval=0.05, max_attempts=8, rate_limit_per_sec=10)
+    configure_notification_service(service)
+
+    async def fake_render(slot):
+        return (
+            "Текст уведомления",
+            slot.candidate_tz or "Europe/Moscow",
+            "Москва",
+            "interview_confirmed_candidate",
+            1,
+        )
+
+    async def unauthorized_send(bot, method, correlation_id):
+        raise TelegramUnauthorizedError(method=method, message="Unauthorized")
+
+    monkeypatch.setattr("backend.apps.bot.services._render_candidate_notification", fake_render)
+    monkeypatch.setattr("backend.apps.bot.services._send_with_retry", unauthorized_send)
+
+    try:
+        async with async_session() as session:
+            recruiter = models.Recruiter(
+                name="Недействительный токен",
+                tz="Europe/Moscow",
+                telemost_url="https://telemost.example",
+                active=True,
+            )
+            session.add(recruiter)
+            await session.commit()
+            await session.refresh(recruiter)
+
+            slot = models.Slot(
+                recruiter_id=recruiter.id,
+                city_id=None,
+                start_utc=datetime.now(timezone.utc) + timedelta(hours=2),
+                status=SlotStatus.PENDING,
+                candidate_tg_id=5050,
+                candidate_fio="Ошибка Токена",
+                candidate_tz="Europe/Moscow",
+            )
+            session.add(slot)
+            await session.commit()
+            await session.refresh(slot)
+
+        outbox_entry = await add_outbox_notification(
+            notification_type="interview_confirmed_candidate",
+            booking_id=slot.id,
+            candidate_tg_id=slot.candidate_tg_id,
+        )
+
+        await service._poll_once()
+
+        async with async_session() as session:
+            outbox = await session.get(OutboxNotification, outbox_entry.id)
+            assert outbox is not None
+            assert outbox.status == "failed"
+            assert outbox.next_retry_at is None
+            assert outbox.last_error == "telegram_unauthorized"
+
+        snapshot = await service.health_snapshot()
+        assert snapshot["fatal_error_code"] == "telegram_unauthorized"
+        assert snapshot["fatal_error_at"] is not None
+        assert snapshot["last_delivery_error"] == "telegram_unauthorized"
+    finally:
+        await service.shutdown()
+        await manager.clear()
+        await manager.close()
+        import backend.apps.bot.services as cleanup_services
+
+        cleanup_services._notification_service = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_broker_dlq_on_max_attempts(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)
@@ -820,5 +899,8 @@ async def test_notification_service_health_snapshot_reports_broker():
     snapshot = await service.health_snapshot()
     assert snapshot["broker_backend"] == "memory"
     assert snapshot["started"] is False
+    assert snapshot["fatal_error_code"] is None
+    assert snapshot["fatal_error_at"] is None
+    assert snapshot["last_delivery_error"] is None
     ping = await service.broker_ping()
     assert ping is True

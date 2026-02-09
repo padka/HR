@@ -704,6 +704,22 @@ class TestQuestion(Base):
         return f"<TestQuestion {self.test_id}#{self.question_index} active={self.is_active}>"
 
 
+class BotRuntimeConfig(Base):
+    __tablename__ = "bot_runtime_configs"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<BotRuntimeConfig key={self.key}>"
+
+
 class NotificationLog(Base):
     __tablename__ = "notification_logs"
     __table_args__ = (

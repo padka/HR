@@ -96,22 +96,42 @@ class IntegrationSwitch:
 
     def __init__(self, *, initial: bool) -> None:
         self._enabled = bool(initial)
+        self._source = "operator"
+        self._reason: Optional[str] = None
         self._updated_at = datetime.now(timezone.utc)
 
     def is_enabled(self) -> bool:
         return self._enabled
 
-    def set(self, value: bool) -> None:
+    def set(
+        self,
+        value: bool,
+        *,
+        source: str = "operator",
+        reason: Optional[str] = None,
+    ) -> None:
         self._enabled = bool(value)
+        self._source = source if source in {"operator", "runtime"} else "operator"
+        self._reason = reason
         self._updated_at = datetime.now(timezone.utc)
 
     @property
     def updated_at(self) -> datetime:
         return self._updated_at
 
+    @property
+    def source(self) -> str:
+        return self._source
+
+    @property
+    def reason(self) -> Optional[str]:
+        return self._reason
+
     def snapshot(self) -> Dict[str, object]:
         return {
             "enabled": self._enabled,
+            "source": self._source,
+            "reason": self._reason,
             "updated_at": self._updated_at,
         }
 

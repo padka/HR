@@ -688,7 +688,8 @@ async def test_bot_health_endpoint_reports_status(monkeypatch):
     response = await _async_request(app, "get", "/health/bot")
     assert response.status_code == 200
     payload = response.json()
-    assert set(payload.keys()) == {"config", "runtime", "telegram", "state_store", "queues"}
+    assert set(payload.keys()) == {"status", "config", "runtime", "telegram", "state_store", "queues"}
+    assert payload["status"] in {"ok", "disabled", "degraded", "error"}
     assert payload["runtime"]["mode"] in {"real", "null"}
     assert "switch_enabled" in payload["runtime"]
     assert "integration_enabled" in payload["config"]

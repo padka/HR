@@ -143,6 +143,8 @@ services:
       BOT_ENABLED: ${BOT_ENABLED:-true}
       BOT_TOKEN: ${BOT_TOKEN}
       BOT_CALLBACK_SECRET: ${BOT_CALLBACK_SECRET}
+      BOT_HEARTBEAT_FILE: /var/lib/recruitsmart_admin/bot_heartbeat
+      BOT_HEARTBEAT_MAX_AGE: "45"
     depends_on:
       postgres:
         condition: service_healthy
@@ -154,7 +156,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, redis; redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis_notifications:6379/0')).ping()\"",
+          "python -c \"import os, sys, time, redis; from pathlib import Path; redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis_notifications:6379/0')).ping(); p = Path(os.getenv('BOT_HEARTBEAT_FILE', '/var/lib/recruitsmart_admin/bot_heartbeat')); max_age = float(os.getenv('BOT_HEARTBEAT_MAX_AGE', '45')); ok = p.exists() and (time.time() - p.stat().st_mtime) <= max_age; sys.exit(0 if ok else 1)\"",
         ]
       interval: 30s
       timeout: 10s

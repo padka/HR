@@ -118,6 +118,10 @@ from backend.domain.errors import CityAlreadyExistsError
 from backend.core.settings import get_settings
 from backend.core.sanitizers import sanitize_plain_text
 from backend.apps.bot.reminders import get_reminder_service
+from backend.apps.bot.runtime_config import (
+    get_reminder_policy_config,
+    save_reminder_policy_config,
+)
 from backend.apps.admin_ui.timezones import timezone_options
 
 router = APIRouter(prefix="/api", tags=["api"])
@@ -1923,6 +1927,8 @@ async def api_bot_integration_status(request: Request):
     payload = {
         "config_enabled": settings.bot_integration_enabled,
         "runtime_enabled": runtime_enabled,
+        "switch_source": switch.source if switch else "operator",
+        "switch_reason": switch.reason if switch else None,
         "updated_at": switch.updated_at.isoformat() if switch else None,
         "service_health": bot_service.health_status if bot_service else "missing",
         "service_ready": bot_service.is_ready() if bot_service else False,
@@ -1954,11 +1960,13 @@ async def api_bot_integration_update(request: Request):
             {"ok": False, "error": "enabled_not_provided"}, status_code=400
         )
 
-    switch.set(enabled_value)
+    switch.set(enabled_value, source="operator", reason=None)
     bot_service = getattr(request.app.state, "bot_service", None)
     payload = {
         "ok": True,
         "runtime_enabled": switch.is_enabled(),
+        "switch_source": switch.source,
+        "switch_reason": switch.reason,
         "updated_at": switch.updated_at.isoformat(),
         "service_health": bot_service.health_status if bot_service else "missing",
         "service_ready": bot_service.is_ready() if bot_service else False,
@@ -1984,6 +1992,58 @@ async def api_bot_cities_refresh(
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
     return JSONResponse({"ok": True})
+
+
+@router.get("/bot/reminder-policy")
+async def api_bot_reminder_policy(
+    _: Principal = Depends(require_admin),
+):
+    policy, updated_at = await get_reminder_policy_config()
+    return JSONResponse(
+        {
+            "policy": policy,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "links": {
+                "questions": "/app/questions",
+                "message_templates": "/app/message-templates",
+                "templates": "/app/templates",
+            },
+        }
+    )
+
+
+@router.put("/bot/reminder-policy")
+async def api_bot_reminder_policy_update(
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+
+    raw_policy = data.get("policy", data)
+    policy, updated_at = await save_reminder_policy_config(raw_policy)
+
+    rescheduled = {"scheduled": 0, "failed": 0}
+    reminder_service = getattr(request.app.state, "reminder_service", None)
+    if reminder_service is not None and hasattr(reminder_service, "reschedule_active_slots"):
+        try:
+            value = await reminder_service.reschedule_active_slots()
+            if isinstance(value, dict):
+                rescheduled["scheduled"] = int(value.get("scheduled", 0))
+                rescheduled["failed"] = int(value.get("failed", 0))
+        except Exception:
+            logger.exception("Failed to reschedule reminders after policy update")
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "policy": policy,
+            "updated_at": updated_at.isoformat(),
+            "rescheduled_slots": rescheduled["scheduled"],
+            "reschedule_failed": rescheduled["failed"],
+        }
+    )
 
 
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:

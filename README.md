@@ -238,6 +238,16 @@ is cached and used by the Admin UI, Admin API and the bot service.
 - `GET /metrics/notifications` — Prometheus-совместимые метрики (`seconds_since_poll`, `poll_skipped_total`,
   `rate_limit_wait_seconds`, per-type counters и др.) для построения графиков/алертов.
 
+Интерпретация статусов:
+
+- `/health/bot`:
+  - `status=disabled` + `runtime.disabled_by=config|operator` — бот выключен намеренно.
+  - `status=error` + `runtime.switch_source=runtime` + `runtime.switch_reason=telegram_unauthorized` — токен бота отклонён Telegram, требуется ротация токена и рестарт.
+- `/health/notifications`:
+  - `notifications.fatal_error_code=telegram_unauthorized` и `notifications.delivery_state=fatal` — доставка остановлена из‑за фатальной ошибки токена.
+  - HTTP `503` означает деградацию воркера/брокера или фатальную ошибку доставки.
+  - `status=disabled` (HTTP `200`) — интеграция выключена через конфиг/оператора.
+
 ### Sandbox & диагностика
 
 - `PYTHONPATH=. python scripts/e2e_notifications_sandbox.py` — поднимает локальный Telegram sandbox,
@@ -310,6 +320,16 @@ quick start template):
 
 The `/health/bot` endpoint reports the runtime state of the integration
 (`enabled`, `ready`, `status`) which simplifies operational diagnostics.
+
+### Централизованное управление контентом бота
+
+- В админке (`/app/system`) добавлен блок **Контент бота**:
+  - быстрые переходы к управлению вопросами (`/app/questions`) и шаблонами (`/app/message-templates`, `/app/templates`);
+  - единая настройка политики напоминаний (вкл/выкл и смещения по часам).
+- API для политики напоминаний:
+  - `GET /api/bot/reminder-policy`
+  - `PUT /api/bot/reminder-policy`
+- Политика хранится в БД и применяется ботом при планировании/исполнении напоминаний.
 
 ## Security configuration
 

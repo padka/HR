@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from aiogram.exceptions import TelegramRetryAfter, TelegramServerError
 from aiogram.methods import SendMessage
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from backend.apps.bot.broker import InMemoryNotificationBroker
 from backend.apps.bot.metrics import (
@@ -524,6 +524,74 @@ async def test_execute_job_enqueues_outbox_notification(monkeypatch):
         assert outbox is not None
         assert outbox.type == "slot_reminder"
         assert outbox.payload_json.get("reminder_kind") == ReminderKind.CONFIRM_6H.value
+
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_execute_job_skips_when_policy_disables_kind(monkeypatch):
+    scheduler = create_scheduler(redis_url=None)
+    service = ReminderService(scheduler=scheduler)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Policy", tz="Europe/Moscow", active=True)
+        city = models.City(name="Policy City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=4),
+            status=models.SlotStatus.BOOKED,
+            candidate_tg_id=3434,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    class _FakeNotificationService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+
+        async def _enqueue_outbox(self, outbox_id: int, attempt: int = 0) -> None:
+            self.calls.append((outbox_id, attempt))
+
+    fake_service = _FakeNotificationService()
+
+    async def _disabled_policy():
+        return (
+            {
+                "interview": {
+                    "confirm_6h": {"enabled": False, "offset_hours": 6},
+                    "confirm_3h": {"enabled": True, "offset_hours": 3},
+                    "confirm_2h": {"enabled": True, "offset_hours": 2},
+                },
+                "intro_day": {"intro_remind_3h": {"enabled": True, "offset_hours": 3}},
+                "min_time_before_immediate_hours": 2,
+            },
+            None,
+        )
+
+    monkeypatch.setattr("backend.apps.bot.services.get_notification_service", lambda: fake_service)
+    monkeypatch.setattr("backend.apps.bot.reminders.get_reminder_policy_config", _disabled_policy)
+
+    await service._execute_job(slot_id, ReminderKind.CONFIRM_6H)
+
+    assert not fake_service.calls
+
+    async with async_session() as session:
+        outbox_count = await session.scalar(
+            select(func.count())
+            .select_from(models.OutboxNotification)
+            .where(models.OutboxNotification.booking_id == slot_id)
+            .where(models.OutboxNotification.type == "slot_reminder")
+        )
+    assert outbox_count == 0
 
     await service.shutdown()
 
