@@ -47,6 +47,15 @@ const ICONS = {
       <path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662" />
     </svg>
   ),
+  bot: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v2" />
+      <path d="M8 5h8" />
+      <rect x="4" y="7" width="16" height="14" rx="3" />
+      <path d="M9 12h.01M15 12h.01" />
+      <path d="M8 16h8" />
+    </svg>
+  ),
 }
 
 export function RootLayout() {
@@ -94,6 +103,7 @@ export function RootLayout() {
             { to: '/app/recruiters', label: 'Рекрутёры', icon: ICONS.recruiters, tone: 'indigo' },
             { to: '/app/cities', label: 'Города', icon: ICONS.cities, tone: 'sunset' },
             { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
+            { to: '/app/system', label: 'Бот', icon: ICONS.bot, tone: 'emerald' },
           ]
         : []
 
