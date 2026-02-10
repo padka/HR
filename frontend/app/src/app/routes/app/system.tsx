@@ -108,6 +108,26 @@ type OutboxFeedPayload = {
   degraded: boolean
 }
 
+type NotificationLogItem = {
+  id: number
+  type: string
+  status: string
+  attempts: number
+  created_at: string | null
+  next_retry_at: string | null
+  last_error: string | null
+  booking_id: number
+  candidate_tg_id: number | null
+  template_key: string | null
+  template_version: number | null
+}
+
+type NotificationLogsPayload = {
+  items: NotificationLogItem[]
+  latest_id: number
+  degraded: boolean
+}
+
 type BotCenterTab = 'health' | 'tests' | 'templates' | 'reminders' | 'delivery'
 
 export function SystemPage() {
@@ -165,6 +185,26 @@ export function SystemPage() {
       return apiFetch(`/notifications/feed?${params.toString()}`)
     },
     refetchInterval: 10_000,
+    enabled: activeTab === 'delivery',
+  })
+
+  const [logStatusFilter, setLogStatusFilter] = useState<string>('')
+  const [logTypeFilter, setLogTypeFilter] = useState<string>('')
+  const [logCandidateFilter, setLogCandidateFilter] = useState<string>('')
+
+  const logsQuery = useQuery<NotificationLogsPayload>({
+    queryKey: ['system-notification-logs', logStatusFilter, logTypeFilter, logCandidateFilter],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      params.set('after_id', '0')
+      params.set('limit', '50')
+      if (logStatusFilter) params.set('status', logStatusFilter)
+      if (logTypeFilter.trim()) params.set('type', logTypeFilter.trim())
+      const candidate = Number(logCandidateFilter)
+      if (Number.isFinite(candidate) && candidate > 0) params.set('candidate_tg_id', String(candidate))
+      return apiFetch(`/notifications/logs?${params.toString()}`)
+    },
+    refetchInterval: 15_000,
     enabled: activeTab === 'delivery',
   })
 
@@ -707,6 +747,90 @@ export function SystemPage() {
                   </table>
                 </div>
               </>
+            )}
+
+            <div style={{ height: 16 }} />
+
+            <h3 className="section-title" style={{ marginTop: 0 }}>Логи доставки</h3>
+            <p className="subtitle">История попыток отправки (NotificationLog).</p>
+
+            <div className="form-row" style={{ alignItems: 'flex-end' }}>
+              <label className="form-group" style={{ minWidth: 220 }}>
+                <span className="form-group__label">Статус</span>
+                <select value={logStatusFilter} onChange={(e) => setLogStatusFilter(e.target.value)}>
+                  <option value="">Все</option>
+                  <option value="sent">sent</option>
+                  <option value="failed">failed</option>
+                  <option value="pending">pending</option>
+                </select>
+              </label>
+              <label className="form-group" style={{ flex: 1, minWidth: 260 }}>
+                <span className="form-group__label">Тип</span>
+                <input
+                  value={logTypeFilter}
+                  onChange={(e) => setLogTypeFilter(e.target.value)}
+                  placeholder="Например: slot_reminder"
+                />
+              </label>
+              <label className="form-group" style={{ minWidth: 220 }}>
+                <span className="form-group__label">Candidate TG</span>
+                <input
+                  value={logCandidateFilter}
+                  onChange={(e) => setLogCandidateFilter(e.target.value)}
+                  placeholder="123456"
+                />
+              </label>
+              <button className="ui-btn ui-btn--ghost" onClick={() => logsQuery.refetch()}>
+                Обновить
+              </button>
+            </div>
+
+            {logsQuery.isLoading && <p className="subtitle">Загрузка логов…</p>}
+            {logsQuery.isError && <p className="text-danger">Ошибка: {(logsQuery.error as Error).message}</p>}
+            {logsQuery.data?.degraded && <p className="text-danger">DB degraded: логи недоступны.</p>}
+
+            {logsQuery.data && (
+              <div className="glass panel--tight" style={{ overflowX: 'auto' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th>Attempts</th>
+                      <th>Created</th>
+                      <th>Last error</th>
+                      <th>Booking</th>
+                      <th>Candidate</th>
+                      <th>Template</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logsQuery.data.items.length === 0 && (
+                      <tr>
+                        <td colSpan={9} className="subtitle">Пусто</td>
+                      </tr>
+                    )}
+                    {logsQuery.data.items.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.id}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{item.type}</td>
+                        <td>{item.status}</td>
+                        <td>{item.attempts}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{item.created_at || '-'}</td>
+                        <td style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {item.last_error || '-'}
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>#{item.booking_id}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{item.candidate_tg_id ? `cand:${item.candidate_tg_id}` : '-'}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {item.template_key ? `${item.template_key}${item.template_version ? ` v${item.template_version}` : ''}` : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
         )}
