@@ -33,6 +33,7 @@ class DegradedDatabaseMiddleware(BaseHTTPMiddleware):
         "/favicon.ico",
         "/.well-known/appspecific/com.chrome.devtools.json",
         "/api/notifications/feed",
+        "/api/bot/reminders/jobs",
     )
 
     async def dispatch(self, request: Request, call_next):

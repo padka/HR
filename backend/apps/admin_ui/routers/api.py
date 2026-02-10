@@ -2117,6 +2117,64 @@ async def api_bot_reminder_policy_update(
     )
 
 
+@router.get("/bot/reminders/jobs")
+async def api_bot_reminder_jobs(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    kind: Optional[str] = Query(default=None),
+    slot_id: Optional[int] = Query(default=None, ge=1),
+    candidate_tg_id: Optional[int] = Query(default=None, ge=1),
+    _: Principal = Depends(require_admin),
+):
+    """List upcoming reminder jobs persisted in the database."""
+    if getattr(request.app.state, "db_available", True) is False:
+        return JSONResponse({"items": [], "now_utc": datetime.now(timezone.utc).isoformat(), "degraded": True})
+
+    from backend.apps.admin_ui.services.reminders_ops import list_reminder_jobs
+
+    payload = await list_reminder_jobs(
+        limit=limit,
+        kind=kind,
+        slot_id=slot_id,
+        candidate_tg_id=candidate_tg_id,
+    )
+    return JSONResponse({**payload, "degraded": False})
+
+
+@router.post("/bot/reminders/resync")
+async def api_bot_reminder_resync(
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    """Rebuild reminder jobs for active slots (best effort)."""
+    _ = await require_csrf_token(request)
+
+    reminder_service = getattr(request.app.state, "reminder_service", None)
+    if reminder_service is None or not hasattr(reminder_service, "reschedule_active_slots"):
+        return JSONResponse({"ok": False, "error": "reminder_service_unavailable"}, status_code=503)
+
+    try:
+        value = await reminder_service.reschedule_active_slots()
+    except Exception:
+        logger.exception("Failed to resync reminder jobs")
+        return JSONResponse({"ok": False, "error": "resync_failed"}, status_code=500)
+
+    scheduled = 0
+    failed = 0
+    if isinstance(value, dict):
+        scheduled = int(value.get("scheduled", 0) or 0)
+        failed = int(value.get("failed", 0) or 0)
+
+    await log_audit_action(
+        "reminder_resync",
+        "system",
+        0,
+        changes={"scheduled": scheduled, "failed": failed},
+    )
+
+    return JSONResponse({"ok": True, "scheduled": scheduled, "failed": failed})
+
+
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
     """Parse ISO datetime string into aware datetime if possible."""
     if not value:
