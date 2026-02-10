@@ -1524,6 +1524,19 @@ class NotificationService:
         except (TypeError, ValueError):
             assignment_id = None
 
+        if assignment_id is None and item.booking_id is None and payload.get("slot_id") is None:
+            await self._mark_failed(
+                item,
+                max(1, item.attempts + 1),
+                "reschedule_requested_recruiter",
+                "reschedule_requested_recruiter",
+                "context_missing",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        assignment = None
         # Legacy outbox entries may outlive their originating assignment; don't spam recruiters in that case.
         if assignment_id is not None:
             from backend.domain.models import SlotAssignment
@@ -1539,8 +1552,10 @@ class NotificationService:
                     "reschedule_requested_recruiter",
                     "assignment_missing",
                     None,
+                    candidate_tg_id=item.candidate_tg_id,
                 )
                 return
+        candidate_tg_id = item.candidate_tg_id or getattr(assignment, "candidate_tg_id", None)
 
         requested_raw = (
             payload.get("requested_start_utc")
@@ -1563,14 +1578,59 @@ class NotificationService:
         requested_time_local = (
             fmt_dt_local(requested_utc, tz_label) if requested_utc is not None else ""
         )
-        candidate_name = payload.get("candidate_name") or payload.get("candidate_fio") or "Кандидат"
+        candidate_name = payload.get("candidate_name") or payload.get("candidate_fio")
+        if not candidate_name:
+            slot_id_raw = payload.get("slot_id") or item.booking_id or getattr(assignment, "slot_id", None)
+            try:
+                slot_id = int(slot_id_raw) if slot_id_raw is not None else None
+            except (TypeError, ValueError):
+                slot_id = None
+
+            if slot_id is not None:
+                from backend.domain.models import Slot
+                from backend.core.db import async_session
+
+                async with async_session() as session:
+                    slot = await session.get(Slot, slot_id)
+                if slot is not None and getattr(slot, "candidate_fio", None):
+                    candidate_name = slot.candidate_fio
+                if candidate_tg_id is None:
+                    candidate_tg_id = getattr(slot, "candidate_tg_id", None)
+
+        if not candidate_name:
+            candidate_name = getattr(assignment, "candidate_id", None) or (
+                str(candidate_tg_id) if candidate_tg_id is not None else None
+            )
+
+        if not candidate_name:
+            await self._mark_failed(
+                item,
+                max(1, item.attempts + 1),
+                "reschedule_requested_recruiter",
+                "reschedule_requested_recruiter",
+                "candidate_missing",
+                None,
+                candidate_tg_id=candidate_tg_id,
+            )
+            return
 
         context = {
             "candidate_name": escape_html(str(candidate_name)),
             "requested_time_local": requested_time_local,
         }
         rendered = await self._template_provider.render("reschedule_requested_recruiter", context)
-        text = rendered.text if rendered is not None else "Кандидат запросил другое время."
+        if rendered is not None and rendered.text:
+            text = rendered.text
+        else:
+            details = []
+            if candidate_name:
+                details.append(f"👤 {escape_html(str(candidate_name))}")
+            if requested_time_local:
+                details.append(f"🗓 {escape_html(str(requested_time_local))}")
+            if details:
+                text = "🔁 Кандидат запросил другое время\n" + "\n".join(details)
+            else:
+                text = "Кандидат запросил другое время."
 
         attempt = item.attempts + 1
         await self._throttle()
@@ -1588,7 +1648,7 @@ class NotificationService:
                 notification_type="reschedule_requested_recruiter",
                 error=str(exc),
                 rendered=rendered,
-                candidate_tg_id=item.candidate_tg_id,
+                candidate_tg_id=candidate_tg_id,
             )
             return
 

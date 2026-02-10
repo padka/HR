@@ -4,7 +4,8 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from backend.core.db import async_session
-from backend.domain.models import SlotAssignment, RescheduleRequest, OutboxNotification, Recruiter
+from backend.domain.models import SlotAssignment, RescheduleRequest, OutboxNotification, Recruiter, Slot
+from backend.domain.candidates.models import User
 from sqlalchemy import select as sql_select
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
@@ -64,14 +65,32 @@ async def request_reschedule(assignment_id: int, payload: RescheduleRequestPaylo
         session.add(reschedule_request)
         
         recruiter = await session.get(Recruiter, assignment.recruiter_id)
+        slot = await session.get(Slot, assignment.slot_id)
+        candidate = None
+        if assignment.candidate_id:
+            candidate = await session.scalar(
+                sql_select(User).where(User.candidate_id == assignment.candidate_id)
+            )
+
+        candidate_tg_id = assignment.candidate_tg_id or (slot.candidate_tg_id if slot else None)
+        candidate_name = None
+        if slot and slot.candidate_fio:
+            candidate_name = slot.candidate_fio
+        elif candidate and candidate.fio:
+            candidate_name = candidate.fio
+        elif candidate_tg_id:
+            candidate_name = f"TG {candidate_tg_id}"
         
         notification = OutboxNotification(
             type="reschedule_requested_recruiter",
             recruiter_tg_id=recruiter.tg_chat_id if recruiter else None,
+            candidate_tg_id=candidate_tg_id,
             payload_json={
                 "assignment_id": assignment.id,
                 "slot_id": assignment.slot_id,
                 "requested_time_utc": payload.requested_datetime_utc.isoformat(),
+                "candidate_name": candidate_name,
+                "candidate_tg_id": candidate_tg_id,
             },
         )
         session.add(notification)
