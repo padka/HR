@@ -1825,9 +1825,12 @@ async def api_template_create(
     if not key_value:
         key_value = f"custom_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
+    revived_id: Optional[int] = None
+    created_id: Optional[int] = None
+
     async with async_session() as session:
         existing = await session.scalar(
-            select(MessageTemplate.id).where(
+            select(MessageTemplate).where(
                 MessageTemplate.key == key_value,
                 MessageTemplate.locale == locale_value,
                 MessageTemplate.channel == channel_value,
@@ -1836,32 +1839,49 @@ async def api_template_create(
             )
         )
         if existing:
-            return JSONResponse(
-                {"ok": False, "error": "Шаблон для выбранного города и типа уже существует."},
-                status_code=400,
+            # Back-compat: legacy UI uses this endpoint to create templates.
+            # If a matching template exists but is inactive, "revive" it instead of failing.
+            if not existing.is_active:
+                existing.body_md = body_value
+                existing.is_active = is_active_value
+                existing.updated_by = "admin"
+                existing.updated_at = datetime.now(timezone.utc)
+                await session.commit()
+                revived_id = existing.id
+            else:
+                return JSONResponse(
+                    {"ok": False, "error": "Шаблон для выбранного города и типа уже существует."},
+                    status_code=400,
+                )
+        else:
+            tmpl = MessageTemplate(
+                key=key_value,
+                locale=locale_value,
+                channel=channel_value,
+                body_md=body_value,
+                version=version_value,
+                is_active=is_active_value,
+                city_id=city_id,
+                updated_by="admin",
             )
-        tmpl = MessageTemplate(
-            key=key_value,
-            locale=locale_value,
-            channel=channel_value,
-            body_md=body_value,
-            version=version_value,
-            is_active=is_active_value,
-            city_id=city_id,
-            updated_by="admin",
-        )
-        session.add(tmpl)
-        try:
-            await session.commit()
-        except IntegrityError:
-            await session.rollback()
-            return JSONResponse(
-                {"ok": False, "error": "Шаблон для выбранного города и типа уже существует."},
-                status_code=400,
-            )
-        await session.refresh(tmpl)
-    await log_audit_action("template_create", "message_template", tmpl.id, changes={"key": key_value, "city_id": city_id})
-    return JSONResponse({"ok": True, "id": tmpl.id}, status_code=201)
+            session.add(tmpl)
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                return JSONResponse(
+                    {"ok": False, "error": "Шаблон для выбранного города и типа уже существует."},
+                    status_code=400,
+                )
+            await session.refresh(tmpl)
+            created_id = tmpl.id
+    if revived_id is not None:
+        await log_audit_action("template_revive", "message_template", revived_id, changes={"key": key_value, "city_id": city_id})
+        return JSONResponse({"ok": True, "id": revived_id, "revived": True}, status_code=201)
+
+    assert created_id is not None
+    await log_audit_action("template_create", "message_template", created_id, changes={"key": key_value, "city_id": city_id})
+    return JSONResponse({"ok": True, "id": created_id}, status_code=201)
 
 
 @router.get("/template_keys")
