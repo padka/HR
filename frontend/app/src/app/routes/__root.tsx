@@ -1,4 +1,5 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
+import { useEffect, useRef } from 'react'
 import { useProfile } from '@/app/hooks/useProfile'
 
 const ICONS = {
@@ -66,6 +67,171 @@ export function RootLayout() {
   const authError = profileQuery.error as (Error & { status?: number }) | undefined
   const isUnauthed = authError?.status === 401
 
+  const bubbleStateRef = useRef<{
+    hovered: HTMLSpanElement | null
+    moveRaf: number | null
+    lastX: number
+    lastY: number
+    timers: number[]
+    layers: {
+      layer1: HTMLSpanElement[]
+      layer2: HTMLSpanElement[]
+      layer3: HTMLSpanElement[]
+    }
+  }>({
+    hovered: null,
+    moveRaf: null,
+    lastX: 0,
+    lastY: 0,
+    timers: [],
+    layers: { layer1: [], layer2: [], layer3: [] },
+  })
+
+  useEffect(() => {
+    const state = bubbleStateRef.current
+    let destroyed = false
+
+    const isInteractiveTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false
+      return Boolean(
+        target.closest(
+          [
+            'button',
+            'a',
+            'input',
+            'select',
+            'textarea',
+            '[role="button"]',
+            '.ui-btn',
+            '.vision-nav__item',
+            '.app-profile-pill',
+          ].join(','),
+        ),
+      )
+    }
+
+    const refreshLayers = () => {
+      state.layers.layer1 = Array.from(
+        document.querySelectorAll<HTMLSpanElement>('.background-scene .layer-1 .bubble'),
+      )
+      state.layers.layer2 = Array.from(
+        document.querySelectorAll<HTMLSpanElement>('.background-scene .layer-2 .bubble'),
+      )
+      state.layers.layer3 = Array.from(
+        document.querySelectorAll<HTMLSpanElement>('.background-scene .layer-3 .bubble'),
+      )
+    }
+
+    const hitTestBubble = (bubble: HTMLSpanElement, x: number, y: number) => {
+      const rect = bubble.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return false
+      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return false
+
+      const cx = rect.left + rect.width / 2
+      const cy = rect.top + rect.height / 2
+      const r = Math.min(rect.width, rect.height) / 2
+      const dx = x - cx
+      const dy = y - cy
+      return dx * dx + dy * dy <= r * r
+    }
+
+    const findBubbleAt = (x: number, y: number) => {
+      // Prefer the front layer when bubbles overlap.
+      const layers = [state.layers.layer3, state.layers.layer2, state.layers.layer1]
+      for (const layer of layers) {
+        for (const bubble of layer) {
+          if (bubble.dataset.popping === '1') continue
+          if (hitTestBubble(bubble, x, y)) return bubble
+        }
+      }
+      return null
+    }
+
+    const setHovered = (bubble: HTMLSpanElement | null) => {
+      if (state.hovered === bubble) return
+      if (state.hovered) state.hovered.classList.remove('is-hovered')
+      state.hovered = bubble
+      if (state.hovered) state.hovered.classList.add('is-hovered')
+    }
+
+    const respawnBubble = (bubble: HTMLSpanElement) => {
+      const clone = bubble.cloneNode(true) as HTMLSpanElement
+      clone.classList.remove('is-hovered', 'is-popping', 'is-hidden')
+      delete clone.dataset.popping
+
+      bubble.replaceWith(clone)
+
+      const layers = [state.layers.layer1, state.layers.layer2, state.layers.layer3]
+      for (const layer of layers) {
+        const idx = layer.indexOf(bubble)
+        if (idx !== -1) {
+          layer[idx] = clone
+          break
+        }
+      }
+    }
+
+    const popBubble = (bubble: HTMLSpanElement) => {
+      if (bubble.dataset.popping === '1') return
+      bubble.dataset.popping = '1'
+      bubble.classList.remove('is-hovered')
+      bubble.classList.add('is-popping')
+
+      const popMs = 420
+      const respawnDelay = 900 + Math.round(Math.random() * 1400)
+
+      const t1 = window.setTimeout(() => {
+        if (destroyed) return
+        bubble.classList.remove('is-popping')
+        bubble.classList.add('is-hidden')
+        const t2 = window.setTimeout(() => {
+          if (destroyed) return
+          respawnBubble(bubble)
+        }, respawnDelay)
+        state.timers.push(t2)
+      }, popMs)
+      state.timers.push(t1)
+    }
+
+    const onPointerMove = (event: PointerEvent) => {
+      state.lastX = event.clientX
+      state.lastY = event.clientY
+      if (state.moveRaf != null) return
+      state.moveRaf = window.requestAnimationFrame(() => {
+        state.moveRaf = null
+        if (destroyed) return
+        setHovered(findBubbleAt(state.lastX, state.lastY))
+      })
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      // Only primary click (mouse) or any tap (touch/pen).
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      if (isInteractiveTarget(event.target)) return
+
+      const bubble = findBubbleAt(event.clientX, event.clientY)
+      if (!bubble) return
+      popBubble(bubble)
+    }
+
+    refreshLayers()
+    window.addEventListener('pointermove', onPointerMove, { passive: true })
+    window.addEventListener('pointerdown', onPointerDown, { passive: true })
+
+    return () => {
+      destroyed = true
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerdown', onPointerDown)
+      if (state.moveRaf != null) {
+        window.cancelAnimationFrame(state.moveRaf)
+        state.moveRaf = null
+      }
+      setHovered(null)
+      for (const timer of state.timers) window.clearTimeout(timer)
+      state.timers = []
+    }
+  }, [])
+
   if (isUnauthed && !hideNav) {
     return (
       <div style={{ minHeight: '100vh', padding: '24px', display: 'grid', gap: '16px' }}>
@@ -111,19 +277,19 @@ export function RootLayout() {
     <div className="app-shell">
       <div className="background-scene">
         <div className="bubbles-layer layer-1">
-          <span className="bubble"></span>
-          <span className="bubble"></span>
-          <span className="bubble"></span>
+          <span className="bubble"><span className="bubble__core" /></span>
+          <span className="bubble"><span className="bubble__core" /></span>
+          <span className="bubble"><span className="bubble__core" /></span>
         </div>
         <div className="bubbles-layer layer-2">
-          <span className="bubble"></span>
-          <span className="bubble"></span>
-          <span className="bubble"></span>
-          <span className="bubble"></span>
+          <span className="bubble"><span className="bubble__core" /></span>
+          <span className="bubble"><span className="bubble__core" /></span>
+          <span className="bubble"><span className="bubble__core" /></span>
+          <span className="bubble"><span className="bubble__core" /></span>
         </div>
         <div className="bubbles-layer layer-3">
-          <span className="bubble"></span>
-          <span className="bubble"></span>
+          <span className="bubble"><span className="bubble__core" /></span>
+          <span className="bubble"><span className="bubble__core" /></span>
         </div>
       </div>
       {!hideNav && (
