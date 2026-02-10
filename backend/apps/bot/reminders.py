@@ -388,6 +388,7 @@ class ReminderService:
                 slot.candidate_tz or DEFAULT_TZ,
                 getattr(slot, "purpose", "interview") or "interview",
                 policy=reminder_policy,
+                dedupe_by_time=False,
             )
             if skip_confirmation_prompts:
                 confirm_kinds = {
@@ -448,6 +449,19 @@ class ReminderService:
                         immediate_map[group] = plan
                 else:
                     future_plans.append(plan)
+
+            # Quiet-hours adjustment can collapse multiple reminders into the same timestamp.
+            # For scheduled jobs, keep only the first plan for each rounded local time
+            # (plans are already sorted by kind/offset order in _build_schedule).
+            deduped_future: List[ReminderPlan] = []
+            seen_future_times: set[datetime] = set()
+            for plan in sorted(future_plans, key=lambda item: item.run_at_local):
+                rounded_local = plan.run_at_local.replace(second=0, microsecond=0)
+                if rounded_local in seen_future_times:
+                    continue
+                seen_future_times.add(rounded_local)
+                deduped_future.append(plan)
+            future_plans = deduped_future
 
             async with async_session() as session:
                 for plan in sorted(immediate_map.values(), key=lambda item: item.run_at_local):
@@ -724,6 +738,7 @@ class ReminderService:
         purpose: str,
         *,
         policy: Optional[Dict[str, Any]] = None,
+        dedupe_by_time: bool = True,
     ) -> List[ReminderPlan]:
         zone = _safe_zone(tz)
         start_local = start_utc.astimezone(zone)
@@ -775,11 +790,12 @@ class ReminderService:
             seen.add(kind)
             local_time = start_local - delta
             adjusted_local, reason = _apply_quiet_hours(local_time, meeting_local=start_local)
-            # Избегаем ситуаций, когда тихие часы сдвигают несколько напоминаний в одну и ту же точку (дубли).
             rounded_local = adjusted_local.replace(second=0, microsecond=0)
-            if rounded_local in seen_times:
-                continue
-            seen_times.add(rounded_local)
+            if dedupe_by_time:
+                # Avoid sending multiple reminders at the same timestamp after quiet-hours adjustment.
+                if rounded_local in seen_times:
+                    continue
+                seen_times.add(rounded_local)
             run_at_utc = adjusted_local.astimezone(timezone.utc)
             plans.append(
                 ReminderPlan(
