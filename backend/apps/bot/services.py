@@ -267,7 +267,12 @@ TEST1_DIR: Path = _settings.data_dir / "test1"
 UPLOADS_DIR: Path = _settings.data_dir / "uploads"
 
 for _path in (REPORTS_DIR, TEST1_DIR, UPLOADS_DIR):
-    _path.mkdir(parents=True, exist_ok=True)
+    try:
+        _path.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        # Don't fail app import on misconfigured DATA_DIR (common in docker/CI).
+        # The actual write attempt will still fail later with a clearer context.
+        logger.error("data_dir.permission_denied", extra={"path": str(_path)})
 
 _bot: Optional[Bot] = None
 _state_manager: Optional[StateManager] = None

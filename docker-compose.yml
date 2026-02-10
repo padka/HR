@@ -73,6 +73,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - recruitsmart_data:/var/lib/recruitsmart_admin
     restart: "no"
     networks:
       - recruitsmart

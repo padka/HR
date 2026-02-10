@@ -397,8 +397,9 @@ def get_settings() -> Settings:
     if raw_db_url.startswith("postgresql://") and not raw_db_url.startswith("postgresql+asyncpg://"):
         raw_db_url = raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-    # In dev, allow replacing docker-style hostnames with localhost to avoid DNS errors
-    if environment == "development":
+    # In dev on the host, allow replacing docker-style hostnames with localhost to avoid DNS errors.
+    # When running inside docker-compose, service DNS names (postgres/redis_notifications) must be preserved.
+    if environment == "development" and not Path("/.dockerenv").exists():
         try:
             from urllib.parse import urlparse, urlunparse
 
@@ -435,7 +436,9 @@ def get_settings() -> Settings:
     if raw_db_url.startswith("sqlite+aiosqlite"):
         sync_url = raw_db_url.replace("+aiosqlite", "")
     else:
-        sync_url = raw_db_url.replace("+asyncpg", "")
+        # SQLAlchemy's "postgresql://" defaults to psycopg2, which isn't shipped in prod deps.
+        # Use psycopg (v3) explicitly for sync operations (migrations, admin tooling).
+        sync_url = raw_db_url.replace("+asyncpg", "+psycopg", 1)
 
     bot_enabled = _get_bool_with_fallback("BOT_ENABLED", "ENABLE_TEST2_BOT", default=True)
     bot_provider = os.getenv("BOT_PROVIDER", "telegram").strip().lower() or "telegram"
@@ -445,7 +448,11 @@ def get_settings() -> Settings:
     if not bot_backend_url and environment in {"development", "local"}:
         bot_backend_url = "http://localhost:8000"
     redis_url = os.getenv("REDIS_URL", "").strip()
-    if redis_url.startswith("redis://redis_notifications") and environment != "production":
+    if (
+        redis_url.startswith("redis://redis_notifications")
+        and environment != "production"
+        and not Path("/.dockerenv").exists()
+    ):
         redis_url = redis_url.replace("redis_notifications", "localhost", 1)
     notification_broker = os.getenv("NOTIFICATION_BROKER", "memory").strip().lower() or "memory"
     if notification_broker not in {"memory", "redis"}:
@@ -548,7 +555,12 @@ def get_settings() -> Settings:
         rate_limit_redis_url = rate_limit_redis_url_env
 
     # Apply same localhost substitution for dev environment
-    if rate_limit_redis_url and rate_limit_redis_url.startswith("redis://redis_notifications") and environment != "production":
+    if (
+        rate_limit_redis_url
+        and rate_limit_redis_url.startswith("redis://redis_notifications")
+        and environment != "production"
+        and not Path("/.dockerenv").exists()
+    ):
         rate_limit_redis_url = rate_limit_redis_url.replace("redis_notifications", "localhost", 1)
 
     trust_proxy_headers = _get_bool("TRUST_PROXY_HEADERS", default=False)

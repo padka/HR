@@ -5,7 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    # Build deps are required on arm64 for some Python packages on 3.13 (e.g. aiohttp).
+    # Keeping it in the base image avoids build failures in multi-service compose setups.
+    && apt-get install -y --no-install-recommends curl build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 appgroup \
     && useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser

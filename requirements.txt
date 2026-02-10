@@ -4,11 +4,13 @@ aiogram==3.10.0
 APScheduler==3.10.4
 asyncpg==0.31.0
 fastapi==0.112.0
+greenlet==3.2.4
 itsdangerous==2.2.0
 Jinja2==3.1.4
 passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.3.0
 python-multipart==0.0.9
+psycopg[binary]==3.2.3
 redis==5.0.7
 slowapi==0.1.9
 sqladmin==0.21.0
