@@ -1943,6 +1943,32 @@ async def api_notifications_feed(
     return JSONResponse({**payload, "degraded": False})
 
 
+@router.get("/notifications/logs")
+async def api_notifications_logs(
+    request: Request,
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    status: Optional[str] = Query(default=None),
+    type: Optional[str] = Query(default=None),
+    candidate_tg_id: Optional[int] = Query(default=None, ge=1),
+    booking_id: Optional[int] = Query(default=None, ge=1),
+    _: Principal = Depends(require_admin),
+):
+    if getattr(request.app.state, "db_available", True) is False:
+        return JSONResponse({"items": [], "latest_id": after_id, "degraded": True})
+    from backend.apps.admin_ui.services.notifications_ops import list_notification_logs
+
+    payload = await list_notification_logs(
+        after_id=after_id,
+        limit=limit,
+        status=status,
+        type=type,
+        candidate_tg_id=candidate_tg_id,
+        booking_id=booking_id,
+    )
+    return JSONResponse({**payload, "degraded": False})
+
+
 @router.post("/notifications/{notification_id}/retry")
 async def api_notifications_retry(
     notification_id: int,

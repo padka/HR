@@ -33,6 +33,7 @@ class DegradedDatabaseMiddleware(BaseHTTPMiddleware):
         "/favicon.ico",
         "/.well-known/appspecific/com.chrome.devtools.json",
         "/api/notifications/feed",
+        "/api/notifications/logs",
         "/api/bot/reminders/jobs",
     )
 
