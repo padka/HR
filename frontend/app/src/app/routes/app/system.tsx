@@ -130,6 +130,17 @@ type NotificationLogsPayload = {
 
 type BotCenterTab = 'health' | 'tests' | 'templates' | 'reminders' | 'delivery'
 
+type QuestionGroup = {
+  test_id: string
+  title: string
+  questions: Array<{
+    id: number
+    index: number
+    title: string
+    is_active: boolean
+  }>
+}
+
 export function SystemPage() {
   const [activeTab, setActiveTab] = useState<BotCenterTab>('health')
 
@@ -143,6 +154,12 @@ export function SystemPage() {
     queryKey: ['system-bot'],
     queryFn: () => apiFetch('/bot/integration'),
     enabled: activeTab === 'health',
+  })
+
+  const questionsQuery = useQuery<QuestionGroup[]>({
+    queryKey: ['bot-center-questions'],
+    queryFn: () => apiFetch('/questions'),
+    enabled: activeTab === 'tests',
   })
 
   const reminderPolicyQuery = useQuery<ReminderPolicyPayload>({
@@ -420,14 +437,66 @@ export function SystemPage() {
           <section className="glass page-section">
             <h2 className="section-title">Контент тестов</h2>
             <p className="subtitle">Вопросы и варианты ответов берутся из БД и применяются ботом без рестарта.</p>
-            <div className="data-grid">
-              <article className="glass glass--interactive data-card">
-                <div className="data-card__label">Вопросы тестов</div>
-                <div className="data-card__value">
-                  <Link to="/app/questions" className="ui-btn ui-btn--ghost ui-btn--sm">Открыть</Link>
-                </div>
-              </article>
+            <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+              <div className="toolbar toolbar--compact">
+                <Link to="/app/questions/new" className="ui-btn ui-btn--primary ui-btn--sm">
+                  + Новый вопрос
+                </Link>
+                <Link to="/app/questions" className="ui-btn ui-btn--ghost ui-btn--sm">
+                  Все вопросы
+                </Link>
+              </div>
+              <div className="subtitle" style={{ margin: 0 }}>
+                Источник правды: <code>tests/questions/answer_options</code>
+              </div>
             </div>
+
+            {questionsQuery.isLoading && <p className="subtitle">Загрузка…</p>}
+            {questionsQuery.isError && <p className="text-danger">Ошибка: {(questionsQuery.error as Error).message}</p>}
+
+            {questionsQuery.data && (
+              <div className="page-section__content">
+                {questionsQuery.data.map((group) => (
+                  <article key={group.test_id} className="glass glass--subtle data-card" style={{ marginBottom: 12 }}>
+                    <h3 className="data-card__title">{group.title}</h3>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>Индекс</th>
+                          <th>Вопрос</th>
+                          <th>Статус</th>
+                          <th>Действия</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.questions.map((q) => (
+                          <tr key={q.id}>
+                            <td>{q.id}</td>
+                            <td>{q.index}</td>
+                            <td>{q.title}</td>
+                            <td>
+                              <span className={`status-badge status-badge--${q.is_active ? 'success' : 'muted'}`}>
+                                {q.is_active ? 'Активен' : 'Отключён'}
+                              </span>
+                            </td>
+                            <td>
+                              <Link
+                                to="/app/questions/$questionId/edit"
+                                params={{ questionId: String(q.id) }}
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
+                              >
+                                Редактировать
+                              </Link>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </article>
+                ))}
+              </div>
+            )}
           </section>
         )}
 
