@@ -282,7 +282,7 @@ async def get_current_principal(
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required",
-        headers={"WWW-Authenticate": "Bearer, Basic"},
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
