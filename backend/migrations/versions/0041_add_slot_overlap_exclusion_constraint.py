@@ -65,6 +65,7 @@ def upgrade(conn: Connection) -> None:
     # Add exclusion constraint
     # This ensures that for the same recruiter_id, time ranges cannot overlap
     # The range is computed as [start_utc, slot_end_time(start_utc, duration_min))
+    savepoint = conn.begin_nested()
     try:
         conn.execute(
             sa.text(
@@ -79,6 +80,7 @@ def upgrade(conn: Connection) -> None:
             )
         )
     except IntegrityError:
+        savepoint.rollback()
         # Back-compat for existing production data that may already contain overlaps.
         # We skip constraint creation to unblock deployment and keep revision chain
         # consistent. Overlap checks are still enforced at application level.
@@ -87,6 +89,8 @@ def upgrade(conn: Connection) -> None:
             "Constraint can be added after data cleanup.",
             CONSTRAINT_NAME,
         )
+    else:
+        savepoint.commit()
 
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover
