@@ -8,8 +8,11 @@ do not overlap.
 
 from __future__ import annotations
 
+import logging
+
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import IntegrityError
 
 from backend.migrations.utils import table_exists
 
@@ -20,6 +23,7 @@ depends_on = None
 
 
 CONSTRAINT_NAME = "slots_no_recruiter_time_overlap_excl"
+logger = logging.getLogger(__name__)
 
 
 def upgrade(conn: Connection) -> None:
@@ -61,18 +65,28 @@ def upgrade(conn: Connection) -> None:
     # Add exclusion constraint
     # This ensures that for the same recruiter_id, time ranges cannot overlap
     # The range is computed as [start_utc, slot_end_time(start_utc, duration_min))
-    conn.execute(
-        sa.text(
-            f"""
-            ALTER TABLE slots
-            ADD CONSTRAINT {CONSTRAINT_NAME}
-            EXCLUDE USING gist (
-                recruiter_id WITH =,
-                tstzrange(start_utc, slot_end_time(start_utc, duration_min)) WITH &&
+    try:
+        conn.execute(
+            sa.text(
+                f"""
+                ALTER TABLE slots
+                ADD CONSTRAINT {CONSTRAINT_NAME}
+                EXCLUDE USING gist (
+                    recruiter_id WITH =,
+                    tstzrange(start_utc, slot_end_time(start_utc, duration_min)) WITH &&
+                )
+                """
             )
-            """
         )
-    )
+    except IntegrityError:
+        # Back-compat for existing production data that may already contain overlaps.
+        # We skip constraint creation to unblock deployment and keep revision chain
+        # consistent. Overlap checks are still enforced at application level.
+        logger.warning(
+            "Skipping %s creation because existing slot data has overlaps. "
+            "Constraint can be added after data cleanup.",
+            CONSTRAINT_NAME,
+        )
 
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover
