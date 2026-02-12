@@ -131,6 +131,27 @@ async def login(
     redirect_to: Optional[str] = Form("/"),
 ):
     audit_ctx = _get_audit_context(request, username)
+    settings = get_settings()
+
+    # Keep form login behaviour aligned with /auth/token:
+    # allow configured admin credentials from environment.
+    if (
+        settings.admin_username
+        and username == settings.admin_username
+        and password == settings.admin_password
+    ):
+        await log_audit_action(
+            "login_success",
+            "auth",
+            None,
+            ctx=audit_ctx,
+            changes={"method": "form", "role": "admin"},
+        )
+        request.session[SESSION_KEY] = {"type": "admin", "id": -1}
+        target = redirect_to or "/"
+        if not target.startswith("/") or target.startswith("//"):
+            target = "/"
+        return RedirectResponse(url=target, status_code=303)
 
     async with async_session() as session:
         account = await session.scalar(
