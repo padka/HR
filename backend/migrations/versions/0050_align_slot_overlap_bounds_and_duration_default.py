@@ -7,8 +7,11 @@ for newly created slots.
 
 from __future__ import annotations
 
+import logging
+
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import IntegrityError
 
 from backend.migrations.utils import column_exists, table_exists
 
@@ -21,6 +24,7 @@ TABLE = "slots"
 CONSTRAINT_NAME = "slots_no_recruiter_time_overlap_excl"
 DEFAULT_DURATION = 10
 LEGACY_DEFAULT_DURATION = 60
+logger = logging.getLogger(__name__)
 
 
 def _set_duration_default(conn: Connection, default: int) -> None:
@@ -54,19 +58,31 @@ def upgrade(conn: Connection) -> None:
         )
     )
 
-    conn.execute(sa.text(f"ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS {CONSTRAINT_NAME}"))
-    conn.execute(
-        sa.text(
-            f"""
-            ALTER TABLE {TABLE}
-            ADD CONSTRAINT {CONSTRAINT_NAME}
-            EXCLUDE USING gist (
-                recruiter_id WITH =,
-                tstzrange(start_utc, slot_end_time(start_utc, duration_min), '[)') WITH &&
+    savepoint = conn.begin_nested()
+    try:
+        conn.execute(sa.text(f"ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS {CONSTRAINT_NAME}"))
+        conn.execute(
+            sa.text(
+                f"""
+                ALTER TABLE {TABLE}
+                ADD CONSTRAINT {CONSTRAINT_NAME}
+                EXCLUDE USING gist (
+                    recruiter_id WITH =,
+                    tstzrange(start_utc, slot_end_time(start_utc, duration_min), '[)') WITH &&
+                )
+                """
             )
-            """
         )
-    )
+    except IntegrityError:
+        savepoint.rollback()
+        logger.warning(
+            "Skipping %s recreation in %s because slot data has overlaps. "
+            "Constraint can be added after data cleanup.",
+            CONSTRAINT_NAME,
+            revision,
+        )
+    else:
+        savepoint.commit()
 
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover
