@@ -6,6 +6,7 @@ import logging
 import secrets
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File, Form
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
@@ -229,10 +230,11 @@ async def api_dashboard_summary(principal: Principal = Depends(require_principal
 
 @router.get("/dashboard/incoming")
 async def api_dashboard_incoming(
+    limit: int = Query(default=6, ge=1, le=500),
     principal: Principal = Depends(require_principal),
 ) -> JSONResponse:
     """Candidates who passed test1 and are waiting for a free interview slot."""
-    payload = await get_waiting_candidates(principal=principal)
+    payload = await get_waiting_candidates(limit=limit, principal=principal)
     return JSONResponse({"items": payload})
 
 
@@ -657,7 +659,9 @@ async def api_staff_send_message(
             text = str(raw_text)
         uploads = form.getlist("files")
         if uploads:
-            files = [item for item in uploads if isinstance(item, UploadFile)]
+            # Starlette returns starlette.datastructures.UploadFile; FastAPI's UploadFile
+            # is a subclass, so we should accept the Starlette base type here.
+            files = [item for item in uploads if isinstance(item, StarletteUploadFile)]
 
     payload = await staff_send_message(thread_id, principal, text=text, files=files)
     return JSONResponse(payload)
