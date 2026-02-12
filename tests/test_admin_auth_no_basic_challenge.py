@@ -41,6 +41,7 @@ def test_api_401_does_not_advertise_basic_challenge(admin_app):
         response = client.get("/api/profile", headers={"accept": "application/json"})
 
     assert response.status_code == 401
-    challenge = response.headers.get("www-authenticate", "")
-    assert challenge.lower() == "bearer"
-    assert "basic" not in challenge.lower()
+    challenges = response.headers.get_list("www-authenticate")
+    # No Basic challenge allowed: it triggers the browser's native auth modal.
+    assert challenges, "Expected WWW-Authenticate header on 401"
+    assert all(ch.lower() == "bearer" for ch in challenges), challenges

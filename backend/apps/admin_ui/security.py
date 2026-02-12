@@ -12,7 +12,7 @@ from typing import Optional, Literal
 from contextvars import ContextVar
 
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from jose import JWTError, jwt
@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 # Replaced Basic auth with OAuth2 (Bearer token)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
-_basic = HTTPBasic(auto_error=False) # Kept only for legacy fallback if configured
 
 
 def get_admin_identifier(request: Request) -> str:
@@ -159,7 +158,6 @@ def _allow_legacy_basic() -> bool:
 async def get_current_principal(
     request: Request, 
     token: str = Depends(oauth2_scheme),
-    credentials: HTTPBasicCredentials = Depends(_basic)
 ) -> Principal:
     """
     Resolve principal from:
@@ -244,9 +242,21 @@ async def get_current_principal(
     settings = get_settings()
     legacy_user = settings.admin_username
     legacy_pass = settings.admin_password
-    if _allow_legacy_basic() and credentials and legacy_user and legacy_pass:
-        user_ok = secrets.compare_digest(credentials.username, legacy_user)
-        pass_ok = secrets.compare_digest(credentials.password, legacy_pass)
+    auth_header = request.headers.get("authorization", "")
+    if _allow_legacy_basic() and auth_header.lower().startswith("basic ") and legacy_user and legacy_pass:
+        # Important: don't use FastAPI's HTTPBasic dependency here.
+        # Even with auto_error=False, having HTTPBasic in the dependency graph can
+        # cause some servers to advertise "WWW-Authenticate: Basic" on 401, which
+        # triggers the browser's native Basic Auth modal and breaks UX.
+        encoded = auth_header.split(" ", 1)[1].strip()
+        try:
+            decoded = base64.b64decode(encoded).decode("utf-8")
+            candidate_user, candidate_pass = decoded.split(":", 1)
+        except Exception:
+            candidate_user, candidate_pass = "", ""
+
+        user_ok = secrets.compare_digest(candidate_user, legacy_user)
+        pass_ok = secrets.compare_digest(candidate_pass, legacy_pass)
         if user_ok and pass_ok:
             # Persist into session for subsequent requests
             if hasattr(request, "session"):
