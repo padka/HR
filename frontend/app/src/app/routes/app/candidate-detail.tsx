@@ -1320,7 +1320,6 @@ export function CandidateDetailPage() {
           {!aiSummaryData && !aiSummaryQuery.isFetching && !aiRefreshMutation.isPending && (
             <p className="subtitle">
               Сгенерируйте краткую сводку и рекомендации по следующему шагу.
-              Контекст отправляется в AI в обезличенном виде.
             </p>
           )}
 
