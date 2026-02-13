@@ -10,7 +10,7 @@ from backend.apps.admin_ui.security import Principal
 from backend.core.ai.context import build_candidate_ai_context
 from backend.core.ai.redaction import redact_text
 from backend.core.db import async_session
-from backend.domain.candidates.models import User
+from backend.domain.candidates.models import QuestionAnswer, TestResult, User
 from backend.domain.models import City, Recruiter, recruiter_city_association
 
 
@@ -110,6 +110,60 @@ async def test_ai_context_builder_excludes_pii_fields():
     assert "+79991234567" not in raw_dump
     assert "555123" not in raw_dump
     assert "sensitive_user" not in raw_dump
+
+
+@pytest.mark.asyncio
+async def test_ai_context_redacts_question_answers():
+    async with async_session() as session:
+        user = User(
+            fio="Sensitive Name",
+            phone="+79991234567",
+            telegram_id=555123,
+            telegram_username="sensitive_user",
+            city="E2E City",
+            source="bot",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        tr = TestResult(
+            user_id=user.id,
+            raw_score=0,
+            final_score=0.0,
+            rating="TEST1",
+            total_time=10,
+            source="bot",
+        )
+        session.add(tr)
+        await session.commit()
+        await session.refresh(tr)
+
+        qa = QuestionAnswer(
+            test_result_id=tr.id,
+            question_index=0,
+            question_text="Напишите ваш телефон и почту",
+            correct_answer=None,
+            user_answer="Мой телефон +7 900 000-00-00, почта test@example.com",
+            attempts_count=1,
+            time_spent=2,
+            is_correct=False,
+            overtime=False,
+        )
+        session.add(qa)
+        await session.commit()
+
+        candidate_id = int(user.id)
+
+    ctx = await build_candidate_ai_context(candidate_id, principal=Principal(type="admin", id=-1))
+    import json
+
+    raw_dump = json.dumps(ctx, ensure_ascii=False)
+    assert "+7 900 000-00-00" not in raw_dump
+    assert "test@example.com" not in raw_dump
+    assert "Sensitive Name" not in raw_dump
+    assert "PHONE" in raw_dump
+    assert "EMAIL" in raw_dump
 
 
 @pytest.mark.asyncio
@@ -235,3 +289,47 @@ def test_ai_disabled_returns_ai_disabled_error(monkeypatch):
     payload = resp.json()
     assert payload["ok"] is False
     assert payload["error"] == "ai_disabled"
+
+
+def test_ai_city_recommendations_cache_reuse(ai_app):
+    async def _seed() -> int:
+        async with async_session() as session:
+            city = City(name="Reco City", tz="Europe/Moscow", active=True, criteria="Опыт продаж, грамотная речь")
+            session.add(city)
+            await session.commit()
+            await session.refresh(city)
+
+            # Candidates for the same city (PII not used in AI context)
+            u1 = User(fio="Cand One", city=city.name, telegram_id=111001, source="bot")
+            u2 = User(fio="Cand Two", city=city.name, telegram_id=111002, source="bot")
+            session.add_all([u1, u2])
+            await session.commit()
+            await session.refresh(u1)
+            await session.refresh(u2)
+
+            return int(city.id)
+
+    city_id = _run(_seed())
+
+    with TestClient(ai_app) as client:
+        r1 = client.get(
+            f"/api/ai/cities/{city_id}/candidates/recommendations?limit=10",
+            auth=("admin", "admin"),
+            headers={"Accept": "application/json"},
+        )
+        assert r1.status_code == 200
+        p1 = r1.json()
+        assert p1["ok"] is True
+        assert p1["cached"] is False
+        assert "recommended" in p1
+
+        r2 = client.get(
+            f"/api/ai/cities/{city_id}/candidates/recommendations?limit=10",
+            auth=("admin", "admin"),
+            headers={"Accept": "application/json"},
+        )
+        assert r2.status_code == 200
+        p2 = r2.json()
+        assert p2["ok"] is True
+        assert p2["cached"] is True
+        assert p2["input_hash"] == p1["input_hash"]

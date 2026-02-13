@@ -155,3 +155,55 @@ async def api_ai_dashboard_insights(
     except AIRateLimitedError:
         return _rate_limited()
     return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, "insight": result.payload})
+
+
+@router.get("/cities/{city_id}/candidates/recommendations")
+async def api_ai_city_candidate_recommendations(
+    city_id: int,
+    limit: int = 30,
+    principal: Principal = Depends(require_principal),
+    ai: AIService = Depends(get_ai_service),
+) -> JSONResponse:
+    limit_value = max(1, min(int(limit or 30), 80))
+    try:
+        result = await ai.get_city_candidate_recommendations(
+            city_id,
+            principal=principal,
+            limit=limit_value,
+            refresh=False,
+        )
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, **result.payload})
+
+
+@router.post("/cities/{city_id}/candidates/recommendations/refresh")
+async def api_ai_city_candidate_recommendations_refresh(
+    city_id: int,
+    request: Request,
+    principal: Principal = Depends(require_principal),
+    ai: AIService = Depends(get_ai_service),
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    limit_value = 30
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and body.get("limit") is not None:
+            limit_value = int(body.get("limit"))
+    except Exception:
+        limit_value = 30
+    limit_value = max(1, min(int(limit_value or 30), 80))
+    try:
+        result = await ai.get_city_candidate_recommendations(
+            city_id,
+            principal=principal,
+            limit=limit_value,
+            refresh=True,
+        )
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, **result.payload})

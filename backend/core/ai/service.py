@@ -17,11 +17,21 @@ from backend.domain.ai.models import AIOutput, AIRequestLog
 from backend.domain.candidates.models import User
 from backend.domain.models import Recruiter
 
-from .context import build_candidate_ai_context, compute_input_hash, get_last_inbound_message_text
-from .prompts import candidate_summary_prompts, chat_reply_drafts_prompts, dashboard_insight_prompts
+from .context import (
+    build_candidate_ai_context,
+    build_city_candidate_recommendations_context,
+    compute_input_hash,
+    get_last_inbound_message_text,
+)
+from .prompts import (
+    candidate_summary_prompts,
+    chat_reply_drafts_prompts,
+    city_candidate_recommendations_prompts,
+    dashboard_insight_prompts,
+)
 from .providers import AIProvider, AIProviderError, FakeProvider, OpenAIProvider
 from .redaction import redact_text
-from .schemas import CandidateSummaryV1, ChatReplyDraftsV1, DashboardInsightV1
+from .schemas import CandidateSummaryV1, ChatReplyDraftsV1, CityCandidateRecommendationsV1, DashboardInsightV1
 
 logger = logging.getLogger(__name__)
 
@@ -465,6 +475,104 @@ class AIService:
                 status_value="error",
                 error_code=exc.__class__.__name__,
             )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"message": "AI provider error"},
+            )
+
+    async def get_city_candidate_recommendations(
+        self,
+        city_id: int,
+        *,
+        principal: Principal,
+        limit: int = 30,
+        refresh: bool = False,
+    ) -> AIResult:
+        self._ensure_enabled()
+        ctx = await build_city_candidate_recommendations_context(city_id, principal=principal, limit=limit)
+        input_hash = compute_input_hash(ctx)
+        kind = "city_candidate_recommendations_v1"
+
+        if not refresh:
+            cached = await _get_cached_output(
+                scope_type="city",
+                scope_id=city_id,
+                kind=kind,
+                input_hash=input_hash,
+            )
+            if cached is not None:
+                return AIResult(payload=cached.payload_json, cached=True, input_hash=input_hash)
+
+        await self._ensure_quota(principal)
+
+        system_prompt, user_prompt = city_candidate_recommendations_prompts(context=ctx)
+        model = self._settings.openai_model
+        started = time.monotonic()
+        try:
+            payload, usage = await self._provider.generate_json(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_seconds=int(self._settings.ai_timeout_seconds),
+                max_tokens=int(self._settings.ai_max_tokens),
+            )
+            validated = CityCandidateRecommendationsV1.model_validate(payload).model_dump()
+            try:
+                allowed_ids = {
+                    int(item.get("id"))
+                    for item in ((ctx.get("candidates") or {}).get("items") or [])
+                    if isinstance(item, dict) and isinstance(item.get("id"), int)
+                }
+                recs = validated.get("recommended") or []
+                filtered = []
+                for rec in recs:
+                    if not isinstance(rec, dict):
+                        continue
+                    cid = rec.get("candidate_id")
+                    if isinstance(cid, int) and cid in allowed_ids:
+                        filtered.append(rec)
+                validated["recommended"] = filtered[:10]
+                validated["criteria_used"] = bool((ctx.get("city") or {}).get("criteria_present"))
+            except Exception:  # pragma: no cover - best-effort guardrail
+                pass
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="city",
+                scope_id=city_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=usage.tokens_in,
+                tokens_out=usage.tokens_out,
+                status_value="ok",
+                error_code="",
+            )
+            await _store_output(
+                scope_type="city",
+                scope_id=city_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=validated,
+            )
+            return AIResult(payload=validated, cached=False, input_hash=input_hash)
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="city",
+                scope_id=city_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=0,
+                tokens_out=0,
+                status_value="error",
+                error_code=exc.__class__.__name__,
+            )
+            logger.warning("ai.city_recommendations.failed", extra={"city_id": city_id}, exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"message": "AI provider error"},

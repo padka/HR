@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 Severity = Literal["low", "medium", "high"]
+FitLevel = Literal["high", "medium", "low", "unknown"]
 
 
 class RiskItem(BaseModel):
@@ -22,8 +23,27 @@ class NextActionItem(BaseModel):
     cta: Optional[str] = None
 
 
+class FitAssessment(BaseModel):
+    score: Optional[int] = Field(default=None, ge=0, le=100)
+    level: FitLevel = "unknown"
+    rationale: str = Field(default="")
+    criteria_used: bool = False
+
+
+class EvidenceItem(BaseModel):
+    # Keep these fields permissive: LLM output can be inconsistent.
+    # Frontend will gracefully handle empty values.
+    key: str = ""
+    label: str = ""
+    evidence: str = ""
+
+
 class CandidateSummaryV1(BaseModel):
     tldr: str = Field(min_length=1)
+    fit: Optional[FitAssessment] = None
+    strengths: list[EvidenceItem] = Field(default_factory=list)
+    weaknesses: list[EvidenceItem] = Field(default_factory=list)
+    test_insights: Optional[str] = None
     risks: list[RiskItem] = Field(default_factory=list)
     next_actions: list[NextActionItem] = Field(default_factory=list)
     notes: Optional[str] = None
@@ -44,3 +64,16 @@ class DashboardInsightV1(BaseModel):
     anomalies: list[str] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
 
+
+class CandidateRecommendationItem(BaseModel):
+    candidate_id: int = Field(ge=1)
+    fit_score: Optional[int] = Field(default=None, ge=0, le=100)
+    fit_level: FitLevel = "unknown"
+    reason: str = ""
+    suggested_next_step: Optional[str] = None
+
+
+class CityCandidateRecommendationsV1(BaseModel):
+    criteria_used: bool = False
+    recommended: list[CandidateRecommendationItem] = Field(default_factory=list)
+    notes: Optional[str] = None
