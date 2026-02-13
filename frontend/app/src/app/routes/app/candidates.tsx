@@ -4,6 +4,30 @@ import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { apiFetch } from '@/api/client'
 
+type CityOption = {
+  id: number
+  name: string
+  tz?: string | null
+  active?: boolean
+}
+
+type AICityCandidateRecommendation = {
+  candidate_id: number
+  fit_score?: number | null
+  fit_level?: 'high' | 'medium' | 'low' | 'unknown'
+  reason: string
+  suggested_next_step?: string | null
+}
+
+type AICityRecommendationsResponse = {
+  ok: boolean
+  cached: boolean
+  input_hash: string
+  criteria_used?: boolean
+  recommended: AICityCandidateRecommendation[]
+  notes?: string | null
+}
+
 type Candidate = {
   id: number
   fio?: string | null
@@ -87,6 +111,7 @@ export function CandidatesPage() {
   const [perPage, setPerPage] = useState(20)
   const [pipeline, setPipeline] = useState(initialFilters.pipeline)
   const [view, setView] = useState<'list' | 'kanban' | 'calendar'>('list')
+  const [aiCityId, setAiCityId] = useState('')
   const [calendarFrom, setCalendarFrom] = useState(() => {
     const d = new Date()
     return d.toISOString().slice(0, 10)
@@ -112,6 +137,22 @@ export function CandidatesPage() {
   const { data, isLoading, isError, error } = useQuery<CandidateListPayload>({
     queryKey: ['candidates', { search, status, page, perPage, pipeline, view, calendarFrom, calendarTo }],
     queryFn: () => apiFetch(`/candidates?${params.toString()}`),
+  })
+
+  const citiesQuery = useQuery<CityOption[]>({
+    queryKey: ['cities'],
+    queryFn: () => apiFetch('/cities'),
+    staleTime: 60_000,
+  })
+
+  const aiRecoQuery = useQuery<AICityRecommendationsResponse>({
+    queryKey: ['ai-city-reco', aiCityId],
+    queryFn: () => {
+      if (!aiCityId) throw new Error('Выберите город')
+      return apiFetch(`/ai/cities/${aiCityId}/candidates/recommendations?limit=30`)
+    },
+    enabled: false,
+    retry: false,
   })
 
   const total = data?.total ?? 0
@@ -169,6 +210,79 @@ export function CandidatesPage() {
               </button>
             </div>
           </div>
+
+          <div className="glass ai-reco">
+            <div className="ai-reco__header">
+              <div>
+                <div className="ai-reco__title">AI рекомендации</div>
+                <div className="subtitle">Подбор кандидатов под критерии города (без ПДн).</div>
+              </div>
+              <div className="ai-reco__actions">
+                <select
+                  aria-label="Город для AI рекомендаций"
+                  value={aiCityId}
+                  onChange={(e) => setAiCityId(e.target.value)}
+                >
+                  <option value="">Выберите город…</option>
+                  {(citiesQuery.data || []).map((c) => (
+                    <option key={c.id} value={String(c.id)}>{c.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn--ghost ui-btn--sm"
+                  disabled={!aiCityId || aiRecoQuery.isFetching}
+                  onClick={() => aiRecoQuery.refetch()}
+                >
+                  {aiRecoQuery.isFetching ? 'Генерация…' : 'Сгенерировать'}
+                </button>
+                {aiRecoQuery.data && (
+                  <span className={`cd-chip cd-chip--small ${aiRecoQuery.data.cached ? '' : 'cd-chip--accent'}`}>
+                    {aiRecoQuery.data.cached ? 'Кэш' : 'Новый'}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {aiRecoQuery.isError && (
+              <div className="ai-reco__error">
+                AI: {(aiRecoQuery.error as Error).message}
+              </div>
+            )}
+
+            {aiRecoQuery.data && (
+              <div className="ai-reco__body">
+                {aiRecoQuery.data.notes && <div className="ai-reco__notes">{aiRecoQuery.data.notes}</div>}
+                {aiRecoQuery.data.recommended.length === 0 ? (
+                  <div className="subtitle">Нет рекомендаций.</div>
+                ) : (
+                  <div className="ai-reco__list">
+                    {aiRecoQuery.data.recommended.map((r) => (
+                      <div key={r.candidate_id} className="ai-reco__item glass glass--interactive">
+                        <div className="ai-reco__main">
+                          <div className="ai-reco__top">
+                            <Link
+                              to="/app/candidates/$candidateId"
+                              params={{ candidateId: String(r.candidate_id) }}
+                              className="font-semibold"
+                            >
+                              Кандидат #{r.candidate_id}
+                            </Link>
+                            <span className={`ai-reco__badge ai-reco__badge--${r.fit_level || 'unknown'}`}>
+                              {r.fit_score != null ? `${r.fit_score}/100` : '—'}
+                            </span>
+                          </div>
+                          <div className="ai-reco__reason">{r.reason}</div>
+                          {r.suggested_next_step && <div className="ai-reco__next">{r.suggested_next_step}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="pagination">
             <span className="pagination__info">Всего: {total}</span>
             <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Назад</button>

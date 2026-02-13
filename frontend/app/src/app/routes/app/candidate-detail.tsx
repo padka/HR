@@ -183,8 +183,25 @@ type AINextActionItem = {
   cta?: string | null
 }
 
+type AIFit = {
+  score?: number | null
+  level?: 'high' | 'medium' | 'low' | 'unknown'
+  rationale?: string
+  criteria_used?: boolean
+}
+
+type AIEvidenceItem = {
+  key: string
+  label: string
+  evidence: string
+}
+
 type AISummary = {
   tldr: string
+  fit?: AIFit | null
+  strengths?: AIEvidenceItem[]
+  weaknesses?: AIEvidenceItem[]
+  test_insights?: string | null
   risks?: AIRiskItem[]
   next_actions?: AINextActionItem[]
   notes?: string | null
@@ -971,6 +988,10 @@ export function CandidateDetailPage() {
   const aiSummaryData = aiSummaryQuery.data?.summary || null
   const aiRisks = aiSummaryData?.risks || []
   const aiNextActions = aiSummaryData?.next_actions || []
+  const aiFit = aiSummaryData?.fit || null
+  const aiStrengths = aiSummaryData?.strengths || []
+  const aiWeaknesses = aiSummaryData?.weaknesses || []
+  const aiTestInsights = aiSummaryData?.test_insights || null
   const aiSummaryError = (aiSummaryQuery.error as Error | null) || (aiRefreshMutation.error as Error | null)
 
   useEffect(() => {
@@ -1302,6 +1323,52 @@ export function CandidateDetailPage() {
               </div>
 
               <div className="cd-ai__card">
+                <div className="cd-ai__label">Релевантность</div>
+                <div className="cd-ai-fit">
+                  <div className="cd-ai-fit__score">{aiFit?.score != null ? `${aiFit.score}/100` : '—'}</div>
+                  <div className={`cd-ai-fit__badge cd-ai-fit__badge--${aiFit?.level || 'unknown'}`}>
+                    {aiFit?.level === 'high' ? 'Высокая' : aiFit?.level === 'medium' ? 'Средняя' : aiFit?.level === 'low' ? 'Низкая' : 'Неизвестно'}
+                  </div>
+                </div>
+                {aiFit?.criteria_used === false && (
+                  <div className="subtitle">Критерии города не заданы, оценка ограничена.</div>
+                )}
+                {aiFit?.rationale && <div className="cd-ai__text">{aiFit.rationale}</div>}
+              </div>
+
+              <div className="cd-ai__card">
+                <div className="cd-ai__label">Сильные стороны</div>
+                {aiStrengths.length === 0 ? (
+                  <div className="subtitle">Нет явных сильных сторон по текущим данным.</div>
+                ) : (
+                  <ul className="cd-ai__list">
+                    {aiStrengths.map((s) => (
+                      <li key={s.key} className="cd-ai__point cd-ai__point--strength">
+                        <div className="cd-ai__point-title">{s.label}</div>
+                        <div className="cd-ai__point-text">{s.evidence}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="cd-ai__card">
+                <div className="cd-ai__label">Зоны роста</div>
+                {aiWeaknesses.length === 0 ? (
+                  <div className="subtitle">Критичных зон роста не выявлено.</div>
+                ) : (
+                  <ul className="cd-ai__list">
+                    {aiWeaknesses.map((w) => (
+                      <li key={w.key} className="cd-ai__point cd-ai__point--weakness">
+                        <div className="cd-ai__point-title">{w.label}</div>
+                        <div className="cd-ai__point-text">{w.evidence}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="cd-ai__card">
                 <div className="cd-ai__label">Риски</div>
                 {aiRisks.length === 0 ? (
                   <div className="subtitle">Явных рисков не найдено.</div>
@@ -1332,6 +1399,13 @@ export function CandidateDetailPage() {
                   </ol>
                 )}
               </div>
+
+              {aiTestInsights && (
+                <div className="cd-ai__card cd-ai__card--span">
+                  <div className="cd-ai__label">Анализ тестов</div>
+                  <div className="cd-ai__text">{aiTestInsights}</div>
+                </div>
+              )}
 
               {aiSummaryData.notes && (
                 <div className="cd-ai__card cd-ai__card--span">
