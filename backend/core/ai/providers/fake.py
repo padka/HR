@@ -31,6 +31,7 @@ class FakeProvider:
             "chat_reply_drafts_v1",
             "dashboard_insight_v1",
             "city_candidate_recommendations_v1",
+            "agent_chat_reply_v1",
         ):
             if marker in system_prompt or marker in user_prompt:
                 kind = marker
@@ -88,6 +89,13 @@ class FakeProvider:
                 "tldr": "Ключевые метрики стабильны. Узкое место: подтверждение слота.",
                 "anomalies": [],
                 "recommendations": ["Увеличить число слотов в пиковые часы."],
+            }
+        elif "agent_chat_reply_v1" in kind:
+            payload = {
+                "answer": "По регламенту используйте только объективные критерии и фиксируйте подтверждения в CRM. Если критерии города не заданы, уточните их у ответственного лица и зафиксируйте в системе.",
+                "confidence": "medium",
+                "kb_sources": [],
+                "follow_ups": ["Уточните город/вакансию и какие критерии сейчас установлены офисом."],
             }
         else:
             payload = {

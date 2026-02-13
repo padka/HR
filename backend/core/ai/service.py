@@ -13,7 +13,7 @@ from backend.apps.admin_ui.security import Principal
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain import analytics
-from backend.domain.ai.models import AIOutput, AIRequestLog
+from backend.domain.ai.models import AIOutput, AIRequestLog, AIAgentMessage, AIAgentThread
 from backend.domain.candidates.models import User
 from backend.domain.models import Recruiter
 
@@ -28,10 +28,17 @@ from .prompts import (
     chat_reply_drafts_prompts,
     city_candidate_recommendations_prompts,
     dashboard_insight_prompts,
+    agent_chat_reply_prompts,
 )
 from .providers import AIProvider, AIProviderError, FakeProvider, OpenAIProvider
 from .redaction import redact_text
-from .schemas import CandidateSummaryV1, ChatReplyDraftsV1, CityCandidateRecommendationsV1, DashboardInsightV1
+from .schemas import (
+    AgentChatReplyV1,
+    CandidateSummaryV1,
+    ChatReplyDraftsV1,
+    CityCandidateRecommendationsV1,
+    DashboardInsightV1,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -573,6 +580,264 @@ class AIService:
                 error_code=exc.__class__.__name__,
             )
             logger.warning("ai.city_recommendations.failed", extra={"city_id": city_id}, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"message": "AI provider error"},
+            )
+
+    async def get_agent_chat_state(
+        self,
+        *,
+        principal: Principal,
+        limit: int = 80,
+    ) -> tuple[int, list[dict[str, Any]]]:
+        """Return (thread_id, messages) for the internal copilot chat."""
+
+        self._ensure_enabled()
+        limit_value = max(1, min(int(limit or 80), 200))
+
+        async with async_session() as session:
+            thread = await session.scalar(
+                select(AIAgentThread).where(
+                    AIAgentThread.principal_type == principal.type,
+                    AIAgentThread.principal_id == principal.id,
+                )
+            )
+            if thread is None:
+                thread = AIAgentThread(
+                    principal_type=principal.type,
+                    principal_id=principal.id,
+                    title="Copilot",
+                )
+                session.add(thread)
+                await session.commit()
+                await session.refresh(thread)
+
+            rows = (
+                await session.execute(
+                    select(AIAgentMessage)
+                    .where(AIAgentMessage.thread_id == thread.id)
+                    .order_by(AIAgentMessage.created_at.desc(), AIAgentMessage.id.desc())
+                    .limit(limit_value)
+                )
+            ).scalars().all()
+
+        messages = [
+            {
+                "id": int(m.id),
+                "role": str(m.role or "user"),
+                "text": str(m.content_text or ""),
+                "created_at": (m.created_at.astimezone(timezone.utc).isoformat() if m.created_at else None),
+                "meta": m.metadata_json or {},
+            }
+            for m in reversed(list(rows))
+        ]
+        return int(thread.id), messages
+
+    async def send_agent_chat_message(
+        self,
+        *,
+        principal: Principal,
+        text: str,
+        history_limit: int = 14,
+        kb_limit: int = 5,
+    ) -> dict[str, Any]:
+        self._ensure_enabled()
+
+        raw = (text or "").strip()
+        if not raw:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": "Сообщение пустое"})
+        if len(raw) > 4000:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": "Сообщение слишком длинное"})
+
+        redaction = redact_text(raw, max_len=2000, mask_person_names=True)
+        if not redaction.safe_to_send:
+            # Store redacted input but do not call the provider.
+            async with async_session() as session:
+                thread = await session.scalar(
+                    select(AIAgentThread).where(
+                        AIAgentThread.principal_type == principal.type,
+                        AIAgentThread.principal_id == principal.id,
+                    )
+                )
+                if thread is None:
+                    thread = AIAgentThread(
+                        principal_type=principal.type,
+                        principal_id=principal.id,
+                        title="Copilot",
+                    )
+                    session.add(thread)
+                    await session.commit()
+                    await session.refresh(thread)
+
+                session.add(
+                    AIAgentMessage(
+                        thread_id=int(thread.id),
+                        role="user",
+                        content_text=redaction.text,
+                        metadata_json={"safe_to_send": False, "replacements": redaction.replacements},
+                    )
+                )
+                await session.commit()
+
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": "В сообщении обнаружены потенциальные персональные данные. Уберите ФИО/телефон/ссылки и повторите.",
+                    "error": "pii_detected",
+                },
+            )
+
+        from .knowledge_base import kb_state_snapshot, search_excerpts
+
+        kb_excerpts = await search_excerpts(redaction.text, limit=max(1, min(int(kb_limit), 10)))
+        kb_state = await kb_state_snapshot()
+
+        history_limit_value = max(0, min(int(history_limit or 14), 30))
+        thread_id: int
+        async with async_session() as session:
+            thread = await session.scalar(
+                select(AIAgentThread).where(
+                    AIAgentThread.principal_type == principal.type,
+                    AIAgentThread.principal_id == principal.id,
+                )
+            )
+            if thread is None:
+                thread = AIAgentThread(
+                    principal_type=principal.type,
+                    principal_id=principal.id,
+                    title="Copilot",
+                )
+                session.add(thread)
+                await session.commit()
+                await session.refresh(thread)
+            thread_id = int(thread.id)
+
+            # Load recent history (already redacted at write time).
+            prev = (
+                await session.execute(
+                    select(AIAgentMessage)
+                    .where(AIAgentMessage.thread_id == thread.id)
+                    .order_by(AIAgentMessage.created_at.desc(), AIAgentMessage.id.desc())
+                    .limit(history_limit_value)
+                )
+            ).scalars().all()
+            prev_msgs = [
+                {"role": str(m.role or "user"), "text": str(m.content_text or "")}
+                for m in reversed(list(prev))
+            ]
+
+            # Persist the new user message first to keep order stable.
+            session.add(
+                AIAgentMessage(
+                    thread_id=int(thread.id),
+                    role="user",
+                    content_text=redaction.text,
+                    metadata_json={"safe_to_send": True, "replacements": redaction.replacements},
+                )
+            )
+            await session.commit()
+
+        ctx = {
+            "question": {"text": redaction.text},
+            "history": prev_msgs[-history_limit_value:] if history_limit_value else [],
+            "knowledge_base": {
+                "excerpts": kb_excerpts,
+                "state": kb_state,
+            },
+        }
+
+        kind = "agent_chat_reply_v1"
+        model = self._settings.openai_model
+        started = time.monotonic()
+        try:
+            await self._ensure_quota(principal)
+            system_prompt, user_prompt = agent_chat_reply_prompts(context=ctx)
+            payload, usage = await self._provider.generate_json(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_seconds=int(self._settings.ai_timeout_seconds),
+                max_tokens=int(self._settings.ai_max_tokens),
+            )
+            validated = AgentChatReplyV1.model_validate(payload).model_dump()
+
+            # Only allow sources from excerpts we actually provided.
+            allowed = {
+                (int(ex.get("document_id") or 0), int(ex.get("chunk_index") or 0)): ex
+                for ex in (kb_excerpts or [])
+                if isinstance(ex, dict)
+            }
+            filtered_sources = []
+            for src in validated.get("kb_sources") or []:
+                if not isinstance(src, dict):
+                    continue
+                key = (int(src.get("document_id") or 0), int(src.get("chunk_index") or 0))
+                if key in allowed:
+                    filtered_sources.append(
+                        {
+                            "document_id": key[0],
+                            "title": str(allowed[key].get("document_title") or src.get("title") or ""),
+                            "chunk_index": key[1],
+                        }
+                    )
+            validated["kb_sources"] = filtered_sources[:6]
+
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="thread",
+                scope_id=thread_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=usage.tokens_in,
+                tokens_out=usage.tokens_out,
+                status_value="ok",
+                error_code="",
+            )
+
+            async with async_session() as session:
+                thread = await session.scalar(
+                    select(AIAgentThread).where(
+                        AIAgentThread.principal_type == principal.type,
+                        AIAgentThread.principal_id == principal.id,
+                    )
+                )
+                if thread is not None:
+                    session.add(
+                        AIAgentMessage(
+                            thread_id=int(thread.id),
+                            role="assistant",
+                            content_text=str(validated.get("answer") or "").strip(),
+                            metadata_json={
+                                "confidence": validated.get("confidence"),
+                                "kb_sources": validated.get("kb_sources") or [],
+                            },
+                        )
+                    )
+                    await session.commit()
+
+            return {"reply": validated, "kb_excerpts_used": kb_excerpts}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="thread",
+                scope_id=thread_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=0,
+                tokens_out=0,
+                status_value="error",
+                error_code=exc.__class__.__name__,
+            )
+            logger.warning("ai.agent_chat.failed", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"message": "AI provider error"},

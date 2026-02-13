@@ -256,7 +256,7 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
     status_slug = getattr(candidate_status, "value", None) if candidate_status is not None else None
     status_slug = status_slug or getattr(user, "candidate_status", None)
 
-    return {
+    ctx: dict[str, Any] = {
         "candidate": {
             "id": user.id,
             "is_active": bool(user.is_active),
@@ -290,6 +290,32 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
             "total": len(events),
         },
     }
+
+    kb_query_parts: list[str] = ["критерии оценки кандидатов"]
+    if city_profile and city_profile.get("criteria"):
+        kb_query_parts.append(str(city_profile.get("criteria")))
+    if user.desired_position:
+        kb_query_parts.append(str(user.desired_position))
+    if status_slug:
+        kb_query_parts.append(str(status_slug))
+    ctx = await _attach_kb_excerpts(ctx, query=" ".join(kb_query_parts), limit=3)
+    return ctx
+
+
+async def _attach_kb_excerpts(ctx: dict[str, Any], *, query: str, limit: int = 3) -> dict[str, Any]:
+    from .knowledge_base import kb_state_snapshot, search_excerpts
+
+    kb_state = await kb_state_snapshot()
+    excerpts = []
+    query_clean = (query or "").strip()
+    if query_clean:
+        excerpts = await search_excerpts(query_clean, limit=limit)
+    ctx["knowledge_base"] = {
+        "query": query_clean or None,
+        "excerpts": excerpts,
+        "state": kb_state,
+    }
+    return ctx
 
 
 async def build_city_candidate_recommendations_context(
@@ -393,7 +419,7 @@ async def build_city_candidate_recommendations_context(
                 }
             )
 
-    return {
+    ctx: dict[str, Any] = {
         "city": {
             "id": int(city.id),
             "name": city_name_plain or None,
@@ -407,6 +433,11 @@ async def build_city_candidate_recommendations_context(
             "limit": int(limit),
         },
     }
+    kb_query_parts: list[str] = ["планирование офисом", "критерии отбора"]
+    if criteria_value:
+        kb_query_parts.append(str(criteria_value))
+    ctx = await _attach_kb_excerpts(ctx, query=" ".join(kb_query_parts), limit=3)
+    return ctx
 
 
 async def get_last_inbound_message_text(candidate_id: int, *, principal: Principal) -> Optional[str]:

@@ -13,6 +13,9 @@ _LONG_DIGITS_RE = re.compile(r"\b\d{6,}\b")
 # Rough phone matcher: "+7 900 000-00-00", "89000000000", "(900) 000-00-00", etc.
 _PHONE_RE = re.compile(r"(\+?\d[\d\s()\-\.\u00A0]{7,}\d)")
 
+_NAME_WORD_RE = r"[A-ZА-ЯЁ][a-zа-яё]{2,}"
+_PERSON_NAME_SEQ_RE = re.compile(rf"\\b{_NAME_WORD_RE}(?:\\s+{_NAME_WORD_RE}){{1,2}}\\b")
+
 
 @dataclass(frozen=True)
 class RedactionResult:
@@ -47,6 +50,7 @@ def redact_text(
     candidate_fio: Optional[str] = None,
     recruiter_name: Optional[str] = None,
     max_len: int = 2000,
+    mask_person_names: bool = False,
 ) -> RedactionResult:
     """Best-effort PII redaction for AI prompts.
 
@@ -65,6 +69,10 @@ def redact_text(
     replacements += n
     clipped, n = _replace_known_name(clipped, recruiter_name, "RECRUITER_NAME")
     replacements += n
+
+    if mask_person_names:
+        clipped, n = _PERSON_NAME_SEQ_RE.subn("PERSON_NAME", clipped)
+        replacements += n
 
     clipped, n = _EMAIL_RE.subn("EMAIL", clipped)
     replacements += n

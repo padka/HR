@@ -32,12 +32,14 @@ def candidate_summary_prompts(*, context: dict) -> tuple[str, str]:
         "- Do NOT include any personal data (PII). Never output names, phones, Telegram IDs, links.\n"
         "- Use concise Russian.\n"
         "- If information is missing, say so explicitly.\n"
+        "- Use ONLY the provided context. Do not invent facts.\n"
         "JSON schema:\n"
         "{\n"
         '  "tldr": "string",\n'
         '  "fit": {"score": 0-100|null, "level":"high|medium|low|unknown", "rationale":"string", "criteria_used": true|false} | null,\n'
         '  "strengths": [{"key":"string","label":"string","evidence":"string"}],\n'
         '  "weaknesses": [{"key":"string","label":"string","evidence":"string"}],\n'
+        '  "criteria_checklist": [{"key":"string","status":"met|not_met|unknown","label":"string","evidence":"string"}],\n'
         '  "test_insights": "string|null",\n'
         '  "risks": [{"key":"string","severity":"low|medium|high","label":"string","explanation":"string"}],\n'
         '  "next_actions": [{"key":"string","label":"string","rationale":"string","cta":"string|null"}],\n'
@@ -48,8 +50,12 @@ def candidate_summary_prompts(*, context: dict) -> tuple[str, str]:
         "Analyze the candidate context and produce recruiter-facing summary.\n"
         "Focus on:\n"
         "- Fit to the city's vacancy criteria (use city_profile.criteria if present).\n"
+        "- If knowledge_base.excerpts are present, treat them as internal regulations and follow them.\n"
         "- Strengths/weaknesses based on test answers (if present) and scores.\n"
+        "- Criteria checklist: assess objective criteria from regulations (met/not_met/unknown) with short evidence.\n"
         "- Concrete next steps for the recruiter.\n"
+        "Notes:\n"
+        "- If referencing test answers, prefer pointing to question_index (e.g. \"TEST2 Q3\") instead of quoting.\n"
         "Context (anonymized JSON):\n"
         f"{_json_block(context)}\n"
     )
@@ -127,7 +133,33 @@ def city_candidate_recommendations_prompts(*, context: dict) -> tuple[str, str]:
     )
     user = (
         "Select the best candidates for recruiter review.\n"
+        "Use city.criteria and knowledge_base.excerpts as the evaluation framework.\n"
         "Return up to 10 recommended candidates.\n"
+        "Context (anonymized JSON):\n"
+        f"{_json_block(context)}\n"
+    )
+    return system, user
+
+
+def agent_chat_reply_prompts(*, context: dict) -> tuple[str, str]:
+    system = (
+        "You are RecruitSmart Recruiter Copilot.\n"
+        "Task kind: agent_chat_reply_v1.\n"
+        "Rules:\n"
+        "- Output MUST be a single JSON object (no markdown).\n"
+        "- Do NOT include any personal data (PII). Never output names, phones, Telegram IDs, links.\n"
+        "- Use Russian.\n"
+        "- Prefer citing provided knowledge_base excerpts. If the KB doesn't cover the question, say so.\n"
+        "JSON schema:\n"
+        "{\n"
+        '  "answer": "string",\n'
+        '  "confidence": "high|medium|low",\n'
+        '  "kb_sources": [{"document_id": 1, "title":"string", "chunk_index": 0}],\n'
+        '  "follow_ups": ["string"]\n'
+        "}\n"
+    )
+    user = (
+        "Answer the recruiter question using internal regulations.\n"
         "Context (anonymized JSON):\n"
         f"{_json_block(context)}\n"
     )

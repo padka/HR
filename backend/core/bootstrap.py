@@ -16,6 +16,7 @@ from backend.core.db import init_models, sync_engine, sync_session
 from backend.domain.base import Base
 from backend.domain.default_data import DEFAULT_CITIES, default_recruiters
 from backend.domain.models import City, Recruiter
+import backend.domain.ai.models  # noqa: F401 - register AI/KB tables for metadata create_all
 
 logger = logging.getLogger(__name__)
 

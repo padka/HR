@@ -49,6 +49,7 @@ from backend.apps.admin_ui.routers import (
     reschedule_requests,
     slot_assignments_api,
     ai,
+    knowledge_base,
 )
 from backend.apps.admin_ui.security import (
     RateLimitExceeded,
@@ -572,6 +573,7 @@ def create_app() -> FastAPI:
     app.include_router(message_templates.router, dependencies=[Depends(require_admin)])
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
     app.include_router(ai.router, dependencies=[Depends(require_principal)])
+    app.include_router(knowledge_base.router, dependencies=[Depends(require_principal)])
     app.include_router(api.router, dependencies=[Depends(require_principal)])
     app.include_router(assignments.router, prefix="/api/v1")
     app.include_router(slot_assignments_api.router)
