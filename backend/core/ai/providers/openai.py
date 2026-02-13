@@ -150,7 +150,8 @@ class OpenAIProvider:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             timeout_seconds=timeout_seconds,
-            max_tokens=max(256, min(int(max_tokens), 700)),
+            # Repair must be able to emit the full object; do not cap too low.
+            max_tokens=max(256, min(int(max_tokens), 1500)),
             with_response_format=True,
         )
         content, usage = self._extract_content_and_usage(data)
