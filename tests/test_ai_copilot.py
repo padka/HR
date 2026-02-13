@@ -1,0 +1,237 @@
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend.apps.admin_ui.app import create_app
+from backend.apps.admin_ui.security import Principal
+from backend.core.ai.context import build_candidate_ai_context
+from backend.core.ai.redaction import redact_text
+from backend.core.db import async_session
+from backend.domain.candidates.models import User
+from backend.domain.models import City, Recruiter, recruiter_city_association
+
+
+class _DummyIntegration:
+    async def shutdown(self) -> None:
+        return None
+
+
+@pytest.fixture
+def ai_app(monkeypatch):
+    async def fake_setup(app) -> _DummyIntegration:
+        app.state.bot = None
+        app.state.state_manager = None
+        app.state.bot_service = None
+        app.state.bot_integration_switch = None
+        app.state.reminder_service = None
+        return _DummyIntegration()
+
+    monkeypatch.setenv("AI_ENABLED", "1")
+    monkeypatch.setenv("AI_PROVIDER", "fake")
+    monkeypatch.setenv("ADMIN_USER", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup)
+    monkeypatch.setattr("backend.apps.admin_ui.app.setup_bot_state", fake_setup)
+    app = create_app()
+    try:
+        yield app
+    finally:
+        settings_module.get_settings.cache_clear()
+
+
+def _run(coro):
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
+def test_ai_redaction_masks_phone_email_urls_and_known_names():
+    raw = (
+        "Иван Иванов, мой телефон +7 900 000-00-00, почта test@example.com.\n"
+        "Ссылка: https://example.com и @some_user. id 1234567"
+    )
+    result = redact_text(raw, candidate_fio="Иван Иванов", recruiter_name="Петр Петров")
+    assert result.safe_to_send is True
+    assert "Иван" not in result.text
+    assert "Иванов" not in result.text
+    assert "test@example.com" not in result.text
+    assert "https://example.com" not in result.text
+    assert "@some_user" not in result.text
+    assert "900" not in result.text
+    assert "1234567" not in result.text
+    assert "PHONE" in result.text
+    assert "EMAIL" in result.text
+    assert "URL" in result.text
+    assert "USERNAME" in result.text
+    assert "ID" in result.text
+
+
+@pytest.mark.asyncio
+async def test_ai_context_builder_excludes_pii_fields():
+    async with async_session() as session:
+        user = User(
+            fio="Sensitive Name",
+            phone="+79991234567",
+            telegram_id=555123,
+            telegram_username="sensitive_user",
+            username="legacy_username",
+            city="E2E City",
+            source="bot",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        candidate_id = int(user.id)
+
+    ctx = await build_candidate_ai_context(candidate_id, principal=Principal(type="admin", id=-1))
+
+    # Explicit exclusions
+    assert "fio" not in ctx.get("candidate", {})
+    assert "phone" not in ctx.get("candidate", {})
+    assert "telegram_id" not in ctx.get("candidate", {})
+    assert "telegram_username" not in ctx.get("candidate", {})
+    assert "username" not in ctx.get("candidate", {})
+
+    # Ensure raw values aren't present anywhere in serialized context
+    import json
+
+    raw_dump = json.dumps(ctx, ensure_ascii=False)
+    assert "Sensitive Name" not in raw_dump
+    assert "+79991234567" not in raw_dump
+    assert "555123" not in raw_dump
+    assert "sensitive_user" not in raw_dump
+
+
+@pytest.mark.asyncio
+async def test_ai_context_scoping_blocks_other_recruiter():
+    from fastapi import HTTPException
+
+    async with async_session() as session:
+        city1 = City(name="City One", tz="Europe/Moscow", active=True)
+        city2 = City(name="City Two", tz="Europe/Moscow", active=True)
+        r1 = Recruiter(name="R1", tz="Europe/Moscow", active=True)
+        r2 = Recruiter(name="R2", tz="Europe/Moscow", active=True)
+        session.add_all([city1, city2, r1, r2])
+        await session.commit()
+        await session.refresh(city1)
+        await session.refresh(city2)
+        await session.refresh(r1)
+        await session.refresh(r2)
+
+        await session.execute(
+            recruiter_city_association.insert().values(recruiter_id=r1.id, city_id=city1.id)
+        )
+        await session.commit()
+
+        user = User(
+            fio="Scoped Candidate",
+            phone=None,
+            city=city2.name,
+            responsible_recruiter_id=r2.id,
+            telegram_id=777001,
+            source="bot",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        candidate_id = int(user.id)
+
+    with pytest.raises(HTTPException) as exc:
+        await build_candidate_ai_context(candidate_id, principal=Principal(type="recruiter", id=r1.id))
+    assert exc.value.status_code == 404
+
+
+def test_ai_summary_cache_reuse_by_input_hash(ai_app):
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="Cache Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=888001,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return int(user.id)
+
+    candidate_id = _run(_seed())
+
+    with TestClient(ai_app) as client:
+        r1 = client.get(
+            f"/api/ai/candidates/{candidate_id}/summary",
+            auth=("admin", "admin"),
+            headers={"Accept": "application/json"},
+        )
+        assert r1.status_code == 200
+        p1 = r1.json()
+        assert p1["ok"] is True
+        assert p1["cached"] is False
+        assert "summary" in p1
+
+        r2 = client.get(
+            f"/api/ai/candidates/{candidate_id}/summary",
+            auth=("admin", "admin"),
+            headers={"Accept": "application/json"},
+        )
+        assert r2.status_code == 200
+        p2 = r2.json()
+        assert p2["ok"] is True
+        assert p2["cached"] is True
+        assert p2["input_hash"] == p1["input_hash"]
+
+
+def test_ai_disabled_returns_ai_disabled_error(monkeypatch):
+    async def fake_setup(app) -> _DummyIntegration:
+        return _DummyIntegration()
+
+    monkeypatch.setenv("AI_ENABLED", "0")
+    monkeypatch.setenv("AI_PROVIDER", "fake")
+    monkeypatch.setenv("ADMIN_USER", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup)
+    monkeypatch.setattr("backend.apps.admin_ui.app.setup_bot_state", fake_setup)
+    app = create_app()
+
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="Disabled Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=999001,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return int(user.id)
+
+    candidate_id = _run(_seed())
+
+    with TestClient(app) as client:
+        resp = client.get(
+            f"/api/ai/candidates/{candidate_id}/summary",
+            auth=("admin", "admin"),
+            headers={"Accept": "application/json"},
+        )
+    assert resp.status_code == 501
+    payload = resp.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "ai_disabled"
