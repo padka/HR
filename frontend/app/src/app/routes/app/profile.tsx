@@ -5,12 +5,35 @@ import { useProfile } from '@/app/hooks/useProfile'
 import { apiFetch } from '@/api/client'
 
 type AvatarUploadResponse = { ok: boolean; url?: string }
+type AvatarDeleteResponse = { ok: boolean; removed?: boolean }
+
+function CameraIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2l2-2h4l2 2h2a2 2 0 0 1 2 2v10z" />
+      <circle cx="12" cy="14" r="3" />
+    </svg>
+  )
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  )
+}
 
 export function ProfilePage() {
   const { data, isLoading, isError, error, refetch, isFetching } = useProfile()
   const isAdmin = data?.principal.type === 'admin'
   const recruiter = data?.recruiter
   const health = data?.profile?.admin_stats?.health || {}
+  const hasAvatar = Boolean(data?.avatar_url)
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const stored = localStorage.getItem('theme')
@@ -27,6 +50,15 @@ export function ProfilePage() {
       const form = new FormData()
       form.append('file', file)
       return apiFetch<AvatarUploadResponse>('/profile/avatar', { method: 'POST', body: form })
+    },
+    onSuccess: () => {
+      refetch()
+    },
+  })
+
+  const avatarDelete = useMutation({
+    mutationFn: async () => {
+      return apiFetch<AvatarDeleteResponse>('/profile/avatar', { method: 'DELETE' })
     },
     onSuccess: () => {
       refetch()
@@ -72,18 +104,47 @@ export function ProfilePage() {
             {data?.avatar_url ? (
               <img src={data.avatar_url} alt="Аватар" />
             ) : (
-              <span>{initials}</span>
+              <span className="profile-avatar__initials">{initials}</span>
             )}
-            <label className="profile-avatar__upload">
+            {hasAvatar ? (
+              <button
+                type="button"
+                className="profile-avatar__delete"
+                disabled={avatarUpload.isPending || avatarDelete.isPending}
+                title="Удалить фото"
+                aria-label="Удалить фото профиля"
+                onClick={() => {
+                  if (!confirm('Удалить фотографию профиля?')) return
+                  avatarDelete.mutate()
+                }}
+              >
+                <TrashIcon />
+              </button>
+            ) : null}
+            <label
+              className={`profile-avatar__upload ${avatarUpload.isPending ? 'is-pending' : ''}`}
+              title={
+                avatarUpload.isPending
+                  ? 'Загрузка…'
+                  : hasAvatar
+                    ? 'Заменить фото'
+                    : 'Загрузить фото'
+              }
+              aria-label={hasAvatar ? 'Заменить фото профиля' : 'Загрузить фото профиля'}
+            >
               <input
                 type="file"
                 accept="image/*"
                 onChange={(e) => {
                   const file = e.target.files?.[0]
+                  e.target.value = ''
                   if (file) avatarUpload.mutate(file)
                 }}
               />
-              <span>{avatarUpload.isPending ? 'Загрузка…' : 'Загрузить'}</span>
+              <CameraIcon />
+              {hasAvatar ? null : (
+                <span>{avatarUpload.isPending ? 'Загрузка…' : 'Загрузить'}</span>
+              )}
             </label>
           </div>
 
@@ -128,6 +189,9 @@ export function ProfilePage() {
 
         {avatarUpload.isError && (
           <p className="text-danger text-sm">Не удалось загрузить аватар</p>
+        )}
+        {avatarDelete.isError && (
+          <p className="text-danger text-sm">Не удалось удалить аватар</p>
         )}
       </section>
 

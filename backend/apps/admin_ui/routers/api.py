@@ -155,6 +155,14 @@ def _empty_weekly_kpis(timezone_label: Optional[str]) -> dict[str, object]:
 @router.get("/csrf")
 async def api_csrf(request: Request):
     """Return CSRF token for SPA clients."""
+    state = getattr(request, "state", None)
+    if state is not None and not getattr(state, "csrf_config", None):
+        settings = get_settings()
+        request.scope.setdefault("session", {})
+        state.csrf_config = {
+            "csrf_secret": settings.session_secret,
+            "csrf_field_name": "csrf_token",
+        }
     return JSONResponse({"token": csrf_token(request)})
 
 
@@ -528,9 +536,11 @@ async def api_profile_avatar(principal: Principal = Depends(require_principal)) 
 
 @router.post("/profile/avatar")
 async def api_profile_avatar_upload(
+    request: Request,
     file: UploadFile = File(...),
     principal: Principal = Depends(require_principal),
 ) -> JSONResponse:
+    _ = await require_csrf_token(request)
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail={"message": "Можно загрузить только изображение"})
     content = await file.read()
@@ -555,6 +565,24 @@ async def api_profile_avatar_upload(
     file_path = avatar_dir / f"{prefix}.{ext}"
     file_path.write_bytes(content)
     return JSONResponse({"ok": True, "url": f"/api/profile/avatar?v={int(file_path.stat().st_mtime)}"})
+
+
+@router.delete("/profile/avatar")
+async def api_profile_avatar_delete(
+    request: Request,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    avatar_dir = _avatar_dir()
+    prefix = _avatar_prefix(principal)
+    removed = False
+    for existing in avatar_dir.glob(f"{prefix}.*"):
+        try:
+            existing.unlink()
+            removed = True
+        except Exception:
+            pass
+    return JSONResponse({"ok": True, "removed": removed})
 
 
 class StaffMemberPayload(BaseModel):

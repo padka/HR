@@ -6200,7 +6200,7 @@ details > *:not(summary) {
   object-fit: cover;
 }
 
-.profile-avatar span {
+.profile-avatar__initials {
   font-size: 32px;
   font-weight: 600;
   color: var(--fg);
@@ -6219,6 +6219,10 @@ details > *:not(summary) {
   cursor: pointer;
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,0.2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
 }
 
 :root[data-theme='light'] .profile-avatar__upload {
@@ -6228,6 +6232,46 @@ details > *:not(summary) {
 
 .profile-avatar__upload input {
   display: none;
+}
+
+.profile-avatar__upload svg {
+  width: 16px;
+  height: 16px;
+}
+
+.profile-avatar__upload.is-pending {
+  opacity: 0.7;
+}
+
+.profile-avatar__delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(0,0,0,0.35);
+  color: white;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+:root[data-theme='light'] .profile-avatar__delete {
+  background: rgba(255,255,255,0.7);
+  color: #1b2235;
+}
+
+.profile-avatar__delete svg {
+  width: 16px;
+  height: 16px;
+}
+
+.profile-avatar__delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .profile-info {
