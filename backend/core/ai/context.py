@@ -20,7 +20,7 @@ from backend.domain.candidates.models import (
     TestResult,
     User,
 )
-from backend.domain.models import City, Slot, recruiter_city_association
+from backend.domain.models import City, Recruiter, Slot, recruiter_city_association
 from backend.domain.repositories import find_city_by_plain_name
 
 
@@ -74,7 +74,12 @@ async def _ensure_candidate_scope(user: User, principal: Principal) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
 
-async def build_candidate_ai_context(candidate_id: int, *, principal: Principal) -> dict[str, Any]:
+async def build_candidate_ai_context(
+    candidate_id: int,
+    *,
+    principal: Principal,
+    include_pii: bool = False,
+) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     async with async_session() as session:
         user = await session.get(User, candidate_id)
@@ -84,18 +89,30 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
 
         candidate_fio_for_redaction = user.fio
 
+        recruiter_record: Optional[Recruiter] = None
+        try:
+            rid = getattr(user, "responsible_recruiter_id", None)
+            if rid is not None:
+                recruiter_record = await session.get(Recruiter, int(rid))
+        except Exception:
+            recruiter_record = None
+
         city_profile: Optional[dict[str, Any]] = None
         city_record: Optional[City] = None
         if user.city:
             city_record = await find_city_by_plain_name(user.city)
         if city_record is not None:
-            from .redaction import redact_text
-
             criteria_raw = city_record.criteria or ""
-            criteria_redaction = redact_text(criteria_raw, candidate_fio=candidate_fio_for_redaction, max_len=2000)
             criteria_value = None
-            if criteria_raw and criteria_redaction.safe_to_send and criteria_redaction.text.strip():
-                criteria_value = criteria_redaction.text
+            if criteria_raw and criteria_raw.strip():
+                if include_pii:
+                    criteria_value = criteria_raw.strip()[:2000]
+                else:
+                    from .redaction import redact_text
+
+                    criteria_redaction = redact_text(criteria_raw, candidate_fio=candidate_fio_for_redaction, max_len=2000)
+                    if criteria_redaction.safe_to_send and criteria_redaction.text.strip():
+                        criteria_value = criteria_redaction.text
 
             city_profile = {
                 "id": int(city_record.id),
@@ -134,8 +151,6 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
 
         # Add question-level answers for latest test results (best-effort, redacted, optional).
         if latest_result_ids:
-            from .redaction import redact_text
-
             extracted: dict[str, Any] = {}
             result_id_to_rating = {int(v): str(k) for (k, v) in latest_result_ids.items()}
 
@@ -163,16 +178,26 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
                         if "уровень дохода" in q_lc or ("желаемый" in q_lc and "доход" in q_lc):
                             extracted["desired_income"] = u_text_raw.strip()[:120] if u_text_raw.strip() else None
 
-                q_text = redact_text(ans.question_text or "", candidate_fio=candidate_fio_for_redaction, max_len=400)
-                u_text = redact_text(ans.user_answer or "", candidate_fio=candidate_fio_for_redaction, max_len=200)
-                c_text = redact_text(ans.correct_answer or "", candidate_fio=candidate_fio_for_redaction, max_len=200)
+                if include_pii:
+                    q_value = (ans.question_text or "")[:600] or None
+                    u_value = (ans.user_answer or "")[:600] or None
+                    c_value = (ans.correct_answer or "")[:600] or None
+                else:
+                    from .redaction import redact_text
+
+                    q_text = redact_text(ans.question_text or "", candidate_fio=candidate_fio_for_redaction, max_len=400)
+                    u_text = redact_text(ans.user_answer or "", candidate_fio=candidate_fio_for_redaction, max_len=200)
+                    c_text = redact_text(ans.correct_answer or "", candidate_fio=candidate_fio_for_redaction, max_len=200)
+                    q_value = q_text.text if q_text.safe_to_send and q_text.text.strip() else None
+                    u_value = u_text.text if u_text.safe_to_send and u_text.text.strip() else None
+                    c_value = c_text.text if c_text.safe_to_send and c_text.text.strip() else None
 
                 by_result.setdefault(int(ans.test_result_id), []).append(
                     {
                         "question_index": int(ans.question_index),
-                        "question_text": q_text.text if q_text.safe_to_send and q_text.text.strip() else None,
-                        "user_answer": u_text.text if u_text.safe_to_send and u_text.text.strip() else None,
-                        "correct_answer": c_text.text if c_text.safe_to_send and c_text.text.strip() else None,
+                        "question_text": q_value,
+                        "user_answer": u_value,
+                        "correct_answer": c_value,
                         "is_correct": bool(ans.is_correct),
                         "attempts_count": int(ans.attempts_count or 0),
                         "time_spent_sec": int(ans.time_spent or 0),
@@ -191,30 +216,45 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
         try:
             note = await session.scalar(select(InterviewNote).where(InterviewNote.user_id == user.id))
             if note is not None and isinstance(getattr(note, "data", None), dict):
-                from .redaction import redact_text
-
                 interview["present"] = True
                 fields: dict[str, Any] = {}
-                for key in (
-                    "money_expectations",
-                    "candidate_expectations",
-                    "motivation_notes",
-                    "strengths",
-                    "risks",
-                    "recommendation",
-                ):
-                    raw_val = (note.data or {}).get(key)
-                    if raw_val is None:
-                        continue
-                    if isinstance(raw_val, bool):
-                        fields[key] = raw_val
-                        continue
-                    if isinstance(raw_val, (int, float)):
-                        fields[key] = raw_val
-                        continue
-                    txt = redact_text(str(raw_val), candidate_fio=candidate_fio_for_redaction, max_len=240)
-                    if txt.safe_to_send and txt.text.strip():
-                        fields[key] = txt.text
+                if include_pii:
+                    for key, raw_val in (note.data or {}).items():
+                        if raw_val is None:
+                            continue
+                        if isinstance(raw_val, (bool, int, float)):
+                            fields[str(key)] = raw_val
+                            continue
+                        s = str(raw_val).strip()
+                        if not s:
+                            continue
+                        fields[str(key)] = s[:800]
+                    # Include interviewer name as non-critical metadata
+                    if getattr(note, "interviewer_name", None):
+                        interview["interviewer_name"] = str(note.interviewer_name)[:160]
+                else:
+                    from .redaction import redact_text
+
+                    for key in (
+                        "money_expectations",
+                        "candidate_expectations",
+                        "motivation_notes",
+                        "strengths",
+                        "risks",
+                        "recommendation",
+                    ):
+                        raw_val = (note.data or {}).get(key)
+                        if raw_val is None:
+                            continue
+                        if isinstance(raw_val, bool):
+                            fields[key] = raw_val
+                            continue
+                        if isinstance(raw_val, (int, float)):
+                            fields[key] = raw_val
+                            continue
+                        txt = redact_text(str(raw_val), candidate_fio=candidate_fio_for_redaction, max_len=240)
+                        if txt.safe_to_send and txt.text.strip():
+                            fields[key] = txt.text
                 interview["fields"] = fields
         except Exception:
             interview = {"present": False, "fields": {}}
@@ -298,6 +338,31 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
             )
         )
 
+        recent_chat: list[dict[str, Any]] = []
+        if include_pii:
+            chat_rows = await session.execute(
+                select(ChatMessage.direction, ChatMessage.created_at, ChatMessage.author_label, ChatMessage.text)
+                .where(
+                    ChatMessage.candidate_id == user.id,
+                    ChatMessage.text.is_not(None),
+                    ChatMessage.created_at >= (now - timedelta(days=14)),
+                )
+                .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                .limit(14)
+            )
+            for direction, created_at, author_label, text_value in reversed(chat_rows.fetchall()):
+                txt = (text_value or "").strip()
+                if not txt:
+                    continue
+                recent_chat.append(
+                    {
+                        "direction": str(direction or ""),
+                        "at": _iso(created_at),
+                        "author": (str(author_label)[:160] if author_label else None),
+                        "text": txt[:800],
+                    }
+                )
+
         # Funnel events summary (no metadata by default)
         try:
             ev_rows = await session.execute(
@@ -323,9 +388,18 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
     status_slug = getattr(candidate_status, "value", None) if candidate_status is not None else None
     status_slug = status_slug or getattr(user, "candidate_status", None)
 
-    ctx: dict[str, Any] = {
-        "candidate": {
+    extracted_map = tests.get("extracted") if isinstance(tests.get("extracted"), dict) else {}
+    age_years = extracted_map.get("age_years") if isinstance(extracted_map, dict) else None
+    desired_income = extracted_map.get("desired_income") if isinstance(extracted_map, dict) else None
+    # Fallback to recruiter interview notes if test answers are missing.
+    if not desired_income and isinstance(interview.get("fields"), dict):
+        v = interview["fields"].get("money_expectations")
+        if v is not None and str(v).strip():
+            desired_income = str(v).strip()[:120]
+
+    candidate_obj: dict[str, Any] = {
             "id": user.id,
+            "candidate_id": getattr(user, "candidate_id", None),
             "is_active": bool(user.is_active),
             "status": status_slug,
             "workflow_status": getattr(user, "workflow_status", None),
@@ -336,11 +410,38 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
             "desired_position": getattr(user, "desired_position", None),
             "responsible_recruiter_id": getattr(user, "responsible_recruiter_id", None),
             "telegram_linked": bool(user.telegram_id or user.telegram_user_id),
-        },
+    }
+    if include_pii:
+        candidate_obj.update(
+            {
+                "fio": user.fio,
+                "phone": user.phone,
+                "telegram_id": user.telegram_id,
+                "telegram_user_id": user.telegram_user_id,
+                "telegram_username": user.telegram_username,
+                "username": user.username,
+                "resume_filename": getattr(user, "resume_filename", None),
+                "test1_report_url": getattr(user, "test1_report_url", None),
+                "test2_report_url": getattr(user, "test2_report_url", None),
+            }
+        )
+
+    ctx: dict[str, Any] = {
+        "candidate": candidate_obj,
         "city_profile": city_profile,
+        "recruiter": (
+            {
+                "id": int(recruiter_record.id),
+                "name": recruiter_record.name,
+                "tz": recruiter_record.tz,
+                "active": bool(recruiter_record.active),
+            }
+            if recruiter_record is not None
+            else None
+        ),
         "candidate_profile": {
-            "age_years": ((tests.get("extracted") or {}).get("age_years") if isinstance(tests.get("extracted"), dict) else None),
-            "desired_income": ((tests.get("extracted") or {}).get("desired_income") if isinstance(tests.get("extracted"), dict) else None),
+            "age_years": age_years,
+            "desired_income": desired_income,
         },
         "tests": tests,
         "slots": {
@@ -355,6 +456,7 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
             "failed_outbound_count": int(failed_outbound or 0),
             "last_inbound_at": _iso(last_inbound),
             "last_outbound_at": _iso(last_outbound),
+            "recent": (recent_chat if include_pii else []),
         },
         "funnel_events": {
             "items": events,

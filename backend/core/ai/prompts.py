@@ -10,6 +10,16 @@ def _json_block(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2)
 
 
+def _pii_rule(*, allow_pii: bool) -> str:
+    if allow_pii:
+        return (
+            "- You MAY include personal data from context when it helps (names, phones, usernames).\n"
+            "- Do NOT invent personal data that is not present in the context.\n"
+            "- Never output secrets (API keys, tokens, passwords).\n"
+        )
+    return "- Do NOT include any personal data (PII). Never output names, phones, Telegram IDs, links.\n"
+
+
 @lru_cache
 def _style_guide_excerpt() -> str:
     """Load a short excerpt of the bot style guide to align reply drafts."""
@@ -23,13 +33,13 @@ def _style_guide_excerpt() -> str:
         return ""
 
 
-def candidate_summary_prompts(*, context: dict) -> tuple[str, str]:
+def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tuple[str, str]:
     system = (
         "You are RecruitSmart Recruiter Copilot.\n"
         "Task kind: candidate_summary_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
-        "- Do NOT include any personal data (PII). Never output names, phones, Telegram IDs, links.\n"
+        f"{_pii_rule(allow_pii=allow_pii)}"
         "- Use concise Russian.\n"
         "- If information is missing, say so explicitly.\n"
         "- Use ONLY the provided context. Do not invent facts.\n"
@@ -49,29 +59,31 @@ def candidate_summary_prompts(*, context: dict) -> tuple[str, str]:
     user = (
         "Analyze the candidate context and produce recruiter-facing summary.\n"
         "Focus on:\n"
+        "- TL;DR MUST mention: city, current status, test results, and (if present) age + desired income.\n"
         "- Fit to the city's vacancy criteria (use city_profile.criteria if present).\n"
         "- If knowledge_base.excerpts are present, treat them as internal regulations and follow them.\n"
         "- Use candidate_profile.age_years and candidate_profile.desired_income when present.\n"
         "- If interview_notes.present=true, use interview_notes.fields as additional evidence.\n"
         "- Strengths/weaknesses based on test answers (if present) and scores.\n"
+        "- If chat.recent is present, assess recruiter communication quality and suggest concrete improvements.\n"
         "- Criteria checklist: assess objective criteria from regulations (met/not_met/unknown) with short evidence.\n"
         "- Concrete next steps for the recruiter.\n"
         "Notes:\n"
         "- If referencing test answers, prefer pointing to question_index (e.g. \"TEST2 Q3\") instead of quoting.\n"
-        "Context (anonymized JSON):\n"
+        "Context (JSON):\n"
         f"{_json_block(context)}\n"
     )
     return system, user
 
 
-def chat_reply_drafts_prompts(*, context: dict, mode: str) -> tuple[str, str]:
+def chat_reply_drafts_prompts(*, context: dict, mode: str, allow_pii: bool = False) -> tuple[str, str]:
     style_excerpt = _style_guide_excerpt()
     system = (
         "You are RecruitSmart Recruiter Copilot.\n"
         "Task kind: chat_reply_drafts_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
-        "- Do NOT include any personal data (PII). Never output names, phones, Telegram IDs, links.\n"
+        f"{_pii_rule(allow_pii=allow_pii)}"
         "- Use polite Russian (вы), short lines, 3-4 blocks max.\n"
         "- Follow Telegram message style: clear, structured, action-oriented.\n"
         "- Use the message style guide excerpt below as requirements.\n"
@@ -143,14 +155,15 @@ def city_candidate_recommendations_prompts(*, context: dict) -> tuple[str, str]:
     return system, user
 
 
-def agent_chat_reply_prompts(*, context: dict) -> tuple[str, str]:
+def agent_chat_reply_prompts(*, context: dict, allow_pii: bool = False) -> tuple[str, str]:
     system = (
         "You are RecruitSmart Recruiter Copilot.\n"
         "Task kind: agent_chat_reply_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
-        "- Do NOT include any personal data (PII). Never output names, phones, Telegram IDs, links.\n"
+        f"{_pii_rule(allow_pii=allow_pii)}"
         "- Use Russian.\n"
+        "- You are a strict but helpful senior recruiter + sales coach.\n"
         "- Prefer citing provided knowledge_base excerpts. If the KB doesn't cover the question, say so.\n"
         "JSON schema:\n"
         "{\n"
@@ -162,7 +175,8 @@ def agent_chat_reply_prompts(*, context: dict) -> tuple[str, str]:
     )
     user = (
         "Answer the recruiter question using internal regulations.\n"
-        "Context (anonymized JSON):\n"
+        "If the question is about conducting an interview, propose exact questions and phrasing aligned with the company script.\n"
+        "Context (JSON):\n"
         f"{_json_block(context)}\n"
     )
     return system, user

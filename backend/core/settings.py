@@ -81,6 +81,7 @@ class Settings:
     ai_daily_budget_usd: float
     ai_max_requests_per_principal_per_day: int
     ai_store_prompts: bool
+    ai_pii_mode: str
 
 
 def _get_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
@@ -618,6 +619,9 @@ def get_settings() -> Settings:
         minimum=1,
     )
     ai_store_prompts = _get_bool("AI_STORE_PROMPTS", default=False)
+    ai_pii_mode = os.getenv("AI_PII_MODE", "redacted").strip().lower() or "redacted"
+    if ai_pii_mode not in {"redacted", "full"}:
+        ai_pii_mode = "redacted"
 
     settings = Settings(
         environment=environment,
@@ -682,6 +686,7 @@ def get_settings() -> Settings:
         ai_daily_budget_usd=ai_daily_budget_usd,
         ai_max_requests_per_principal_per_day=ai_max_requests_per_principal_per_day,
         ai_store_prompts=ai_store_prompts,
+        ai_pii_mode=ai_pii_mode,
     )
 
     # Validate production configuration (fails fast with clear error messages)

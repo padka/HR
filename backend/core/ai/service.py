@@ -182,6 +182,7 @@ class AIService:
     def __init__(self) -> None:
         self._settings = get_settings()
         self._provider = _provider_for_settings()
+        self._allow_pii = (self._settings.ai_pii_mode or "").strip().lower() == "full"
 
     def _ensure_enabled(self) -> None:
         if not self._settings.ai_enabled:
@@ -203,7 +204,7 @@ class AIService:
         refresh: bool = False,
     ) -> AIResult:
         self._ensure_enabled()
-        ctx = await build_candidate_ai_context(candidate_id, principal=principal)
+        ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
         input_hash = compute_input_hash(ctx)
         kind = "candidate_summary_v1"
 
@@ -228,7 +229,7 @@ class AIService:
 
         await self._ensure_quota(principal)
 
-        system_prompt, user_prompt = candidate_summary_prompts(context=ctx)
+        system_prompt, user_prompt = candidate_summary_prompts(context=ctx, allow_pii=self._allow_pii)
         model = self._settings.openai_model
         started = time.monotonic()
         try:
@@ -304,7 +305,7 @@ class AIService:
         mode: str,
     ) -> AIResult:
         self._ensure_enabled()
-        base_ctx = await build_candidate_ai_context(candidate_id, principal=principal)
+        base_ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
 
         inbound_raw = await get_last_inbound_message_text(candidate_id, principal=principal)
         candidate_fio = None
@@ -328,8 +329,8 @@ class AIService:
         ctx = dict(base_ctx)
         ctx["inbound_message"] = {
             "present": bool(inbound_raw),
-            "safe_text_used": bool(inbound_raw) and redaction.safe_to_send,
-            "text": redaction.text if inbound_raw and redaction.safe_to_send else None,
+            "safe_text_used": bool(inbound_raw) and (True if self._allow_pii else redaction.safe_to_send),
+            "text": (str(inbound_raw)[:1200] if inbound_raw and self._allow_pii else (redaction.text if inbound_raw and redaction.safe_to_send else None)),
         }
         ctx["draft_mode"] = mode
 
@@ -347,7 +348,7 @@ class AIService:
 
         await self._ensure_quota(principal)
 
-        system_prompt, user_prompt = chat_reply_drafts_prompts(context=ctx, mode=mode)
+        system_prompt, user_prompt = chat_reply_drafts_prompts(context=ctx, mode=mode, allow_pii=self._allow_pii)
         model = self._settings.openai_model
         started = time.monotonic()
         try:
@@ -650,8 +651,19 @@ class AIService:
         if len(raw) > 4000:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": "Сообщение слишком длинное"})
 
-        redaction = redact_text(raw, max_len=2000, mask_person_names=True)
-        if not redaction.safe_to_send:
+        if self._allow_pii:
+            redaction = None
+            safe_text = raw[:2000]
+            safe_to_send = True
+            replacements = 0
+        else:
+            r = redact_text(raw, max_len=2000, mask_person_names=True)
+            redaction = r
+            safe_text = r.text
+            safe_to_send = r.safe_to_send
+            replacements = r.replacements
+
+        if not safe_to_send:
             # Store redacted input but do not call the provider.
             async with async_session() as session:
                 thread = await session.scalar(
@@ -674,8 +686,8 @@ class AIService:
                     AIAgentMessage(
                         thread_id=int(thread.id),
                         role="user",
-                        content_text=redaction.text,
-                        metadata_json={"safe_to_send": False, "replacements": redaction.replacements},
+                        content_text=safe_text,
+                        metadata_json={"safe_to_send": False, "replacements": int(replacements or 0)},
                     )
                 )
                 await session.commit()
@@ -690,7 +702,7 @@ class AIService:
 
         from .knowledge_base import kb_state_snapshot, search_excerpts
 
-        kb_excerpts = await search_excerpts(redaction.text, limit=max(1, min(int(kb_limit), 10)))
+        kb_excerpts = await search_excerpts(safe_text, limit=max(1, min(int(kb_limit), 10)))
         kb_state = await kb_state_snapshot()
 
         history_limit_value = max(0, min(int(history_limit or 14), 30))
@@ -732,14 +744,14 @@ class AIService:
                 AIAgentMessage(
                     thread_id=int(thread.id),
                     role="user",
-                    content_text=redaction.text,
-                    metadata_json={"safe_to_send": True, "replacements": redaction.replacements},
+                    content_text=safe_text,
+                    metadata_json={"safe_to_send": True, "replacements": int(replacements or 0)},
                 )
             )
             await session.commit()
 
         ctx = {
-            "question": {"text": redaction.text},
+            "question": {"text": safe_text},
             "history": prev_msgs[-history_limit_value:] if history_limit_value else [],
             "knowledge_base": {
                 "excerpts": kb_excerpts,
@@ -752,7 +764,7 @@ class AIService:
         started = time.monotonic()
         try:
             await self._ensure_quota(principal)
-            system_prompt, user_prompt = agent_chat_reply_prompts(context=ctx)
+            system_prompt, user_prompt = agent_chat_reply_prompts(context=ctx, allow_pii=self._allow_pii)
             payload, usage = await self._provider.generate_json(
                 model=model,
                 system_prompt=system_prompt,
