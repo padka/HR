@@ -236,6 +236,11 @@ class AIService:
 
         system_prompt, user_prompt = candidate_summary_prompts(context=ctx, allow_pii=self._allow_pii)
         model = self._settings.openai_model
+        max_tokens = int(self._settings.ai_max_tokens)
+        # GPT-5 responses can produce large JSON payloads; 800 tokens is often insufficient,
+        # leading to truncated/malformed JSON. Keep other endpoints on the configured limit.
+        if (model or "").strip().lower().startswith("gpt-5") and max_tokens < 1200:
+            max_tokens = 1200
         started = time.monotonic()
         try:
             payload, usage = await self._provider.generate_json(
@@ -243,7 +248,7 @@ class AIService:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 timeout_seconds=int(self._settings.ai_timeout_seconds),
-                max_tokens=int(self._settings.ai_max_tokens),
+                max_tokens=max_tokens,
             )
             validated = CandidateSummaryV1.model_validate(payload).model_dump()
             latency_ms = int((time.monotonic() - started) * 1000)
