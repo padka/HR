@@ -136,8 +136,10 @@ async def init_models() -> None:
         # For local dev/test we create the schema directly from ORM metadata.
         # Ensure all models are imported so metadata is fully populated.
         from backend.domain import auth_account as _auth_account  # noqa: F401
+        from backend.domain import analytics_models as _analytics_models  # noqa: F401
         from backend.domain import models as _models  # noqa: F401
         from backend.domain.candidates import models as _candidate_models  # noqa: F401
+        from backend.domain.ai import models as _ai_models  # noqa: F401
         from backend.domain.tests import models as _test_models  # noqa: F401
         from backend.domain.base import Base
 

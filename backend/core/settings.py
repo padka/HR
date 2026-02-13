@@ -71,6 +71,16 @@ class Settings:
     slots_cleanup_interval_seconds: int
     sentry_dsn: str
     sentry_traces_sample_rate: float
+    ai_enabled: bool
+    ai_provider: str
+    openai_api_key: str
+    openai_base_url: str
+    openai_model: str
+    ai_timeout_seconds: int
+    ai_max_tokens: int
+    ai_daily_budget_usd: float
+    ai_max_requests_per_principal_per_day: int
+    ai_store_prompts: bool
 
 
 def _get_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
@@ -242,6 +252,19 @@ def _validate_production_settings(settings: Settings) -> None:
             f"Production requires NOTIFICATION_BROKER=redis (got: {settings.notification_broker}). "
             "Set: NOTIFICATION_BROKER=redis"
         )
+
+    # 4.1 AI settings (optional, but strict when enabled)
+    if settings.ai_enabled:
+        provider = (settings.ai_provider or "").strip().lower()
+        if provider in {"openai"}:
+            if not settings.openai_api_key:
+                errors.append(
+                    "AI_ENABLED=true requires OPENAI_API_KEY to be set for AI_PROVIDER=openai."
+                )
+        elif provider in {"fake"}:
+            warnings.append("AI_PROVIDER=fake is not allowed in production.")
+        else:
+            errors.append(f"Unsupported AI_PROVIDER in production: {settings.ai_provider}")
 
     # 5. DATA_DIR must exist, be outside repo, and be writable
     data_dir = settings.data_dir.resolve()
@@ -580,6 +603,22 @@ def get_settings() -> Settings:
     if sentry_traces_sample_rate > 1.0:
         sentry_traces_sample_rate = 1.0
 
+    # AI Copilot (optional)
+    ai_enabled = _get_bool("AI_ENABLED", default=False)
+    ai_provider = os.getenv("AI_PROVIDER", "openai").strip().lower() or "openai"
+    openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+    ai_timeout_seconds = _get_int("AI_TIMEOUT_SECONDS", 20, minimum=1)
+    ai_max_tokens = _get_int("AI_MAX_TOKENS", 800, minimum=64)
+    ai_daily_budget_usd = _get_float("AI_DAILY_BUDGET_USD", 10.0, minimum=0.0)
+    ai_max_requests_per_principal_per_day = _get_int(
+        "AI_MAX_REQUESTS_PER_PRINCIPAL_PER_DAY",
+        50,
+        minimum=1,
+    )
+    ai_store_prompts = _get_bool("AI_STORE_PROMPTS", default=False)
+
     settings = Settings(
         environment=environment,
         data_dir=data_dir,
@@ -633,6 +672,16 @@ def get_settings() -> Settings:
         slots_cleanup_interval_seconds=slots_cleanup_interval_seconds,
         sentry_dsn=sentry_dsn,
         sentry_traces_sample_rate=sentry_traces_sample_rate,
+        ai_enabled=ai_enabled,
+        ai_provider=ai_provider,
+        openai_api_key=openai_api_key,
+        openai_base_url=openai_base_url,
+        openai_model=openai_model,
+        ai_timeout_seconds=ai_timeout_seconds,
+        ai_max_tokens=ai_max_tokens,
+        ai_daily_budget_usd=ai_daily_budget_usd,
+        ai_max_requests_per_principal_per_day=ai_max_requests_per_principal_per_day,
+        ai_store_prompts=ai_store_prompts,
     )
 
     # Validate production configuration (fails fast with clear error messages)

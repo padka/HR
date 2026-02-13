@@ -5,13 +5,6 @@ import math
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import (
-    BigInteger,
-    Column,
-    DateTime,
-    Integer,
-    String,
-    Table,
-    Text,
     and_,
     case,
     func,
@@ -23,10 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.admin_ui.utils import fmt_local, safe_zone
 from backend.core.db import async_session
-from backend.domain.base import Base
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
 from backend.domain.candidates.models import User, ChatMessage, ChatMessageDirection
 from backend.domain.analytics import FunnelEvent
+from backend.domain.analytics_models import analytics_events as ANALYTICS_EVENTS
 from backend.domain.candidates.status import (
     get_status_label,
     get_status_color,
@@ -71,20 +64,6 @@ STATUS_COLOR_TO_CLASS = {
     "danger": "declined",
     "secondary": "pending",
 }
-
-ANALYTICS_EVENTS = Table(
-    "analytics_events",
-    Base.metadata,
-    Column("id", Integer, primary_key=True),
-    Column("event_name", String(100), nullable=False),
-    Column("user_id", BigInteger),
-    Column("candidate_id", Integer),
-    Column("city_id", Integer),
-    Column("slot_id", Integer),
-    Column("booking_id", Integer),
-    Column("metadata", Text),
-    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-)
 
 FUNNEL_STEP_DEFS: List[Dict[str, object]] = [
     {
