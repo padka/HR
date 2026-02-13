@@ -131,7 +131,9 @@ class OpenAIProvider:
                 "max_output_tokens": int(max_tokens),
                 # Keep GPT-5 costs predictable; without this, the model may spend the entire
                 # output budget on reasoning and produce no final text for large prompts.
-                "reasoning": {"effort": "none"},
+                # For GPT-5 models, "minimal" keeps reasoning overhead near-zero while
+                # still producing final text under tight output token budgets.
+                "reasoning": {"effort": "minimal"},
             }
             if with_response_format:
                 payload["text"] = {"format": {"type": "json_object"}}
