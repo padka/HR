@@ -129,6 +129,9 @@ class OpenAIProvider:
                 "instructions": system_prompt,
                 "input": responses_input,
                 "max_output_tokens": int(max_tokens),
+                # Keep GPT-5 costs predictable; without this, the model may spend the entire
+                # output budget on reasoning and produce no final text for large prompts.
+                "reasoning": {"effort": "none"},
             }
             if with_response_format:
                 payload["text"] = {"format": {"type": "json_object"}}

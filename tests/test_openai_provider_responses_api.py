@@ -79,6 +79,7 @@ async def test_gpt5_uses_responses_api_and_parses_output(monkeypatch):
     assert capture["payload"]["model"] == "gpt-5-mini"
     assert capture["payload"]["max_output_tokens"] == 123
     assert capture["payload"]["text"]["format"]["type"] == "json_object"
+    assert capture["payload"]["reasoning"]["effort"] == "none"
     assert str(capture["payload"]["input"]).startswith("JSON\n")
     assert payload == {"ok": True}
     assert usage.tokens_in == 11
