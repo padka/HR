@@ -167,17 +167,6 @@ async def build_candidate_ai_context(
                 q_text_raw = ans.question_text or ""
                 u_text_raw = ans.user_answer or ""
 
-                if rating == "TEST1":
-                    q_lc = q_text_raw.lower()
-                    if extracted.get("age_years") is None:
-                        if ("полных" in q_lc and "лет" in q_lc) or ("сколько" in q_lc and "лет" in q_lc):
-                            age = _parse_int(u_text_raw)
-                            if age is not None and 14 <= age <= 80:
-                                extracted["age_years"] = int(age)
-                    if extracted.get("desired_income") is None:
-                        if "уровень дохода" in q_lc or ("желаемый" in q_lc and "доход" in q_lc):
-                            extracted["desired_income"] = u_text_raw.strip()[:120] if u_text_raw.strip() else None
-
                 if include_pii:
                     q_value = (ans.question_text or "")[:600] or None
                     u_value = (ans.user_answer or "")[:600] or None
@@ -191,6 +180,33 @@ async def build_candidate_ai_context(
                     q_value = q_text.text if q_text.safe_to_send and q_text.text.strip() else None
                     u_value = u_text.text if u_text.safe_to_send and u_text.text.strip() else None
                     c_value = c_text.text if c_text.safe_to_send and c_text.text.strip() else None
+
+                if rating == "TEST1":
+                    q_lc = q_text_raw.lower()
+                    u_for_extract = (u_text_raw.strip() if include_pii else (u_value or "")).strip()
+                    if extracted.get("age_years") is None:
+                        if ("полных" in q_lc and "лет" in q_lc) or ("сколько" in q_lc and "лет" in q_lc):
+                            age = _parse_int(u_for_extract or None)
+                            if age is not None and 14 <= age <= 80:
+                                extracted["age_years"] = int(age)
+                    if extracted.get("desired_income") is None:
+                        if "уровень дохода" in q_lc or ("желаемый" in q_lc and "доход" in q_lc):
+                            extracted["desired_income"] = u_for_extract[:120] if u_for_extract else None
+                    if extracted.get("work_status") is None:
+                        if ("учитесь" in q_lc and "работ" in q_lc) or ("работаете" in q_lc and "уч" in q_lc):
+                            extracted["work_status"] = u_for_extract[:120] if u_for_extract else None
+                    if extracted.get("work_experience") is None:
+                        if "опыт" in q_lc and ("продаж" in q_lc or "переговор" in q_lc or "смеж" in q_lc):
+                            extracted["work_experience"] = u_for_extract[:800] if u_for_extract else None
+                    if extracted.get("motivation") is None:
+                        if "мотивир" in q_lc:
+                            extracted["motivation"] = u_for_extract[:800] if u_for_extract else None
+                    if extracted.get("skills") is None:
+                        if "навык" in q_lc or "качества" in q_lc:
+                            extracted["skills"] = u_for_extract[:800] if u_for_extract else None
+                    if extracted.get("expectations") is None:
+                        if "ожида" in q_lc:
+                            extracted["expectations"] = u_for_extract[:800] if u_for_extract else None
 
                 by_result.setdefault(int(ans.test_result_id), []).append(
                     {
@@ -391,6 +407,11 @@ async def build_candidate_ai_context(
     extracted_map = tests.get("extracted") if isinstance(tests.get("extracted"), dict) else {}
     age_years = extracted_map.get("age_years") if isinstance(extracted_map, dict) else None
     desired_income = extracted_map.get("desired_income") if isinstance(extracted_map, dict) else None
+    work_status = extracted_map.get("work_status") if isinstance(extracted_map, dict) else None
+    work_experience = extracted_map.get("work_experience") if isinstance(extracted_map, dict) else None
+    motivation = extracted_map.get("motivation") if isinstance(extracted_map, dict) else None
+    skills = extracted_map.get("skills") if isinstance(extracted_map, dict) else None
+    expectations = extracted_map.get("expectations") if isinstance(extracted_map, dict) else None
     # Fallback to recruiter interview notes if test answers are missing.
     if not desired_income and isinstance(interview.get("fields"), dict):
         v = interview["fields"].get("money_expectations")
@@ -448,6 +469,11 @@ async def build_candidate_ai_context(
         "candidate_profile": {
             "age_years": age_years,
             "desired_income": desired_income,
+            "work_status": work_status,
+            "work_experience": work_experience,
+            "motivation": motivation,
+            "skills": skills,
+            "expectations": expectations,
         },
         "tests": tests,
         "slots": {

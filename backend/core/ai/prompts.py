@@ -63,6 +63,8 @@ def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tupl
         "- Fit to the city's vacancy criteria (use city_profile.criteria if present).\n"
         "- If knowledge_base.excerpts are present, treat them as internal regulations and follow them.\n"
         "- Use candidate_profile.age_years and candidate_profile.desired_income when present.\n"
+        "- Use candidate_profile.work_experience / skills / motivation / expectations when present.\n"
+        "- Consider customer-facing jobs (e.g. barista/office-manager) as relevant 'experience with people' if supported by test answers.\n"
         "- If interview_notes.present=true, use interview_notes.fields as additional evidence.\n"
         "- Strengths/weaknesses based on test answers (if present) and scores.\n"
         "- If chat.recent is present, assess recruiter communication quality and suggest concrete improvements.\n"
