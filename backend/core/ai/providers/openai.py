@@ -27,6 +27,20 @@ def _extract_json(text: str) -> dict:
         return json.loads(match.group(0))
 
 
+def _token_param_name_for_model(model: str) -> str:
+    """
+    OpenAI has multiple token limit parameters depending on the model generation.
+
+    - Older chat-completions models: max_tokens
+    - Newer GPT-5 family: max_completion_tokens
+    """
+
+    m = (model or "").strip().lower()
+    if m.startswith("gpt-5"):
+        return "max_completion_tokens"
+    return "max_tokens"
+
+
 class OpenAIProvider:
     name = "openai"
 
@@ -48,10 +62,11 @@ class OpenAIProvider:
             raise AIProviderError("OPENAI_API_KEY is missing")
 
         url = f"{self._base_url}/chat/completions"
+        token_param = _token_param_name_for_model(model)
         payload: dict[str, Any] = {
             "model": model,
             "temperature": 0.2,
-            "max_tokens": int(max_tokens),
+            token_param: int(max_tokens),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -109,4 +124,3 @@ class OpenAIProvider:
                 continue
         logger.warning("openai.provider.failed", exc_info=True)
         raise AIProviderError(str(last_error) if last_error else "OpenAI provider failed")
-
