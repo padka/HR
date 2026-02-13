@@ -169,6 +169,47 @@ type ChatPayload = {
   has_more: boolean
 }
 
+type AIRiskItem = {
+  key: string
+  severity: 'low' | 'medium' | 'high'
+  label: string
+  explanation: string
+}
+
+type AINextActionItem = {
+  key: string
+  label: string
+  rationale: string
+  cta?: string | null
+}
+
+type AISummary = {
+  tldr: string
+  risks?: AIRiskItem[]
+  next_actions?: AINextActionItem[]
+  notes?: string | null
+}
+
+type AISummaryResponse = {
+  ok: boolean
+  cached: boolean
+  input_hash: string
+  summary: AISummary
+}
+
+type AIDraftItem = {
+  text: string
+  reason: string
+}
+
+type AIDraftsResponse = {
+  ok: boolean
+  cached: boolean
+  input_hash: string
+  drafts: AIDraftItem[]
+  used_context?: Record<string, any>
+}
+
 function formatTzOffset(tz: string): string {
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
@@ -836,6 +877,9 @@ export function CandidateDetailPage() {
   const [reportPreview, setReportPreview] = useState<ReportPreviewState | null>(null)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
+  const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [aiDraftsOpen, setAiDraftsOpen] = useState(false)
+  const [aiDraftMode, setAiDraftMode] = useState<'short' | 'neutral' | 'supportive'>('neutral')
 
   const detailQuery = useQuery<CandidateDetail>({
     queryKey: ['candidate-detail', candidateId],
@@ -861,6 +905,29 @@ export function CandidateDetailPage() {
     onSuccess: () => {
       setChatText('')
       chatQuery.refetch()
+    },
+  })
+
+  const aiSummaryQuery = useQuery<AISummaryResponse>({
+    queryKey: ['ai-summary', candidateId],
+    queryFn: () => apiFetch(`/ai/candidates/${candidateId}/summary`),
+    enabled: false,
+    retry: false,
+  })
+
+  const aiRefreshMutation = useMutation({
+    mutationFn: async () => apiFetch<AISummaryResponse>(`/ai/candidates/${candidateId}/summary/refresh`, { method: 'POST' }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['ai-summary', candidateId], data)
+    },
+  })
+
+  const aiDraftsMutation = useMutation({
+    mutationFn: async (mode: 'short' | 'neutral' | 'supportive') => {
+      return apiFetch<AIDraftsResponse>(`/ai/candidates/${candidateId}/chat/drafts`, {
+        method: 'POST',
+        body: JSON.stringify({ mode }),
+      })
     },
   })
 
@@ -900,6 +967,11 @@ export function CandidateDetailPage() {
   const chatMessages = (chatQuery.data?.messages || []).slice().reverse()
   const pipelineStages = detail?.pipeline_stages || []
   const lastChatMessage = chatMessages.length > 0 ? chatMessages[chatMessages.length - 1] : null
+
+  const aiSummaryData = aiSummaryQuery.data?.summary || null
+  const aiRisks = aiSummaryData?.risks || []
+  const aiNextActions = aiSummaryData?.next_actions || []
+  const aiSummaryError = (aiSummaryQuery.error as Error | null) || (aiRefreshMutation.error as Error | null)
 
   useEffect(() => {
     if (!isChatOpen) return
@@ -1178,6 +1250,99 @@ export function CandidateDetailPage() {
           </div>
         </div>
 
+        {/* ── AI Copilot ── */}
+        <div className="glass panel cd-ai">
+          <div className="cd-section-header">
+            <h2 className="cd-section-title">AI Copilot</h2>
+            <div className="cd-ai__actions">
+              {aiSummaryQuery.data && (
+                <span className={`cd-chip cd-chip--small ${aiSummaryQuery.data.cached ? '' : 'cd-chip--accent'}`}>
+                  {aiSummaryQuery.data.cached ? 'Кэш' : 'Новый'}
+                </span>
+              )}
+              {!aiSummaryQuery.data ? (
+                <button
+                  className="ui-btn ui-btn--ghost"
+                  onClick={() => aiSummaryQuery.refetch()}
+                  disabled={aiSummaryQuery.isFetching}
+                >
+                  {aiSummaryQuery.isFetching ? 'Генерация…' : 'Сгенерировать'}
+                </button>
+              ) : (
+                <button
+                  className="ui-btn ui-btn--ghost"
+                  onClick={() => aiRefreshMutation.mutate()}
+                  disabled={aiRefreshMutation.isPending}
+                  title="Форс-обновление сводки"
+                >
+                  {aiRefreshMutation.isPending ? 'Обновление…' : 'Обновить'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {aiSummaryError && (
+            <p className="subtitle" style={{ color: '#f07373' }}>
+              AI: {aiSummaryError.message}
+            </p>
+          )}
+
+          {!aiSummaryData && !aiSummaryQuery.isFetching && !aiRefreshMutation.isPending && (
+            <p className="subtitle">
+              Сгенерируйте краткую сводку и рекомендации по следующему шагу.
+              Контекст отправляется в AI в обезличенном виде.
+            </p>
+          )}
+
+          {aiSummaryData && (
+            <div className="cd-ai__grid">
+              <div className="cd-ai__card">
+                <div className="cd-ai__label">TL;DR</div>
+                <div className="cd-ai__text">{aiSummaryData.tldr}</div>
+              </div>
+
+              <div className="cd-ai__card">
+                <div className="cd-ai__label">Риски</div>
+                {aiRisks.length === 0 ? (
+                  <div className="subtitle">Явных рисков не найдено.</div>
+                ) : (
+                  <ul className="cd-ai__list">
+                    {aiRisks.map((r) => (
+                      <li key={r.key} className={`cd-ai__risk cd-ai__risk--${r.severity}`}>
+                        <div className="cd-ai__risk-title">{r.label}</div>
+                        <div className="cd-ai__risk-text">{r.explanation}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="cd-ai__card">
+                <div className="cd-ai__label">Следующие шаги</div>
+                {aiNextActions.length === 0 ? (
+                  <div className="subtitle">Нет рекомендаций.</div>
+                ) : (
+                  <ol className="cd-ai__list cd-ai__list--ordered">
+                    {aiNextActions.map((a) => (
+                      <li key={a.key} className="cd-ai__action">
+                        <div className="cd-ai__action-title">{a.label}</div>
+                        <div className="cd-ai__action-text">{a.rationale}</div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+
+              {aiSummaryData.notes && (
+                <div className="cd-ai__card cd-ai__card--span">
+                  <div className="cd-ai__label">Заметки</div>
+                  <div className="cd-ai__text">{aiSummaryData.notes}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* ── Slots Table ── */}
         <div className="glass panel">
           <div className="cd-section-header">
@@ -1359,19 +1524,97 @@ export function CandidateDetailPage() {
               </div>
 
               <div className="candidate-chat-drawer__footer">
+                {aiDraftsOpen && (
+                  <div className="cd-ai-drafts glass">
+                    <div className="cd-ai-drafts__header">
+                      <div className="cd-ai-drafts__title">Черновики ответа</div>
+                      <div className="cd-ai-drafts__modes">
+                        {(['short', 'neutral', 'supportive'] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            className={`cd-ai-drafts__mode ${aiDraftMode === mode ? 'cd-ai-drafts__mode--active' : ''}`}
+                            onClick={() => {
+                              setAiDraftMode(mode)
+                              aiDraftsMutation.mutate(mode)
+                            }}
+                            disabled={aiDraftsMutation.isPending}
+                          >
+                            {mode === 'short' ? 'Коротко' : mode === 'neutral' ? 'Нейтр.' : 'Поддерж.'}
+                          </button>
+                        ))}
+                      </div>
+                      <button type="button" className="ui-btn ui-btn--ghost" onClick={() => setAiDraftsOpen(false)}>
+                        Закрыть
+                      </button>
+                    </div>
+
+                    {aiDraftsMutation.isPending && <p className="subtitle">Генерация…</p>}
+                    {aiDraftsMutation.error && (
+                      <p className="subtitle" style={{ color: '#f07373' }}>
+                        AI: {(aiDraftsMutation.error as Error).message}
+                      </p>
+                    )}
+                    {aiDraftsMutation.data?.drafts?.length ? (
+                      <div className="cd-ai-drafts__list">
+                        {aiDraftsMutation.data.drafts.map((d, idx) => (
+                          <div key={`${idx}-${d.reason}`} className="cd-ai-drafts__item">
+                            <div className="cd-ai-drafts__text">{d.text}</div>
+                            <div className="cd-ai-drafts__actions">
+                              <span className="cd-ai-drafts__reason">{d.reason}</span>
+                              <button
+                                type="button"
+                                className="ui-btn ui-btn--primary"
+                                onClick={() => {
+                                  setChatText(d.text)
+                                  setAiDraftsOpen(false)
+                                  requestAnimationFrame(() => chatTextareaRef.current?.focus())
+                                }}
+                              >
+                                Вставить
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
                 <textarea
+                  ref={chatTextareaRef}
                   rows={3}
                   value={chatText}
                   onChange={(e) => setChatText(e.target.value)}
                   placeholder="Написать сообщение…"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      const text = chatText.trim()
+                      if (text) sendMutation.mutate(text)
+                    }
+                  }}
                 />
-                <button
-                  className="ui-btn ui-btn--primary"
-                  onClick={() => chatText.trim() && sendMutation.mutate(chatText.trim())}
-                  disabled={sendMutation.isPending}
-                >
-                  {sendMutation.isPending ? 'Отправка…' : 'Отправить'}
-                </button>
+                <div className="candidate-chat-drawer__actions">
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn--ghost"
+                    onClick={() => {
+                      const next = !aiDraftsOpen
+                      setAiDraftsOpen(next)
+                      if (next) aiDraftsMutation.mutate(aiDraftMode)
+                    }}
+                    disabled={aiDraftsMutation.isPending}
+                  >
+                    Черновики ответа
+                  </button>
+                  <button
+                    className="ui-btn ui-btn--primary"
+                    onClick={() => chatText.trim() && sendMutation.mutate(chatText.trim())}
+                    disabled={sendMutation.isPending}
+                  >
+                    {sendMutation.isPending ? 'Отправка…' : 'Отправить'}
+                  </button>
+                </div>
               </div>
             </aside>
           </div>
