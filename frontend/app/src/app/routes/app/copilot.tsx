@@ -313,10 +313,10 @@ export function CopilotPage() {
                   </label>
 
                   <label className="form-group">
-                    <span className="form-group__label">Или загрузить файл (.txt/.md)</span>
+                    <span className="form-group__label">Или загрузить файл (.txt/.md/.docx)</span>
                     <input
                       type="file"
-                      accept=".txt,.md,text/plain,text/markdown"
+                      accept=".txt,.md,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                       onChange={(e) => setKbFile(e.target.files?.[0] || null)}
                     />
                     <button
@@ -333,6 +333,11 @@ export function CopilotPage() {
                     </div>
                   </label>
                 </div>
+              </div>
+            )}
+            {!isAdmin && (
+              <div className="subtitle" style={{ marginTop: 12 }}>
+                Добавлять и отключать документы может только администратор.
               </div>
             )}
           </div>
@@ -371,4 +376,3 @@ export function CopilotPage() {
     </RoleGuard>
   )
 }
-

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import zipfile
+from io import BytesIO
 from datetime import timezone
 from typing import Any, Optional
+import xml.etree.ElementTree as ET
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -15,6 +18,8 @@ from backend.domain.ai.models import KnowledgeBaseChunk, KnowledgeBaseDocument
 
 router = APIRouter(prefix="/api/kb", tags=["kb"])
 
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
 
 def _iso(dt) -> Optional[str]:
     if not dt:
@@ -25,6 +30,43 @@ def _iso(dt) -> Optional[str]:
         return dt.astimezone(timezone.utc).isoformat()
     except Exception:
         return None
+
+
+def _extract_docx_text(data: bytes) -> str:
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as zf:
+            xml_bytes = zf.read("word/document.xml")
+    except Exception:
+        return ""
+
+    try:
+        root = ET.fromstring(xml_bytes)
+    except Exception:
+        return ""
+
+    paras: list[str] = []
+    for p in root.iter():
+        if not str(p.tag).endswith("}p"):
+            continue
+        parts: list[str] = []
+        for t in p.iter():
+            if str(t.tag).endswith("}t") and t.text:
+                parts.append(str(t.text))
+        line = "".join(parts).strip()
+        if line:
+            paras.append(line)
+    return "\n".join(paras).strip()
+
+
+def _decode_upload_to_text(*, data: bytes, filename: str, mime_type: str) -> str:
+    name = (filename or "").lower()
+    if name.endswith(".docx") or (mime_type or "").lower() == _DOCX_MIME:
+        extracted = _extract_docx_text(data)
+        return extracted
+    try:
+        return data.decode("utf-8")
+    except Exception:
+        return data.decode("utf-8", errors="replace")
 
 
 @router.get("/documents")
@@ -130,12 +172,14 @@ async def api_kb_document_create(
             raise HTTPException(status_code=400, detail={"message": "Не удалось прочитать файл"}) from exc
         if data is None:
             raise HTTPException(status_code=400, detail={"message": "Файл пустой"})
-        if len(data) > 2_000_000:
-            raise HTTPException(status_code=400, detail={"message": "Файл слишком большой (лимит 2MB)"})
-        try:
-            content_text = data.decode("utf-8")
-        except Exception:
-            content_text = data.decode("utf-8", errors="replace")
+        if len(data) > 6_000_000:
+            raise HTTPException(status_code=400, detail={"message": "Файл слишком большой (лимит 6MB)"})
+        content_text = _decode_upload_to_text(data=data, filename=filename, mime_type=mime_type)
+        if not content_text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "Не удалось извлечь текст из файла. Поддерживаются .txt/.md/.docx."},
+            )
         if not title:
             title = filename or "Документ"
     else:
@@ -235,4 +279,3 @@ async def api_kb_document_reindex(
     _ = await require_csrf_token(request)
     chunks_total = await reindex_document(document_id)
     return JSONResponse({"ok": True, "document_id": int(document_id), "chunks_total": int(chunks_total)})
-

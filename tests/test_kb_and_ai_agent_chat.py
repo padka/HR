@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import zipfile
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -86,3 +89,42 @@ def test_kb_document_create_and_agent_chat_returns_excerpts(ai_kb_app):
         assert excerpts, "Expected KB excerpts to be returned for a matching query"
         assert any("причины отказа" in str(ex.get("excerpt") or "").lower() for ex in excerpts)
 
+
+def _make_docx_bytes(text: str) -> bytes:
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body>"
+        f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+        "</w:body>"
+        "</w:document>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("word/document.xml", xml)
+    return buf.getvalue()
+
+
+def test_kb_document_upload_docx_extracts_text(ai_kb_app):
+    with TestClient(ai_kb_app) as client:
+        token = _csrf(client)
+        docx_bytes = _make_docx_bytes("Регламент: использовать только объективные критерии.")
+        resp = client.post(
+            "/api/kb/documents",
+            auth=("admin", "admin"),
+            headers={"x-csrf-token": token},
+            data={"title": "Регламент (docx)"},
+            files={
+                "file": (
+                    "reg.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+        assert resp.status_code == 200
+        doc_id = int(resp.json()["document_id"])
+
+        fetched = client.get(f"/api/kb/documents/{doc_id}", auth=("admin", "admin"))
+        assert fetched.status_code == 200
+        assert "объективные критерии" in (fetched.json()["document"]["content_text"] or "").lower()
