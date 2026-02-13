@@ -101,6 +101,61 @@ class OpenAIProvider:
         self._api_key = settings.openai_api_key
         self._base_url = settings.openai_base_url.rstrip("/")
 
+    def _extract_content_and_usage(self, data: dict[str, Any]) -> tuple[str, Usage]:
+        if isinstance(data.get("choices"), list):
+            # Chat Completions
+            content = (
+                (((data.get("choices") or [{}])[0] or {}).get("message") or {}).get("content") or ""
+            )
+            usage_raw = data.get("usage") or {}
+            usage = Usage(
+                tokens_in=int(usage_raw.get("prompt_tokens") or 0),
+                tokens_out=int(usage_raw.get("completion_tokens") or 0),
+            )
+            return str(content), usage
+
+        # Responses API
+        content = _extract_text_from_responses(data) or ""
+        usage_raw = data.get("usage") or {}
+        usage = Usage(
+            tokens_in=int(usage_raw.get("input_tokens") or 0),
+            tokens_out=int(usage_raw.get("output_tokens") or 0),
+        )
+        return str(content), usage
+
+    async def _repair_json(
+        self,
+        *,
+        model: str,
+        bad_text: str,
+        timeout_seconds: int,
+        max_tokens: int,
+    ) -> tuple[dict, Usage]:
+        # Keep the repair prompt short to avoid extra cost.
+        system_prompt = (
+            "You are a strict JSON repair tool.\n"
+            "Fix the input into a single valid JSON object.\n"
+            "Rules:\n"
+            "- Output MUST be a single JSON object (no markdown).\n"
+            "- Escape newlines as \\n inside strings.\n"
+            "- Do not add fields that are not present in the input.\n"
+        )
+        snippet = (bad_text or "").strip()
+        if len(snippet) > 6000:
+            snippet = snippet[:6000].rstrip() + "…"
+        user_prompt = "JSON\nFix this into valid JSON object only:\n" + snippet
+
+        data = await self._request(
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            timeout_seconds=timeout_seconds,
+            max_tokens=max(256, min(int(max_tokens), 700)),
+            with_response_format=True,
+        )
+        content, usage = self._extract_content_and_usage(data)
+        return _extract_json(content), usage
+
     async def _request(
         self,
         *,
@@ -187,28 +242,26 @@ class OpenAIProvider:
                     max_tokens=max_tokens,
                     with_response_format=with_format,
                 )
-                if isinstance(data.get("choices"), list):
-                    # Chat Completions
-                    content = (
-                        (((data.get("choices") or [{}])[0] or {}).get("message") or {}).get("content")
-                        or ""
-                    )
-                    usage_raw = data.get("usage") or {}
-                    usage = Usage(
-                        tokens_in=int(usage_raw.get("prompt_tokens") or 0),
-                        tokens_out=int(usage_raw.get("completion_tokens") or 0),
-                    )
-                else:
-                    # Responses API
-                    content = _extract_text_from_responses(data) or ""
-                    usage_raw = data.get("usage") or {}
-                    usage = Usage(
-                        tokens_in=int(usage_raw.get("input_tokens") or 0),
-                        tokens_out=int(usage_raw.get("output_tokens") or 0),
-                    )
+                content, usage = self._extract_content_and_usage(data)
 
-                payload = _extract_json(str(content))
-                return payload, usage
+                try:
+                    payload = _extract_json(content)
+                    return payload, usage
+                except Exception as exc:
+                    # If JSON mode returned malformed JSON, try a single repair pass.
+                    if with_format and content.strip():
+                        repaired, rep_usage = await self._repair_json(
+                            model=model,
+                            bad_text=content,
+                            timeout_seconds=timeout_seconds,
+                            max_tokens=max_tokens,
+                        )
+                        combined = Usage(
+                            tokens_in=int(usage.tokens_in) + int(rep_usage.tokens_in),
+                            tokens_out=int(usage.tokens_out) + int(rep_usage.tokens_out),
+                        )
+                        return repaired, combined
+                    raise exc
             except Exception as exc:
                 last_error = exc
                 continue
