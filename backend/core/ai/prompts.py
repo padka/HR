@@ -51,6 +51,8 @@ def candidate_summary_prompts(*, context: dict) -> tuple[str, str]:
         "Focus on:\n"
         "- Fit to the city's vacancy criteria (use city_profile.criteria if present).\n"
         "- If knowledge_base.excerpts are present, treat them as internal regulations and follow them.\n"
+        "- Use candidate_profile.age_years and candidate_profile.desired_income when present.\n"
+        "- If interview_notes.present=true, use interview_notes.fields as additional evidence.\n"
         "- Strengths/weaknesses based on test answers (if present) and scores.\n"
         "- Criteria checklist: assess objective criteria from regulations (met/not_met/unknown) with short evidence.\n"
         "- Concrete next steps for the recruiter.\n"

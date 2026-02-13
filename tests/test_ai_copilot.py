@@ -76,6 +76,16 @@ def test_ai_redaction_masks_phone_email_urls_and_known_names():
     assert "ID" in result.text
 
 
+def test_ai_redaction_allows_numeric_answers():
+    r1 = redact_text("27")
+    assert r1.safe_to_send is True
+    assert r1.text == "27"
+
+    r2 = redact_text("60 000 – 90 000 ›")
+    assert r2.safe_to_send is True
+    assert "60" in r2.text
+
+
 @pytest.mark.asyncio
 async def test_ai_context_builder_excludes_pii_fields():
     async with async_session() as session:
@@ -164,6 +174,68 @@ async def test_ai_context_redacts_question_answers():
     assert "Sensitive Name" not in raw_dump
     assert "PHONE" in raw_dump
     assert "EMAIL" in raw_dump
+
+
+@pytest.mark.asyncio
+async def test_ai_context_extracts_age_and_desired_income():
+    async with async_session() as session:
+        user = User(
+            fio="Sensitive Name",
+            phone=None,
+            telegram_id=555124,
+            telegram_username="sensitive_user2",
+            city="E2E City",
+            source="bot",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        tr = TestResult(
+            user_id=user.id,
+            raw_score=0,
+            final_score=0.0,
+            rating="TEST1",
+            total_time=10,
+            source="bot",
+        )
+        session.add(tr)
+        await session.commit()
+        await session.refresh(tr)
+
+        session.add_all(
+            [
+                QuestionAnswer(
+                    test_result_id=tr.id,
+                    question_index=2,
+                    question_text="3‰ Сколько вам полных лет?",
+                    correct_answer=None,
+                    user_answer="27",
+                    attempts_count=1,
+                    time_spent=1,
+                    is_correct=True,
+                    overtime=False,
+                ),
+                QuestionAnswer(
+                    test_result_id=tr.id,
+                    question_index=4,
+                    question_text="5‰ Желаемый уровень дохода в первые 3 месяца?",
+                    correct_answer=None,
+                    user_answer="60 000 – 90 000 ›",
+                    attempts_count=1,
+                    time_spent=1,
+                    is_correct=True,
+                    overtime=False,
+                ),
+            ]
+        )
+        await session.commit()
+        candidate_id = int(user.id)
+
+    ctx = await build_candidate_ai_context(candidate_id, principal=Principal(type="admin", id=-1))
+    profile = ctx.get("candidate_profile") or {}
+    assert profile.get("age_years") == 27
+    assert "60" in str(profile.get("desired_income") or "")
 
 
 @pytest.mark.asyncio

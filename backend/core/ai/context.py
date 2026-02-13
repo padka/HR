@@ -15,6 +15,7 @@ from backend.domain.candidates.models import (
     ChatMessage,
     ChatMessageDirection,
     ChatMessageStatus,
+    InterviewNote,
     QuestionAnswer,
     TestResult,
     User,
@@ -34,6 +35,19 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _parse_int(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    s = str(value)
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except Exception:
+        return None
 
 
 async def _ensure_candidate_scope(user: User, principal: Principal) -> None:
@@ -122,6 +136,9 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
         if latest_result_ids:
             from .redaction import redact_text
 
+            extracted: dict[str, Any] = {}
+            result_id_to_rating = {int(v): str(k) for (k, v) in latest_result_ids.items()}
+
             ans_rows = (
                 await session.execute(
                     select(QuestionAnswer)
@@ -131,6 +148,21 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
             ).scalars().all()
             by_result: dict[int, list[dict[str, Any]]] = {}
             for ans in ans_rows:
+                rating = result_id_to_rating.get(int(ans.test_result_id), "")
+                q_text_raw = ans.question_text or ""
+                u_text_raw = ans.user_answer or ""
+
+                if rating == "TEST1":
+                    q_lc = q_text_raw.lower()
+                    if extracted.get("age_years") is None:
+                        if ("полных" in q_lc and "лет" in q_lc) or ("сколько" in q_lc and "лет" in q_lc):
+                            age = _parse_int(u_text_raw)
+                            if age is not None and 14 <= age <= 80:
+                                extracted["age_years"] = int(age)
+                    if extracted.get("desired_income") is None:
+                        if "уровень дохода" in q_lc or ("желаемый" in q_lc and "доход" in q_lc):
+                            extracted["desired_income"] = u_text_raw.strip()[:120] if u_text_raw.strip() else None
+
                 q_text = redact_text(ans.question_text or "", candidate_fio=candidate_fio_for_redaction, max_len=400)
                 u_text = redact_text(ans.user_answer or "", candidate_fio=candidate_fio_for_redaction, max_len=200)
                 c_text = redact_text(ans.correct_answer or "", candidate_fio=candidate_fio_for_redaction, max_len=200)
@@ -151,6 +183,41 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
             for rating, rid in latest_result_ids.items():
                 if rating in tests["latest"]:
                     tests["latest"][rating]["answers"] = by_result.get(rid, [])
+            if extracted:
+                tests["extracted"] = extracted
+
+        # Interview notes summary (limited, best-effort, redacted)
+        interview: dict[str, Any] = {"present": False, "fields": {}}
+        try:
+            note = await session.scalar(select(InterviewNote).where(InterviewNote.user_id == user.id))
+            if note is not None and isinstance(getattr(note, "data", None), dict):
+                from .redaction import redact_text
+
+                interview["present"] = True
+                fields: dict[str, Any] = {}
+                for key in (
+                    "money_expectations",
+                    "candidate_expectations",
+                    "motivation_notes",
+                    "strengths",
+                    "risks",
+                    "recommendation",
+                ):
+                    raw_val = (note.data or {}).get(key)
+                    if raw_val is None:
+                        continue
+                    if isinstance(raw_val, bool):
+                        fields[key] = raw_val
+                        continue
+                    if isinstance(raw_val, (int, float)):
+                        fields[key] = raw_val
+                        continue
+                    txt = redact_text(str(raw_val), candidate_fio=candidate_fio_for_redaction, max_len=240)
+                    if txt.safe_to_send and txt.text.strip():
+                        fields[key] = txt.text
+                interview["fields"] = fields
+        except Exception:
+            interview = {"present": False, "fields": {}}
 
         # Slots summary
         slot_filters = [Slot.candidate_id == user.candidate_id]
@@ -271,6 +338,10 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
             "telegram_linked": bool(user.telegram_id or user.telegram_user_id),
         },
         "city_profile": city_profile,
+        "candidate_profile": {
+            "age_years": ((tests.get("extracted") or {}).get("age_years") if isinstance(tests.get("extracted"), dict) else None),
+            "desired_income": ((tests.get("extracted") or {}).get("desired_income") if isinstance(tests.get("extracted"), dict) else None),
+        },
         "tests": tests,
         "slots": {
             "upcoming": upcoming,
@@ -289,6 +360,7 @@ async def build_candidate_ai_context(candidate_id: int, *, principal: Principal)
             "items": events,
             "total": len(events),
         },
+        "interview_notes": interview,
     }
 
     kb_query_parts: list[str] = ["критерии оценки кандидатов"]

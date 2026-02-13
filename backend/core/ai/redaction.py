@@ -89,9 +89,5 @@ def redact_text(
     unsafe = False
     if _EMAIL_RE.search(clipped) or _URL_RE.search(clipped) or _PHONE_RE.search(clipped):
         unsafe = True
-    # If there is too much digit density, consider unsafe.
-    digits = sum(ch.isdigit() for ch in clipped)
-    if len(clipped) > 0 and (digits / max(1, len(clipped))) > 0.25:
-        unsafe = True
 
     return RedactionResult(text=clipped, safe_to_send=not unsafe, replacements=replacements)
