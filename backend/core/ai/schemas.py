@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
-
 
 Severity = Literal["low", "medium", "high"]
 FitLevel = Literal["high", "medium", "low", "unknown"]
@@ -12,21 +11,23 @@ CriterionStatus = Literal["met", "not_met", "unknown"]
 
 
 class RiskItem(BaseModel):
-    key: str = Field(min_length=1)
+    # Keep permissive: LLM output can be inconsistent.
+    key: str = ""
     severity: Severity = "medium"
-    label: str = Field(min_length=1)
-    explanation: str = Field(min_length=1)
+    label: str = ""
+    explanation: str = ""
 
 
 class NextActionItem(BaseModel):
-    key: str = Field(min_length=1)
-    label: str = Field(min_length=1)
-    rationale: str = Field(min_length=1)
-    cta: Optional[str] = None
+    # Keep permissive: LLM output can be inconsistent.
+    key: str = ""
+    label: str = ""
+    rationale: str = ""
+    cta: str | None = None
 
 
 class FitAssessment(BaseModel):
-    score: Optional[int] = Field(default=None, ge=0, le=100)
+    score: int | None = Field(default=None, ge=0, le=100)
     level: FitLevel = "unknown"
     rationale: str = Field(default="")
     criteria_used: bool = False
@@ -50,14 +51,14 @@ class CriterionChecklistItem(BaseModel):
 
 class CandidateSummaryV1(BaseModel):
     tldr: str = Field(min_length=1)
-    fit: Optional[FitAssessment] = None
+    fit: FitAssessment | None = None
     strengths: list[EvidenceItem] = Field(default_factory=list)
     weaknesses: list[EvidenceItem] = Field(default_factory=list)
     criteria_checklist: list[CriterionChecklistItem] = Field(default_factory=list)
-    test_insights: Optional[str] = None
+    test_insights: str | None = None
     risks: list[RiskItem] = Field(default_factory=list)
     next_actions: list[NextActionItem] = Field(default_factory=list)
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class DraftItem(BaseModel):
@@ -66,7 +67,7 @@ class DraftItem(BaseModel):
 
 
 class ChatReplyDraftsV1(BaseModel):
-    analysis: Optional[str] = None
+    analysis: str | None = None
     drafts: list[DraftItem] = Field(min_length=1)
     used_context: dict = Field(default_factory=dict)
 
@@ -79,16 +80,16 @@ class DashboardInsightV1(BaseModel):
 
 class CandidateRecommendationItem(BaseModel):
     candidate_id: int = Field(ge=1)
-    fit_score: Optional[int] = Field(default=None, ge=0, le=100)
+    fit_score: int | None = Field(default=None, ge=0, le=100)
     fit_level: FitLevel = "unknown"
     reason: str = ""
-    suggested_next_step: Optional[str] = None
+    suggested_next_step: str | None = None
 
 
 class CityCandidateRecommendationsV1(BaseModel):
     criteria_used: bool = False
     recommended: list[CandidateRecommendationItem] = Field(default_factory=list)
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class KBSourceItem(BaseModel):
