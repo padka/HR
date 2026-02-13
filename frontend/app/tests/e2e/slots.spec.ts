@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test.describe("/app/slots", () => {
   test("renders slots list", async ({ page }) => {
     await page.goto("/app/slots");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
     await expect(page.getByRole("heading", { name: "Слоты", exact: false })).toBeVisible({ timeout: 10000 });
@@ -18,7 +18,7 @@ test.describe("/app/slots", () => {
 
   test("has status filter chips", async ({ page }) => {
     await page.goto("/app/slots");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const statusSelect = page.locator("select").filter({ hasText: /Свободные|Ожидают|Забронированы|Подтверждены/i }).first();
     await expect(statusSelect).toBeVisible({ timeout: 10000 });
@@ -26,7 +26,7 @@ test.describe("/app/slots", () => {
 
   test("can navigate to create slots", async ({ page }) => {
     await page.goto("/app/slots");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const createButton = page.locator("a[href*='create'], button").filter({ hasText: /создать/i });
     if (await createButton.count() > 0) {

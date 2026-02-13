@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test.describe("/app/candidates", () => {
   test("renders list view", async ({ page }) => {
     await page.goto("/app/candidates");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Wait for lazy loading
     await page.waitForTimeout(500);
@@ -17,7 +17,7 @@ test.describe("/app/candidates", () => {
 
   test("has view mode switcher", async ({ page }) => {
     await page.goto("/app/candidates");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Should have view mode buttons (list/kanban/calendar)
     const viewButtons = page.locator("button").filter({ hasText: /список|канбан|календарь/i });
@@ -26,7 +26,7 @@ test.describe("/app/candidates", () => {
 
   test("can navigate to new candidate form", async ({ page }) => {
     await page.goto("/app/candidates");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const newButton = page.locator("a[href*='new'], button").filter({ hasText: /создать|добавить|новый/i });
     if (await newButton.count() > 0) {

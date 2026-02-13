@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test.describe("/app/recruiters", () => {
   test("renders recruiter cards", async ({ page }) => {
     await page.goto("/app/recruiters");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
     await expect(page.getByRole("heading", { name: "Рекрутёры", exact: false })).toBeVisible({ timeout: 10000 });
@@ -15,7 +15,7 @@ test.describe("/app/recruiters", () => {
 
   test("can navigate to new recruiter form", async ({ page }) => {
     await page.goto("/app/recruiters");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const newButton = page.locator("a[href*='new'], button").filter({ hasText: /создать|добавить|новый/i });
     if (await newButton.count() > 0) {
@@ -26,7 +26,7 @@ test.describe("/app/recruiters", () => {
 
   test("new recruiter form has city selection", async ({ page }) => {
     await page.goto("/app/recruiters/new");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
     // Check for city tiles or checkboxes

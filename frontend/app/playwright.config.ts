@@ -54,6 +54,9 @@ export default defineConfig({
       SESSION_SECRET:
         process.env.SESSION_SECRET ||
         'playwright-secret-session-key-please-change-this-1234567890',
+      AI_ENABLED: process.env.AI_ENABLED || '1',
+      AI_PROVIDER: process.env.AI_PROVIDER || 'fake',
+      E2E_SEED_AI: process.env.E2E_SEED_AI || '1',
       BOT_ENABLED: 'false',
       BOT_AUTOSTART: 'false',
       NOTIFICATION_BROKER: 'memory',

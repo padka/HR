@@ -26,7 +26,7 @@ for (const route of routes) {
     });
 
     await page.goto(route.path);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
 
     // Wait for lazy-loaded content
     await page.waitForTimeout(500);

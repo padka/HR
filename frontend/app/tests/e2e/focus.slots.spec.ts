@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test.describe("/app/slots navigation and modals", () => {
   test("can open slot details sheet", async ({ page }) => {
     await page.goto("/app/slots");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
     // Try to open details via the "..." button
@@ -24,7 +24,7 @@ test.describe("/app/slots navigation and modals", () => {
 
   test("bulk select checkbox is available", async ({ page }) => {
     await page.goto("/app/slots");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
     const headerCheckbox = page.locator("thead input[type='checkbox']").first();
@@ -37,7 +37,7 @@ test.describe("/app/slots navigation and modals", () => {
 
   test("status summary buttons are visible", async ({ page }) => {
     await page.goto("/app/slots");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
     const summaryButton = page.locator("button").filter({ hasText: /свободные|забронировано|ожидают/i }).first();
