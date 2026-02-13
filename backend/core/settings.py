@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import logging
 import os
 import secrets
-import shutil
 import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 from backend.core.env import load_env
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_USER_DATA_DIR = Path.home() / ".recruitsmart_admin" / "data"
@@ -84,7 +80,7 @@ class Settings:
     ai_pii_mode: str
 
 
-def _get_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
+def _get_int(name: str, default: int, *, minimum: int | None = None) -> int:
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -97,7 +93,7 @@ def _get_int(name: str, default: int, *, minimum: Optional[int] = None) -> int:
     return value
 
 
-def _get_float(name: str, default: float, *, minimum: Optional[float] = None) -> float:
+def _get_float(name: str, default: float, *, minimum: float | None = None) -> float:
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -328,7 +324,7 @@ def _validate_production_settings(settings: Settings) -> None:
             try:
                 sock.connect((host, port))
                 sock.close()
-            except (socket.timeout, socket.error, OSError) as e:
+            except (TimeoutError, OSError) as e:
                 warnings.append(
                     f"Could not verify Redis connectivity at {host}:{port}: {e}. "
                     f"Redis may not be running or may not be accessible."
@@ -358,7 +354,7 @@ def _validate_production_settings(settings: Settings) -> None:
                 try:
                     sock.connect((host, port))
                     sock.close()
-                except (socket.timeout, socket.error, OSError) as e:
+                except (TimeoutError, OSError) as e:
                     warnings.append(
                         f"Could not verify rate limiting Redis connectivity at {host}:{port}: {e}. "
                         f"Rate limiting may not work correctly."
@@ -609,7 +605,8 @@ def get_settings() -> Settings:
     ai_provider = os.getenv("AI_PROVIDER", "openai").strip().lower() or "openai"
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
     openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
-    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+    # Default to the newest "mini" family unless overridden via env.
+    openai_model = os.getenv("OPENAI_MODEL", "gpt-5-mini").strip() or "gpt-5-mini"
     ai_timeout_seconds = _get_int("AI_TIMEOUT_SECONDS", 20, minimum=1)
     ai_max_tokens = _get_int("AI_MAX_TOKENS", 800, minimum=64)
     ai_daily_budget_usd = _get_float("AI_DAILY_BUDGET_USD", 10.0, minimum=0.0)
