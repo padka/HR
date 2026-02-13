@@ -117,10 +117,17 @@ class OpenAIProvider:
         if _should_use_responses_api(model):
             # Responses API: https://api.openai.com/v1/responses
             url = f"{self._base_url}/responses"
+            # OpenAI requires the word "json" to appear in the *input* when using
+            # `text.format.type=json_object`.
+            # Our prompts typically already include it (e.g. "Context (JSON): ..."),
+            # but we defensively ensure compliance here.
+            responses_input = user_prompt
+            if with_response_format and "json" not in (responses_input or "").lower():
+                responses_input = f"JSON\n{responses_input}"
             payload = {
                 "model": model,
                 "instructions": system_prompt,
-                "input": user_prompt,
+                "input": responses_input,
                 "max_output_tokens": int(max_tokens),
             }
             if with_response_format:
