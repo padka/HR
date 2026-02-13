@@ -41,6 +41,14 @@ def _token_param_name_for_model(model: str) -> str:
     return "max_tokens"
 
 
+def _supports_temperature(model: str) -> bool:
+    # GPT-5 chat-completions currently rejects custom temperature values.
+    m = (model or "").strip().lower()
+    if m.startswith("gpt-5"):
+        return False
+    return True
+
+
 class OpenAIProvider:
     name = "openai"
 
@@ -65,13 +73,14 @@ class OpenAIProvider:
         token_param = _token_param_name_for_model(model)
         payload: dict[str, Any] = {
             "model": model,
-            "temperature": 0.2,
             token_param: int(max_tokens),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         }
+        if _supports_temperature(model):
+            payload["temperature"] = 0.2
         if with_response_format:
             payload["response_format"] = {"type": "json_object"}
 
