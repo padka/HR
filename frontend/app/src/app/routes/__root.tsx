@@ -79,6 +79,13 @@ const ICONS = {
       <path d="M8 16h8" />
     </svg>
   ),
+  copilot: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2l1.4 6.2L20 10l-6.6 1.8L12 18l-1.4-6.2L4 10l6.6-1.8L12 2z" />
+      <path d="M5 20l1-3" />
+      <path d="M19 20l-1-3" />
+    </svg>
+  ),
 }
 
 export function RootLayout() {
@@ -428,13 +435,17 @@ export function RootLayout() {
           { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
           { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
           { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
+          { to: '/app/copilot', label: 'Copilot', icon: ICONS.copilot, tone: 'amber' },
         ]
       : principalType === 'admin'
         ? [
             { to: '/app/dashboard', label: 'Дашборд', icon: ICONS.dashboard, tone: 'blue' },
+            { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
+            { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
             { to: '/app/recruiters', label: 'Рекрутёры', icon: ICONS.recruiters, tone: 'indigo' },
             { to: '/app/cities', label: 'Города', icon: ICONS.cities, tone: 'sunset' },
             { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
+            { to: '/app/copilot', label: 'Copilot', icon: ICONS.copilot, tone: 'amber' },
             { to: '/app/system', label: 'Бот', icon: ICONS.bot, tone: 'emerald' },
           ]
         : []

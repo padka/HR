@@ -196,11 +196,19 @@ type AIEvidenceItem = {
   evidence: string
 }
 
+type AICriterionChecklistItem = {
+  key: string
+  status: 'met' | 'not_met' | 'unknown'
+  label: string
+  evidence: string
+}
+
 type AISummary = {
   tldr: string
   fit?: AIFit | null
   strengths?: AIEvidenceItem[]
   weaknesses?: AIEvidenceItem[]
+  criteria_checklist?: AICriterionChecklistItem[]
   test_insights?: string | null
   risks?: AIRiskItem[]
   next_actions?: AINextActionItem[]
@@ -991,6 +999,7 @@ export function CandidateDetailPage() {
   const aiFit = aiSummaryData?.fit || null
   const aiStrengths = aiSummaryData?.strengths || []
   const aiWeaknesses = aiSummaryData?.weaknesses || []
+  const aiCriteriaChecklist = (aiSummaryData?.criteria_checklist || []).filter((c) => Boolean(c?.label || c?.evidence))
   const aiTestInsights = aiSummaryData?.test_insights || null
   const aiSummaryError = (aiSummaryQuery.error as Error | null) || (aiRefreshMutation.error as Error | null)
 
@@ -1335,6 +1344,25 @@ export function CandidateDetailPage() {
                 )}
                 {aiFit?.rationale && <div className="cd-ai__text">{aiFit.rationale}</div>}
               </div>
+
+              {aiCriteriaChecklist.length > 0 && (
+                <div className="cd-ai__card cd-ai__card--span">
+                  <div className="cd-ai__label">Чек-лист критериев</div>
+                  <ul className="cd-ai__list">
+                    {aiCriteriaChecklist.map((c) => (
+                      <li key={c.key} className={`cd-ai-crit cd-ai-crit--${c.status || 'unknown'}`}>
+                        <div className="cd-ai-crit__top">
+                          <span className={`cd-ai-crit__badge cd-ai-crit__badge--${c.status || 'unknown'}`}>
+                            {c.status === 'met' ? 'ОК' : c.status === 'not_met' ? 'Не ок' : 'Неясно'}
+                          </span>
+                          <div className="cd-ai-crit__title">{c.label}</div>
+                        </div>
+                        <div className="cd-ai-crit__text">{c.evidence}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               <div className="cd-ai__card">
                 <div className="cd-ai__label">Сильные стороны</div>
