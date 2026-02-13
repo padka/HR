@@ -828,6 +828,14 @@ async def remove_thread_member(thread_id: int, principal: Principal, member_type
     return await list_thread_members(thread_id, principal)
 
 
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 async def wait_for_thread_updates(
     principal: Principal,
     *,
@@ -835,11 +843,12 @@ async def wait_for_thread_updates(
     timeout: int = 25,
 ) -> dict:
     deadline = datetime.now(timezone.utc) + timedelta(seconds=max(timeout, 5))
+    since_utc = _as_utc(since)
     while True:
         payload = await list_threads(principal)
         latest_event_at = payload.get("latest_event_at")
-        latest_dt = datetime.fromisoformat(latest_event_at) if latest_event_at else None
-        if since is None or (latest_dt and latest_dt > since):
+        latest_dt = _as_utc(datetime.fromisoformat(latest_event_at)) if latest_event_at else None
+        if since_utc is None or (latest_dt and latest_dt > since_utc):
             payload["updated"] = True
             return payload
         if datetime.now(timezone.utc) >= deadline:
@@ -860,6 +869,7 @@ async def wait_for_message_updates(
 ) -> dict:
     await _ensure_member(thread_id, principal)
     deadline = datetime.now(timezone.utc) + timedelta(seconds=max(timeout, 5))
+    since_utc = _as_utc(since)
     latest_message_at: Optional[datetime] = None
     latest_activity_at: Optional[datetime] = None
     while True:
@@ -880,13 +890,14 @@ async def wait_for_message_updates(
                 default=None,
             )
 
-            if since is None or (latest_activity_at and latest_activity_at > since):
+            latest_activity_at_utc = _as_utc(latest_activity_at)
+            if since_utc is None or (latest_activity_at_utc and latest_activity_at_utc > since_utc):
                 stmt = select(StaffMessage).where(StaffMessage.thread_id == thread_id)
-                if since:
+                if since_utc:
                     stmt = stmt.where(
                         or_(
-                            StaffMessage.created_at > since,
-                            StaffMessage.edited_at > since,
+                            StaffMessage.created_at > since_utc,
+                            StaffMessage.edited_at > since_utc,
                         )
                     )
                 stmt = stmt.order_by(StaffMessage.created_at.asc())
