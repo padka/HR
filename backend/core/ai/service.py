@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
@@ -13,7 +13,12 @@ from backend.apps.admin_ui.security import Principal
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain import analytics
-from backend.domain.ai.models import AIOutput, AIRequestLog, AIAgentMessage, AIAgentThread
+from backend.domain.ai.models import (
+    AIAgentMessage,
+    AIAgentThread,
+    AIOutput,
+    AIRequestLog,
+)
 from backend.domain.candidates.models import User
 from backend.domain.models import Recruiter
 
@@ -24,11 +29,11 @@ from .context import (
     get_last_inbound_message_text,
 )
 from .prompts import (
+    agent_chat_reply_prompts,
     candidate_summary_prompts,
     chat_reply_drafts_prompts,
     city_candidate_recommendations_prompts,
     dashboard_insight_prompts,
-    agent_chat_reply_prompts,
 )
 from .providers import AIProvider, AIProviderError, FakeProvider, OpenAIProvider
 from .redaction import redact_text
@@ -67,7 +72,7 @@ def _provider_for_settings() -> AIProvider:
 
 
 async def _count_today_requests(principal: Principal) -> int:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     async with async_session() as session:
         total = await session.scalar(
@@ -109,7 +114,7 @@ async def _log_request(
             tokens_out=int(tokens_out),
             status=status_value,
             error_code=error_code or "",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         session.add(row)
         await session.commit()
@@ -121,8 +126,8 @@ async def _get_cached_output(
     scope_id: int,
     kind: str,
     input_hash: str,
-) -> Optional[AIOutput]:
-    now = datetime.now(timezone.utc)
+) -> AIOutput | None:
+    now = datetime.now(UTC)
     async with async_session() as session:
         row = await session.scalar(
             select(AIOutput)
@@ -148,7 +153,7 @@ async def _store_output(
     payload: dict,
     ttl_hours: int = 24,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires_at = now + timedelta(hours=ttl_hours)
     async with async_session() as session:
         existing = await session.scalar(
@@ -295,7 +300,7 @@ class AIService:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"message": "AI provider error"},
-            )
+            ) from exc
 
     async def get_chat_reply_drafts(
         self,
@@ -409,7 +414,7 @@ class AIService:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"message": "AI provider error"},
-            )
+            ) from exc
 
     async def get_dashboard_insights(
         self,
@@ -486,7 +491,7 @@ class AIService:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"message": "AI provider error"},
-            )
+            ) from exc
 
     async def get_city_candidate_recommendations(
         self,
@@ -584,7 +589,7 @@ class AIService:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"message": "AI provider error"},
-            )
+            ) from exc
 
     async def get_agent_chat_state(
         self,
@@ -628,7 +633,7 @@ class AIService:
                 "id": int(m.id),
                 "role": str(m.role or "user"),
                 "text": str(m.content_text or ""),
-                "created_at": (m.created_at.astimezone(timezone.utc).isoformat() if m.created_at else None),
+                "created_at": (m.created_at.astimezone(UTC).isoformat() if m.created_at else None),
                 "meta": m.metadata_json or {},
             }
             for m in reversed(list(rows))
@@ -652,13 +657,11 @@ class AIService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": "Сообщение слишком длинное"})
 
         if self._allow_pii:
-            redaction = None
             safe_text = raw[:2000]
             safe_to_send = True
             replacements = 0
         else:
             r = redact_text(raw, max_len=2000, mask_person_names=True)
-            redaction = r
             safe_text = r.text
             safe_to_send = r.safe_to_send
             replacements = r.replacements
@@ -700,10 +703,23 @@ class AIService:
                 },
             )
 
-        from .knowledge_base import kb_state_snapshot, search_excerpts
+        from .knowledge_base import (
+            kb_state_snapshot,
+            list_active_documents,
+            search_excerpts,
+        )
 
         kb_excerpts = await search_excerpts(safe_text, limit=max(1, min(int(kb_limit), 10)))
         kb_state = await kb_state_snapshot()
+        kb_docs = await list_active_documents(limit=12)
+
+        # If the query doesn't match anything but KB is present, include a small
+        # default excerpt set so the agent can explain what regulations exist.
+        if not kb_excerpts and int(kb_state.get("active_documents_total") or 0) > 0:
+            kb_excerpts = await search_excerpts(
+                "критерии оценки кандидатов регламент рекрутинга",
+                limit=max(1, min(int(kb_limit), 3)),
+            )
 
         history_limit_value = max(0, min(int(history_limit or 14), 30))
         thread_id: int
@@ -754,6 +770,7 @@ class AIService:
             "question": {"text": safe_text},
             "history": prev_msgs[-history_limit_value:] if history_limit_value else [],
             "knowledge_base": {
+                "documents": kb_docs,
                 "excerpts": kb_excerpts,
                 "state": kb_state,
             },
@@ -853,7 +870,7 @@ class AIService:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"message": "AI provider error"},
-            )
+            ) from exc
 
 
 def get_ai_service() -> AIService:

@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from fastapi.testclient import TestClient
-
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.security import Principal
 from backend.core.ai.context import build_candidate_ai_context
@@ -12,6 +10,7 @@ from backend.core.ai.redaction import redact_text
 from backend.core.db import async_session
 from backend.domain.candidates.models import QuestionAnswer, TestResult, User
 from backend.domain.models import City, Recruiter, recruiter_city_association
+from fastapi.testclient import TestClient
 
 
 class _DummyIntegration:
@@ -236,6 +235,57 @@ async def test_ai_context_extracts_age_and_desired_income():
     profile = ctx.get("candidate_profile") or {}
     assert profile.get("age_years") == 27
     assert "60" in str(profile.get("desired_income") or "")
+
+
+@pytest.mark.asyncio
+async def test_ai_context_derives_customer_facing_signals_from_experience():
+    async with async_session() as session:
+        user = User(
+            fio="Signals Candidate",
+            phone=None,
+            telegram_id=555125,
+            city="E2E City",
+            source="bot",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        tr = TestResult(
+            user_id=user.id,
+            raw_score=10,
+            final_score=10.0,
+            rating="TEST1",
+            total_time=20,
+            source="bot",
+        )
+        session.add(tr)
+        await session.commit()
+        await session.refresh(tr)
+
+        session.add(
+            QuestionAnswer(
+                test_result_id=tr.id,
+                question_index=7,
+                question_text="Опишите ваш опыт в продажах/переговорах или смежных областях",
+                correct_answer=None,
+                user_answer="3 года работала бариста, затем офис-менеджером.",
+                attempts_count=1,
+                time_spent=1,
+                is_correct=True,
+                overtime=False,
+            )
+        )
+        await session.commit()
+        candidate_id = int(user.id)
+
+    ctx = await build_candidate_ai_context(candidate_id, principal=Principal(type="admin", id=-1))
+    signals = (ctx.get("candidate_profile") or {}).get("signals") or {}
+    people = signals.get("people_interaction") or {}
+    comm = signals.get("communication") or {}
+    assert people.get("level") == "high"
+    assert "бариста" in str(people.get("evidence") or "").lower()
+    assert comm.get("level") in {"medium", "high"}
 
 
 @pytest.mark.asyncio

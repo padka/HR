@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import delete, func, or_, select
 
 from backend.core.db import async_session
 from backend.domain.ai.models import KnowledgeBaseChunk, KnowledgeBaseDocument
-
 
 _WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9_]{3,}")
 
@@ -52,6 +52,17 @@ def _sha256(text: str) -> str:
 
 def _clean_text(text: str) -> str:
     return (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _iso(dt: datetime | None) -> str | None:
+    if not dt:
+        return None
+    try:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).isoformat()
+    except Exception:
+        return None
 
 
 def chunk_text(text: str, *, chunk_size: int = 900, overlap: int = 120) -> list[str]:
@@ -107,7 +118,7 @@ async def reindex_document(document_id: int) -> int:
         await session.execute(delete(KnowledgeBaseChunk).where(KnowledgeBaseChunk.document_id == doc.id))
 
         chunks = chunk_text(doc.content_text or "")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for idx, chunk in enumerate(chunks):
             session.add(
                 KnowledgeBaseChunk(
@@ -199,6 +210,22 @@ async def search_excerpts(query: str, *, limit: int = 5) -> list[dict[str, Any]]
     return results
 
 
+async def list_active_documents(*, limit: int = 10) -> list[dict[str, Any]]:
+    limit_value = max(1, min(int(limit or 10), 50))
+    async with async_session() as session:
+        rows = (
+            await session.execute(
+                select(KnowledgeBaseDocument.id, KnowledgeBaseDocument.title, KnowledgeBaseDocument.updated_at)
+                .where(KnowledgeBaseDocument.is_active.is_(True))
+                .order_by(KnowledgeBaseDocument.updated_at.desc(), KnowledgeBaseDocument.id.desc())
+                .limit(limit_value)
+            )
+        ).all()
+    return [
+        {"id": int(r.id), "title": str(r.title or ""), "updated_at": _iso(r.updated_at)} for r in rows
+    ]
+
+
 async def kb_state_snapshot() -> dict[str, Any]:
     async with async_session() as session:
         total = await session.scalar(
@@ -207,13 +234,12 @@ async def kb_state_snapshot() -> dict[str, Any]:
         last = await session.scalar(
             select(func.max(KnowledgeBaseDocument.updated_at)).where(KnowledgeBaseDocument.is_active.is_(True))
         )
-        last_iso: Optional[str] = None
+        last_iso: str | None = None
         if last is not None:
             try:
                 if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
-                last_iso = last.astimezone(timezone.utc).isoformat()
+                    last = last.replace(tzinfo=UTC)
+                last_iso = last.astimezone(UTC).isoformat()
             except Exception:
                 last_iso = None
     return {"active_documents_total": int(total or 0), "last_updated_at": last_iso}
-

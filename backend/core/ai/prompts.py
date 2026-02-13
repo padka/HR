@@ -64,7 +64,10 @@ def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tupl
         "- If knowledge_base.excerpts are present, treat them as internal regulations and follow them.\n"
         "- Use candidate_profile.age_years and candidate_profile.desired_income when present.\n"
         "- Use candidate_profile.work_experience / skills / motivation / expectations when present.\n"
+        "- Use candidate_profile.signals.* as deterministic hints derived from answers.\n"
         "- Consider customer-facing jobs (e.g. barista/office-manager) as relevant 'experience with people' if supported by test answers.\n"
+        "- Communication: you MAY infer likely communication skills from customer-facing roles and signals.people_interaction.\n"
+        "  Be explicit that it's an inference and propose 1-2 short validation questions.\n"
         "- If interview_notes.present=true, use interview_notes.fields as additional evidence.\n"
         "- Strengths/weaknesses based on test answers (if present) and scores.\n"
         "- If chat.recent is present, assess recruiter communication quality and suggest concrete improvements.\n"
@@ -178,7 +181,9 @@ def agent_chat_reply_prompts(*, context: dict, allow_pii: bool = False) -> tuple
         f"{_pii_rule(allow_pii=allow_pii)}"
         "- Use Russian.\n"
         "- You are a strict but helpful senior recruiter + sales coach.\n"
-        "- Prefer citing provided knowledge_base excerpts. If the KB doesn't cover the question, say so.\n"
+        "- knowledge_base.state and knowledge_base.documents describe what is loaded.\n"
+        "- If knowledge_base.state.active_documents_total > 0, you MUST NOT say that regulations are missing.\n"
+        "- Prefer citing provided knowledge_base.excerpts. If excerpts are empty, say \"не нашел релевантный фрагмент\" and suggest how to уточнить запрос.\n"
         "JSON schema:\n"
         "{\n"
         '  "answer": "string",\n'
@@ -189,6 +194,9 @@ def agent_chat_reply_prompts(*, context: dict, allow_pii: bool = False) -> tuple
     )
     user = (
         "Answer the recruiter question using internal regulations.\n"
+        "If the question is about what you can help with (capabilities), answer with:\n"
+        "- 5-8 bullet points of what you can do in RecruitSmart (screening, regulations, script, next steps, message drafts);\n"
+        "- list the titles from knowledge_base.documents.\n"
         "If the question is about conducting an interview, propose exact questions and phrasing aligned with the company script.\n"
         "Context (JSON):\n"
         f"{_json_block(context)}\n"

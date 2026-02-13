@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import html
 import json
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+import re
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select, text as sql_text
+from sqlalchemy import func, or_, select
+from sqlalchemy import text as sql_text
 
 from backend.apps.admin_ui.security import Principal
 from backend.core.db import async_session
@@ -29,15 +31,15 @@ def compute_input_hash(payload: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _iso(value: Optional[datetime]) -> Optional[str]:
+def _iso(value: datetime | None) -> str | None:
     if not value:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
-def _parse_int(value: Optional[str]) -> Optional[int]:
+def _parse_int(value: str | None) -> int | None:
     if value is None:
         return None
     s = str(value)
@@ -48,6 +50,91 @@ def _parse_int(value: Optional[str]) -> Optional[int]:
         return int(digits)
     except Exception:
         return None
+
+
+def _derive_candidate_signals(profile: dict[str, Any]) -> dict[str, Any]:
+    """
+    Best-effort deterministic signals derived from free-text answers.
+
+    These are used to help LLMs avoid overly conservative "неясно" when
+    the candidate described customer-facing experience (barista, office manager, etc.).
+    """
+
+    text_parts = [
+        str(profile.get("work_experience") or ""),
+        str(profile.get("skills") or ""),
+        str(profile.get("motivation") or ""),
+        str(profile.get("expectations") or ""),
+    ]
+    text = " ".join(p for p in text_parts if p).strip()
+    lc = text.lower()
+
+    strong_needles = {
+        "бариста": "бариста",
+        "офис-менедж": "офис-менеджер",
+        "официант": "официант",
+        "продав": "продавец/консультант",
+        "кассир": "кассир",
+        "администратор": "администратор",
+        "колл": "колл-центр",
+        "call": "call-центр",
+        "оператор": "оператор",
+        "консульт": "консультирование",
+        "секретар": "секретарь/ассистент",
+        "менеджер": "менеджер",
+        "промоут": "промоутер",
+        "волонт": "волонтер",
+    }
+    soft_needles = {
+        "клиент": "работа с клиентами",
+        "сервис": "клиентский сервис",
+        "переговор": "переговоры",
+        "продаж": "продажи",
+        "общен": "общение",
+        "коммуник": "коммуникация",
+    }
+
+    def _hits(needles: dict[str, str]) -> list[str]:
+        hits: list[str] = []
+        for needle, label in needles.items():
+            if needle in lc:
+                hits.append(label)
+        # Deduplicate while preserving order
+        out: list[str] = []
+        for h in hits:
+            if h not in out:
+                out.append(h)
+        return out[:8]
+
+    strong_hits = _hits(strong_needles)
+    soft_hits = _hits(soft_needles)
+
+    people_level = "unknown"
+    if strong_hits:
+        people_level = "high"
+    elif soft_hits:
+        people_level = "medium"
+
+    words = [w for w in re.split(r"\\s+", lc) if w]
+    written_expression = len(words) >= 8
+    communication_level = "unknown"
+    if people_level == "high" and written_expression:
+        communication_level = "high"
+    elif people_level in {"high", "medium"}:
+        communication_level = "medium"
+
+    evidence = ", ".join((strong_hits or soft_hits)[:6])
+    return {
+        "people_interaction": {
+            "level": people_level,
+            "evidence": evidence or None,
+        },
+        "communication": {
+            "level": communication_level,
+            "evidence": evidence or None,
+            "written_expression": bool(written_expression),
+        },
+    }
 
 
 async def _ensure_candidate_scope(user: User, principal: Principal) -> None:
@@ -80,7 +167,7 @@ async def build_candidate_ai_context(
     principal: Principal,
     include_pii: bool = False,
 ) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session() as session:
         user = await session.get(User, candidate_id)
         if not user:
@@ -89,7 +176,7 @@ async def build_candidate_ai_context(
 
         candidate_fio_for_redaction = user.fio
 
-        recruiter_record: Optional[Recruiter] = None
+        recruiter_record: Recruiter | None = None
         try:
             rid = getattr(user, "responsible_recruiter_id", None)
             if rid is not None:
@@ -97,8 +184,8 @@ async def build_candidate_ai_context(
         except Exception:
             recruiter_record = None
 
-        city_profile: Optional[dict[str, Any]] = None
-        city_record: Optional[City] = None
+        city_profile: dict[str, Any] | None = None
+        city_record: City | None = None
         if user.city:
             city_record = await find_city_by_plain_name(user.city)
         if city_record is not None:
@@ -296,12 +383,12 @@ async def build_candidate_ai_context(
             .limit(30)
         )
         slots = []
-        upcoming: Optional[dict[str, Any]] = None
-        upcoming_dt: Optional[datetime] = None
+        upcoming: dict[str, Any] | None = None
+        upcoming_dt: datetime | None = None
         for row in slot_rows:
             start_utc = row.start_utc
             if start_utc and start_utc.tzinfo is None:
-                start_utc = start_utc.replace(tzinfo=timezone.utc)
+                start_utc = start_utc.replace(tzinfo=UTC)
             item = {
                 "id": row.id,
                 "status": (row.status or "").lower() or None,
@@ -474,6 +561,14 @@ async def build_candidate_ai_context(
             "motivation": motivation,
             "skills": skills,
             "expectations": expectations,
+            "signals": _derive_candidate_signals(
+                {
+                    "work_experience": work_experience,
+                    "skills": skills,
+                    "motivation": motivation,
+                    "expectations": expectations,
+                }
+            ),
         },
         "tests": tests,
         "slots": {
@@ -509,15 +604,21 @@ async def build_candidate_ai_context(
 
 
 async def _attach_kb_excerpts(ctx: dict[str, Any], *, query: str, limit: int = 3) -> dict[str, Any]:
-    from .knowledge_base import kb_state_snapshot, search_excerpts
+    from .knowledge_base import (
+        kb_state_snapshot,
+        list_active_documents,
+        search_excerpts,
+    )
 
     kb_state = await kb_state_snapshot()
+    kb_docs = await list_active_documents(limit=8)
     excerpts = []
     query_clean = (query or "").strip()
     if query_clean:
         excerpts = await search_excerpts(query_clean, limit=limit)
     ctx["knowledge_base"] = {
         "query": query_clean or None,
+        "documents": kb_docs,
         "excerpts": excerpts,
         "state": kb_state,
     }
@@ -646,7 +747,7 @@ async def build_city_candidate_recommendations_context(
     return ctx
 
 
-async def get_last_inbound_message_text(candidate_id: int, *, principal: Principal) -> Optional[str]:
+async def get_last_inbound_message_text(candidate_id: int, *, principal: Principal) -> str | None:
     async with async_session() as session:
         user = await session.get(User, candidate_id)
         if not user:
