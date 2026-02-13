@@ -231,6 +231,7 @@ type AIDraftsResponse = {
   ok: boolean
   cached: boolean
   input_hash: string
+  analysis?: string | null
   drafts: AIDraftItem[]
   used_context?: Record<string, any>
 }
@@ -1655,6 +1656,12 @@ export function CandidateDetailPage() {
                       <p className="subtitle" style={{ color: '#f07373' }}>
                         AI: {(aiDraftsMutation.error as Error).message}
                       </p>
+                    )}
+                    {aiDraftsMutation.data?.analysis && (
+                      <div className="cd-ai-drafts__analysis">
+                        <div className="cd-ai-drafts__analysis-label">Анализ переписки</div>
+                        <div className="cd-ai-drafts__analysis-text">{aiDraftsMutation.data.analysis}</div>
+                      </div>
                     )}
                     {aiDraftsMutation.data?.drafts?.length ? (
                       <div className="cd-ai-drafts__list">

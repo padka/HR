@@ -66,6 +66,7 @@ class DraftItem(BaseModel):
 
 
 class ChatReplyDraftsV1(BaseModel):
+    analysis: Optional[str] = None
     drafts: list[DraftItem] = Field(min_length=1)
     used_context: dict = Field(default_factory=dict)
 

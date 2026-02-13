@@ -86,6 +86,9 @@ def chat_reply_drafts_prompts(*, context: dict, mode: str, allow_pii: bool = Fal
         f"{_pii_rule(allow_pii=allow_pii)}"
         "- Use polite Russian (вы), short lines, 3-4 blocks max.\n"
         "- Follow Telegram message style: clear, structured, action-oriented.\n"
+        "- Use chat.recent (if present) to understand the conversation and candidate objections.\n"
+        "- Drafts MUST be recruiter-ready: no placeholders like {Имя} unless candidate.fio is present.\n"
+        "- Each draft MUST include a clear call-to-action (ask a question or propose options).\n"
         "- Use the message style guide excerpt below as requirements.\n"
     )
     if style_excerpt:
@@ -93,14 +96,23 @@ def chat_reply_drafts_prompts(*, context: dict, mode: str, allow_pii: bool = Fal
     system += (
         "JSON schema:\n"
         "{\n"
+        '  "analysis": "string|null",\n'
         '  "drafts": [{"text":"string","reason":"string"}],\n'
         '  "used_context": {"safe_text_used": true|false}\n'
         "}\n"
     )
     user = (
-        f"Generate 2-3 reply drafts for the recruiter.\n"
+        f"Generate 2-3 reply drafts for the recruiter AND a short analysis.\n"
         f"Mode: {mode} (short|neutral|supportive).\n"
-        "Context (anonymized JSON):\n"
+        "Analysis requirements:\n"
+        "- Describe what is happening in the chat (recruiter -> candidate, candidate responsiveness).\n"
+        "- If candidate is silent, propose a follow-up strategy.\n"
+        "- If candidate asks to reschedule, prioritize agreeing on a specific time window.\n"
+        "Draft requirements:\n"
+        "- Each draft.reason MUST explain the goal and why this message helps.\n"
+        "- Prefer referencing concrete next steps (slot, test, intro day) based on candidate status and slots.\n"
+        "- If knowledge_base.excerpts are present, follow internal regulations and the interview script style.\n"
+        "Context (JSON):\n"
         f"{_json_block(context)}\n"
     )
     return system, user
