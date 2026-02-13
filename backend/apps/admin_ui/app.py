@@ -48,6 +48,7 @@ from backend.apps.admin_ui.routers import (
     assignments,
     reschedule_requests,
     slot_assignments_api,
+    ai,
 )
 from backend.apps.admin_ui.security import (
     RateLimitExceeded,
@@ -324,6 +325,72 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.error("Failed to bootstrap test questions: %s", exc)
 
+    # Optional: seed deterministic data for Playwright/e2e runs.
+    if os.getenv("E2E_SEED_AI", "").lower() in {"1", "true", "yes"} and settings.environment != "production":
+        try:
+            from datetime import datetime, timezone
+
+            from sqlalchemy import select
+
+            from backend.domain.candidates.models import User
+            from backend.domain.candidates.status import CandidateStatus
+            from backend.domain.models import City, Recruiter, recruiter_city_association
+
+            now = datetime.now(timezone.utc)
+            async with async_session() as session:
+                city = await session.scalar(select(City).where(City.name == "E2E City"))
+                if city is None:
+                    city = City(name="E2E City", tz="Europe/Moscow", active=True)
+                    session.add(city)
+                    await session.commit()
+                    await session.refresh(city)
+
+                recruiter = await session.scalar(select(Recruiter).where(Recruiter.name == "E2E Recruiter"))
+                if recruiter is None:
+                    recruiter = Recruiter(name="E2E Recruiter", tz=city.tz or "Europe/Moscow", active=True)
+                    session.add(recruiter)
+                    await session.commit()
+                    await session.refresh(recruiter)
+
+                assoc = (
+                    await session.execute(
+                        select(recruiter_city_association.c.city_id)
+                        .where(
+                            recruiter_city_association.c.recruiter_id == recruiter.id,
+                            recruiter_city_association.c.city_id == city.id,
+                        )
+                    )
+                ).first()
+                if assoc is None:
+                    await session.execute(
+                        recruiter_city_association.insert().values(recruiter_id=recruiter.id, city_id=city.id)
+                    )
+                    await session.commit()
+
+                user = await session.scalar(select(User).where(User.telegram_id == 999000111))
+                if user is None:
+                    user = User(
+                        fio="E2E Candidate",
+                        phone=None,
+                        city=city.name,
+                        responsible_recruiter_id=recruiter.id,
+                        telegram_id=999000111,
+                        telegram_username="e2e_candidate",
+                        telegram_linked_at=now,
+                        candidate_status=CandidateStatus.LEAD,
+                        status_changed_at=now,
+                        last_activity=now,
+                        workflow_status="lead",
+                        source="bot",
+                    )
+                    session.add(user)
+                    await session.commit()
+                    await session.refresh(user)
+                app.state.e2e_seed_candidate_id = int(user.id)
+            logger.info("E2E seed ready (candidate_id=%s)", app.state.e2e_seed_candidate_id)
+        except Exception as exc:
+            logger.warning("E2E seed failed: %s", exc, exc_info=True)
+
     # Check DB availability early to avoid crashing on startup.
     if not is_test_mode:
         await _check_db_availability(app)
@@ -504,6 +571,7 @@ def create_app() -> FastAPI:
     app.include_router(cities.router, dependencies=[Depends(require_principal)])
     app.include_router(message_templates.router, dependencies=[Depends(require_admin)])
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
+    app.include_router(ai.router, dependencies=[Depends(require_principal)])
     app.include_router(api.router, dependencies=[Depends(require_principal)])
     app.include_router(assignments.router, prefix="/api/v1")
     app.include_router(slot_assignments_api.router)

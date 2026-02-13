@@ -266,7 +266,7 @@ async def get_current_principal(
             request.state.principal = principal
             set_audit_context(
                 AuditContext(
-                    username=credentials.username,
+                    username=f"admin:{candidate_user}",
                     ip_address=request.client.host if request and request.client else None,
                     user_agent=request.headers.get("user-agent"),
                 )
