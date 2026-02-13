@@ -432,9 +432,15 @@ async def build_candidate_ai_context(
         "recruiter": (
             {
                 "id": int(recruiter_record.id),
-                "name": recruiter_record.name,
-                "tz": recruiter_record.tz,
-                "active": bool(recruiter_record.active),
+                **(
+                    {
+                        "name": recruiter_record.name,
+                        "tz": recruiter_record.tz,
+                        "active": bool(recruiter_record.active),
+                    }
+                    if include_pii
+                    else {}
+                ),
             }
             if recruiter_record is not None
             else None
