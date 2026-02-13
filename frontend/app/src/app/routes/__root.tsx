@@ -1,6 +1,28 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useProfile } from '@/app/hooks/useProfile'
+import { apiFetch, queryClient } from '@/api/client'
+
+type ThreadItem = {
+  id: number
+  type: 'direct' | 'group'
+  title: string
+  created_at: string
+  last_message?: {
+    text?: string | null
+    created_at?: string | null
+    sender_type?: string | null
+    sender_id?: number | null
+    type?: string | null
+  }
+  unread_count?: number
+}
+
+type ThreadsPayload = {
+  threads: ThreadItem[]
+  latest_event_at?: string | null
+  updated?: boolean
+}
 
 const ICONS = {
   dashboard: (
@@ -66,6 +88,13 @@ export function RootLayout() {
   const principalType = profileQuery.data?.principal.type
   const authError = profileQuery.error as (Error & { status?: number }) | undefined
   const isUnauthed = authError?.status === 401
+  const principalId = profileQuery.data?.principal.id
+
+  const [chatToast, setChatToast] = useState<{ title: string; preview: string } | null>(null)
+  const chatToastTimerRef = useRef<number | null>(null)
+  const chatLastSeenRef = useRef<Record<number, string>>({})
+  const chatInitializedRef = useRef(false)
+  const audioCtxRef = useRef<AudioContext | null>(null)
 
   const bubbleStateRef = useRef<{
     hovered: HTMLSpanElement | null
@@ -232,6 +261,143 @@ export function RootLayout() {
     }
   }, [])
 
+  useEffect(() => {
+    if (hideNav || isUnauthed) return
+    if (!principalType || typeof principalId !== 'number') return
+
+    let isActive = true
+    let since = new Date().toISOString()
+    let controller: AbortController | null = null
+
+    const toast = (title: string, preview: string) => {
+      setChatToast({ title, preview })
+      if (chatToastTimerRef.current != null) window.clearTimeout(chatToastTimerRef.current)
+      chatToastTimerRef.current = window.setTimeout(() => setChatToast(null), 4200)
+    }
+
+    const playBeep = () => {
+      try {
+        const AudioCtor = window.AudioContext || (window as any).webkitAudioContext
+        if (!AudioCtor) return
+        if (!audioCtxRef.current) audioCtxRef.current = new AudioCtor()
+        const ctx = audioCtxRef.current
+        if (ctx.state === 'suspended') void ctx.resume()
+
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.type = 'sine'
+        osc.frequency.value = 880
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.01)
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18)
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.start()
+        osc.stop(ctx.currentTime + 0.2)
+      } catch {
+        // ignore autoplay / device restrictions
+      }
+    }
+
+    const previewFor = (thread: ThreadItem) => {
+      const last = thread.last_message
+      if (!last) return 'Нет сообщений'
+      if (last.type === 'candidate_task') return 'Передан кандидат'
+      if (last.type === 'system') return last.text || 'Системное сообщение'
+      if (last.text && last.text.trim()) return last.text.trim()
+      return 'Файл'
+    }
+
+    const loop = async () => {
+      // Baseline: load once without notifications to avoid beeping on existing unread.
+      try {
+        const initial = await apiFetch<ThreadsPayload>('/staff/threads')
+        queryClient.setQueryData(['staff-threads'], initial)
+        since = initial.latest_event_at || since
+        const seen: Record<number, string> = {}
+        ;(initial.threads || []).forEach((t) => {
+          const lastAt = t.last_message?.created_at || t.created_at
+          if (lastAt) seen[t.id] = lastAt
+        })
+        chatLastSeenRef.current = seen
+        chatInitializedRef.current = true
+      } catch {
+        // Keep polling anyway; the first successful update will initialize baseline.
+      }
+
+      while (isActive) {
+        controller = new AbortController()
+        try {
+          const params = new URLSearchParams()
+          if (since) params.set('since', since)
+          params.set('timeout', '25')
+          const payload = await apiFetch<ThreadsPayload>(`/staff/threads/updates?${params.toString()}`, {
+            signal: controller.signal,
+          })
+
+          if (payload.latest_event_at) since = payload.latest_event_at
+
+          if (payload.updated && payload.threads?.length) {
+            queryClient.setQueryData(['staff-threads'], payload)
+
+            const prevSeen = chatLastSeenRef.current || {}
+            const nextSeen: Record<number, string> = { ...prevSeen }
+            const newIncoming: Array<{ thread: ThreadItem; at: string }> = []
+
+            for (const thread of payload.threads) {
+              const lastAt = thread.last_message?.created_at || thread.created_at
+              if (!lastAt) continue
+              const prevAt = prevSeen[thread.id]
+              nextSeen[thread.id] = lastAt
+
+              // Don't notify on baseline load; only for actual new events after init.
+              if (!chatInitializedRef.current) continue
+              if (prevAt && lastAt <= prevAt) continue
+
+              const senderType = thread.last_message?.sender_type
+              const senderId = thread.last_message?.sender_id
+              const isSelf = senderType === principalType && senderId === principalId
+              if (!isSelf) newIncoming.push({ thread, at: lastAt })
+            }
+
+            chatLastSeenRef.current = nextSeen
+            chatInitializedRef.current = true
+
+            if (newIncoming.length) {
+              newIncoming.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+              const top = newIncoming[0].thread
+              toast(top.title || 'Чат', previewFor(top))
+              playBeep()
+
+              // Optional OS notification if already granted (no permission prompts).
+              if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                try {
+                  new Notification(`Новое сообщение: ${top.title || 'Чат'}`, { body: previewFor(top) })
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          }
+        } catch (err) {
+          if ((err as Error).name !== 'AbortError') {
+            await new Promise((resolve) => setTimeout(resolve, 1200))
+          }
+        }
+      }
+    }
+
+    loop()
+    return () => {
+      isActive = false
+      controller?.abort()
+      if (chatToastTimerRef.current != null) {
+        window.clearTimeout(chatToastTimerRef.current)
+        chatToastTimerRef.current = null
+      }
+    }
+  }, [hideNav, isUnauthed, principalType, principalId])
+
   if (isUnauthed && !hideNav) {
     return (
       <div style={{ minHeight: '100vh', padding: '24px', display: 'grid', gap: '16px' }}>
@@ -322,6 +488,12 @@ export function RootLayout() {
       <main>
         <Outlet />
       </main>
+      {chatToast && (
+        <div className="toast" data-tone="success" style={{ top: 20, right: 20, bottom: 'auto' }}>
+          <strong style={{ fontSize: 13 }}>{chatToast.title}</strong>
+          <span style={{ color: 'var(--muted)', fontSize: 12, lineHeight: 1.2 }}>{chatToast.preview}</span>
+        </div>
+      )}
     </div>
   )
 }

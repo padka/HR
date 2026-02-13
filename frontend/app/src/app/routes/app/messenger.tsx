@@ -377,44 +377,6 @@ export function MessengerPage() {
   }, [activeThreadId])
 
   useEffect(() => {
-    if (!threadsQuery.data) return
-    let isActive = true
-    let since = threadsQuery.data.latest_event_at || new Date().toISOString()
-    let controller: AbortController | null = null
-
-    const loop = async () => {
-      while (isActive) {
-        controller = new AbortController()
-        try {
-          const params = new URLSearchParams()
-          if (since) params.set('since', since)
-          params.set('timeout', '25')
-          const payload = await apiFetch<ThreadsPayload & { updated?: boolean }>(
-            `/staff/threads/updates?${params.toString()}`,
-            { signal: controller.signal },
-          )
-          if (payload.updated && payload.threads?.length) {
-            queryClient.setQueryData(['staff-threads'], payload)
-          }
-          if (payload.latest_event_at) {
-            since = payload.latest_event_at
-          }
-        } catch (err) {
-          if ((err as Error).name !== 'AbortError') {
-            await new Promise((resolve) => setTimeout(resolve, 1200))
-          }
-        }
-      }
-    }
-
-    loop()
-    return () => {
-      isActive = false
-      controller?.abort()
-    }
-  }, [threadsQuery.data?.latest_event_at])
-
-  useEffect(() => {
     if (!activeThreadId || !messagesQuery.data) return
     let isActive = true
     let since =
@@ -764,6 +726,18 @@ export function MessengerPage() {
                   rows={2}
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter') return
+                    if (event.shiftKey) return // keep newline on Shift+Enter
+                    if ((event.nativeEvent as any)?.isComposing) return
+                    if (sendMutation.isPending) return
+
+                    const canSend = messageText.trim().length > 0 || files.length > 0
+                    if (!canSend) return
+
+                    event.preventDefault()
+                    sendMutation.mutate()
+                  }}
                   placeholder="Написать сообщение…"
                 />
                 <div className="messenger-composer__actions">
