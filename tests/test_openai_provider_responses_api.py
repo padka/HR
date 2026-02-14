@@ -162,6 +162,60 @@ async def test_gpt5_repairs_malformed_json_from_json_mode(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gpt5_repairs_truncated_json(monkeypatch):
+    capture: dict = {}
+    _install_dummy_client_session_sequence(
+        monkeypatch,
+        capture=capture,
+        response_bodies=[
+            {
+                "id": "resp_bad",
+                "object": "response",
+                "output": [
+                    {
+                        "id": "msg_1",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            # Truncated JSON (missing closing braces).
+                            {"type": "output_text", "text": "{\"ok\": true, \"x\": 1"}
+                        ],
+                    }
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 20},
+            },
+            {
+                "id": "resp_fixed",
+                "object": "response",
+                "output": [
+                    {
+                        "id": "msg_2",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "{\"ok\": true, \"x\": 1}"}],
+                    }
+                ],
+                "usage": {"input_tokens": 2, "output_tokens": 6},
+            },
+        ],
+    )
+
+    provider = OpenAIProvider(DummySettings())
+    payload, usage = await provider.generate_json(
+        model="gpt-5-mini",
+        system_prompt="Return JSON only.",
+        user_prompt="{}",
+        timeout_seconds=10,
+        max_tokens=123,
+    )
+
+    assert payload == {"ok": True, "x": 1}
+    assert int(capture.get("calls") or 0) == 2
+    assert usage.tokens_in == 12
+    assert usage.tokens_out == 26
+
+
+@pytest.mark.asyncio
 async def test_gpt4o_uses_chat_completions(monkeypatch):
     capture: dict = {}
     _install_dummy_client_session(

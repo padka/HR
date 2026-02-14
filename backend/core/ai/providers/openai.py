@@ -138,7 +138,8 @@ class OpenAIProvider:
             "Rules:\n"
             "- Output MUST be a single JSON object (no markdown).\n"
             "- Escape newlines as \\n inside strings.\n"
-            "- Do not add fields that are not present in the input.\n"
+            "- Preserve as much meaning as possible.\n"
+            "- If the JSON is truncated/incomplete, you MAY complete missing brackets/quotes and set missing fields to null/[] as needed to make it valid.\n"
         )
         snippet = (bad_text or "").strip()
         if len(snippet) > 6000:
