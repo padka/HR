@@ -78,8 +78,15 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       ...init,
     })
     if (!retryRes.ok) {
-      const text = await retryRes.text()
-      const err = new Error(text || retryRes.statusText) as Error & { status?: number }
+      let retryMsg = ''
+      try {
+        const retryData = await retryRes.json()
+        retryMsg = retryData?.detail?.message || retryData?.detail || retryData?.message || ''
+        if (typeof retryMsg !== 'string') retryMsg = JSON.stringify(retryMsg)
+      } catch {
+        retryMsg = await retryRes.text().catch(() => '')
+      }
+      const err = new Error(retryMsg || retryRes.statusText || 'Ошибка авторизации') as Error & { status?: number }
       err.status = retryRes.status
       throw err
     }
@@ -117,7 +124,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
         else message = JSON.stringify(data.error)
       }
     }
-    const err = new Error(message || res.statusText) as Error & { status?: number; data?: any }
+    const err = new Error(message || res.statusText || `Ошибка ${res.status}`) as Error & { status?: number; data?: any }
     err.status = res.status
     err.data = data
     throw err

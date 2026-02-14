@@ -275,11 +275,12 @@ export function TemplateEditPage() {
                     {previewMutation.isPending ? 'Загрузка...' : 'Обновить'}
                   </button>
                   {serverPreview && (
-                    <div
+                    <pre
                       className="glass"
-                      style={{ marginTop: 12, padding: 12, whiteSpace: 'pre-wrap' }}
-                      dangerouslySetInnerHTML={{ __html: serverPreview }}
-                    />
+                      style={{ marginTop: 12, padding: 12, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}
+                    >
+                      {serverPreview}
+                    </pre>
                   )}
                 </div>
               </details>

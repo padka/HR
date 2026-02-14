@@ -50,6 +50,8 @@ type KBDocGet = {
   document: KBDocument
 }
 
+type KBReindexResponse = { ok: boolean; document_id: number; chunks_total?: number }
+
 function ModalPortal({ children }: { children: ReactNode }) {
   if (typeof document === 'undefined') return null
   return createPortal(children, document.body)
@@ -157,6 +159,26 @@ export function CopilotPage() {
     onError: (err: any) => showToast(err?.message || 'Не удалось отключить документ'),
   })
 
+  const enableDocMutation = useMutation({
+    mutationFn: async (id: number) =>
+      apiFetch(`/kb/documents/${id}`, { method: 'PUT', body: JSON.stringify({ is_active: true }) }),
+    onSuccess: async () => {
+      await docsQuery.refetch()
+      showToast('Документ включён')
+    },
+    onError: (err: any) => showToast(err?.message || 'Не удалось включить документ'),
+  })
+
+  const reindexDocMutation = useMutation({
+    mutationFn: async (id: number) => apiFetch<KBReindexResponse>(`/kb/documents/${id}/reindex`, { method: 'POST' }),
+    onSuccess: async () => {
+      await docsQuery.refetch()
+      if (activeDocId != null) await docQuery.refetch()
+      showToast('Переиндексация выполнена')
+    },
+    onError: (err: any) => showToast(err?.message || 'Не удалось переиндексировать'),
+  })
+
   const messages = chatQuery.data?.messages || []
 
   const docsActive = useMemo(() => (docsQuery.data?.items || []).filter((d) => d.is_active), [docsQuery.data])
@@ -203,6 +225,15 @@ export function CopilotPage() {
                   </div>
                 </div>
               ))}
+              {sendMutation.isPending && (
+                <div className="copilot-msg copilot-msg--assistant">
+                  <div className="copilot-msg__bubble copilot-msg__bubble--typing">
+                    <div className="copilot-msg__text" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
+                      AI думает…
+                    </div>
+                  </div>
+                </div>
+              )}
               <div ref={chatEndRef} />
             </div>
 
@@ -282,6 +313,16 @@ export function CopilotPage() {
                               {d.updated_at ? ` · ${formatTime(d.updated_at)}` : ''}
                             </div>
                           </button>
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              className="ui-btn ui-btn--primary ui-btn--sm"
+                              onClick={() => enableDocMutation.mutate(d.id)}
+                              disabled={enableDocMutation.isPending}
+                            >
+                              Включить
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -313,10 +354,10 @@ export function CopilotPage() {
                   </label>
 
                   <label className="form-group">
-                    <span className="form-group__label">Или загрузить файл (.txt/.md/.docx)</span>
+                    <span className="form-group__label">Или загрузить файл (.txt/.md/.docx/.pdf)</span>
                     <input
                       type="file"
-                      accept=".txt,.md,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      accept=".txt,.md,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                       onChange={(e) => setKbFile(e.target.files?.[0] || null)}
                     />
                     <button
@@ -350,9 +391,24 @@ export function CopilotPage() {
                 <div className="modal__header">
                   <div>
                     <h2 className="modal__title">{docQuery.data?.document?.title || 'Документ'}</h2>
-                    <p className="modal__subtitle">{docQuery.data?.document?.updated_at ? formatTime(docQuery.data.document.updated_at) : ''}</p>
+                    <p className="modal__subtitle">
+                      {docQuery.data?.document?.updated_at ? formatTime(docQuery.data.document.updated_at) : ''}
+                      {docQuery.data?.document?.chunks_total != null ? ` · ${docQuery.data.document.chunks_total} фрагм.` : ''}
+                    </p>
                   </div>
-                  <button className="ui-btn ui-btn--ghost" onClick={() => setActiveDocId(null)}>Закрыть</button>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {isAdmin && (
+                      <button
+                        className="ui-btn ui-btn--ghost"
+                        onClick={() => reindexDocMutation.mutate(activeDocId)}
+                        disabled={reindexDocMutation.isPending}
+                        title="Пересобрать фрагменты (chunks) для поиска"
+                      >
+                        {reindexDocMutation.isPending ? 'Индексируем…' : 'Переиндексировать'}
+                      </button>
+                    )}
+                    <button className="ui-btn ui-btn--ghost" onClick={() => setActiveDocId(null)}>Закрыть</button>
+                  </div>
                 </div>
                 <div className="modal__body">
                   {docQuery.isLoading && <p className="subtitle">Загрузка…</p>}

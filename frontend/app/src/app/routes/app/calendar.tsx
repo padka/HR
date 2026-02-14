@@ -72,7 +72,7 @@ export function CalendarPage() {
   }, [])
 
   // Handle create slot
-  const handleSlotCreate = useCallback((start: Date, end: Date) => {
+  const handleSlotCreate = useCallback((start: Date, _end: Date) => {
     // Navigate to slot creation form with pre-filled date/time
     const dateStr = start.toISOString().split('T')[0]
     const timeStr = start.toTimeString().slice(0, 5)

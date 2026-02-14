@@ -49,8 +49,13 @@ export default defineConfig({
     stderr: 'pipe',
     timeout: 120 * 1000,
     env: {
+      ENVIRONMENT: process.env.ENVIRONMENT || 'test',
       ADMIN_USER: process.env.ADMIN_USER || 'playwright_admin',
       ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'playwright_admin_password',
+      // E2E uses Playwright httpCredentials (Basic auth). Keep it enabled for the test server.
+      ALLOW_LEGACY_BASIC: process.env.ALLOW_LEGACY_BASIC || '1',
+      // Avoid brittle auth flows in E2E; keep prod-safe default (disabled) elsewhere.
+      ALLOW_DEV_AUTOADMIN: process.env.ALLOW_DEV_AUTOADMIN || '1',
       SESSION_SECRET:
         process.env.SESSION_SECRET ||
         'playwright-secret-session-key-please-change-this-1234567890',

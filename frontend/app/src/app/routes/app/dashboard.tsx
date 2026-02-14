@@ -284,16 +284,6 @@ export function DashboardPage() {
     },
   })
 
-  const rejectSlot = useMutation({
-    mutationFn: async (slotId: number) =>
-      apiFetch(`/slots/${slotId}/reject_booking`, { method: 'POST' }),
-    onSuccess: (data: any) => {
-      showToast(data?.message || 'Слот освобождён')
-      calendarQuery.refetch()
-    },
-    onError: (error: Error) => showToast(error.message),
-  })
-
   const rescheduleSlot = useMutation({
     mutationFn: async (payload: { slotId: number; date: string; time: string; reason?: string }) =>
       apiFetch(`/slots/${payload.slotId}/reschedule`, {
@@ -304,19 +294,6 @@ export function DashboardPage() {
       showToast(data?.message || 'Слот перенесён')
       setRescheduleTarget(null)
       calendarQuery.refetch()
-    },
-    onError: (error: Error) => showToast(error.message),
-  })
-
-  const candidateAction = useMutation({
-    mutationFn: async (payload: { candidateId: number; actionKey: string }) =>
-      apiFetch(`/candidates/${payload.candidateId}/actions/${payload.actionKey}`, {
-        method: 'POST',
-      }),
-    onSuccess: (data: any) => {
-      showToast(data?.message || 'Действие выполнено')
-      calendarQuery.refetch()
-      incomingQuery.refetch()
     },
     onError: (error: Error) => showToast(error.message),
   })
@@ -709,9 +686,7 @@ export function DashboardPage() {
                       <div>
                         <div className="incoming-card__name">
                           {candidate.name || 'Без имени'}
-                          {candidate.last_message_at && (
-                            Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
-                          ) && <span className="incoming-card__badge">NEW</span>}
+                          {(() => { try { return candidate.last_message_at && (Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000) } catch { return false } })() && <span className="incoming-card__badge">NEW</span>}
                         </div>
                         <div className="incoming-card__meta">
                           <span>{candidate.city || 'Город не указан'}</span>
@@ -866,6 +841,15 @@ export function DashboardPage() {
                         ) : (
                           <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled>
                             Профиль
+                          </button>
+                        )}
+                        {event.status !== 'FREE' && (
+                          <button
+                            className="ui-btn ui-btn--ghost ui-btn--sm"
+                            type="button"
+                            onClick={() => openReschedule(event)}
+                          >
+                            Перенести
                           </button>
                         )}
                       </div>

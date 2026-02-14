@@ -140,6 +140,12 @@ export function CitiesPage() {
                       <span className="chip">TZ: {c.tz || '—'}</span>
                       <span className="chip">Нед.: {edits[c.id]?.plan_week ?? c.plan_week ?? '—'}</span>
                       <span className="chip">Мес.: {edits[c.id]?.plan_month ?? c.plan_month ?? '—'}</span>
+                      {stages.length > 0 && (
+                        <span className="chip">
+                          Этапы: {stages.length}
+                          {customCount > 0 ? ` (кастом ${customCount})` : ''}
+                        </span>
+                      )}
                     </div>
                     <div className="list-item__meta">
                       <div className="list-item__meta-label">Ответственные</div>
@@ -159,9 +165,12 @@ export function CitiesPage() {
                         <input
                           type="checkbox"
                           checked={Boolean(edits[c.id]?.active ?? c.active)}
-                          onChange={(e) =>
-                            setEdits((prev) => ({ ...prev, [c.id]: { ...prev[c.id], active: e.target.checked } }))
-                          }
+                          onChange={(e) => {
+                            const nextActive = e.target.checked
+                            setEdits((prev) => ({ ...prev, [c.id]: { ...prev[c.id], active: nextActive } }))
+                            updateMutation.mutate({ city: c, active: nextActive })
+                          }}
+                          disabled={updateMutation.isPending}
                         />
                         <span>{(edits[c.id]?.active ?? c.active) ? 'Активен' : 'Не активен'}</span>
                       </label>

@@ -9,6 +9,12 @@ function Bomb(): JSX.Element {
 describe('ErrorBoundary', () => {
   it('renders fallback UI when child throws', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const onWindowError = (event: ErrorEvent) => {
+      // React will surface render errors to the global handler in jsdom.
+      // Prevent jsdom from printing "Uncaught [Error: boom]" noise for this test.
+      event.preventDefault()
+    }
+    window.addEventListener('error', onWindowError)
 
     render(
       <ErrorBoundary>
@@ -19,6 +25,7 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('Что-то пошло не так')).toBeInTheDocument()
     expect(screen.getByText('boom')).toBeInTheDocument()
 
+    window.removeEventListener('error', onWindowError)
     consoleError.mockRestore()
   })
 })

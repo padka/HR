@@ -505,16 +505,6 @@ export function SlotsPage() {
     }
   }, [modalOpen])
 
-  const copyLink = async (id: number) => {
-    try {
-      const url = `${window.location.origin}/slots?slot=${id}`
-      await navigator.clipboard.writeText(url)
-      showToast('Ссылка скопирована')
-    } catch {
-      showToast('Не удалось скопировать')
-    }
-  }
-
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
