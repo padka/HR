@@ -58,11 +58,64 @@ def _extract_docx_text(data: bytes) -> str:
     return "\n".join(paras).strip()
 
 
+def _extract_pdf_text(data: bytes) -> str:
+    """Extract text from PDF. Uses PyMuPDF (fitz) if available, otherwise returns empty."""
+    # Preferred: pypdf (pure-python, lightweight)
+    try:
+        from pypdf import PdfReader  # type: ignore[import-untyped]
+
+        reader = PdfReader(BytesIO(data))
+        pages: list[str] = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text and text.strip():
+                pages.append(text.strip())
+        return "\n\n".join(pages).strip()
+    except ImportError:
+        pass
+    except Exception:
+        return ""
+
+    try:
+        import fitz  # PyMuPDF  # type: ignore[import-untyped]
+
+        doc = fitz.open(stream=data, filetype="pdf")
+        pages: list[str] = []
+        for page in doc:
+            text = page.get_text("text")
+            if text and text.strip():
+                pages.append(text.strip())
+        doc.close()
+        return "\n\n".join(pages).strip()
+    except ImportError:
+        pass
+    except Exception:
+        return ""
+    # Fallback: try pdfplumber
+    try:
+        import pdfplumber  # type: ignore[import-untyped]
+
+        with pdfplumber.open(BytesIO(data)) as pdf:
+            pages = []
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text and text.strip():
+                    pages.append(text.strip())
+            return "\n\n".join(pages).strip()
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    return ""
+
+
 def _decode_upload_to_text(*, data: bytes, filename: str, mime_type: str) -> str:
     name = (filename or "").lower()
     if name.endswith(".docx") or (mime_type or "").lower() == _DOCX_MIME:
         extracted = _extract_docx_text(data)
         return extracted
+    if name.endswith(".pdf") or (mime_type or "").lower() == "application/pdf":
+        return _extract_pdf_text(data)
     try:
         return data.decode("utf-8")
     except Exception:
@@ -178,7 +231,7 @@ async def api_kb_document_create(
         if not content_text.strip():
             raise HTTPException(
                 status_code=400,
-                detail={"message": "Не удалось извлечь текст из файла. Поддерживаются .txt/.md/.docx."},
+                detail={"message": "Не удалось извлечь текст из файла. Поддерживаются .txt/.md/.docx/.pdf."},
             )
         if not title:
             title = filename or "Документ"

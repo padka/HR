@@ -49,9 +49,28 @@ class CriterionChecklistItem(BaseModel):
     evidence: str = ""
 
 
+VacancyFitAssessment = Literal["positive", "negative", "neutral", "unknown"]
+CriteriaSource = Literal["city_criteria", "kb_regulations", "both", "none"]
+
+
+class VacancyFitEvidence(BaseModel):
+    factor: str = ""
+    assessment: VacancyFitAssessment = "unknown"
+    detail: str = ""
+
+
+class VacancyFit(BaseModel):
+    score: int | None = Field(default=None, ge=0, le=100)
+    level: FitLevel = "unknown"
+    summary: str = ""
+    evidence: list[VacancyFitEvidence] = Field(default_factory=list)
+    criteria_source: CriteriaSource = "none"
+
+
 class CandidateSummaryV1(BaseModel):
     tldr: str = Field(min_length=1)
     fit: FitAssessment | None = None
+    vacancy_fit: VacancyFit | None = None
     strengths: list[EvidenceItem] = Field(default_factory=list)
     weaknesses: list[EvidenceItem] = Field(default_factory=list)
     criteria_checklist: list[CriterionChecklistItem] = Field(default_factory=list)

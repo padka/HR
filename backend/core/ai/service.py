@@ -86,6 +86,31 @@ async def _count_today_requests(principal: Principal) -> int:
         return int(total or 0)
 
 
+async def _estimate_today_spend_usd() -> float:
+    """Rough estimate of today's AI spend based on logged tokens.
+
+    Uses approximate GPT-5-mini pricing: $0.30/1M input, $1.20/1M output.
+    For other models the estimate is conservative (higher cost assumed).
+    """
+    now = datetime.now(UTC)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    async with async_session() as session:
+        row = await session.execute(
+            select(
+                func.coalesce(func.sum(AIRequestLog.tokens_in), 0),
+                func.coalesce(func.sum(AIRequestLog.tokens_out), 0),
+            ).where(
+                AIRequestLog.created_at >= start,
+                AIRequestLog.status == "ok",
+            )
+        )
+        tokens_in, tokens_out = row.one()
+    # Conservative estimate (GPT-5 mini pricing)
+    cost_in = float(tokens_in or 0) / 1_000_000 * 0.30
+    cost_out = float(tokens_out or 0) / 1_000_000 * 1.20
+    return cost_in + cost_out
+
+
 async def _log_request(
     *,
     principal: Principal,
@@ -195,11 +220,16 @@ class AIService:
 
     async def _ensure_quota(self, principal: Principal) -> None:
         limit = int(self._settings.ai_max_requests_per_principal_per_day or 0)
-        if limit <= 0:
-            return
-        used = await _count_today_requests(principal)
-        if used >= limit:
-            raise AIRateLimitedError("rate_limited")
+        if limit > 0:
+            used = await _count_today_requests(principal)
+            if used >= limit:
+                raise AIRateLimitedError("rate_limited")
+        budget = float(self._settings.ai_daily_budget_usd or 0)
+        if budget > 0:
+            spent = await _estimate_today_spend_usd()
+            if spent >= budget:
+                logger.warning("ai.budget.exceeded", extra={"spent_usd": round(spent, 4), "budget_usd": budget})
+                raise AIRateLimitedError("daily_budget_exceeded")
 
     async def get_candidate_summary(
         self,

@@ -161,14 +161,33 @@ async def _candidate_chunks_for_terms(terms: list[str], *, limit: int) -> list[K
 
 
 def _rank_chunks(chunks: Iterable[KnowledgeBaseChunk], terms: list[str]) -> list[KnowledgeBaseChunk]:
+    """Rank chunks using TF-IDF-like scoring: term frequency weighted by inverse document frequency."""
     terms_lc = [t.lower() for t in terms if t]
+    chunk_list = list(chunks)
+    if not chunk_list or not terms_lc:
+        return chunk_list
 
-    def score(ch: KnowledgeBaseChunk) -> tuple[int, int]:
+    # Compute IDF: how many chunks contain each term
+    doc_freq: dict[str, int] = {}
+    for t in terms_lc:
+        doc_freq[t] = sum(1 for ch in chunk_list if t in (ch.content_text or "").lower())
+
+    total = len(chunk_list)
+
+    import math
+
+    def score(ch: KnowledgeBaseChunk) -> float:
         txt = (ch.content_text or "").lower()
-        hits = sum(1 for t in terms_lc if t in txt)
-        return (hits, -len(txt))
+        txt_len = len(txt) or 1
+        s = 0.0
+        for t in terms_lc:
+            tf = txt.count(t) / (txt_len / 100)  # normalized TF per 100 chars
+            df = doc_freq.get(t, 0)
+            idf = math.log(1 + total / (1 + df))
+            s += tf * idf
+        return s
 
-    ranked = sorted(chunks, key=score, reverse=True)
+    ranked = sorted(chunk_list, key=score, reverse=True)
     return ranked
 
 

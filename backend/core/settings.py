@@ -78,6 +78,7 @@ class Settings:
     ai_max_requests_per_principal_per_day: int
     ai_store_prompts: bool
     ai_pii_mode: str
+    ai_reasoning_effort: str
 
 
 def _get_int(name: str, default: int, *, minimum: int | None = None) -> int:
@@ -619,6 +620,11 @@ def get_settings() -> Settings:
     ai_pii_mode = os.getenv("AI_PII_MODE", "redacted").strip().lower() or "redacted"
     if ai_pii_mode not in {"redacted", "full"}:
         ai_pii_mode = "redacted"
+    # For GPT-5 Responses API, "minimal" keeps reasoning overhead near-zero and
+    # avoids empty outputs under tight token budgets. Can be overridden via env.
+    ai_reasoning_effort = os.getenv("AI_REASONING_EFFORT", "minimal").strip().lower() or "minimal"
+    if ai_reasoning_effort not in {"minimal", "low", "medium", "high"}:
+        ai_reasoning_effort = "minimal"
 
     settings = Settings(
         environment=environment,
@@ -684,6 +690,7 @@ def get_settings() -> Settings:
         ai_max_requests_per_principal_per_day=ai_max_requests_per_principal_per_day,
         ai_store_prompts=ai_store_prompts,
         ai_pii_mode=ai_pii_mode,
+        ai_reasoning_effort=ai_reasoning_effort,
     )
 
     # Validate production configuration (fails fast with clear error messages)

@@ -64,8 +64,9 @@ def configure_backend(tmp_path_factory):
     # migration checks when a local Postgres instance is unavailable.
     os.environ["TEST_DATABASE_URL"] = os.environ["DATABASE_URL"]
     os.environ.pop("SQL_ECHO", None)
-    # Allow legacy Basic auth in test runs for compatibility
+    # Allow legacy Basic auth and auto-admin in test runs for compatibility
     os.environ["ALLOW_LEGACY_BASIC"] = "1"
+    os.environ["ALLOW_DEV_AUTOADMIN"] = "1"
     os.environ.setdefault("ADMIN_USER", "admin")
     os.environ.setdefault("ADMIN_PASSWORD", "admin")
     os.environ.setdefault("RATE_LIMIT_ENABLED", "0")

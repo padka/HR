@@ -18,3 +18,4 @@ SQLAlchemy==2.0.32
 starlette==0.37.2
 starlette-wtf==0.4.5
 uvicorn[standard]==0.30.6
+pypdf==6.7.0

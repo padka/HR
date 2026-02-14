@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from backend.apps.admin_ui.security import Principal, require_admin, require_csrf_token, require_principal
+from backend.apps.admin_ui.security import Principal, get_principal_identifier, limiter, require_admin, require_csrf_token, require_principal
 from backend.core.ai.service import AIService, AIDisabledError, AIRateLimitedError
 from backend.core.ai.service import get_ai_service
 from backend.core.db import async_session
@@ -52,6 +52,7 @@ async def api_ai_candidate_summary(
 
 
 @router.post("/candidates/{candidate_id}/summary/refresh")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
 async def api_ai_candidate_summary_refresh(
     candidate_id: int,
     request: Request,
@@ -69,6 +70,7 @@ async def api_ai_candidate_summary_refresh(
 
 
 @router.post("/candidates/{candidate_id}/chat/drafts")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
 async def api_ai_chat_drafts(
     candidate_id: int,
     request: Request,
@@ -92,6 +94,7 @@ async def api_ai_chat_drafts(
 
 
 @router.post("/dashboard/insights")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
 async def api_ai_dashboard_insights(
     request: Request,
     principal: Principal = Depends(require_admin),
@@ -170,6 +173,7 @@ async def api_ai_agent_chat_state(
 
 
 @router.post("/chat/message")
+@limiter.limit("10/minute", key_func=get_principal_identifier)
 async def api_ai_agent_chat_send(
     request: Request,
     principal: Principal = Depends(require_principal),
@@ -212,6 +216,7 @@ async def api_ai_city_candidate_recommendations(
 
 
 @router.post("/cities/{city_id}/candidates/recommendations/refresh")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
 async def api_ai_city_candidate_recommendations_refresh(
     city_id: int,
     request: Request,
