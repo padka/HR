@@ -1,3 +1,15 @@
+"""AIService — central facade for all AI Copilot operations.
+
+Responsibilities:
+- Cache management (check / store AI outputs with TTL).
+- Quota enforcement (per-principal daily requests, global daily budget).
+- Request logging (tokens, latency, status → AIRequestLog table).
+- Provider dispatch (OpenAI or Fake).
+
+All public methods follow the same pattern:
+  ensure_enabled → build context → check cache → ensure quota → generate → log → store → return.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -49,21 +61,24 @@ logger = logging.getLogger(__name__)
 
 
 class AIDisabledError(RuntimeError):
-    pass
+    """Raised when AI is invoked but ``AI_ENABLED`` is falsy."""
 
 
 class AIRateLimitedError(RuntimeError):
-    pass
+    """Raised when the principal exceeds daily request limit or budget."""
 
 
 @dataclass(frozen=True)
 class AIResult:
+    """Immutable wrapper for an AI generation result."""
+
     payload: dict
     cached: bool
     input_hash: str
 
 
 def _provider_for_settings() -> AIProvider:
+    """Instantiate the AI provider from current settings (openai or fake)."""
     settings = get_settings()
     provider = (settings.ai_provider or "").strip().lower()
     if provider == "fake":
@@ -72,6 +87,7 @@ def _provider_for_settings() -> AIProvider:
 
 
 async def _count_today_requests(principal: Principal) -> int:
+    """Count AI requests made by *principal* since midnight UTC today."""
     now = datetime.now(UTC)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     async with async_session() as session:
@@ -125,6 +141,7 @@ async def _log_request(
     status_value: str,
     error_code: str = "",
 ) -> None:
+    """Persist an AI request log row (tokens, latency, status) for auditing and budget tracking."""
     async with async_session() as session:
         row = AIRequestLog(
             principal_type=principal.type,
@@ -152,6 +169,7 @@ async def _get_cached_output(
     kind: str,
     input_hash: str,
 ) -> AIOutput | None:
+    """Fetch a non-expired cached AI output matching scope + input hash."""
     now = datetime.now(UTC)
     async with async_session() as session:
         row = await session.scalar(
@@ -178,6 +196,7 @@ async def _store_output(
     payload: dict,
     ttl_hours: int = 24,
 ) -> None:
+    """Upsert a cached AI output (creates or updates existing row for the same scope/kind/hash)."""
     now = datetime.now(UTC)
     expires_at = now + timedelta(hours=ttl_hours)
     async with async_session() as session:
@@ -209,16 +228,24 @@ async def _store_output(
 
 
 class AIService:
+    """Facade for all AI operations (summaries, drafts, insights, chat).
+
+    Instantiated per-request via ``get_ai_service()`` FastAPI dependency.
+    Handles caching, quota enforcement, logging and provider dispatch.
+    """
+
     def __init__(self) -> None:
         self._settings = get_settings()
         self._provider = _provider_for_settings()
         self._allow_pii = (self._settings.ai_pii_mode or "").strip().lower() == "full"
 
     def _ensure_enabled(self) -> None:
+        """Raise ``AIDisabledError`` if ``AI_ENABLED`` is falsy."""
         if not self._settings.ai_enabled:
             raise AIDisabledError("ai_disabled")
 
     async def _ensure_quota(self, principal: Principal) -> None:
+        """Raise ``AIRateLimitedError`` if daily request count or budget is exceeded."""
         limit = int(self._settings.ai_max_requests_per_principal_per_day or 0)
         if limit > 0:
             used = await _count_today_requests(principal)
@@ -238,6 +265,21 @@ class AIService:
         principal: Principal,
         refresh: bool = False,
     ) -> AIResult:
+        """Generate or retrieve a cached AI summary for a candidate.
+
+        Args:
+            candidate_id: Target candidate PK.
+            principal: Authenticated admin/recruiter.
+            refresh: If True, bypass cache and force re-generation.
+
+        Returns:
+            AIResult with validated CandidateSummaryV1 payload.
+
+        Raises:
+            AIDisabledError: AI is turned off.
+            AIRateLimitedError: Daily quota/budget exceeded.
+            HTTPException 502: Provider returned an error.
+        """
         self._ensure_enabled()
         ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
         input_hash = compute_input_hash(ctx)
@@ -344,6 +386,16 @@ class AIService:
         principal: Principal,
         mode: str,
     ) -> AIResult:
+        """Generate reply draft suggestions for a recruiter's chat with a candidate.
+
+        Args:
+            candidate_id: Target candidate PK.
+            principal: Authenticated recruiter.
+            mode: Tone — ``"short"`` | ``"neutral"`` | ``"supportive"``.
+
+        Returns:
+            AIResult with validated ChatReplyDraftsV1 payload.
+        """
         self._ensure_enabled()
         base_ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
 
@@ -459,6 +511,17 @@ class AIService:
         scope_id: int = 0,
         refresh: bool = False,
     ) -> AIResult:
+        """Generate AI-powered dashboard insights (anomalies, recommendations).
+
+        Args:
+            principal: Authenticated admin.
+            context: Aggregated dashboard data (funnel, pipeline, outbox stats).
+            scope_id: City ID for city-scoped insights, 0 for global.
+            refresh: If True, bypass cache.
+
+        Returns:
+            AIResult with validated DashboardInsightV1 payload.
+        """
         self._ensure_enabled()
         input_hash = compute_input_hash(context)
         kind = "dashboard_insight_v1"
@@ -536,6 +599,19 @@ class AIService:
         limit: int = 30,
         refresh: bool = False,
     ) -> AIResult:
+        """Rank and recommend candidates for a city based on AI analysis.
+
+        Post-processes results to filter out hallucinated candidate IDs.
+
+        Args:
+            city_id: Target city PK.
+            principal: Authenticated recruiter/admin.
+            limit: Max candidates to consider (capped at 80).
+            refresh: If True, bypass cache.
+
+        Returns:
+            AIResult with validated CityCandidateRecommendationsV1 payload.
+        """
         self._ensure_enabled()
         ctx = await build_city_candidate_recommendations_context(city_id, principal=principal, limit=limit)
         input_hash = compute_input_hash(ctx)
@@ -683,6 +759,29 @@ class AIService:
         history_limit: int = 14,
         kb_limit: int = 5,
     ) -> dict[str, Any]:
+        """Send a user message to the Copilot agent and get an AI reply.
+
+        Flow:
+        1. Redact PII from user message; reject if unsafe.
+        2. Search KB for relevant excerpts.
+        3. Load chat history.
+        4. Call AI provider with context.
+        5. Filter hallucinated KB sources.
+        6. Persist assistant reply.
+
+        Args:
+            principal: Authenticated user.
+            text: Raw user message (max 4000 chars).
+            history_limit: Max previous messages to include as context.
+            kb_limit: Max KB excerpts to retrieve.
+
+        Returns:
+            Dict with ``reply`` (AgentChatReplyV1) and ``kb_excerpts_used``.
+
+        Raises:
+            HTTPException 400: Empty message or PII detected.
+            HTTPException 502: Provider error.
+        """
         self._ensure_enabled()
 
         raw = (text or "").strip()
@@ -909,4 +1008,5 @@ class AIService:
 
 
 def get_ai_service() -> AIService:
+    """FastAPI dependency that provides a fresh AIService instance per request."""
     return AIService()

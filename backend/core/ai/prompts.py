@@ -1,3 +1,16 @@
+"""AI prompt templates for all LLM-powered features.
+
+Each ``*_prompts()`` function returns ``(system_prompt, user_prompt)`` ready
+for the AI provider.  Prompts are in Russian to match the target audience.
+
+Functions:
+- ``candidate_summary_prompts()`` — candidate assessment prompt.
+- ``chat_reply_drafts_prompts()`` — recruiter reply suggestions.
+- ``dashboard_insight_prompts()`` — dashboard analytics insight.
+- ``city_candidate_recommendations_prompts()`` — candidate ranking for a city.
+- ``agent_chat_reply_prompts()`` — Copilot (internal AI chat) prompt.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +20,7 @@ from typing import Any
 
 
 def _json_block(data: Any) -> str:
+    """Serialize data to a pretty-printed JSON string for prompt embedding."""
     return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2)
 
 

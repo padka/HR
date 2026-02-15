@@ -1,3 +1,13 @@
+"""AI context builders — assemble anonymized data for AI prompts.
+
+Main functions:
+- ``build_candidate_ai_context()`` — aggregates candidate profile, tests, chat,
+  slots, city criteria, and KB excerpts into a single dict for the LLM.
+- ``build_city_candidate_recommendations_context()`` — aggregates city + candidate
+  list for recommendation ranking.
+- ``compute_input_hash()`` — deterministic SHA-256 of context dict for caching.
+"""
+
 from __future__ import annotations
 
 import hashlib
