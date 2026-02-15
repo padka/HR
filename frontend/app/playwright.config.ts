@@ -10,6 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '../..');
 const pythonBin = path.join(repoRoot, '.venv', 'bin', 'python');
+const e2eDataDir = path.join(repoRoot, '.tmp', 'e2e-data');
 const sqlitePath = path.join(
   os.tmpdir(),
   `recruitsmart_e2e_${process.pid}_${Date.now()}.db`,
@@ -41,7 +42,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `${pythonBin} scripts/run_migrations.py && ${pythonBin} -m uvicorn backend.apps.admin_ui.app:app --host 0.0.0.0 --port ${port}`,
+    command: `${pythonBin} scripts/run_migrations.py && ${pythonBin} -m uvicorn backend.apps.admin_ui.app:app --host ${host} --port ${port}`,
     cwd: repoRoot,
     url: `${baseURL}/health`,
     reuseExistingServer: false,
@@ -70,6 +71,7 @@ export default defineConfig({
         : repoRoot,
       DATABASE_URL:
         process.env.DATABASE_URL || `sqlite+aiosqlite:///${sqlitePath}`,
+      DATA_DIR: process.env.DATA_DIR || e2eDataDir,
     },
   },
 });
