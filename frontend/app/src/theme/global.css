@@ -2257,46 +2257,6 @@ body {
   animation: bubble-pop 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 
-.bubble.is-popping .bubble__core::before {
-  content: "";
-  position: absolute;
-  inset: -16px;
-  border-radius: 50%;
-  opacity: 0;
-  transform: scale(0.25);
-  transform-origin: var(--pop-origin-x) var(--pop-origin-y);
-  pointer-events: none;
-  /* A tiny "spray" of droplets using multiple radial-gradients. */
-  background:
-    radial-gradient(circle, rgba(255,255,255,0.70) 0%, rgba(255,255,255,0.70) 46%, transparent 47%) 58% 7% / 9px 9px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.56) 0%, rgba(255,255,255,0.56) 46%, transparent 47%) 86% 14% / 6px 6px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.60) 0%, rgba(255,255,255,0.60) 46%, transparent 47%) 96% 40% / 10px 10px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.50) 0%, rgba(255,255,255,0.50) 46%, transparent 47%) 90% 70% / 5px 5px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.56) 0%, rgba(255,255,255,0.56) 46%, transparent 47%) 78% 88% / 7px 7px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.54) 0%, rgba(255,255,255,0.54) 46%, transparent 47%) 51% 95% / 8px 8px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.46) 0%, rgba(255,255,255,0.46) 46%, transparent 47%) 30% 90% / 4px 4px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.56) 0%, rgba(255,255,255,0.56) 46%, transparent 47%) 11% 76% / 9px 9px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.50) 0%, rgba(255,255,255,0.50) 46%, transparent 47%) 3% 48% / 6px 6px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.52) 0%, rgba(255,255,255,0.52) 46%, transparent 47%) 14% 18% / 7px 7px no-repeat,
-    radial-gradient(circle, rgba(255,255,255,0.44) 0%, rgba(255,255,255,0.44) 46%, transparent 47%) 34% 12% / 5px 5px no-repeat;
-  mix-blend-mode: screen;
-  filter: blur(0.15px) drop-shadow(0 0 10px rgba(123,177,255,0.16));
-  animation: bubble-spray 420ms cubic-bezier(0.15, 0.85, 0.2, 1) forwards;
-}
-
-.bubble.is-popping .bubble__core::after {
-  content: "";
-  position: absolute;
-  inset: -10px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  box-shadow: 0 0 28px rgba(123,177,255,0.2);
-  filter: blur(0.15px);
-  transform-origin: var(--pop-origin-x) var(--pop-origin-y);
-  animation: bubble-ring 420ms cubic-bezier(0.15, 0.85, 0.2, 1) forwards;
-  pointer-events: none;
-}
-
 @keyframes bubble-pop {
   0% { transform: scale(1); opacity: 1; filter: brightness(1) saturate(1); }
   14% { transform: scale(0.92); opacity: 1; filter: brightness(1.26) saturate(1.16); }
@@ -2304,16 +2264,16 @@ body {
   100% { transform: scale(1.58); opacity: 0; filter: brightness(1) saturate(1); }
 }
 
-@keyframes bubble-ring {
-  0% { transform: translate(var(--pop-shift-x), var(--pop-shift-y)) scale(0.45); opacity: 0.65; }
-  55% { opacity: 0.28; }
-  100% { transform: translate(var(--pop-shift-x), var(--pop-shift-y)) scale(1.78); opacity: 0; }
-}
-
-@keyframes bubble-spray {
-  0% { opacity: 0; transform: translate(var(--pop-shift-x), var(--pop-shift-y)) scale(0.22) rotate(var(--pop-rot)); }
-  16% { opacity: 0.95; }
-  100% { opacity: 0; transform: translate(var(--pop-shift-x), var(--pop-shift-y)) scale(1.65) rotate(var(--pop-rot-end)); }
+.bubble-popfx-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0.85;
+  mix-blend-mode: screen;
+  filter: blur(0.18px) saturate(1.18) contrast(1.04);
 }
 
 /* Layer 1: Far back, large, slow, very blurred */
