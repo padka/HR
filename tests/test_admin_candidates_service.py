@@ -8,6 +8,7 @@ from backend.apps.admin_ui.services.candidates import (
     delete_all_candidates,
     get_candidate_detail,
     list_candidates,
+    api_candidate_detail_payload,
     update_candidate_status,
     upsert_candidate,
 )
@@ -187,6 +188,39 @@ async def test_candidate_detail_includes_test_sections_and_telemost():
 
     assert detail["telemost_url"] == telemost_url
     assert detail["telemost_source"] == "upcoming"
+
+
+@pytest.mark.asyncio
+async def test_api_candidate_detail_payload_extracts_hh_profile_url_from_answers():
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999101,
+        fio="HH Link Candidate",
+        city="Екатеринбург",
+    )
+
+    await candidate_services.save_test_result(
+        user_id=candidate.id,
+        raw_score=5,
+        final_score=5.0,
+        rating="TEST1",
+        total_time=120,
+        question_data=[
+            {
+                "question_index": 1,
+                "question_text": "Ссылка на HH",
+                "correct_answer": None,
+                "user_answer": "Вот мой профиль: https://hh.ru/resume/abcdef12345",
+                "attempts_count": 1,
+                "time_spent": 10,
+                "is_correct": True,
+                "overtime": False,
+            }
+        ],
+    )
+
+    payload = await api_candidate_detail_payload(candidate.id)
+    assert payload is not None
+    assert payload.get("hh_profile_url") == "https://hh.ru/resume/abcdef12345"
 
 
 @pytest.mark.asyncio
