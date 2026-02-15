@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from urllib.parse import urlparse
 
 from sqlalchemy import String, cast, delete, exists, func, literal, literal_column, or_, select, false, and_
 from sqlalchemy.exc import OperationalError, ProgrammingError
@@ -3226,10 +3228,12 @@ async def delete_all_candidates() -> int:
 
 
 async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, object]]:
-    detail = await get_candidate_detail(candidate_id)
+    # Preserve principal scoping in case api payload is called outside FastAPI request context.
+    detail = await get_candidate_detail(candidate_id, principal=principal_ctx.get())
     if not detail:
         return None
     user: User = detail["user"]
+    tests: list[TestResult] = list(detail.get("tests", []) or [])
     sections_map = detail.get("test_sections_map", {})
     candidate_actions = detail.get("candidate_actions", []) or []
     slots = detail.get("slots", []) or []
@@ -3330,6 +3334,8 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
             "name": getattr(responsible_recruiter, "name", None),
         }
 
+    hh_profile_url = _extract_hh_profile_url_from_tests(tests)
+
     return {
         "id": user.id,
         "fio": user.fio,
@@ -3338,6 +3344,7 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "telegram_username": _normalize_username(user.telegram_username or user.username),
         "phone": user.phone,
         "is_active": user.is_active,
+        "hh_profile_url": hh_profile_url,
         "test1_report_url": f"/candidates/{user.id}/reports/test1"
         if getattr(user, "test1_report_url", None)
         else None,
@@ -3365,6 +3372,57 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "legacy_status_enabled": detail.get("legacy_status_enabled", False),
         "intro_day_template": detail.get("intro_day_template"),
     }
+
+
+_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+", re.IGNORECASE)
+_BARE_HH_RE = re.compile(r"\b(?:hh\.ru|headhunter\.ru)/[^\s<>\"')\]]+", re.IGNORECASE)
+
+
+def _normalize_hh_url(raw: str) -> Optional[str]:
+    candidate = (raw or "").strip()
+    if not candidate:
+        return None
+    # Strip common trailing punctuation from copy/paste.
+    candidate = candidate.rstrip(").,;:]\"'")
+    if candidate.lower().startswith("hh.ru/") or candidate.lower().startswith("headhunter.ru/"):
+        candidate = "https://" + candidate
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return None
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return None
+    if host.endswith("hh.ru") or host.endswith("headhunter.ru"):
+        return candidate
+    return None
+
+
+def _extract_hh_profile_url_from_tests(tests: list[TestResult]) -> Optional[str]:
+    # Prefer newest test results first.
+    ordered = sorted(tests, key=lambda r: (getattr(r, "created_at", None) or datetime.min, getattr(r, "id", 0)), reverse=True)
+    for result in ordered:
+        answers = list(getattr(result, "answers", []) or [])
+        for answer in answers:
+            text = str(getattr(answer, "user_answer", "") or "")
+            if not text:
+                continue
+            # Fast filter to avoid regex work on most answers.
+            lowered = text.lower()
+            if "hh.ru" not in lowered and "headhunter.ru" not in lowered:
+                continue
+            candidates: list[str] = []
+            candidates.extend(_URL_RE.findall(text))
+            candidates.extend(_BARE_HH_RE.findall(text))
+            for raw in candidates:
+                if "hh.ru" not in raw.lower() and "headhunter.ru" not in raw.lower():
+                    continue
+                normalized = _normalize_hh_url(raw)
+                if normalized:
+                    return normalized
+    return None
 
 
 __all__ = [

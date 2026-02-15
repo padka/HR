@@ -80,6 +80,7 @@ type CandidateDetail = {
   city?: string | null
   telegram_id?: number | null
   telegram_username?: string | null
+  hh_profile_url?: string | null
   phone?: string | null
   is_active?: boolean
   stage?: string | null
@@ -1061,6 +1062,7 @@ export function CandidateDetailPage() {
   const whatsappLink = phoneDigits ? `https://wa.me/${phoneDigits.replace(/\D/g, '')}` : null
   const callLink = phoneDigits ? `tel:${phoneDigits}` : null
   const telemostLink = detail?.telemost_url || null
+  const hhLink = detail?.hh_profile_url || null
 
   const test2Action = actions.find((action) => {
     const key = action.key?.toLowerCase?.() || ''
@@ -1164,6 +1166,17 @@ export function CandidateDetailPage() {
               <span className="cd-contact-btn cd-contact-btn--disabled">
                 <span className="cd-contact-btn__icon">PH</span>
                 <span>Телефон</span>
+              </span>
+            )}
+            {hhLink ? (
+              <a href={hhLink} className="cd-contact-btn" target="_blank" rel="noopener">
+                <span className="cd-contact-btn__icon">HH</span>
+                <span>Профиль</span>
+              </a>
+            ) : (
+              <span className="cd-contact-btn cd-contact-btn--disabled">
+                <span className="cd-contact-btn__icon">HH</span>
+                <span>Профиль</span>
               </span>
             )}
             {detail.telegram_id && (
