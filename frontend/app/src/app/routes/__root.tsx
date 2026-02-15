@@ -207,8 +207,32 @@ export function RootLayout() {
       }
     }
 
-    const popBubble = (bubble: HTMLSpanElement) => {
+    const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
+
+    const popBubble = (bubble: HTMLSpanElement, clientX?: number, clientY?: number) => {
       if (bubble.dataset.popping === '1') return
+
+      // Make each pop feel slightly different and originate from the actual tap point.
+      const rect = bubble.getBoundingClientRect()
+      let originX = 0.5
+      let originY = 0.5
+      if (typeof clientX === 'number' && typeof clientY === 'number' && rect.width > 0 && rect.height > 0) {
+        originX = clamp01((clientX - rect.left) / rect.width)
+        originY = clamp01((clientY - rect.top) / rect.height)
+      }
+
+      const rot = Math.round(Math.random() * 360)
+      const rotEnd = rot + (Math.random() < 0.5 ? -1 : 1) * (12 + Math.random() * 28)
+      const shiftX = Math.round((originX - 0.5) * 22 + (Math.random() * 10 - 5))
+      const shiftY = Math.round((originY - 0.5) * 22 + (Math.random() * 10 - 5))
+
+      bubble.style.setProperty('--pop-origin-x', `${(originX * 100).toFixed(1)}%`)
+      bubble.style.setProperty('--pop-origin-y', `${(originY * 100).toFixed(1)}%`)
+      bubble.style.setProperty('--pop-rot', `${rot}deg`)
+      bubble.style.setProperty('--pop-rot-end', `${rotEnd}deg`)
+      bubble.style.setProperty('--pop-shift-x', `${shiftX}px`)
+      bubble.style.setProperty('--pop-shift-y', `${shiftY}px`)
+
       bubble.dataset.popping = '1'
       bubble.classList.remove('is-hovered')
       bubble.classList.add('is-popping')
@@ -247,7 +271,7 @@ export function RootLayout() {
 
       const bubble = findBubbleAt(event.clientX, event.clientY)
       if (!bubble) return
-      popBubble(bubble)
+      popBubble(bubble, event.clientX, event.clientY)
     }
 
     refreshLayers()
