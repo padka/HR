@@ -1058,10 +1058,6 @@ export function CandidateDetailPage() {
     : detail?.telegram_id
       ? `tg://user?id=${detail.telegram_id}`
       : null
-  const phoneDigits = detail?.phone ? detail.phone.replace(/[^\d+]/g, '') : null
-  const whatsappLink = phoneDigits ? `https://wa.me/${phoneDigits.replace(/\D/g, '')}` : null
-  const callLink = phoneDigits ? `tel:${phoneDigits}` : null
-  const telemostLink = detail?.telemost_url || null
   const hhLink = detail?.hh_profile_url || null
 
   const test2Action = actions.find((action) => {
@@ -1146,28 +1142,6 @@ export function CandidateDetailPage() {
               <span className="cd-contact-btn__icon">CH</span>
               <span>Чат</span>
             </button>
-            {telemostLink ? (
-              <a href={telemostLink} className="cd-contact-btn" target="_blank" rel="noopener">
-                <span className="cd-contact-btn__icon">VC</span>
-                <span>{detail.telemost_source || 'Видеозвонок'}</span>
-              </a>
-            ) : (
-              <span className="cd-contact-btn cd-contact-btn--disabled">
-                <span className="cd-contact-btn__icon">VC</span>
-                <span>Видеозвонок</span>
-              </span>
-            )}
-            {callLink ? (
-              <a href={callLink} className="cd-contact-btn">
-                <span className="cd-contact-btn__icon">PH</span>
-                <span>{detail.phone}</span>
-              </a>
-            ) : (
-              <span className="cd-contact-btn cd-contact-btn--disabled">
-                <span className="cd-contact-btn__icon">PH</span>
-                <span>Телефон</span>
-              </span>
-            )}
             {hhLink ? (
               <a href={hhLink} className="cd-contact-btn" target="_blank" rel="noopener">
                 <span className="cd-contact-btn__icon">HH</span>
