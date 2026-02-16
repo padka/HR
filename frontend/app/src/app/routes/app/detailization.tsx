@@ -2,6 +2,7 @@ import { apiFetch } from '@/api/client'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
+import { useProfile } from '@/app/hooks/useProfile'
 
 type DetailizationItem = {
   id: number
@@ -46,6 +47,9 @@ function attachLabel(value: boolean | null): { text: string; tone: string } {
 }
 
 export function DetailizationPage() {
+  const profile = useProfile()
+  const isAdmin = profile.data?.principal.type === 'admin'
+
   const [showCreate, setShowCreate] = useState(false)
   const [createCandidateId, setCreateCandidateId] = useState('')
   const [createRecruiterId, setCreateRecruiterId] = useState<string>('') // optional; default from API list
@@ -72,6 +76,7 @@ export function DetailizationPage() {
   const recruitersQuery = useQuery<Recruiter[]>({
     queryKey: ['recruiters'],
     queryFn: () => apiFetch('/recruiters'),
+    enabled: Boolean(isAdmin),
   })
 
   const updateMutation = useMutation({
@@ -183,22 +188,24 @@ export function DetailizationPage() {
             </div>
 
             <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
-              <div style={{ display: 'grid', gap: 6 }}>
-                <div className="text-muted text-xs">Рекрутер</div>
-                <select
-                  className="ui-select"
-                  value={createRecruiterId || ''}
-                  onChange={(e) => setCreateRecruiterId(e.target.value)}
-                  disabled={recruitersQuery.isLoading || (recruitersQuery.data?.length || 0) <= 1}
-                >
-                  <option value="">—</option>
-                  {(recruitersQuery.data || []).map((r) => (
-                    <option key={r.id} value={String(r.id)}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {isAdmin && (
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <div className="text-muted text-xs">Рекрутер</div>
+                  <select
+                    className="ui-select"
+                    value={createRecruiterId || ''}
+                    onChange={(e) => setCreateRecruiterId(e.target.value)}
+                    disabled={recruitersQuery.isLoading || (recruitersQuery.data?.length || 0) <= 1}
+                  >
+                    <option value="">—</option>
+                    {(recruitersQuery.data || []).map((r) => (
+                      <option key={r.id} value={String(r.id)}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div style={{ display: 'grid', gap: 6 }}>
                 <div className="text-muted text-xs">Город</div>
@@ -257,12 +264,16 @@ export function DetailizationPage() {
               </button>
               <button
                 className="ui-btn ui-btn--primary"
-                disabled={createMutation.isPending || !createCandidateId.trim()}
+                disabled={createMutation.isPending || !createCandidateId.trim() || (isAdmin && !createRecruiterId.trim())}
                 onClick={async () => {
                   setCreateError('')
                   const candidateId = Number(createCandidateId)
                   if (!Number.isFinite(candidateId) || candidateId <= 0) {
                     setCreateError('Укажите корректный ID кандидата')
+                    return
+                  }
+                  if (isAdmin && !createRecruiterId.trim()) {
+                    setCreateError('Выберите рекрутера')
                     return
                   }
                   const payload: any = {
@@ -272,7 +283,7 @@ export function DetailizationPage() {
                     conducted_at: createConductedAt.trim() || null,
                     is_attached: createIsAttached === 'unknown' ? null : createIsAttached === 'yes',
                   }
-                  if (createRecruiterId) payload.recruiter_id = Number(createRecruiterId)
+                  if (isAdmin && createRecruiterId) payload.recruiter_id = Number(createRecruiterId)
                   if (createCityId) payload.city_id = Number(createCityId)
                   await createMutation.mutateAsync(payload)
                 }}
@@ -290,10 +301,10 @@ export function DetailizationPage() {
           </div>
         )}
 
-        <div className="detailization-grid" style={{ marginTop: 12 }}>
+        <div className={`detailization-grid ${isAdmin ? '' : 'detailization-grid--recruiter'}`} style={{ marginTop: 12 }}>
           <div className="detailization-grid__head">
             <div>Column 9</div>
-            <div>Рекрутер</div>
+            {isAdmin && <div>Рекрутер</div>}
             <div>Дата проведения</div>
             <div>Город</div>
             <div>Эксперт (ФИО)</div>
@@ -317,7 +328,7 @@ export function DetailizationPage() {
                   />
                 </div>
 
-                <div className="text-sm">{row.recruiter?.name || '—'}</div>
+                {isAdmin && <div className="text-sm">{row.recruiter?.name || '—'}</div>}
 
                 <div className="text-sm">
                   <div>{fmtDate(row.conducted_at)}</div>

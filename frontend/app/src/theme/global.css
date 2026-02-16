@@ -7233,6 +7233,11 @@ details > *:not(summary) {
   align-items: center;
 }
 
+.detailization-grid--recruiter .detailization-grid__head,
+.detailization-grid--recruiter .detailization-grid__row {
+  grid-template-columns: 140px 140px 140px 180px 1fr 120px 120px;
+}
+
 .detailization-grid__head {
   padding: 10px 12px;
   color: var(--muted);
