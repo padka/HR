@@ -28,6 +28,16 @@
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
 }
 
+/* Use when the calendar is rendered inside an existing glass panel (e.g. Dashboard). */
+.schedule-calendar.schedule-calendar--embedded {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
 /* Loading overlay */
 .calendar-loading {
   position: absolute;

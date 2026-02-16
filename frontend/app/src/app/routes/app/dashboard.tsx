@@ -1,8 +1,9 @@
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { apiFetch } from '@/api/client'
 import { useProfile } from '@/app/hooks/useProfile'
+import { ScheduleCalendar, type SlotExtendedProps } from '@/app/components/Calendar/ScheduleCalendar'
 import { Link } from '@tanstack/react-router'
 
 type SummaryPayload = {
@@ -18,45 +19,9 @@ type SummaryPayload = {
   test1_rejections_percent: number
 }
 
-type CalendarDay = {
-  date: string
-  label: string
-  weekday: string
-  count: number
-  is_today: boolean
-  is_selected: boolean
-}
-
-type CalendarEvent = {
-  id: number
-  status: string
-  status_label: string
-  status_variant: string
-  start_time: string
-  end_time: string
-  duration: number
-  recruiter: { id: number | null; name: string }
-  city: { id: number | null; name: string }
-  candidate: {
-    id?: number | null
-    name: string
-    profile_url?: string | null
-    telegram_id?: number | null
-    status_slug?: string | null
-  }
-}
-
-type CalendarPayload = {
-  selected_date: string
-  selected_label: string
-  selected_human: string
-  timezone: string
-  days: CalendarDay[]
-  events: CalendarEvent[]
-  events_total: number
-  status_summary: Record<string, number>
-  meta: string
-  updated_label: string
+type RescheduleTarget = {
+  slotId: number
+  candidateName: string
 }
 
 type KPITrend = {
@@ -159,6 +124,8 @@ const AI_LEVEL_LABELS: Record<'high' | 'medium' | 'low' | 'unknown', string> = {
   unknown: 'Не определена',
 }
 
+const INTERVIEW_CAL_STATUSES = ['confirmed_by_candidate']
+
 function formatAiRelevance(candidate: IncomingCandidate): string {
   if (typeof candidate.ai_relevance_score === 'number') {
     const score = Math.min(100, Math.max(0, Math.round(candidate.ai_relevance_score)))
@@ -191,16 +158,17 @@ function ModalPortal({ children }: { children: ReactNode }) {
 
 export function DashboardPage() {
   const profile = useProfile()
+  const queryClient = useQueryClient()
   const profileReady = profile.isSuccess
   const isAdmin = profile.data?.principal.type === 'admin'
   const initialRange = useMemo(() => getDefaultRange(), [])
   const [rangeFrom, setRangeFrom] = useState(initialRange.from)
   const [rangeTo, setRangeTo] = useState(initialRange.to)
-  const [calendarDate, setCalendarDate] = useState(initialRange.to)
   const [recruiterId, setRecruiterId] = useState('')
   const [planInputs, setPlanInputs] = useState<Record<number, string>>({})
   const [toast, setToast] = useState<string | null>(null)
-  const [rescheduleTarget, setRescheduleTarget] = useState<CalendarEvent | null>(null)
+  const [interviewTarget, setInterviewTarget] = useState<SlotExtendedProps | null>(null)
+  const [rescheduleTarget, setRescheduleTarget] = useState<RescheduleTarget | null>(null)
   const [rescheduleDate, setRescheduleDate] = useState('')
   const [rescheduleTime, setRescheduleTime] = useState('')
   const [rescheduleReason, setRescheduleReason] = useState('')
@@ -229,20 +197,6 @@ export function DashboardPage() {
     queryFn: () => apiFetch('/recruiters'),
     enabled: profileReady && Boolean(isAdmin),
     staleTime: 60_000,
-  })
-
-  const calendarParams = useMemo(() => {
-    const params = new URLSearchParams()
-    params.set('date', calendarDate)
-    params.set('days', '14')
-    if (recruiterId) params.set('recruiter', recruiterId)
-    return params.toString()
-  }, [calendarDate, recruiterId])
-
-  const calendarQuery = useQuery<CalendarPayload>({
-    queryKey: ['dashboard-calendar', calendarParams],
-    queryFn: () => apiFetch(`/dashboard/calendar?${calendarParams}`),
-    enabled: profileReady && !isAdmin,
   })
 
   const planQuery = useQuery<RecruiterCityPlan[]>({
@@ -308,16 +262,6 @@ export function DashboardPage() {
     },
   })
 
-  const rejectSlot = useMutation({
-    mutationFn: async (slotId: number) =>
-      apiFetch(`/slots/${slotId}/reject_booking`, { method: 'POST' }),
-    onSuccess: (data: any) => {
-      showToast(data?.message || 'Слот освобождён')
-      calendarQuery.refetch()
-    },
-    onError: (error: Error) => showToast(error.message),
-  })
-
   const rescheduleSlot = useMutation({
     mutationFn: async (payload: { slotId: number; date: string; time: string; reason?: string }) =>
       apiFetch(`/slots/${payload.slotId}/reschedule`, {
@@ -327,20 +271,7 @@ export function DashboardPage() {
     onSuccess: (data: any) => {
       showToast(data?.message || 'Слот перенесён')
       setRescheduleTarget(null)
-      calendarQuery.refetch()
-    },
-    onError: (error: Error) => showToast(error.message),
-  })
-
-  const candidateAction = useMutation({
-    mutationFn: async (payload: { candidateId: number; actionKey: string }) =>
-      apiFetch(`/candidates/${payload.candidateId}/actions/${payload.actionKey}`, {
-        method: 'POST',
-      }),
-    onSuccess: (data: any) => {
-      showToast(data?.message || 'Действие выполнено')
-      calendarQuery.refetch()
-      incomingQuery.refetch()
+      queryClient.invalidateQueries({ queryKey: ['calendar-events'] })
     },
     onError: (error: Error) => showToast(error.message),
   })
@@ -379,25 +310,31 @@ export function DashboardPage() {
       showToast(data?.message || 'Предложение отправлено кандидату')
       setIncomingTarget(null)
       incomingQuery.refetch()
-      calendarQuery.refetch()
+      queryClient.invalidateQueries({ queryKey: ['calendar-events'] })
     },
     onError: (error: Error) => showToast(error.message),
   })
 
-  const openReschedule = (event: CalendarEvent) => {
-    const selected = calendarQuery.data?.selected_date || toIsoDate(new Date())
-    setRescheduleTarget(event)
-    setRescheduleDate(selected)
-    setRescheduleTime(event.start_time || '09:00')
+  const openRescheduleFromSlot = (slot: SlotExtendedProps) => {
+    setRescheduleTarget({
+      slotId: slot.slot_id,
+      candidateName: slot.candidate_name || 'Без имени',
+    })
+    setRescheduleDate(slot.local_date || toIsoDate(new Date()))
+    setRescheduleTime(slot.local_start || '09:00')
     setRescheduleReason('')
   }
 
   const openIncomingSchedule = (candidate: IncomingCandidate) => {
-    const selected = calendarQuery.data?.selected_date || toIsoDate(new Date())
+    const selected = toIsoDate(new Date())
     setIncomingTarget(candidate)
     setIncomingDate(selected)
     setIncomingTime('10:00')
     setIncomingMessage('')
+  }
+
+  const handleInterviewClick = (_slotId: number, slot: SlotExtendedProps) => {
+    setInterviewTarget(slot)
   }
 
   const summaryCards = useMemo(() => {
@@ -869,88 +806,84 @@ export function DashboardPage() {
           </div>
         )}
 
-        {!isAdmin && (
+        {profileReady && !isAdmin && (
           <div className="glass panel dashboard-panel">
             <div className="dashboard-section-header">
               <div>
                 <h2 className="section-title">Календарь интервью</h2>
-                <p className="subtitle">
-                  {calendarQuery.data?.selected_human} · {calendarQuery.data?.meta}
-                </p>
+                <p className="subtitle">Подтверждённые интервью. Клик по событию открывает действия.</p>
               </div>
-              <button className="ui-btn ui-btn--ghost" onClick={() => calendarQuery.refetch()}>
+              <button
+                className="ui-btn ui-btn--ghost"
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['calendar-events'] })}
+              >
                 Обновить
               </button>
             </div>
-            {calendarQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-            {calendarQuery.isError && (
-              <p style={{ color: '#f07373' }}>Ошибка: {(calendarQuery.error as Error).message}</p>
-            )}
-            {calendarQuery.data && (
-              <>
-                <div className="calendar-grid">
-                  {calendarQuery.data.days.map((day) => (
-                    <button
-                      key={day.date}
-                      className={`calendar-day${day.is_selected ? ' is-selected' : ''}${day.is_today ? ' is-today' : ''}`}
-                      onClick={() => setCalendarDate(day.date)}
-                    >
-                      <span className="calendar-day__weekday">{day.weekday}</span>
-                      <span className="calendar-day__label">{day.label}</span>
-                      <span className="calendar-day__count">{day.count}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="calendar-meta">
-                  <span>Подтверждено: {calendarQuery.data.status_summary?.CONFIRMED_BY_CANDIDATE ?? 0}</span>
-                </div>
-                <div className="calendar-events">
-                  {calendarQuery.data.events.length === 0 && (
-                    <p className="subtitle">Нет слотов на выбранную дату.</p>
-                  )}
-                  {calendarQuery.data.events.map((event) => (
-                    <div key={event.id} className="calendar-event">
-                      <div className="calendar-event__primary">
-                        <div className="calendar-event__header">
-                          <div className="calendar-event__time">
-                            {event.start_time}–{event.end_time}
-                          </div>
-                          <span
-                            className={`status-pill status-pill--${
-                              event.status_variant === 'accent' ? 'info' : event.status_variant
-                            }`}
-                          >
-                            {event.status_label}
-                          </span>
-                        </div>
-                        <div className="calendar-event__meta">
-                          {event.candidate.name}
-                          {event.city.name ? ` · ${event.city.name}` : ''}
-                        </div>
-                      </div>
-                      <div className="calendar-event__actions">
-                        {event.candidate.id ? (
-                          <Link
-                            className="ui-btn ui-btn--ghost ui-btn--sm"
-                            to="/app/candidates/$candidateId"
-                            params={{ candidateId: String(event.candidate.id) }}
-                          >
-                            Профиль
-                          </Link>
-                        ) : (
-                          <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled>
-                            Профиль
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+            <ScheduleCalendar
+              recruiterId={profile.data?.recruiter?.id || undefined}
+              statuses={INTERVIEW_CAL_STATUSES}
+              onSlotClick={handleInterviewClick}
+              editable={false}
+              embedded={true}
+            />
           </div>
         )}
       </div>
+
+      {interviewTarget && (
+        <ModalPortal>
+          <div
+            className="modal-overlay"
+            onClick={(e) => e.target === e.currentTarget && setInterviewTarget(null)}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="glass glass--elevated modal modal--sm" onClick={(e) => e.stopPropagation()}>
+              <div className="modal__header">
+                <div>
+                  <h2 className="modal__title">{interviewTarget.candidate_name || 'Интервью'}</h2>
+                  <p className="modal__subtitle">
+                    {interviewTarget.city_name ? `${interviewTarget.city_name} · ` : ''}
+                    {interviewTarget.local_date} · {interviewTarget.local_start}–{interviewTarget.local_end}
+                  </p>
+                </div>
+                <button className="ui-btn ui-btn--ghost" onClick={() => setInterviewTarget(null)}>
+                  Закрыть
+                </button>
+              </div>
+              <div className="modal__body">
+                <span className="status-pill status-pill--success">{interviewTarget.status_label}</span>
+              </div>
+              <div className="modal__footer">
+                {interviewTarget.candidate_id ? (
+                  <Link
+                    className="ui-btn ui-btn--ghost"
+                    to="/app/candidates/$candidateId"
+                    params={{ candidateId: String(interviewTarget.candidate_id) }}
+                    onClick={() => setInterviewTarget(null)}
+                  >
+                    Профиль
+                  </Link>
+                ) : (
+                  <button className="ui-btn ui-btn--ghost" disabled>
+                    Профиль
+                  </button>
+                )}
+                <button
+                  className="ui-btn ui-btn--primary"
+                  onClick={() => {
+                    openRescheduleFromSlot(interviewTarget)
+                    setInterviewTarget(null)
+                  }}
+                >
+                  Перенести
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
 
       {rescheduleTarget && (
         <ModalPortal>
@@ -964,7 +897,7 @@ export function DashboardPage() {
               <div className="modal__header">
                 <div>
                   <h2 className="modal__title">Перенести слот</h2>
-                  <p className="modal__subtitle">{rescheduleTarget.candidate.name}</p>
+                  <p className="modal__subtitle">{rescheduleTarget.candidateName}</p>
                 </div>
                 <button className="ui-btn ui-btn--ghost" onClick={() => setRescheduleTarget(null)}>
                   Закрыть
@@ -1008,7 +941,7 @@ export function DashboardPage() {
                       return
                     }
                     rescheduleSlot.mutate({
-                      slotId: rescheduleTarget.id,
+                      slotId: rescheduleTarget.slotId,
                       date: rescheduleDate,
                       time: rescheduleTime,
                       reason: rescheduleReason,

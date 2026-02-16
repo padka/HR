@@ -10,7 +10,7 @@ import { apiFetch } from '../../../api/client'
 import './calendar.css'
 
 // Types for API response
-interface SlotExtendedProps {
+export interface SlotExtendedProps {
   slot_id: number
   status: string
   status_label: string
@@ -64,6 +64,7 @@ interface ScheduleCalendarProps {
   onSlotCreate?: (start: Date, end: Date) => void
   onSlotMove?: (slotId: number, newStart: Date) => void
   editable?: boolean
+  embedded?: boolean
 }
 
 export function ScheduleCalendar({
@@ -74,6 +75,7 @@ export function ScheduleCalendar({
   onSlotCreate,
   onSlotMove,
   editable = true,
+  embedded = false,
 }: ScheduleCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null)
   const queryClient = useQueryClient()
@@ -220,7 +222,7 @@ export function ScheduleCalendar({
   }
 
   return (
-    <div className="schedule-calendar">
+    <div className={`schedule-calendar${embedded ? ' schedule-calendar--embedded' : ''}`}>
       {isLoading && <div className="calendar-loading">Загрузка...</div>}
       <FullCalendar
         ref={calendarRef}
