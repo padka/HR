@@ -28,10 +28,14 @@ Endpoint: `GET /metrics` (по умолчанию **включен** в non-prod
   - `db_queries_total{route,operation}` где `operation=select|insert|update|delete|other`
   - `db_query_duration_seconds_bucket{route,operation,le}`
   - `db_slow_queries_total{route,operation}` (threshold по `DB_SLOW_QUERY_SECONDS`, default `0.2`)
+  - per-request (best-effort):
+    - `http_db_queries_per_request_bucket{route,outcome,le}`
+    - `http_db_query_time_seconds_bucket{route,outcome,le}`
   - Pool:
     - `db_pool_checked_out`
     - `db_pool_size`
     - `db_pool_overflow`
+    - `db_pool_acquire_seconds_bucket{route,le}` (best-effort: includes wait under contention)
     - `db_pool_timeouts_total`
     - `db_too_many_connections_total`
   - `db_active_connections` (best-effort, `pg_stat_activity`, иначе `-1`)
@@ -83,4 +87,3 @@ Stale policy:
 4. Если endpoint допускается в degraded-mode, добавь path в allowlist.
 5. Добавь тест:
    - разные principals → разные ключи (или явно shared)
-

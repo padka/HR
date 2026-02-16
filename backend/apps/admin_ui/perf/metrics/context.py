@@ -33,6 +33,8 @@ class PerfContext:
     method: str
     degraded_reason: str | None = None
     cache_events: list[CacheEvent] = field(default_factory=list)
+    db_query_count: int = 0
+    db_query_seconds: float = 0.0
 
 
 _CTX: ContextVar[PerfContext | None] = ContextVar("admin_ui_perf_ctx", default=None)
@@ -84,3 +86,13 @@ def add_cache_event(*, backend: CacheBackend, state: CacheState, freshness: Cach
     if ctx is None:
         return
     ctx.cache_events.append(CacheEvent(backend=backend, state=state, freshness=freshness))
+
+
+def add_db_query(*, duration_seconds: float) -> None:
+    """Record a single DB query for the current request (best-effort)."""
+
+    ctx = _CTX.get()
+    if ctx is None:
+        return
+    ctx.db_query_count += 1
+    ctx.db_query_seconds += float(duration_seconds)

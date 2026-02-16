@@ -25,4 +25,6 @@ def test_metrics_endpoint_enabled(monkeypatch):
         # A couple of core metrics should be present.
         assert "http_requests_total" in resp.text
         assert "http_request_duration_seconds" in resp.text
-
+        assert "db_pool_acquire_seconds_bucket" in resp.text
+        assert "http_db_queries_per_request_bucket" in resp.text
+        assert "http_db_query_time_seconds_bucket" in resp.text

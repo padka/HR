@@ -1,28 +1,30 @@
-"""HTTP per-route metrics and cache/degraded markers."""
+"""HTTP per-route metrics and cache/degraded markers.
+
+Implemented as ASGI middleware (instead of BaseHTTPMiddleware) to:
+- reduce overhead under load
+- handle client disconnects during response streaming without noisy tracebacks
+"""
 
 from __future__ import annotations
 
 import os
 import time
-
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from typing import Any, Callable
 
 from backend.apps.admin_ui.perf.metrics import context as perf_context
 from backend.apps.admin_ui.perf.metrics import prometheus
 from backend.core.settings import get_settings
 
 
-def _route_label(request: Request) -> str:
+def _route_label(scope: dict[str, Any]) -> str:
     """Return a low-cardinality route label (prefer route template)."""
 
-    route = request.scope.get("route")
+    route = scope.get("route")
     path = getattr(route, "path", None)
     if isinstance(path, str) and path:
         return path
-    # Fallback: raw path (may include IDs, but should be rare for API routes).
-    return request.url.path
+    raw = scope.get("path") or ""
+    return str(raw) if raw else "unknown"
 
 
 def _sanitize_path(path: str) -> str:
@@ -53,34 +55,89 @@ def _diagnostic_headers_enabled() -> bool:
     }
 
 
-class HTTPMetricsMiddleware(BaseHTTPMiddleware):
+def _is_client_disconnect(exc: BaseException) -> bool:
+    msg = str(exc)
+    # uvloop: RuntimeError: unable to perform operation on <TCPTransport closed=True ...>
+    return ("TCPTransport closed" in msg) or ("handler is closed" in msg)
+
+
+class HTTPMetricsMiddleware:
     """Collect per-route latency/rps/error metrics with cache + degraded markers."""
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict[str, Any], receive: Callable, send: Callable) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = str(scope.get("method") or "GET")
         # Use raw path early, refine to route template after routing.
-        initial_route = _sanitize_path(request.url.path)
-        token = perf_context.set_context(route=initial_route, method=request.method)
+        initial_route = _sanitize_path(str(scope.get("path") or ""))
+        token = perf_context.set_context(route=initial_route, method=method)
+
+        diagnostic_headers = _diagnostic_headers_enabled()
+
         prometheus.HTTP_INFLIGHT.inc()
         start = time.perf_counter()
-        response: Response | None = None
         status_code = 500
+        client_disconnected = False
+
+        async def send_wrapper(message: dict[str, Any]) -> None:
+            nonlocal status_code, client_disconnected
+            if message.get("type") == "http.response.start":
+                status_code = int(message.get("status") or 500)
+
+                # Optional headers for non-prod diagnostics.
+                if diagnostic_headers:
+                    ctx = perf_context.get_context()
+                    if ctx is not None:
+                        cache_hits = [ev for ev in ctx.cache_events if ev.state == "hit"]
+                        cache_misses = [ev for ev in ctx.cache_events if ev.state != "hit"]
+                        stale_hit = any(ev.freshness == "stale" for ev in cache_hits)
+                        x_cache = None
+                        if stale_hit:
+                            x_cache = "STALE"
+                        elif cache_hits:
+                            x_cache = "HIT"
+                        elif cache_misses:
+                            x_cache = "MISS"
+                        if x_cache:
+                            headers = list(message.get("headers") or [])
+                            if not any(k.lower() == b"x-cache" for k, _ in headers):
+                                headers.append((b"x-cache", x_cache.encode("ascii", "ignore")))
+                                message["headers"] = headers
+
+            try:
+                await send(message)
+            except (BrokenPipeError, ConnectionResetError):
+                client_disconnected = True
+                return
+            except RuntimeError as exc:
+                if _is_client_disconnect(exc):
+                    client_disconnected = True
+                    return
+                raise
+
         try:
-            response = await call_next(request)
-            status_code = int(getattr(response, "status_code", 500))
-            return response
+            await self.app(scope, receive, send_wrapper)
         finally:
             duration = max(0.0, time.perf_counter() - start)
             prometheus.HTTP_INFLIGHT.dec()
 
             ctx = perf_context.get_context()
-            # Refine route label if possible.
-            final_route = _route_label(request)
+            final_route = _route_label(scope)
             if ctx is not None:
                 ctx.route = final_route
 
             degraded = bool(ctx and ctx.degraded_reason)
             if degraded:
                 outcome = "degraded"
+            elif client_disconnected:
+                # Not a server error; the client aborted mid-response.
+                outcome = "error"
+                status_code = 499
             elif status_code >= 500:
                 outcome = "error"
             else:
@@ -88,7 +145,7 @@ class HTTPMetricsMiddleware(BaseHTTPMiddleware):
 
             prometheus.observe_http(
                 route=final_route,
-                method=request.method,
+                method=method,
                 status_code=status_code,
                 outcome=outcome,
                 duration_seconds=duration,
@@ -96,7 +153,6 @@ class HTTPMetricsMiddleware(BaseHTTPMiddleware):
 
             # Cache markers.
             cache_hits = []
-            cache_misses = []
             stale_hit = False
             if ctx is not None:
                 for ev in ctx.cache_events:
@@ -104,8 +160,6 @@ class HTTPMetricsMiddleware(BaseHTTPMiddleware):
                         cache_hits.append(ev)
                         if ev.freshness == "stale":
                             stale_hit = True
-                    else:
-                        cache_misses.append(ev)
 
             if cache_hits:
                 # Only count one hit per backend per request.
@@ -118,16 +172,15 @@ class HTTPMetricsMiddleware(BaseHTTPMiddleware):
                 for backend, freshness in by_backend.items():
                     prometheus.observe_cache(route=final_route, backend=backend, freshness=freshness)
 
-            # Optional headers for non-prod diagnostics.
-            if response is not None and _diagnostic_headers_enabled():
-                x_cache = None
-                if stale_hit:
-                    x_cache = "STALE"
-                elif cache_hits:
-                    x_cache = "HIT"
-                elif cache_misses:
-                    x_cache = "MISS"
-                if x_cache:
-                    response.headers.setdefault("X-Cache", x_cache)
+            # Per-request DB diagnostics (best-effort).
+            if ctx is not None:
+                prometheus.HTTP_DB_QUERIES_PER_REQUEST.labels(
+                    route=final_route,
+                    outcome=outcome,
+                ).observe(float(ctx.db_query_count))
+                prometheus.HTTP_DB_QUERY_TIME_SECONDS.labels(
+                    route=final_route,
+                    outcome=outcome,
+                ).observe(float(ctx.db_query_seconds))
 
             perf_context.reset_context(token)

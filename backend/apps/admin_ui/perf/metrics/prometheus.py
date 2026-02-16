@@ -78,6 +78,35 @@ HTTP_SERVED_STALE_TOTAL = Counter(
     labelnames=("route", "backend"),
 )
 
+HTTP_DB_QUERIES_PER_REQUEST = Histogram(
+    "http_db_queries_per_request",
+    "Number of DB queries executed during a single HTTP request (best-effort).",
+    labelnames=("route", "outcome"),
+    buckets=(0, 1, 2, 5, 10, 20, 50, 100, 200),
+)
+
+HTTP_DB_QUERY_TIME_SECONDS = Histogram(
+    "http_db_query_time_seconds",
+    "Total DB time spent during a single HTTP request in seconds (best-effort).",
+    labelnames=("route", "outcome"),
+    buckets=(
+        0.0005,
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+    ),
+)
+
 # ----------------------------
 # DB metrics
 # ----------------------------
@@ -135,6 +164,31 @@ DB_TOO_MANY_CONNECTIONS_TOTAL = Counter(
     "db_too_many_connections_total",
     "Total asyncpg TooManyConnectionsError observed (best-effort).",
 )
+
+DB_POOL_ACQUIRE_SECONDS = Histogram(
+    "db_pool_acquire_seconds",
+    "Time spent acquiring a DB connection from the SQLAlchemy pool (best-effort), labeled by route.",
+    labelnames=("route",),
+    buckets=(
+        0.0005,
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+    ),
+)
+# Ensure the metric exists in `/metrics` even before the first observation.
+DB_POOL_ACQUIRE_SECONDS.labels(route="unknown")
 
 DB_ACTIVE_CONNECTIONS = Gauge(
     "db_active_connections",

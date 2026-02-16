@@ -70,6 +70,7 @@ def install_sqlalchemy_metrics(async_engine: AsyncEngine) -> None:
         elapsed = max(0.0, time.perf_counter() - float(start))
         ctx = perf_context.get_context()
         route = (ctx.route if ctx and ctx.route else "unknown")
+        perf_context.add_db_query(duration_seconds=elapsed)
         op = _operation(statement or "")
         prometheus.DB_QUERIES_TOTAL.labels(route=route, operation=op).inc()
         prometheus.DB_QUERY_DURATION_SECONDS.labels(route=route, operation=op).observe(elapsed)
@@ -93,6 +94,34 @@ def install_sqlalchemy_metrics(async_engine: AsyncEngine) -> None:
     prometheus.DB_POOL_CHECKED_OUT.set_function(lambda: _safe_call("checkedout"))
     prometheus.DB_POOL_SIZE.set_function(lambda: _safe_call("size"))
     prometheus.DB_POOL_OVERFLOW.set_function(lambda: _safe_call("overflow"))
+
+    # Best-effort pool acquisition timing.
+    #
+    # We wrap the pool's internal `_do_get()` to measure *wait time* under
+    # contention (plus any connection creation time when the pool grows).
+    #
+    # Notes:
+    # - This is intended for non-prod perf work; metrics are off in production
+    #   by default, and install_sqlalchemy_metrics() is idempotent.
+    # - Route attribution relies on perf_context (set by HTTP middleware).
+    if not getattr(pool, "_perf_do_get_wrapped", False) and hasattr(pool, "_do_get"):
+        try:
+            orig_do_get = pool._do_get  # type: ignore[attr-defined]
+
+            def _wrapped_do_get():  # type: ignore[no-redef]
+                start = time.perf_counter()
+                try:
+                    return orig_do_get()
+                finally:
+                    elapsed = max(0.0, time.perf_counter() - start)
+                    ctx = perf_context.get_context()
+                    route = (ctx.route if ctx and ctx.route else "unknown")
+                    prometheus.DB_POOL_ACQUIRE_SECONDS.labels(route=route).observe(elapsed)
+
+            pool._do_get = _wrapped_do_get  # type: ignore[attr-defined]
+            setattr(pool, "_perf_do_get_wrapped", True)
+        except Exception:
+            logger.exception("Failed to install pool acquisition timing wrapper")
 
     _installed = True
 
