@@ -1496,24 +1496,98 @@ body {
 }
 }
 
-.incoming-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--space-md);
+.incoming-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
 }
 
-.incoming-card {
-  padding: var(--space-md);
+.incoming-toolbar__stats {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+}
+
+.incoming-toolbar__stats strong {
+  font-size: var(--text-lg);
+  line-height: 1;
+}
+
+.incoming-toolbar__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.incoming-toolbar__search,
+.incoming-toolbar__select {
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(10, 16, 30, 0.56);
+  color: var(--text);
+  border-radius: 10px;
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.incoming-toolbar__search {
+  min-width: 240px;
+}
+
+.incoming-toolbar__search:focus,
+.incoming-toolbar__select:focus {
+  border-color: rgba(110,170,255,0.55);
+  box-shadow: 0 0 0 3px rgba(110,170,255,0.16);
+}
+
+.incoming-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-sm);
+  max-height: min(64vh, 760px);
+  overflow: auto;
+  padding-right: 4px;
 }
 
-.incoming-card__main {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+.incoming-row {
+  padding: 12px;
+  border-radius: 14px;
+  display: grid;
+  grid-template-columns: minmax(280px, 1.2fr) minmax(240px, 1fr) auto;
   gap: var(--space-md);
+  align-items: center;
+}
+
+.incoming-row__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.incoming-row__avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #eaf4ff;
+  border: 1px solid rgba(123, 177, 255, 0.45);
+  background: linear-gradient(135deg, rgba(113, 166, 255, 0.38), rgba(73, 125, 238, 0.28));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22);
+  flex: 0 0 auto;
+}
+
+.incoming-row__info {
+  min-width: 0;
 }
 
 .incoming-card__name {
@@ -1533,18 +1607,39 @@ body {
   font-size: var(--text-sm);
 }
 
-.incoming-card__actions {
+.incoming-row__status.status-pill {
+  margin-left: auto;
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.1;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.incoming-row__message {
+  min-width: 0;
+}
+
+.incoming-row__message .incoming-card__note {
+  margin-top: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.incoming-row__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-xs);
+  justify-content: flex-end;
 }
 
-.incoming-card__actions .ui-btn {
+.incoming-row__actions .ui-btn {
   min-height: 32px;
 }
 
 .incoming-card__note {
-  margin-top: var(--space-xs);
   color: var(--muted);
   font-size: var(--text-sm);
 }
@@ -1565,6 +1660,54 @@ body {
   background: rgba(123, 177, 255, 0.2);
   color: var(--accent-light);
   border: 1px solid rgba(123, 177, 255, 0.35);
+}
+
+.dashboard-incoming .incoming-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dashboard-incoming .incoming-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(140, 188, 255, 0.28);
+}
+
+.dashboard-incoming .incoming-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 1440px) {
+  .incoming-row {
+    grid-template-columns: minmax(240px, 1fr) auto;
+  }
+
+  .incoming-row__message {
+    grid-column: 1 / -1;
+  }
+
+  .incoming-row__actions {
+    justify-content: flex-start;
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 860px) {
+  .incoming-toolbar__controls {
+    width: 100%;
+  }
+
+  .incoming-toolbar__search {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .incoming-row {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+  }
+
+  .incoming-row__status.status-pill {
+    margin-left: 0;
+  }
 }
 
 .incoming-card__assign {

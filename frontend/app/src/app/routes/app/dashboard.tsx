@@ -187,6 +187,9 @@ export function DashboardPage() {
   const [incomingDate, setIncomingDate] = useState('')
   const [incomingTime, setIncomingTime] = useState('')
   const [incomingMessage, setIncomingMessage] = useState('')
+  const [incomingSearch, setIncomingSearch] = useState('')
+  const [incomingFilter, setIncomingFilter] = useState<'all' | 'new' | 'stalled'>('all')
+  const [incomingSort, setIncomingSort] = useState<'waiting' | 'recent' | 'name'>('waiting')
 
   const showToast = (message: string) => {
     setToast(message)
@@ -391,6 +394,59 @@ export function DashboardPage() {
       { label: '% отказов тест1', value: data.test1_rejections_percent },
     ]
   }, [summaryQuery.data])
+
+  const incomingItems = useMemo(() => {
+    const base = [...(incomingQuery.data?.items || [])]
+    const search = incomingSearch.trim().toLowerCase()
+    const now = Date.now()
+
+    const filtered = base.filter((candidate) => {
+      if (incomingFilter === 'new') {
+        if (!candidate.last_message_at) return false
+        const ageMs = now - new Date(candidate.last_message_at).getTime()
+        if (!Number.isFinite(ageMs) || ageMs > 24 * 60 * 60 * 1000) return false
+      }
+
+      if (incomingFilter === 'stalled') {
+        const stalledByStatus = candidate.status_slug === 'stalled_waiting_slot'
+        const stalledByTime = (candidate.waiting_hours || 0) >= 24
+        if (!stalledByStatus && !stalledByTime) return false
+      }
+
+      if (!search) return true
+      const haystack = [
+        candidate.name,
+        candidate.city,
+        candidate.status_display,
+        candidate.telegram_username,
+        candidate.last_message,
+        candidate.availability_note,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(search)
+    })
+
+    filtered.sort((a, b) => {
+      if (incomingSort === 'name') {
+        return (a.name || '').localeCompare(b.name || '', 'ru')
+      }
+      if (incomingSort === 'recent') {
+        const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0
+        const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0
+        return bTime - aTime
+      }
+      const aw = a.waiting_hours ?? -1
+      const bw = b.waiting_hours ?? -1
+      if (bw !== aw) return bw - aw
+      const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0
+      const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0
+      return bTime - aTime
+    })
+
+    return filtered
+  }, [incomingFilter, incomingQuery.data?.items, incomingSearch, incomingSort])
 
   return (
     <div className="page dashboard-page">
@@ -702,95 +758,142 @@ export function DashboardPage() {
               </div>
             )}
             {incomingQuery.data && incomingQuery.data.items.length > 0 && (
-              <div className="incoming-grid">
-                {incomingQuery.data.items.map((candidate) => (
-                  <div key={candidate.id} className="glass glass--subtle incoming-card">
-                    <div className="incoming-card__main">
-                      <div>
-                        <div className="incoming-card__name">
-                          {candidate.name || 'Без имени'}
-                          {candidate.last_message_at && (
-                            Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
-                          ) && <span className="incoming-card__badge">NEW</span>}
-                        </div>
-                        <div className="incoming-card__meta">
-                          <span>{candidate.city || 'Город не указан'}</span>
-                          {candidate.waiting_hours != null && (
-                            <span>· ждёт {candidate.waiting_hours} ч</span>
-                          )}
-                          {candidate.availability_window && (
-                            <span>· {candidate.availability_window}</span>
-                          )}
-                        </div>
-                        {candidate.availability_note && (
-                          <div className="incoming-card__note">
-                            ✉️ {candidate.availability_note}
-                          </div>
-                        )}
-                        {!candidate.availability_note && candidate.last_message && (
-                          <div className="incoming-card__note">
-                            💬 {candidate.last_message}
-                            {candidate.last_message_at && (
-                              <span className="incoming-card__note-time">
-                                {new Date(candidate.last_message_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      {candidate.status_display && (
-                        <span
-                          className={`status-pill status-pill--${
-                            candidate.status_slug === 'stalled_waiting_slot'
-                              ? 'danger'
-                              : candidate.status_slug === 'slot_pending'
-                                ? 'info'
-                                : 'warning'
-                          }`}
-                        >
-                          {candidate.status_display}
-                        </span>
-                      )}
-                    </div>
-                    <div className="incoming-card__actions">
-                      <Link
-                        className="ui-btn ui-btn--ghost ui-btn--sm"
-                        to="/app/candidates/$candidateId"
-                        params={{ candidateId: String(candidate.id) }}
-                      >
-                        Профиль
-                      </Link>
-                      {(() => {
-                        const username = candidate.telegram_username?.replace(/^@/, '')
-                        const link = username
-                          ? `https://t.me/${username}`
-                          : candidate.telegram_id
-                            ? `tg://user?id=${candidate.telegram_id}`
-                            : null
-                        return link ? (
-                          <a className="ui-btn ui-btn--ghost ui-btn--sm" href={link} target="_blank" rel="noopener">
-                            Telegram
-                          </a>
-                        ) : null
-                      })()}
-                      <button
-                        className="ui-btn ui-btn--primary ui-btn--sm"
-                        type="button"
-                        onClick={() => openIncomingSchedule(candidate)}
-                      >
-                        Предложить время
-                      </button>
-                      <button
-                        className="ui-btn ui-btn--danger ui-btn--sm"
-                        type="button"
-                        onClick={() => rejectCandidate.mutate(candidate.id)}
-                      >
-                        Отказать
-                      </button>
-                    </div>
+              <>
+                <div className="incoming-toolbar">
+                  <div className="incoming-toolbar__stats">
+                    <strong>{incomingItems.length}</strong>
+                    <span className="text-muted text-sm">из {incomingQuery.data.items.length} кандидатов</span>
                   </div>
-                ))}
-              </div>
+                  <div className="incoming-toolbar__controls">
+                    <input
+                      className="incoming-toolbar__search"
+                      type="search"
+                      placeholder="Поиск: имя, город, сообщение…"
+                      value={incomingSearch}
+                      onChange={(e) => setIncomingSearch(e.target.value)}
+                    />
+                    <select
+                      className="incoming-toolbar__select"
+                      value={incomingFilter}
+                      onChange={(e) => setIncomingFilter(e.target.value as 'all' | 'new' | 'stalled')}
+                    >
+                      <option value="all">Все</option>
+                      <option value="new">Только NEW (24ч)</option>
+                      <option value="stalled">Застрявшие</option>
+                    </select>
+                    <select
+                      className="incoming-toolbar__select"
+                      value={incomingSort}
+                      onChange={(e) => setIncomingSort(e.target.value as 'waiting' | 'recent' | 'name')}
+                    >
+                      <option value="waiting">Сначала кто дольше ждёт</option>
+                      <option value="recent">Последние сообщения</option>
+                      <option value="name">По имени</option>
+                    </select>
+                  </div>
+                </div>
+
+                {incomingItems.length === 0 ? (
+                  <p className="subtitle">По текущим фильтрам кандидатов нет.</p>
+                ) : (
+                  <div className="incoming-list">
+                    {incomingItems.map((candidate) => (
+                      <article key={candidate.id} className="glass glass--subtle incoming-row">
+                        <div className="incoming-row__identity">
+                          <div className="incoming-row__avatar">
+                            {(candidate.name || '?').trim().slice(0, 1).toUpperCase()}
+                          </div>
+                          <div className="incoming-row__info">
+                            <div className="incoming-card__name">
+                              {candidate.name || 'Без имени'}
+                              {candidate.last_message_at && (
+                                Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
+                              ) && <span className="incoming-card__badge">NEW</span>}
+                            </div>
+                            <div className="incoming-card__meta">
+                              <span>{candidate.city || 'Город не указан'}</span>
+                              {candidate.waiting_hours != null && <span>· ждёт {candidate.waiting_hours} ч</span>}
+                              {candidate.availability_window && <span>· {candidate.availability_window}</span>}
+                            </div>
+                          </div>
+                          {candidate.status_display && (
+                            <span
+                              className={`incoming-row__status status-pill status-pill--${
+                                candidate.status_slug === 'stalled_waiting_slot'
+                                  ? 'danger'
+                                  : candidate.status_slug === 'slot_pending'
+                                    ? 'info'
+                                    : 'warning'
+                              }`}
+                            >
+                              {candidate.status_display}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="incoming-row__message">
+                          {candidate.availability_note ? (
+                            <div className="incoming-card__note">✉️ {candidate.availability_note}</div>
+                          ) : candidate.last_message ? (
+                            <div className="incoming-card__note">
+                              💬 {candidate.last_message}
+                              {candidate.last_message_at && (
+                                <span className="incoming-card__note-time">
+                                  {new Date(candidate.last_message_at).toLocaleString('ru-RU', {
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted text-sm">Нет последнего сообщения</span>
+                          )}
+                        </div>
+
+                        <div className="incoming-row__actions">
+                          <Link
+                            className="ui-btn ui-btn--ghost ui-btn--sm"
+                            to="/app/candidates/$candidateId"
+                            params={{ candidateId: String(candidate.id) }}
+                          >
+                            Профиль
+                          </Link>
+                          {(() => {
+                            const username = candidate.telegram_username?.replace(/^@/, '')
+                            const link = username
+                              ? `https://t.me/${username}`
+                              : candidate.telegram_id
+                                ? `tg://user?id=${candidate.telegram_id}`
+                                : null
+                            return link ? (
+                              <a className="ui-btn ui-btn--ghost ui-btn--sm" href={link} target="_blank" rel="noopener">
+                                Telegram
+                              </a>
+                            ) : null
+                          })()}
+                          <button
+                            className="ui-btn ui-btn--primary ui-btn--sm"
+                            type="button"
+                            onClick={() => openIncomingSchedule(candidate)}
+                          >
+                            Предложить время
+                          </button>
+                          <button
+                            className="ui-btn ui-btn--danger ui-btn--sm"
+                            type="button"
+                            onClick={() => rejectCandidate.mutate(candidate.id)}
+                          >
+                            Отказать
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
