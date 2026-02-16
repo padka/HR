@@ -1554,25 +1554,61 @@ body {
   padding-right: 4px;
 }
 
-.incoming-row {
-  padding: 12px;
-  border-radius: 14px;
+.incoming-liquid-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.06) 40%, rgba(20, 30, 46, 0.18) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+    0 8px 26px rgba(4, 10, 22, 0.28);
+  backdrop-filter: blur(20px) saturate(1.15);
+  -webkit-backdrop-filter: blur(20px) saturate(1.15);
+  padding: 14px;
   display: grid;
-  grid-template-columns: minmax(280px, 1.2fr) minmax(240px, 1fr) auto;
-  gap: var(--space-md);
-  align-items: center;
+  gap: 12px;
+  transition: border-color var(--transition-hover), transform var(--transition-hover), box-shadow var(--transition-hover);
 }
 
-.incoming-row__identity {
+.incoming-liquid-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(90% 75% at 18% -15%, rgba(255,255,255,0.22), transparent 62%);
+  pointer-events: none;
+}
+
+@media (hover: hover) {
+  .incoming-liquid-card:hover {
+    transform: translateY(-1px);
+    border-color: rgba(168, 210, 255, 0.45);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.34),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+      0 14px 30px rgba(4, 10, 22, 0.34);
+  }
+}
+
+.incoming-liquid-card__head {
   display: flex;
-  align-items: center;
-  gap: var(--space-sm);
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.incoming-liquid-card__person {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   min-width: 0;
 }
 
-.incoming-row__avatar {
-  width: 36px;
-  height: 36px;
+.incoming-liquid-card__avatar {
+  width: 38px;
+  height: 38px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
@@ -1580,86 +1616,104 @@ body {
   font-size: 14px;
   font-weight: 700;
   color: #eaf4ff;
-  border: 1px solid rgba(123, 177, 255, 0.45);
-  background: linear-gradient(135deg, rgba(113, 166, 255, 0.38), rgba(73, 125, 238, 0.28));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22);
+  border: 1px solid rgba(160, 208, 255, 0.52);
+  background: linear-gradient(150deg, rgba(136, 181, 255, 0.52), rgba(82, 130, 230, 0.34));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.34), 0 2px 10px rgba(66,123,235,0.25);
   flex: 0 0 auto;
 }
 
-.incoming-row__info {
+.incoming-liquid-card__identity {
   min-width: 0;
 }
 
-.incoming-card__name {
+.incoming-liquid-card__name {
   font-size: var(--text-md);
   font-weight: 600;
   letter-spacing: var(--text-tracking-tight);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
+  color: rgba(245, 249, 255, 0.96);
+  line-height: 1.2;
 }
 
-.incoming-card__meta {
+.incoming-liquid-card__meta {
+  margin-top: 4px;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-xs);
-  color: var(--text-muted);
-  font-size: var(--text-sm);
+  gap: 6px;
+  color: rgba(225, 233, 245, 0.8);
+  font-size: 13px;
+  line-height: 1.2;
 }
 
-.incoming-row__status.status-pill {
-  margin-left: auto;
-  padding: 5px 10px;
-  font-size: 12px;
-  line-height: 1.1;
-  white-space: nowrap;
+.incoming-liquid-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
   flex: 0 0 auto;
 }
 
-.incoming-row__message {
-  min-width: 0;
+.incoming-liquid-card__status.status-pill {
+  padding: 4px 10px;
+  min-height: 24px;
+  font-size: 12px;
+  line-height: 1.15;
+  border-width: 1px;
 }
 
-.incoming-row__message .incoming-card__note {
-  margin-top: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.incoming-liquid-card__message {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  background: linear-gradient(180deg, rgba(12, 20, 34, 0.2), rgba(12, 20, 34, 0.1));
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
 }
 
-.incoming-row__actions {
+.incoming-liquid-card__message-text {
+  margin: 0;
+  color: rgba(230, 237, 249, 0.88);
+  font-size: 14px;
+  line-height: 1.38;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.incoming-liquid-card__message-empty {
+  margin: 0;
+  color: rgba(230, 237, 249, 0.56);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.incoming-liquid-card__time {
+  justify-self: end;
+  font-size: 12px;
+  color: rgba(226, 234, 247, 0.62);
+}
+
+.incoming-liquid-card__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-xs);
+  gap: 8px;
   justify-content: flex-end;
 }
 
-.incoming-row__actions .ui-btn {
+.incoming-liquid-card__actions .ui-btn {
   min-height: 32px;
-}
-
-.incoming-card__note {
-  color: var(--muted);
-  font-size: var(--text-sm);
-}
-
-.incoming-card__note-time {
-  display: inline-flex;
-  margin-left: var(--space-xs);
-  opacity: 0.7;
-  font-size: var(--text-xs);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .incoming-card__badge {
-  padding: 2px 6px;
+  padding: 3px 8px;
   border-radius: 999px;
   font-size: 10px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  background: rgba(123, 177, 255, 0.2);
-  color: var(--accent-light);
-  border: 1px solid rgba(123, 177, 255, 0.35);
+  background: rgba(150, 208, 255, 0.22);
+  color: rgba(230, 243, 255, 0.95);
+  border: 1px solid rgba(170, 220, 255, 0.45);
 }
 
 .dashboard-incoming .incoming-list::-webkit-scrollbar {
@@ -1676,17 +1730,8 @@ body {
 }
 
 @media (max-width: 1440px) {
-  .incoming-row {
-    grid-template-columns: minmax(240px, 1fr) auto;
-  }
-
-  .incoming-row__message {
-    grid-column: 1 / -1;
-  }
-
-  .incoming-row__actions {
+  .incoming-liquid-card__actions {
     justify-content: flex-start;
-    grid-column: 1 / -1;
   }
 }
 
@@ -1700,13 +1745,17 @@ body {
     width: 100%;
   }
 
-  .incoming-row {
-    grid-template-columns: 1fr;
-    align-items: flex-start;
+  .incoming-liquid-card {
+    border-radius: 18px;
   }
 
-  .incoming-row__status.status-pill {
-    margin-left: 0;
+  .incoming-liquid-card__head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .incoming-liquid-card__chips {
+    justify-content: flex-start;
   }
 }
 

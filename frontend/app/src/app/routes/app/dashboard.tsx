@@ -798,62 +798,64 @@ export function DashboardPage() {
                 ) : (
                   <div className="incoming-list">
                     {incomingItems.map((candidate) => (
-                      <article key={candidate.id} className="glass glass--subtle incoming-row">
-                        <div className="incoming-row__identity">
-                          <div className="incoming-row__avatar">
-                            {(candidate.name || '?').trim().slice(0, 1).toUpperCase()}
-                          </div>
-                          <div className="incoming-row__info">
-                            <div className="incoming-card__name">
-                              {candidate.name || 'Без имени'}
-                              {candidate.last_message_at && (
-                                Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
-                              ) && <span className="incoming-card__badge">NEW</span>}
+                      <article key={candidate.id} className="incoming-liquid-card">
+                        <div className="incoming-liquid-card__head">
+                          <div className="incoming-liquid-card__person">
+                            <div className="incoming-liquid-card__avatar">
+                              {(candidate.name || '?').trim().slice(0, 1).toUpperCase()}
                             </div>
-                            <div className="incoming-card__meta">
-                              <span>{candidate.city || 'Город не указан'}</span>
-                              {candidate.waiting_hours != null && <span>· ждёт {candidate.waiting_hours} ч</span>}
-                              {candidate.availability_window && <span>· {candidate.availability_window}</span>}
+                            <div className="incoming-liquid-card__identity">
+                              <div className="incoming-liquid-card__name">{candidate.name || 'Без имени'}</div>
+                              <div className="incoming-liquid-card__meta">
+                                <span>{candidate.city || 'Город не указан'}</span>
+                                {candidate.waiting_hours != null && <span>· ждёт {candidate.waiting_hours} ч</span>}
+                                {candidate.availability_window && <span>· {candidate.availability_window}</span>}
+                              </div>
                             </div>
                           </div>
-                          {candidate.status_display && (
-                            <span
-                              className={`incoming-row__status status-pill status-pill--${
-                                candidate.status_slug === 'stalled_waiting_slot'
-                                  ? 'danger'
-                                  : candidate.status_slug === 'slot_pending'
-                                    ? 'info'
-                                    : 'warning'
-                              }`}
-                            >
-                              {candidate.status_display}
+
+                          <div className="incoming-liquid-card__chips">
+                            {candidate.last_message_at &&
+                              Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000 && (
+                                <span className="incoming-card__badge">NEW</span>
+                              )}
+                            {candidate.status_display && (
+                              <span
+                                className={`incoming-liquid-card__status status-pill status-pill--${
+                                  candidate.status_slug === 'stalled_waiting_slot'
+                                    ? 'danger'
+                                    : candidate.status_slug === 'slot_pending'
+                                      ? 'info'
+                                      : 'warning'
+                                }`}
+                              >
+                                {candidate.status_display}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="incoming-liquid-card__message">
+                          {candidate.availability_note ? (
+                            <p className="incoming-liquid-card__message-text">✉️ {candidate.availability_note}</p>
+                          ) : candidate.last_message ? (
+                            <p className="incoming-liquid-card__message-text">💬 {candidate.last_message}</p>
+                          ) : (
+                            <p className="incoming-liquid-card__message-empty">Нет последнего сообщения</p>
+                          )}
+                          {candidate.last_message_at && (
+                            <span className="incoming-liquid-card__time">
+                              {new Date(candidate.last_message_at).toLocaleString('ru-RU', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
                             </span>
                           )}
                         </div>
 
-                        <div className="incoming-row__message">
-                          {candidate.availability_note ? (
-                            <div className="incoming-card__note">✉️ {candidate.availability_note}</div>
-                          ) : candidate.last_message ? (
-                            <div className="incoming-card__note">
-                              💬 {candidate.last_message}
-                              {candidate.last_message_at && (
-                                <span className="incoming-card__note-time">
-                                  {new Date(candidate.last_message_at).toLocaleString('ru-RU', {
-                                    day: '2-digit',
-                                    month: '2-digit',
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-muted text-sm">Нет последнего сообщения</span>
-                          )}
-                        </div>
-
-                        <div className="incoming-row__actions">
+                        <div className="incoming-liquid-card__actions">
                           <Link
                             className="ui-btn ui-btn--ghost ui-btn--sm"
                             to="/app/candidates/$candidateId"
