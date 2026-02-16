@@ -12,6 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.utils import DEFAULT_TZ, safe_zone
+from backend.core.cache import get_cache
+from backend.core.microcache import get as microcache_get, set as microcache_set
 from backend.core.db import async_session
 from backend.domain.candidates.models import User
 from backend.domain.models import Recruiter, Slot, SlotStatus
@@ -107,6 +109,30 @@ async def get_calendar_events(
     Returns:
         Dictionary with 'events' and 'resources' arrays for FullCalendar
     """
+    cache = None
+    try:
+        cache = get_cache()
+    except RuntimeError:
+        cache = None
+    statuses_key = ",".join(sorted((s or "").strip().lower() for s in (statuses or [])) or [])
+    cache_key = (
+        "calendar:events:v1:"
+        f"{start_date.isoformat()}:{end_date.isoformat()}:"
+        f"r{recruiter_id or 'all'}:c{city_id or 'all'}:"
+        f"s{statuses_key or 'all'}:"
+        f"tz{tz_name}:x{int(bool(include_canceled))}"
+    )
+    micro_payload = microcache_get(cache_key)
+    if isinstance(micro_payload, dict) and "events" in micro_payload:
+        return micro_payload
+
+    if cache is not None:
+        cached = await cache.get(cache_key, default=None)
+        cached_payload = cached.unwrap_or(None)
+        if isinstance(cached_payload, dict) and "events" in cached_payload:
+            microcache_set(cache_key, cached_payload, ttl_seconds=2.0)
+            return cached_payload
+
     zone = safe_zone(tz_name)
 
     # Convert local dates to UTC range
@@ -242,7 +268,7 @@ async def get_calendar_events(
             },
         })
 
-    return {
+    result = {
         "events": events,
         "resources": resources,
         "meta": {
@@ -253,3 +279,7 @@ async def get_calendar_events(
             "generated_at": datetime.now(timezone.utc).isoformat(),
         },
     }
+    microcache_set(cache_key, result, ttl_seconds=2.0)
+    if cache is not None:
+        await cache.set(cache_key, result, ttl=timedelta(seconds=2))
+    return result

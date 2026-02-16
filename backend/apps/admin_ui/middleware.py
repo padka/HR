@@ -32,6 +32,11 @@ class DegradedDatabaseMiddleware(BaseHTTPMiddleware):
         "/",
         "/favicon.ico",
         "/.well-known/appspecific/com.chrome.devtools.json",
+        # Read-only UX/Ops endpoints can serve cached snapshots even when DB is temporarily degraded.
+        "/api/profile",
+        "/api/dashboard/summary",
+        "/api/dashboard/incoming",
+        "/api/calendar/events",
         "/api/notifications/feed",
         "/api/notifications/logs",
         "/api/bot/reminders/jobs",

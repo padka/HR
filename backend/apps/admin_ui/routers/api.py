@@ -75,6 +75,8 @@ from backend.apps.admin_ui.services.kpis import (
     list_weekly_history,
 )
 from backend.core.audit import log_audit_action
+from backend.core.cache import get_cache
+from backend.core.microcache import get as microcache_get, set as microcache_set
 from backend.apps.admin_ui.services.message_templates import (
     list_message_templates,
     create_message_template,
@@ -233,16 +235,58 @@ async def api_health():
 
 
 @router.get("/dashboard/summary")
-async def api_dashboard_summary(principal: Principal = Depends(require_principal)):
+async def api_dashboard_summary(
+    request: Request,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    if not getattr(request.app.state, "db_available", True):
+        cache_key = f"dashboard:counts:v1:{principal.type}:{principal.id}"
+        micro_payload = microcache_get(cache_key)
+        if isinstance(micro_payload, dict):
+            return JSONResponse(micro_payload)
+
+        cache = None
+        try:
+            cache = get_cache()
+        except RuntimeError:
+            cache = None
+        if cache is not None:
+            cached = await cache.get(cache_key, default=None)
+            cached_payload = cached.unwrap_or(None)
+            if isinstance(cached_payload, dict):
+                microcache_set(cache_key, cached_payload, ttl_seconds=2.0)
+                return JSONResponse(cached_payload)
+        return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
+
     return JSONResponse(await dashboard_counts(principal=principal))
 
 
 @router.get("/dashboard/incoming")
 async def api_dashboard_incoming(
+    request: Request,
     limit: int = Query(default=6, ge=1, le=500),
     principal: Principal = Depends(require_principal),
 ) -> JSONResponse:
     """Candidates who passed test1 and are waiting for a free interview slot."""
+    if not getattr(request.app.state, "db_available", True):
+        cache_key = f"dashboard:incoming:v1:{principal.type}:{principal.id}:{int(limit)}"
+        micro_payload = microcache_get(cache_key)
+        if isinstance(micro_payload, list):
+            return JSONResponse({"items": micro_payload})
+
+        cache = None
+        try:
+            cache = get_cache()
+        except RuntimeError:
+            cache = None
+        if cache is not None:
+            cached = await cache.get(cache_key, default=None)
+            cached_payload = cached.unwrap_or(None)
+            if isinstance(cached_payload, list):
+                microcache_set(cache_key, cached_payload, ttl_seconds=2.0)
+                return JSONResponse({"items": cached_payload})
+        return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
+
     payload = await get_waiting_candidates(limit=limit, principal=principal)
     return JSONResponse({"items": payload})
 
@@ -491,27 +535,58 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
 
 @router.get("/profile")
 async def api_profile(request: Request, principal: Principal = Depends(require_principal)):
-    recruiter_payload = None
-    if principal.type == "recruiter":
-        async with async_session() as session:
-            recruiter = await session.get(Recruiter, principal.id)
-            if recruiter:
-                rows = await session.execute(
-                    select(City)
-                    .join(recruiter_city_association)
-                    .where(recruiter_city_association.c.recruiter_id == recruiter.id)
-                )
-                cities = rows.scalars().all()
-                recruiter_payload = {
-                    "id": recruiter.id,
-                    "name": recruiter.name,
-                    "tz": recruiter.tz,
-                    "active": recruiter.active,
-                    "cities": [{"id": city.id, "name": city.name} for city in cities],
-                }
+    cache = None
+    try:
+        cache = get_cache()
+    except RuntimeError:
+        cache = None
 
-    stats = await dashboard_counts(principal=principal)
-    profile_payload = await _profile_snapshot(principal, request)
+    cache_key = f"profile:payload:v1:{principal.type}:{principal.id}"
+    snapshot = None
+    micro_payload = microcache_get(cache_key)
+    if isinstance(micro_payload, dict):
+        snapshot = micro_payload
+    if cache is not None:
+        cached = await cache.get(cache_key, default=None)
+        cached_payload = cached.unwrap_or(None)
+        if isinstance(cached_payload, dict):
+            snapshot = cached_payload
+            microcache_set(cache_key, cached_payload, ttl_seconds=2.0)
+
+    if snapshot is None:
+        if not getattr(request.app.state, "db_available", True):
+            return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
+
+        recruiter_payload = None
+        if principal.type == "recruiter":
+            async with async_session() as session:
+                recruiter = await session.get(Recruiter, principal.id)
+                if recruiter:
+                    rows = await session.execute(
+                        select(City)
+                        .join(recruiter_city_association)
+                        .where(recruiter_city_association.c.recruiter_id == recruiter.id)
+                    )
+                    cities = rows.scalars().all()
+                    recruiter_payload = {
+                        "id": recruiter.id,
+                        "name": recruiter.name,
+                        "tz": recruiter.tz,
+                        "active": recruiter.active,
+                        "cities": [{"id": city.id, "name": city.name} for city in cities],
+                    }
+
+        stats = await dashboard_counts(principal=principal)
+        profile_payload = await _profile_snapshot(principal, request)
+        snapshot = {
+            "recruiter": recruiter_payload,
+            "stats": stats,
+            "profile": profile_payload,
+        }
+        microcache_set(cache_key, snapshot, ttl_seconds=2.0)
+        if cache is not None:
+            await cache.set(cache_key, snapshot, ttl=timedelta(seconds=2))
+
     avatar_file = _find_avatar_file(_avatar_prefix(principal))
     avatar_url = None
     if avatar_file is not None:
@@ -519,9 +594,7 @@ async def api_profile(request: Request, principal: Principal = Depends(require_p
     return JSONResponse(
         {
             "principal": {"type": principal.type, "id": principal.id},
-            "recruiter": recruiter_payload,
-            "stats": stats,
-            "profile": profile_payload,
+            **snapshot,
             "avatar_url": avatar_url,
         }
     )
@@ -819,6 +892,7 @@ async def api_dashboard_calendar(
 
 @router.get("/calendar/events")
 async def api_calendar_events(
+    request: Request,
     start: str = Query(..., description="Start date ISO format (YYYY-MM-DD)"),
     end: str = Query(..., description="End date ISO format (YYYY-MM-DD)"),
     recruiter_id: Optional[int] = Query(default=None),
@@ -849,6 +923,33 @@ async def api_calendar_events(
     effective_recruiter_id = recruiter_id
     if principal.type == "recruiter":
         effective_recruiter_id = principal.id
+
+    if not getattr(request.app.state, "db_available", True):
+        statuses_key = ",".join(sorted((s or "").strip().lower() for s in (status or [])) or [])
+        from backend.apps.admin_ui.utils import DEFAULT_TZ as _DEFAULT_TZ
+        cache_key = (
+            "calendar:events:v1:"
+            f"{start_date.isoformat()}:{end_date.isoformat()}:"
+            f"r{effective_recruiter_id or 'all'}:c{city_id or 'all'}:"
+            f"s{statuses_key or 'all'}:"
+            f"tz{_DEFAULT_TZ}:x0"
+        )
+        micro_payload = microcache_get(cache_key)
+        if isinstance(micro_payload, dict) and "events" in micro_payload:
+            return JSONResponse({"ok": True, **micro_payload})
+
+        cache = None
+        try:
+            cache = get_cache()
+        except RuntimeError:
+            cache = None
+        if cache is not None:
+            cached = await cache.get(cache_key, default=None)
+            cached_payload = cached.unwrap_or(None)
+            if isinstance(cached_payload, dict) and "events" in cached_payload:
+                microcache_set(cache_key, cached_payload, ttl_seconds=2.0)
+                return JSONResponse({"ok": True, **cached_payload})
+        return JSONResponse({"ok": False, "error": "database_unavailable"}, status_code=503)
 
     result = await get_calendar_events(
         start_date=start_date,

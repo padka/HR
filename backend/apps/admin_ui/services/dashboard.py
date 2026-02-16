@@ -31,10 +31,11 @@ from backend.domain.candidates.status import (
 )
 from backend.domain.candidate_status_service import CandidateStatusService
 from backend.apps.bot.metrics import get_test1_metrics_snapshot
-from backend.domain.repositories import find_city_by_plain_name
+from backend.domain.repositories import resolve_city_id_and_tz_by_plain_name
 from backend.core.scoping import scope_candidates, scope_slots, scope_cities
 from backend.apps.admin_ui.security import Principal
 from backend.core.cache import CacheTTL, get_cache
+from backend.core.microcache import get as microcache_get, set as microcache_set
 
 __all__ = [
     "dashboard_counts",
@@ -115,6 +116,7 @@ FUNNEL_STEP_DEFS: List[Dict[str, object]] = [
 ]
 
 FUNNEL_DROP_TTL_HOURS = 24
+_DASHBOARD_CACHE_TTL = timedelta(seconds=2)
 
 
 class SmartCreateError(Exception):
@@ -162,7 +164,26 @@ def _format_waiting_window(user: User, tz_label: str) -> Optional[str]:
 
 
 async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, object]:
-    last_message_map: Dict[int, dict] = {}
+    cache = None
+    try:
+        cache = get_cache()
+    except RuntimeError:
+        cache = None
+    principal_key = (
+        f"{principal.type}:{principal.id}" if principal is not None else "anon"
+    )
+    cache_key = f"dashboard:counts:v1:{principal_key}"
+    micro_payload = microcache_get(cache_key)
+    if isinstance(micro_payload, dict):
+        return micro_payload
+
+    if cache is not None:
+        cached = await cache.get(cache_key, default=None)
+        cached_payload = cached.unwrap_or(None)
+        if isinstance(cached_payload, dict):
+            microcache_set(cache_key, cached_payload, ttl_seconds=_DASHBOARD_CACHE_TTL.total_seconds())
+            return cached_payload
+
     async with async_session() as session:
         principal_type = getattr(principal, "type", None)
         principal_id = getattr(principal, "id", None)
@@ -204,7 +225,7 @@ async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, o
         obj = getattr(SlotStatus, name, name)
         return obj.value if hasattr(obj, "value") else obj
 
-    return {
+    result = {
         "recruiters": rec_count or 0,
         "cities": city_count or 0,
         "slots_total": total,
@@ -217,6 +238,10 @@ async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, o
         "test1_rejections_percent": test1_metrics.rejection_percent,
         "test1_rejections_breakdown": test1_metrics.rejection_breakdown,
     }
+    microcache_set(cache_key, result, ttl_seconds=_DASHBOARD_CACHE_TTL.total_seconds())
+    if cache is not None:
+        await cache.set(cache_key, result, ttl=_DASHBOARD_CACHE_TTL)
+    return result
 
 
 async def get_recent_candidates(limit: int = 5, *, principal: Optional[Principal] = None) -> List[Dict[str, object]]:
@@ -238,6 +263,26 @@ async def get_recent_candidates(limit: int = 5, *, principal: Optional[Principal
 
 async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principal] = None) -> List[Dict[str, object]]:
     """Return candidates waiting for manual slot assignment (prioritized)."""
+    cache = None
+    try:
+        cache = get_cache()
+    except RuntimeError:
+        cache = None
+    principal_key = (
+        f"{principal.type}:{principal.id}" if principal is not None else "anon"
+    )
+    cache_key = f"dashboard:incoming:v1:{principal_key}:{int(limit)}"
+    micro_payload = microcache_get(cache_key)
+    if isinstance(micro_payload, list):
+        return micro_payload
+
+    if cache is not None:
+        cached = await cache.get(cache_key, default=None)
+        payload = cached.unwrap_or(None)
+        if isinstance(payload, list):
+            microcache_set(cache_key, payload, ttl_seconds=_DASHBOARD_CACHE_TTL.total_seconds())
+            return payload
+
     last_message_map: Dict[int, dict] = {}
     recruiter_map: Dict[int, str] = {}
     ai_fit_map: Dict[int, Dict[str, Optional[object]]] = {}
@@ -271,33 +316,59 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
 
         user_ids = [u.id for u in users]
         if user_ids:
-            rows = await session.execute(
-                select(ChatMessage.candidate_id, ChatMessage.text, ChatMessage.created_at)
+            last_msg_sq = (
+                select(
+                    ChatMessage.candidate_id.label("candidate_id"),
+                    ChatMessage.text.label("text"),
+                    ChatMessage.created_at.label("created_at"),
+                    func.row_number()
+                    .over(
+                        partition_by=ChatMessage.candidate_id,
+                        order_by=ChatMessage.created_at.desc(),
+                    )
+                    .label("rn"),
+                )
                 .where(
                     ChatMessage.candidate_id.in_(user_ids),
                     ChatMessage.direction == ChatMessageDirection.INBOUND.value,
                 )
-                .order_by(ChatMessage.candidate_id.asc(), ChatMessage.created_at.desc())
+            ).subquery()
+            rows = await session.execute(
+                select(last_msg_sq.c.candidate_id, last_msg_sq.c.text, last_msg_sq.c.created_at).where(
+                    last_msg_sq.c.rn == 1
+                )
             )
             for candidate_id, text, created_at in rows:
-                if candidate_id not in last_message_map:
-                    last_message_map[candidate_id] = {
-                        "text": text,
-                        "created_at": created_at,
-                    }
+                last_message_map[int(candidate_id)] = {
+                    "text": text,
+                    "created_at": created_at,
+                }
 
-            ai_rows = await session.execute(
-                select(AIOutput.scope_id, AIOutput.payload_json, AIOutput.created_at)
+            ai_sq = (
+                select(
+                    AIOutput.scope_id.label("candidate_id"),
+                    AIOutput.payload_json.label("payload_json"),
+                    AIOutput.created_at.label("created_at"),
+                    func.row_number()
+                    .over(
+                        partition_by=AIOutput.scope_id,
+                        order_by=AIOutput.created_at.desc(),
+                    )
+                    .label("rn"),
+                )
                 .where(
                     AIOutput.scope_type == "candidate",
                     AIOutput.kind == "candidate_summary_v1",
                     AIOutput.scope_id.in_(user_ids),
                 )
-                .order_by(AIOutput.scope_id.asc(), AIOutput.created_at.desc())
+            ).subquery()
+            ai_rows = await session.execute(
+                select(ai_sq.c.candidate_id, ai_sq.c.payload_json, ai_sq.c.created_at).where(
+                    ai_sq.c.rn == 1
+                )
             )
             for candidate_id, payload_json, created_at in ai_rows:
-                if candidate_id in ai_fit_map:
-                    continue
+                candidate_id = int(candidate_id)
                 fit = payload_json.get("fit") if isinstance(payload_json, dict) else None
                 if not isinstance(fit, dict):
                     ai_fit_map[candidate_id] = {
@@ -336,9 +407,8 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
             return (DEFAULT_TZ, None)
         if key in tz_cache:
             return tz_cache[key]
-        record = await find_city_by_plain_name(city_label)
-        tz_value = getattr(record, "tz", None) or DEFAULT_TZ
-        city_id = getattr(record, "id", None)
+        city_id, tz_value = await resolve_city_id_and_tz_by_plain_name(city_label)
+        tz_value = tz_value or DEFAULT_TZ
         tz_cache[key] = (tz_value, city_id)
         return tz_cache[key]
 
@@ -411,7 +481,12 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
         row["priority_score"] = idx
         row.pop("waiting_since_dt", None)
 
-    return prioritized[:limit]
+    payload = prioritized[:limit]
+    # Best-effort cache: short TTL to keep UI responsive while smoothing bursts.
+    microcache_set(cache_key, payload, ttl_seconds=_DASHBOARD_CACHE_TTL.total_seconds())
+    if cache is not None:
+        await cache.set(cache_key, payload, ttl=_DASHBOARD_CACHE_TTL)
+    return payload
 
 
 def _format_delta(delta: timedelta) -> str:
