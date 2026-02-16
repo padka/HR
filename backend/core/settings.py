@@ -47,6 +47,7 @@ class Settings:
     session_cookie_secure: bool
     session_cookie_samesite: str
     state_ttl_seconds: int
+    access_token_ttl_hours: int
     notification_poll_interval: float
     notification_batch_size: int
     notification_rate_limit_per_sec: float
@@ -78,6 +79,7 @@ class Settings:
     ai_max_requests_per_principal_per_day: int
     ai_store_prompts: bool
     ai_pii_mode: str
+    simulator_enabled: bool
 
 
 def _get_int(name: str, default: int, *, minimum: int | None = None) -> int:
@@ -526,6 +528,7 @@ def get_settings() -> Settings:
         state_ttl_seconds = 604800
     if state_ttl_seconds <= 0:
         state_ttl_seconds = 604800
+    access_token_ttl_hours = _get_int("ACCESS_TOKEN_TTL_HOURS", 12, minimum=1)
 
     notification_poll_interval = _get_float("NOTIFICATION_POLL_INTERVAL", 3.0, minimum=0.1)
     notification_batch_size = _get_int("NOTIFICATION_BATCH_SIZE", 100, minimum=1)
@@ -620,6 +623,7 @@ def get_settings() -> Settings:
     # Keep env var for compatibility, but always run AI with full context.
     ai_pii_mode_raw = os.getenv("AI_PII_MODE", "full").strip().lower() or "full"
     ai_pii_mode = "full" if ai_pii_mode_raw in {"full", "redacted"} else "full"
+    simulator_enabled = _get_bool("SIMULATOR_ENABLED", default=False)
 
     settings = Settings(
         environment=environment,
@@ -654,6 +658,7 @@ def get_settings() -> Settings:
         session_cookie_secure=session_cookie_secure,
         session_cookie_samesite=session_cookie_samesite,
         state_ttl_seconds=state_ttl_seconds,
+        access_token_ttl_hours=access_token_ttl_hours,
         notification_poll_interval=notification_poll_interval,
         notification_batch_size=notification_batch_size,
         notification_rate_limit_per_sec=notification_rate_limit_per_sec,
@@ -685,6 +690,7 @@ def get_settings() -> Settings:
         ai_max_requests_per_principal_per_day=ai_max_requests_per_principal_per_day,
         ai_store_prompts=ai_store_prompts,
         ai_pii_mode=ai_pii_mode,
+        simulator_enabled=simulator_enabled,
     )
 
     # Validate production configuration (fails fast with clear error messages)

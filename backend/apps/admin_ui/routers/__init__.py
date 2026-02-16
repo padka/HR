@@ -9,6 +9,7 @@ from . import (
     slots,
     slot_assignments,
     system,
+    simulator,
     questions,
     message_templates,
 )  # noqa: F401
@@ -22,6 +23,7 @@ __all__ = [
     "slots",
     "slot_assignments",
     "system",
+    "simulator",
     "questions",
     "message_templates",
 ]

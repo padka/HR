@@ -820,6 +820,9 @@ export function RootLayout() {
     )
   }
 
+  const simulatorEnabled =
+    String(import.meta.env.VITE_SIMULATOR_ENABLED || (import.meta.env.DEV ? 'true' : 'false')).toLowerCase() ===
+    'true'
   const navItems =
     principalType === 'recruiter'
       ? [
@@ -838,6 +841,7 @@ export function RootLayout() {
             { to: '/app/cities', label: 'Города', icon: ICONS.cities, tone: 'sunset' },
             { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
             { to: '/app/copilot', label: 'Copilot', icon: ICONS.copilot, tone: 'amber' },
+            ...(simulatorEnabled ? [{ to: '/app/simulator', label: 'Симулятор', icon: ICONS.slots, tone: 'violet' }] : []),
             { to: '/app/system', label: 'Бот', icon: ICONS.bot, tone: 'emerald' },
           ]
         : []
