@@ -270,5 +270,6 @@ async def get_calendar_events(
         cache_key,
         expected_type=dict,
         ttl_seconds=2.0,
+        stale_seconds=10.0,
         compute=_compute,
     )

@@ -241,9 +241,14 @@ async def api_dashboard_summary(
 ) -> JSONResponse:
     if not getattr(request.app.state, "db_available", True):
         cache_key = cache_keys.dashboard_counts(principal=principal).value
-        cached_payload = await get_cached(cache_key, expected_type=dict, ttl_seconds=2.0)
-        if isinstance(cached_payload, dict):
-            return JSONResponse(cached_payload)
+        cached_payload = await get_cached(
+            cache_key,
+            expected_type=dict,
+            ttl_seconds=2.0,
+            stale_seconds=10.0,
+        )
+        if cached_payload is not None and isinstance(cached_payload[0], dict):
+            return JSONResponse(cached_payload[0])
         return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
 
     return JSONResponse(await dashboard_counts(principal=principal))
@@ -258,9 +263,14 @@ async def api_dashboard_incoming(
     """Candidates who passed test1 and are waiting for a free interview slot."""
     if not getattr(request.app.state, "db_available", True):
         cache_key = cache_keys.dashboard_incoming(principal=principal, limit=limit).value
-        cached_payload = await get_cached(cache_key, expected_type=list, ttl_seconds=2.0)
-        if isinstance(cached_payload, list):
-            return JSONResponse({"items": cached_payload})
+        cached_payload = await get_cached(
+            cache_key,
+            expected_type=list,
+            ttl_seconds=2.0,
+            stale_seconds=10.0,
+        )
+        if cached_payload is not None and isinstance(cached_payload[0], list):
+            return JSONResponse({"items": cached_payload[0]})
         return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
 
     payload = await get_waiting_candidates(limit=limit, principal=principal)
@@ -513,9 +523,15 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
 async def api_profile(request: Request, principal: Principal = Depends(require_principal)):
     cache_key = cache_keys.profile_payload(principal=principal).value
     if not getattr(request.app.state, "db_available", True):
-        snapshot = await get_cached(cache_key, expected_type=dict, ttl_seconds=2.0)
+        snapshot = await get_cached(
+            cache_key,
+            expected_type=dict,
+            ttl_seconds=2.0,
+            stale_seconds=10.0,
+        )
         if snapshot is None:
             return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
+        snapshot = snapshot[0]
     else:
         async def _compute() -> dict:
             recruiter_payload = None
@@ -549,6 +565,7 @@ async def api_profile(request: Request, principal: Principal = Depends(require_p
             cache_key,
             expected_type=dict,
             ttl_seconds=2.0,
+            stale_seconds=10.0,
             compute=_compute,
         )
 
@@ -900,9 +917,14 @@ async def api_calendar_events(
             tz_name=_DEFAULT_TZ,
             include_canceled=False,
         ).value
-        cached_payload = await get_cached(cache_key, expected_type=dict, ttl_seconds=2.0)
-        if isinstance(cached_payload, dict) and "events" in cached_payload:
-            return JSONResponse({"ok": True, **cached_payload})
+        cached_payload = await get_cached(
+            cache_key,
+            expected_type=dict,
+            ttl_seconds=2.0,
+            stale_seconds=10.0,
+        )
+        if cached_payload is not None and isinstance(cached_payload[0], dict) and "events" in cached_payload[0]:
+            return JSONResponse({"ok": True, **cached_payload[0]})
         return JSONResponse({"ok": False, "error": "database_unavailable"}, status_code=503)
 
     result = await get_calendar_events(

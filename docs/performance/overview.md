@@ -77,6 +77,7 @@ Read-through wrapper:
 
 Stale policy:
 - если запрос marked degraded (DB down) и отдали ответ из кэша → `freshness=stale`
+- если `stale_seconds>0` (stale-while-revalidate) и TTL истёк, но значение ещё в stale window → отдаём stale и обновляем в фоне (single-flight)
 
 ## Как безопасно добавить новый cached endpoint
 
@@ -84,6 +85,7 @@ Stale policy:
    - shared (одинаковый для всех) или per-principal (admin/recruiter и id)
 2. Добавь key builder в `backend/apps/admin_ui/perf/cache/keys.py`.
 3. Используй `get_cached` / `set_cached` из `backend/apps/admin_ui/perf/cache/readthrough.py`.
+   - для защиты tail latency под нагрузкой можно включить `stale_seconds` (stale-while-revalidate)
 4. Если endpoint допускается в degraded-mode, добавь path в allowlist.
 5. Добавь тест:
    - разные principals → разные ключи (или явно shared)

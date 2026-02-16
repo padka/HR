@@ -226,6 +226,7 @@ async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, o
         cache_key,
         expected_type=dict,
         ttl_seconds=_DASHBOARD_CACHE_TTL.total_seconds(),
+        stale_seconds=10.0,
         compute=_compute,
     )
 
@@ -455,6 +456,7 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
         cache_key,
         expected_type=list,
         ttl_seconds=_DASHBOARD_CACHE_TTL.total_seconds(),
+        stale_seconds=10.0,
         compute=_compute,
     )
 

@@ -13,8 +13,10 @@ Security note:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
+import time
 from typing import Any, TypeVar
 
 from backend.apps.admin_ui.perf.metrics.context import add_cache_event, get_context
@@ -29,25 +31,54 @@ _LOCKS: dict[str, asyncio.Lock] = {}
 _LOCKS_MAX = 1024
 
 
+@dataclass(frozen=True)
+class _MicroEntry:
+    """Microcache value wrapper supporting stale-while-revalidate."""
+
+    value: Any
+    fresh_until_unix: float
+
+
 def _freshness() -> str:
     ctx = get_context()
     return "stale" if (ctx and ctx.degraded_reason) else "fresh"
 
 
-def microcache_get(key: str, *, expected_type: type[T]) -> T | None:
-    value = micro_get(key)
-    if isinstance(value, expected_type):
+def microcache_get(key: str, *, expected_type: type[T]) -> tuple[T, bool] | None:
+    raw = micro_get(key)
+    if raw is None:
+        add_cache_event(backend="microcache", state="miss", freshness=_freshness())
+        return None
+
+    degraded = _freshness() == "stale"
+    now = time.time()
+
+    if isinstance(raw, _MicroEntry) and isinstance(raw.value, expected_type):
+        is_stale = degraded or (now > float(raw.fresh_until_unix))
+        add_cache_event(
+            backend="microcache",
+            state="hit",
+            freshness=("stale" if is_stale else "fresh"),
+        )
+        return raw.value, is_stale
+
+    if isinstance(raw, expected_type):
         add_cache_event(backend="microcache", state="hit", freshness=_freshness())
-        return value
+        return raw, degraded
+
     add_cache_event(backend="microcache", state="miss", freshness=_freshness())
     return None
 
 
-def microcache_set(key: str, value: Any, *, ttl_seconds: float) -> None:
+def microcache_set(key: str, value: Any, *, ttl_seconds: float, stale_seconds: float = 0.0) -> None:
+    if stale_seconds and stale_seconds > 0:
+        wrapped = _MicroEntry(value=value, fresh_until_unix=time.time() + float(ttl_seconds))
+        micro_set(key, wrapped, ttl_seconds=float(ttl_seconds) + float(stale_seconds))
+        return
     micro_set(key, value, ttl_seconds=ttl_seconds)
 
 
-async def redis_get(key: str, *, expected_type: type[T]) -> T | None:
+async def redis_get(key: str, *, expected_type: type[T]) -> tuple[T, bool] | None:
     try:
         cache = get_cache()
     except RuntimeError:
@@ -63,7 +94,7 @@ async def redis_get(key: str, *, expected_type: type[T]) -> T | None:
 
     if isinstance(value, expected_type):
         add_cache_event(backend="redis", state="hit", freshness=_freshness())
-        return value
+        return value, (_freshness() == "stale")
     add_cache_event(backend="redis", state="miss", freshness=_freshness())
     return None
 
@@ -79,8 +110,18 @@ async def redis_set(key: str, value: Any, *, ttl_seconds: float) -> None:
         return
 
 
-async def get_cached(key: str, *, expected_type: type[T], ttl_seconds: float) -> T | None:
-    """Try microcache, then Redis, then return None."""
+async def get_cached(
+    key: str,
+    *,
+    expected_type: type[T],
+    ttl_seconds: float,
+    stale_seconds: float = 0.0,
+) -> tuple[T, bool] | None:
+    """Try microcache, then Redis.
+
+    Returns:
+        (value, is_stale) or None.
+    """
 
     value = microcache_get(key, expected_type=expected_type)
     if value is not None:
@@ -89,15 +130,21 @@ async def get_cached(key: str, *, expected_type: type[T], ttl_seconds: float) ->
     value = await redis_get(key, expected_type=expected_type)
     if value is not None:
         # Warm microcache for subsequent ultra-hot reads.
-        microcache_set(key, value, ttl_seconds=ttl_seconds)
+        microcache_set(key, value[0], ttl_seconds=ttl_seconds, stale_seconds=stale_seconds)
         return value
     return None
 
 
-async def set_cached(key: str, value: Any, *, ttl_seconds: float) -> None:
+async def set_cached(
+    key: str,
+    value: Any,
+    *,
+    ttl_seconds: float,
+    stale_seconds: float = 0.0,
+) -> None:
     """Write-through to microcache + Redis (best-effort)."""
 
-    microcache_set(key, value, ttl_seconds=ttl_seconds)
+    microcache_set(key, value, ttl_seconds=ttl_seconds, stale_seconds=stale_seconds)
     await redis_set(key, value, ttl_seconds=ttl_seconds)
 
 
@@ -119,19 +166,71 @@ async def get_or_compute(
     *,
     expected_type: type[T],
     ttl_seconds: float,
+    stale_seconds: float = 0.0,
     compute: Callable[[], Awaitable[T]],
 ) -> T:
-    """Read-through cache with single-flight fill to prevent stampedes."""
+    """Read-through cache with single-flight fill to prevent stampedes.
 
-    cached = await get_cached(key, expected_type=expected_type, ttl_seconds=ttl_seconds)
-    if isinstance(cached, expected_type):
-        return cached
+    If `stale_seconds>0`, enables stale-while-revalidate for microcache:
+    - after TTL expiry but before `TTL+stale_seconds`, return cached value
+      immediately (marked stale) and refresh in background (single-flight).
+    """
+
+    cached = await get_cached(
+        key,
+        expected_type=expected_type,
+        ttl_seconds=ttl_seconds,
+        stale_seconds=stale_seconds,
+    )
+    if cached is not None:
+        value, is_stale = cached
+        if not is_stale:
+            return value
+
+        # Stale hit: if we're in degraded mode, don't attempt background refresh.
+        ctx = get_context()
+        if ctx and ctx.degraded_reason:
+            return value
+
+        if stale_seconds and stale_seconds > 0:
+            lock = await _lock_for(key)
+            if not lock.locked():
+                async def _refresh() -> None:
+                    async with lock:
+                        cached2 = await get_cached(
+                            key,
+                            expected_type=expected_type,
+                            ttl_seconds=ttl_seconds,
+                            stale_seconds=stale_seconds,
+                        )
+                        if cached2 is not None and not cached2[1]:
+                            return
+                        try:
+                            new_value = await compute()
+                        except Exception:
+                            return
+                        await set_cached(
+                            key,
+                            new_value,
+                            ttl_seconds=ttl_seconds,
+                            stale_seconds=stale_seconds,
+                        )
+
+                asyncio.create_task(_refresh(), name="perf_cache_refresh")
+            return value
+
+        return value
 
     lock = await _lock_for(key)
     async with lock:
-        cached = await get_cached(key, expected_type=expected_type, ttl_seconds=ttl_seconds)
-        if isinstance(cached, expected_type):
-            return cached
+        cached = await get_cached(
+            key,
+            expected_type=expected_type,
+            ttl_seconds=ttl_seconds,
+            stale_seconds=stale_seconds,
+        )
+        if cached is not None and not cached[1]:
+            return cached[0]
         value = await compute()
-        await set_cached(key, value, ttl_seconds=ttl_seconds)
+        await set_cached(key, value, ttl_seconds=ttl_seconds, stale_seconds=stale_seconds)
         return value
