@@ -557,7 +557,10 @@ def get_settings() -> Settings:
     # Database connection pool settings
     db_pool_size = _get_int("DB_POOL_SIZE", 20, minimum=1)
     db_max_overflow = _get_int("DB_MAX_OVERFLOW", 10, minimum=0)
-    db_pool_timeout = _get_int("DB_POOL_TIMEOUT", 30, minimum=1)
+    # Pool acquisition timeout: keep it low in non-prod to avoid 30s hangs under load.
+    # Production should set DB_POOL_TIMEOUT explicitly; default stays conservative.
+    default_pool_timeout = 30 if environment == "production" else 3
+    db_pool_timeout = _get_int("DB_POOL_TIMEOUT", default_pool_timeout, minimum=1)
     db_pool_recycle = _get_int("DB_POOL_RECYCLE", 3600, minimum=60)
 
     # Rate limiting configuration
