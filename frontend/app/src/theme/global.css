@@ -7218,3 +7218,47 @@ details > *:not(summary) {
   justify-content: space-between;
   gap: 10px;
 }
+
+/* Detailization report */
+.detailization-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.detailization-grid__head,
+.detailization-grid__row {
+  display: grid;
+  grid-template-columns: 120px 140px 140px 140px 140px 180px 1fr 120px 120px;
+  gap: 10px;
+  align-items: center;
+}
+
+.detailization-grid__head {
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.detailization-grid__row {
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-soft);
+}
+
+.detailization-grid__row .ui-input,
+.detailization-grid__row .ui-select {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .detailization-grid__head {
+    display: none;
+  }
+  .detailization-grid__row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}

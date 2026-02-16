@@ -829,6 +829,7 @@ export function RootLayout() {
           { to: '/app/dashboard', label: 'Дашборд', icon: ICONS.dashboard, tone: 'blue' },
           { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
           { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
+          { to: '/app/detailization', label: 'Детализация', icon: ICONS.candidates, tone: 'mint' },
           { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
           { to: '/app/copilot', label: 'Copilot', icon: ICONS.copilot, tone: 'amber' },
         ]
@@ -837,6 +838,7 @@ export function RootLayout() {
             { to: '/app/dashboard', label: 'Дашборд', icon: ICONS.dashboard, tone: 'blue' },
             { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
             { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
+            { to: '/app/detailization', label: 'Детализация', icon: ICONS.candidates, tone: 'mint' },
             { to: '/app/recruiters', label: 'Рекрутёры', icon: ICONS.recruiters, tone: 'indigo' },
             { to: '/app/cities', label: 'Города', icon: ICONS.cities, tone: 'sunset' },
             { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },

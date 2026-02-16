@@ -52,6 +52,7 @@ const CalendarPage = lazy(() => import('./routes/app/calendar').then(m => ({ def
 const IncomingPage = lazy(() => import('./routes/app/incoming').then(m => ({ default: m.IncomingPage })))
 const CopilotPage = lazy(() => import('./routes/app/copilot').then(m => ({ default: m.CopilotPage })))
 const SimulatorPage = lazy(() => import('./routes/app/simulator').then(m => ({ default: m.SimulatorPage })))
+const DetailizationPage = lazy(() => import('./routes/app/detailization').then(m => ({ default: m.DetailizationPage })))
 
 // Loading fallback
 function PageLoader() {
@@ -241,6 +242,12 @@ const simulatorRoute = createRoute({
   component: withSuspense(SimulatorPage),
 })
 
+const detailizationRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/app/detailization',
+  component: withSuspense(DetailizationPage),
+})
+
 const candidatesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/app/candidates',
@@ -285,6 +292,7 @@ const routeTree = rootRoute.addChildren([
   systemRoute,
   copilotRoute,
   simulatorRoute,
+  detailizationRoute,
   candidatesRoute,
   candidateNewRoute,
   candidateDetailRoute,
