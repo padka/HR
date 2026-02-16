@@ -19,8 +19,8 @@ principal_dep = Depends(require_principal)
 
 class DetailizationUpdatePayload(BaseModel):
     expert_name: str | None = None
-    column_9: str | None = None
     is_attached: bool | None = None
+    assigned_at: str | None = None
     conducted_at: str | None = None
     recruiter_id: int | None = None
     city_id: int | None = None
@@ -30,9 +30,9 @@ class DetailizationCreatePayload(BaseModel):
     candidate_id: int
     recruiter_id: int | None = None
     city_id: int | None = None
+    assigned_at: str | None = None
     conducted_at: str | None = None
     expert_name: str | None = None
-    column_9: str | None = None
     is_attached: bool | None = None
 
 

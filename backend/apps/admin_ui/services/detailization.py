@@ -65,14 +65,13 @@ class DetailizationItem:
     slot_id: Optional[int]
     assigned_at: Optional[str]
     conducted_at: Optional[str]
-    column_9: str
     expert_name: str
     is_attached: Optional[bool]
     recruiter: Optional[dict[str, Any]]
     city: Optional[dict[str, Any]]
     candidate: dict[str, Any]
 
-def _parse_conducted_at(value: Any) -> Optional[datetime]:
+def _parse_datetime_utc(value: Any) -> Optional[datetime]:
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -143,7 +142,6 @@ async def _ensure_auto_rows(principal: Principal) -> None:
                 assigned_at=assigned_at,
                 conducted_at=conducted_at,
                 expert_name=None,
-                column_9=None,
                 is_attached=_derive_is_attached(user),
                 created_by_type="system",
                 created_by_id=-1,
@@ -197,7 +195,6 @@ async def _ensure_auto_rows(principal: Principal) -> None:
                 assigned_at=getattr(slot, "updated_at", None),
                 conducted_at=getattr(slot, "start_utc", None),
                 expert_name=None,
-                column_9=None,
                 is_attached=_derive_is_attached(user),
                 created_by_type="system",
                 created_by_id=-1,
@@ -252,7 +249,6 @@ async def list_detailization(principal: Principal) -> dict[str, Any]:
                     slot_id=int(entry.slot_id) if entry.slot_id else None,
                     assigned_at=assigned_at,
                     conducted_at=conducted_at,
-                    column_9=(entry.column_9 or "").strip(),
                     expert_name=(entry.expert_name or "").strip(),
                     is_attached=entry.is_attached,
                     recruiter=(
@@ -291,8 +287,6 @@ async def update_detailization_entry(
 
         if "expert_name" in payload:
             entry.expert_name = (str(payload.get("expert_name") or "").strip() or None)
-        if "column_9" in payload:
-            entry.column_9 = (str(payload.get("column_9") or "").strip() or None)
         if "is_attached" in payload:
             val = payload.get("is_attached")
             if val is None:
@@ -300,8 +294,11 @@ async def update_detailization_entry(
             else:
                 entry.is_attached = bool(val)
 
+        if "assigned_at" in payload:
+            entry.assigned_at = _parse_datetime_utc(payload.get("assigned_at"))
+
         if "conducted_at" in payload:
-            entry.conducted_at = _parse_conducted_at(payload.get("conducted_at"))
+            entry.conducted_at = _parse_datetime_utc(payload.get("conducted_at"))
 
         if allow_full:
             if "recruiter_id" in payload:
@@ -347,10 +344,9 @@ async def create_manual_detailization_entry(
             candidate_id=int(user.id),
             recruiter_id=int(recruiter_id) if recruiter_id is not None else None,
             city_id=int(city_id) if city_id is not None else None,
-            assigned_at=None,
-            conducted_at=_parse_conducted_at(payload.get("conducted_at")),
+            assigned_at=_parse_datetime_utc(payload.get("assigned_at")),
+            conducted_at=_parse_datetime_utc(payload.get("conducted_at")),
             expert_name=(str(payload.get("expert_name") or "").strip() or None),
-            column_9=(str(payload.get("column_9") or "").strip() or None),
             is_attached=payload.get("is_attached", None),
             created_by_type=principal.type,
             created_by_id=principal.id,

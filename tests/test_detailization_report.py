@@ -164,7 +164,7 @@ def test_detailization_patch_updates_manual_fields():
             f"/api/detailization/{entry_id}",
             auth=("admin", "admin"),
             headers={"x-csrf-token": token},
-            json={"column_9": "C9", "expert_name": "Эксперт ФИО", "is_attached": True},
+            json={"expert_name": "Эксперт ФИО", "is_attached": True},
         )
         assert patched.status_code == 200
         assert patched.json()["ok"] is True
@@ -172,7 +172,5 @@ def test_detailization_patch_updates_manual_fields():
         payload2 = client.get("/api/detailization", auth=("admin", "admin")).json()
         row2 = next((it for it in payload2["items"] if it["candidate"]["id"] == seed["user_id"]), None)
         assert row2 is not None
-        assert row2["column_9"] == "C9"
         assert row2["expert_name"] == "Эксперт ФИО"
         assert row2["is_attached"] is True
-

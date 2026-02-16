@@ -6,8 +6,8 @@ import { useProfile } from '@/app/hooks/useProfile'
 
 type DetailizationItem = {
   id: number
+  assigned_at: string | null
   conducted_at: string | null
-  column_9: string
   expert_name: string
   is_attached: boolean | null
   recruiter: { id: number; name: string } | null
@@ -40,6 +40,17 @@ function fmtDate(value: string | null): string {
   return dt.toLocaleDateString('ru-RU')
 }
 
+function fmtTime(value: string | null): string {
+  if (!value) return '—'
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return '—'
+  return dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+}
+
+function isoDate(value: Date): string {
+  return value.toISOString().slice(0, 10)
+}
+
 function attachLabel(value: boolean | null): { text: string; tone: string } {
   if (value === true) return { text: 'Да', tone: 'success' }
   if (value === false) return { text: 'Нет', tone: 'danger' }
@@ -54,15 +65,13 @@ export function DetailizationPage() {
   const [createCandidateId, setCreateCandidateId] = useState('')
   const [createRecruiterId, setCreateRecruiterId] = useState<string>('') // optional; default from API list
   const [createCityId, setCreateCityId] = useState<string>('') // optional
+  const [createAssignedAt, setCreateAssignedAt] = useState<string>(() => isoDate(new Date()))
   const [createConductedAt, setCreateConductedAt] = useState<string>('') // yyyy-mm-dd
   const [createExpertName, setCreateExpertName] = useState('')
-  const [createColumn9, setCreateColumn9] = useState('')
   const [createIsAttached, setCreateIsAttached] = useState<'unknown' | 'yes' | 'no'>('unknown')
   const [createError, setCreateError] = useState<string>('')
 
-  const [dirty, setDirty] = useState<Record<number, Partial<Pick<DetailizationItem, 'column_9' | 'expert_name' | 'is_attached'>>>>(
-    {},
-  )
+  const [dirty, setDirty] = useState<Record<number, Partial<Pick<DetailizationItem, 'expert_name' | 'is_attached'>>>>({})
   const query = useQuery({
     queryKey: ['detailization'],
     queryFn: () => apiFetch<DetailizationResponse>('/detailization'),
@@ -96,9 +105,9 @@ export function DetailizationPage() {
       setCreateCandidateId('')
       setCreateRecruiterId('')
       setCreateCityId('')
+      setCreateAssignedAt(isoDate(new Date()))
       setCreateConductedAt('')
       setCreateExpertName('')
-      setCreateColumn9('')
       setCreateIsAttached('unknown')
       await query.refetch()
     },
@@ -160,6 +169,16 @@ export function DetailizationPage() {
                   onChange={(e) => setCreateCandidateId(e.target.value)}
                   placeholder="например: 123"
                   inputMode="numeric"
+                />
+              </div>
+
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div className="text-muted text-xs">Дата назначения</div>
+                <input
+                  className="ui-input"
+                  type="date"
+                  value={createAssignedAt}
+                  onChange={(e) => setCreateAssignedAt(e.target.value)}
                 />
               </div>
 
@@ -237,16 +256,6 @@ export function DetailizationPage() {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gap: 6 }}>
-              <div className="text-muted text-xs">Column 9</div>
-              <input
-                className="ui-input"
-                value={createColumn9}
-                onChange={(e) => setCreateColumn9(e.target.value)}
-                placeholder="—"
-              />
-            </div>
-
             {createError && <div className="text-danger text-sm">{createError}</div>}
 
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
@@ -279,7 +288,7 @@ export function DetailizationPage() {
                   const payload: any = {
                     candidate_id: candidateId,
                     expert_name: createExpertName.trim() || null,
-                    column_9: createColumn9.trim() || null,
+                    assigned_at: createAssignedAt.trim() || null,
                     conducted_at: createConductedAt.trim() || null,
                     is_attached: createIsAttached === 'unknown' ? null : createIsAttached === 'yes',
                   }
@@ -303,7 +312,7 @@ export function DetailizationPage() {
 
         <div className={`detailization-grid ${isAdmin ? '' : 'detailization-grid--recruiter'}`} style={{ marginTop: 12 }}>
           <div className="detailization-grid__head">
-            <div>Column 9</div>
+            <div>Дата назначения</div>
             {isAdmin && <div>Рекрутер</div>}
             <div>Дата проведения</div>
             <div>Город</div>
@@ -319,13 +328,9 @@ export function DetailizationPage() {
             const canSave = Object.keys(patch).length > 0 && !updateMutation.isPending
             return (
               <div key={row.id} className="detailization-grid__row">
-                <div>
-                  <input
-                    className="ui-input"
-                    value={(patch as any).column_9 ?? row.column_9 ?? ''}
-                    onChange={(e) => setRowPatch(row.id, { column_9: e.target.value })}
-                    placeholder="—"
-                  />
+                <div className="text-sm">
+                  <div>{fmtDate(row.assigned_at)}</div>
+                  <div className="text-muted text-xs">{fmtTime(row.assigned_at)}</div>
                 </div>
 
                 {isAdmin && <div className="text-sm">{row.recruiter?.name || '—'}</div>}
