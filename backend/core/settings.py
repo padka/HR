@@ -698,7 +698,6 @@ def get_settings() -> Settings:
         ai_max_requests_per_principal_per_day=ai_max_requests_per_principal_per_day,
         ai_store_prompts=ai_store_prompts,
         ai_pii_mode=ai_pii_mode,
-        simulator_enabled=simulator_enabled,
         ai_reasoning_effort=ai_reasoning_effort,
         simulator_enabled=simulator_enabled,
     )
