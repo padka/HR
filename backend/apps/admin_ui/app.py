@@ -75,7 +75,12 @@ from backend.core.error_handler import (
 )
 from backend.migrations.runner import upgrade_to_head
 from backend.core.redis_factory import parse_redis_target
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, TimeoutError as SQLAlchemyTimeoutError
+
+try:  # pragma: no cover - optional depending on installed DB driver
+    from asyncpg.exceptions import TooManyConnectionsError as AsyncpgTooManyConnectionsError  # type: ignore
+except Exception:  # pragma: no cover
+    AsyncpgTooManyConnectionsError = None  # type: ignore[assignment]
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.exception_handlers import http_exception_handler
 from fastapi import HTTPException
@@ -283,7 +288,7 @@ async def _db_unavailable_response(request: Request) -> Response:
     )
 
 
-async def _db_exception_handler(request: Request, exc: OperationalError) -> Response:
+async def _db_exception_handler(request: Request, exc: Exception) -> Response:
     request.app.state.db_available = False
     logger.warning("Database operation failed during request: %s", exc)
     return await _db_unavailable_response(request)
@@ -524,6 +529,9 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_exception_handler(OperationalError, _db_exception_handler)
+    app.add_exception_handler(SQLAlchemyTimeoutError, _db_exception_handler)
+    if AsyncpgTooManyConnectionsError is not None:
+        app.add_exception_handler(AsyncpgTooManyConnectionsError, _db_exception_handler)
     app.add_middleware(SlowAPIMiddleware)
     if settings.environment != "test":
         app.add_middleware(
