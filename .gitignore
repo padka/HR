@@ -56,3 +56,6 @@ node_modules/
 .next/
 .env.local
 .aider*
+
+# Local runtime / scratch
+.local/
