@@ -10,6 +10,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
+from backend.apps.admin_ui.perf.degraded.allowlist import ALLOW_PATHS, ALLOW_PREFIXES
+from backend.apps.admin_ui.perf.metrics.context import mark_degraded
 from backend.core.logging import reset_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
@@ -18,34 +20,14 @@ logger = logging.getLogger(__name__)
 class DegradedDatabaseMiddleware(BaseHTTPMiddleware):
     """Short-circuit requests when DB is unavailable to avoid noisy 500s."""
 
-    _allow_prefixes = (
-        "/static",
-        "/assets",
-        "/app",
-        "/health",
-        "/metrics",
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-    )
-    _allow_paths = (
-        "/",
-        "/favicon.ico",
-        "/.well-known/appspecific/com.chrome.devtools.json",
-        # Read-only UX/Ops endpoints can serve cached snapshots even when DB is temporarily degraded.
-        "/api/profile",
-        "/api/dashboard/summary",
-        "/api/dashboard/incoming",
-        "/api/calendar/events",
-        "/api/notifications/feed",
-        "/api/notifications/logs",
-        "/api/bot/reminders/jobs",
-    )
+    _allow_prefixes = ALLOW_PREFIXES
+    _allow_paths = ALLOW_PATHS
 
     async def dispatch(self, request: Request, call_next):
         db_available = getattr(request.app.state, "db_available", True)
         path = request.url.path
         if not db_available:
+            mark_degraded("database_unavailable")
             if path in self._allow_paths or path.startswith(self._allow_prefixes):
                 return await call_next(request)
             accepts = (request.headers.get("accept") or "").lower()
