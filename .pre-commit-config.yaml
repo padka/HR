@@ -24,3 +24,10 @@ repos:
           - "--strict"
         additional_dependencies:
           - types-redis
+  - repo: local
+    hooks:
+      - id: secret-scan
+        name: secret-scan
+        entry: ./scripts/secret_scan.sh
+        language: system
+        pass_filenames: false

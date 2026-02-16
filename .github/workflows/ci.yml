@@ -20,6 +20,9 @@ jobs:
       - name: Ensure Codex system document present
         run: test -f ./.codex/system.md
 
+      - name: Secret scan
+        run: ./scripts/secret_scan.sh
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

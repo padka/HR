@@ -3,6 +3,7 @@
 ## Security
 
 - [ ] Confirm no real secrets/tokens are stored in committed `.env*` example files.
+- [ ] Run secret scan gate: `./scripts/secret_scan.sh`.
 - [ ] Rotate `BOT_TOKEN` if it was ever committed or shared.
 - [ ] Rotate `BOT_CALLBACK_SECRET` if it was ever committed or shared.
 - [ ] Rotate `SESSION_SECRET` if it was ever committed or shared.
@@ -20,7 +21,13 @@
 
 - [ ] Backend tests pass (`make test` / CI matrix).
 - [ ] Frontend checks pass (`npm run lint`, `npm run typecheck`, `npm run test`, `npm run test:e2e`).
+- [ ] Quality snapshot updated: `./scripts/quality_snapshot.sh --full`.
 - [ ] Smoke test critical candidate/city flows in staging.
+
+## AI / Simulator Ops
+
+- [ ] Verify AI Coach endpoints are operational (see `docs/AI_COACH_RUNBOOK.md`).
+- [ ] Verify local simulator flows are green before rollout prep (see `docs/SIMULATOR_RUNBOOK.md`).
 
 ## Incident Runbook: `telegram_unauthorized`
 

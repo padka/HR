@@ -8,9 +8,9 @@ import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response, HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from backend.core.logging import set_request_id, reset_request_id
+from backend.core.logging import reset_request_id, set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +101,13 @@ class SecureHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-XSS-Protection", "1; mode=block")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()",
+        )
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
 
         if request.url.scheme == "https":
             response.headers.setdefault(

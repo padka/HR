@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+import os
+import time
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 
@@ -25,6 +26,12 @@ from backend.domain.models import Recruiter
 
 logger = logging.getLogger(__name__)
 
+_LOGIN_FAILURES: dict[str, list[float]] = {}
+_LOGIN_LOCK_UNTIL: dict[str, float] = {}
+_BRUTE_WINDOW_SECONDS = 15 * 60
+_BRUTE_MAX_ATTEMPTS = 8
+_BRUTE_LOCK_SECONDS = 15 * 60
+
 
 def _get_audit_context(request: Request, username: str) -> AuditContext:
     return AuditContext(
@@ -39,19 +46,68 @@ def _login_key_func(request: Request) -> str:
     return f"login:{get_client_ip(request)}"
 
 
+def _principal_login_key(request: Request, username: str) -> str:
+    uname = (username or "").strip().lower() or "unknown"
+    return f"{get_client_ip(request)}:{uname}"
+
+
+def _is_locked(login_key: str) -> tuple[bool, int]:
+    now = time.time()
+    lock_until = _LOGIN_LOCK_UNTIL.get(login_key, 0)
+    if lock_until > now:
+        return True, int(lock_until - now)
+    if lock_until:
+        _LOGIN_LOCK_UNTIL.pop(login_key, None)
+    return False, 0
+
+
+def _register_failure(login_key: str) -> None:
+    now = time.time()
+    attempts = [ts for ts in _LOGIN_FAILURES.get(login_key, []) if ts >= (now - _BRUTE_WINDOW_SECONDS)]
+    attempts.append(now)
+    _LOGIN_FAILURES[login_key] = attempts
+    if len(attempts) >= _BRUTE_MAX_ATTEMPTS:
+        _LOGIN_LOCK_UNTIL[login_key] = now + _BRUTE_LOCK_SECONDS
+        _LOGIN_FAILURES[login_key] = []
+
+
+def _register_success(login_key: str) -> None:
+    _LOGIN_FAILURES.pop(login_key, None)
+    _LOGIN_LOCK_UNTIL.pop(login_key, None)
+
+
+def _is_bruteforce_enabled() -> bool:
+    raw = os.getenv("AUTH_BRUTE_FORCE_ENABLED")
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    settings = get_settings()
+    return settings.environment != "test"
+
+
 router = APIRouter(prefix="/auth", tags=["auth"])
+oauth_form_dep = Depends(OAuth2PasswordRequestForm)
 
 
 @router.post("/token")
 @limiter.limit("5/minute", key_func=_login_key_func)
 async def login_for_access_token(
     request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends(OAuth2PasswordRequestForm),
+    form_data: OAuth2PasswordRequestForm = oauth_form_dep,
 ):
     """
     OAuth2 compatible token login, get an access token for future requests.
     """
     settings = get_settings()
+    login_key = _principal_login_key(request, form_data.username)
+    brute_force_enabled = _is_bruteforce_enabled()
+    if brute_force_enabled:
+        is_locked, retry_after = _is_locked(login_key)
+        if is_locked:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many failed login attempts. Try again in {retry_after}s.",
+                headers={"Retry-After": str(max(retry_after, 1))},
+            )
 
     audit_ctx = _get_audit_context(request, form_data.username)
 
@@ -62,12 +118,12 @@ async def login_for_access_token(
         and form_data.password == settings.admin_password
     ):
 
-        access_token_expires = timedelta(
-            minutes=settings.state_ttl_seconds / 60
-        )  # use existing TTL or default 30m
+        access_token_expires = timedelta(hours=settings.access_token_ttl_hours)
         access_token = create_access_token(
             data={"sub": form_data.username}, expires_delta=access_token_expires
         )
+        if brute_force_enabled:
+            _register_success(login_key)
         await log_audit_action(
             "login_success",
             "auth",
@@ -88,6 +144,8 @@ async def login_for_access_token(
         if not account or not verify_password(
             form_data.password, account.password_hash
         ):
+            if brute_force_enabled:
+                _register_failure(login_key)
             await log_audit_action(
                 "login_failed",
                 "auth",
@@ -101,10 +159,12 @@ async def login_for_access_token(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        access_token_expires = timedelta(minutes=settings.state_ttl_seconds / 60)
+        access_token_expires = timedelta(hours=settings.access_token_ttl_hours)
         access_token = create_access_token(
             data={"sub": account.username}, expires_delta=access_token_expires
         )
+        if brute_force_enabled:
+            _register_success(login_key)
         await log_audit_action(
             "login_success",
             "auth",
@@ -128,10 +188,27 @@ async def login(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
-    redirect_to: Optional[str] = Form("/"),
+    redirect_to: str | None = Form("/"),
 ):
     audit_ctx = _get_audit_context(request, username)
     settings = get_settings()
+    login_key = _principal_login_key(request, username)
+    brute_force_enabled = _is_bruteforce_enabled()
+    if brute_force_enabled:
+        is_locked, retry_after = _is_locked(login_key)
+        if is_locked:
+            await log_audit_action(
+                "login_blocked",
+                "auth",
+                None,
+                ctx=audit_ctx,
+                changes={"method": "form", "reason": "brute_force_lock", "retry_after": retry_after},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many failed login attempts. Try again in {retry_after}s.",
+                headers={"Retry-After": str(max(retry_after, 1))},
+            )
 
     # Keep form login behaviour aligned with /auth/token:
     # allow configured admin credentials from environment.
@@ -140,6 +217,8 @@ async def login(
         and username == settings.admin_username
         and password == settings.admin_password
     ):
+        if brute_force_enabled:
+            _register_success(login_key)
         await log_audit_action(
             "login_success",
             "auth",
@@ -160,6 +239,8 @@ async def login(
             )
         )
         if not account or not verify_password(password, account.password_hash):
+            if brute_force_enabled:
+                _register_failure(login_key)
             await log_audit_action(
                 "login_failed",
                 "auth",
@@ -183,9 +264,11 @@ async def login(
                     changes={"method": "form", "reason": "recruiter_not_found"},
                 )
                 raise HTTPException(status_code=401, detail="Recruiter not found")
-            recruiter.last_seen_at = datetime.now(timezone.utc)
+            recruiter.last_seen_at = datetime.now(UTC)
             await session.commit()
 
+    if brute_force_enabled:
+        _register_success(login_key)
     await log_audit_action(
         "login_success",
         "auth",
