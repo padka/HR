@@ -21,6 +21,7 @@ from backend.apps.admin_ui.services.cities import (
     get_city,
     create_city,
     update_city_settings,
+    city_experts_items,
     delete_city,
 )
 from backend.apps.admin_ui.services.dashboard import (
@@ -1005,6 +1006,7 @@ async def api_cities(principal: Principal = Depends(require_principal)):
                 "owner_recruiter_id": primary.id if primary else None,
                 "criteria": getattr(city, "criteria", None),
                 "experts": getattr(city, "experts", None),
+                "experts_items": city_experts_items(city, include_inactive=False),
                 "plan_week": getattr(city, "plan_week", None),
                 "plan_month": getattr(city, "plan_month", None),
                 "intro_address": getattr(city, "intro_address", None),
@@ -1037,6 +1039,7 @@ async def api_city_detail(
         "owner_recruiter_id": primary.id if primary else None,
         "criteria": getattr(city, "criteria", None),
         "experts": getattr(city, "experts", None),
+        "experts_items": city_experts_items(city, include_inactive=True),
         "plan_week": getattr(city, "plan_week", None),
         "plan_month": getattr(city, "plan_month", None),
         "intro_address": getattr(city, "intro_address", None),
@@ -1057,14 +1060,42 @@ async def api_create_city(
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
     try:
-        recruiter_ids = data.get("recruiter_ids")
-        if recruiter_ids is not None and not isinstance(recruiter_ids, list):
+        recruiter_ids_raw = data.get("recruiter_ids")
+        recruiter_ids: Optional[List[int]] = None
+        if recruiter_ids_raw is not None:
             recruiter_ids = []
-        await create_city(
+            if isinstance(recruiter_ids_raw, list):
+                for raw in recruiter_ids_raw:
+                    try:
+                        recruiter_ids.append(int(raw))
+                    except (TypeError, ValueError):
+                        continue
+
+        city = await create_city(
             name=str(data.get("name") or ""),
             tz=str(data.get("tz") or "Europe/Moscow"),
             recruiter_ids=recruiter_ids,
         )
+        if city is not None:
+            # Persist the rest of the city settings (frontend sends full payload on create).
+            error, _, _ = await update_city_settings(
+                city.id,
+                name=data.get("name"),
+                recruiter_ids=recruiter_ids,
+                responsible_id=None,
+                criteria=data.get("criteria"),
+                experts=data.get("experts"),
+                experts_items=data.get("experts_items"),
+                plan_week=data.get("plan_week"),
+                plan_month=data.get("plan_month"),
+                tz=data.get("tz"),
+                active=data.get("active"),
+                intro_address=data.get("intro_address"),
+                contact_name=data.get("contact_name"),
+                contact_phone=data.get("contact_phone"),
+            )
+            if error:
+                return JSONResponse({"ok": False, "error": error}, status_code=400)
     except CityAlreadyExistsError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
     except ValueError as exc:
@@ -1092,6 +1123,7 @@ async def api_update_city(
         responsible_id=None,
         criteria=data.get("criteria"),
         experts=data.get("experts"),
+        experts_items=data.get("experts_items"),
         plan_week=data.get("plan_week"),
         plan_month=data.get("plan_month"),
         tz=data.get("tz"),

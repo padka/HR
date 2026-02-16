@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
+import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
@@ -11,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from backend.core.cache import CacheKeys, CacheTTL, get_cache
 from backend.core.db import async_session
 from backend.core.sanitizers import sanitize_plain_text
+from backend.domain.cities.models import CityExpert
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
 from backend.domain.repositories import city_has_available_slots, slot_status_free_clause
 from backend.domain.errors import CityAlreadyExistsError
@@ -29,7 +31,126 @@ __all__ = [
     "api_city_owners_payload",
     "normalize_city_timezone",
     "get_city_capacity",
+    "city_experts_items",
 ]
+
+_EXPERT_SPLIT_RE = re.compile(r"[\n,;]+")
+
+
+def _clean_expert_name(value: str) -> str:
+    # Normalise whitespace while keeping original characters.
+    return " ".join((value or "").strip().split())
+
+
+def parse_experts_text(value: Optional[str]) -> List[str]:
+    text = (value or "").strip()
+    if not text:
+        return []
+    parts = _EXPERT_SPLIT_RE.split(text)
+    names: List[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        name = _clean_expert_name(part)
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def city_experts_items(city: City, *, include_inactive: bool = False) -> List[Dict[str, object]]:
+    experts = list(getattr(city, "city_experts", []) or [])
+    if experts:
+        payload: List[Dict[str, object]] = []
+        for expert in experts:
+            if not include_inactive and not getattr(expert, "is_active", True):
+                continue
+            payload.append(
+                {
+                    "id": expert.id,
+                    "name": expert.name,
+                    "is_active": bool(getattr(expert, "is_active", True)),
+                }
+            )
+        payload.sort(key=lambda row: int(row.get("id") or 0))
+        return payload
+
+    # Backward-compat: legacy string field used in older UIs and historical data.
+    legacy = parse_experts_text(getattr(city, "experts", None))
+    return [{"id": None, "name": name, "is_active": True} for name in legacy]
+
+
+def _sync_city_experts_from_items(city: City, items: object) -> List[str]:
+    if not isinstance(items, list):
+        items = []
+
+    existing = list(getattr(city, "city_experts", []) or [])
+    by_id = {exp.id: exp for exp in existing if getattr(exp, "id", None) is not None}
+    by_name = {str(exp.name).casefold(): exp for exp in existing if getattr(exp, "name", None)}
+
+    keep_ids: set[int] = set()
+    keep_name_keys: set[str] = set()
+
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        raw_name = raw.get("name")
+        name = _clean_expert_name(str(raw_name or ""))
+        if not name:
+            continue
+
+        key = name.casefold()
+        if key in keep_name_keys:
+            continue
+        keep_name_keys.add(key)
+
+        raw_id = raw.get("id")
+        exp_id: Optional[int] = None
+        if raw_id not in (None, "", "null"):
+            try:
+                exp_id = int(raw_id)
+            except (TypeError, ValueError):
+                exp_id = None
+
+        is_active = raw.get("is_active")
+        active = True if is_active is None else bool(is_active)
+
+        expert: Optional[CityExpert] = None
+        if exp_id is not None and exp_id in by_id:
+            expert = by_id[exp_id]
+        elif key in by_name:
+            expert = by_name[key]
+
+        if expert is None:
+            expert = CityExpert(name=name, is_active=active, city_id=city.id)
+            existing.append(expert)
+        else:
+            expert.name = name
+            expert.is_active = active
+
+        if getattr(expert, "id", None) is not None:
+            keep_ids.add(int(expert.id))
+
+    for expert in existing:
+        if getattr(expert, "id", None) is None:
+            continue
+        if int(expert.id) not in keep_ids:
+            # Keep history; missing from payload => archived.
+            expert.is_active = False
+
+    # Reattach updated list; relationship is configured with delete-orphan.
+    city.city_experts = existing
+
+    active_names = [exp.name for exp in existing if getattr(exp, "is_active", True) and getattr(exp, "name", None)]
+    return active_names
+
+
+def _sync_city_experts_from_text(city: City, value: Optional[str]) -> List[str]:
+    desired = [{"id": None, "name": name, "is_active": True} for name in parse_experts_text(value)]
+    return _sync_city_experts_from_items(city, desired)
 
 
 async def list_cities(order_by_name: bool = True, principal: Optional[Principal] = None) -> List[City]:
@@ -37,7 +158,7 @@ async def list_cities(order_by_name: bool = True, principal: Optional[Principal]
     if principal is None:
         raise RuntimeError("principal is required for list_cities")
     async with async_session() as session:
-        query = select(City).options(selectinload(City.recruiters))
+        query = select(City).options(selectinload(City.recruiters), selectinload(City.city_experts))
         if principal and principal.type == "recruiter":
             query = query.join(City.recruiters).where(Recruiter.id == principal.id)
         if order_by_name:
@@ -67,7 +188,7 @@ async def get_city(city_id: int, principal: Optional[Principal] = None) -> Optio
     async with async_session() as session:
         query = (
             select(City)
-            .options(selectinload(City.recruiters))
+            .options(selectinload(City.recruiters), selectinload(City.city_experts))
             .where(City.id == city_id)
         )
         if principal and principal.type == "recruiter":
@@ -144,6 +265,7 @@ async def update_city_settings(
     responsible_id: Optional[int] = None,
     criteria: Optional[str],
     experts: Optional[str],
+    experts_items: Optional[object] = None,
     plan_week: Optional[int],
     plan_month: Optional[int],
     tz: Optional[str] = None,
@@ -156,7 +278,7 @@ async def update_city_settings(
         try:
             city_result = await session.execute(
                 select(City)
-                .options(selectinload(City.recruiters))
+                .options(selectinload(City.recruiters), selectinload(City.city_experts))
                 .where(City.id == city_id)
             )
             city = city_result.scalar_one_or_none()
@@ -188,7 +310,12 @@ async def update_city_settings(
             clean_criteria = (criteria or "").strip() or None
             clean_experts = (experts or "").strip() or None
             city.criteria = clean_criteria
-            city.experts = clean_experts
+            # Experts: sync structured city_experts and keep legacy text field in sync.
+            if experts_items is not None:
+                active_names = _sync_city_experts_from_items(city, experts_items)
+            else:
+                active_names = _sync_city_experts_from_text(city, clean_experts)
+            city.experts = "\n".join(active_names) if active_names else None
             city.intro_address = (intro_address or "").strip() or None
             city.contact_name = (contact_name or "").strip() or None
             city.contact_phone = (contact_phone or "").strip() or None
