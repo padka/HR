@@ -21,6 +21,7 @@ class DetailizationUpdatePayload(BaseModel):
     expert_name: str | None = None
     column_9: str | None = None
     is_attached: bool | None = None
+    conducted_at: str | None = None
     recruiter_id: int | None = None
     city_id: int | None = None
 
@@ -29,6 +30,7 @@ class DetailizationCreatePayload(BaseModel):
     candidate_id: int
     recruiter_id: int | None = None
     city_id: int | None = None
+    conducted_at: str | None = None
     expert_name: str | None = None
     column_9: str | None = None
     is_attached: bool | None = None
@@ -61,4 +63,3 @@ async def api_detailization_create(
     _ = await require_csrf_token(request)
     result = await create_manual_detailization_entry(payload.model_dump(), principal=principal)
     return JSONResponse(result, status_code=201 if result.get("ok") else 400)
-

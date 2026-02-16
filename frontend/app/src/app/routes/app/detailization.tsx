@@ -1,11 +1,10 @@
 import { apiFetch } from '@/api/client'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 
 type DetailizationItem = {
   id: number
-  assigned_at: string | null
   conducted_at: string | null
   column_9: string
   expert_name: string
@@ -20,18 +19,24 @@ type DetailizationResponse = {
   items: DetailizationItem[]
 }
 
+type City = {
+  id: number
+  name: string
+  tz?: string | null
+  active?: boolean | null
+}
+
+type Recruiter = {
+  id: number
+  name: string
+  active?: boolean | null
+}
+
 function fmtDate(value: string | null): string {
   if (!value) return '—'
   const dt = new Date(value)
   if (Number.isNaN(dt.getTime())) return '—'
   return dt.toLocaleDateString('ru-RU')
-}
-
-function fmtTime(value: string | null): string {
-  if (!value) return '—'
-  const dt = new Date(value)
-  if (Number.isNaN(dt.getTime())) return '—'
-  return dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 }
 
 function attachLabel(value: boolean | null): { text: string; tone: string } {
@@ -41,12 +46,32 @@ function attachLabel(value: boolean | null): { text: string; tone: string } {
 }
 
 export function DetailizationPage() {
+  const [showCreate, setShowCreate] = useState(false)
+  const [createCandidateId, setCreateCandidateId] = useState('')
+  const [createRecruiterId, setCreateRecruiterId] = useState<string>('') // optional; default from API list
+  const [createCityId, setCreateCityId] = useState<string>('') // optional
+  const [createConductedAt, setCreateConductedAt] = useState<string>('') // yyyy-mm-dd
+  const [createExpertName, setCreateExpertName] = useState('')
+  const [createColumn9, setCreateColumn9] = useState('')
+  const [createIsAttached, setCreateIsAttached] = useState<'unknown' | 'yes' | 'no'>('unknown')
+  const [createError, setCreateError] = useState<string>('')
+
   const [dirty, setDirty] = useState<Record<number, Partial<Pick<DetailizationItem, 'column_9' | 'expert_name' | 'is_attached'>>>>(
     {},
   )
   const query = useQuery({
     queryKey: ['detailization'],
     queryFn: () => apiFetch<DetailizationResponse>('/detailization'),
+  })
+
+  const citiesQuery = useQuery<City[]>({
+    queryKey: ['cities'],
+    queryFn: () => apiFetch('/cities'),
+  })
+
+  const recruitersQuery = useQuery<Recruiter[]>({
+    queryKey: ['recruiters'],
+    queryFn: () => apiFetch('/recruiters'),
   })
 
   const updateMutation = useMutation({
@@ -58,8 +83,27 @@ export function DetailizationPage() {
     },
   })
 
-  const items = query.data?.items || []
-  const rows = useMemo(() => items, [items])
+  const createMutation = useMutation({
+    mutationFn: async (payload: any) => apiFetch('/detailization', { method: 'POST', body: JSON.stringify(payload) }),
+    onSuccess: async () => {
+      setCreateError('')
+      setShowCreate(false)
+      setCreateCandidateId('')
+      setCreateRecruiterId('')
+      setCreateCityId('')
+      setCreateConductedAt('')
+      setCreateExpertName('')
+      setCreateColumn9('')
+      setCreateIsAttached('unknown')
+      await query.refetch()
+    },
+    onError: (err: any) => {
+      const msg = err instanceof Error ? err.message : 'Ошибка создания'
+      setCreateError(msg)
+    },
+  })
+
+  const rows = query.data?.items ?? []
 
   const setRowPatch = (id: number, patch: any) => {
     setDirty((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...patch } }))
@@ -86,10 +130,158 @@ export function DetailizationPage() {
             <span className="text-muted text-sm">Строк: {rows.length}</span>
             {query.isFetching && <span className="text-muted text-sm">Обновление…</span>}
           </div>
-          <button className="ui-btn ui-btn--secondary" onClick={() => query.refetch()} disabled={query.isFetching}>
-            Обновить
-          </button>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <button
+              className="ui-btn ui-btn--primary"
+              onClick={() => setShowCreate((v) => !v)}
+              disabled={createMutation.isPending}
+            >
+              + Добавить вручную
+            </button>
+            <button className="ui-btn ui-btn--secondary" onClick={() => query.refetch()} disabled={query.isFetching}>
+              Обновить
+            </button>
+          </div>
         </div>
+
+        {showCreate && (
+          <div className="glass" style={{ padding: 14, marginTop: 12, display: 'grid', gap: 10 }}>
+            <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div className="text-muted text-xs">ID кандидата</div>
+                <input
+                  className="ui-input"
+                  value={createCandidateId}
+                  onChange={(e) => setCreateCandidateId(e.target.value)}
+                  placeholder="например: 123"
+                  inputMode="numeric"
+                />
+              </div>
+
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div className="text-muted text-xs">Дата проведения</div>
+                <input
+                  className="ui-input"
+                  type="date"
+                  value={createConductedAt}
+                  onChange={(e) => setCreateConductedAt(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div className="text-muted text-xs">Закрепление</div>
+                <select
+                  className="ui-select"
+                  value={createIsAttached}
+                  onChange={(e) => setCreateIsAttached(e.target.value as any)}
+                >
+                  <option value="unknown">—</option>
+                  <option value="yes">Да</option>
+                  <option value="no">Нет</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div className="text-muted text-xs">Рекрутер</div>
+                <select
+                  className="ui-select"
+                  value={createRecruiterId || ''}
+                  onChange={(e) => setCreateRecruiterId(e.target.value)}
+                  disabled={recruitersQuery.isLoading || (recruitersQuery.data?.length || 0) <= 1}
+                >
+                  <option value="">—</option>
+                  {(recruitersQuery.data || []).map((r) => (
+                    <option key={r.id} value={String(r.id)}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div className="text-muted text-xs">Город</div>
+                <select
+                  className="ui-select"
+                  value={createCityId || ''}
+                  onChange={(e) => setCreateCityId(e.target.value)}
+                  disabled={citiesQuery.isLoading}
+                >
+                  <option value="">—</option>
+                  {(citiesQuery.data || [])
+                    .filter((c) => c.active !== false)
+                    .map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div className="text-muted text-xs">Эксперт (ФИО)</div>
+                <input
+                  className="ui-input"
+                  value={createExpertName}
+                  onChange={(e) => setCreateExpertName(e.target.value)}
+                  placeholder="ФИО эксперта"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div className="text-muted text-xs">Column 9</div>
+              <input
+                className="ui-input"
+                value={createColumn9}
+                onChange={(e) => setCreateColumn9(e.target.value)}
+                placeholder="—"
+              />
+            </div>
+
+            {createError && <div className="text-danger text-sm">{createError}</div>}
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {createCandidateId && (
+                <Link
+                  to="/app/candidates/$candidateId"
+                  params={{ candidateId: String(createCandidateId) }}
+                  className="ui-btn ui-btn--secondary"
+                >
+                  Открыть кандидата
+                </Link>
+              )}
+              <button className="ui-btn ui-btn--secondary" onClick={() => setShowCreate(false)} disabled={createMutation.isPending}>
+                Отмена
+              </button>
+              <button
+                className="ui-btn ui-btn--primary"
+                disabled={createMutation.isPending || !createCandidateId.trim()}
+                onClick={async () => {
+                  setCreateError('')
+                  const candidateId = Number(createCandidateId)
+                  if (!Number.isFinite(candidateId) || candidateId <= 0) {
+                    setCreateError('Укажите корректный ID кандидата')
+                    return
+                  }
+                  const payload: any = {
+                    candidate_id: candidateId,
+                    expert_name: createExpertName.trim() || null,
+                    column_9: createColumn9.trim() || null,
+                    conducted_at: createConductedAt.trim() || null,
+                    is_attached: createIsAttached === 'unknown' ? null : createIsAttached === 'yes',
+                  }
+                  if (createRecruiterId) payload.recruiter_id = Number(createRecruiterId)
+                  if (createCityId) payload.city_id = Number(createCityId)
+                  await createMutation.mutateAsync(payload)
+                }}
+              >
+                Создать
+              </button>
+            </div>
+          </div>
+        )}
 
         {query.isError && (
           <div className="glass" style={{ padding: 12, marginTop: 12 }}>
@@ -100,7 +292,6 @@ export function DetailizationPage() {
 
         <div className="detailization-grid" style={{ marginTop: 12 }}>
           <div className="detailization-grid__head">
-            <div>Дата назначения</div>
             <div>Column 9</div>
             <div>Рекрутер</div>
             <div>Дата проведения</div>
@@ -117,11 +308,6 @@ export function DetailizationPage() {
             const canSave = Object.keys(patch).length > 0 && !updateMutation.isPending
             return (
               <div key={row.id} className="detailization-grid__row">
-                <div className="text-sm">
-                  <div>{fmtDate(row.assigned_at)}</div>
-                  <div className="text-muted text-xs">{fmtTime(row.assigned_at)}</div>
-                </div>
-
                 <div>
                   <input
                     className="ui-input"
@@ -135,7 +321,6 @@ export function DetailizationPage() {
 
                 <div className="text-sm">
                   <div>{fmtDate(row.conducted_at)}</div>
-                  <div className="text-muted text-xs">{fmtTime(row.conducted_at)}</div>
                 </div>
 
                 <div className="text-sm">{row.city?.name || '—'}</div>
@@ -184,4 +369,3 @@ export function DetailizationPage() {
     </div>
   )
 }
-

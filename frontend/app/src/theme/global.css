@@ -7228,7 +7228,7 @@ details > *:not(summary) {
 .detailization-grid__head,
 .detailization-grid__row {
   display: grid;
-  grid-template-columns: 120px 140px 140px 140px 140px 180px 1fr 120px 120px;
+  grid-template-columns: 140px 140px 140px 140px 180px 1fr 120px 120px;
   gap: 10px;
   align-items: center;
 }

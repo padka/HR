@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone, date as date_type, time as time_type
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -71,6 +71,28 @@ class DetailizationItem:
     recruiter: Optional[dict[str, Any]]
     city: Optional[dict[str, Any]]
     candidate: dict[str, Any]
+
+def _parse_conducted_at(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            if "T" in raw:
+                dt = datetime.fromisoformat(raw)
+            else:
+                d = date_type.fromisoformat(raw)
+                dt = datetime.combine(d, time_type.min)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"message": "Invalid conducted_at"}) from exc
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 async def _ensure_auto_rows(principal: Principal) -> None:
@@ -278,6 +300,9 @@ async def update_detailization_entry(
             else:
                 entry.is_attached = bool(val)
 
+        if "conducted_at" in payload:
+            entry.conducted_at = _parse_conducted_at(payload.get("conducted_at"))
+
         if allow_full:
             if "recruiter_id" in payload:
                 rid = payload.get("recruiter_id")
@@ -323,7 +348,7 @@ async def create_manual_detailization_entry(
             recruiter_id=int(recruiter_id) if recruiter_id is not None else None,
             city_id=int(city_id) if city_id is not None else None,
             assigned_at=None,
-            conducted_at=None,
+            conducted_at=_parse_conducted_at(payload.get("conducted_at")),
             expert_name=(str(payload.get("expert_name") or "").strip() or None),
             column_9=(str(payload.get("column_9") or "").strip() or None),
             is_attached=payload.get("is_attached", None),
