@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.security import Principal
@@ -135,6 +135,9 @@ async def _ensure_auto_rows(principal: Principal) -> None:
             .join(User, User.candidate_id == Slot.candidate_id)
             .where(func.lower(Slot.purpose) == INTRO_DAY_PURPOSE)
             .where(Slot.candidate_id.is_not(None))
+            # Fallback rows should only be created when there is no assignment record.
+            # Otherwise, slot_assignments is the source of truth (including NO_SHOW).
+            .where(~exists(select(SlotAssignment.id).where(SlotAssignment.slot_id == Slot.id)))
         )
         if principal.type == "recruiter":
             q2 = q2.where(Slot.recruiter_id == principal.id)
@@ -331,4 +334,3 @@ async def create_manual_detailization_entry(
         await session.commit()
         await session.refresh(entry)
         return {"ok": True, "id": int(entry.id)}
-
