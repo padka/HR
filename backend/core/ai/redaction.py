@@ -1,3 +1,13 @@
+"""PII redaction utilities for AI prompts.
+
+All text sent to external AI providers passes through ``redact_text()`` first.
+The function replaces emails, phones, URLs, usernames, and optionally person
+names with placeholder tokens (``EMAIL``, ``PHONE``, ``URL``, etc.).
+
+If redaction cannot guarantee safety, ``RedactionResult.safe_to_send`` is False
+and the caller must not forward the text to the provider.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,12 +29,15 @@ _PERSON_NAME_SEQ_RE = re.compile(rf"\\b{_NAME_WORD_RE}(?:\\s+{_NAME_WORD_RE}){{1
 
 @dataclass(frozen=True)
 class RedactionResult:
+    """Result of PII redaction: redacted text, safety flag, and replacement count."""
+
     text: str
     safe_to_send: bool
     replacements: int
 
 
 def _replace_known_name(text: str, name: Optional[str], placeholder: str) -> tuple[str, int]:
+    """Replace all occurrences of a known name (full and individual parts) with a placeholder."""
     if not name:
         return text, 0
     clean = (name or "").strip()

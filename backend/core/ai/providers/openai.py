@@ -100,6 +100,7 @@ class OpenAIProvider:
     def __init__(self, settings: Settings) -> None:
         self._api_key = settings.openai_api_key
         self._base_url = settings.openai_base_url.rstrip("/")
+        self._reasoning_effort = getattr(settings, "ai_reasoning_effort", "minimal") or "minimal"
 
     def _extract_content_and_usage(self, data: dict[str, Any]) -> tuple[str, Usage]:
         if isinstance(data.get("choices"), list):
@@ -190,7 +191,7 @@ class OpenAIProvider:
                 # output budget on reasoning and produce no final text for large prompts.
                 # For GPT-5 models, "minimal" keeps reasoning overhead near-zero while
                 # still producing final text under tight output token budgets.
-                "reasoning": {"effort": "minimal"},
+                "reasoning": {"effort": self._reasoning_effort},
             }
             if with_response_format:
                 payload["text"] = {"format": {"type": "json_object"}}

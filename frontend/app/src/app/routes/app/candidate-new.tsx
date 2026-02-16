@@ -71,7 +71,7 @@ export function CandidateNewPage() {
     queryFn: () => apiFetch('/recruiters'),
   })
 
-  const cities = citiesQuery.data || []
+  const cities = useMemo(() => citiesQuery.data ?? [], [citiesQuery.data])
   const recruiters = (recruitersQuery.data || []).filter((r) => r.active !== false)
 
   // Auto-select single options

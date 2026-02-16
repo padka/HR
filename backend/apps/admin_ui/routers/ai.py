@@ -9,6 +9,8 @@ from sqlalchemy import func, select
 
 from backend.apps.admin_ui.security import (
     Principal,
+    get_principal_identifier,
+    limiter,
     require_admin,
     require_csrf_token,
     require_principal,
@@ -31,6 +33,8 @@ principal_dep = Depends(require_principal)
 admin_dep = Depends(require_admin)
 ai_dep = Depends(get_ai_service)
 
+"""AI endpoints for candidate summaries, chat drafts, dashboard insights, and agent chat."""
+
 
 def _parse_date_param(value: str | None, *, end: bool = False) -> datetime | None:
     if not value:
@@ -44,10 +48,12 @@ def _parse_date_param(value: str | None, *, end: bool = False) -> datetime | Non
 
 
 def _disabled() -> JSONResponse:
+    """Return 501 response indicating AI feature is disabled."""
     return JSONResponse({"ok": False, "error": "ai_disabled"}, status_code=501)
 
 
 def _rate_limited() -> JSONResponse:
+    """Return 429 response indicating AI rate limit exceeded."""
     return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
 
 
@@ -57,6 +63,7 @@ async def api_ai_candidate_summary(
     principal: Principal = principal_dep,
     ai: AIService = ai_dep,
 ) -> JSONResponse:
+    """Get AI-generated candidate summary (cached)."""
     try:
         result = await ai.get_candidate_summary(candidate_id, principal=principal, refresh=False)
     except AIDisabledError:
@@ -67,12 +74,14 @@ async def api_ai_candidate_summary(
 
 
 @router.post("/candidates/{candidate_id}/summary/refresh")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
 async def api_ai_candidate_summary_refresh(
     candidate_id: int,
     request: Request,
     principal: Principal = principal_dep,
     ai: AIService = ai_dep,
 ) -> JSONResponse:
+    """Force regenerate candidate summary, bypassing cache."""
     _ = await require_csrf_token(request)
     try:
         result = await ai.get_candidate_summary(candidate_id, principal=principal, refresh=True)
@@ -139,12 +148,14 @@ async def api_ai_candidate_coach_drafts(
 
 
 @router.post("/candidates/{candidate_id}/chat/drafts")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
 async def api_ai_chat_drafts(
     candidate_id: int,
     request: Request,
     principal: Principal = principal_dep,
     ai: AIService = ai_dep,
 ) -> JSONResponse:
+    """Generate AI chat reply drafts for candidate in specified mode."""
     _ = await require_csrf_token(request)
     payload = await request.json()
     mode = "neutral"
@@ -162,11 +173,13 @@ async def api_ai_chat_drafts(
 
 
 @router.post("/dashboard/insights")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
 async def api_ai_dashboard_insights(
     request: Request,
     principal: Principal = admin_dep,
     ai: AIService = ai_dep,
 ) -> JSONResponse:
+    """Generate AI insights for dashboard based on funnel, pipeline, and notification metrics."""
     _ = await require_csrf_token(request)
     data = await request.json()
     if not isinstance(data, dict):
@@ -232,6 +245,7 @@ async def api_ai_agent_chat_state(
     principal: Principal = principal_dep,
     ai: AIService = ai_dep,
 ) -> JSONResponse:
+    """Retrieve current AI agent chat thread state and messages."""
     try:
         thread_id, messages = await ai.get_agent_chat_state(principal=principal, limit=120)
     except AIDisabledError:
@@ -240,11 +254,13 @@ async def api_ai_agent_chat_state(
 
 
 @router.post("/chat/message")
+@limiter.limit("10/minute", key_func=get_principal_identifier)
 async def api_ai_agent_chat_send(
     request: Request,
     principal: Principal = principal_dep,
     ai: AIService = ai_dep,
 ) -> JSONResponse:
+    """Send a message to AI agent chat and get response."""
     _ = await require_csrf_token(request)
     data = await request.json()
     if not isinstance(data, dict):
@@ -266,6 +282,7 @@ async def api_ai_city_candidate_recommendations(
     principal: Principal = principal_dep,
     ai: AIService = ai_dep,
 ) -> JSONResponse:
+    """Get AI candidate recommendations for a specific city."""
     limit_value = max(1, min(int(limit or 30), 80))
     try:
         result = await ai.get_city_candidate_recommendations(
@@ -282,12 +299,14 @@ async def api_ai_city_candidate_recommendations(
 
 
 @router.post("/cities/{city_id}/candidates/recommendations/refresh")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
 async def api_ai_city_candidate_recommendations_refresh(
     city_id: int,
     request: Request,
     principal: Principal = principal_dep,
     ai: AIService = ai_dep,
 ) -> JSONResponse:
+    """Force regenerate AI candidate recommendations for city, bypassing cache."""
     _ = await require_csrf_token(request)
     limit_value = 30
     try:

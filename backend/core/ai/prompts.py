@@ -1,3 +1,16 @@
+"""AI prompt templates for all LLM-powered features.
+
+Each ``*_prompts()`` function returns ``(system_prompt, user_prompt)`` ready
+for the AI provider.  Prompts are in Russian to match the target audience.
+
+Functions:
+- ``candidate_summary_prompts()`` — candidate assessment prompt.
+- ``chat_reply_drafts_prompts()`` — recruiter reply suggestions.
+- ``dashboard_insight_prompts()`` — dashboard analytics insight.
+- ``city_candidate_recommendations_prompts()`` — candidate ranking for a city.
+- ``agent_chat_reply_prompts()`` — Copilot (internal AI chat) prompt.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +20,7 @@ from typing import Any
 
 
 def _json_block(data: Any) -> str:
+    """Serialize data to a pretty-printed JSON string for prompt embedding."""
     return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2)
 
 
@@ -50,6 +64,7 @@ def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tupl
         "{\n"
         '  "tldr": "string",\n'
         '  "fit": {"score": 0-100|null, "level":"high|medium|low|unknown", "rationale":"string", "criteria_used": true|false} | null,\n'
+        '  "vacancy_fit": {"score": 0-100|null, "level":"high|medium|low|unknown", "summary":"string", "evidence": [{"factor":"string","assessment":"positive|negative|neutral|unknown","detail":"string"}], "criteria_source":"city_criteria|kb_regulations|both|none"} | null,\n'
         '  "strengths": [{"key":"string","label":"string","evidence":"string"}],\n'
         '  "weaknesses": [{"key":"string","label":"string","evidence":"string"}],\n'
         '  "criteria_checklist": [{"key":"string","status":"met|not_met|unknown","label":"string","evidence":"string"}],\n'
@@ -63,6 +78,13 @@ def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tupl
         "Analyze the candidate context and produce recruiter-facing summary.\n"
         "Focus on:\n"
         "- TL;DR MUST mention: city, current status, test results, and (if present) age + desired income.\n"
+        "- vacancy_fit: REQUIRED. Assess how well the candidate fits the vacancy.\n"
+        "  - Use city_profile.criteria as the primary evaluation framework.\n"
+        "  - Cross-reference with knowledge_base.excerpts (internal regulations/requirements).\n"
+        "  - evidence: list 3-6 specific factors (age, income, experience, test scores, motivation, etc.)\n"
+        "    with assessment (positive/negative/neutral/unknown) and concrete detail from candidate data.\n"
+        "  - criteria_source: indicate whether you used city_criteria, kb_regulations, both, or none.\n"
+        "  - If no criteria available, set level=unknown, summary='Критерии города не указаны', score=null.\n"
         "- Fit to the city's vacancy criteria (use city_profile.criteria if present).\n"
         "- If knowledge_base.excerpts are present, treat them as internal regulations and follow them.\n"
         "- Use candidate_profile.age_years and candidate_profile.desired_income when present.\n"

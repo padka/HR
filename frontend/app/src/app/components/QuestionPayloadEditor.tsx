@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type BuilderState = {
   type: 'choice' | 'text'
@@ -166,12 +166,12 @@ export function QuestionPayloadEditor({ value, onChange, onValidityChange }: Pay
   const syncingFromBuilder = useRef(false)
   const parseTimer = useRef<number | null>(null)
 
-  const setBuilderEnabledState = (enabled: boolean, message?: string) => {
+  const setBuilderEnabledState = useCallback((enabled: boolean, message?: string) => {
     setBuilderEnabled(enabled)
     setBuilderMessage(message || BUILDER_DISABLED_DEFAULT)
-  }
+  }, [])
 
-  const applyParsedPayload = (payloadObj: Record<string, unknown>, skipBuilderUpdate: boolean) => {
+  const applyParsedPayload = useCallback((payloadObj: Record<string, unknown>, skipBuilderUpdate: boolean) => {
     setStatus({ state: 'ok', message: 'JSON корректен' })
     onValidityChange?.(true)
     setPreviewItems(buildPreview(payloadObj))
@@ -185,7 +185,7 @@ export function QuestionPayloadEditor({ value, onChange, onValidityChange }: Pay
     }
     setBuilderState(nextState)
     setBuilderEnabledState(true)
-  }
+  }, [onValidityChange, setBuilderEnabledState])
 
   useEffect(() => {
     if (syncingFromBuilder.current) {
@@ -231,7 +231,7 @@ export function QuestionPayloadEditor({ value, onChange, onValidityChange }: Pay
         window.clearTimeout(parseTimer.current)
       }
     }
-  }, [value, onValidityChange])
+  }, [value, onValidityChange, applyParsedPayload, setBuilderEnabledState])
 
   const updateFromBuilder = (nextState: BuilderState) => {
     setBuilderState(nextState)

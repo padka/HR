@@ -47,6 +47,24 @@ def get_admin_identifier(request: Request) -> str:
     return f"ip:{client_ip}"
 
 
+def get_principal_identifier(request: Request) -> str:
+    """Return rate-limit key using resolved principal when available.
+
+    FastAPI resolves dependencies (and sets request.state.principal) before
+    entering slowapi's wrapper, so we can reliably rate-limit per user rather
+    than per shared IP/NAT.
+    """
+    try:
+        principal = getattr(getattr(request, "state", None), "principal", None)
+        p_type = getattr(principal, "type", None)
+        p_id = getattr(principal, "id", None)
+        if p_type and isinstance(p_id, int):
+            return f"{p_type}:{p_id}"
+    except Exception:
+        pass
+    return get_admin_identifier(request)
+
+
 def get_client_ip(request: Request) -> str:
     """
     Extract client IP from request, supporting X-Forwarded-For when enabled.
@@ -274,8 +292,8 @@ async def get_current_principal(
             return principal
 
     # Development/test safety valve: allow anonymous admin when not in production.
-    # Can be disabled by setting ALLOW_DEV_AUTOADMIN=0 to exercise real login locally.
-    allow_dev_autoadmin = os.getenv("ALLOW_DEV_AUTOADMIN", "1").lower() not in {"0", "false", "no"}
+    # Disabled by default; set ALLOW_DEV_AUTOADMIN=1 to skip login locally.
+    allow_dev_autoadmin = os.getenv("ALLOW_DEV_AUTOADMIN", "0").lower() in {"1", "true", "yes"}
     if settings.environment != "production" and allow_dev_autoadmin:
         principal = Principal(type="admin", id=-1)
         principal_ctx.set(principal)
@@ -315,6 +333,7 @@ __all__ = [
     "RateLimitExceeded",
     "_rate_limit_exceeded_handler",
     "get_admin_identifier",
+    "get_principal_identifier",
     "get_client_ip",
     "require_csrf_token",
     "Principal",

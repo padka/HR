@@ -11,13 +11,6 @@ type City = {
   tz?: string | null
 }
 
-type Recruiter = {
-  id: number
-  name: string
-  tz?: string | null
-  active?: boolean
-}
-
 type CandidateAction = {
   key: string
   label: string
@@ -204,9 +197,24 @@ type AICriterionChecklistItem = {
   evidence: string
 }
 
+type AIVacancyFitEvidence = {
+  factor: string
+  assessment: 'positive' | 'negative' | 'neutral' | 'unknown'
+  detail: string
+}
+
+type AIVacancyFit = {
+  score?: number | null
+  level: 'high' | 'medium' | 'low' | 'unknown'
+  summary: string
+  evidence?: AIVacancyFitEvidence[]
+  criteria_source?: string
+}
+
 type AISummary = {
   tldr: string
   fit?: AIFit | null
+  vacancy_fit?: AIVacancyFit | null
   strengths?: AIEvidenceItem[]
   weaknesses?: AIEvidenceItem[]
   criteria_checklist?: AICriterionChecklistItem[]
@@ -453,9 +461,7 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
   })
 
-
-
-  const cities = citiesQuery.data || []
+  const cities = useMemo(() => citiesQuery.data ?? [], [citiesQuery.data])
 
 
 
@@ -708,7 +714,8 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
   const [template, setTemplate] = useState<string>('')
 
   // Helper to generate message
-  const generateMessage = (tmpl: string, dateStr: string, timeStr: string) => {
+  const generateMessage = useMemo(() => {
+    return (tmpl: string, dateStr: string, timeStr: string) => {
     if (!tmpl) return ''
     let msg = tmpl.replace(/\[Имя\]/g, candidateFio.split(' ')[1] || candidateFio.split(' ')[0] || 'Кандидат') // Try to get first name
     
@@ -717,12 +724,13 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
     try {
         const [y, m, d] = dateStr.split('-')
         if (y && m && d) formattedDate = `${d}.${m}`
-    } catch (e) {}
+    } catch {}
 
     msg = msg.replace(/\[Дата\]/g, formattedDate)
     msg = msg.replace(/\[Время\]/g, timeStr)
     return msg
-  }
+    }
+  }, [candidateFio])
 
   useEffect(() => {
     if (introDayTemplate) {
@@ -740,14 +748,14 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
           // Ignore template fetch errors
         })
     }
-  }, [introDayTemplate])
+  }, [generateMessage, introDayTemplate])
 
   // Update message when date/time changes
   useEffect(() => {
       if (template) {
           setForm(prev => ({ ...prev, customMessage: generateMessage(template, prev.date, prev.time) }))
       }
-  }, [form.date, form.time, template])
+  }, [form.date, form.time, generateMessage, template])
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -1015,6 +1023,7 @@ export function CandidateDetailPage() {
     onSuccess: () => {
       setActionMessage('Действие выполнено')
       detailQuery.refetch()
+      queryClient.invalidateQueries({ queryKey: ['candidates'] })
     },
     onError: (err: unknown) => {
       setActionMessage((err as Error).message)
@@ -1024,23 +1033,23 @@ export function CandidateDetailPage() {
   const detail = detailQuery.data
   const actions = detail?.candidate_actions || []
   const slots = detail?.slots || []
-  const rawTestSections = detail?.test_sections || []
-  const testResultsMap = detail?.test_results || {}
   const testSections = useMemo(() => {
-    if (rawTestSections.length > 0) return rawTestSections
-    const entries = Object.entries(testResultsMap)
+    const raw = detail?.test_sections ?? []
+    if (raw.length > 0) return raw
+    const map = detail?.test_results ?? {}
+    const entries = Object.entries(map)
     if (entries.length === 0) return []
     return entries.map(([key, value]) => ({
       ...value,
       key,
       title: key === 'test1' ? 'Тест 1' : key === 'test2' ? 'Тест 2' : (value.title || key),
     }))
-  }, [rawTestSections, testResultsMap])
+  }, [detail?.test_results, detail?.test_sections])
   const test1Section = testSections.find((section) => section.key === 'test1')
   const test2Section = testSections.find((section) => section.key === 'test2')
   const chatMessages = (chatQuery.data?.messages || []).slice().reverse()
   const pipelineStages = detail?.pipeline_stages || []
-  const lastChatMessage = chatMessages.length > 0 ? chatMessages[chatMessages.length - 1] : null
+  const refetchChat = chatQuery.refetch
 
   const aiSummaryData = aiSummaryQuery.data?.summary || null
   const aiRisks = aiSummaryData?.risks || []
@@ -1060,8 +1069,8 @@ export function CandidateDetailPage() {
 
   useEffect(() => {
     if (!isChatOpen) return
-    chatQuery.refetch()
-  }, [isChatOpen, chatQuery.refetch])
+    refetchChat()
+  }, [isChatOpen, refetchChat])
 
   useEffect(() => {
     setAiCoachDrafts(null)
@@ -1092,7 +1101,18 @@ export function CandidateDetailPage() {
 
     if ((action.method || 'GET').toUpperCase() === 'GET') {
       if (action.url) {
-        window.location.href = action.url
+        // Prevent open redirect: only allow same-origin or relative URLs
+        try {
+          const target = new URL(action.url, window.location.origin)
+          if (target.origin !== window.location.origin) {
+            console.warn('Blocked redirect to external origin:', action.url)
+            return
+          }
+          window.location.href = target.href
+        } catch {
+          // Invalid URL — treat as relative path
+          window.location.href = action.url
+        }
       }
       return
     }
@@ -1199,6 +1219,17 @@ export function CandidateDetailPage() {
               <span className="cd-contact-btn__icon">CH</span>
               <span>Чат</span>
             </button>
+            {hhLink ? (
+              <a href={hhLink} className="cd-contact-btn" target="_blank" rel="noopener">
+                <span className="cd-contact-btn__icon">HH</span>
+                <span>Профиль</span>
+              </a>
+            ) : (
+              <span className="cd-contact-btn cd-contact-btn--disabled">
+                <span className="cd-contact-btn__icon">HH</span>
+                <span>Профиль</span>
+              </span>
+            )}
             {hhLink ? (
               <a href={hhLink} className="cd-contact-btn" target="_blank" rel="noopener">
                 <span className="cd-contact-btn__icon">HH</span>
@@ -1547,6 +1578,34 @@ export function CandidateDetailPage() {
                 {aiFit?.rationale && <div className="cd-ai__text">{aiFit.rationale}</div>}
               </div>
 
+              {aiSummaryData.vacancy_fit && (
+                <div className="cd-ai__card cd-ai__card--span">
+                  <div className="cd-ai__label">Оценка релевантности вакансии</div>
+                  <div className="cd-ai-fit" style={{ marginBottom: 8 }}>
+                    <div className="cd-ai-fit__score">{aiSummaryData.vacancy_fit.score != null ? `${aiSummaryData.vacancy_fit.score}/100` : '—'}</div>
+                    <div className={`cd-ai-fit__badge cd-ai-fit__badge--${aiSummaryData.vacancy_fit.level || 'unknown'}`}>
+                      {aiSummaryData.vacancy_fit.level === 'high' ? 'Высокая' : aiSummaryData.vacancy_fit.level === 'medium' ? 'Средняя' : aiSummaryData.vacancy_fit.level === 'low' ? 'Низкая' : 'Неизвестно'}
+                    </div>
+                    {aiSummaryData.vacancy_fit.criteria_source && aiSummaryData.vacancy_fit.criteria_source !== 'none' && (
+                      <span className="cd-chip cd-chip--small">
+                        {aiSummaryData.vacancy_fit.criteria_source === 'both' ? 'критерии + регламент' : aiSummaryData.vacancy_fit.criteria_source === 'city_criteria' ? 'критерии города' : 'регламент'}
+                      </span>
+                    )}
+                  </div>
+                  {aiSummaryData.vacancy_fit.summary && <div className="cd-ai__text" style={{ marginBottom: 8 }}>{aiSummaryData.vacancy_fit.summary}</div>}
+                  {(aiSummaryData.vacancy_fit.evidence || []).length > 0 && (
+                    <ul className="cd-ai__list">
+                      {(aiSummaryData.vacancy_fit.evidence || []).map((e, i) => (
+                        <li key={i} className={`cd-ai__point cd-ai__point--${e.assessment === 'positive' ? 'strength' : e.assessment === 'negative' ? 'weakness' : 'neutral'}`}>
+                          <div className="cd-ai__point-title">{e.factor}</div>
+                          <div className="cd-ai__point-text">{e.detail}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
               {aiCriteriaChecklist.length > 0 && (
                 <div className="cd-ai__card cd-ai__card--span">
                   <div className="cd-ai__label">Чек-лист критериев</div>
@@ -1753,6 +1812,7 @@ export function CandidateDetailPage() {
           onClose={() => setShowScheduleSlotModal(false)}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] })
+            queryClient.invalidateQueries({ queryKey: ['candidates'] })
             setActionMessage('Предложение отправлено кандидату')
           }}
         />
@@ -1767,6 +1827,7 @@ export function CandidateDetailPage() {
           onClose={() => setShowScheduleIntroDayModal(false)}
           onSuccess={() => {
             detailQuery.refetch()
+            queryClient.invalidateQueries({ queryKey: ['candidates'] })
             setActionMessage('Ознакомительный день назначен')
           }}
         />
@@ -1780,6 +1841,7 @@ export function CandidateDetailPage() {
           onClose={() => setShowRejectModal(null)}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] })
+            queryClient.invalidateQueries({ queryKey: ['candidates'] })
           }}
         />
       )}

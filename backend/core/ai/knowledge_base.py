@@ -1,3 +1,16 @@
+"""Knowledge Base chunking, indexing, and search.
+
+Documents are stored in ``KnowledgeBaseDocument`` and split into overlapping
+character-based chunks (``KnowledgeBaseChunk``).  Search uses keyword matching
+with TF-IDF ranking.
+
+Key functions:
+- ``reindex_document(doc_id)`` — re-chunk a document after content change.
+- ``search_excerpts(query)`` — return top KB excerpts for a natural-language query.
+- ``list_active_documents()`` — list all active KB documents.
+- ``kb_state_snapshot()`` — lightweight stats (count, last updated).
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -92,6 +105,7 @@ def chunk_text(text: str, *, chunk_size: int = 900, overlap: int = 120) -> list[
 
 
 def extract_query_tokens(text: str, *, max_terms: int = 10) -> list[str]:
+    """Extract searchable tokens from a query string (lowered, stopwords removed, min length 4)."""
     raw = (text or "").lower()
     words = [w for w in _WORD_RE.findall(raw) if len(w) >= 4]
     terms: list[str] = []
@@ -161,14 +175,33 @@ async def _candidate_chunks_for_terms(terms: list[str], *, limit: int) -> list[K
 
 
 def _rank_chunks(chunks: Iterable[KnowledgeBaseChunk], terms: list[str]) -> list[KnowledgeBaseChunk]:
+    """Rank chunks using TF-IDF-like scoring: term frequency weighted by inverse document frequency."""
     terms_lc = [t.lower() for t in terms if t]
+    chunk_list = list(chunks)
+    if not chunk_list or not terms_lc:
+        return chunk_list
 
-    def score(ch: KnowledgeBaseChunk) -> tuple[int, int]:
+    # Compute IDF: how many chunks contain each term
+    doc_freq: dict[str, int] = {}
+    for t in terms_lc:
+        doc_freq[t] = sum(1 for ch in chunk_list if t in (ch.content_text or "").lower())
+
+    total = len(chunk_list)
+
+    import math
+
+    def score(ch: KnowledgeBaseChunk) -> float:
         txt = (ch.content_text or "").lower()
-        hits = sum(1 for t in terms_lc if t in txt)
-        return (hits, -len(txt))
+        txt_len = len(txt) or 1
+        s = 0.0
+        for t in terms_lc:
+            tf = txt.count(t) / (txt_len / 100)  # normalized TF per 100 chars
+            df = doc_freq.get(t, 0)
+            idf = math.log(1 + total / (1 + df))
+            s += tf * idf
+        return s
 
-    ranked = sorted(chunks, key=score, reverse=True)
+    ranked = sorted(chunk_list, key=score, reverse=True)
     return ranked
 
 
@@ -211,6 +244,7 @@ async def search_excerpts(query: str, *, limit: int = 5) -> list[dict[str, Any]]
 
 
 async def list_active_documents(*, limit: int = 10) -> list[dict[str, Any]]:
+    """Return a lightweight list of active KB documents (id, title, updated_at)."""
     limit_value = max(1, min(int(limit or 10), 50))
     async with async_session() as session:
         rows = (
@@ -227,6 +261,7 @@ async def list_active_documents(*, limit: int = 10) -> list[dict[str, Any]]:
 
 
 async def kb_state_snapshot() -> dict[str, Any]:
+    """Return a lightweight snapshot: ``{active_documents_total, last_updated_at}``."""
     async with async_session() as session:
         total = await session.scalar(
             select(func.count(KnowledgeBaseDocument.id)).where(KnowledgeBaseDocument.is_active.is_(True))

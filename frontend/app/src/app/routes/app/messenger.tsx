@@ -211,6 +211,7 @@ export function MessengerPage() {
   const markReadMutation = useMutation({
     mutationFn: async (threadId: number) => apiFetch(`/staff/threads/${threadId}/read`, { method: 'POST' }),
   })
+  const markThreadRead = markReadMutation.mutate
 
   const sendMutation = useMutation({
     mutationFn: async () => {
@@ -368,19 +369,18 @@ export function MessengerPage() {
 
   useEffect(() => {
     if (activeThreadId) {
-      markReadMutation.mutate(activeThreadId)
+      markThreadRead(activeThreadId)
     }
-  }, [activeThreadId])
+  }, [activeThreadId, markThreadRead])
 
   useEffect(() => {
     setMemberSelection([])
   }, [activeThreadId])
 
   useEffect(() => {
-    if (!activeThreadId || !messagesQuery.data) return
+    if (!activeThreadId) return
     let isActive = true
-    let since =
-      messagesQuery.data.latest_activity_at || messagesQuery.data.latest_message_at || new Date().toISOString()
+    let since = messagesQuery.data?.latest_activity_at || messagesQuery.data?.latest_message_at || new Date().toISOString()
     let controller: AbortController | null = null
 
     const loop = async () => {
@@ -417,7 +417,7 @@ export function MessengerPage() {
             }
             const hasIncoming = payload.messages?.some((msg) => msg.sender_type !== principalType)
             if (hasIncoming && activeThreadId) {
-              markReadMutation.mutate(activeThreadId)
+              markThreadRead(activeThreadId)
             }
           }
           if (payload.latest_activity_at) {
@@ -436,7 +436,7 @@ export function MessengerPage() {
       isActive = false
       controller?.abort()
     }
-  }, [activeThreadId, messagesQuery.data?.latest_activity_at, messagesQuery.data?.latest_message_at, principalType])
+  }, [activeThreadId, messagesQuery.data?.latest_activity_at, messagesQuery.data?.latest_message_at, markThreadRead, principalType])
 
   const handleCreateDirect = () => {
     if (!newChatTarget) return
@@ -745,8 +745,17 @@ export function MessengerPage() {
                     <input
                       type="file"
                       multiple
+                      accept="image/*,.pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
                       onChange={(e) => {
                         const list = Array.from(e.target.files || [])
+                        const MAX_SIZE = 5 * 1024 * 1024 // 5MB
+                        const oversized = list.filter((f) => f.size > MAX_SIZE)
+                        if (oversized.length > 0) {
+                          setSendError(`Файл ${oversized[0].name} превышает 5MB`)
+                          e.target.value = ''
+                          return
+                        }
+                        setSendError(null)
                         setFiles(list)
                       }}
                     />
