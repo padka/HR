@@ -295,12 +295,16 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                 )
                 .order_by(AIOutput.scope_id.asc(), AIOutput.created_at.desc())
             )
-            for candidate_id, payload_json, _created_at in ai_rows:
+            for candidate_id, payload_json, created_at in ai_rows:
                 if candidate_id in ai_fit_map:
                     continue
                 fit = payload_json.get("fit") if isinstance(payload_json, dict) else None
                 if not isinstance(fit, dict):
-                    ai_fit_map[candidate_id] = {"score": None, "level": None}
+                    ai_fit_map[candidate_id] = {
+                        "score": None,
+                        "level": None,
+                        "updated_at": created_at.isoformat() if created_at else None,
+                    }
                     continue
                 raw_score = fit.get("score")
                 score: Optional[int] = None
@@ -310,7 +314,11 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                 level = raw_level.lower().strip() if isinstance(raw_level, str) else None
                 if level not in {"high", "medium", "low", "unknown"}:
                     level = None
-                ai_fit_map[candidate_id] = {"score": score, "level": level}
+                ai_fit_map[candidate_id] = {
+                    "score": score,
+                    "level": level,
+                    "updated_at": created_at.isoformat() if created_at else None,
+                }
 
         recruiter_ids = {u.responsible_recruiter_id for u in users if u.responsible_recruiter_id}
         if recruiter_ids:
@@ -379,6 +387,7 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                 "last_message_at": last_msg_at.isoformat() if last_msg_at else None,
                 "ai_relevance_score": ai_fit_map.get(user.id, {}).get("score"),
                 "ai_relevance_level": ai_fit_map.get(user.id, {}).get("level"),
+                "ai_relevance_updated_at": ai_fit_map.get(user.id, {}).get("updated_at"),
                 "responsible_recruiter_id": user.responsible_recruiter_id,
                 "responsible_recruiter_name": recruiter_map.get(user.responsible_recruiter_id) if user.responsible_recruiter_id else None,
                 "schedule_url": f"/candidates/{user.id}/schedule-slot",

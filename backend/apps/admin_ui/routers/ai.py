@@ -1,23 +1,38 @@
 from __future__ import annotations
 
-from datetime import date as date_type, datetime, time, timezone
-from typing import Optional
+from datetime import UTC, datetime, time
+from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-
-from backend.apps.admin_ui.security import Principal, require_admin, require_csrf_token, require_principal
-from backend.core.ai.service import AIService, AIDisabledError, AIRateLimitedError
-from backend.core.ai.service import get_ai_service
-from backend.core.db import async_session
-from backend.domain.models import City, OutboxNotification
-from backend.apps.admin_ui.services.dashboard import get_bot_funnel_stats, get_pipeline_snapshot
 from sqlalchemy import func, select
 
+from backend.apps.admin_ui.security import (
+    Principal,
+    require_admin,
+    require_csrf_token,
+    require_principal,
+)
+from backend.apps.admin_ui.services.dashboard import (
+    get_bot_funnel_stats,
+    get_pipeline_snapshot,
+)
+from backend.core.ai.service import (
+    AIDisabledError,
+    AIRateLimitedError,
+    AIService,
+    get_ai_service,
+)
+from backend.core.db import async_session
+from backend.domain.models import City, OutboxNotification
+
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+principal_dep = Depends(require_principal)
+admin_dep = Depends(require_admin)
+ai_dep = Depends(get_ai_service)
 
 
-def _parse_date_param(value: Optional[str], *, end: bool = False) -> Optional[datetime]:
+def _parse_date_param(value: str | None, *, end: bool = False) -> datetime | None:
     if not value:
         return None
     try:
@@ -25,7 +40,7 @@ def _parse_date_param(value: Optional[str], *, end: bool = False) -> Optional[da
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"message": "Некорректный параметр даты"}) from exc
     dt = datetime.combine(parsed, time.max if end else time.min)
-    return dt.replace(tzinfo=timezone.utc)
+    return dt.replace(tzinfo=UTC)
 
 
 def _disabled() -> JSONResponse:
@@ -39,8 +54,8 @@ def _rate_limited() -> JSONResponse:
 @router.get("/candidates/{candidate_id}/summary")
 async def api_ai_candidate_summary(
     candidate_id: int,
-    principal: Principal = Depends(require_principal),
-    ai: AIService = Depends(get_ai_service),
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
 ) -> JSONResponse:
     try:
         result = await ai.get_candidate_summary(candidate_id, principal=principal, refresh=False)
@@ -55,8 +70,8 @@ async def api_ai_candidate_summary(
 async def api_ai_candidate_summary_refresh(
     candidate_id: int,
     request: Request,
-    principal: Principal = Depends(require_principal),
-    ai: AIService = Depends(get_ai_service),
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
 ) -> JSONResponse:
     _ = await require_csrf_token(request)
     try:
@@ -68,12 +83,67 @@ async def api_ai_candidate_summary_refresh(
     return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, "summary": result.payload})
 
 
+@router.get("/candidates/{candidate_id}/coach")
+async def api_ai_candidate_coach(
+    candidate_id: int,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    try:
+        result = await ai.get_candidate_coach(candidate_id, principal=principal, refresh=False)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, "coach": result.payload})
+
+
+@router.post("/candidates/{candidate_id}/coach/refresh")
+async def api_ai_candidate_coach_refresh(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    try:
+        result = await ai.get_candidate_coach(candidate_id, principal=principal, refresh=True)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, "coach": result.payload})
+
+
+@router.post("/candidates/{candidate_id}/coach/drafts")
+async def api_ai_candidate_coach_drafts(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    payload = await request.json()
+    mode = "neutral"
+    if isinstance(payload, dict) and payload.get("mode"):
+        mode = str(payload.get("mode"))
+    if mode not in {"short", "neutral", "supportive"}:
+        raise HTTPException(status_code=400, detail={"message": "Некорректный mode"})
+    try:
+        result = await ai.get_candidate_coach_drafts(candidate_id, principal=principal, mode=mode)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, **result.payload})
+
+
 @router.post("/candidates/{candidate_id}/chat/drafts")
 async def api_ai_chat_drafts(
     candidate_id: int,
     request: Request,
-    principal: Principal = Depends(require_principal),
-    ai: AIService = Depends(get_ai_service),
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
 ) -> JSONResponse:
     _ = await require_csrf_token(request)
     payload = await request.json()
@@ -94,8 +164,8 @@ async def api_ai_chat_drafts(
 @router.post("/dashboard/insights")
 async def api_ai_dashboard_insights(
     request: Request,
-    principal: Principal = Depends(require_admin),
-    ai: AIService = Depends(get_ai_service),
+    principal: Principal = admin_dep,
+    ai: AIService = ai_dep,
 ) -> JSONResponse:
     _ = await require_csrf_token(request)
     data = await request.json()
@@ -104,13 +174,13 @@ async def api_ai_dashboard_insights(
     date_from = _parse_date_param(data.get("date_from"))
     date_to = _parse_date_param(data.get("date_to"), end=True)
     city_id = data.get("city_id")
-    city_name: Optional[str] = None
+    city_name: str | None = None
     scope_id = 0
     if city_id is not None:
         try:
             city_id_value = int(city_id)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail={"message": "Некорректный city_id"})
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail={"message": "Некорректный city_id"}) from exc
         async with async_session() as session:
             city = await session.get(City, city_id_value)
             if city is None:
@@ -159,8 +229,8 @@ async def api_ai_dashboard_insights(
 
 @router.get("/chat")
 async def api_ai_agent_chat_state(
-    principal: Principal = Depends(require_principal),
-    ai: AIService = Depends(get_ai_service),
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
 ) -> JSONResponse:
     try:
         thread_id, messages = await ai.get_agent_chat_state(principal=principal, limit=120)
@@ -172,8 +242,8 @@ async def api_ai_agent_chat_state(
 @router.post("/chat/message")
 async def api_ai_agent_chat_send(
     request: Request,
-    principal: Principal = Depends(require_principal),
-    ai: AIService = Depends(get_ai_service),
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
 ) -> JSONResponse:
     _ = await require_csrf_token(request)
     data = await request.json()
@@ -193,8 +263,8 @@ async def api_ai_agent_chat_send(
 async def api_ai_city_candidate_recommendations(
     city_id: int,
     limit: int = 30,
-    principal: Principal = Depends(require_principal),
-    ai: AIService = Depends(get_ai_service),
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
 ) -> JSONResponse:
     limit_value = max(1, min(int(limit or 30), 80))
     try:
@@ -215,8 +285,8 @@ async def api_ai_city_candidate_recommendations(
 async def api_ai_city_candidate_recommendations_refresh(
     city_id: int,
     request: Request,
-    principal: Principal = Depends(require_principal),
-    ai: AIService = Depends(get_ai_service),
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
 ) -> JSONResponse:
     _ = await require_csrf_token(request)
     limit_value = 30

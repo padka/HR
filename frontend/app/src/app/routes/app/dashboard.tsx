@@ -145,6 +145,7 @@ type IncomingCandidate = {
   profile_url?: string | null
   ai_relevance_score?: number | null
   ai_relevance_level?: 'high' | 'medium' | 'low' | 'unknown' | null
+  ai_relevance_updated_at?: string | null
 }
 
 type IncomingPayload = {

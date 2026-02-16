@@ -103,3 +103,15 @@ class AgentChatReplyV1(BaseModel):
     confidence: Confidence = "medium"
     kb_sources: list[KBSourceItem] = Field(default_factory=list)
     follow_ups: list[str] = Field(default_factory=list)
+
+
+class CandidateCoachV1(BaseModel):
+    relevance_score: int | None = Field(default=None, ge=0, le=100)
+    relevance_level: FitLevel = "unknown"
+    rationale: str = ""
+    criteria_used: bool = False
+    strengths: list[EvidenceItem] = Field(default_factory=list)
+    risks: list[RiskItem] = Field(default_factory=list)
+    interview_questions: list[str] = Field(default_factory=list)
+    next_best_action: str = ""
+    message_drafts: list[DraftItem] = Field(default_factory=list)

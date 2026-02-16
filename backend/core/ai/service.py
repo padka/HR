@@ -30,6 +30,8 @@ from .context import (
 )
 from .prompts import (
     agent_chat_reply_prompts,
+    candidate_coach_drafts_prompts,
+    candidate_coach_prompts,
     candidate_summary_prompts,
     chat_reply_drafts_prompts,
     city_candidate_recommendations_prompts,
@@ -39,6 +41,7 @@ from .providers import AIProvider, AIProviderError, FakeProvider, OpenAIProvider
 from .redaction import redact_text
 from .schemas import (
     AgentChatReplyV1,
+    CandidateCoachV1,
     CandidateSummaryV1,
     ChatReplyDraftsV1,
     CityCandidateRecommendationsV1,
@@ -302,6 +305,198 @@ class AIService:
                 error_code=exc.__class__.__name__,
             )
             logger.warning("ai.candidate_summary.failed", extra={"candidate_id": candidate_id}, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"message": "AI provider error"},
+            ) from exc
+
+    async def get_candidate_coach(
+        self,
+        candidate_id: int,
+        *,
+        principal: Principal,
+        refresh: bool = False,
+    ) -> AIResult:
+        self._ensure_enabled()
+        ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
+        input_hash = compute_input_hash(ctx)
+        kind = "candidate_coach_v1"
+
+        if not refresh:
+            cached = await _get_cached_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+            )
+            if cached is not None:
+                return AIResult(payload=cached.payload_json, cached=True, input_hash=input_hash)
+
+        await self._ensure_quota(principal)
+        system_prompt, user_prompt = candidate_coach_prompts(context=ctx, allow_pii=self._allow_pii)
+        model = self._settings.openai_model
+        max_tokens = int(self._settings.ai_max_tokens)
+        if (model or "").strip().lower().startswith("gpt-5") and max_tokens < 1600:
+            max_tokens = 1600
+        started = time.monotonic()
+        try:
+            payload, usage = await self._provider.generate_json(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_seconds=int(self._settings.ai_timeout_seconds),
+                max_tokens=max_tokens,
+            )
+            validated = CandidateCoachV1.model_validate(payload).model_dump()
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=usage.tokens_in,
+                tokens_out=usage.tokens_out,
+                status_value="ok",
+                error_code="",
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=validated,
+            )
+            return AIResult(payload=validated, cached=False, input_hash=input_hash)
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=0,
+                tokens_out=0,
+                status_value="error",
+                error_code=exc.__class__.__name__,
+            )
+            logger.warning("ai.candidate_coach.failed", extra={"candidate_id": candidate_id}, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"message": "AI provider error"},
+            ) from exc
+
+    async def get_candidate_coach_drafts(
+        self,
+        candidate_id: int,
+        *,
+        principal: Principal,
+        mode: str,
+    ) -> AIResult:
+        self._ensure_enabled()
+        base_ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
+
+        inbound_raw = await get_last_inbound_message_text(candidate_id, principal=principal)
+        candidate_fio = None
+        recruiter_name = None
+        try:
+            async with async_session() as session:
+                user = await session.get(User, candidate_id)
+                if user is not None:
+                    candidate_fio = user.fio
+                if principal.type == "recruiter":
+                    recruiter = await session.get(Recruiter, principal.id)
+                    recruiter_name = recruiter.name if recruiter is not None else None
+        except Exception:  # pragma: no cover - redaction helper should never break flow
+            candidate_fio = None
+            recruiter_name = None
+
+        redaction = redact_text(
+            inbound_raw or "",
+            candidate_fio=candidate_fio,
+            recruiter_name=recruiter_name,
+        )
+        ctx = dict(base_ctx)
+        ctx["inbound_message"] = {
+            "present": bool(inbound_raw),
+            "safe_text_used": bool(inbound_raw) and (True if self._allow_pii else redaction.safe_to_send),
+            "text": (
+                str(inbound_raw)[:1200]
+                if inbound_raw and self._allow_pii
+                else (redaction.text if inbound_raw and redaction.safe_to_send else None)
+            ),
+        }
+        ctx["draft_mode"] = mode
+
+        input_hash = compute_input_hash(ctx)
+        kind = "candidate_coach_drafts_v1"
+
+        cached = await _get_cached_output(
+            scope_type="candidate",
+            scope_id=candidate_id,
+            kind=kind,
+            input_hash=input_hash,
+        )
+        if cached is not None:
+            return AIResult(payload=cached.payload_json, cached=True, input_hash=input_hash)
+
+        await self._ensure_quota(principal)
+
+        system_prompt, user_prompt = candidate_coach_drafts_prompts(context=ctx, mode=mode, allow_pii=self._allow_pii)
+        model = self._settings.openai_model
+        started = time.monotonic()
+        try:
+            payload, usage = await self._provider.generate_json(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_seconds=int(self._settings.ai_timeout_seconds),
+                max_tokens=int(self._settings.ai_max_tokens),
+            )
+            validated = ChatReplyDraftsV1.model_validate(payload).model_dump()
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=usage.tokens_in,
+                tokens_out=usage.tokens_out,
+                status_value="ok",
+                error_code="",
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=validated,
+            )
+            return AIResult(payload=validated, cached=False, input_hash=input_hash)
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=0,
+                tokens_out=0,
+                status_value="error",
+                error_code=exc.__class__.__name__,
+            )
+            logger.warning("ai.candidate_coach_drafts.failed", extra={"candidate_id": candidate_id}, exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"message": "AI provider error"},

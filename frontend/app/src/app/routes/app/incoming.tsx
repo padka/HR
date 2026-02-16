@@ -23,6 +23,9 @@ type IncomingCandidate = {
   responsible_recruiter_id?: number | null
   responsible_recruiter_name?: string | null
   profile_url?: string | null
+  ai_relevance_score?: number | null
+  ai_relevance_level?: 'high' | 'medium' | 'low' | 'unknown' | null
+  ai_relevance_updated_at?: string | null
 }
 
 type IncomingPayload = {

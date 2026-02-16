@@ -84,6 +84,76 @@ def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tupl
     return system, user
 
 
+def candidate_coach_prompts(*, context: dict, allow_pii: bool = False) -> tuple[str, str]:
+    system = (
+        "You are RecruitSmart Recruiter Coach.\n"
+        "Task kind: candidate_coach_v1.\n"
+        "Rules:\n"
+        "- Output MUST be a single JSON object (no markdown).\n"
+        f"{_pii_rule(allow_pii=allow_pii)}"
+        "- Use concise Russian.\n"
+        "- Recommendations must be actionable for recruiter in current workflow stage.\n"
+        "- Use city_profile.criteria and knowledge_base.excerpts as primary policy source.\n"
+        "- Never invent facts not present in context.\n"
+        "JSON schema:\n"
+        "{\n"
+        '  "relevance_score": 0-100|null,\n'
+        '  "relevance_level": "high|medium|low|unknown",\n'
+        '  "rationale": "string",\n'
+        '  "criteria_used": true|false,\n'
+        '  "strengths": [{"key":"string","label":"string","evidence":"string"}],\n'
+        '  "risks": [{"key":"string","severity":"low|medium|high","label":"string","explanation":"string"}],\n'
+        '  "interview_questions": ["string"],\n'
+        '  "next_best_action": "string",\n'
+        '  "message_drafts": [{"text":"string","reason":"string"}]\n'
+        "}\n"
+    )
+    user = (
+        "Produce a recruiter coaching payload for current candidate.\n"
+        "Guidelines:\n"
+        "- Relevance score/level: evaluate against city criteria + test data + interaction history.\n"
+        "- Strengths: include evidence from test answers/signals (e.g., customer-facing experience).\n"
+        "- Risks: include no-show / stall / criteria gap risks.\n"
+        "- Interview questions: 4-6 short, concrete questions aligned with interview script and current uncertainties.\n"
+        "- next_best_action: one explicit next step for recruiter.\n"
+        "- message_drafts: 2-3 ready-to-send recruiter messages with reason.\n"
+        "Context (JSON):\n"
+        f"{_json_block(context)}\n"
+    )
+    return system, user
+
+
+def candidate_coach_drafts_prompts(*, context: dict, mode: str, allow_pii: bool = False) -> tuple[str, str]:
+    style_excerpt = _style_guide_excerpt()
+    system = (
+        "You are RecruitSmart Recruiter Coach.\n"
+        "Task kind: candidate_coach_drafts_v1.\n"
+        "Rules:\n"
+        "- Output MUST be a single JSON object (no markdown).\n"
+        f"{_pii_rule(allow_pii=allow_pii)}"
+        "- Return exactly schema fields below.\n"
+        "- Keep drafts practical for Telegram communication.\n"
+    )
+    if style_excerpt:
+        system += f"\nStyle guide excerpt:\n{style_excerpt}\n"
+    system += (
+        "JSON schema:\n"
+        "{\n"
+        '  "analysis": "string|null",\n'
+        '  "drafts": [{"text":"string","reason":"string"}],\n'
+        '  "used_context": {"safe_text_used": true|false}\n'
+        "}\n"
+    )
+    user = (
+        f"Generate 2-3 recruiter message drafts in mode={mode} (short|neutral|supportive).\n"
+        "Use candidate status, last inbound message and city criteria.\n"
+        "Each reason should explain why this draft improves conversion.\n"
+        "Context (JSON):\n"
+        f"{_json_block(context)}\n"
+    )
+    return system, user
+
+
 def chat_reply_drafts_prompts(*, context: dict, mode: str, allow_pii: bool = False) -> tuple[str, str]:
     style_excerpt = _style_guide_excerpt()
     system = (

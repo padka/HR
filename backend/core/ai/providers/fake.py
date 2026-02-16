@@ -27,6 +27,8 @@ class FakeProvider:
         kind = "unknown"
         for marker in (
             "candidate_summary_v1",
+            "candidate_coach_v1",
+            "candidate_coach_drafts_v1",
             "candidate_next_actions_v1",
             "chat_reply_drafts_v1",
             "dashboard_insight_v1",
@@ -38,13 +40,52 @@ class FakeProvider:
                 break
 
         payload: dict[str, Any]
-        if "chat_reply_drafts_v1" in kind:
+        if "candidate_coach_drafts_v1" in kind or "chat_reply_drafts_v1" in kind:
             payload = {
                 "drafts": [
                     {"text": "Здравствуйте! Подскажите, пожалуйста, когда вам удобно?", "reason": "neutral"},
                     {"text": "Добрый день. Уточните, пожалуйста, удобное время, и я предложу слот.", "reason": "short"},
                 ],
                 "used_context": {"safe_text_used": False},
+            }
+        elif "candidate_coach_v1" in kind:
+            payload = {
+                "relevance_score": 78,
+                "relevance_level": "high",
+                "rationale": "Кандидат показывает релевантный опыт и адекватную мотивацию для текущего этапа.",
+                "criteria_used": True,
+                "strengths": [
+                    {
+                        "key": "customer_experience",
+                        "label": "Опыт клиентской коммуникации",
+                        "evidence": "Из ответов теста: работа в клиентских ролях более 3 месяцев.",
+                    }
+                ],
+                "risks": [
+                    {
+                        "key": "timing_alignment",
+                        "severity": "medium",
+                        "label": "Риск затягивания по времени слота",
+                        "explanation": "Нужно быстро закрепить конкретный слот, чтобы не потерять контакт.",
+                    }
+                ],
+                "interview_questions": [
+                    "Какой формат выездной работы для вас комфортен?",
+                    "Когда готовы выйти на ознакомительный день?",
+                    "Какие задачи в продажах вам даются лучше всего?",
+                    "Какие условия важны для принятия оффера?",
+                ],
+                "next_best_action": "Предложить 2-3 конкретных слота и зафиксировать подтверждение кандидата.",
+                "message_drafts": [
+                    {
+                        "text": "Добрый день! Предлагаю выбрать удобное время: сегодня 16:00 или завтра 10:30. Какой вариант вам подходит?",
+                        "reason": "Сужает выбор и ускоряет подтверждение слота.",
+                    },
+                    {
+                        "text": "Подтверждаю встречу и отправляю детали. Если время изменится — напишите, согласуем перенос без потери этапа.",
+                        "reason": "Снижает риск срыва и показывает управляемость процесса.",
+                    },
+                ],
             }
         elif "city_candidate_recommendations_v1" in kind:
             candidate_ids: list[int] = []

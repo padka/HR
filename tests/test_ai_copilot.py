@@ -455,3 +455,90 @@ def test_ai_city_recommendations_cache_reuse(ai_app):
         assert p2["ok"] is True
         assert p2["cached"] is True
         assert p2["input_hash"] == p1["input_hash"]
+
+
+def test_ai_candidate_coach_cache_reuse(ai_app):
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="Coach Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=911001,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return int(user.id)
+
+    candidate_id = _run(_seed())
+
+    with TestClient(ai_app) as client:
+        r1 = client.get(
+            f"/api/ai/candidates/{candidate_id}/coach",
+            auth=("admin", "admin"),
+            headers={"Accept": "application/json"},
+        )
+        assert r1.status_code == 200
+        p1 = r1.json()
+        assert p1["ok"] is True
+        assert p1["cached"] is False
+        assert "coach" in p1
+        assert "relevance_score" in p1["coach"]
+
+        r2 = client.get(
+            f"/api/ai/candidates/{candidate_id}/coach",
+            auth=("admin", "admin"),
+            headers={"Accept": "application/json"},
+        )
+        assert r2.status_code == 200
+        p2 = r2.json()
+        assert p2["ok"] is True
+        assert p2["cached"] is True
+        assert p2["input_hash"] == p1["input_hash"]
+
+
+def test_ai_candidate_coach_drafts_modes_and_invalid(ai_app):
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="Coach Draft Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=911002,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return int(user.id)
+
+    candidate_id = _run(_seed())
+
+    with TestClient(ai_app) as client:
+        csrf = client.get("/api/csrf", auth=("admin", "admin"))
+        assert csrf.status_code == 200
+        token = csrf.json().get("token")
+        assert token
+        headers = {"x-csrf-token": token}
+
+        for mode in ("short", "neutral", "supportive"):
+            resp = client.post(
+                f"/api/ai/candidates/{candidate_id}/coach/drafts",
+                auth=("admin", "admin"),
+                headers=headers,
+                json={"mode": mode},
+            )
+            assert resp.status_code == 200
+            payload = resp.json()
+            assert payload["ok"] is True
+            assert payload["drafts"]
+
+        bad = client.post(
+            f"/api/ai/candidates/{candidate_id}/coach/drafts",
+            auth=("admin", "admin"),
+            headers=headers,
+            json={"mode": "invalid"},
+        )
+        assert bad.status_code == 400

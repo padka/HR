@@ -237,6 +237,25 @@ type AIDraftsResponse = {
   used_context?: Record<string, any>
 }
 
+type AICoach = {
+  relevance_score?: number | null
+  relevance_level?: 'high' | 'medium' | 'low' | 'unknown'
+  rationale?: string
+  criteria_used?: boolean
+  strengths?: AIEvidenceItem[]
+  risks?: AIRiskItem[]
+  interview_questions?: string[]
+  next_best_action?: string
+  message_drafts?: AIDraftItem[]
+}
+
+type AICoachResponse = {
+  ok: boolean
+  cached: boolean
+  input_hash: string
+  coach: AICoach
+}
+
 function formatTzOffset(tz: string): string {
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
@@ -907,6 +926,7 @@ export function CandidateDetailPage() {
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [aiDraftsOpen, setAiDraftsOpen] = useState(false)
   const [aiDraftMode, setAiDraftMode] = useState<'short' | 'neutral' | 'supportive'>('neutral')
+  const [aiCoachDrafts, setAiCoachDrafts] = useState<AIDraftItem[] | null>(null)
 
   const detailQuery = useQuery<CandidateDetail>({
     queryKey: ['candidate-detail', candidateId],
@@ -942,10 +962,25 @@ export function CandidateDetailPage() {
     retry: false,
   })
 
+  const aiCoachQuery = useQuery<AICoachResponse>({
+    queryKey: ['ai-coach', candidateId],
+    queryFn: () => apiFetch(`/ai/candidates/${candidateId}/coach`),
+    enabled: false,
+    retry: false,
+  })
+
   const aiRefreshMutation = useMutation({
     mutationFn: async () => apiFetch<AISummaryResponse>(`/ai/candidates/${candidateId}/summary/refresh`, { method: 'POST' }),
     onSuccess: (data) => {
       queryClient.setQueryData(['ai-summary', candidateId], data)
+    },
+  })
+
+  const aiCoachRefreshMutation = useMutation({
+    mutationFn: async () => apiFetch<AICoachResponse>(`/ai/candidates/${candidateId}/coach/refresh`, { method: 'POST' }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['ai-coach', candidateId], data)
+      setAiCoachDrafts(null)
     },
   })
 
@@ -955,6 +990,18 @@ export function CandidateDetailPage() {
         method: 'POST',
         body: JSON.stringify({ mode }),
       })
+    },
+  })
+
+  const aiCoachDraftsMutation = useMutation({
+    mutationFn: async (mode: 'short' | 'neutral' | 'supportive') => {
+      return apiFetch<AIDraftsResponse>(`/ai/candidates/${candidateId}/coach/drafts`, {
+        method: 'POST',
+        body: JSON.stringify({ mode }),
+      })
+    },
+    onSuccess: (data) => {
+      setAiCoachDrafts(data.drafts || [])
     },
   })
 
@@ -1004,11 +1051,21 @@ export function CandidateDetailPage() {
   const aiCriteriaChecklist = (aiSummaryData?.criteria_checklist || []).filter((c) => Boolean(c?.label || c?.evidence))
   const aiTestInsights = aiSummaryData?.test_insights || null
   const aiSummaryError = (aiSummaryQuery.error as Error | null) || (aiRefreshMutation.error as Error | null)
+  const aiCoachData = aiCoachQuery.data?.coach || null
+  const aiCoachStrengths = aiCoachData?.strengths || []
+  const aiCoachRisks = aiCoachData?.risks || []
+  const aiCoachQuestions = aiCoachData?.interview_questions || []
+  const aiCoachDraftItems = aiCoachDrafts || aiCoachData?.message_drafts || []
+  const aiCoachError = (aiCoachQuery.error as Error | null) || (aiCoachRefreshMutation.error as Error | null)
 
   useEffect(() => {
     if (!isChatOpen) return
     chatQuery.refetch()
   }, [isChatOpen, chatQuery.refetch])
+
+  useEffect(() => {
+    setAiCoachDrafts(null)
+  }, [candidateId])
 
   useEffect(() => {
     if (!isChatOpen) return
@@ -1297,6 +1354,164 @@ export function CandidateDetailPage() {
                 </button>
               )}
             </div>
+          </div>
+
+          <div className="cd-ai__card cd-ai__card--span">
+            <div className="cd-ai__label">Recruiter Coach</div>
+            <div className="cd-ai-coach__toolbar">
+              {!aiCoachData ? (
+                <button
+                  className="ui-btn ui-btn--ghost"
+                  onClick={() => aiCoachQuery.refetch()}
+                  disabled={aiCoachQuery.isFetching}
+                >
+                  {aiCoachQuery.isFetching ? 'Генерация…' : 'Сгенерировать Coach'}
+                </button>
+              ) : (
+                <button
+                  className="ui-btn ui-btn--ghost"
+                  onClick={() => aiCoachRefreshMutation.mutate()}
+                  disabled={aiCoachRefreshMutation.isPending}
+                >
+                  {aiCoachRefreshMutation.isPending ? 'Обновление…' : 'Обновить Coach'}
+                </button>
+              )}
+              <div className="cd-ai-drafts__modes">
+                {(['short', 'neutral', 'supportive'] as const).map((mode) => (
+                  <button
+                    key={`coach-${mode}`}
+                    type="button"
+                    className={`cd-ai-drafts__mode ${aiDraftMode === mode ? 'cd-ai-drafts__mode--active' : ''}`}
+                    onClick={() => {
+                      setAiDraftMode(mode)
+                      aiCoachDraftsMutation.mutate(mode)
+                    }}
+                    disabled={aiCoachDraftsMutation.isPending || !aiCoachData}
+                  >
+                    {mode === 'short' ? 'Коротко' : mode === 'neutral' ? 'Нейтр.' : 'Поддерж.'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {aiCoachError && (
+              <p className="subtitle" style={{ color: '#f07373' }}>
+                AI Coach: {aiCoachError.message}
+              </p>
+            )}
+            {aiCoachDraftsMutation.error && (
+              <p className="subtitle" style={{ color: '#f07373' }}>
+                AI Coach drafts: {(aiCoachDraftsMutation.error as Error).message}
+              </p>
+            )}
+            {!aiCoachData && !aiCoachQuery.isFetching && !aiCoachRefreshMutation.isPending && (
+              <p className="subtitle">Сгенерируйте рекомендации по релевантности, рискам и вопросам интервью.</p>
+            )}
+
+            {aiCoachData && (
+              <div className="cd-ai-coach__grid">
+                <div className="cd-ai__card">
+                  <div className="cd-ai__label">Релевантность</div>
+                  <div className="cd-ai-fit">
+                    <div className="cd-ai-fit__score">
+                      {aiCoachData.relevance_score != null ? `${aiCoachData.relevance_score}/100` : '—'}
+                    </div>
+                    <div className={`cd-ai-fit__badge cd-ai-fit__badge--${aiCoachData.relevance_level || 'unknown'}`}>
+                      {aiCoachData.relevance_level === 'high'
+                        ? 'Высокая'
+                        : aiCoachData.relevance_level === 'medium'
+                          ? 'Средняя'
+                          : aiCoachData.relevance_level === 'low'
+                            ? 'Низкая'
+                            : 'Неизвестно'}
+                    </div>
+                  </div>
+                  {aiCoachData.rationale && <div className="cd-ai__text">{aiCoachData.rationale}</div>}
+                </div>
+
+                <div className="cd-ai__card">
+                  <div className="cd-ai__label">Следующий шаг</div>
+                  <div className="cd-ai__text">{aiCoachData.next_best_action || '—'}</div>
+                </div>
+
+                <div className="cd-ai__card">
+                  <div className="cd-ai__label">Сильные стороны</div>
+                  {aiCoachStrengths.length === 0 ? (
+                    <div className="subtitle">Нет данных</div>
+                  ) : (
+                    <ul className="cd-ai__list">
+                      {aiCoachStrengths.slice(0, 5).map((s) => (
+                        <li key={`coach-strength-${s.key}`} className="cd-ai__point cd-ai__point--strength">
+                          <div className="cd-ai__point-title">{s.label}</div>
+                          <div className="cd-ai__point-text">{s.evidence}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="cd-ai__card">
+                  <div className="cd-ai__label">Риски</div>
+                  {aiCoachRisks.length === 0 ? (
+                    <div className="subtitle">Нет рисков</div>
+                  ) : (
+                    <ul className="cd-ai__list">
+                      {aiCoachRisks.slice(0, 5).map((r) => (
+                        <li key={`coach-risk-${r.key}`} className={`cd-ai__risk cd-ai__risk--${r.severity}`}>
+                          <div className="cd-ai__risk-title">{r.label}</div>
+                          <div className="cd-ai__risk-text">{r.explanation}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="cd-ai__card">
+                  <div className="cd-ai__label">Вопросы интервью</div>
+                  {aiCoachQuestions.length === 0 ? (
+                    <div className="subtitle">Нет предложенных вопросов</div>
+                  ) : (
+                    <ol className="cd-ai__list cd-ai__list--ordered">
+                      {aiCoachQuestions.slice(0, 6).map((q, idx) => (
+                        <li key={`coach-question-${idx}`} className="cd-ai__action">
+                          <div className="cd-ai__action-text">{q}</div>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
+
+                <div className="cd-ai__card cd-ai__card--span">
+                  <div className="cd-ai__label">Черновики сообщений</div>
+                  {aiCoachDraftsMutation.isPending && <div className="subtitle">Генерация черновиков…</div>}
+                  {aiCoachDraftItems.length === 0 ? (
+                    <div className="subtitle">Нет черновиков. Нажмите один из режимов выше.</div>
+                  ) : (
+                    <div className="cd-ai-drafts__list">
+                      {aiCoachDraftItems.map((d, idx) => (
+                        <div key={`coach-draft-${idx}-${d.reason}`} className="cd-ai-drafts__item">
+                          <div className="cd-ai-drafts__text">{d.text}</div>
+                          <div className="cd-ai-drafts__actions">
+                            <span className="cd-ai-drafts__reason">{d.reason}</span>
+                            <button
+                              type="button"
+                              className="ui-btn ui-btn--primary"
+                              onClick={() => {
+                                setChatText(d.text)
+                                setIsChatOpen(true)
+                                requestAnimationFrame(() => chatTextareaRef.current?.focus())
+                              }}
+                            >
+                              Вставить в чат
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {aiSummaryError && (
