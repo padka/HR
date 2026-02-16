@@ -33,6 +33,19 @@ type Recruiter = {
   active?: boolean | null
 }
 
+type CandidateSearchItem = {
+  id: number
+  fio?: string | null
+  city?: string | null
+}
+
+type CandidateSearchResponse = {
+  items: CandidateSearchItem[]
+  total: number
+  page: number
+  pages_total: number
+}
+
 function fmtDate(value: string | null): string {
   if (!value) return '—'
   const dt = new Date(value)
@@ -62,7 +75,8 @@ export function DetailizationPage() {
   const isAdmin = profile.data?.principal.type === 'admin'
 
   const [showCreate, setShowCreate] = useState(false)
-  const [createCandidateId, setCreateCandidateId] = useState('')
+  const [candidateQuery, setCandidateQuery] = useState('')
+  const [selectedCandidate, setSelectedCandidate] = useState<CandidateSearchItem | null>(null)
   const [createRecruiterId, setCreateRecruiterId] = useState<string>('') // optional; default from API list
   const [createCityId, setCreateCityId] = useState<string>('') // optional
   const [createAssignedAt, setCreateAssignedAt] = useState<string>(() => isoDate(new Date()))
@@ -88,6 +102,16 @@ export function DetailizationPage() {
     enabled: Boolean(isAdmin),
   })
 
+  const candidatesSearchQuery = useQuery<CandidateSearchResponse>({
+    queryKey: ['detailization-candidates-search', candidateQuery],
+    queryFn: () =>
+      apiFetch(
+        `/candidates?search=${encodeURIComponent(candidateQuery)}&page=1&per_page=10&pipeline=intro_day`,
+      ),
+    enabled: Boolean(showCreate && !selectedCandidate && candidateQuery.trim().length >= 2),
+    staleTime: 10_000,
+  })
+
   const updateMutation = useMutation({
     mutationFn: async (payload: { id: number; patch: any }) =>
       apiFetch(`/detailization/${payload.id}`, { method: 'PATCH', body: JSON.stringify(payload.patch) }),
@@ -102,7 +126,8 @@ export function DetailizationPage() {
     onSuccess: async () => {
       setCreateError('')
       setShowCreate(false)
-      setCreateCandidateId('')
+      setCandidateQuery('')
+      setSelectedCandidate(null)
       setCreateRecruiterId('')
       setCreateCityId('')
       setCreateAssignedAt(isoDate(new Date()))
@@ -162,14 +187,68 @@ export function DetailizationPage() {
           <div className="glass" style={{ padding: 14, marginTop: 12, display: 'grid', gap: 10 }}>
             <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
               <div style={{ display: 'grid', gap: 6 }}>
-                <div className="text-muted text-xs">ID кандидата</div>
+                <div className="text-muted text-xs">Кандидат (ФИО)</div>
                 <input
                   className="ui-input"
-                  value={createCandidateId}
-                  onChange={(e) => setCreateCandidateId(e.target.value)}
-                  placeholder="например: 123"
-                  inputMode="numeric"
+                  value={selectedCandidate?.fio || candidateQuery}
+                  onChange={(e) => {
+                    setSelectedCandidate(null)
+                    setCandidateQuery(e.target.value)
+                  }}
+                  placeholder="Начните вводить ФИО…"
                 />
+                {selectedCandidate && (
+                  <div className="text-muted text-xs">
+                    Выбран: <strong>{selectedCandidate.fio || `ID ${selectedCandidate.id}`}</strong>
+                    {selectedCandidate.city ? <> · {selectedCandidate.city}</> : null}
+                    <button
+                      type="button"
+                      className="action-link"
+                      style={{ marginLeft: 10 }}
+                      onClick={() => {
+                        setSelectedCandidate(null)
+                        setCandidateQuery('')
+                      }}
+                    >
+                      Очистить
+                    </button>
+                  </div>
+                )}
+                {!selectedCandidate && candidateQuery.trim().length >= 2 && (
+                  <div className="glass" style={{ padding: 10, borderRadius: 12 }}>
+                    {candidatesSearchQuery.isFetching && <div className="text-muted text-xs">Поиск…</div>}
+                    {candidatesSearchQuery.isError && (
+                      <div className="text-danger text-xs">Ошибка поиска</div>
+                    )}
+                    {!candidatesSearchQuery.isFetching &&
+                      !candidatesSearchQuery.isError &&
+                      (candidatesSearchQuery.data?.items || []).length === 0 && (
+                        <div className="text-muted text-xs">Ничего не найдено</div>
+                      )}
+                    <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+                      {(candidatesSearchQuery.data?.items || []).map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className="ui-btn ui-btn--secondary"
+                          style={{ justifyContent: 'space-between' }}
+                          onClick={() => {
+                            setSelectedCandidate(c)
+                            setCandidateQuery(c.fio || '')
+                          }}
+                        >
+                          <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', minWidth: 0 }}>
+                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {c.fio || `ID ${c.id}`}
+                            </span>
+                            {c.city ? <span className="text-muted text-xs">{c.city}</span> : null}
+                          </span>
+                          <span className="text-muted text-xs">#{c.id}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div style={{ display: 'grid', gap: 6 }}>
@@ -259,10 +338,10 @@ export function DetailizationPage() {
             {createError && <div className="text-danger text-sm">{createError}</div>}
 
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              {createCandidateId && (
+              {selectedCandidate && (
                 <Link
                   to="/app/candidates/$candidateId"
-                  params={{ candidateId: String(createCandidateId) }}
+                  params={{ candidateId: String(selectedCandidate.id) }}
                   className="ui-btn ui-btn--secondary"
                 >
                   Открыть кандидата
@@ -273,12 +352,11 @@ export function DetailizationPage() {
               </button>
               <button
                 className="ui-btn ui-btn--primary"
-                disabled={createMutation.isPending || !createCandidateId.trim() || (isAdmin && !createRecruiterId.trim())}
+                disabled={createMutation.isPending || !selectedCandidate || (isAdmin && !createRecruiterId.trim())}
                 onClick={async () => {
                   setCreateError('')
-                  const candidateId = Number(createCandidateId)
-                  if (!Number.isFinite(candidateId) || candidateId <= 0) {
-                    setCreateError('Укажите корректный ID кандидата')
+                  if (!selectedCandidate) {
+                    setCreateError('Выберите кандидата из списка')
                     return
                   }
                   if (isAdmin && !createRecruiterId.trim()) {
@@ -286,7 +364,7 @@ export function DetailizationPage() {
                     return
                   }
                   const payload: any = {
-                    candidate_id: candidateId,
+                    candidate_id: selectedCandidate.id,
                     expert_name: createExpertName.trim() || null,
                     assigned_at: createAssignedAt.trim() || null,
                     conducted_at: createConductedAt.trim() || null,
