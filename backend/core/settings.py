@@ -616,9 +616,10 @@ def get_settings() -> Settings:
         minimum=1,
     )
     ai_store_prompts = _get_bool("AI_STORE_PROMPTS", default=False)
-    ai_pii_mode = os.getenv("AI_PII_MODE", "redacted").strip().lower() or "redacted"
-    if ai_pii_mode not in {"redacted", "full"}:
-        ai_pii_mode = "redacted"
+    # Legacy redacted mode is deprecated for this internal deployment.
+    # Keep env var for compatibility, but always run AI with full context.
+    ai_pii_mode_raw = os.getenv("AI_PII_MODE", "full").strip().lower() or "full"
+    ai_pii_mode = "full" if ai_pii_mode_raw in {"full", "redacted"} else "full"
 
     settings = Settings(
         environment=environment,

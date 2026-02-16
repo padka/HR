@@ -215,7 +215,7 @@ export function CandidatesPage() {
             <div className="ai-reco__header">
               <div>
                 <div className="ai-reco__title">AI рекомендации</div>
-                <div className="subtitle">Подбор кандидатов под критерии города (без ПДн).</div>
+                <div className="subtitle">Подбор кандидатов под критерии города.</div>
               </div>
               <div className="ai-reco__actions">
                 <select

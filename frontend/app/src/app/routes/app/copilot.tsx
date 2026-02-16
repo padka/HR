@@ -167,7 +167,7 @@ export function CopilotPage() {
       <div className="page">
         <header className="glass glass--elevated page-header page-header--row">
           <h1 className="title">Copilot</h1>
-          <div className="subtitle">Чат с AI и база знаний (без ПДн).</div>
+          <div className="subtitle">Чат с AI и база знаний.</div>
         </header>
 
         <section className="copilot-grid">
@@ -176,7 +176,7 @@ export function CopilotPage() {
               <div>
                 <h2 className="section-title" style={{ margin: 0 }}>AI чат</h2>
                 <p className="subtitle" style={{ margin: '6px 0 0' }}>
-                  Не отправляйте ФИО, телефоны и ссылки. AI опирается на базу знаний и контекст системы.
+                  AI опирается на базу знаний и контекст системы.
                 </p>
               </div>
               <button
