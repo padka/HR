@@ -25,6 +25,7 @@ type City = {
   name: string
   tz?: string | null
   active?: boolean | null
+  experts_items?: Array<{ id: number | null; name: string; is_active: boolean }>
 }
 
 type Recruiter = {
@@ -95,6 +96,12 @@ export function DetailizationPage() {
     queryKey: ['cities'],
     queryFn: () => apiFetch('/cities'),
   })
+
+  const cityById = new Map<number, City>()
+  ;(citiesQuery.data || []).forEach((c) => cityById.set(c.id, c))
+
+  const selectedCity = createCityId ? cityById.get(Number(createCityId)) : null
+  const createExpertOptions = (selectedCity?.experts_items || []).filter((e) => e.is_active !== false)
 
   const recruitersQuery = useQuery<Recruiter[]>({
     queryKey: ['recruiters'],
@@ -310,7 +317,10 @@ export function DetailizationPage() {
                 <select
                   className="ui-select"
                   value={createCityId || ''}
-                  onChange={(e) => setCreateCityId(e.target.value)}
+                  onChange={(e) => {
+                    setCreateCityId(e.target.value)
+                    setCreateExpertName('')
+                  }}
                   disabled={citiesQuery.isLoading}
                 >
                   <option value="">—</option>
@@ -326,12 +336,23 @@ export function DetailizationPage() {
 
               <div style={{ display: 'grid', gap: 6 }}>
                 <div className="text-muted text-xs">Эксперт (ФИО)</div>
-                <input
-                  className="ui-input"
+                <select
+                  className="ui-select"
                   value={createExpertName}
                   onChange={(e) => setCreateExpertName(e.target.value)}
-                  placeholder="ФИО эксперта"
-                />
+                  disabled={!createCityId || createExpertOptions.length === 0}
+                >
+                  <option value="">—</option>
+                  {createExpertOptions.map((e) => (
+                    <option key={e.id ?? e.name} value={e.name}>
+                      {e.name}
+                    </option>
+                  ))}
+                </select>
+                {!createCityId && <div className="text-muted text-xs">Выберите город, чтобы увидеть экспертов</div>}
+                {createCityId && createExpertOptions.length === 0 && (
+                  <div className="text-muted text-xs">В этом городе не настроены эксперты</div>
+                )}
               </div>
             </div>
 
@@ -420,12 +441,41 @@ export function DetailizationPage() {
                 <div className="text-sm">{row.city?.name || '—'}</div>
 
                 <div>
-                  <input
-                    className="ui-input"
-                    value={(patch as any).expert_name ?? row.expert_name ?? ''}
-                    onChange={(e) => setRowPatch(row.id, { expert_name: e.target.value })}
-                    placeholder="ФИО эксперта"
-                  />
+                  {row.city?.id && (cityById.get(row.city.id)?.experts_items || []).length > 0 ? (
+                    <select
+                      className="ui-select"
+                      value={(patch as any).expert_name ?? row.expert_name ?? ''}
+                      onChange={(e) => setRowPatch(row.id, { expert_name: e.target.value })}
+                    >
+                      <option value="">—</option>
+                      {(() => {
+                        const opts = (cityById.get(row.city!.id)?.experts_items || []).filter(
+                          (e) => e.is_active !== false,
+                        )
+                        const current = (patch as any).expert_name ?? row.expert_name ?? ''
+                        const hasCurrent = current && opts.some((o) => o.name === current)
+                        return (
+                          <>
+                            {!hasCurrent && current ? (
+                              <option value={current}>{current} (текущее)</option>
+                            ) : null}
+                            {opts.map((e) => (
+                              <option key={e.id ?? e.name} value={e.name}>
+                                {e.name}
+                              </option>
+                            ))}
+                          </>
+                        )
+                      })()}
+                    </select>
+                  ) : (
+                    <input
+                      className="ui-input"
+                      value={(patch as any).expert_name ?? row.expert_name ?? ''}
+                      onChange={(e) => setRowPatch(row.id, { expert_name: e.target.value })}
+                      placeholder="ФИО эксперта"
+                    />
+                  )}
                 </div>
 
                 <div className="text-sm">

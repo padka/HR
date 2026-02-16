@@ -14,6 +14,7 @@ type City = {
   plan_month?: number | null
   criteria?: string | null
   experts?: string | null
+  experts_items?: Array<{ id: number | null; name: string; is_active: boolean }>
   recruiter_ids?: number[]
   recruiters?: Array<{ id: number; name: string }>
   recruiter_count?: number
@@ -125,6 +126,10 @@ export function CitiesPage() {
                 const stages = stageByCityId.get(c.id) || []
                 const customCount = stages.filter((s) => s.is_custom).length
                 const responsibles = c.recruiters || []
+                const expertsList = (c.experts_items || []).filter((e) => e.is_active !== false).map((e) => e.name).filter(Boolean)
+                const expertsPreview = expertsList.length > 0
+                  ? `${expertsList.slice(0, 3).join(', ')}${expertsList.length > 3 ? ` +${expertsList.length - 3}` : ''}`
+                  : (c.experts || '')
                 return (
                   <article key={c.id} className="glass glass--interactive list-item">
                     <div className="list-item__header">
@@ -151,9 +156,7 @@ export function CitiesPage() {
                         )}
                       </div>
                     </div>
-                    {c.experts && (
-                      <div className="text-muted text-sm">Эксперты: {c.experts}</div>
-                    )}
+                    {expertsPreview && <div className="text-muted text-sm">Эксперты: {expertsPreview}</div>}
                     <div className="toolbar">
                       <label className="form-group__checkbox">
                         <input

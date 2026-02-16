@@ -6,6 +6,7 @@ import { RoleGuard } from '@/app/components/RoleGuard'
 
 type Recruiter = { id: number; name: string; tz?: string | null }
 type TimezoneOption = { value: string; label: string; region?: string; offset?: string }
+type CityExpertItem = { id: number | null; name: string; is_active: boolean }
 
 // City name to timezone mapping for auto-suggestion
 const CITY_TZ_MAP: Record<string, string> = {
@@ -71,13 +72,25 @@ export function CityNewPage() {
     plan_week: '',
     plan_month: '',
     criteria: '',
-    experts: '',
     recruiter_ids: [] as number[],
   })
+  const [expertsItems, setExpertsItems] = useState<CityExpertItem[]>([])
   const [tzTouched, setTzTouched] = useState(false)
   const [recruiterSearch, setRecruiterSearch] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [fieldError, setFieldError] = useState<{ name?: string; tz?: string; plan_week?: string; plan_month?: string }>({})
+
+  const setExpertPatch = (index: number, patch: Partial<CityExpertItem>) => {
+    setExpertsItems((prev) => prev.map((e, i) => (i === index ? { ...e, ...patch } : e)))
+  }
+
+  const addExpert = () => {
+    setExpertsItems((prev) => [...prev, { id: null, name: '', is_active: true }])
+  }
+
+  const removeExpert = (index: number) => {
+    setExpertsItems((prev) => prev.filter((_, i) => i !== index))
+  }
 
   // Auto-suggest timezone based on city name
   useEffect(() => {
@@ -113,6 +126,21 @@ export function CityNewPage() {
         setFieldError({ plan_month: 'План/мес должен быть числом' })
         throw new Error('invalid_form')
       }
+
+      const normalizeExpertName = (value: string): string => value.trim().replace(/\s+/g, ' ')
+      const experts_items = expertsItems
+        .map((e) => ({
+          id: e.id ?? null,
+          name: normalizeExpertName(e.name),
+          is_active: e.is_active !== false,
+        }))
+        .filter((e) => e.name)
+      const experts_text = experts_items
+        .filter((e) => e.is_active)
+        .map((e) => e.name)
+        .join('\n')
+        .trim() || null
+
       const payload = {
         name: form.name,
         tz: form.tz,
@@ -120,7 +148,8 @@ export function CityNewPage() {
         plan_week: form.plan_week ? Number(form.plan_week) : null,
         plan_month: form.plan_month ? Number(form.plan_month) : null,
         criteria: form.criteria || null,
-        experts: form.experts || null,
+        experts: experts_text,
+        experts_items,
         recruiter_ids: form.recruiter_ids,
       }
       return apiFetch('/cities', { method: 'POST', body: JSON.stringify(payload) })
@@ -316,15 +345,43 @@ export function CityNewPage() {
                 />
               </label>
 
-              <label style={{ display: 'grid', gap: 6 }}>
-                <span>Контакты/Эксперты</span>
-                <textarea
-                  rows={3}
-                  value={form.experts}
-                  onChange={(e) => setForm({ ...form, experts: e.target.value })}
-                  placeholder="Контактные лица или эксперты для города"
-                />
-              </label>
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+                  <span>Эксперты</span>
+                  <button type="button" className="ui-btn ui-btn--secondary" onClick={addExpert}>
+                    + Эксперт
+                  </button>
+                </div>
+                <div className="text-muted text-xs">
+                  Список экспертов для города. Используется в «Детализации» при выборе города.
+                </div>
+                {expertsItems.length === 0 && <div className="text-muted text-sm">Эксперты не добавлены</div>}
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {expertsItems.map((exp, idx) => (
+                    <div key={exp.id ?? `new-${idx}`} className="glass" style={{ padding: 12, display: 'grid', gap: 8 }}>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <input
+                          value={exp.name}
+                          onChange={(e) => setExpertPatch(idx, { name: e.target.value })}
+                          placeholder="ФИО эксперта"
+                          style={{ flex: 1, minWidth: 220 }}
+                        />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={exp.is_active !== false}
+                            onChange={(e) => setExpertPatch(idx, { is_active: e.target.checked })}
+                          />
+                          <span className="text-muted text-xs">Активен</span>
+                        </label>
+                        <button type="button" className="ui-btn ui-btn--ghost" onClick={() => removeExpert(idx)}>
+                          Удалить
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
 
