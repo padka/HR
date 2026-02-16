@@ -41,16 +41,33 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-TOKEN="$(
-  curl -sS -X POST \
-    -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode "username=${ADMIN_USER}" \
-    --data-urlencode "password=${ADMIN_PASSWORD}" \
-    "${BASE_URL}/auth/token" | jq -r '.access_token'
-)"
+TOKEN="${AUTH_TOKEN:-}"
+if [[ -z "${TOKEN}" ]]; then
+  echo "Obtaining access token..."
+  TOKEN=""
+  for attempt in 1 2 3; do
+    resp="$(
+      curl -sS -m 5 --connect-timeout 2 -X POST \
+        -H 'Content-Type: application/x-www-form-urlencoded' \
+        --data-urlencode "username=${ADMIN_USER}" \
+        --data-urlencode "password=${ADMIN_PASSWORD}" \
+        "${BASE_URL}/auth/token" || true
+    )"
+    # jq may fail on non-JSON (e.g. degraded HTML); keep it best-effort.
+    parsed="$(echo "${resp}" | jq -r '.access_token // empty' 2>/dev/null || true)"
+    if [[ -n "${parsed}" && "${parsed}" != "null" ]]; then
+      TOKEN="${parsed}"
+      break
+    fi
+    echo "Token attempt ${attempt} failed (non-JSON or missing access_token)." > "${OUT_DIR}/auth_token_attempt_${attempt}.err"
+    echo "${resp}" > "${OUT_DIR}/auth_token_attempt_${attempt}.body" || true
+    sleep 1
+  done
+fi
 
 if [[ -z "${TOKEN}" || "${TOKEN}" == "null" ]]; then
   echo "Failed to obtain access token from ${BASE_URL}/auth/token" >&2
+  echo "Hint: system may be degraded or ADMIN_USER/ADMIN_PASSWORD are wrong." >&2
   exit 1
 fi
 
@@ -72,49 +89,54 @@ run_one() {
   echo "$!" > "${OUT_DIR}/${name}.pid"
 }
 
+# Skip endpoints by setting their RATE_* env var to 0.
+maybe_run_one() {
+  local name="$1"
+  local rate="$2"
+  shift 2
+  if [[ "${rate}" -le 0 ]]; then
+    echo "Skipping: ${name} (overallRate=${rate})"
+    return 0
+  fi
+  run_one "${name}" --overallRate "${rate}" "$@"
+}
+
 # Unauthenticated / static-ish
-run_one "health" \
+maybe_run_one "health" "${RATE_HEALTH}" \
   -c "${CONNECTIONS_LIGHT}" -p "${PIPELINING_LIGHT}" -d "${DURATION_SECONDS}" \
-  --overallRate "${RATE_HEALTH}" \
   "${BASE_URL}/health"
 
-run_one "app_dashboard" \
+maybe_run_one "app_dashboard" "${RATE_APP_DASHBOARD}" \
   -c "${CONNECTIONS_LIGHT}" -p "${PIPELINING_HEAVY}" -d "${DURATION_SECONDS}" \
-  --overallRate "${RATE_APP_DASHBOARD}" \
   "${BASE_URL}/app/dashboard"
 
 # Auth token (form POST)
-run_one "auth_token" \
+maybe_run_one "auth_token" "${RATE_AUTH_TOKEN}" \
   -c "${CONNECTIONS_LIGHT}" -p "${PIPELINING_HEAVY}" -d "${DURATION_SECONDS}" \
-  --overallRate "${RATE_AUTH_TOKEN}" \
   -m POST \
   -H "Content-Type=application/x-www-form-urlencoded" \
   -b "username=${ADMIN_USER}&password=${ADMIN_PASSWORD}" \
   "${BASE_URL}/auth/token"
 
 # Authenticated APIs (read-only)
-run_one "dashboard_summary" \
+maybe_run_one "dashboard_summary" "${RATE_DASHBOARD_SUMMARY}" \
   -c "${CONNECTIONS_HEAVY}" -p "${PIPELINING_HEAVY}" -d "${DURATION_SECONDS}" \
-  --overallRate "${RATE_DASHBOARD_SUMMARY}" \
   -H "${AUTH_HEADER}" \
   "${BASE_URL}/api/dashboard/summary"
 
-run_one "dashboard_incoming" \
+maybe_run_one "dashboard_incoming" "${RATE_DASHBOARD_INCOMING}" \
   -c "${CONNECTIONS_HEAVY}" -p "${PIPELINING_HEAVY}" -d "${DURATION_SECONDS}" \
-  --overallRate "${RATE_DASHBOARD_INCOMING}" \
   -H "${AUTH_HEADER}" \
   "${BASE_URL}/api/dashboard/incoming?limit=6"
 
-run_one "profile" \
+maybe_run_one "profile" "${RATE_PROFILE}" \
   -c "${CONNECTIONS_HEAVY}" -p "${PIPELINING_HEAVY}" -d "${DURATION_SECONDS}" \
-  --overallRate "${RATE_PROFILE}" \
   -H "${AUTH_HEADER}" \
   "${BASE_URL}/api/profile"
 
 # Calendar range kept small to avoid enormous payloads in the load generator.
-run_one "calendar_events" \
+maybe_run_one "calendar_events" "${RATE_CALENDAR_EVENTS}" \
   -c "${CONNECTIONS_HEAVY}" -p "${PIPELINING_HEAVY}" -d "${DURATION_SECONDS}" \
-  --overallRate "${RATE_CALENDAR_EVENTS}" \
   -H "${AUTH_HEADER}" \
   "${BASE_URL}/api/calendar/events?start=2026-02-01&end=2026-02-16"
 
@@ -125,4 +147,3 @@ echo "Summarizing results..."
 ./.venv/bin/python scripts/summarize_autocannon.py "${OUT_DIR}"/*.json
 
 echo "Done."
-
