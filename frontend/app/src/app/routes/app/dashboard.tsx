@@ -143,10 +143,30 @@ type IncomingCandidate = {
   responsible_recruiter_id?: number | null
   responsible_recruiter_name?: string | null
   profile_url?: string | null
+  ai_relevance_score?: number | null
+  ai_relevance_level?: 'high' | 'medium' | 'low' | 'unknown' | null
 }
 
 type IncomingPayload = {
   items: IncomingCandidate[]
+}
+
+const AI_LEVEL_LABELS: Record<'high' | 'medium' | 'low' | 'unknown', string> = {
+  high: 'Высокая',
+  medium: 'Средняя',
+  low: 'Низкая',
+  unknown: 'Не определена',
+}
+
+function formatAiRelevance(candidate: IncomingCandidate): string {
+  if (typeof candidate.ai_relevance_score === 'number') {
+    const score = Math.min(100, Math.max(0, Math.round(candidate.ai_relevance_score)))
+    return `${score}/100`
+  }
+  if (candidate.ai_relevance_level && AI_LEVEL_LABELS[candidate.ai_relevance_level]) {
+    return AI_LEVEL_LABELS[candidate.ai_relevance_level]
+  }
+  return '—'
 }
 
 function toIsoDate(value: Date) {
@@ -768,7 +788,7 @@ export function DashboardPage() {
                     <input
                       className="incoming-toolbar__search"
                       type="search"
-                      placeholder="Поиск: имя, город, сообщение…"
+                      placeholder="Поиск: имя, город…"
                       value={incomingSearch}
                       onChange={(e) => setIncomingSearch(e.target.value)}
                     />
@@ -798,64 +818,25 @@ export function DashboardPage() {
                 ) : (
                   <div className="incoming-list">
                     {incomingItems.map((candidate) => (
-                      <article key={candidate.id} className="incoming-liquid-card">
-                        <div className="incoming-liquid-card__head">
-                          <div className="incoming-liquid-card__person">
-                            <div className="incoming-liquid-card__avatar">
-                              {(candidate.name || '?').trim().slice(0, 1).toUpperCase()}
-                            </div>
-                            <div className="incoming-liquid-card__identity">
-                              <div className="incoming-liquid-card__name">{candidate.name || 'Без имени'}</div>
-                              <div className="incoming-liquid-card__meta">
-                                <span>{candidate.city || 'Город не указан'}</span>
-                                {candidate.waiting_hours != null && <span>· ждёт {candidate.waiting_hours} ч</span>}
-                                {candidate.availability_window && <span>· {candidate.availability_window}</span>}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="incoming-liquid-card__chips">
-                            {candidate.last_message_at &&
-                              Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000 && (
-                                <span className="incoming-card__badge">NEW</span>
-                              )}
-                            {candidate.status_display && (
-                              <span
-                                className={`incoming-liquid-card__status status-pill status-pill--${
-                                  candidate.status_slug === 'stalled_waiting_slot'
-                                    ? 'danger'
-                                    : candidate.status_slug === 'slot_pending'
-                                      ? 'info'
-                                      : 'warning'
-                                }`}
-                              >
-                                {candidate.status_display}
-                              </span>
-                            )}
-                          </div>
+                      <article key={candidate.id} className="incoming-min-card">
+                        <div className="incoming-min-card__head">
+                          <div className="incoming-min-card__name">{candidate.name || 'Без имени'}</div>
+                          <div className="incoming-min-card__city">{candidate.city || 'Город не указан'}</div>
                         </div>
 
-                        <div className="incoming-liquid-card__message">
-                          {candidate.availability_note ? (
-                            <p className="incoming-liquid-card__message-text">✉️ {candidate.availability_note}</p>
-                          ) : candidate.last_message ? (
-                            <p className="incoming-liquid-card__message-text">💬 {candidate.last_message}</p>
-                          ) : (
-                            <p className="incoming-liquid-card__message-empty">Нет последнего сообщения</p>
-                          )}
-                          {candidate.last_message_at && (
-                            <span className="incoming-liquid-card__time">
-                              {new Date(candidate.last_message_at).toLocaleString('ru-RU', {
-                                day: '2-digit',
-                                month: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </span>
-                          )}
+                        <div className="incoming-min-card__chips">
+                          <span className="incoming-min-chip incoming-min-chip--time">
+                            Предпочтение: {candidate.availability_window || 'не указано'}
+                          </span>
+                          <span className="incoming-min-chip incoming-min-chip--wait">
+                            Ждёт: {candidate.waiting_hours != null ? `${candidate.waiting_hours} ч` : '—'}
+                          </span>
+                          <span className="incoming-min-chip incoming-min-chip--ai">
+                            AI: {formatAiRelevance(candidate)}
+                          </span>
                         </div>
 
-                        <div className="incoming-liquid-card__actions">
+                        <div className="incoming-min-card__actions">
                           <Link
                             className="ui-btn ui-btn--ghost ui-btn--sm"
                             to="/app/candidates/$candidateId"
@@ -863,25 +844,12 @@ export function DashboardPage() {
                           >
                             Профиль
                           </Link>
-                          {(() => {
-                            const username = candidate.telegram_username?.replace(/^@/, '')
-                            const link = username
-                              ? `https://t.me/${username}`
-                              : candidate.telegram_id
-                                ? `tg://user?id=${candidate.telegram_id}`
-                                : null
-                            return link ? (
-                              <a className="ui-btn ui-btn--ghost ui-btn--sm" href={link} target="_blank" rel="noopener">
-                                Telegram
-                              </a>
-                            ) : null
-                          })()}
                           <button
                             className="ui-btn ui-btn--primary ui-btn--sm"
                             type="button"
                             onClick={() => openIncomingSchedule(candidate)}
                           >
-                            Предложить время
+                            Согласовать время
                           </button>
                           <button
                             className="ui-btn ui-btn--danger ui-btn--sm"

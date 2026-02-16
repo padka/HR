@@ -18,6 +18,7 @@ from backend.apps.admin_ui.utils import fmt_local, safe_zone
 from backend.core.db import async_session
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
 from backend.domain.candidates.models import User, ChatMessage, ChatMessageDirection
+from backend.domain.ai.models import AIOutput
 from backend.domain.analytics import FunnelEvent
 from backend.domain.analytics_models import analytics_events as ANALYTICS_EVENTS
 from backend.domain.candidates.status import (
@@ -239,6 +240,7 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
     """Return candidates waiting for manual slot assignment (prioritized)."""
     last_message_map: Dict[int, dict] = {}
     recruiter_map: Dict[int, str] = {}
+    ai_fit_map: Dict[int, Dict[str, Optional[object]]] = {}
     async with async_session() as session:
         recruiter_city_ids: set[int] = set()
         query_limit = limit
@@ -283,6 +285,32 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                         "text": text,
                         "created_at": created_at,
                     }
+
+            ai_rows = await session.execute(
+                select(AIOutput.scope_id, AIOutput.payload_json, AIOutput.created_at)
+                .where(
+                    AIOutput.scope_type == "candidate",
+                    AIOutput.kind == "candidate_summary_v1",
+                    AIOutput.scope_id.in_(user_ids),
+                )
+                .order_by(AIOutput.scope_id.asc(), AIOutput.created_at.desc())
+            )
+            for candidate_id, payload_json, _created_at in ai_rows:
+                if candidate_id in ai_fit_map:
+                    continue
+                fit = payload_json.get("fit") if isinstance(payload_json, dict) else None
+                if not isinstance(fit, dict):
+                    ai_fit_map[candidate_id] = {"score": None, "level": None}
+                    continue
+                raw_score = fit.get("score")
+                score: Optional[int] = None
+                if isinstance(raw_score, (int, float)):
+                    score = max(0, min(100, int(raw_score)))
+                raw_level = fit.get("level")
+                level = raw_level.lower().strip() if isinstance(raw_level, str) else None
+                if level not in {"high", "medium", "low", "unknown"}:
+                    level = None
+                ai_fit_map[candidate_id] = {"score": score, "level": level}
 
         recruiter_ids = {u.responsible_recruiter_id for u in users if u.responsible_recruiter_id}
         if recruiter_ids:
@@ -349,6 +377,8 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                 "telegram_username": user.telegram_username or user.username,
                 "last_message": last_msg.get("text") if last_msg else None,
                 "last_message_at": last_msg_at.isoformat() if last_msg_at else None,
+                "ai_relevance_score": ai_fit_map.get(user.id, {}).get("score"),
+                "ai_relevance_level": ai_fit_map.get(user.id, {}).get("level"),
                 "responsible_recruiter_id": user.responsible_recruiter_id,
                 "responsible_recruiter_name": recruiter_map.get(user.responsible_recruiter_id) if user.responsible_recruiter_id else None,
                 "schedule_url": f"/candidates/{user.id}/schedule-slot",
