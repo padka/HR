@@ -77,6 +77,8 @@ SPIKE_RPS=6000 SPIKE_SECONDS=15 \
 - latency p50/p90/p99
 - non2xx/errors/timeouts
 
+`capacity`/`steady` дополнительно сохраняют снапшот Prometheus в `metrics.txt` внутри каждой директории шага (`.../total_*/metrics.txt`).
+
 ## Что смотреть в метриках
 
 HTTP:
@@ -89,8 +91,10 @@ Cache:
 
 DB:
 - `db_pool_checked_out` + `db_pool_overflow` (приближаемся к лимитам пула)
+- `db_pool_acquire_seconds_bucket` (pool wait под contention)
 - `db_pool_timeouts_total` (pool exhaustion)
 - `db_query_duration_seconds` и `db_queries_total` для поиска N+1 и тяжелых запросов
+- `http_db_queries_per_request_bucket` / `http_db_query_time_seconds_bucket` (сколько DB работы на один HTTP)
 
 ## Типовой workflow диагностики
 
@@ -106,4 +110,3 @@ DB:
    3. индексы
    4. предрасчёт
    5. кэш как усилитель
-

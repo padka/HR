@@ -69,5 +69,7 @@ for total in ${TARGET_TOTALS}; do
     echo "Step failed at total=${total}. Treat this as a knee-of-curve candidate and investigate." >&2
     break
   fi
+  # Best-effort diagnostics snapshot (requires METRICS_ENABLED=1 on server).
+  curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics.txt" 2>/dev/null || true
   echo ""
 done
