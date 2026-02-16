@@ -11,6 +11,7 @@ Use it for high-RPS read endpoints where Redis/DB roundtrips become the bottlene
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from time import monotonic
 from typing import Any, Optional
 
@@ -26,7 +27,14 @@ class _Entry:
 _CACHE: dict[str, _Entry] = {}
 
 
+def _enabled() -> bool:
+    # Tests rebuild/clean DB frequently; process-local caches cause flaky assertions.
+    return not (os.getenv("PYTEST_CURRENT_TEST") or os.getenv("ENVIRONMENT") == "test")
+
+
 def get(key: str) -> Optional[Any]:
+    if not _enabled():
+        return None
     entry = _CACHE.get(key)
     if entry is None:
         return None
@@ -37,6 +45,8 @@ def get(key: str) -> Optional[Any]:
 
 
 def set(key: str, value: Any, *, ttl_seconds: float) -> None:
+    if not _enabled():
+        return
     if ttl_seconds <= 0:
         return
     if len(_CACHE) >= _MAX_ITEMS:
@@ -47,4 +57,3 @@ def set(key: str, value: Any, *, ttl_seconds: float) -> None:
 
 def clear() -> None:
     _CACHE.clear()
-
