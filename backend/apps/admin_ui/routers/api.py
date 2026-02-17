@@ -114,6 +114,10 @@ from backend.apps.admin_ui.services.questions import (
     clone_test_question,
     reorder_test_questions,
 )
+from backend.apps.admin_ui.services.test_builder_graph import (
+    apply_test_builder_graph,
+    get_test_builder_graph,
+)
 from backend.core.db import async_session
 from backend.domain.models import Recruiter, Slot, City, SlotStatus, SlotAssignment, ActionToken, MessageTemplate, recruiter_city_association
 from backend.domain.candidates.models import User
@@ -1812,6 +1816,44 @@ async def api_questions_reorder(
         test_id=test_id,
         order=order,  # type: ignore[arg-type]
     )
+    if not ok:
+        return JSONResponse({"ok": False, "error": error}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+@router.get("/test-builder/graph")
+async def api_test_builder_graph(
+    test_id: str = Query(...),
+    _: Principal = Depends(require_admin),
+):
+    clean = str(test_id or "").strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    graph, updated_at = await get_test_builder_graph(test_id=clean)
+    return JSONResponse(
+        {
+            "ok": True,
+            "test_id": clean,
+            "graph": graph,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+        }
+    )
+
+
+@router.post("/test-builder/graph/apply")
+async def api_test_builder_graph_apply(
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    _ = await require_csrf_token(request)
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    test_id = str(data.get("test_id") or "")
+    graph = data.get("graph")
+    if not isinstance(graph, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    ok, error = await apply_test_builder_graph(test_id=test_id, graph=graph)
     if not ok:
         return JSONResponse({"ok": False, "error": error}, status_code=400)
     return JSONResponse({"ok": True})
