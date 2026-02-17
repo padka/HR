@@ -13,6 +13,7 @@ from backend.apps.bot.config import (
     FOLLOWUP_STUDY_MODE,
     FOLLOWUP_STUDY_SCHEDULE,
     State,
+    get_questions_bank_version,
 )
 from backend.apps.bot.metrics import get_test1_metrics_snapshot, reset_test1_metrics
 from backend.apps.bot.services import (
@@ -117,6 +118,7 @@ async def test_format_not_ready_triggers_rejection(bot_context, monkeypatch):
         USER_ID,
         State(
             flow="interview",
+            questions_bank_version=1,
             t1_idx=0,
             t1_current_idx=0,
             test1_answers={},
@@ -162,6 +164,7 @@ async def test_study_schedule_branch_and_reject(bot_context, monkeypatch):
         USER_ID,
         State(
             flow="interview",
+            questions_bank_version=get_questions_bank_version(),
             t1_idx=0,
             t1_current_idx=0,
             test1_answers={},
@@ -218,6 +221,7 @@ async def test_study_schedule_hard_response_rejects(bot_context):
         USER_ID,
         State(
             flow="interview",
+            questions_bank_version=get_questions_bank_version(),
             t1_idx=0,
             t1_current_idx=0,
             test1_answers={},
@@ -327,6 +331,7 @@ async def test_send_test1_question_uses_display_name_in_buttons(bot_context, mon
         USER_ID,
         State(
             flow="interview",
+            questions_bank_version=get_questions_bank_version(),
             t1_idx=0,
             t1_current_idx=0,
             test1_answers={},
@@ -382,7 +387,7 @@ async def test_send_test1_question_resyncs_sequence_on_bank_version_change(bot_c
         USER_ID,
         State(
             flow="interview",
-            questions_bank_version=1,
+            questions_bank_version=get_questions_bank_version(),
             t1_idx=0,
             t1_current_idx=0,
             test1_answers={},

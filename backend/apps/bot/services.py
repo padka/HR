@@ -4642,14 +4642,11 @@ def _sync_test1_sequence_if_needed(state: State) -> None:
     """
 
     current_version = get_questions_bank_version()
-    stored_version = state.get("questions_bank_version")
-    if stored_version is None:
-        # Backward compatible: older states/tests may not have version yet.
-        # Do not override an explicit sequence in state.
-        state["questions_bank_version"] = current_version
-        if not state.get("t1_sequence"):
-            state["t1_sequence"] = list(TEST1_QUESTIONS)
-        return
+    stored_raw = state.get("questions_bank_version")
+    try:
+        stored_version = int(stored_raw) if stored_raw is not None else 0
+    except (TypeError, ValueError):
+        stored_version = 0
     if stored_version == current_version:
         return
 
