@@ -13,16 +13,15 @@ Security note:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 import time
 from typing import Any, TypeVar
 
 from backend.apps.admin_ui.perf.metrics.context import add_cache_event, get_context
+from backend.apps.admin_ui.perf.cache.microcache import get_value as microcache_get_value
+from backend.apps.admin_ui.perf.cache.microcache import set_value as microcache_set_value
 from backend.core.cache import get_cache
-from backend.core.microcache import get as micro_get
-from backend.core.microcache import set as micro_set
 
 T = TypeVar("T")
 
@@ -31,51 +30,17 @@ _LOCKS: dict[str, asyncio.Lock] = {}
 _LOCKS_MAX = 1024
 
 
-@dataclass(frozen=True)
-class _MicroEntry:
-    """Microcache value wrapper supporting stale-while-revalidate."""
-
-    value: Any
-    fresh_until_unix: float
-
-
 def _freshness() -> str:
     ctx = get_context()
     return "stale" if (ctx and ctx.degraded_reason) else "fresh"
 
 
 def microcache_get(key: str, *, expected_type: type[T]) -> tuple[T, bool] | None:
-    raw = micro_get(key)
-    if raw is None:
-        add_cache_event(backend="microcache", state="miss", freshness=_freshness())
-        return None
-
-    degraded = _freshness() == "stale"
-    now = time.time()
-
-    if isinstance(raw, _MicroEntry) and isinstance(raw.value, expected_type):
-        is_stale = degraded or (now > float(raw.fresh_until_unix))
-        add_cache_event(
-            backend="microcache",
-            state="hit",
-            freshness=("stale" if is_stale else "fresh"),
-        )
-        return raw.value, is_stale
-
-    if isinstance(raw, expected_type):
-        add_cache_event(backend="microcache", state="hit", freshness=_freshness())
-        return raw, degraded
-
-    add_cache_event(backend="microcache", state="miss", freshness=_freshness())
-    return None
+    return microcache_get_value(key, expected_type=expected_type)
 
 
 def microcache_set(key: str, value: Any, *, ttl_seconds: float, stale_seconds: float = 0.0) -> None:
-    if stale_seconds and stale_seconds > 0:
-        wrapped = _MicroEntry(value=value, fresh_until_unix=time.time() + float(ttl_seconds))
-        micro_set(key, wrapped, ttl_seconds=float(ttl_seconds) + float(stale_seconds))
-        return
-    micro_set(key, value, ttl_seconds=ttl_seconds)
+    microcache_set_value(key, value, ttl_seconds=ttl_seconds, stale_seconds=stale_seconds)
 
 
 async def redis_get(key: str, *, expected_type: type[T]) -> tuple[T, bool] | None:
