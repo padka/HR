@@ -9,6 +9,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from backend.core.db import async_session
+from backend.core.content_updates import (
+    KIND_QUESTIONS_CHANGED,
+    publish_content_update,
+)
 from backend.domain.tests.models import AnswerOption, Question, Test
 
 __all__ = [
@@ -297,12 +301,8 @@ async def update_test_question(
             await session.rollback()
             return False, "duplicate_index"
 
-    try:
-        from backend.apps.bot.config import refresh_questions_bank
-
-        refresh_questions_bank()
-    except Exception:
-        pass
+    # Best-effort: notify bot process to refresh question bank without restart.
+    await publish_content_update(KIND_QUESTIONS_CHANGED, {"test_id": clean_test_id})
 
     return True, None
 
@@ -392,12 +392,8 @@ async def create_test_question(
             await session.rollback()
             return False, None, "duplicate_index"
 
-    try:
-        from backend.apps.bot.config import refresh_questions_bank
-
-        refresh_questions_bank()
-    except Exception:
-        pass
+    # Best-effort: notify bot process to refresh question bank without restart.
+    await publish_content_update(KIND_QUESTIONS_CHANGED, {"test_id": clean_test_id})
 
     return True, int(question.id), None
 
@@ -456,12 +452,7 @@ async def clone_test_question(question_id: int) -> Tuple[bool, Optional[int], Op
             await session.rollback()
             return False, None, "duplicate_index"
 
-    try:
-        from backend.apps.bot.config import refresh_questions_bank
-
-        refresh_questions_bank()
-    except Exception:
-        pass
+    # Best-effort: notify bot process to refresh question bank without restart.
+    await publish_content_update(KIND_QUESTIONS_CHANGED, {"test_id": str(getattr(original.test, "slug", "") or "")})
 
     return True, int(clone.id), None
-

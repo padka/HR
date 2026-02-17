@@ -11,6 +11,10 @@ from sqlalchemy import Select, select, update
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.db import async_session
+from backend.core.content_updates import (
+    KIND_TEMPLATES_CHANGED,
+    publish_content_update,
+)
 from backend.core.settings import get_settings
 from backend.domain.models import City, MessageTemplate, MessageTemplateHistory
 
@@ -412,6 +416,15 @@ async def create_message_template(
             return False, errors, None
 
         await _invalidate_cache(template.key, template.locale, template.channel, city_id=template.city_id)
+        await publish_content_update(
+            KIND_TEMPLATES_CHANGED,
+            {
+                "key": template.key,
+                "locale": template.locale,
+                "channel": template.channel,
+                "city_id": template.city_id,
+            },
+        )
         return True, [], template
 
 
@@ -532,6 +545,15 @@ async def update_message_template(
         await _invalidate_cache(template.key, template.locale, template.channel, city_id=template.city_id)
         if previous_city_id != template.city_id:
             await _invalidate_cache(template.key, template.locale, template.channel, city_id=previous_city_id)
+        await publish_content_update(
+            KIND_TEMPLATES_CHANGED,
+            {
+                "key": template.key,
+                "locale": template.locale,
+                "channel": template.channel,
+                "city_id": template.city_id,
+            },
+        )
         return True, [], template
 
 
@@ -547,6 +569,10 @@ async def delete_message_template(template_id: int) -> None:
         await session.delete(template)
         await session.commit()
     await _invalidate_cache(key, locale, channel, city_id=city_id)
+    await publish_content_update(
+        KIND_TEMPLATES_CHANGED,
+        {"key": key, "locale": locale, "channel": channel, "city_id": city_id},
+    )
 
 
 async def _invalidate_cache(key: str, locale: str, channel: str, *, city_id: Optional[int] = None) -> None:
