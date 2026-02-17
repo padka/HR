@@ -208,6 +208,91 @@ def _histogram_quantile(buckets: list[tuple[float, float]], q: float) -> float |
     return buckets[-1][0]
 
 
+def _finite_quantile(value: float | None, *, buckets: list[tuple[float, float]]) -> float | None:
+    """Avoid Infinity in JSON output by clamping to the largest finite bucket."""
+
+    if value is None:
+        return None
+    if value != float("inf"):
+        return float(value)
+    finite = [le for le, _ in buckets if le != float("inf")]
+    if not finite:
+        return None
+    return float(max(finite))
+
+
+def _delta_histogram_quantiles(
+    before_path: Path,
+    after_path: Path,
+    *,
+    metric_name: str,
+    label_filter: dict[str, str],
+) -> tuple[dict[str, dict[str, float]], dict[str, int]]:
+    """Compute p50/p95/p99 per route from histogram deltas (step-local)."""
+
+    def _collect(path: Path) -> dict[str, dict[float, float]]:
+        by_route: dict[str, dict[float, float]] = {}
+        for name, labels, value in _iter_metrics_lines(path):
+            if name != metric_name:
+                continue
+            route = labels.get("route")
+            if route not in CRITICAL_ROUTES:
+                continue
+            ok = True
+            for k, v in label_filter.items():
+                if labels.get(k) != v:
+                    ok = False
+                    break
+            if not ok:
+                continue
+            le_raw = labels.get("le")
+            if not le_raw:
+                continue
+            if le_raw == "+Inf":
+                le = float("inf")
+            else:
+                try:
+                    le = float(le_raw)
+                except Exception:
+                    continue
+            by_route.setdefault(route, {})[le] = float(value)
+        return by_route
+
+    before = _collect(before_path)
+    after = _collect(after_path)
+
+    out: dict[str, dict[str, float]] = {}
+    totals: dict[str, int] = {}
+    for route in CRITICAL_ROUTES:
+        b = before.get(route, {})
+        a = after.get(route, {})
+        les = sorted(set(b.keys()) | set(a.keys()))
+        if not les:
+            continue
+        buckets: list[tuple[float, float]] = []
+        for le in les:
+            delta = float(a.get(le, 0.0) - b.get(le, 0.0))
+            if delta < 0:
+                delta = 0.0
+            buckets.append((le, delta))
+        buckets.sort(key=lambda x: x[0])
+        totals[route] = int(buckets[-1][1] or 0)
+
+        p50 = _finite_quantile(_histogram_quantile(buckets, 0.50), buckets=buckets)
+        p95 = _finite_quantile(_histogram_quantile(buckets, 0.95), buckets=buckets)
+        p99 = _finite_quantile(_histogram_quantile(buckets, 0.99), buckets=buckets)
+        payload: dict[str, float] = {}
+        if p50 is not None:
+            payload["p50"] = float(p50)
+        if p95 is not None:
+            payload["p95"] = float(p95)
+        if p99 is not None:
+            payload["p99"] = float(p99)
+        if payload:
+            out[route] = payload
+    return out, totals
+
+
 def _pool_acquire_p95(metrics_path: Path) -> tuple[dict[str, float], dict[str, int]]:
     """Return (p95 seconds, total samples) per route from a single snapshot."""
 
@@ -321,9 +406,23 @@ def main(argv: list[str]) -> int:
     if metrics_before.exists() and metrics_after.exists():
         latency_by_route = _delta_http_latency(metrics_before, metrics_after)
         pool_p95_by_route, pool_total_by_route = _delta_pool_acquire_p95(metrics_before, metrics_after)
+        db_queries_by_route, db_queries_total = _delta_histogram_quantiles(
+            metrics_before,
+            metrics_after,
+            metric_name="http_db_queries_per_request_bucket",
+            label_filter={"outcome": "success"},
+        )
+        db_time_by_route, db_time_total = _delta_histogram_quantiles(
+            metrics_before,
+            metrics_after,
+            metric_name="http_db_query_time_seconds_bucket",
+            label_filter={"outcome": "success"},
+        )
     else:
         latency_by_route = _route_latency(metrics_path)
         pool_p95_by_route, pool_total_by_route = _pool_acquire_p95(metrics_path)
+        db_queries_by_route, db_queries_total = {}, {}
+        db_time_by_route, db_time_total = {}, {}
 
     max_p95 = max((v.get("p95", 0.0) for v in latency_by_route.values()), default=0.0)
     max_p99 = max((v.get("p99", 0.0) for v in latency_by_route.values()), default=0.0)
@@ -370,6 +469,10 @@ def main(argv: list[str]) -> int:
         "routes": latency_by_route,
         "pool_acquire_p95": pool_p95_by_route,
         "pool_acquire_total": pool_total_by_route,
+        "db_queries_per_request": db_queries_by_route,
+        "db_queries_per_request_total": db_queries_total,
+        "db_query_time_seconds": db_time_by_route,
+        "db_query_time_seconds_total": db_time_total,
     }
 
     print(json.dumps(payload, ensure_ascii=False))
