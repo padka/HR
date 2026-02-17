@@ -47,6 +47,7 @@ const QuestionsPage = lazy(() => import('./routes/app/questions').then(m => ({ d
 const QuestionNewPage = lazy(() => import('./routes/app/question-new').then(m => ({ default: m.QuestionNewPage })))
 const QuestionEditPage = lazy(() => import('./routes/app/question-edit').then(m => ({ default: m.QuestionEditPage })))
 const TestBuilderPage = lazy(() => import('./routes/app/test-builder').then(m => ({ default: m.TestBuilderPage })))
+const TestBuilderGraphPage = lazy(() => import('./routes/app/test-builder-graph').then(m => ({ default: m.TestBuilderGraphPage })))
 const MessageTemplatesPage = lazy(() => import('./routes/app/message-templates').then(m => ({ default: m.MessageTemplatesPage })))
 const MessengerPage = lazy(() => import('./routes/app/messenger').then(m => ({ default: m.MessengerPage })))
 const CalendarPage = lazy(() => import('./routes/app/calendar').then(m => ({ default: m.CalendarPage })))
@@ -207,6 +208,12 @@ const testBuilderRoute = createRoute({
   component: withSuspense(TestBuilderPage),
 })
 
+const testBuilderGraphRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/app/test-builder/graph',
+  component: withSuspense(TestBuilderGraphPage),
+})
+
 const messageTemplatesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/app/message-templates',
@@ -293,6 +300,7 @@ const routeTree = rootRoute.addChildren([
   questionNewRoute,
   questionEditRoute,
   testBuilderRoute,
+  testBuilderGraphRoute,
   messageTemplatesRoute,
   messengerRoute,
   calendarRoute,

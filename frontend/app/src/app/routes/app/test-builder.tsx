@@ -191,6 +191,7 @@ export function TestBuilderPage() {
           </div>
           <div className="toolbar toolbar--compact">
             <Link to="/app/system" className="ui-btn ui-btn--ghost">Bot Center</Link>
+            <Link to="/app/test-builder/graph" className="ui-btn ui-btn--ghost">Граф</Link>
             <Link to="/app/questions/new" className="ui-btn ui-btn--primary">+ Новый вопрос</Link>
           </div>
         </header>
