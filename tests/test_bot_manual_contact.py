@@ -276,3 +276,76 @@ async def test_manual_availability_sets_waiting_status(monkeypatch):
 
     await manager.clear()
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_manual_availability_notifies_recruiters(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace(
+        send_message=AsyncMock(),
+        send_document=AsyncMock(),
+        session=SimpleNamespace(close=AsyncMock()),
+    )
+
+    monkeypatch.setattr(services, "_bot", dummy_bot)
+    monkeypatch.setattr(services, "_state_manager", manager)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Рекрутер Уведомлений",
+            tz="Europe/Moscow",
+            active=True,
+            tg_chat_id=222333444,
+        )
+        city = models.City(
+            name="Тестоград",
+            tz="Europe/Moscow",
+            active=True,
+        )
+        city.recruiters.append(recruiter)
+        session.add_all([recruiter, city])
+        await session.flush()
+        user = CandidateUser(
+            telegram_id=USER_ID,
+            username="tester",
+            fio="Тестовый Кандидат",
+            city=city.name,
+            candidate_status=CandidateStatus.TEST1_COMPLETED,
+            last_activity=datetime.now(timezone.utc),
+            is_active=True,
+        )
+        session.add(user)
+        await session.commit()
+        city_id = city.id
+
+    await manager.set(
+        USER_ID,
+        State(
+            flow="interview",
+            manual_availability_expected=True,
+            candidate_tz=DEFAULT_TZ,
+            city_id=city_id,
+            city_name="Тестоград",
+            fio="Тестовый Кандидат",
+        ),
+    )
+
+    handled = await services.record_manual_availability_response(USER_ID, "01.08 10:00-12:00")
+    assert handled is True
+
+    # Candidate always receives an ack.
+    candidate_chat_ids = [call.args[0] for call in dummy_bot.send_message.await_args_list]
+    assert USER_ID in candidate_chat_ids
+
+    # Recruiter receives either a text notification or a document with caption.
+    recruiter_notified = False
+    recruiter_chat_ids = set(call.args[0] for call in dummy_bot.send_message.await_args_list)
+    recruiter_notified = recruiter_notified or (222333444 in recruiter_chat_ids)
+    if hasattr(dummy_bot, "send_document"):
+        doc_chat_ids = set(call.args[0] for call in dummy_bot.send_document.await_args_list)
+        recruiter_notified = recruiter_notified or (222333444 in doc_chat_ids)
+    assert recruiter_notified is True
+
+    await manager.clear()
+    await manager.close()
