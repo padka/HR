@@ -7,106 +7,95 @@
 1. Поднять сервис локально:
 
 ```bash
-uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000
+ENVIRONMENT=development BOT_ENABLED=false \
+METRICS_ENABLED=1 PERF_DIAGNOSTIC_HEADERS=1 \
+./.venv/bin/uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000
 ```
 
-2. Включить метрики (рекомендовано):
-
-```bash
-export METRICS_ENABLED=1
-export PERF_DIAGNOSTIC_HEADERS=1
-```
-
-3. Убедиться что `/metrics` доступен:
+2. Убедиться что `/metrics` доступен:
 
 ```bash
 curl -sS http://127.0.0.1:8000/metrics | head
 ```
 
-## Profiles
+## Профили нагрузки (life-like)
 
-### 1) Mixed (single run)
+Профили лежат в `scripts/loadtest_profiles/profiles/`:
+- `read_heavy.profile`
+- `mixed.profile`
+- `write_heavy.profile` (controlled; нужен `PERF_CANDIDATE_ID`)
 
-Скрипт: `scripts/loadtest_http_mix.sh`
+Каждый профиль задаёт веса (%) и набор endpoint’ов. Токен берётся один раз и переиспользуется.
 
-```bash
-BASE_URL=http://127.0.0.1:8000 \
-ADMIN_USER=admin ADMIN_PASSWORD=admin \
-DURATION_SECONDS=60 \
-./scripts/loadtest_http_mix.sh
-```
+## Workflow: capacity → steady(5m) → spike
 
-Поддерживает отключение отдельных endpoint’ов через `RATE_*=0`.
-
-### 2) Capacity discovery (ramp)
-
-Скрипт: `scripts/loadtest_http_capacity.sh`
+### 1) Capacity discovery (knee-of-curve)
 
 ```bash
-TARGET_TOTALS="1000 2000 5000 8000 12000" \
-DURATION_SECONDS=60 \
-./scripts/loadtest_http_capacity.sh
+PROFILE_PATH=scripts/loadtest_profiles/profiles/read_heavy.profile \
+TARGET_TOTALS="200 400 800 1200 1600" \
+DURATION_SECONDS=45 \
+./scripts/loadtest_profiles/capacity.sh
 ```
 
-Идея: найти точку перелома (рост p95/p99 + non2xx/timeouts).
+Артефакты пишутся в `.local/loadtest/profiles/<profile>_<stamp>/capacity/total_<rps>/`:
+- `*.json` (autocannon)
+- `metrics.txt` (snapshot `/metrics`)
+- `step.json` (агрегированный анализ + knee reasons)
+- `knee.json` (итог по профилю)
 
-### 3) Steady (5 minutes)
+### 2) Steady (5 minutes)
 
-Скрипт: `scripts/loadtest_http_steady.sh`
+Выберите `TOTAL_RPS` = “последний стабильный” перед knee (из `knee.json`).
 
 ```bash
-TOTAL_RPS=2000 \
-DURATION_SECONDS=300 \
-./scripts/loadtest_http_steady.sh
+PROFILE_PATH=scripts/loadtest_profiles/profiles/read_heavy.profile \
+TOTAL_RPS=800 DURATION_SECONDS=300 \
+./scripts/loadtest_profiles/steady.sh
 ```
 
-### 4) Spike
-
-Скрипт: `scripts/loadtest_http_spike.sh`
+### 3) Spike
 
 ```bash
-STEADY_RPS=2000 STEADY_SECONDS=30 \
-SPIKE_RPS=6000 SPIKE_SECONDS=15 \
-./scripts/loadtest_http_spike.sh
+PROFILE_PATH=scripts/loadtest_profiles/profiles/read_heavy.profile \
+STEADY_RPS=800 STEADY_SECONDS=30 \
+SPIKE_RPS=1200 SPIKE_SECONDS=30 \
+./scripts/loadtest_profiles/spike.sh
 ```
+
+## Формальные критерии knee-of-curve
+
+Определение knee (по умолчанию, можно переопределить env):
+- `error_rate > 0.5%` (`KNEE_ERROR_RATE_MAX`, default `0.005`)
+- `max route latency p95 > 500ms` (`KNEE_LATENCY_P95_MAX_SECONDS`, default `0.5`)
+- `max route latency p99 > 1500ms` (`KNEE_LATENCY_P99_MAX_SECONDS`, default `1.5`)
+- `db pool acquire p95 > 50ms` (`KNEE_POOL_ACQUIRE_P95_MAX_SECONDS`, default `0.05`)
+
+Критичные маршруты для knee (фиксировано в `analyze_step.py`):
+- `/api/profile`
+- `/api/dashboard/summary`
+- `/api/dashboard/incoming`
+- `/api/calendar/events`
 
 ## Как читать результаты
 
-Скрипты пишут JSON отчеты autocannon в `.local/loadtest/...` и печатают сводку:
-- achieved RPS (avg)
-- latency p50/p90/p99
-- non2xx/errors/timeouts
+1. CLI summary от autocannon:
+   - achieved RPS (avg)
+   - p50/p90/p99 latency
+   - non2xx/errors/timeouts
+2. `step.json`:
+   - агрегированный error_rate, client_capped
+   - max p95/p99 по критичным маршрутам (из `/metrics`)
+   - pool acquire p95 (bucket-based)
+3. `metrics.txt`:
+   - пром-метрики per-route и per-request DB diagnostics
 
-`capacity`/`steady` дополнительно сохраняют снапшот Prometheus в `metrics.txt` внутри каждой директории шага (`.../total_*/metrics.txt`).
+## Legacy scripts
 
-## Что смотреть в метриках
+Старые скрипты остаются для обратной совместимости:
+- `scripts/loadtest_http_mix.sh`
+- `scripts/loadtest_http_capacity.sh`
+- `scripts/loadtest_http_steady.sh`
+- `scripts/loadtest_http_spike.sh`
 
-HTTP:
-- `latency_p95_seconds{route="/api/dashboard/summary"}` (rolling window)
-- `http_requests_total{outcome="degraded"}`: сколько деградированных ответов
-
-Cache:
-- `served_from_cache_total{route="/api/profile",backend="microcache"}`
-- `served_stale_total{route="/api/profile",backend="redis"}`
-
-DB:
-- `db_pool_checked_out` + `db_pool_overflow` (приближаемся к лимитам пула)
-- `db_pool_acquire_seconds_bucket` (pool wait под contention)
-- `db_pool_timeouts_total` (pool exhaustion)
-- `db_query_duration_seconds` и `db_queries_total` для поиска N+1 и тяжелых запросов
-- `http_db_queries_per_request_bucket` / `http_db_query_time_seconds_bucket` (сколько DB работы на один HTTP)
-
-## Типовой workflow диагностики
-
-1. Прогон `capacity` до появления деградации.
-2. Фиксируем “knee of curve”: на каком total p95/p99 растет нелинейно.
-3. Смотрим:
-   - pool timeouts / too many connections
-   - рост `db_queries_total` на один HTTP (N+1)
-   - рост `served_stale_total` (ответы начали держаться только на кэше)
-4. Дальше оптимизации строго по порядку:
-   1. убрать N+1 / selectinload / батчинг
-   2. уменьшить payload
-   3. индексы
-   4. предрасчёт
-   5. кэш как усилитель
+Для текущего perf-цикла используйте `scripts/loadtest_profiles/*`.
