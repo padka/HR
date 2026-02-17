@@ -69,6 +69,7 @@ from backend.apps.admin_ui.perf.metrics.http_metrics import HTTPMetricsMiddlewar
 from backend.apps.admin_ui.perf.metrics.db_metrics import (
     install_sqlalchemy_metrics,
     start_db_stats_task,
+    start_sql_profile_task,
 )
 from backend.apps.admin_ui.perf.metrics import prometheus as perf_prometheus
 from backend.apps.admin_ui.perf.metrics.context import mark_degraded
@@ -443,6 +444,16 @@ async def lifespan(app: FastAPI):
                 logger.info("DB stats sampler started")
         except Exception as exc:  # pragma: no cover - optional diagnostics
             logger.debug("DB stats sampler not started: %s", exc)
+
+        # Optional: sampled SQL profile dump for local perf work (gated by env).
+        try:  # pragma: no cover - optional diagnostics
+            sql_profile_task = start_sql_profile_task()
+            if sql_profile_task is not None:
+                app.state.sql_profile_task = sql_profile_task
+                shutdown_manager.add_task(sql_profile_task)
+                logger.info("SQL profile flusher started")
+        except Exception as exc:  # pragma: no cover - optional diagnostics
+            logger.debug("SQL profile flusher not started: %s", exc)
 
     # Initialize cache with retry logic
     cache_task = None

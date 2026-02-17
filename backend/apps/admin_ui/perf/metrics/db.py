@@ -13,9 +13,15 @@ Design constraints:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import random
+import re
 import time
+from dataclasses import dataclass
+from pathlib import Path
+from threading import Lock
 
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine, make_url
@@ -29,6 +35,141 @@ from backend.core.settings import get_settings
 logger = logging.getLogger(__name__)
 
 _installed = False
+
+
+def _truthy_env(name: str) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sql_profile_enabled() -> bool:
+    settings = get_settings()
+    if settings.environment == "production":
+        return False
+    return _truthy_env("DB_PROFILE_ENABLED") or bool(os.getenv("DB_PROFILE_OUTPUT"))
+
+
+def _sql_profile_sample_rate() -> float:
+    raw = os.getenv("DB_PROFILE_SAMPLE_RATE", "0.05") or "0.05"
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except Exception:
+        return 0.05
+
+
+def _sql_profile_max_keys() -> int:
+    raw = os.getenv("DB_PROFILE_MAX_KEYS", "500") or "500"
+    try:
+        return max(50, int(raw))
+    except Exception:
+        return 500
+
+
+_WS_RE = re.compile(r"\s+")
+_STR_RE = re.compile(r"'(?:''|[^'])*'")
+_NUM_RE = re.compile(r"\b\d+\b")
+
+
+def _fingerprint_sql(statement: str) -> str:
+    """Normalize SQL into a low-cardinality fingerprint for local profiling."""
+
+    s = _WS_RE.sub(" ", (statement or "").strip())
+    if not s:
+        return "empty"
+    s = _STR_RE.sub("?", s)
+    s = _NUM_RE.sub("?", s)
+    return s[:200]
+
+
+@dataclass
+class _SQLStat:
+    count: int = 0
+    total_seconds: float = 0.0
+    max_seconds: float = 0.0
+    example: str = ""
+    last_route: str = ""
+
+
+class SQLProfileCollector:
+    """Best-effort in-process SQL profile collector (sampled, bounded)."""
+
+    def __init__(self) -> None:
+        self._enabled = _sql_profile_enabled()
+        self._sample_rate = _sql_profile_sample_rate()
+        self._max_keys = _sql_profile_max_keys()
+        self._lock = Lock()
+        self._stats: dict[str, _SQLStat] = {}
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self._enabled and self._sample_rate > 0.0)
+
+    def observe(self, *, statement: str, elapsed_seconds: float, route: str) -> None:
+        """Record a query observation (sampled, bounded)."""
+
+        if not self.enabled:
+            return
+        if self._sample_rate < 1.0 and random.random() > self._sample_rate:
+            return
+        fp = _fingerprint_sql(statement)
+        with self._lock:
+            stat = self._stats.get(fp)
+            if stat is None:
+                if len(self._stats) >= self._max_keys:
+                    # Deterministic eviction: clear all (cheap, bounded).
+                    self._stats.clear()
+                stat = _SQLStat(example=fp, last_route=route)
+                self._stats[fp] = stat
+            stat.count += 1
+            stat.total_seconds += float(elapsed_seconds)
+            stat.max_seconds = max(stat.max_seconds, float(elapsed_seconds))
+            stat.last_route = route
+
+    def snapshot(self) -> dict[str, _SQLStat]:
+        """Return a shallow copy snapshot."""
+
+        with self._lock:
+            return dict(self._stats)
+
+    def dump_json(self, path: Path) -> None:
+        """Write a JSON summary to disk (best-effort)."""
+
+        snap = self.snapshot()
+        items = [
+            {
+                "fingerprint": fp,
+                "count": st.count,
+                "total_ms": round(st.total_seconds * 1000.0, 3),
+                "max_ms": round(st.max_seconds * 1000.0, 3),
+                "last_route": st.last_route,
+            }
+            for fp, st in snap.items()
+        ]
+        top_by_total = sorted(items, key=lambda r: r["total_ms"], reverse=True)[:50]
+        top_by_count = sorted(items, key=lambda r: r["count"], reverse=True)[:50]
+        payload = {
+            "sample_rate": self._sample_rate,
+            "unique_fingerprints": len(items),
+            "top_by_total_ms": top_by_total,
+            "top_by_count": top_by_count,
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+_SQL_PROFILE = SQLProfileCollector()
+
+
+async def _sql_profile_flusher(output_path: Path, interval_seconds: float) -> None:
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            _SQL_PROFILE.dump_json(output_path)
+        except Exception:
+            # Never fail the app for diagnostics.
+            continue
 
 
 def _metrics_enabled() -> bool:
@@ -84,6 +225,8 @@ def install_sqlalchemy_metrics(async_engine: AsyncEngine) -> None:
         op = _operation(statement or "")
         prometheus.DB_QUERIES_TOTAL.labels(route=route, operation=op).inc()
         prometheus.DB_QUERY_DURATION_SECONDS.labels(route=route, operation=op).observe(elapsed)
+        if _SQL_PROFILE.enabled:
+            _SQL_PROFILE.observe(statement=statement or "", elapsed_seconds=elapsed, route=route)
         if elapsed >= slow_threshold_s:
             prometheus.DB_SLOW_QUERIES_TOTAL.labels(route=route, operation=op).inc()
             # Avoid logging full statements by default; add a short fingerprint for diagnostics.
@@ -184,5 +327,25 @@ def start_db_stats_task() -> asyncio.Task | None:
     )
 
 
-__all__ = ["install_sqlalchemy_metrics", "start_db_stats_task"]
+def start_sql_profile_task() -> asyncio.Task | None:
+    """Start a best-effort SQL profile flusher when enabled via env.
 
+    Env:
+        DB_PROFILE_ENABLED=1
+        DB_PROFILE_OUTPUT=.local/perf/sql_profile.json
+        DB_PROFILE_FLUSH_SECONDS=10
+        DB_PROFILE_SAMPLE_RATE=0.05
+    """
+
+    if not _SQL_PROFILE.enabled:
+        return None
+    output = Path(os.getenv("DB_PROFILE_OUTPUT", ".local/perf/sql_profile.json"))
+    interval = float(os.getenv("DB_PROFILE_FLUSH_SECONDS", "10") or "10")
+    interval = max(1.0, interval)
+    return asyncio.create_task(
+        _sql_profile_flusher(output, interval_seconds=interval),
+        name="sql_profile_flusher",
+    )
+
+
+__all__ = ["install_sqlalchemy_metrics", "start_db_stats_task", "start_sql_profile_task"]
