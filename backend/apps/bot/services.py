@@ -2898,7 +2898,31 @@ class NotificationService:
         attempt = item.attempts + 1
         await self._throttle()
         try:
-            await get_bot().send_message(recruiter.tg_chat_id, text)
+            bot = get_bot()
+            # Best effort: attach candidate Test 1 report ("анкета") when present,
+            # so recruiter can immediately re-assess context on reschedule.
+            attachment_sent = False
+            try:
+                candidate = None
+                candidate_key = payload.get("candidate_id")
+                if candidate_key:
+                    candidate = await candidate_services.get_user_by_candidate_id(str(candidate_key))
+                if candidate is None and item.candidate_tg_id:
+                    candidate = await candidate_services.get_user_by_telegram_id(int(item.candidate_tg_id))
+                if candidate is not None:
+                    reports = _candidate_report_paths(candidate)
+                    if reports and hasattr(bot, "send_document"):
+                        await bot.send_document(
+                            recruiter.tg_chat_id,
+                            FSInputFile(str(reports[0])),
+                            caption=text,
+                        )
+                        attachment_sent = True
+            except Exception:
+                logger.exception("Failed to attach candidate report for reschedule request")
+
+            if not attachment_sent:
+                await bot.send_message(recruiter.tg_chat_id, text)
         except Exception as exc:
             await self._schedule_retry(
                 item,
@@ -5837,6 +5861,36 @@ async def record_manual_availability_response(user_id: int, text: str) -> bool:
     bot = get_bot()
     await bot.send_message(user_id, ack)
 
+    # Notify recruiters about updated availability so the reschedule/manual slot
+    # flow doesn't get "stuck" waiting for someone to open the candidate profile.
+    try:
+        city_id: Optional[int] = state.get("city_id") if isinstance(state, dict) else None
+        city_name = (state.get("city_name") if isinstance(state, dict) else None) or (db_user.city if db_user else None)
+        candidate_name = (state.get("fio") if isinstance(state, dict) else None) or (db_user.fio if db_user else str(user_id))
+        if city_id is None and db_user and db_user.city:
+            try:
+                city_record = await find_city_by_plain_name(db_user.city)
+            except Exception:
+                city_record = None
+            if city_record is not None:
+                city_id = city_record.id
+                if not city_name:
+                    city_name = city_record.name
+
+        if city_id is not None:
+            await notify_recruiters_manual_availability(
+                candidate_tg_id=user_id,
+                candidate_name=candidate_name,
+                city_name=city_name or "—",
+                city_id=int(city_id),
+                availability_window=window_label,
+                availability_note=payload,
+                candidate_db_id=(db_user.id if db_user else None),
+                responsible_recruiter_id=(db_user.responsible_recruiter_id if db_user else None),
+            )
+    except Exception:  # pragma: no cover - best-effort side effect
+        logger.exception("Failed to notify recruiters about manual availability response")
+
     def _clear_prompt(st: State) -> Tuple[State, None]:
         st["manual_availability_expected"] = False
         st["manual_contact_prompt_sent"] = True
@@ -5845,6 +5899,160 @@ async def record_manual_availability_response(user_id: int, text: str) -> bool:
 
     await state_manager.atomic_update(user_id, _clear_prompt)
     return True
+
+
+def _safe_data_path(relative_path: str) -> Optional[Path]:
+    """Resolve a data-dir relative path to an absolute Path (guarding traversal)."""
+
+    if not relative_path:
+        return None
+    settings = get_settings()
+    base_dir = Path(settings.data_dir).resolve()
+    candidate = (base_dir / relative_path).resolve()
+    if not str(candidate).startswith(str(base_dir)):
+        return None
+    return candidate
+
+
+def _candidate_report_paths(db_user: Any) -> List[Path]:
+    """Return existing report file paths for the candidate (best effort)."""
+
+    paths: List[Path] = []
+    for rel in (
+        getattr(db_user, "test1_report_url", None),
+        getattr(db_user, "test2_report_url", None),
+    ):
+        if not rel:
+            continue
+        abs_path = _safe_data_path(str(rel))
+        if abs_path and abs_path.exists() and abs_path not in paths:
+            paths.append(abs_path)
+
+    try:
+        db_id = int(getattr(db_user, "id", 0) or 0)
+    except Exception:
+        db_id = 0
+    if db_id:
+        fallback = REPORTS_DIR / str(db_id) / "test1.txt"
+        if fallback.exists() and fallback not in paths:
+            paths.insert(0, fallback)
+    return paths
+
+
+async def notify_recruiters_manual_availability(
+    *,
+    candidate_tg_id: int,
+    candidate_name: str,
+    city_name: str,
+    city_id: int,
+    availability_window: Optional[str],
+    availability_note: str,
+    candidate_db_id: Optional[int] = None,
+    responsible_recruiter_id: Optional[int] = None,
+) -> bool:
+    """Notify recruiters that a candidate provided/updated manual availability.
+
+    This is used when there are no auto slots or when a candidate requests a
+    reschedule and proposes a new time window. Best effort: failures should not
+    break the candidate flow.
+    """
+
+    if not city_id:
+        return False
+
+    recipients: List[Any] = []
+    seen_chats: set[Any] = set()
+
+    if responsible_recruiter_id:
+        try:
+            responsible = await get_recruiter(int(responsible_recruiter_id))
+        except Exception:
+            responsible = None
+        chat_id = getattr(responsible, "tg_chat_id", None) if responsible else None
+        if chat_id:
+            recipients = [responsible]
+            seen_chats.add(chat_id)
+
+    if not recipients:
+        try:
+            recruiters = await get_active_recruiters_for_city(int(city_id))
+        except Exception:
+            recruiters = []
+        for rec in recruiters:
+            chat_id = getattr(rec, "tg_chat_id", None)
+            if not chat_id or chat_id in seen_chats:
+                continue
+            recipients.append(rec)
+            seen_chats.add(chat_id)
+
+    if not recipients:
+        return False
+
+    crm_link = None
+    try:
+        settings = get_settings()
+        if candidate_db_id and settings.bot_backend_url:
+            crm_link = f"{settings.bot_backend_url.rstrip('/')}/app/candidates/{int(candidate_db_id)}"
+    except Exception:
+        crm_link = None
+
+    lines = [
+        "🕒 <b>Кандидат указал удобное время</b>",
+        "",
+        f"👤 {escape_html(str(candidate_name))}",
+        f"📍 {escape_html(str(city_name))}",
+    ]
+    if availability_window:
+        lines.append(f"🗓 {escape_html(str(availability_window))}")
+    if availability_note:
+        lines.append(f"💬 {escape_html(str(availability_note))}")
+    lines.append(f"TG: <code>{candidate_tg_id}</code>")
+    if crm_link:
+        lines.append(f"CRM: {escape_html(crm_link)}")
+    message = "\n".join(lines)
+
+    delivered = False
+    bot = get_bot()
+    for recruiter in recipients:
+        chat_id = getattr(recruiter, "tg_chat_id", None)
+        if not chat_id:
+            continue
+
+        sent = False
+        report_paths: List[Path] = []
+        try:
+            db_user = await candidate_services.get_user_by_telegram_id(candidate_tg_id)
+            if db_user is not None:
+                report_paths = _candidate_report_paths(db_user)
+        except Exception:
+            report_paths = []
+
+        if report_paths and hasattr(bot, "send_document"):
+            for path in report_paths[:1]:  # send the most useful one (Test 1) to avoid spam
+                try:
+                    await bot.send_document(chat_id, FSInputFile(str(path)), caption=message, parse_mode="HTML")
+                    sent = True
+                    delivered = True
+                    break
+                except Exception:
+                    logger.exception(
+                        "Failed to deliver manual availability attachment to recruiter %s",
+                        getattr(recruiter, "id", None),
+                    )
+
+        if sent:
+            continue
+
+        try:
+            await bot.send_message(chat_id, message, parse_mode="HTML")
+            delivered = True
+        except Exception:
+            logger.exception(
+                "Failed to send manual availability notification to recruiter %s",
+                getattr(recruiter, "id", None),
+            )
+
+    return delivered
 
 
 async def handle_pick_recruiter(callback: CallbackQuery) -> None:
