@@ -451,6 +451,38 @@ class NotificationService:
         self._fatal_error_at: Optional[datetime] = None
         self._last_delivery_error: Optional[str] = None
 
+    async def invalidate_template_cache(
+        self,
+        *,
+        key: Optional[str] = None,
+        locale: str = "ru",
+        channel: str = "tg",
+        city_id: Optional[int] = None,
+    ) -> None:
+        """Invalidate cached message templates so edits apply without restart.
+
+        Best effort: failures are logged but do not raise, because the caller is
+        typically a background pub/sub listener.
+        """
+
+        try:
+            await self._template_provider.invalidate(
+                key=key,
+                locale=locale,
+                channel=channel,
+                city_id=city_id,
+            )
+        except Exception:  # pragma: no cover - defensive logging
+            logger.exception(
+                "notification.template_invalidate_failed",
+                extra={
+                    "key": key,
+                    "locale": locale,
+                    "channel": channel,
+                    "city_id": city_id,
+                },
+            )
+
     def start(self, *, allow_poll_loop: bool = False) -> None:
         self._shutting_down = False
         if self._started:
