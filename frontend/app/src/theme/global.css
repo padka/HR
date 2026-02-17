@@ -5713,6 +5713,23 @@ details > *:not(summary) {
 }
 
 /* ========================================
+   TEST BUILDER
+   ======================================== */
+
+.test-builder-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 420px);
+  gap: var(--space-md);
+  align-items: start;
+}
+
+@media (max-width: 980px) {
+  .test-builder-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ========================================
    PROFILE PAGE - ENHANCED STYLES
    ======================================== */
 

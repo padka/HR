@@ -2,6 +2,7 @@ import { useMemo, useEffect, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { QuestionPayloadEditor } from '@/app/components/QuestionPayloadEditor'
 import { apiFetch, queryClient } from '@/api/client'
 
 type QuestionRow = {
@@ -20,6 +21,15 @@ type QuestionGroup = {
   test_id: string
   title: string
   questions: QuestionRow[]
+}
+
+type QuestionDetailPayload = {
+  id: number
+  title: string
+  test_id: string
+  question_index: number
+  payload: string
+  is_active: boolean
 }
 
 function moveItem<T>(items: T[], from: number, to: number): T[] {
@@ -58,12 +68,14 @@ export function TestBuilderPage() {
   const [dirty, setDirty] = useState(false)
   const [dragId, setDragId] = useState<number | null>(null)
   const [message, setMessage] = useState<string>('')
+  const [selectedId, setSelectedId] = useState<number | null>(null)
 
   useEffect(() => {
     if (!group) return
     setOrder(group.questions.map((q) => q.id))
     setDirty(false)
     setMessage('')
+    setSelectedId(null)
   }, [group])
 
   const byId = useMemo(() => {
@@ -101,6 +113,60 @@ export function TestBuilderPage() {
         queryClient.invalidateQueries({ queryKey: ['questions'] })
         navigate({ to: '/app/questions/$questionId/edit', params: { questionId: String(payload.id) } })
       }
+    },
+  })
+
+  const selectedIndex = useMemo(() => {
+    if (!selectedId) return null
+    const idx = order.indexOf(selectedId)
+    return idx === -1 ? null : idx
+  }, [order, selectedId])
+
+  const detailQuery = useQuery({
+    queryKey: ['question-detail', selectedId],
+    queryFn: () => apiFetch<QuestionDetailPayload>(`/questions/${selectedId}`),
+    enabled: Boolean(selectedId),
+  })
+
+  const [editTitle, setEditTitle] = useState('')
+  const [editPayload, setEditPayload] = useState('{}')
+  const [editActive, setEditActive] = useState(true)
+  const [payloadValid, setPayloadValid] = useState(false)
+
+  useEffect(() => {
+    const d = detailQuery.data
+    if (!d) return
+    setEditTitle(d.title || '')
+    setEditPayload(d.payload || '{}')
+    setEditActive(Boolean(d.is_active))
+    setPayloadValid(true)
+  }, [detailQuery.data])
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!group || !selectedId) throw new Error('Question not selected')
+      if (dirty) throw new Error('Сначала сохраните порядок блоков')
+      if (!payloadValid) throw new Error('Payload JSON некорректен')
+      if (selectedIndex == null) throw new Error('Question index not resolved')
+      return apiFetch<{ ok: boolean; error?: string }>(`/questions/${selectedId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: editTitle,
+          test_id: group.test_id,
+          question_index: selectedIndex + 1,
+          payload: editPayload,
+          is_active: editActive,
+        }),
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['questions'] })
+      queryClient.invalidateQueries({ queryKey: ['question-detail', selectedId] })
+      setMessage('Вопрос сохранён. Бот обновит вопросы автоматически.')
+      window.setTimeout(() => setMessage(''), 2500)
+    },
+    onError: (err) => {
+      setMessage(err instanceof Error ? err.message : 'Не удалось сохранить вопрос')
     },
   })
 
@@ -162,11 +228,17 @@ export function TestBuilderPage() {
           {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
 
           {group && (
-            <div className="page-section__content">
-              {order.map((id, idx) => {
+            <div
+              className="page-section__content"
+              style={{ marginTop: 12 }}
+            >
+              <div className="test-builder-grid">
+              <div style={{ display: 'grid', gap: 10 }}>
+                {order.map((id, idx) => {
                 const q = byId.get(id)
                 if (!q) return null
                 const disabled = !q.is_active
+                const isSelected = selectedId === id
                 return (
                   <article
                     key={id}
@@ -179,8 +251,11 @@ export function TestBuilderPage() {
                       flexDirection: 'row',
                       alignItems: 'center',
                       gap: 12,
+                      borderColor: isSelected ? 'rgba(106,165,255,0.55)' : undefined,
+                      boxShadow: isSelected ? '0 0 0 1px rgba(106,165,255,0.35), var(--glass-shadow)' : undefined,
                     }}
                     draggable
+                    onClick={() => setSelectedId(id)}
                     onDragStart={(e) => {
                       setDragId(id)
                       e.dataTransfer.effectAllowed = 'move'
@@ -267,7 +342,96 @@ export function TestBuilderPage() {
                     </div>
                   </article>
                 )
-              })}
+                })}
+              </div>
+
+              <aside className="glass" style={{ padding: 16, borderRadius: 18 }}>
+                {!selectedId && (
+                  <>
+                    <h3 className="section-title" style={{ marginTop: 0 }}>Редактор блока</h3>
+                    <p className="subtitle">Выберите вопрос слева, чтобы редактировать текст и варианты.</p>
+                  </>
+                )}
+                {selectedId && (
+                  <>
+                    <div className="data-card__header" style={{ marginBottom: 12 }}>
+                      <div>
+                        <h3 className="section-title" style={{ marginTop: 0, marginBottom: 4 }}>
+                          Блок #{selectedIndex != null ? selectedIndex + 1 : '—'}
+                        </h3>
+                        <div className="subtitle" style={{ margin: 0 }}>
+                          ID: <code>{selectedId}</code>
+                        </div>
+                      </div>
+                      <div className="toolbar toolbar--compact">
+                        <Link
+                          to="/app/questions/$questionId/edit"
+                          params={{ questionId: String(selectedId) }}
+                          className="ui-btn ui-btn--ghost ui-btn--sm"
+                        >
+                          Полный экран
+                        </Link>
+                      </div>
+                    </div>
+
+                    {dirty && (
+                      <p className="text-danger" style={{ marginTop: 0 }}>
+                        Сначала сохраните порядок блоков. Редактирование временно отключено.
+                      </p>
+                    )}
+
+                    {detailQuery.isLoading && <p className="subtitle">Загрузка вопроса…</p>}
+                    {detailQuery.isError && (
+                      <p className="text-danger">Ошибка: {(detailQuery.error as Error).message}</p>
+                    )}
+
+                    {detailQuery.data && (
+                      <div style={{ display: 'grid', gap: 12 }}>
+                        <label className="form-group">
+                          <span className="form-group__label">Заголовок</span>
+                          <input
+                            className="ui-input"
+                            value={editTitle}
+                            onChange={(e) => setEditTitle(e.target.value)}
+                            disabled={dirty}
+                          />
+                        </label>
+
+                        <label className="form-group">
+                          <span className="form-group__label">
+                            <input
+                              type="checkbox"
+                              checked={editActive}
+                              onChange={(e) => setEditActive(e.target.checked)}
+                              disabled={dirty}
+                            />{' '}
+                            Активен
+                          </span>
+                        </label>
+
+                        <div>
+                          <div className="form-group__label" style={{ marginBottom: 6 }}>Payload (JSON)</div>
+                          <QuestionPayloadEditor
+                            value={editPayload}
+                            onChange={setEditPayload}
+                            onValidityChange={(ok) => setPayloadValid(ok)}
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          className="ui-btn ui-btn--primary"
+                          onClick={() => saveMutation.mutate()}
+                          disabled={dirty || saveMutation.isPending || !payloadValid}
+                        >
+                          {saveMutation.isPending ? 'Сохраняем…' : 'Сохранить блок'}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </aside>
+              </div>
             </div>
           )}
 
