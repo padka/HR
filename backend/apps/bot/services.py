@@ -450,6 +450,7 @@ class NotificationService:
         self._fatal_error_code: Optional[str] = None
         self._fatal_error_at: Optional[datetime] = None
         self._last_delivery_error: Optional[str] = None
+        self._use_scheduler_job: bool = True
 
     async def invalidate_template_cache(
         self,
@@ -487,6 +488,21 @@ class NotificationService:
         self._shutting_down = False
         if self._started:
             return
+        # Loop mode is preferred when explicitly allowed: it keeps a continuous
+        # broker read (xreadgroup block) running and avoids latency gaps that can
+        # happen with interval-based scheduling when a message arrives shortly
+        # after a fast poll iteration.
+        if allow_poll_loop:
+            self._use_scheduler_job = False
+            if self._scheduler is not None:
+                try:
+                    self._scheduler.remove_job(self._job_id)
+                except Exception:
+                    pass
+            self._enable_poll_loop()
+            self._started = True
+            self._ensure_watchdog()
+            return
 
         scheduler_started = False
         scheduler_failed = False
@@ -495,6 +511,7 @@ class NotificationService:
             try:
                 self._ensure_scheduler_job()
                 scheduler_started = True
+                self._use_scheduler_job = True
             except Exception:
                 scheduler_failed = True
                 logger.exception("notification.worker.scheduler_start_failed")
@@ -506,17 +523,14 @@ class NotificationService:
 
         if scheduler_failed:
             logger.warning("notification.worker.scheduler_fallback_loop")
+            self._use_scheduler_job = False
             self._enable_poll_loop()
             self._started = True
             self._ensure_watchdog()
             return
 
-        if not allow_poll_loop:
-            return
-
-        self._enable_poll_loop()
-        self._started = True
-        self._ensure_watchdog()
+        # No scheduler and loop not allowed: do nothing.
+        return
 
     def _enable_poll_loop(self) -> None:
         if self._shutting_down:
@@ -606,7 +620,7 @@ class NotificationService:
                 await asyncio.sleep(self._watchdog_interval)
                 if not self._started or self._shutting_down:
                     return
-                if self._scheduler is not None:
+                if self._scheduler is not None and self._use_scheduler_job:
                     job = self._scheduler.get_job(self._job_id)
                     if job is None:
                         logger.warning("notification.worker.watchdog_job_missing")
@@ -1031,6 +1045,10 @@ class NotificationService:
                 try:
                     await self._poll_once()
                     delay = self._current_poll_interval
+                    # When broker is enabled, _poll_broker_queue uses a blocking read.
+                    # Sleeping here introduces avoidable latency gaps.
+                    if self._broker is not None:
+                        continue
                 except asyncio.CancelledError:
                     raise
                 except asyncio.TimeoutError:

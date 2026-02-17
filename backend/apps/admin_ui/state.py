@@ -484,8 +484,9 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
         logger.info("Notification service not started in test sqlite mode")
     elif settings.bot_enabled:
         # Start notification service (independent of bot supervision)
-        # Use poll loop if scheduler is not available or in development
-        allow_poll_loop = settings.environment != "production" or scheduler is None
+        # Use continuous poll loop (preferred): avoids latency gaps for time-sensitive
+        # transactional messages (slot approvals) and makes reminders more timely.
+        allow_poll_loop = True
         notification_service.start(allow_poll_loop=allow_poll_loop)
         logger.info(
             "Notification service started",
