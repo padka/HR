@@ -294,7 +294,7 @@ async def api_dashboard_recruiter_performance(
     return JSONResponse(payload)
 
 
-async def _profile_snapshot(principal: Principal, request: Request) -> dict:
+async def _profile_snapshot(principal: Principal, request: Request) -> tuple[dict, Optional[dict]]:
     recruiter = None
     city_names: list[str] = []
     candidate_count = 0
@@ -316,6 +316,8 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
     booked_count = 0
     nearest_minutes: Optional[int] = None
     avg_lead_hours: Optional[float] = None
+    recruiter_payload: Optional[dict] = None
+    now_utc = datetime.now(timezone.utc)
 
     async with async_session() as session:
         if principal.type == "recruiter":
@@ -345,27 +347,28 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
                 city_options.append({"id": cid, "name": cname, "tz": ctz})
 
             slot_rows = await session.execute(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                select(Slot.id, Slot.status, Slot.start_utc, Slot.city_id)
                 .where(Slot.recruiter_id == principal.id)
-                .order_by(Slot.start_utc.asc())
+                .order_by(Slot.start_utc.asc(), Slot.id.asc())
                 .limit(10)
             )
-            slots = slot_rows.scalars().all()
-            now_utc = datetime.now(timezone.utc)
-            for s in slots:
-                status_value = s.status.name if hasattr(s.status, "name") else s.status
+            slots = slot_rows.all()
+            for slot_id, slot_status, slot_start_utc, slot_city_id in slots:
+                start_utc = slot_start_utc
+                if start_utc and start_utc.tzinfo is None:
+                    start_utc = start_utc.replace(tzinfo=timezone.utc)
+                status_value = slot_status.name if hasattr(slot_status, "name") else slot_status
                 item = {
-                    "id": s.id,
+                    "id": slot_id,
                     "status": status_value,
-                    "start_utc": s.start_utc.isoformat() if s.start_utc else None,
-                    "city_id": s.city_id,
+                    "start_utc": start_utc.isoformat() if start_utc else None,
+                    "city_id": slot_city_id,
                 }
-                if s.start_utc:
-                    minutes = int((s.start_utc - now_utc).total_seconds() / 60)
+                if start_utc:
+                    minutes = int((start_utc - now_utc).total_seconds() / 60)
                     if minutes > 0:
                         nearest_minutes = minutes if nearest_minutes is None else min(nearest_minutes, minutes)
-                start_local_date = s.start_utc.astimezone(tzinfo).date() if s.start_utc else None
+                start_local_date = start_utc.astimezone(tzinfo).date() if start_utc else None
                 if start_local_date and start_local_date == now_utc.astimezone(tzinfo).date():
                     today_meetings.append(item)
                 else:
@@ -373,36 +376,40 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
 
             # planner for 7 days
             planner_rows = await session.execute(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                select(Slot.id, Slot.status, Slot.start_utc, Slot.city_id)
                 .where(
                     Slot.recruiter_id == principal.id,
-                    Slot.start_utc >= datetime.now(timezone.utc),
-                    Slot.start_utc <= datetime.now(timezone.utc) + timedelta(days=7),
+                    Slot.start_utc >= now_utc,
+                    Slot.start_utc <= now_utc + timedelta(days=7),
                 )
-                .order_by(Slot.start_utc.asc())
+                .order_by(Slot.start_utc.asc(), Slot.id.asc())
             )
-            planner_items = planner_rows.scalars().all()
+            planner_items = planner_rows.all()
             day_map: dict[str, list[dict]] = {}
-            for s in planner_items:
-                local = s.start_utc.astimezone(tzinfo) if s.start_utc else None
+            for slot_id, slot_status, slot_start_utc, slot_city_id in planner_items:
+                start_utc = slot_start_utc
+                if start_utc and start_utc.tzinfo is None:
+                    start_utc = start_utc.replace(tzinfo=timezone.utc)
+                local = start_utc.astimezone(tzinfo) if start_utc else None
                 day_key = local.strftime("%Y-%m-%d") if local else "unknown"
                 payload = {
-                    "id": s.id,
+                    "id": slot_id,
                     "time": local.strftime("%H:%M") if local else "",
-                    "status": s.status.name if hasattr(s.status, "name") else s.status,
-                    "city": s.city_id,
+                    "status": slot_status.name if hasattr(slot_status, "name") else slot_status,
+                    "city": slot_city_id,
                 }
                 day_map.setdefault(day_key, []).append(payload)
             for day, items in sorted(day_map.items()):
                 planner_days.append({"date": day, "entries": items})
 
             if planner_items:
-                deltas = [
-                    (slot.start_utc - now_utc).total_seconds() / 3600
-                    for slot in planner_items
-                    if slot.start_utc and slot.start_utc > now_utc
-                ]
+                deltas: list[float] = []
+                for _, _, slot_start_utc, _ in planner_items:
+                    start_utc = slot_start_utc
+                    if start_utc and start_utc.tzinfo is None:
+                        start_utc = start_utc.replace(tzinfo=timezone.utc)
+                    if start_utc and start_utc > now_utc:
+                        deltas.append((start_utc - now_utc).total_seconds() / 3600)
                 if deltas:
                     avg_lead_hours = round(sum(deltas) / len(deltas), 1)
 
@@ -433,22 +440,20 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
             for status, cnt in status_rows:
                 slots_by_status[str(status).lower()] = cnt
 
-            now_utc = datetime.now(timezone.utc)
             global_slots = await session.execute(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                select(Slot.id, Slot.status, Slot.start_utc, Slot.city_id, Slot.recruiter_id)
                 .where(Slot.start_utc >= now_utc)
-                .order_by(Slot.start_utc.asc())
+                .order_by(Slot.start_utc.asc(), Slot.id.asc())
                 .limit(8)
             )
-            for s in global_slots.scalars().all():
+            for slot_id, slot_status, slot_start_utc, slot_city_id, slot_recruiter_id in global_slots:
                 upcoming_global.append(
                     {
-                        "id": s.id,
-                        "status": s.status.name if hasattr(s.status, "name") else s.status,
-                        "start_utc": s.start_utc.isoformat() if s.start_utc else None,
-                        "city_id": s.city_id,
-                        "recruiter_id": s.recruiter_id,
+                        "id": slot_id,
+                        "status": slot_status.name if hasattr(slot_status, "name") else slot_status,
+                        "start_utc": slot_start_utc.isoformat() if slot_start_utc else None,
+                        "city_id": slot_city_id,
+                        "recruiter_id": slot_recruiter_id,
                     }
                 )
 
@@ -461,6 +466,15 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
                     "bot": getattr(app_state, "bot_enabled", None),
                     "notifications": getattr(app_state, "notification_broker_available", None),
                 }
+
+        if principal.type == "recruiter" and recruiter is not None:
+            recruiter_payload = {
+                "id": recruiter.id,
+                "name": recruiter.name,
+                "tz": recruiter.tz,
+                "active": recruiter.active,
+                "cities": [{"id": c.get("id"), "name": c.get("name")} for c in city_options],
+            }
 
     pending_count = len([m for m in today_meetings + upcoming_meetings if str(m.get("status")).upper() in {"PENDING"}])
     booked_count = len([m for m in today_meetings + upcoming_meetings if str(m.get("status")).upper() in {"BOOKED"}])
@@ -516,7 +530,7 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
             "nearest_minutes": nearest_minutes,
             "avg_lead_hours": avg_lead_hours,
         },
-    }
+    }, recruiter_payload
 
 
 @router.get("/profile")
@@ -534,27 +548,8 @@ async def api_profile(request: Request, principal: Principal = Depends(require_p
         snapshot = snapshot[0]
     else:
         async def _compute() -> dict:
-            recruiter_payload = None
-            if principal.type == "recruiter":
-                async with async_session() as session:
-                    recruiter = await session.get(Recruiter, principal.id)
-                    if recruiter:
-                        rows = await session.execute(
-                            select(City)
-                            .join(recruiter_city_association)
-                            .where(recruiter_city_association.c.recruiter_id == recruiter.id)
-                        )
-                        cities = rows.scalars().all()
-                        recruiter_payload = {
-                            "id": recruiter.id,
-                            "name": recruiter.name,
-                            "tz": recruiter.tz,
-                            "active": recruiter.active,
-                            "cities": [{"id": city.id, "name": city.name} for city in cities],
-                        }
-
             stats = await dashboard_counts(principal=principal)
-            profile_payload = await _profile_snapshot(principal, request)
+            profile_payload, recruiter_payload = await _profile_snapshot(principal, request)
             return {
                 "recruiter": recruiter_payload,
                 "stats": stats,

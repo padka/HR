@@ -147,11 +147,15 @@ def format_dashboard_candidate(user: User) -> Dict[str, object]:
     }
 
 
-def _format_waiting_window(user: User, tz_label: str) -> Optional[str]:
-    if not user.manual_slot_from or not user.manual_slot_to:
+def _format_waiting_window(
+    manual_slot_from: Optional[datetime],
+    manual_slot_to: Optional[datetime],
+    tz_label: str,
+) -> Optional[str]:
+    if not manual_slot_from or not manual_slot_to:
         return None
-    start = user.manual_slot_from
-    end = user.manual_slot_to
+    start = manual_slot_from
+    end = manual_slot_to
     start_label = fmt_local(start, tz_label)
     end_label = fmt_local(end, tz_label)
     if start_label[:5] == end_label[:5]:
@@ -177,7 +181,8 @@ async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, o
             if principal_type == "recruiter":
                 rec_count = 1
 
-            city_stmt = select(City).where(City.active.is_(True))
+            # Count cities without selecting full ORM rows (hot path under load).
+            city_stmt = select(City.id).where(City.active.is_(True))
             city_stmt = scope_cities(city_stmt, principal) if principal else city_stmt
             city_count = await session.scalar(select(func.count()).select_from(city_stmt.subquery()))
 
@@ -186,7 +191,8 @@ async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, o
                 slot_stmt = slot_stmt.where(Slot.recruiter_id == principal_id)
             rows = (await session.execute(slot_stmt.group_by(Slot.status))).all()
 
-            candidate_stmt = select(User).where(
+            # Count candidates without selecting full ORM rows (hot path under load).
+            candidate_stmt = select(User.id).where(
                 User.candidate_status.in_([
                     CandidateStatus.WAITING_SLOT,
                     CandidateStatus.STALLED_WAITING_SLOT,
@@ -273,17 +279,32 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                 CandidateStatus.STALLED_WAITING_SLOT,
             ])
             stmt = (
-                select(User)
+                select(
+                    User.id,
+                    User.fio,
+                    User.city,
+                    User.candidate_status,
+                    User.status_changed_at,
+                    User.manual_slot_requested_at,
+                    User.manual_slot_from,
+                    User.manual_slot_to,
+                    User.manual_slot_comment,
+                    User.telegram_id,
+                    User.telegram_user_id,
+                    User.telegram_username,
+                    User.username,
+                    User.responsible_recruiter_id,
+                )
                 .where(status_filter)
-                .order_by(User.status_changed_at.asc())
+                .order_by(User.status_changed_at.asc(), User.id.asc())
                 .limit(query_limit)
             )
             if principal is not None and principal_type == "admin":
                 stmt = scope_candidates(stmt, principal)
             result = await session.execute(stmt)
-            users = result.scalars().all()
+            users = result.all()
 
-            user_ids = [u.id for u in users]
+            user_ids = [int(row.id) for row in users]
             if user_ids:
                 last_msg_sq = (
                     select(
@@ -360,7 +381,7 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                         "updated_at": created_at.isoformat() if created_at else None,
                     }
 
-            recruiter_ids = {u.responsible_recruiter_id for u in users if u.responsible_recruiter_id}
+            recruiter_ids = {row.responsible_recruiter_id for row in users if row.responsible_recruiter_id}
             if recruiter_ids:
                 recruiters = (
                     await session.execute(select(Recruiter).where(Recruiter.id.in_(recruiter_ids)))
@@ -382,17 +403,32 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
             return tz_cache[key]
 
         waiting_rows: List[Dict[str, object]] = []
-        for user in users:
-            tz_label, city_id = await _resolve_city(user.city)
+        for (
+            user_id,
+            user_fio,
+            user_city,
+            user_candidate_status,
+            user_status_changed_at,
+            user_manual_slot_requested_at,
+            user_manual_slot_from,
+            user_manual_slot_to,
+            user_manual_slot_comment,
+            user_telegram_id,
+            user_telegram_user_id,
+            user_telegram_username,
+            user_username,
+            user_responsible_recruiter_id,
+        ) in users:
+            tz_label, city_id = await _resolve_city(user_city)
             if principal is not None and getattr(principal, "type", None) == "recruiter":
-                owner_id = getattr(user, "responsible_recruiter_id", None)
+                owner_id = user_responsible_recruiter_id
                 if owner_id == getattr(principal, "id", None):
                     pass
                 elif city_id and city_id in recruiter_city_ids:
                     pass
                 else:
                     continue
-            waiting_since = user.status_changed_at or user.manual_slot_requested_at
+            waiting_since = user_status_changed_at or user_manual_slot_requested_at
             waiting_hours = None
             normalized_waiting_since = waiting_since
             if normalized_waiting_since and normalized_waiting_since.tzinfo is None:
@@ -402,35 +438,35 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                 waiting_hours = max(0, int(delta.total_seconds() // 3600))
 
             waiting_since_iso = waiting_since.isoformat() if waiting_since else None
-            last_msg = last_message_map.get(user.id)
+            last_msg = last_message_map.get(int(user_id))
             last_msg_at = last_msg.get("created_at") if last_msg else None
             waiting_rows.append(
                 {
-                    "id": user.id,
-                    "name": user.fio,
-                    "city": user.city or "Не указан",
+                    "id": int(user_id),
+                    "name": user_fio,
+                    "city": user_city or "Не указан",
                     "city_id": city_id,
-                    "status_display": get_status_label(user.candidate_status),
-                    "status_color": get_status_color(user.candidate_status),
-                    "status_slug": user.candidate_status.value if user.candidate_status else None,
+                    "status_display": get_status_label(user_candidate_status),
+                    "status_color": get_status_color(user_candidate_status),
+                    "status_slug": user_candidate_status.value if user_candidate_status else None,
                     "waiting_since": waiting_since_iso,
                     "waiting_since_dt": normalized_waiting_since,
                     "waiting_hours": waiting_hours,
-                    "availability_window": _format_waiting_window(user, tz_label),
-                    "availability_note": user.manual_slot_comment,
+                    "availability_window": _format_waiting_window(user_manual_slot_from, user_manual_slot_to, tz_label),
+                    "availability_note": user_manual_slot_comment,
                     "tz": tz_label,
-                    "telegram_id": user.telegram_id,
-                    "telegram_user_id": user.telegram_user_id or user.telegram_id,
-                    "telegram_username": user.telegram_username or user.username,
+                    "telegram_id": user_telegram_id,
+                    "telegram_user_id": user_telegram_user_id or user_telegram_id,
+                    "telegram_username": user_telegram_username or user_username,
                     "last_message": last_msg.get("text") if last_msg else None,
                     "last_message_at": last_msg_at.isoformat() if last_msg_at else None,
-                    "ai_relevance_score": ai_fit_map.get(user.id, {}).get("score"),
-                    "ai_relevance_level": ai_fit_map.get(user.id, {}).get("level"),
-                    "ai_relevance_updated_at": ai_fit_map.get(user.id, {}).get("updated_at"),
-                    "responsible_recruiter_id": user.responsible_recruiter_id,
-                    "responsible_recruiter_name": recruiter_map.get(user.responsible_recruiter_id) if user.responsible_recruiter_id else None,
-                    "schedule_url": f"/candidates/{user.id}/schedule-slot",
-                    "profile_url": f"/candidates/{user.id}",
+                    "ai_relevance_score": ai_fit_map.get(int(user_id), {}).get("score"),
+                    "ai_relevance_level": ai_fit_map.get(int(user_id), {}).get("level"),
+                    "ai_relevance_updated_at": ai_fit_map.get(int(user_id), {}).get("updated_at"),
+                    "responsible_recruiter_id": user_responsible_recruiter_id,
+                    "responsible_recruiter_name": recruiter_map.get(user_responsible_recruiter_id) if user_responsible_recruiter_id else None,
+                    "schedule_url": f"/candidates/{int(user_id)}/schedule-slot",
+                    "profile_url": f"/candidates/{int(user_id)}",
                     "priority_score": 0,  # will be updated below
                 }
             )
