@@ -54,3 +54,9 @@ Degraded mode:
 - добавить path в allowlist `backend/apps/admin_ui/perf/degraded/allowlist.py`
 5. Добавить тест на key scoping.
 
+## Diagnostics: forced cache-miss
+
+Для профилирования DB путей (без влияния microcache/Redis) используйте `PERF_CACHE_BYPASS=1` (только non-prod):
+- Redis/microcache read/write пропускаются
+- single-flight fill/refresh не выполняется
+- в перф-контекст пишутся `MISS` маркеры (чтобы `X-Cache` и метрики были ожидаемыми)

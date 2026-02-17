@@ -90,6 +90,33 @@ SPIKE_RPS=1200 SPIKE_SECONDS=30 \
 3. `metrics.txt`:
    - пром-метрики per-route и per-request DB diagnostics
 
+## Cache-miss profiling (DB cost)
+
+Чтобы измерять стоимость DB путей без влияния microcache/Redis (cold-start / expiry / деградации), используйте:
+
+```bash
+PERF_CACHE_BYPASS=1 METRICS_ENABLED=1 PERF_DIAGNOSTIC_HEADERS=1 \
+./.venv/bin/uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000
+```
+
+Для сбора top SQL (sampled, non-prod only):
+
+```bash
+DB_PROFILE_ENABLED=1 DB_PROFILE_OUTPUT=.local/perf/sql_profile.json \
+DB_PROFILE_SAMPLE_RATE=0.05 DB_PROFILE_FLUSH_SECONDS=10 \
+./.venv/bin/uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000
+```
+
+## Seeding (чтобы профили были “похожи на жизнь”)
+
+Если в базе мало сущностей, некоторые ветки `/api/dashboard/incoming` и `/api/calendar/events` будут “слишком лёгкими”.
+Для наполнения локальной базы используйте:
+
+```bash
+PYTHONPATH=. ./.venv/bin/python scripts/seed_incoming_candidates.py --count 200
+PYTHONPATH=. ./.venv/bin/python scripts/seed_test_candidates.py
+```
+
 ## Legacy scripts
 
 Старые скрипты остаются для обратной совместимости:
