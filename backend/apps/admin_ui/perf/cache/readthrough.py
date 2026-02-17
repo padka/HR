@@ -12,16 +12,19 @@ Security note:
 
 from __future__ import annotations
 
+import os
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
-import time
 from typing import Any, TypeVar
 
 from backend.apps.admin_ui.perf.metrics.context import add_cache_event, get_context
 from backend.apps.admin_ui.perf.cache.microcache import get_value as microcache_get_value
 from backend.apps.admin_ui.perf.cache.microcache import set_value as microcache_set_value
+from backend.apps.admin_ui.perf.limits.refresh_limiter import GLOBAL_REFRESH_LIMITER
+from backend.apps.admin_ui.perf.metrics import prometheus
 from backend.core.cache import get_cache
+from backend.core.settings import get_settings
 
 T = TypeVar("T")
 
@@ -34,6 +37,18 @@ def _freshness() -> str:
     ctx = get_context()
     return "stale" if (ctx and ctx.degraded_reason) else "fresh"
 
+def _cache_bypass_enabled() -> bool:
+    """Return True when caches should be bypassed for perf diagnostics.
+
+    This is a non-prod-only toggle used to profile cache-miss DB paths.
+    """
+
+    settings = get_settings()
+    if settings.environment == "production":
+        return False
+    raw = os.getenv("PERF_CACHE_BYPASS", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
 
 def microcache_get(key: str, *, expected_type: type[T]) -> tuple[T, bool] | None:
     return microcache_get_value(key, expected_type=expected_type)
@@ -44,6 +59,9 @@ def microcache_set(key: str, value: Any, *, ttl_seconds: float, stale_seconds: f
 
 
 async def redis_get(key: str, *, expected_type: type[T]) -> tuple[T, bool] | None:
+    if _cache_bypass_enabled():
+        add_cache_event(backend="redis", state="miss", freshness=_freshness())
+        return None
     try:
         cache = get_cache()
     except RuntimeError:
@@ -65,6 +83,8 @@ async def redis_get(key: str, *, expected_type: type[T]) -> tuple[T, bool] | Non
 
 
 async def redis_set(key: str, value: Any, *, ttl_seconds: float) -> None:
+    if _cache_bypass_enabled():
+        return
     try:
         cache = get_cache()
     except RuntimeError:
@@ -88,6 +108,12 @@ async def get_cached(
         (value, is_stale) or None.
     """
 
+    if _cache_bypass_enabled():
+        # Mark both backends as MISS for diagnostics.
+        add_cache_event(backend="microcache", state="miss", freshness=_freshness())
+        add_cache_event(backend="redis", state="miss", freshness=_freshness())
+        return None
+
     value = microcache_get(key, expected_type=expected_type)
     if value is not None:
         return value
@@ -109,6 +135,8 @@ async def set_cached(
 ) -> None:
     """Write-through to microcache + Redis (best-effort)."""
 
+    if _cache_bypass_enabled():
+        return
     microcache_set(key, value, ttl_seconds=ttl_seconds, stale_seconds=stale_seconds)
     await redis_set(key, value, ttl_seconds=ttl_seconds)
 
@@ -141,6 +169,9 @@ async def get_or_compute(
       immediately (marked stale) and refresh in background (single-flight).
     """
 
+    if _cache_bypass_enabled():
+        return await compute()
+
     cached = await get_cached(
         key,
         expected_type=expected_type,
@@ -160,26 +191,39 @@ async def get_or_compute(
         if stale_seconds and stale_seconds > 0:
             lock = await _lock_for(key)
             if not lock.locked():
+                # Best-effort global limiter: avoid spawning unbounded refresh tasks.
+                if GLOBAL_REFRESH_LIMITER.locked():
+                    return value
+
+                ctx0 = get_context()
+                route_for_metrics = (ctx0.route if ctx0 and ctx0.route else "unknown")
+
                 async def _refresh() -> None:
-                    async with lock:
-                        cached2 = await get_cached(
-                            key,
-                            expected_type=expected_type,
-                            ttl_seconds=ttl_seconds,
-                            stale_seconds=stale_seconds,
-                        )
-                        if cached2 is not None and not cached2[1]:
-                            return
-                        try:
-                            new_value = await compute()
-                        except Exception:
-                            return
-                        await set_cached(
-                            key,
-                            new_value,
-                            ttl_seconds=ttl_seconds,
-                            stale_seconds=stale_seconds,
-                        )
+                    prometheus.refresh_started(route=route_for_metrics)
+                    try:
+                        async with GLOBAL_REFRESH_LIMITER:
+                            async with lock:
+                                cached2 = await get_cached(
+                                    key,
+                                    expected_type=expected_type,
+                                    ttl_seconds=ttl_seconds,
+                                    stale_seconds=stale_seconds,
+                                )
+                                if cached2 is not None and not cached2[1]:
+                                    return
+                                try:
+                                    new_value = await compute()
+                                except Exception:
+                                    prometheus.refresh_error(route=route_for_metrics)
+                                    return
+                                await set_cached(
+                                    key,
+                                    new_value,
+                                    ttl_seconds=ttl_seconds,
+                                    stale_seconds=stale_seconds,
+                                )
+                    finally:
+                        prometheus.refresh_finished()
 
                 asyncio.create_task(_refresh(), name="perf_cache_refresh")
             return value

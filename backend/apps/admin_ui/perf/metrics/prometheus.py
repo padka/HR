@@ -78,6 +78,23 @@ HTTP_SERVED_STALE_TOTAL = Counter(
     labelnames=("route", "backend"),
 )
 
+HTTP_CACHE_REFRESH_INFLIGHT = Gauge(
+    "cache_refresh_inflight",
+    "Number of in-flight cache background refresh tasks (process-wide).",
+)
+
+HTTP_CACHE_REFRESH_TOTAL = Counter(
+    "cache_refresh_total",
+    "Background cache refresh tasks started, labeled by triggering route.",
+    labelnames=("route",),
+)
+
+HTTP_CACHE_REFRESH_ERRORS_TOTAL = Counter(
+    "cache_refresh_errors_total",
+    "Background cache refresh task errors, labeled by triggering route.",
+    labelnames=("route",),
+)
+
 HTTP_DB_QUERIES_PER_REQUEST = Histogram(
     "http_db_queries_per_request",
     "Number of DB queries executed during a single HTTP request (best-effort).",
@@ -318,6 +335,25 @@ def observe_cache(*, route: str, backend: str, freshness: str) -> None:
     HTTP_SERVED_FROM_CACHE_TOTAL.labels(route=route, backend=backend).inc()
     if freshness == "stale":
         HTTP_SERVED_STALE_TOTAL.labels(route=route, backend=backend).inc()
+
+
+def refresh_started(*, route: str) -> None:
+    """Mark the start of a background cache refresh task."""
+
+    HTTP_CACHE_REFRESH_INFLIGHT.inc()
+    HTTP_CACHE_REFRESH_TOTAL.labels(route=route).inc()
+
+
+def refresh_error(*, route: str) -> None:
+    """Mark an error from a background cache refresh task."""
+
+    HTTP_CACHE_REFRESH_ERRORS_TOTAL.labels(route=route).inc()
+
+
+def refresh_finished() -> None:
+    """Mark completion of a background cache refresh task."""
+
+    HTTP_CACHE_REFRESH_INFLIGHT.dec()
 
 
 def current_route_label() -> str:
