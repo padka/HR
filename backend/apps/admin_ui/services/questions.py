@@ -21,6 +21,7 @@ __all__ = [
     "update_test_question",
     "create_test_question",
     "clone_test_question",
+    "reorder_test_questions",
 ]
 
 
@@ -456,3 +457,63 @@ async def clone_test_question(question_id: int) -> Tuple[bool, Optional[int], Op
     await publish_content_update(KIND_QUESTIONS_CHANGED, {"test_id": str(getattr(original.test, "slug", "") or "")})
 
     return True, int(clone.id), None
+
+
+async def reorder_test_questions(
+    *,
+    test_id: str,
+    order: List[int],
+) -> Tuple[bool, Optional[str]]:
+    """Reorder questions inside a test by assigning 1..N indexes (stable, contiguous).
+
+    Notes:
+    - This is an admin-only operation used by the visual "test builder" UI.
+    - The payload must include the full set of question ids for the test; this prevents
+      accidentally dropping/inserting items during concurrent edits.
+    - On success we publish a best-effort Redis content update so the bot refreshes its
+      in-memory bank without restart.
+    """
+
+    clean_test_id = str(test_id or "").strip()
+    if not clean_test_id:
+        return False, "test_required"
+
+    try:
+        normalized: List[int] = [int(x) for x in (order or [])]
+    except (TypeError, ValueError):
+        return False, "invalid_order"
+
+    if not normalized:
+        return False, "empty_order"
+    if len(set(normalized)) != len(normalized):
+        return False, "duplicate_ids"
+
+    async with async_session() as session:
+        test = await session.scalar(select(Test).where(Test.slug == clean_test_id))
+        if test is None:
+            return False, "test_not_found"
+
+        existing_ids = (
+            await session.scalars(select(Question.id).where(Question.test_id == test.id))
+        ).all()
+        existing_set = {int(x) for x in existing_ids}
+        normalized_set = set(normalized)
+
+        if normalized_set != existing_set:
+            # Prevent partial reorder mistakes or concurrent edits from corrupting order.
+            return False, "order_mismatch"
+
+        questions = (
+            await session.scalars(select(Question).where(Question.id.in_(normalized)))
+        ).all()
+        by_id = {int(q.id): q for q in questions}
+        if len(by_id) != len(normalized):
+            return False, "order_mismatch"
+
+        for idx, qid in enumerate(normalized):
+            by_id[qid].order = int(idx)
+
+        await session.commit()
+
+    await publish_content_update(KIND_QUESTIONS_CHANGED, {"test_id": clean_test_id})
+    return True, None

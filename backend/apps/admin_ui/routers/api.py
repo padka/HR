@@ -111,6 +111,7 @@ from backend.apps.admin_ui.services.questions import (
     update_test_question,
     create_test_question,
     clone_test_question,
+    reorder_test_questions,
 )
 from backend.core.db import async_session
 from backend.domain.models import Recruiter, Slot, City, SlotStatus, SlotAssignment, ActionToken, MessageTemplate, recruiter_city_association
@@ -1791,6 +1792,28 @@ async def api_question_clone(
         status_code = 404 if error == "not_found" else 400
         return JSONResponse({"ok": False, "error": error}, status_code=status_code)
     return JSONResponse({"ok": True, "id": new_id})
+
+
+@router.post("/questions/reorder")
+async def api_questions_reorder(
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    _ = await require_csrf_token(request)
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    test_id = str(data.get("test_id") or "")
+    order = data.get("order")
+    if not isinstance(order, list):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    ok, error = await reorder_test_questions(
+        test_id=test_id,
+        order=order,  # type: ignore[arg-type]
+    )
+    if not ok:
+        return JSONResponse({"ok": False, "error": error}, status_code=400)
+    return JSONResponse({"ok": True})
 
 
 @router.get("/kpis/current")
