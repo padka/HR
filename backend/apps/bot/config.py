@@ -117,9 +117,9 @@ def refresh_questions_bank(*, include_inactive: bool = False) -> None:
     TEST1_QUESTIONS = _QUESTIONS_BANK.get("test1", []).copy()
     TEST2_QUESTIONS = _QUESTIONS_BANK.get("test2", []).copy()
 
-    _QUESTIONS_BANK_VERSION += 1
     _QUESTIONS_BANK_LOADED_AT = float(time.time())
     _QUESTIONS_BANK_SOURCE = source
+    new_hash = ""
     try:
         raw = json.dumps(
             _QUESTIONS_BANK,
@@ -127,9 +127,20 @@ def refresh_questions_bank(*, include_inactive: bool = False) -> None:
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        _QUESTIONS_BANK_HASH = hashlib.sha256(raw).hexdigest()
+        new_hash = hashlib.sha256(raw).hexdigest()
     except Exception:  # pragma: no cover - defensive
-        _QUESTIONS_BANK_HASH = str(_QUESTIONS_BANK_VERSION)
+        new_hash = ""
+
+    # Increment version only when the content actually changed. This prevents
+    # unnecessary resync for active sessions when refresh() is called frequently.
+    if new_hash and new_hash != _QUESTIONS_BANK_HASH:
+        _QUESTIONS_BANK_VERSION += 1
+        _QUESTIONS_BANK_HASH = new_hash
+    elif not _QUESTIONS_BANK_HASH:
+        # First successful load (or hash calculation failed): still set a non-zero version.
+        _QUESTIONS_BANK_VERSION = max(1, int(_QUESTIONS_BANK_VERSION))
+        if new_hash:
+            _QUESTIONS_BANK_HASH = new_hash
 
 
 def get_questions_bank_version() -> int:
