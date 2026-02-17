@@ -363,6 +363,56 @@ async def test_send_test1_question_uses_display_name_in_buttons(bot_context, mon
 
 
 @pytest.mark.asyncio
+async def test_send_test1_question_resyncs_sequence_on_bank_version_change(bot_context, monkeypatch):
+    manager, dummy_bot = bot_context
+
+    dummy_bot.send_message.reset_mock()
+
+    async def fake_tpl(*_args, **_kwargs):
+        return ""
+
+    monkeypatch.setattr("backend.apps.bot.services._render_tpl", fake_tpl)
+    monkeypatch.setattr("backend.apps.bot.services.get_questions_bank_version", lambda: 2)
+    monkeypatch.setattr(
+        "backend.apps.bot.services.TEST1_QUESTIONS",
+        [{"id": "fio", "prompt": "NEW PROMPT", "placeholder": "x"}],
+    )
+
+    await manager.set(
+        USER_ID,
+        State(
+            flow="interview",
+            questions_bank_version=1,
+            t1_idx=0,
+            t1_current_idx=0,
+            test1_answers={},
+            t1_last_prompt_id=None,
+            t1_last_question_text="",
+            t1_requires_free_text=True,
+            t1_sequence=[{"id": "fio", "prompt": "OLD PROMPT", "placeholder": "x"}],
+            fio="",
+            city_name="",
+            city_id=None,
+            candidate_tz=DEFAULT_TZ,
+            t2_attempts={},
+            picked_recruiter_id=None,
+            picked_slot_id=None,
+            test1_payload={},
+        ),
+    )
+
+    await send_test1_question(USER_ID)
+
+    assert dummy_bot.send_message.await_count == 1
+    args, _kwargs = dummy_bot.send_message.await_args_list[0]
+    assert "NEW PROMPT" in args[1]
+
+    state = await manager.get(USER_ID)
+    assert state.get("questions_bank_version") == 2
+    assert state["t1_sequence"][0]["prompt"] == "NEW PROMPT"
+
+
+@pytest.mark.asyncio
 async def test_handle_test1_answer_advances_on_success(bot_context, monkeypatch):
     manager, dummy_bot = bot_context
 

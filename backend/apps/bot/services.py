@@ -110,6 +110,7 @@ from .config import (
     TEST2_QUESTIONS,
     TIME_FMT,
     TIME_LIMIT,
+    get_questions_bank_version,
     refresh_questions_bank,
 )
 from .keyboards import (
@@ -4417,6 +4418,7 @@ async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city
 async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
     # Ensure we use the freshest question set after admin edits.
     refresh_questions_bank()
+    questions_version = get_questions_bank_version()
 
     state_manager = get_state_manager()
     bot = get_bot()
@@ -4432,6 +4434,7 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
             user_id,
             State(
                 flow="recruiter",
+                questions_bank_version=questions_version,
                 t1_idx=None,
                 test1_answers={},
                 t1_last_prompt_id=None,
@@ -4461,6 +4464,7 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
         user_id,
         State(
             flow="interview",
+            questions_bank_version=questions_version,
             t1_idx=0,
             test1_answers={},
             t1_last_prompt_id=None,
@@ -4574,6 +4578,10 @@ async def handle_recruiter_identity_command(message: Message) -> None:
 
 
 async def start_introday_flow(message: Message) -> None:
+    # Ensure we use the freshest question set after admin edits.
+    refresh_questions_bank()
+    questions_version = get_questions_bank_version()
+
     state_manager = get_state_manager()
     user_id = message.from_user.id
     prev = await state_manager.get(user_id) or {}
@@ -4581,6 +4589,7 @@ async def start_introday_flow(message: Message) -> None:
         user_id,
         State(
             flow="intro",
+            questions_bank_version=questions_version,
             t1_idx=None,
             test1_answers=prev.get("test1_answers", {}),
             t1_last_prompt_id=None,
@@ -4623,11 +4632,58 @@ def _ensure_question_id(question: Dict[str, Any], idx: int) -> str:
     return str(qid)
 
 
+def _sync_test1_sequence_if_needed(state: State) -> None:
+    """Ensure state's Test1 sequence matches the latest question bank.
+
+    Admins can edit questions while the bot is running. The bot refreshes the global
+    question bank via Redis pub/sub and at flow entry points, but active sessions may
+    still carry an older `t1_sequence`. We resync best-effort and try to continue from
+    the first unanswered question (by question id) to avoid repeating answered items.
+    """
+
+    current_version = get_questions_bank_version()
+    stored_version = state.get("questions_bank_version")
+    if stored_version is None:
+        # Backward compatible: older states/tests may not have version yet.
+        # Do not override an explicit sequence in state.
+        state["questions_bank_version"] = current_version
+        if not state.get("t1_sequence"):
+            state["t1_sequence"] = list(TEST1_QUESTIONS)
+        return
+    if stored_version == current_version:
+        return
+
+    new_sequence: List[Dict[str, Any]] = list(TEST1_QUESTIONS)
+
+    answers = state.get("test1_answers") or {}
+    answered_ids: set[str] = set()
+    if isinstance(answers, dict):
+        answered_ids = {str(k) for k in answers.keys() if k is not None}
+
+    if answered_ids:
+        next_idx = 0
+        for idx, q in enumerate(new_sequence):
+            qid = q.get("id") or q.get("question_id") or f"q{idx + 1}"
+            if str(qid) not in answered_ids:
+                next_idx = idx
+                break
+        else:
+            next_idx = len(new_sequence)
+        state["t1_idx"] = next_idx
+    else:
+        if state.get("t1_idx") is None:
+            state["t1_idx"] = 0
+
+    state["t1_sequence"] = new_sequence
+    state["questions_bank_version"] = current_version
+
+
 async def send_test1_question(user_id: int) -> None:
     bot = get_bot()
     state_manager = get_state_manager()
     def _prepare(state: State) -> Tuple[State, Dict[str, Any]]:
         working = state
+        _sync_test1_sequence_if_needed(working)
         sequence = list(working.get("t1_sequence") or TEST1_QUESTIONS)
         working["t1_sequence"] = sequence
         idx = int(working.get("t1_idx") or 0)
@@ -5299,11 +5355,13 @@ async def finalize_test1(user_id: int) -> None:
 async def start_test2(user_id: int) -> None:
     # Refresh questions so admin changes are reflected without restart.
     refresh_questions_bank()
+    questions_version = get_questions_bank_version()
 
     bot = get_bot()
     state_manager = get_state_manager()
 
     def _init_attempts(state: State) -> Tuple[State, Dict[str, Optional[int]]]:
+        state["questions_bank_version"] = questions_version
         state["t2_attempts"] = {
             q_index: {"answers": [], "is_correct": False, "start_time": None}
             for q_index in range(len(TEST2_QUESTIONS))
