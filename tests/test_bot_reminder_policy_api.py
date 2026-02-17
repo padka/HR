@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from backend.apps.admin_ui.app import create_app
 from backend.core.settings import get_settings
+from backend.core.content_updates import KIND_REMINDERS_CHANGED
 
 
 def _configure_auth(client: TestClient) -> None:
@@ -15,9 +16,19 @@ def _configure_auth(client: TestClient) -> None:
 
 
 def test_bot_reminder_policy_api_roundtrip(monkeypatch) -> None:
+    published: list[tuple[str, object]] = []
+
+    async def _fake_publish(kind: str, payload=None, **_kwargs):
+        published.append((kind, payload))
+        return True
+
     monkeypatch.setattr(
         "backend.apps.admin_ui.state._build_bot",
         lambda settings: (None, False),
+    )
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.routers.api.publish_content_update",
+        _fake_publish,
     )
 
     app = create_app()
@@ -52,6 +63,7 @@ def test_bot_reminder_policy_api_roundtrip(monkeypatch) -> None:
         assert updated["policy"]["interview"]["confirm_6h"]["enabled"] is False
         assert updated["policy"]["interview"]["confirm_3h"]["offset_hours"] == 2.5
         assert updated["policy"]["min_time_before_immediate_hours"] == 1.0
+        assert any(kind == KIND_REMINDERS_CHANGED for kind, _payload in published)
 
         verify_resp = client.get("/api/bot/reminder-policy")
         assert verify_resp.status_code == 200

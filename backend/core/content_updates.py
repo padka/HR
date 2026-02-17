@@ -29,6 +29,7 @@ CONTENT_UPDATES_CHANNEL = "recruitsmart:content_updates"
 # Event kinds (keep small; extend when needed).
 KIND_QUESTIONS_CHANGED = "questions_changed"
 KIND_TEMPLATES_CHANGED = "templates_changed"
+KIND_REMINDERS_CHANGED = "reminders_changed"
 
 
 @dataclass(frozen=True)
@@ -181,6 +182,7 @@ __all__ = [
     "ContentUpdateEvent",
     "KIND_QUESTIONS_CHANGED",
     "KIND_TEMPLATES_CHANGED",
+    "KIND_REMINDERS_CHANGED",
     "build_content_update",
     "parse_content_update",
     "publish_content_update",

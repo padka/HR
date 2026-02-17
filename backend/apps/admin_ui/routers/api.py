@@ -75,6 +75,7 @@ from backend.apps.admin_ui.services.kpis import (
     list_weekly_history,
 )
 from backend.core.audit import log_audit_action
+from backend.core.content_updates import KIND_REMINDERS_CHANGED, publish_content_update
 from backend.apps.admin_ui.perf.cache import keys as cache_keys
 from backend.apps.admin_ui.perf.cache.readthrough import get_cached, get_or_compute
 from backend.apps.admin_ui.services.message_templates import (
@@ -2310,6 +2311,9 @@ async def api_bot_reminder_policy_update(
                 rescheduled["failed"] = int(value.get("failed", 0))
         except Exception:
             logger.exception("Failed to reschedule reminders after policy update")
+
+    # Best-effort: notify the standalone bot process to reload reminder policy and reschedule jobs.
+    await publish_content_update(KIND_REMINDERS_CHANGED, {"key": "reminder_policy"})
 
     return JSONResponse(
         {

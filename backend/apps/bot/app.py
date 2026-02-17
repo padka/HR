@@ -20,6 +20,7 @@ from backend.core.content_updates import (
     ContentUpdateEvent,
     KIND_QUESTIONS_CHANGED,
     KIND_TEMPLATES_CHANGED,
+    KIND_REMINDERS_CHANGED,
     run_content_updates_subscriber,
 )
 
@@ -206,6 +207,16 @@ async def main() -> None:
                 except Exception:
                     pass
                 logging.info("Content update applied: templates invalidated")
+                return
+
+            if event.kind == KIND_REMINDERS_CHANGED:
+                if reminder_service is None:
+                    return
+                try:
+                    await reminder_service.reschedule_active_slots()
+                    logging.info("Content update applied: reminders rescheduled")
+                except Exception as exc:
+                    logging.warning("Content update failed: reminders reschedule error=%s", exc)
                 return
 
         async def _content_updates_supervisor(redis_url: str) -> None:
