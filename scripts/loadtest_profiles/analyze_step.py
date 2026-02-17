@@ -208,8 +208,8 @@ def _histogram_quantile(buckets: list[tuple[float, float]], q: float) -> float |
     return buckets[-1][0]
 
 
-def _pool_acquire_p95(metrics_path: Path) -> dict[str, float]:
-    """Return p95 pool acquire time (seconds) per route (bucket-based)."""
+def _pool_acquire_p95(metrics_path: Path) -> tuple[dict[str, float], dict[str, int]]:
+    """Return (p95 seconds, total samples) per route from a single snapshot."""
 
     by_route: dict[str, list[tuple[float, float]]] = {}
     for name, labels, value in _iter_metrics_lines(metrics_path):
@@ -231,6 +231,7 @@ def _pool_acquire_p95(metrics_path: Path) -> dict[str, float]:
         by_route.setdefault(route, []).append((le, float(value)))
 
     out: dict[str, float] = {}
+    totals: dict[str, int] = {}
     for route, buckets in by_route.items():
         buckets.sort(key=lambda x: x[0])
         # Drop +Inf from output quantile value when it is selected (means: beyond largest bucket).
@@ -238,11 +239,12 @@ def _pool_acquire_p95(metrics_path: Path) -> dict[str, float]:
         if q is None:
             continue
         out[route] = float(q)
-    return out
+        totals[route] = int(buckets[-1][1] or 0)
+    return out, totals
 
 
-def _delta_pool_acquire_p95(before_path: Path, after_path: Path) -> dict[str, float]:
-    """Compute pool acquire p95 from histogram deltas (step-local)."""
+def _delta_pool_acquire_p95(before_path: Path, after_path: Path) -> tuple[dict[str, float], dict[str, int]]:
+    """Compute (pool acquire p95 seconds, total samples) from histogram deltas (step-local)."""
 
     def _collect(path: Path) -> dict[str, dict[float, float]]:
         by_route: dict[str, dict[float, float]] = {}
@@ -269,6 +271,7 @@ def _delta_pool_acquire_p95(before_path: Path, after_path: Path) -> dict[str, fl
     after = _collect(after_path)
 
     out: dict[str, float] = {}
+    totals: dict[str, int] = {}
     for route in CRITICAL_ROUTES:
         b = before.get(route, {})
         a = after.get(route, {})
@@ -286,7 +289,8 @@ def _delta_pool_acquire_p95(before_path: Path, after_path: Path) -> dict[str, fl
         if q is None:
             continue
         out[route] = float(q)
-    return out
+        totals[route] = int(buckets[-1][1] or 0)
+    return out, totals
 
 
 def _env_float(name: str, default: float) -> float:
@@ -316,14 +320,18 @@ def main(argv: list[str]) -> int:
 
     if metrics_before.exists() and metrics_after.exists():
         latency_by_route = _delta_http_latency(metrics_before, metrics_after)
-        pool_p95_by_route = _delta_pool_acquire_p95(metrics_before, metrics_after)
+        pool_p95_by_route, pool_total_by_route = _delta_pool_acquire_p95(metrics_before, metrics_after)
     else:
         latency_by_route = _route_latency(metrics_path)
-        pool_p95_by_route = _pool_acquire_p95(metrics_path)
+        pool_p95_by_route, pool_total_by_route = _pool_acquire_p95(metrics_path)
 
     max_p95 = max((v.get("p95", 0.0) for v in latency_by_route.values()), default=0.0)
     max_p99 = max((v.get("p99", 0.0) for v in latency_by_route.values()), default=0.0)
-    max_pool_p95 = max((v for v in pool_p95_by_route.values()), default=0.0)
+    pool_min_samples = int(_env_float("KNEE_POOL_MIN_SAMPLES", 50))
+    max_pool_p95 = 0.0
+    for route, p95 in pool_p95_by_route.items():
+        if int(pool_total_by_route.get(route, 0)) >= pool_min_samples:
+            max_pool_p95 = max(max_pool_p95, float(p95))
 
     # Knee thresholds (defaults aligned with the project spec).
     thr_err = _env_float("KNEE_ERROR_RATE_MAX", 0.005)
@@ -361,6 +369,7 @@ def main(argv: list[str]) -> int:
         "reasons": reasons,
         "routes": latency_by_route,
         "pool_acquire_p95": pool_p95_by_route,
+        "pool_acquire_total": pool_total_by_route,
     }
 
     print(json.dumps(payload, ensure_ascii=False))
