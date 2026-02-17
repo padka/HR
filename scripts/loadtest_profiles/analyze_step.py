@@ -68,7 +68,9 @@ def _aggregate_autocannon(out_dir: Path) -> AutocannonSummary:
     )
 
 
-_METRIC_LINE_RE = re.compile(r"^([a-zA-Z_:][a-zA-Z0-9_:]*)\{([^}]*)\}\s+([0-9eE+\\-.]+)\s*$")
+_METRIC_LINE_RE = re.compile(
+    r"^([a-zA-Z_:][a-zA-Z0-9_:]*)\{([^}]*)\}\s+([-+0-9eE.]+)\s*$"
+)
 
 
 def _parse_labels(raw: str) -> dict[str, str]:
@@ -121,6 +123,68 @@ def _route_latency(metrics_path: Path) -> dict[str, dict[str, float]]:
             continue
         out.setdefault(route, {})
         out[route][("p95" if name.endswith("p95_seconds") else "p99")] = float(value)
+    return out
+
+
+def _delta_http_latency(before_path: Path, after_path: Path) -> dict[str, dict[str, float]]:
+    """Compute p95/p99 from per-route HTTP latency histogram deltas.
+
+    This isolates a single step run even when the server process is long-lived.
+    """
+
+    def _collect(path: Path) -> dict[str, dict[float, float]]:
+        by_route: dict[str, dict[float, float]] = {}
+        for name, labels, value in _iter_metrics_lines(path):
+            if name != "http_request_duration_seconds_bucket":
+                continue
+            route = labels.get("route")
+            if route not in CRITICAL_ROUTES:
+                continue
+            if labels.get("method") != "GET":
+                continue
+            if labels.get("status") != "200":
+                continue
+            if labels.get("outcome") != "success":
+                continue
+            le_raw = labels.get("le")
+            if not le_raw:
+                continue
+            if le_raw == "+Inf":
+                le = float("inf")
+            else:
+                try:
+                    le = float(le_raw)
+                except Exception:
+                    continue
+            by_route.setdefault(route, {})[le] = float(value)
+        return by_route
+
+    before = _collect(before_path)
+    after = _collect(after_path)
+
+    out: dict[str, dict[str, float]] = {}
+    for route in CRITICAL_ROUTES:
+        b = before.get(route, {})
+        a = after.get(route, {})
+        les = sorted(set(b.keys()) | set(a.keys()))
+        if not les:
+            continue
+        buckets: list[tuple[float, float]] = []
+        for le in les:
+            delta = float(a.get(le, 0.0) - b.get(le, 0.0))
+            if delta < 0:
+                delta = 0.0
+            buckets.append((le, delta))
+        buckets.sort(key=lambda x: x[0])
+        p95 = _histogram_quantile(buckets, 0.95)
+        p99 = _histogram_quantile(buckets, 0.99)
+        if p95 is None and p99 is None:
+            continue
+        out[route] = {}
+        if p95 is not None:
+            out[route]["p95"] = float(p95)
+        if p99 is not None:
+            out[route]["p99"] = float(p99)
     return out
 
 
@@ -177,6 +241,54 @@ def _pool_acquire_p95(metrics_path: Path) -> dict[str, float]:
     return out
 
 
+def _delta_pool_acquire_p95(before_path: Path, after_path: Path) -> dict[str, float]:
+    """Compute pool acquire p95 from histogram deltas (step-local)."""
+
+    def _collect(path: Path) -> dict[str, dict[float, float]]:
+        by_route: dict[str, dict[float, float]] = {}
+        for name, labels, value in _iter_metrics_lines(path):
+            if name != "db_pool_acquire_seconds_bucket":
+                continue
+            route = labels.get("route")
+            if route not in CRITICAL_ROUTES:
+                continue
+            le_raw = labels.get("le")
+            if not le_raw:
+                continue
+            if le_raw == "+Inf":
+                le = float("inf")
+            else:
+                try:
+                    le = float(le_raw)
+                except Exception:
+                    continue
+            by_route.setdefault(route, {})[le] = float(value)
+        return by_route
+
+    before = _collect(before_path)
+    after = _collect(after_path)
+
+    out: dict[str, float] = {}
+    for route in CRITICAL_ROUTES:
+        b = before.get(route, {})
+        a = after.get(route, {})
+        les = sorted(set(b.keys()) | set(a.keys()))
+        if not les:
+            continue
+        buckets: list[tuple[float, float]] = []
+        for le in les:
+            delta = float(a.get(le, 0.0) - b.get(le, 0.0))
+            if delta < 0:
+                delta = 0.0
+            buckets.append((le, delta))
+        buckets.sort(key=lambda x: x[0])
+        q = _histogram_quantile(buckets, 0.95)
+        if q is None:
+            continue
+        out[route] = float(q)
+    return out
+
+
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
     if raw is None:
@@ -195,13 +307,19 @@ def main(argv: list[str]) -> int:
     out_dir = Path(argv[1])
     target_total = float(argv[2])
     metrics_path = out_dir / "metrics.txt"
+    metrics_before = out_dir / "metrics_before.txt"
+    metrics_after = out_dir / "metrics_after.txt"
 
     ac = _aggregate_autocannon(out_dir)
     attempts = max(1, ac.ok_2xx + ac.non2xx + ac.errors + ac.timeouts)
     error_rate = float(ac.non2xx + ac.errors + ac.timeouts) / float(attempts)
 
-    latency_by_route = _route_latency(metrics_path)
-    pool_p95_by_route = _pool_acquire_p95(metrics_path)
+    if metrics_before.exists() and metrics_after.exists():
+        latency_by_route = _delta_http_latency(metrics_before, metrics_after)
+        pool_p95_by_route = _delta_pool_acquire_p95(metrics_before, metrics_after)
+    else:
+        latency_by_route = _route_latency(metrics_path)
+        pool_p95_by_route = _pool_acquire_p95(metrics_path)
 
     max_p95 = max((v.get("p95", 0.0) for v in latency_by_route.values()), default=0.0)
     max_p99 = max((v.get("p99", 0.0) for v in latency_by_route.values()), default=0.0)
@@ -251,4 +369,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
-

@@ -31,13 +31,17 @@ echo ""
 export BASE_URL ADMIN_USER ADMIN_PASSWORD PROFILE_PATH
 
 OUT_DIR="${OUT_PARENT}/steady"
+curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics_before.txt" 2>/dev/null || true
 TOTAL_RPS="${STEADY_RPS}" DURATION_SECONDS="${STEADY_SECONDS}" OUT_DIR="${OUT_DIR}" ./scripts/loadtest_profiles/run_profile.sh
-curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics.txt" 2>/dev/null || true
+curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics_after.txt" 2>/dev/null || true
+cp -f "${OUT_DIR}/metrics_after.txt" "${OUT_DIR}/metrics.txt" 2>/dev/null || true
 ./.venv/bin/python scripts/loadtest_profiles/analyze_step.py "${OUT_DIR}" "${STEADY_RPS}" > "${OUT_DIR}/step.json"
 
 OUT_DIR="${OUT_PARENT}/spike"
+curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics_before.txt" 2>/dev/null || true
 TOTAL_RPS="${SPIKE_RPS}" DURATION_SECONDS="${SPIKE_SECONDS}" OUT_DIR="${OUT_DIR}" ./scripts/loadtest_profiles/run_profile.sh
-curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics.txt" 2>/dev/null || true
+curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics_after.txt" 2>/dev/null || true
+cp -f "${OUT_DIR}/metrics_after.txt" "${OUT_DIR}/metrics.txt" 2>/dev/null || true
 ./.venv/bin/python scripts/loadtest_profiles/analyze_step.py "${OUT_DIR}" "${SPIKE_RPS}" > "${OUT_DIR}/step.json"
 
 echo ""
@@ -46,4 +50,3 @@ cat "${OUT_PARENT}/steady/step.json"
 echo ""
 echo "Spike step:"
 cat "${OUT_PARENT}/spike/step.json"
-

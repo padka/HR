@@ -95,7 +95,9 @@ scale_rate() {
   ./.venv/bin/python - <<PY
 weight = float(${weight})
 total = float(${total})
-rate = int(round(total * (weight / 100.0)))
+# autocannon overallRate is per worker when -w is used.
+workers = int(${WORKERS})
+rate = int(round((total * (weight / 100.0)) / max(1, workers)))
 print(max(0, rate))
 PY
 }
@@ -142,22 +144,23 @@ while IFS="|" read -r name weight method path auth_kind connections pipelining b
   url="${BASE_URL}${path}"
 
   common_args=(-c "${connections}" -p "${pipelining}" -d "${DURATION_SECONDS}")
-  body_args=()
+  extra_args=()
   if [[ -n "${body_file}" ]]; then
     if [[ ! -f "${body_file}" ]]; then
       echo "Body file not found for ${name}: ${body_file}" >&2
       exit 2
     fi
-    body_args=(-H "Content-Type=application/json" -b "$(cat "${body_file}")")
+    extra_args=(-H "Content-Type=application/json" -b "$(cat "${body_file}")")
   fi
 
   if [[ "${auth_kind}" == "bearer" ]]; then
+    args=("${common_args[@]}" -m "${method}" -H "${AUTH_HEADER}")
+    if ((${#extra_args[@]})); then
+      args+=("${extra_args[@]}")
+    fi
+    args+=("${url}")
     maybe_run_one "${name}" "${rate}" \
-      "${common_args[@]}" \
-      -m "${method}" \
-      -H "${AUTH_HEADER}" \
-      "${body_args[@]}" \
-      "${url}"
+      "${args[@]}"
     continue
   fi
 
@@ -166,14 +169,18 @@ while IFS="|" read -r name weight method path auth_kind connections pipelining b
       echo "CSRF token/cookie missing; cannot run ${name} safely." >&2
       exit 2
     fi
-    maybe_run_one "${name}" "${rate}" \
-      "${common_args[@]}" \
-      -m "${method}" \
-      -H "${AUTH_HEADER}" \
-      -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-      -H "Cookie: ${COOKIE_HEADER}" \
-      "${body_args[@]}" \
-      "${url}"
+    args=(
+      "${common_args[@]}"
+      -m "${method}"
+      -H "${AUTH_HEADER}"
+      -H "X-CSRF-Token: ${CSRF_TOKEN}"
+      -H "Cookie: ${COOKIE_HEADER}"
+    )
+    if ((${#extra_args[@]})); then
+      args+=("${extra_args[@]}")
+    fi
+    args+=("${url}")
+    maybe_run_one "${name}" "${rate}" "${args[@]}"
     continue
   fi
 

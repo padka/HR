@@ -39,9 +39,11 @@ for total in ${TARGET_TOTALS}; do
   OUT_DIR="${OUT_PARENT}/total_${total}"
   mkdir -p "${OUT_DIR}"
 
+  curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics_before.txt" 2>/dev/null || true
   TOTAL_RPS="${total}" OUT_DIR="${OUT_DIR}" ./scripts/loadtest_profiles/run_profile.sh
-
-  curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics.txt" 2>/dev/null || true
+  curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics_after.txt" 2>/dev/null || true
+  # Backward-compatible name for "latest snapshot".
+  cp -f "${OUT_DIR}/metrics_after.txt" "${OUT_DIR}/metrics.txt" 2>/dev/null || true
   ./.venv/bin/python scripts/loadtest_profiles/analyze_step.py "${OUT_DIR}" "${total}" > "${OUT_DIR}/step.json"
   cat "${OUT_DIR}/step.json"
   echo ""
@@ -61,4 +63,3 @@ else
   echo "No knee detected in provided totals; treating last step as stable."
   echo "{\"knee_total\": null, \"stable_total\": ${prev_total:-null}}" > "${OUT_PARENT}/knee.json"
 fi
-

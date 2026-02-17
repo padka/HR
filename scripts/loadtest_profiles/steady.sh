@@ -28,8 +28,9 @@ echo ""
 
 export BASE_URL ADMIN_USER ADMIN_PASSWORD PROFILE_PATH TOTAL_RPS DURATION_SECONDS OUT_DIR
 
+curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics_before.txt" 2>/dev/null || true
 ./scripts/loadtest_profiles/run_profile.sh
-curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics.txt" 2>/dev/null || true
+curl -sS "${BASE_URL}/metrics" > "${OUT_DIR}/metrics_after.txt" 2>/dev/null || true
+cp -f "${OUT_DIR}/metrics_after.txt" "${OUT_DIR}/metrics.txt" 2>/dev/null || true
 ./.venv/bin/python scripts/loadtest_profiles/analyze_step.py "${OUT_DIR}" "${TOTAL_RPS}" > "${OUT_DIR}/step.json"
 cat "${OUT_DIR}/step.json"
-
