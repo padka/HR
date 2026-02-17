@@ -439,6 +439,9 @@ export function SystemPage() {
             <p className="subtitle">Вопросы и варианты ответов берутся из БД и применяются ботом без рестарта.</p>
             <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
               <div className="toolbar toolbar--compact">
+                <Link to="/app/test-builder" className="ui-btn ui-btn--ghost ui-btn--sm">
+                  Конструктор
+                </Link>
                 <Link to="/app/questions/new" className="ui-btn ui-btn--primary ui-btn--sm">
                   + Новый вопрос
                 </Link>
