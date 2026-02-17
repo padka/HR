@@ -114,7 +114,7 @@ from backend.apps.admin_ui.services.questions import (
     clone_test_question,
     reorder_test_questions,
 )
-from backend.apps.admin_ui.services.test_builder_graph import (
+from backend.apps.admin_ui.services.builder_graph import (
     apply_test_builder_graph,
     get_test_builder_graph,
 )
