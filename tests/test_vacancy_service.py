@@ -133,8 +133,9 @@ async def test_resolve_questions_city_vacancy_takes_precedence():
     assert global_ok and city_ok
 
     async with async_session() as session:
-        qg = TestQuestion(test_id="test1", question_index=1, title="Global Q", payload='{}', is_active=True, vacancy_id=global_vacancy.id)
-        qc = TestQuestion(test_id="test1", question_index=1, title="City Q", payload='{}', is_active=True, vacancy_id=city_vacancy.id)
+        # Use distinct question_index values: global unique constraint is (test_id, question_index)
+        qg = TestQuestion(test_id="test1", question_index=901, title="Global Q", payload='{}', is_active=True, vacancy_id=global_vacancy.id)
+        qc = TestQuestion(test_id="test1", question_index=902, title="City Q", payload='{}', is_active=True, vacancy_id=city_vacancy.id)
         session.add_all([qg, qc])
         await session.commit()
         await session.refresh(qg)

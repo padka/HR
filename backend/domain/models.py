@@ -713,8 +713,6 @@ class Vacancy(Base):
     __tablename__ = "vacancies"
     __table_args__ = (
         UniqueConstraint("slug", name="uq_vacancy_slug"),
-        Index("ix_vacancies_city_id", "city_id"),
-        Index("ix_vacancies_active", "is_active"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

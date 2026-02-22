@@ -2433,7 +2433,7 @@ async def api_bot_reminder_resync(
     return JSONResponse({"ok": True, "scheduled": scheduled, "failed": failed})
 
 
-@router.delete("/api/bot/reminder-jobs/{job_id:path}")
+@router.delete("/bot/reminder-jobs/{job_id:path}")
 async def api_cancel_reminder_job(
     request: Request, job_id: str
 ) -> JSONResponse:
@@ -3361,7 +3361,7 @@ async def api_schedule_intro_day(
 # Vacancies API
 # ---------------------------------------------------------------------------
 
-@router.get("/api/vacancies")
+@router.get("/vacancies")
 async def api_list_vacancies(
     request: Request,
     city_id: Optional[int] = None,
@@ -3391,7 +3391,7 @@ async def api_list_vacancies(
     })
 
 
-@router.post("/api/vacancies")
+@router.post("/vacancies")
 async def api_create_vacancy(request: Request) -> JSONResponse:
     _ = await require_csrf_token(request)
     data = await request.json()
@@ -3417,7 +3417,7 @@ async def api_create_vacancy(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "id": vacancy.id})
 
 
-@router.put("/api/vacancies/{vacancy_id}")
+@router.put("/vacancies/{vacancy_id}")
 async def api_update_vacancy(request: Request, vacancy_id: int) -> JSONResponse:
     _ = await require_csrf_token(request)
     data = await request.json()
@@ -3447,7 +3447,7 @@ async def api_update_vacancy(request: Request, vacancy_id: int) -> JSONResponse:
     return JSONResponse({"ok": True, "id": vacancy.id})
 
 
-@router.delete("/api/vacancies/{vacancy_id}")
+@router.delete("/vacancies/{vacancy_id}")
 async def api_delete_vacancy(request: Request, vacancy_id: int) -> JSONResponse:
     _ = await require_csrf_token(request)
     from backend.apps.admin_ui.services.vacancies import delete_vacancy
@@ -3458,7 +3458,7 @@ async def api_delete_vacancy(request: Request, vacancy_id: int) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-@router.get("/api/vacancies/{vacancy_id}/questions/{test_id}")
+@router.get("/vacancies/{vacancy_id}/questions/{test_id}")
 async def api_get_vacancy_questions(
     request: Request,
     vacancy_id: int,
@@ -3493,7 +3493,7 @@ async def api_get_vacancy_questions(
 # City Reminder Policy API
 # ---------------------------------------------------------------------------
 
-@router.get("/api/cities/{city_id}/reminder-policy")
+@router.get("/cities/{city_id}/reminder-policy")
 async def api_get_city_reminder_policy(
     request: Request, city_id: int
 ) -> JSONResponse:
@@ -3516,7 +3516,7 @@ async def api_get_city_reminder_policy(
     })
 
 
-@router.put("/api/cities/{city_id}/reminder-policy")
+@router.put("/cities/{city_id}/reminder-policy")
 async def api_upsert_city_reminder_policy(
     request: Request, city_id: int
 ) -> JSONResponse:
@@ -3561,7 +3561,7 @@ async def api_upsert_city_reminder_policy(
     })
 
 
-@router.delete("/api/cities/{city_id}/reminder-policy")
+@router.delete("/cities/{city_id}/reminder-policy")
 async def api_delete_city_reminder_policy(
     request: Request, city_id: int
 ) -> JSONResponse:
