@@ -700,9 +700,77 @@ class TestQuestion(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
+    vacancy_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("vacancies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    vacancy: Mapped[Optional["Vacancy"]] = relationship("Vacancy", back_populates="questions", foreign_keys=[vacancy_id])
+
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<TestQuestion {self.test_id}#{self.question_index} active={self.is_active}>"
 
+
+class Vacancy(Base):
+    __tablename__ = "vacancies"
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_vacancy_slug"),
+        Index("ix_vacancies_city_id", "city_id"),
+        Index("ix_vacancies_active", "is_active"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    city_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("cities.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    city: Mapped[Optional["City"]] = relationship("City", foreign_keys=[city_id])
+    questions: Mapped[List["TestQuestion"]] = relationship(
+        back_populates="vacancy", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Vacancy {self.id} {self.slug!r} city_id={self.city_id}>"
+
+
+class CityReminderPolicy(Base):
+    __tablename__ = "city_reminder_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    city_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("cities.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    confirm_6h_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    confirm_3h_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    confirm_2h_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    intro_remind_3h_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    quiet_hours_start: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
+    quiet_hours_end: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    city: Mapped["City"] = relationship("City", foreign_keys=[city_id])
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<CityReminderPolicy city_id={self.city_id}>"
 
 class BotRuntimeConfig(Base):
     __tablename__ = "bot_runtime_configs"

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
@@ -66,6 +66,178 @@ function formatTimeInTz(tz: string): string {
   } catch {
     return ''
   }
+}
+
+
+type ReminderPolicy = {
+  city_id: number
+  is_custom: boolean
+  confirm_6h_enabled: boolean
+  confirm_3h_enabled: boolean
+  confirm_2h_enabled: boolean
+  intro_remind_3h_enabled: boolean
+  quiet_hours_start: number
+  quiet_hours_end: number
+}
+
+function ReminderPolicySection({ cityId }: { cityId: number }) {
+  const qc = useQueryClient()
+  const { data: policyData } = useQuery({
+    queryKey: ['city-reminder-policy', cityId],
+    queryFn: async () => {
+      const r = await apiFetch<{ ok: boolean; policy: ReminderPolicy }>(
+        `/api/cities/${cityId}/reminder-policy`
+      )
+      return r.policy
+    },
+    enabled: cityId > 0,
+  })
+
+  const [useCustom, setUseCustom] = useState(policyData?.is_custom ?? false)
+  const [form, setForm] = useState<Omit<ReminderPolicy, 'city_id' | 'is_custom'>>({
+    confirm_6h_enabled: true,
+    confirm_3h_enabled: true,
+    confirm_2h_enabled: true,
+    intro_remind_3h_enabled: true,
+    quiet_hours_start: 22,
+    quiet_hours_end: 8,
+  })
+
+  // Sync form from fetched data
+  useEffect(() => {
+    if (policyData) {
+      setUseCustom(policyData.is_custom)
+      setForm({
+        confirm_6h_enabled: policyData.confirm_6h_enabled,
+        confirm_3h_enabled: policyData.confirm_3h_enabled,
+        confirm_2h_enabled: policyData.confirm_2h_enabled,
+        intro_remind_3h_enabled: policyData.intro_remind_3h_enabled,
+        quiet_hours_start: policyData.quiet_hours_start,
+        quiet_hours_end: policyData.quiet_hours_end,
+      })
+    }
+  }, [policyData])
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      await apiFetch(`/api/cities/${cityId}/reminder-policy`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['city-reminder-policy', cityId] }),
+  })
+
+  const resetMutation = useMutation({
+    mutationFn: async () => {
+      await apiFetch(`/api/cities/${cityId}/reminder-policy`, { method: 'DELETE' })
+    },
+    onSuccess: () => {
+      setUseCustom(false)
+      qc.invalidateQueries({ queryKey: ['city-reminder-policy', cityId] })
+    },
+  })
+
+  return (
+    <div className="glass page-section" style={{ marginTop: 16 }}>
+      <h3 style={{ marginBottom: 12, fontWeight: 600 }}>Напоминания</h3>
+
+      <label style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16, cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={useCustom}
+          onChange={(e) => setUseCustom(e.target.checked)}
+        />
+        <span>Использовать настройки для этого города</span>
+      </label>
+
+      {useCustom && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            <label className="form-group">
+              <span className="form-group__label">Тихие часы: начало (0–23)</span>
+              <input
+                type="number"
+                className="ui-input"
+                min={0}
+                max={23}
+                value={form.quiet_hours_start}
+                onChange={(e) => setForm((f) => ({ ...f, quiet_hours_start: Number(e.target.value) }))}
+              />
+            </label>
+            <label className="form-group">
+              <span className="form-group__label">Тихие часы: конец (0–23)</span>
+              <input
+                type="number"
+                className="ui-input"
+                min={0}
+                max={23}
+                value={form.quiet_hours_end}
+                onChange={(e) => setForm((f) => ({ ...f, quiet_hours_end: Number(e.target.value) }))}
+              />
+            </label>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+            {([
+              ['confirm_6h_enabled', 'Подтверждение за 6 часов'],
+              ['confirm_3h_enabled', 'Подтверждение за 3 часа'],
+              ['confirm_2h_enabled', 'Подтверждение за 2 часа'],
+              ['intro_remind_3h_enabled', 'Напоминание интро-день за 3 часа'],
+            ] as const).map(([key, label]) => (
+              <label key={key} style={{ display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={form[key]}
+                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
+                />
+                <span style={{ fontSize: 14 }}>{label}</span>
+              </label>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className="ui-btn ui-btn--primary ui-btn--sm"
+              disabled={saveMutation.isPending}
+              onClick={() => saveMutation.mutate()}
+            >
+              {saveMutation.isPending ? 'Сохранение...' : 'Сохранить настройки'}
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              disabled={resetMutation.isPending}
+              onClick={() => {
+                if (confirm('Сбросить к глобальным настройкам?')) resetMutation.mutate()
+              }}
+            >
+              Сбросить к глобальным
+            </button>
+          </div>
+
+          {saveMutation.isSuccess && (
+            <div style={{ color: 'var(--success)', fontSize: 13, marginTop: 8 }}>✓ Настройки сохранены</div>
+          )}
+        </>
+      )}
+
+      {!useCustom && policyData && (
+        <div style={{ color: 'var(--fg-muted)', fontSize: 13 }}>
+          Используются глобальные настройки напоминаний.{' '}
+          <button
+            type="button"
+            className="ui-btn ui-btn--ghost ui-btn--sm"
+            onClick={() => setUseCustom(true)}
+          >
+            Настроить для этого города
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function CityEditPage() {
@@ -806,6 +978,7 @@ export function CityEditPage() {
                 )}
               </div>
 
+              <ReminderPolicySection cityId={cityId} />
               <div className="action-row">
                 <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
                   {mutation.isPending ? 'Сохраняем…' : 'Сохранить'}

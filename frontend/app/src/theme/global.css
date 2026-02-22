@@ -7338,3 +7338,79 @@ details > *:not(summary) {
     gap: 8px;
   }
 }
+
+/* ── Reminder Kind Badges ─────────────────────────────────────── */
+.reminder-kind-badge--confirm {
+  background: rgba(246, 193, 107, 0.18);
+  color: var(--warning);
+  border-color: rgba(246, 193, 107, 0.35);
+}
+.reminder-kind-badge--remind {
+  background: rgba(123, 177, 255, 0.15);
+  color: var(--accent);
+  border-color: rgba(123, 177, 255, 0.3);
+}
+.reminder-kind-badge--intro {
+  background: rgba(91, 225, 165, 0.15);
+  color: var(--success);
+  border-color: rgba(91, 225, 165, 0.3);
+}
+
+/* ── Coverage Matrix ─────────────────────────────────────── */
+.coverage-matrix {
+  display: grid;
+  gap: 1px;
+  background: var(--glass-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.coverage-cell {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--bg-elevated);
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: center;
+}
+.coverage-cell:hover {
+  background: var(--glass-bg);
+}
+.coverage-cell--ok {
+  color: var(--success);
+}
+.coverage-cell--fallback {
+  color: var(--fg-muted);
+}
+.coverage-cell--missing {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ── Template Split-Pane Editor ──────────────────────────── */
+.template-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  min-height: 400px;
+}
+@media (max-width: 900px) {
+  .template-editor {
+    grid-template-columns: 1fr;
+  }
+}
+.template-editor__pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.template-editor__preview {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-md);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 200px;
+}

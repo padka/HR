@@ -2433,6 +2433,21 @@ async def api_bot_reminder_resync(
     return JSONResponse({"ok": True, "scheduled": scheduled, "failed": failed})
 
 
+@router.delete("/api/bot/reminder-jobs/{job_id:path}")
+async def api_cancel_reminder_job(
+    request: Request, job_id: str
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    reminder_service = getattr(request.app.state, "reminder_service", None)
+    if reminder_service is None:
+        return JSONResponse({"ok": False, "error": "reminder_service_unavailable"}, status_code=503)
+
+    cancelled = await reminder_service.cancel_job(job_id)
+    if not cancelled:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
     """Parse ISO datetime string into aware datetime if possible."""
     if not value:
@@ -3340,3 +3355,218 @@ async def api_schedule_intro_day(
         "slot_id": slot.id,
         "message": "Intro day scheduled",
     })
+
+
+# ---------------------------------------------------------------------------
+# Vacancies API
+# ---------------------------------------------------------------------------
+
+@router.get("/api/vacancies")
+async def api_list_vacancies(
+    request: Request,
+    city_id: Optional[int] = None,
+) -> JSONResponse:
+    _ = await require_principal(request)
+    from backend.apps.admin_ui.services.vacancies import list_vacancies
+
+    summaries = await list_vacancies(city_id=city_id)
+    return JSONResponse({
+        "ok": True,
+        "vacancies": [
+            {
+                "id": v.id,
+                "title": v.title,
+                "slug": v.slug,
+                "city_id": v.city_id,
+                "city_name": v.city_name,
+                "is_active": v.is_active,
+                "description": v.description,
+                "test1_question_count": v.test1_question_count,
+                "test2_question_count": v.test2_question_count,
+                "created_at": v.created_at.isoformat(),
+                "updated_at": v.updated_at.isoformat(),
+            }
+            for v in summaries
+        ],
+    })
+
+
+@router.post("/api/vacancies")
+async def api_create_vacancy(request: Request) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    data = await request.json()
+    from backend.apps.admin_ui.services.vacancies import create_vacancy
+
+    city_id_raw = data.get("city_id")
+    city_id: Optional[int] = None
+    if city_id_raw not in (None, "", "null"):
+        try:
+            city_id = int(city_id_raw)
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "errors": ["city_id: некорректное значение"]}, status_code=400)
+
+    ok, errors, vacancy = await create_vacancy(
+        title=str(data.get("title") or ""),
+        slug=str(data.get("slug") or ""),
+        city_id=city_id,
+        description=data.get("description") or None,
+        is_active=bool(data.get("is_active", True)),
+    )
+    if not ok:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+    return JSONResponse({"ok": True, "id": vacancy.id})
+
+
+@router.put("/api/vacancies/{vacancy_id}")
+async def api_update_vacancy(request: Request, vacancy_id: int) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    data = await request.json()
+    from backend.apps.admin_ui.services.vacancies import update_vacancy
+
+    city_id_raw = data.get("city_id")
+    city_id: Optional[int] = None
+    if city_id_raw is not None:
+        if city_id_raw in ("", "null", 0):
+            city_id = -1  # clear
+        else:
+            try:
+                city_id = int(city_id_raw)
+            except (TypeError, ValueError):
+                return JSONResponse({"ok": False, "errors": ["city_id: некорректное значение"]}, status_code=400)
+
+    ok, errors, vacancy = await update_vacancy(
+        vacancy_id,
+        title=data.get("title"),
+        slug=data.get("slug"),
+        city_id=city_id,
+        description=data.get("description"),
+        is_active=data.get("is_active"),
+    )
+    if not ok:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+    return JSONResponse({"ok": True, "id": vacancy.id})
+
+
+@router.delete("/api/vacancies/{vacancy_id}")
+async def api_delete_vacancy(request: Request, vacancy_id: int) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    from backend.apps.admin_ui.services.vacancies import delete_vacancy
+
+    deleted = await delete_vacancy(vacancy_id)
+    if not deleted:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@router.get("/api/vacancies/{vacancy_id}/questions/{test_id}")
+async def api_get_vacancy_questions(
+    request: Request,
+    vacancy_id: int,
+    test_id: str,
+) -> JSONResponse:
+    _ = await require_principal(request)
+    from backend.apps.admin_ui.services.vacancies import get_vacancy, get_vacancy_questions
+
+    vacancy = await get_vacancy(vacancy_id)
+    if vacancy is None:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+
+    questions = await get_vacancy_questions(vacancy_id, test_id)
+    return JSONResponse({
+        "ok": True,
+        "vacancy_id": vacancy_id,
+        "test_id": test_id,
+        "questions": [
+            {
+                "id": q.id,
+                "question_index": q.question_index,
+                "title": q.title,
+                "payload": q.payload,
+                "is_active": q.is_active,
+            }
+            for q in questions
+        ],
+    })
+
+
+# ---------------------------------------------------------------------------
+# City Reminder Policy API
+# ---------------------------------------------------------------------------
+
+@router.get("/api/cities/{city_id}/reminder-policy")
+async def api_get_city_reminder_policy(
+    request: Request, city_id: int
+) -> JSONResponse:
+    _ = await require_principal(request)
+    from backend.apps.admin_ui.services.city_reminder_policy import get_city_reminder_policy
+
+    policy = await get_city_reminder_policy(city_id)
+    return JSONResponse({
+        "ok": True,
+        "policy": {
+            "city_id": city_id,
+            "is_custom": policy.is_custom,
+            "confirm_6h_enabled": policy.confirm_6h_enabled,
+            "confirm_3h_enabled": policy.confirm_3h_enabled,
+            "confirm_2h_enabled": policy.confirm_2h_enabled,
+            "intro_remind_3h_enabled": policy.intro_remind_3h_enabled,
+            "quiet_hours_start": policy.quiet_hours_start,
+            "quiet_hours_end": policy.quiet_hours_end,
+        },
+    })
+
+
+@router.put("/api/cities/{city_id}/reminder-policy")
+async def api_upsert_city_reminder_policy(
+    request: Request, city_id: int
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    data = await request.json()
+    from backend.apps.admin_ui.services.city_reminder_policy import upsert_city_reminder_policy
+
+    def _bool(key: str, default: bool) -> bool:
+        v = data.get(key)
+        if v is None:
+            return default
+        return bool(v)
+
+    def _int(key: str, default: int) -> int:
+        v = data.get(key)
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
+    policy = await upsert_city_reminder_policy(
+        city_id,
+        confirm_6h_enabled=_bool("confirm_6h_enabled", True),
+        confirm_3h_enabled=_bool("confirm_3h_enabled", True),
+        confirm_2h_enabled=_bool("confirm_2h_enabled", True),
+        intro_remind_3h_enabled=_bool("intro_remind_3h_enabled", True),
+        quiet_hours_start=_int("quiet_hours_start", 22),
+        quiet_hours_end=_int("quiet_hours_end", 8),
+    )
+    return JSONResponse({
+        "ok": True,
+        "policy": {
+            "city_id": policy.city_id,
+            "is_custom": policy.is_custom,
+            "confirm_6h_enabled": policy.confirm_6h_enabled,
+            "confirm_3h_enabled": policy.confirm_3h_enabled,
+            "confirm_2h_enabled": policy.confirm_2h_enabled,
+            "intro_remind_3h_enabled": policy.intro_remind_3h_enabled,
+            "quiet_hours_start": policy.quiet_hours_start,
+            "quiet_hours_end": policy.quiet_hours_end,
+        },
+    })
+
+
+@router.delete("/api/cities/{city_id}/reminder-policy")
+async def api_delete_city_reminder_policy(
+    request: Request, city_id: int
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    from backend.apps.admin_ui.services.city_reminder_policy import delete_city_reminder_policy
+
+    deleted = await delete_city_reminder_policy(city_id)
+    return JSONResponse({"ok": True, "was_custom": deleted})
