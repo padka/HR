@@ -5,14 +5,19 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from typing import Dict, List, Optional, Sequence, Tuple, Iterable, Set
+from typing import Dict, List, Optional, Sequence, Tuple, Iterable, Set, Any
 
 from sqlalchemy import Select, select, update
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.db import async_session
+from backend.core.content_updates import (
+    KIND_TEMPLATES_CHANGED,
+    publish_content_update,
+)
 from backend.core.settings import get_settings
 from backend.domain.models import City, MessageTemplate, MessageTemplateHistory
+from backend.utils.jinja_renderer import render_template
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +90,94 @@ MOCK_CONTEXT: Dict[str, str] = {
     "recruiter_contact": "+7 900 123-45-67",
     "city_address": "ул. Пример, 1",
 }
+
+
+def _is_intro_template(key: str) -> bool:
+    """Return True when template key belongs to intro day messaging."""
+    lk = (key or "").strip().lower()
+    return "intro" in lk
+
+
+def _compose_intro_contact(name: Optional[str], phone: Optional[str]) -> Optional[str]:
+    clean_name = (name or "").strip()
+    clean_phone = (phone or "").strip()
+    if clean_name and clean_phone:
+        return f"{clean_name}, {clean_phone}"
+    if clean_name:
+        return clean_name
+    if clean_phone:
+        return clean_phone
+    return None
+
+
+async def build_preview_context(
+    *,
+    key: str,
+    city_id: Optional[int] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    """Build preview context with optional city-aware intro-day contact data.
+
+    For intro templates we prefer city intro fields (address/contact) over
+    static mock values so admins see the same details candidates will receive.
+    """
+    payload: Dict[str, str] = {k: str(v) for k, v in MOCK_CONTEXT.items()}
+    if context:
+        payload.update({str(k): str(v) for k, v in context.items() if v is not None})
+
+    if city_id is None:
+        return payload
+
+    try:
+        city_value = int(city_id)
+    except (TypeError, ValueError):
+        return payload
+
+    async with async_session() as session:
+        city = await session.get(City, city_value)
+
+    if city is None:
+        return payload
+
+    city_name = (getattr(city, "name", None) or "").strip()
+    intro_address = (getattr(city, "intro_address", None) or "").strip()
+    contact_name = (getattr(city, "contact_name", None) or "").strip()
+    contact_phone = (getattr(city, "contact_phone", None) or "").strip()
+    intro_contact = _compose_intro_contact(contact_name or None, contact_phone or None)
+
+    if city_name:
+        payload["city_name"] = city_name
+        payload.setdefault("candidate_city", city_name)
+    if intro_address:
+        payload["intro_address"] = intro_address
+        payload["address"] = intro_address
+        payload["city_address"] = intro_address
+
+    if _is_intro_template(key):
+        if contact_name:
+            payload["contact_name"] = contact_name
+            payload["recruiter_name"] = contact_name
+        if contact_phone:
+            payload["contact_phone"] = contact_phone
+            payload["recruiter_phone"] = contact_phone
+            payload["recruiter_contact"] = contact_phone
+        if intro_contact:
+            payload["intro_contact"] = intro_contact
+            payload["recruiter_contact"] = intro_contact
+
+    return payload
+
+
+async def render_message_template_preview(
+    *,
+    text: str,
+    key: str,
+    city_id: Optional[int] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Render template preview using city-aware context for admin editing."""
+    preview_context = await build_preview_context(key=key, city_id=city_id, context=context)
+    return render_template(text, preview_context)
 
 
 @dataclass(frozen=True)
@@ -412,6 +505,15 @@ async def create_message_template(
             return False, errors, None
 
         await _invalidate_cache(template.key, template.locale, template.channel, city_id=template.city_id)
+        await publish_content_update(
+            KIND_TEMPLATES_CHANGED,
+            {
+                "key": template.key,
+                "locale": template.locale,
+                "channel": template.channel,
+                "city_id": template.city_id,
+            },
+        )
         return True, [], template
 
 
@@ -532,6 +634,15 @@ async def update_message_template(
         await _invalidate_cache(template.key, template.locale, template.channel, city_id=template.city_id)
         if previous_city_id != template.city_id:
             await _invalidate_cache(template.key, template.locale, template.channel, city_id=previous_city_id)
+        await publish_content_update(
+            KIND_TEMPLATES_CHANGED,
+            {
+                "key": template.key,
+                "locale": template.locale,
+                "channel": template.channel,
+                "city_id": template.city_id,
+            },
+        )
         return True, [], template
 
 
@@ -547,6 +658,10 @@ async def delete_message_template(template_id: int) -> None:
         await session.delete(template)
         await session.commit()
     await _invalidate_cache(key, locale, channel, city_id=city_id)
+    await publish_content_update(
+        KIND_TEMPLATES_CHANGED,
+        {"key": key, "locale": locale, "channel": channel, "city_id": city_id},
+    )
 
 
 async def _invalidate_cache(key: str, locale: str, channel: str, *, city_id: Optional[int] = None) -> None:

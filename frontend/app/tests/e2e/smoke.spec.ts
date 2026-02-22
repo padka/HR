@@ -14,6 +14,8 @@ const routes: SmokeRoute[] = [
   { path: '/app/cities', heading: 'Города' },
   { path: '/app/templates', heading: 'Шаблоны' },
   { path: '/app/questions', heading: 'Вопросы' },
+  { path: '/app/test-builder', heading: 'Конструктор тестов' },
+  { path: '/app/test-builder/graph', heading: 'Конструктор тестов: Граф' },
 ];
 
 for (const route of routes) {

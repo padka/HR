@@ -174,7 +174,11 @@ export function TemplateEditPage() {
   const previewMutation = useMutation({
     mutationFn: async () => apiFetch('/message-templates/preview', {
       method: 'POST',
-      body: JSON.stringify({ text: form.text }),
+      body: JSON.stringify({
+        text: form.text,
+        key: form.key,
+        city_id: form.city_id ? Number(form.city_id) : null,
+      }),
     }),
     onSuccess: (data: any) => setServerPreview(data.html),
   })

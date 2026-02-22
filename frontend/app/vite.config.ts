@@ -26,14 +26,16 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (id.includes('react-dom') || id.includes('/react/')) {
-              return 'react-vendor'
-            }
-            if (id.includes('@tanstack/react-router')) {
-              return 'router'
-            }
             if (id.includes('@tanstack/react-query')) {
               return 'query'
+            }
+            // Keep router in the same chunk as React to avoid circular chunk graphs
+            // when additional React-adjacent libraries (e.g. graph editors) are introduced.
+            if (id.includes('@tanstack/react-router')) {
+              return 'react-vendor'
+            }
+            if (id.includes('react-dom') || id.includes('/react/')) {
+              return 'react-vendor'
             }
             if (id.includes('lucide-react')) {
               return 'icons'

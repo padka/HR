@@ -110,6 +110,7 @@ from .config import (
     TEST2_QUESTIONS,
     TIME_FMT,
     TIME_LIMIT,
+    get_questions_bank_version,
     refresh_questions_bank,
 )
 from .keyboards import (
@@ -450,10 +451,58 @@ class NotificationService:
         self._fatal_error_code: Optional[str] = None
         self._fatal_error_at: Optional[datetime] = None
         self._last_delivery_error: Optional[str] = None
+        self._use_scheduler_job: bool = True
+
+    async def invalidate_template_cache(
+        self,
+        *,
+        key: Optional[str] = None,
+        locale: str = "ru",
+        channel: str = "tg",
+        city_id: Optional[int] = None,
+    ) -> None:
+        """Invalidate cached message templates so edits apply without restart.
+
+        Best effort: failures are logged but do not raise, because the caller is
+        typically a background pub/sub listener.
+        """
+
+        try:
+            await self._template_provider.invalidate(
+                key=key,
+                locale=locale,
+                channel=channel,
+                city_id=city_id,
+            )
+        except Exception:  # pragma: no cover - defensive logging
+            logger.exception(
+                "notification.template_invalidate_failed",
+                extra={
+                    "key": key,
+                    "locale": locale,
+                    "channel": channel,
+                    "city_id": city_id,
+                },
+            )
 
     def start(self, *, allow_poll_loop: bool = False) -> None:
         self._shutting_down = False
         if self._started:
+            return
+        # Loop mode is preferred when explicitly allowed: it keeps a continuous
+        # broker read (xreadgroup block) running and avoids latency gaps that can
+        # happen with interval-based scheduling when a message arrives shortly
+        # after a fast poll iteration.
+        if allow_poll_loop:
+            self._use_scheduler_job = False
+            if self._scheduler is not None:
+                try:
+                    self._scheduler.remove_job(self._job_id)
+                except Exception:
+                    pass
+            self._enable_poll_loop()
+            self._started = True
+            self._ensure_watchdog()
             return
 
         scheduler_started = False
@@ -463,6 +512,7 @@ class NotificationService:
             try:
                 self._ensure_scheduler_job()
                 scheduler_started = True
+                self._use_scheduler_job = True
             except Exception:
                 scheduler_failed = True
                 logger.exception("notification.worker.scheduler_start_failed")
@@ -474,17 +524,14 @@ class NotificationService:
 
         if scheduler_failed:
             logger.warning("notification.worker.scheduler_fallback_loop")
+            self._use_scheduler_job = False
             self._enable_poll_loop()
             self._started = True
             self._ensure_watchdog()
             return
 
-        if not allow_poll_loop:
-            return
-
-        self._enable_poll_loop()
-        self._started = True
-        self._ensure_watchdog()
+        # No scheduler and loop not allowed: do nothing.
+        return
 
     def _enable_poll_loop(self) -> None:
         if self._shutting_down:
@@ -574,7 +621,7 @@ class NotificationService:
                 await asyncio.sleep(self._watchdog_interval)
                 if not self._started or self._shutting_down:
                     return
-                if self._scheduler is not None:
+                if self._scheduler is not None and self._use_scheduler_job:
                     job = self._scheduler.get_job(self._job_id)
                     if job is None:
                         logger.warning("notification.worker.watchdog_job_missing")
@@ -999,6 +1046,10 @@ class NotificationService:
                 try:
                     await self._poll_once()
                     delay = self._current_poll_interval
+                    # When broker is enabled, _poll_broker_queue uses a blocking read.
+                    # Sleeping here introduces avoidable latency gaps.
+                    if self._broker is not None:
+                        continue
                 except asyncio.CancelledError:
                     raise
                 except asyncio.TimeoutError:
@@ -2848,7 +2899,31 @@ class NotificationService:
         attempt = item.attempts + 1
         await self._throttle()
         try:
-            await get_bot().send_message(recruiter.tg_chat_id, text)
+            bot = get_bot()
+            # Best effort: attach candidate Test 1 report ("анкета") when present,
+            # so recruiter can immediately re-assess context on reschedule.
+            attachment_sent = False
+            try:
+                candidate = None
+                candidate_key = payload.get("candidate_id")
+                if candidate_key:
+                    candidate = await candidate_services.get_user_by_candidate_id(str(candidate_key))
+                if candidate is None and item.candidate_tg_id:
+                    candidate = await candidate_services.get_user_by_telegram_id(int(item.candidate_tg_id))
+                if candidate is not None:
+                    reports = _candidate_report_paths(candidate)
+                    if reports and hasattr(bot, "send_document"):
+                        await bot.send_document(
+                            recruiter.tg_chat_id,
+                            FSInputFile(str(reports[0])),
+                            caption=text,
+                        )
+                        attachment_sent = True
+            except Exception:
+                logger.exception("Failed to attach candidate report for reschedule request")
+
+            if not attachment_sent:
+                await bot.send_message(recruiter.tg_chat_id, text)
         except Exception as exc:
             await self._schedule_retry(
                 item,
@@ -4343,6 +4418,7 @@ async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city
 async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
     # Ensure we use the freshest question set after admin edits.
     refresh_questions_bank()
+    questions_version = get_questions_bank_version()
 
     state_manager = get_state_manager()
     bot = get_bot()
@@ -4358,6 +4434,7 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
             user_id,
             State(
                 flow="recruiter",
+                questions_bank_version=questions_version,
                 t1_idx=None,
                 test1_answers={},
                 t1_last_prompt_id=None,
@@ -4387,6 +4464,7 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
         user_id,
         State(
             flow="interview",
+            questions_bank_version=questions_version,
             t1_idx=0,
             test1_answers={},
             t1_last_prompt_id=None,
@@ -4500,6 +4578,10 @@ async def handle_recruiter_identity_command(message: Message) -> None:
 
 
 async def start_introday_flow(message: Message) -> None:
+    # Ensure we use the freshest question set after admin edits.
+    refresh_questions_bank()
+    questions_version = get_questions_bank_version()
+
     state_manager = get_state_manager()
     user_id = message.from_user.id
     prev = await state_manager.get(user_id) or {}
@@ -4507,6 +4589,7 @@ async def start_introday_flow(message: Message) -> None:
         user_id,
         State(
             flow="intro",
+            questions_bank_version=questions_version,
             t1_idx=None,
             test1_answers=prev.get("test1_answers", {}),
             t1_last_prompt_id=None,
@@ -4549,11 +4632,55 @@ def _ensure_question_id(question: Dict[str, Any], idx: int) -> str:
     return str(qid)
 
 
+def _sync_test1_sequence_if_needed(state: State) -> None:
+    """Ensure state's Test1 sequence matches the latest question bank.
+
+    Admins can edit questions while the bot is running. The bot refreshes the global
+    question bank via Redis pub/sub and at flow entry points, but active sessions may
+    still carry an older `t1_sequence`. We resync best-effort and try to continue from
+    the first unanswered question (by question id) to avoid repeating answered items.
+    """
+
+    current_version = get_questions_bank_version()
+    stored_raw = state.get("questions_bank_version")
+    try:
+        stored_version = int(stored_raw) if stored_raw is not None else 0
+    except (TypeError, ValueError):
+        stored_version = 0
+    if stored_version == current_version:
+        return
+
+    new_sequence: List[Dict[str, Any]] = list(TEST1_QUESTIONS)
+
+    answers = state.get("test1_answers") or {}
+    answered_ids: set[str] = set()
+    if isinstance(answers, dict):
+        answered_ids = {str(k) for k in answers.keys() if k is not None}
+
+    if answered_ids:
+        next_idx = 0
+        for idx, q in enumerate(new_sequence):
+            qid = q.get("id") or q.get("question_id") or f"q{idx + 1}"
+            if str(qid) not in answered_ids:
+                next_idx = idx
+                break
+        else:
+            next_idx = len(new_sequence)
+        state["t1_idx"] = next_idx
+    else:
+        if state.get("t1_idx") is None:
+            state["t1_idx"] = 0
+
+    state["t1_sequence"] = new_sequence
+    state["questions_bank_version"] = current_version
+
+
 async def send_test1_question(user_id: int) -> None:
     bot = get_bot()
     state_manager = get_state_manager()
     def _prepare(state: State) -> Tuple[State, Dict[str, Any]]:
         working = state
+        _sync_test1_sequence_if_needed(working)
         sequence = list(working.get("t1_sequence") or TEST1_QUESTIONS)
         working["t1_sequence"] = sequence
         idx = int(working.get("t1_idx") or 0)
@@ -5094,13 +5221,7 @@ async def finalize_test1(user_id: int) -> None:
             await state_manager.atomic_update(user_id, _mark_shared)
 
     done_text = await _render_tpl(state.get("city_id"), "t1_done")
-    if done_text:
-        await bot.send_message(user_id, done_text)
-
-    try:
-        await show_recruiter_menu(user_id)
-    except Exception:
-        logger.exception("Failed to present recruiter menu after Test 1 completion")
+    manual_prompt_sent = False
 
     candidate = None
     try:
@@ -5176,7 +5297,10 @@ async def finalize_test1(user_id: int) -> None:
                                 candidate.telegram_id
                             )
                         try:
-                            await send_manual_scheduling_prompt(candidate.telegram_id)
+                            manual_prompt_sent = await send_manual_scheduling_prompt(
+                                candidate.telegram_id,
+                                notice=done_text,
+                            )
                         except Exception:
                             logger.exception(
                                 "Failed to prompt candidate %s for manual schedule window",
@@ -5197,6 +5321,12 @@ async def finalize_test1(user_id: int) -> None:
             logger.exception("Failed to persist Test 1 report for candidate %s", candidate.id)
     except Exception:  # pragma: no cover - auxiliary sync must not break flow
         logger.exception("Failed to persist candidate profile for Test1")
+
+    if not manual_prompt_sent:
+        try:
+            await show_recruiter_menu(user_id, notice=done_text)
+        except Exception:
+            logger.exception("Failed to present recruiter menu after Test 1 completion")
 
     await record_test1_completion()
     try:
@@ -5225,11 +5355,13 @@ async def finalize_test1(user_id: int) -> None:
 async def start_test2(user_id: int) -> None:
     # Refresh questions so admin changes are reflected without restart.
     refresh_questions_bank()
+    questions_version = get_questions_bank_version()
 
     bot = get_bot()
     state_manager = get_state_manager()
 
     def _init_attempts(state: State) -> Tuple[State, Dict[str, Optional[int]]]:
+        state["questions_bank_version"] = questions_version
         state["t2_attempts"] = {
             q_index: {"answers": [], "is_correct": False, "start_time": None}
             for q_index in range(len(TEST2_QUESTIONS))
@@ -5556,16 +5688,22 @@ async def finalize_test2(user_id: int) -> None:
         logger.exception("Failed to update candidate status to TEST2_COMPLETED for user %s", user_id)
 
 
-async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> None:
+async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> bool:
     bot = get_bot()
     state_manager = get_state_manager()
     state = await state_manager.get(user_id) or {}
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
     kb = await kb_recruiters(tz_label, city_id=state.get("city_id"))
-    text = await _render_tpl(state.get("city_id"), "choose_recruiter")
-    if notice:
-        text = f"{notice}\n\n{text}"
-    await bot.send_message(user_id, text, reply_markup=kb)
+    if kb.inline_keyboard:
+        text = await _render_tpl(state.get("city_id"), "choose_recruiter")
+        if notice:
+            text = f"{notice}\n\n{text}"
+        await bot.send_message(user_id, text, reply_markup=kb)
+        return True
+
+    # No recruiter with available slots in the selected city: switch to manual flow.
+    sent = await send_manual_scheduling_prompt(user_id, notice=notice)
+    return sent
 
 
 async def handle_home_start(callback: CallbackQuery) -> None:
@@ -5670,7 +5808,7 @@ def _parse_manual_availability_window(
     return start_dt, end_dt
 
 
-async def send_manual_scheduling_prompt(user_id: int) -> bool:
+async def send_manual_scheduling_prompt(user_id: int, *, notice: Optional[str] = None) -> bool:
     """Prompt the candidate to reach out when no automatic slots are available.
 
     Returns ``True`` when a new prompt was sent and ``False`` when the candidate
@@ -5702,9 +5840,13 @@ async def send_manual_scheduling_prompt(user_id: int) -> bool:
             "или завтра 10:00-13:00."
         )
 
+    payload = message
+    if notice:
+        payload = f"{notice}\n\n{message}"
+
     await bot.send_message(
         user_id,
-        message,
+        payload,
         reply_markup=ForceReply(selective=True, input_field_placeholder="25.07 12:00-16:00"),
     )
 
@@ -5787,6 +5929,36 @@ async def record_manual_availability_response(user_id: int, text: str) -> bool:
     bot = get_bot()
     await bot.send_message(user_id, ack)
 
+    # Notify recruiters about updated availability so the reschedule/manual slot
+    # flow doesn't get "stuck" waiting for someone to open the candidate profile.
+    try:
+        city_id: Optional[int] = state.get("city_id") if isinstance(state, dict) else None
+        city_name = (state.get("city_name") if isinstance(state, dict) else None) or (db_user.city if db_user else None)
+        candidate_name = (state.get("fio") if isinstance(state, dict) else None) or (db_user.fio if db_user else str(user_id))
+        if city_id is None and db_user and db_user.city:
+            try:
+                city_record = await find_city_by_plain_name(db_user.city)
+            except Exception:
+                city_record = None
+            if city_record is not None:
+                city_id = city_record.id
+                if not city_name:
+                    city_name = city_record.name
+
+        if city_id is not None:
+            await notify_recruiters_manual_availability(
+                candidate_tg_id=user_id,
+                candidate_name=candidate_name,
+                city_name=city_name or "—",
+                city_id=int(city_id),
+                availability_window=window_label,
+                availability_note=payload,
+                candidate_db_id=(db_user.id if db_user else None),
+                responsible_recruiter_id=(db_user.responsible_recruiter_id if db_user else None),
+            )
+    except Exception:  # pragma: no cover - best-effort side effect
+        logger.exception("Failed to notify recruiters about manual availability response")
+
     def _clear_prompt(st: State) -> Tuple[State, None]:
         st["manual_availability_expected"] = False
         st["manual_contact_prompt_sent"] = True
@@ -5795,6 +5967,160 @@ async def record_manual_availability_response(user_id: int, text: str) -> bool:
 
     await state_manager.atomic_update(user_id, _clear_prompt)
     return True
+
+
+def _safe_data_path(relative_path: str) -> Optional[Path]:
+    """Resolve a data-dir relative path to an absolute Path (guarding traversal)."""
+
+    if not relative_path:
+        return None
+    settings = get_settings()
+    base_dir = Path(settings.data_dir).resolve()
+    candidate = (base_dir / relative_path).resolve()
+    if not str(candidate).startswith(str(base_dir)):
+        return None
+    return candidate
+
+
+def _candidate_report_paths(db_user: Any) -> List[Path]:
+    """Return existing report file paths for the candidate (best effort)."""
+
+    paths: List[Path] = []
+    for rel in (
+        getattr(db_user, "test1_report_url", None),
+        getattr(db_user, "test2_report_url", None),
+    ):
+        if not rel:
+            continue
+        abs_path = _safe_data_path(str(rel))
+        if abs_path and abs_path.exists() and abs_path not in paths:
+            paths.append(abs_path)
+
+    try:
+        db_id = int(getattr(db_user, "id", 0) or 0)
+    except Exception:
+        db_id = 0
+    if db_id:
+        fallback = REPORTS_DIR / str(db_id) / "test1.txt"
+        if fallback.exists() and fallback not in paths:
+            paths.insert(0, fallback)
+    return paths
+
+
+async def notify_recruiters_manual_availability(
+    *,
+    candidate_tg_id: int,
+    candidate_name: str,
+    city_name: str,
+    city_id: int,
+    availability_window: Optional[str],
+    availability_note: str,
+    candidate_db_id: Optional[int] = None,
+    responsible_recruiter_id: Optional[int] = None,
+) -> bool:
+    """Notify recruiters that a candidate provided/updated manual availability.
+
+    This is used when there are no auto slots or when a candidate requests a
+    reschedule and proposes a new time window. Best effort: failures should not
+    break the candidate flow.
+    """
+
+    if not city_id:
+        return False
+
+    recipients: List[Any] = []
+    seen_chats: set[Any] = set()
+
+    if responsible_recruiter_id:
+        try:
+            responsible = await get_recruiter(int(responsible_recruiter_id))
+        except Exception:
+            responsible = None
+        chat_id = getattr(responsible, "tg_chat_id", None) if responsible else None
+        if chat_id:
+            recipients = [responsible]
+            seen_chats.add(chat_id)
+
+    if not recipients:
+        try:
+            recruiters = await get_active_recruiters_for_city(int(city_id))
+        except Exception:
+            recruiters = []
+        for rec in recruiters:
+            chat_id = getattr(rec, "tg_chat_id", None)
+            if not chat_id or chat_id in seen_chats:
+                continue
+            recipients.append(rec)
+            seen_chats.add(chat_id)
+
+    if not recipients:
+        return False
+
+    crm_link = None
+    try:
+        settings = get_settings()
+        if candidate_db_id and settings.bot_backend_url:
+            crm_link = f"{settings.bot_backend_url.rstrip('/')}/app/candidates/{int(candidate_db_id)}"
+    except Exception:
+        crm_link = None
+
+    lines = [
+        "🕒 <b>Кандидат указал удобное время</b>",
+        "",
+        f"👤 {escape_html(str(candidate_name))}",
+        f"📍 {escape_html(str(city_name))}",
+    ]
+    if availability_window:
+        lines.append(f"🗓 {escape_html(str(availability_window))}")
+    if availability_note:
+        lines.append(f"💬 {escape_html(str(availability_note))}")
+    lines.append(f"TG: <code>{candidate_tg_id}</code>")
+    if crm_link:
+        lines.append(f"CRM: {escape_html(crm_link)}")
+    message = "\n".join(lines)
+
+    delivered = False
+    bot = get_bot()
+    for recruiter in recipients:
+        chat_id = getattr(recruiter, "tg_chat_id", None)
+        if not chat_id:
+            continue
+
+        sent = False
+        report_paths: List[Path] = []
+        try:
+            db_user = await candidate_services.get_user_by_telegram_id(candidate_tg_id)
+            if db_user is not None:
+                report_paths = _candidate_report_paths(db_user)
+        except Exception:
+            report_paths = []
+
+        if report_paths and hasattr(bot, "send_document"):
+            for path in report_paths[:1]:  # send the most useful one (Test 1) to avoid spam
+                try:
+                    await bot.send_document(chat_id, FSInputFile(str(path)), caption=message, parse_mode="HTML")
+                    sent = True
+                    delivered = True
+                    break
+                except Exception:
+                    logger.exception(
+                        "Failed to deliver manual availability attachment to recruiter %s",
+                        getattr(recruiter, "id", None),
+                    )
+
+        if sent:
+            continue
+
+        try:
+            await bot.send_message(chat_id, message, parse_mode="HTML")
+            delivered = True
+        except Exception:
+            logger.exception(
+                "Failed to send manual availability notification to recruiter %s",
+                getattr(recruiter, "id", None),
+            )
+
+    return delivered
 
 
 async def handle_pick_recruiter(callback: CallbackQuery) -> None:
@@ -6657,6 +6983,7 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
             except Exception:
                 logger.exception("Failed to update intro day confirmation status for candidate %s", slot.candidate_tg_id)
 
+        is_intro_day = getattr(slot, "purpose", "interview") == "intro_day"
         ack_text = await _render_tpl(
             city_id,
             "att_confirmed_ack",
@@ -6665,7 +6992,10 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         )
         if ack_text:
             try:
-                await callback.message.edit_text(ack_text)
+                if is_intro_day:
+                    await bot.send_message(slot.candidate_tg_id, ack_text)
+                else:
+                    await callback.message.edit_text(ack_text)
             except TelegramBadRequest:
                 pass
         await safe_remove_reply_markup(callback.message)

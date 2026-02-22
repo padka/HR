@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
+import hashlib
+import json
+import time
 
 import logging
 
@@ -34,6 +37,9 @@ class State(TypedDict, total=False):
     """In-memory representation of candidate state."""
 
     flow: str  # 'interview' | 'intro'
+    # Monotonic revision of the in-memory question bank used to build this state.
+    # Allows the bot to sync active sessions when admins update questions.
+    questions_bank_version: int
     t1_idx: Optional[int]
     t1_current_idx: Optional[int]
     test1_answers: Dict[str, str]
@@ -72,6 +78,10 @@ logger = logging.getLogger(__name__)
 _QUESTIONS_BANK: Dict[str, List[Dict[str, Any]]] = {}
 TEST1_QUESTIONS: List[Dict[str, Any]] = []
 TEST2_QUESTIONS: List[Dict[str, Any]] = []
+_QUESTIONS_BANK_VERSION: int = 0
+_QUESTIONS_BANK_HASH: str = ""
+_QUESTIONS_BANK_LOADED_AT: float = 0.0
+_QUESTIONS_BANK_SOURCE: str = "unknown"
 
 
 def refresh_questions_bank(*, include_inactive: bool = False) -> None:
@@ -82,6 +92,9 @@ def refresh_questions_bank(*, include_inactive: bool = False) -> None:
 
     global _QUESTIONS_BANK, TEST1_QUESTIONS, TEST2_QUESTIONS
 
+    global _QUESTIONS_BANK_VERSION, _QUESTIONS_BANK_HASH, _QUESTIONS_BANK_LOADED_AT, _QUESTIONS_BANK_SOURCE
+
+    source = "db"
     try:
         loaded = load_all_test_questions(include_inactive=include_inactive)
     except Exception as exc:  # pragma: no cover - fallback for missing DB tables
@@ -90,9 +103,11 @@ def refresh_questions_bank(*, include_inactive: bool = False) -> None:
             exc,
         )
         loaded = deepcopy(DEFAULT_TEST_QUESTIONS)
+        source = "fallback"
 
     if not loaded:
         loaded = deepcopy(DEFAULT_TEST_QUESTIONS)
+        source = "default"
     else:
         for key, default_questions in DEFAULT_TEST_QUESTIONS.items():
             if not loaded.get(key):
@@ -101,6 +116,52 @@ def refresh_questions_bank(*, include_inactive: bool = False) -> None:
     _QUESTIONS_BANK = loaded
     TEST1_QUESTIONS = _QUESTIONS_BANK.get("test1", []).copy()
     TEST2_QUESTIONS = _QUESTIONS_BANK.get("test2", []).copy()
+
+    _QUESTIONS_BANK_LOADED_AT = float(time.time())
+    _QUESTIONS_BANK_SOURCE = source
+    new_hash = ""
+    try:
+        raw = json.dumps(
+            _QUESTIONS_BANK,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        new_hash = hashlib.sha256(raw).hexdigest()
+    except Exception:  # pragma: no cover - defensive
+        new_hash = ""
+
+    # Increment version only when the content actually changed. This prevents
+    # unnecessary resync for active sessions when refresh() is called frequently.
+    if new_hash and new_hash != _QUESTIONS_BANK_HASH:
+        _QUESTIONS_BANK_VERSION += 1
+        _QUESTIONS_BANK_HASH = new_hash
+    elif not _QUESTIONS_BANK_HASH:
+        # First successful load (or hash calculation failed): still set a non-zero version.
+        _QUESTIONS_BANK_VERSION = max(1, int(_QUESTIONS_BANK_VERSION))
+        if new_hash:
+            _QUESTIONS_BANK_HASH = new_hash
+
+
+def get_questions_bank_version() -> int:
+    """Return the current in-memory question bank revision."""
+
+    return int(_QUESTIONS_BANK_VERSION)
+
+
+def get_questions_bank_meta() -> Dict[str, object]:
+    """Return a small diagnostic snapshot of the in-memory question bank."""
+
+    return {
+        "version": int(_QUESTIONS_BANK_VERSION),
+        "hash": _QUESTIONS_BANK_HASH,
+        "loaded_at": _QUESTIONS_BANK_LOADED_AT,
+        "source": _QUESTIONS_BANK_SOURCE,
+        "counts": {
+            "test1": len(TEST1_QUESTIONS),
+            "test2": len(TEST2_QUESTIONS),
+        },
+    }
 
 
 # Prime question bank at import so existing imports keep working
@@ -168,6 +229,8 @@ __all__ = [
     "State",
     "TEST1_QUESTIONS",
     "TEST2_QUESTIONS",
+    "get_questions_bank_meta",
+    "get_questions_bank_version",
     "refresh_questions_bank",
     "TIME_FMT",
     "TIME_LIMIT",

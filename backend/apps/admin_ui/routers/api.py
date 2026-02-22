@@ -75,6 +75,9 @@ from backend.apps.admin_ui.services.kpis import (
     list_weekly_history,
 )
 from backend.core.audit import log_audit_action
+from backend.core.content_updates import KIND_REMINDERS_CHANGED, publish_content_update
+from backend.apps.admin_ui.perf.cache import keys as cache_keys
+from backend.apps.admin_ui.perf.cache.readthrough import get_cached, get_or_compute
 from backend.apps.admin_ui.services.message_templates import (
     list_message_templates,
     create_message_template,
@@ -109,6 +112,11 @@ from backend.apps.admin_ui.services.questions import (
     update_test_question,
     create_test_question,
     clone_test_question,
+    reorder_test_questions,
+)
+from backend.apps.admin_ui.services.builder_graph import (
+    apply_test_builder_graph,
+    get_test_builder_graph,
 )
 from backend.core.db import async_session
 from backend.domain.models import Recruiter, Slot, City, SlotStatus, SlotAssignment, ActionToken, MessageTemplate, recruiter_city_association
@@ -233,16 +241,44 @@ async def api_health():
 
 
 @router.get("/dashboard/summary")
-async def api_dashboard_summary(principal: Principal = Depends(require_principal)):
+async def api_dashboard_summary(
+    request: Request,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    if not getattr(request.app.state, "db_available", True):
+        cache_key = cache_keys.dashboard_counts(principal=principal).value
+        cached_payload = await get_cached(
+            cache_key,
+            expected_type=dict,
+            ttl_seconds=2.0,
+            stale_seconds=10.0,
+        )
+        if cached_payload is not None and isinstance(cached_payload[0], dict):
+            return JSONResponse(cached_payload[0])
+        return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
+
     return JSONResponse(await dashboard_counts(principal=principal))
 
 
 @router.get("/dashboard/incoming")
 async def api_dashboard_incoming(
+    request: Request,
     limit: int = Query(default=6, ge=1, le=500),
     principal: Principal = Depends(require_principal),
 ) -> JSONResponse:
     """Candidates who passed test1 and are waiting for a free interview slot."""
+    if not getattr(request.app.state, "db_available", True):
+        cache_key = cache_keys.dashboard_incoming(principal=principal, limit=limit).value
+        cached_payload = await get_cached(
+            cache_key,
+            expected_type=list,
+            ttl_seconds=2.0,
+            stale_seconds=10.0,
+        )
+        if cached_payload is not None and isinstance(cached_payload[0], list):
+            return JSONResponse({"items": cached_payload[0]})
+        return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
+
     payload = await get_waiting_candidates(limit=limit, principal=principal)
     return JSONResponse({"items": payload})
 
@@ -264,7 +300,7 @@ async def api_dashboard_recruiter_performance(
     return JSONResponse(payload)
 
 
-async def _profile_snapshot(principal: Principal, request: Request) -> dict:
+async def _profile_snapshot(principal: Principal, request: Request) -> tuple[dict, Optional[dict]]:
     recruiter = None
     city_names: list[str] = []
     candidate_count = 0
@@ -286,6 +322,8 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
     booked_count = 0
     nearest_minutes: Optional[int] = None
     avg_lead_hours: Optional[float] = None
+    recruiter_payload: Optional[dict] = None
+    now_utc = datetime.now(timezone.utc)
 
     async with async_session() as session:
         if principal.type == "recruiter":
@@ -315,27 +353,28 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
                 city_options.append({"id": cid, "name": cname, "tz": ctz})
 
             slot_rows = await session.execute(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                select(Slot.id, Slot.status, Slot.start_utc, Slot.city_id)
                 .where(Slot.recruiter_id == principal.id)
-                .order_by(Slot.start_utc.asc())
+                .order_by(Slot.start_utc.asc(), Slot.id.asc())
                 .limit(10)
             )
-            slots = slot_rows.scalars().all()
-            now_utc = datetime.now(timezone.utc)
-            for s in slots:
-                status_value = s.status.name if hasattr(s.status, "name") else s.status
+            slots = slot_rows.all()
+            for slot_id, slot_status, slot_start_utc, slot_city_id in slots:
+                start_utc = slot_start_utc
+                if start_utc and start_utc.tzinfo is None:
+                    start_utc = start_utc.replace(tzinfo=timezone.utc)
+                status_value = slot_status.name if hasattr(slot_status, "name") else slot_status
                 item = {
-                    "id": s.id,
+                    "id": slot_id,
                     "status": status_value,
-                    "start_utc": s.start_utc.isoformat() if s.start_utc else None,
-                    "city_id": s.city_id,
+                    "start_utc": start_utc.isoformat() if start_utc else None,
+                    "city_id": slot_city_id,
                 }
-                if s.start_utc:
-                    minutes = int((s.start_utc - now_utc).total_seconds() / 60)
+                if start_utc:
+                    minutes = int((start_utc - now_utc).total_seconds() / 60)
                     if minutes > 0:
                         nearest_minutes = minutes if nearest_minutes is None else min(nearest_minutes, minutes)
-                start_local_date = s.start_utc.astimezone(tzinfo).date() if s.start_utc else None
+                start_local_date = start_utc.astimezone(tzinfo).date() if start_utc else None
                 if start_local_date and start_local_date == now_utc.astimezone(tzinfo).date():
                     today_meetings.append(item)
                 else:
@@ -343,36 +382,40 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
 
             # planner for 7 days
             planner_rows = await session.execute(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                select(Slot.id, Slot.status, Slot.start_utc, Slot.city_id)
                 .where(
                     Slot.recruiter_id == principal.id,
-                    Slot.start_utc >= datetime.now(timezone.utc),
-                    Slot.start_utc <= datetime.now(timezone.utc) + timedelta(days=7),
+                    Slot.start_utc >= now_utc,
+                    Slot.start_utc <= now_utc + timedelta(days=7),
                 )
-                .order_by(Slot.start_utc.asc())
+                .order_by(Slot.start_utc.asc(), Slot.id.asc())
             )
-            planner_items = planner_rows.scalars().all()
+            planner_items = planner_rows.all()
             day_map: dict[str, list[dict]] = {}
-            for s in planner_items:
-                local = s.start_utc.astimezone(tzinfo) if s.start_utc else None
+            for slot_id, slot_status, slot_start_utc, slot_city_id in planner_items:
+                start_utc = slot_start_utc
+                if start_utc and start_utc.tzinfo is None:
+                    start_utc = start_utc.replace(tzinfo=timezone.utc)
+                local = start_utc.astimezone(tzinfo) if start_utc else None
                 day_key = local.strftime("%Y-%m-%d") if local else "unknown"
                 payload = {
-                    "id": s.id,
+                    "id": slot_id,
                     "time": local.strftime("%H:%M") if local else "",
-                    "status": s.status.name if hasattr(s.status, "name") else s.status,
-                    "city": s.city_id,
+                    "status": slot_status.name if hasattr(slot_status, "name") else slot_status,
+                    "city": slot_city_id,
                 }
                 day_map.setdefault(day_key, []).append(payload)
             for day, items in sorted(day_map.items()):
                 planner_days.append({"date": day, "entries": items})
 
             if planner_items:
-                deltas = [
-                    (slot.start_utc - now_utc).total_seconds() / 3600
-                    for slot in planner_items
-                    if slot.start_utc and slot.start_utc > now_utc
-                ]
+                deltas: list[float] = []
+                for _, _, slot_start_utc, _ in planner_items:
+                    start_utc = slot_start_utc
+                    if start_utc and start_utc.tzinfo is None:
+                        start_utc = start_utc.replace(tzinfo=timezone.utc)
+                    if start_utc and start_utc > now_utc:
+                        deltas.append((start_utc - now_utc).total_seconds() / 3600)
                 if deltas:
                     avg_lead_hours = round(sum(deltas) / len(deltas), 1)
 
@@ -403,22 +446,20 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
             for status, cnt in status_rows:
                 slots_by_status[str(status).lower()] = cnt
 
-            now_utc = datetime.now(timezone.utc)
             global_slots = await session.execute(
-                select(Slot)
-                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                select(Slot.id, Slot.status, Slot.start_utc, Slot.city_id, Slot.recruiter_id)
                 .where(Slot.start_utc >= now_utc)
-                .order_by(Slot.start_utc.asc())
+                .order_by(Slot.start_utc.asc(), Slot.id.asc())
                 .limit(8)
             )
-            for s in global_slots.scalars().all():
+            for slot_id, slot_status, slot_start_utc, slot_city_id, slot_recruiter_id in global_slots:
                 upcoming_global.append(
                     {
-                        "id": s.id,
-                        "status": s.status.name if hasattr(s.status, "name") else s.status,
-                        "start_utc": s.start_utc.isoformat() if s.start_utc else None,
-                        "city_id": s.city_id,
-                        "recruiter_id": s.recruiter_id,
+                        "id": slot_id,
+                        "status": slot_status.name if hasattr(slot_status, "name") else slot_status,
+                        "start_utc": slot_start_utc.isoformat() if slot_start_utc else None,
+                        "city_id": slot_city_id,
+                        "recruiter_id": slot_recruiter_id,
                     }
                 )
 
@@ -431,6 +472,15 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
                     "bot": getattr(app_state, "bot_enabled", None),
                     "notifications": getattr(app_state, "notification_broker_available", None),
                 }
+
+        if principal.type == "recruiter" and recruiter is not None:
+            recruiter_payload = {
+                "id": recruiter.id,
+                "name": recruiter.name,
+                "tz": recruiter.tz,
+                "active": recruiter.active,
+                "cities": [{"id": c.get("id"), "name": c.get("name")} for c in city_options],
+            }
 
     pending_count = len([m for m in today_meetings + upcoming_meetings if str(m.get("status")).upper() in {"PENDING"}])
     booked_count = len([m for m in today_meetings + upcoming_meetings if str(m.get("status")).upper() in {"BOOKED"}])
@@ -486,32 +536,40 @@ async def _profile_snapshot(principal: Principal, request: Request) -> dict:
             "nearest_minutes": nearest_minutes,
             "avg_lead_hours": avg_lead_hours,
         },
-    }
+    }, recruiter_payload
 
 
 @router.get("/profile")
 async def api_profile(request: Request, principal: Principal = Depends(require_principal)):
-    recruiter_payload = None
-    if principal.type == "recruiter":
-        async with async_session() as session:
-            recruiter = await session.get(Recruiter, principal.id)
-            if recruiter:
-                rows = await session.execute(
-                    select(City)
-                    .join(recruiter_city_association)
-                    .where(recruiter_city_association.c.recruiter_id == recruiter.id)
-                )
-                cities = rows.scalars().all()
-                recruiter_payload = {
-                    "id": recruiter.id,
-                    "name": recruiter.name,
-                    "tz": recruiter.tz,
-                    "active": recruiter.active,
-                    "cities": [{"id": city.id, "name": city.name} for city in cities],
-                }
+    cache_key = cache_keys.profile_payload(principal=principal).value
+    if not getattr(request.app.state, "db_available", True):
+        snapshot = await get_cached(
+            cache_key,
+            expected_type=dict,
+            ttl_seconds=2.0,
+            stale_seconds=10.0,
+        )
+        if snapshot is None:
+            return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
+        snapshot = snapshot[0]
+    else:
+        async def _compute() -> dict:
+            stats = await dashboard_counts(principal=principal)
+            profile_payload, recruiter_payload = await _profile_snapshot(principal, request)
+            return {
+                "recruiter": recruiter_payload,
+                "stats": stats,
+                "profile": profile_payload,
+            }
 
-    stats = await dashboard_counts(principal=principal)
-    profile_payload = await _profile_snapshot(principal, request)
+        snapshot = await get_or_compute(
+            cache_key,
+            expected_type=dict,
+            ttl_seconds=2.0,
+            stale_seconds=10.0,
+            compute=_compute,
+        )
+
     avatar_file = _find_avatar_file(_avatar_prefix(principal))
     avatar_url = None
     if avatar_file is not None:
@@ -519,9 +577,7 @@ async def api_profile(request: Request, principal: Principal = Depends(require_p
     return JSONResponse(
         {
             "principal": {"type": principal.type, "id": principal.id},
-            "recruiter": recruiter_payload,
-            "stats": stats,
-            "profile": profile_payload,
+            **snapshot,
             "avatar_url": avatar_url,
         }
     )
@@ -819,6 +875,7 @@ async def api_dashboard_calendar(
 
 @router.get("/calendar/events")
 async def api_calendar_events(
+    request: Request,
     start: str = Query(..., description="Start date ISO format (YYYY-MM-DD)"),
     end: str = Query(..., description="End date ISO format (YYYY-MM-DD)"),
     recruiter_id: Optional[int] = Query(default=None),
@@ -849,6 +906,27 @@ async def api_calendar_events(
     effective_recruiter_id = recruiter_id
     if principal.type == "recruiter":
         effective_recruiter_id = principal.id
+
+    if not getattr(request.app.state, "db_available", True):
+        from backend.apps.admin_ui.utils import DEFAULT_TZ as _DEFAULT_TZ
+        cache_key = cache_keys.calendar_events(
+            start_date=start_date,
+            end_date=end_date,
+            recruiter_id=effective_recruiter_id,
+            city_id=city_id,
+            statuses=status,
+            tz_name=_DEFAULT_TZ,
+            include_canceled=False,
+        ).value
+        cached_payload = await get_cached(
+            cache_key,
+            expected_type=dict,
+            ttl_seconds=2.0,
+            stale_seconds=10.0,
+        )
+        if cached_payload is not None and isinstance(cached_payload[0], dict) and "events" in cached_payload[0]:
+            return JSONResponse({"ok": True, **cached_payload[0]})
+        return JSONResponse({"ok": False, "error": "database_unavailable"}, status_code=503)
 
     result = await get_calendar_events(
         start_date=start_date,
@@ -1721,6 +1799,66 @@ async def api_question_clone(
     return JSONResponse({"ok": True, "id": new_id})
 
 
+@router.post("/questions/reorder")
+async def api_questions_reorder(
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    _ = await require_csrf_token(request)
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    test_id = str(data.get("test_id") or "")
+    order = data.get("order")
+    if not isinstance(order, list):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    ok, error = await reorder_test_questions(
+        test_id=test_id,
+        order=order,  # type: ignore[arg-type]
+    )
+    if not ok:
+        return JSONResponse({"ok": False, "error": error}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+@router.get("/test-builder/graph")
+async def api_test_builder_graph(
+    test_id: str = Query(...),
+    _: Principal = Depends(require_admin),
+):
+    clean = str(test_id or "").strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    graph, updated_at = await get_test_builder_graph(test_id=clean)
+    return JSONResponse(
+        {
+            "ok": True,
+            "test_id": clean,
+            "graph": graph,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+        }
+    )
+
+
+@router.post("/test-builder/graph/apply")
+async def api_test_builder_graph_apply(
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    _ = await require_csrf_token(request)
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    test_id = str(data.get("test_id") or "")
+    graph = data.get("graph")
+    if not isinstance(graph, dict):
+        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    ok, error = await apply_test_builder_graph(test_id=test_id, graph=graph)
+    if not ok:
+        return JSONResponse({"ok": False, "error": error}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
 @router.get("/kpis/current")
 async def api_weekly_kpis(
     company_tz: Optional[str] = Query(default=None),
@@ -1982,12 +2120,19 @@ async def api_message_template_preview(
     _ = await require_csrf_token(request)
     data = await request.json()
     text = str(data.get("text") or "")
-    
-    from backend.utils.jinja_renderer import render_template
-    from backend.apps.admin_ui.services.message_templates import MOCK_CONTEXT
+    key = str(data.get("key") or "")
+    city_id_raw = data.get("city_id")
+    city_id = None
+    if city_id_raw not in (None, "", "null"):
+        try:
+            city_id = int(city_id_raw)
+        except (TypeError, ValueError):
+            city_id = None
+
+    from backend.apps.admin_ui.services.message_templates import render_message_template_preview
     
     try:
-        rendered = render_template(text, MOCK_CONTEXT)
+        rendered = await render_message_template_preview(text=text, key=key, city_id=city_id)
         return JSONResponse({"ok": True, "html": rendered})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -2215,6 +2360,9 @@ async def api_bot_reminder_policy_update(
                 rescheduled["failed"] = int(value.get("failed", 0))
         except Exception:
             logger.exception("Failed to reschedule reminders after policy update")
+
+    # Best-effort: notify the standalone bot process to reload reminder policy and reschedule jobs.
+    await publish_content_update(KIND_REMINDERS_CHANGED, {"key": "reminder_policy"})
 
     return JSONResponse(
         {
@@ -2726,6 +2874,21 @@ async def api_schedule_slot(
     city_id = data.get("city_id")
     date_str = data.get("date")
     time_str = data.get("time")
+    recruiter = None
+    requested_recruiter_id: Optional[int] = None
+    recruiter_raw = data.get("recruiter_id")
+    if recruiter_raw not in (None, "", "null"):
+        try:
+            requested_recruiter_id = int(recruiter_raw)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "invalid_recruiter",
+                    "message": "Некорректный рекрутёр.",
+                },
+                status_code=400,
+            )
     custom_message = data.get("custom_message")
 
     # Auto-resolve recruiter from principal when not explicitly provided
@@ -2936,6 +3099,21 @@ async def api_schedule_intro_day(
 
     date_str = data.get("date")
     time_str = data.get("time")
+    recruiter = None
+    requested_recruiter_id: Optional[int] = None
+    recruiter_raw = data.get("recruiter_id")
+    if recruiter_raw not in (None, "", "null"):
+        try:
+            requested_recruiter_id = int(recruiter_raw)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "invalid_recruiter",
+                    "message": "Некорректный рекрутёр.",
+                },
+                status_code=400,
+            )
 
     if not date_str or not time_str:
         return JSONResponse(
@@ -2991,11 +3169,30 @@ async def api_schedule_intro_day(
             status_code=400,
         )
 
-    # Resolve recruiter: city FK → city M2M (no user fallback)
-    recruiter = None
-    if getattr(city_record, "responsible_recruiter_id", None):
+    if principal.type == "recruiter":
+        # Recruiter can schedule intro day only for themselves.
+        if requested_recruiter_id is not None and requested_recruiter_id != principal.id:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "permission_denied",
+                    "message": "Недостаточно прав для назначения ознакомительного дня другому рекрутёру.",
+                },
+                status_code=403,
+            )
+        requested_recruiter_id = principal.id
+
+    # Resolve recruiter: explicit payload/self → city FK → city M2M → user fallback
+    if requested_recruiter_id is not None:
         async with async_session() as session:
-            recruiter = await session.get(Recruiter, city_record.responsible_recruiter_id)
+            candidate_recruiter = await session.get(Recruiter, requested_recruiter_id)
+            if candidate_recruiter is not None and getattr(candidate_recruiter, "active", True):
+                recruiter = candidate_recruiter
+
+    if getattr(city_record, "responsible_recruiter_id", None):
+        if recruiter is None:
+            async with async_session() as session:
+                recruiter = await session.get(Recruiter, city_record.responsible_recruiter_id)
 
     if not recruiter and getattr(city_record, "recruiters", None):
         for rec in city_record.recruiters:

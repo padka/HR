@@ -398,6 +398,10 @@ async def request_reschedule(
             candidate = await session.scalar(
                 select(User).where(User.candidate_id == assignment.candidate_id)
             )
+            if candidate is not None and candidate.responsible_recruiter_id is None:
+                # Ensure the reschedule request is routed back to the same recruiter in CRM views
+                # that are scoped by responsible_recruiter_id.
+                candidate.responsible_recruiter_id = assignment.recruiter_id
             recruiter_tg_id = recruiter.tg_chat_id if recruiter else None
             await add_outbox_notification(
                 notification_type="slot_assignment_reschedule_requested",

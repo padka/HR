@@ -33,6 +33,7 @@ from backend.domain.tests.bootstrap import bootstrap_test_questions
 from pathlib import Path
 from backend.apps.admin_ui.routers import (
     api,
+    metrics as metrics_router,
     candidates,
     cities,
     dashboard,
@@ -64,9 +65,17 @@ from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
 from backend.apps.bot.services import configure_template_provider
 from backend.apps.admin_ui.calendar_hub import calendar_hub
 from backend.apps.admin_ui.middleware import SecureHeadersMiddleware, DegradedDatabaseMiddleware, RequestIDMiddleware
+from backend.apps.admin_ui.perf.metrics.http_metrics import HTTPMetricsMiddleware
+from backend.apps.admin_ui.perf.metrics.db_metrics import (
+    install_sqlalchemy_metrics,
+    start_db_stats_task,
+    start_sql_profile_task,
+)
+from backend.apps.admin_ui.perf.metrics import prometheus as perf_prometheus
+from backend.apps.admin_ui.perf.metrics.context import mark_degraded
 from backend.core.logging import configure_logging
 from backend.core.settings import get_settings
-from backend.core.db import async_session
+from backend.core.db import async_engine, async_session
 from backend.core.cache import CacheConfig, init_cache, connect_cache, disconnect_cache, get_cache
 from backend.core.error_handler import (
     setup_global_exception_handler,
@@ -75,7 +84,12 @@ from backend.core.error_handler import (
 )
 from backend.migrations.runner import upgrade_to_head
 from backend.core.redis_factory import parse_redis_target
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, TimeoutError as SQLAlchemyTimeoutError
+
+try:  # pragma: no cover - optional depending on installed DB driver
+    from asyncpg.exceptions import TooManyConnectionsError as AsyncpgTooManyConnectionsError  # type: ignore
+except Exception:  # pragma: no cover
+    AsyncpgTooManyConnectionsError = None  # type: ignore[assignment]
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.exception_handlers import http_exception_handler
 from fastapi import HTTPException
@@ -283,9 +297,14 @@ async def _db_unavailable_response(request: Request) -> Response:
     )
 
 
-async def _db_exception_handler(request: Request, exc: OperationalError) -> Response:
+async def _db_exception_handler(request: Request, exc: Exception) -> Response:
     request.app.state.db_available = False
     logger.warning("Database operation failed during request: %s", exc)
+    mark_degraded("database_exception")
+    if isinstance(exc, SQLAlchemyTimeoutError):
+        perf_prometheus.DB_POOL_TIMEOUTS_TOTAL.inc()
+    if AsyncpgTooManyConnectionsError is not None and isinstance(exc, AsyncpgTooManyConnectionsError):
+        perf_prometheus.DB_TOO_MANY_CONNECTIONS_TOTAL.inc()
     return await _db_unavailable_response(request)
 
 
@@ -315,6 +334,9 @@ async def lifespan(app: FastAPI):
     # Detect test mode
     import os
     is_test_mode = bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("ENVIRONMENT") == "test"
+
+    # Install DB/pool instrumentation early (no-op when metrics are disabled).
+    install_sqlalchemy_metrics(async_engine)
 
     if _auto_upgrade_schema_if_needed(settings):
         logger.info("Development database migrated to latest revision")
@@ -410,6 +432,28 @@ async def lifespan(app: FastAPI):
             )
     else:
         logger.info("Test mode: skipping database health watcher")
+
+    # Best-effort Postgres active connections sampler (metrics-only).
+    db_stats_task = None
+    if not is_test_mode:
+        try:
+            db_stats_task = start_db_stats_task()
+            if db_stats_task is not None:
+                app.state.db_stats_task = db_stats_task
+                shutdown_manager.add_task(db_stats_task)
+                logger.info("DB stats sampler started")
+        except Exception as exc:  # pragma: no cover - optional diagnostics
+            logger.debug("DB stats sampler not started: %s", exc)
+
+        # Optional: sampled SQL profile dump for local perf work (gated by env).
+        try:  # pragma: no cover - optional diagnostics
+            sql_profile_task = start_sql_profile_task()
+            if sql_profile_task is not None:
+                app.state.sql_profile_task = sql_profile_task
+                shutdown_manager.add_task(sql_profile_task)
+                logger.info("SQL profile flusher started")
+        except Exception as exc:  # pragma: no cover - optional diagnostics
+            logger.debug("SQL profile flusher not started: %s", exc)
 
     # Initialize cache with retry logic
     cache_task = None
@@ -524,6 +568,9 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_exception_handler(OperationalError, _db_exception_handler)
+    app.add_exception_handler(SQLAlchemyTimeoutError, _db_exception_handler)
+    if AsyncpgTooManyConnectionsError is not None:
+        app.add_exception_handler(AsyncpgTooManyConnectionsError, _db_exception_handler)
     app.add_middleware(SlowAPIMiddleware)
     if settings.environment != "test":
         app.add_middleware(
@@ -539,6 +586,7 @@ def create_app() -> FastAPI:
     app.add_middleware(DegradedDatabaseMiddleware)
     app.add_middleware(SecureHeadersMiddleware)
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(HTTPMetricsMiddleware)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     if SPA_DIST_DIR.exists():
         assets_dir = SPA_DIST_DIR / "assets"
@@ -563,6 +611,7 @@ def create_app() -> FastAPI:
             await calendar_hub.disconnect(websocket)
 
     app.include_router(system.router)
+    app.include_router(metrics_router.router)
     app.include_router(auth_router.router)
     app.include_router(dashboard.router, dependencies=[Depends(require_principal)])
     app.include_router(slots.router, dependencies=[Depends(require_principal)])

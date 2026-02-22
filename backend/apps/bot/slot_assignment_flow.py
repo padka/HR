@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, time, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -21,6 +22,9 @@ WORKDAY_START = time(9, 0)
 WORKDAY_END = time(20, 0)
 MAX_DAYS_AHEAD = 60
 MINUTE_STEP = 15
+
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_zone(tz_name: Optional[str]) -> ZoneInfo:
@@ -104,7 +108,13 @@ async def _handle_confirm(
                 "candidate_tg_id": candidate_id,
             },
         )
-    except BackendClientError:
+    except BackendClientError as exc:
+        logger.warning(
+            "slot_assignment.confirm.backend_unavailable assignment_id=%s candidate_tg_id=%s error=%s",
+            assignment_id,
+            candidate_id,
+            exc,
+        )
         await callback.answer("Сервис недоступен. Попробуйте позже.", show_alert=True)
         return
 
@@ -133,9 +143,6 @@ async def _handle_confirm(
         pass
 
     await callback.answer("Время подтверждено")
-    bot = get_bot()
-    message_text = data.get("message") if isinstance(data, dict) else None
-    await bot.send_message(candidate_id, message_text or "✅ Спасибо! Время подтверждено.")
 
 
 async def _handle_reschedule_prompt(
@@ -181,7 +188,13 @@ async def _handle_decline(
                 "candidate_tg_id": candidate_id,
             },
         )
-    except BackendClientError:
+    except BackendClientError as exc:
+        logger.warning(
+            "slot_assignment.decline.backend_unavailable assignment_id=%s candidate_tg_id=%s error=%s",
+            assignment_id,
+            candidate_id,
+            exc,
+        )
         await callback.answer("Сервис недоступен. Попробуйте позже.", show_alert=True)
         return
 
@@ -338,7 +351,13 @@ async def handle_datetime_input(message: Message, state: Dict[str, Any]) -> bool
                 "comment": None,
             },
         )
-    except BackendClientError:
+    except BackendClientError as exc:
+        logger.warning(
+            "slot_assignment.request_reschedule.backend_unavailable assignment_id=%s candidate_tg_id=%s error=%s",
+            assignment_id,
+            candidate_id,
+            exc,
+        )
         await message.answer("Сервис недоступен. Попробуйте позже.")
         return True
 

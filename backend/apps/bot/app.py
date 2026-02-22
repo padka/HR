@@ -16,6 +16,13 @@ from aiogram.client.telegram import TelegramAPIServer
 
 from backend.core.logging import configure_logging
 from backend.core.settings import get_settings
+from backend.core.content_updates import (
+    ContentUpdateEvent,
+    KIND_QUESTIONS_CHANGED,
+    KIND_TEMPLATES_CHANGED,
+    KIND_REMINDERS_CHANGED,
+    run_content_updates_subscriber,
+)
 
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
@@ -129,6 +136,8 @@ async def main() -> None:
     heartbeat_file = _heartbeat_path()
     heartbeat_stop = asyncio.Event()
     heartbeat_task: asyncio.Task | None = None
+    content_updates_stop = asyncio.Event()
+    content_updates_task: asyncio.Task | None = None
     bot: Bot | None = None
     reminder_service: ReminderService | None = None
     notification_service: NotificationService | None = None
@@ -164,6 +173,72 @@ async def main() -> None:
         notification_service.start()
         logging.info("✓ Notification service started")
 
+        async def _handle_content_update(event: ContentUpdateEvent) -> None:
+            if event.kind == KIND_QUESTIONS_CHANGED:
+                # refresh_questions_bank uses sync SQLAlchemy session; run it off the event loop.
+                from backend.apps.bot.config import refresh_questions_bank
+
+                await asyncio.to_thread(refresh_questions_bank)
+                logging.info("Content update applied: questions refreshed")
+                return
+
+            if event.kind == KIND_TEMPLATES_CHANGED:
+                payload = dict(event.payload or {})
+                key = payload.get("key")
+                locale = payload.get("locale") or "ru"
+                channel = payload.get("channel") or "tg"
+                city_id = payload.get("city_id")
+                try:
+                    city_id_value = int(city_id) if city_id is not None else None
+                except (TypeError, ValueError):
+                    city_id_value = None
+                if notification_service is not None:
+                    await notification_service.invalidate_template_cache(
+                        key=str(key) if key else None,
+                        locale=str(locale or "ru"),
+                        channel=str(channel or "tg"),
+                        city_id=city_id_value,
+                    )
+                try:
+                    # Clear template proxy cache too (it uses a global provider).
+                    from backend.apps.bot.services import templates
+
+                    templates.clear_cache()
+                except Exception:
+                    pass
+                logging.info("Content update applied: templates invalidated")
+                return
+
+            if event.kind == KIND_REMINDERS_CHANGED:
+                if reminder_service is None:
+                    return
+                try:
+                    await reminder_service.reschedule_active_slots()
+                    logging.info("Content update applied: reminders rescheduled")
+                except Exception as exc:
+                    logging.warning("Content update failed: reminders reschedule error=%s", exc)
+                return
+
+        async def _content_updates_supervisor(redis_url: str) -> None:
+            backoff = 1.0
+            while not content_updates_stop.is_set():
+                try:
+                    await run_content_updates_subscriber(
+                        redis_url=redis_url,
+                        stop_event=content_updates_stop,
+                        on_event=_handle_content_update,
+                    )
+                    return
+                except Exception as exc:
+                    if content_updates_stop.is_set():
+                        return
+                    logging.warning("content_updates subscriber crashed: %s", exc)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 30.0)
+
+        if settings.redis_url:
+            content_updates_task = asyncio.create_task(_content_updates_supervisor(settings.redis_url))
+
         await bot.delete_webhook(drop_pending_updates=True)
         me = await bot.get_me()
         logging.warning("BOOT: using bot id=%s, username=@%s", me.id, me.username)
@@ -174,10 +249,15 @@ async def main() -> None:
         await dispatcher.start_polling(bot)
     finally:
         heartbeat_stop.set()
+        content_updates_stop.set()
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
+        if content_updates_task is not None:
+            content_updates_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await content_updates_task
         with suppress(FileNotFoundError):
             heartbeat_file.unlink()
         if reminder_service is not None:

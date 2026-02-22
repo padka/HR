@@ -262,6 +262,57 @@ async def test_candidate_confirmation_idempotent(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_intro_day_confirmation_keeps_details_message_and_sends_ack(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    dummy_bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=11))
+    configure(dummy_bot, manager)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Интро",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example",
+            active=True,
+        )
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=3),
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=54321,
+            candidate_fio="Интро Кандидат",
+            candidate_tz="Europe/Moscow",
+            purpose="intro_day",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    responses = []
+    message = DummyMessage()
+    callback = DummyCallback("cb-intro-1", slot_id, message, responses)
+    callback.from_user.id = 54321
+
+    await handle_attendance_yes(callback)
+
+    # Intro-day details message must remain unchanged; only keyboard is removed.
+    message.edit_text.assert_not_awaited()
+    message.edit_reply_markup.assert_awaited()
+    dummy_bot.send_message.assert_awaited()
+    assert responses[-1] == ("Подтверждено", False)
+
+    await manager.clear()
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_recruiter_approval_message_idempotent(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)

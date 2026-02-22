@@ -2,6 +2,7 @@ import html
 import logging
 import re
 import uuid
+import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -269,22 +270,83 @@ def _city_variants(value: Optional[str]) -> List[str]:
 async def find_city_by_plain_name(name: Optional[str]) -> Optional[City]:
     """Case-insensitive lookup tolerant к приставкам (“г.”) и составным названиям."""
 
+    city_id, _tz = await resolve_city_id_and_tz_by_plain_name(name)
+    if city_id is None:
+        return None
+    async with async_session() as session:
+        return await session.get(City, city_id)
+
+
+_CITY_LOOKUP_TTL = timedelta(minutes=10)
+_CITY_LOOKUP_LOCK = asyncio.Lock()
+_CITY_LOOKUP_EXPIRES_AT: Optional[datetime] = None
+_CITY_LOOKUP: Optional[dict[str, tuple[int, Optional[str]]]] = None
+
+
+async def _get_city_lookup() -> dict[str, tuple[int, Optional[str]]]:
+    """Build and cache a normalized lookup map for city variants -> (city_id, tz).
+
+    This avoids scanning all cities on every call to find_city_by_plain_name(), which
+    becomes a hotspot under load (dashboard, AI context, bot services).
+    """
+
+    import os
+
+    # Avoid cross-test contamination: tests rebuild/clean the SQLite DB frequently,
+    # but module globals persist across test cases.
+    is_test_mode = bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("ENVIRONMENT") == "test"
+    if is_test_mode:
+        async with async_session() as session:
+            rows = (await session.execute(select(City.id, City.name, City.tz))).all()
+        lookup: dict[str, tuple[int, Optional[str]]] = {}
+        for city_id, stored_name, stored_tz in rows:
+            stored_plain = html.unescape(stored_name or "")
+            for variant in _city_variants(stored_plain):
+                lookup.setdefault(variant, (int(city_id), stored_tz))
+        return lookup
+
+    global _CITY_LOOKUP, _CITY_LOOKUP_EXPIRES_AT
+    now = datetime.now(timezone.utc)
+    if _CITY_LOOKUP is not None and _CITY_LOOKUP_EXPIRES_AT and _CITY_LOOKUP_EXPIRES_AT > now:
+        return _CITY_LOOKUP
+
+    async with _CITY_LOOKUP_LOCK:
+        now = datetime.now(timezone.utc)
+        if _CITY_LOOKUP is not None and _CITY_LOOKUP_EXPIRES_AT and _CITY_LOOKUP_EXPIRES_AT > now:
+            return _CITY_LOOKUP
+
+        async with async_session() as session:
+            rows = (await session.execute(select(City.id, City.name, City.tz))).all()
+
+        lookup: dict[str, tuple[int, Optional[str]]] = {}
+        for city_id, stored_name, stored_tz in rows:
+            stored_plain = html.unescape(stored_name or "")
+            for variant in _city_variants(stored_plain):
+                lookup.setdefault(variant, (int(city_id), stored_tz))
+
+        _CITY_LOOKUP = lookup
+        _CITY_LOOKUP_EXPIRES_AT = now + _CITY_LOOKUP_TTL
+        return lookup
+
+
+async def resolve_city_id_and_tz_by_plain_name(
+    name: Optional[str],
+) -> tuple[Optional[int], Optional[str]]:
+    """Resolve a city by fuzzy plain-name match without loading ORM entities.
+
+    Returns (city_id, tz) or (None, None) when not found.
+    """
+
     candidates = _city_variants(name)
     if not candidates:
-        return None
-
-    async with async_session() as session:
-        result = await session.execute(select(City.id, City.name))
-        match_city_id: Optional[int] = None
-        for city_id, stored_name in result:
-            stored_plain = html.unescape(stored_name or "")
-            stored_variants = _city_variants(stored_plain)
-            if any(candidate in stored_variants for candidate in candidates):
-                match_city_id = city_id
-                break
-        if match_city_id is None:
-            return None
-        return await session.get(City, match_city_id)
+        return (None, None)
+    lookup = await _get_city_lookup()
+    for candidate in candidates:
+        entry = lookup.get(candidate)
+        if entry is not None:
+            city_id, tz = entry
+            return (city_id, tz)
+    return (None, None)
 
 
 async def city_has_available_slots(city_id: int, *, now_utc: Optional[datetime] = None) -> bool:

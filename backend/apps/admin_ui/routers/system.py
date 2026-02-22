@@ -60,31 +60,25 @@ async def readiness_probe(request: Request) -> PlainTextResponse:
 
 @router.get("/health", include_in_schema=False)
 async def health_check(request: Request) -> JSONResponse:
+    import os
+
+    is_test_mode = bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("ENVIRONMENT") == "test"
+    db_available = bool(getattr(request.app.state, "db_available", True))
+    state_manager_present = bool(getattr(request.app.state, "state_manager", None))
+
     checks = {
-        "database": "ok",
-        "state_manager": (
-            "ok" if getattr(request.app.state, "state_manager", None) else "missing"
-        ),
+        "database": "ok" if db_available else "error",
+        "state_manager": ("ok" if state_manager_present else "missing"),
     }
 
-    # Check Phase 2 Redis Cache
-    cache_status = "disabled"
-    try:
-        from backend.core.cache import get_cache
-        cache = get_cache()
-        # Try a simple ping operation
-        test_result = await cache.exists("__health_check__")
-        if test_result.is_success():
-            cache_status = "ok"
-        else:
-            cache_status = "error"
-    except RuntimeError:
-        # Cache not initialized
-        cache_status = "disabled"
-    except Exception as exc:
-        logger.warning(f"Cache health check failed: {exc}")
-        cache_status = "error"
-    checks["cache"] = cache_status
+    # Cache health (avoid DB/Redis roundtrips; rely on app watchers).
+    raw_cache_status = getattr(request.app.state, "cache_status", "disabled")
+    if raw_cache_status == "ok":
+        checks["cache"] = "ok"
+    elif raw_cache_status == "disabled":
+        checks["cache"] = "disabled"
+    else:
+        checks["cache"] = "error"
 
     # Check background tasks status
     background_tasks = {}
@@ -117,19 +111,9 @@ async def health_check(request: Request) -> JSONResponse:
         checks["bot"] = "unconfigured"
     status_code = 200
 
-    # In test mode, state_manager is optional and should not fail health check
-    import os
-    is_test_mode = bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("ENVIRONMENT") == "test"
-
-    if checks["state_manager"] == "missing" and not is_test_mode:
+    if not db_available:
         status_code = 503
-
-    try:
-        async with async_session() as session:
-            await session.execute(text("SELECT 1"))
-    except Exception as exc:  # pragma: no cover - depends on runtime DB availability
-        logger.exception("Health check database probe failed")
-        checks["database"] = "error"
+    if checks["state_manager"] == "missing" and not is_test_mode:
         status_code = 503
 
     return JSONResponse(
