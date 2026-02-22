@@ -2120,12 +2120,19 @@ async def api_message_template_preview(
     _ = await require_csrf_token(request)
     data = await request.json()
     text = str(data.get("text") or "")
-    
-    from backend.utils.jinja_renderer import render_template
-    from backend.apps.admin_ui.services.message_templates import MOCK_CONTEXT
+    key = str(data.get("key") or "")
+    city_id_raw = data.get("city_id")
+    city_id = None
+    if city_id_raw not in (None, "", "null"):
+        try:
+            city_id = int(city_id_raw)
+        except (TypeError, ValueError):
+            city_id = None
+
+    from backend.apps.admin_ui.services.message_templates import render_message_template_preview
     
     try:
-        rendered = render_template(text, MOCK_CONTEXT)
+        rendered = await render_message_template_preview(text=text, key=key, city_id=city_id)
         return JSONResponse({"ok": True, "html": rendered})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -2867,6 +2874,21 @@ async def api_schedule_slot(
     city_id = data.get("city_id")
     date_str = data.get("date")
     time_str = data.get("time")
+    recruiter = None
+    requested_recruiter_id: Optional[int] = None
+    recruiter_raw = data.get("recruiter_id")
+    if recruiter_raw not in (None, "", "null"):
+        try:
+            requested_recruiter_id = int(recruiter_raw)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "invalid_recruiter",
+                    "message": "Некорректный рекрутёр.",
+                },
+                status_code=400,
+            )
     custom_message = data.get("custom_message")
 
     # Auto-resolve recruiter from principal when not explicitly provided
@@ -3077,6 +3099,21 @@ async def api_schedule_intro_day(
 
     date_str = data.get("date")
     time_str = data.get("time")
+    recruiter = None
+    requested_recruiter_id: Optional[int] = None
+    recruiter_raw = data.get("recruiter_id")
+    if recruiter_raw not in (None, "", "null"):
+        try:
+            requested_recruiter_id = int(recruiter_raw)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "invalid_recruiter",
+                    "message": "Некорректный рекрутёр.",
+                },
+                status_code=400,
+            )
 
     if not date_str or not time_str:
         return JSONResponse(
@@ -3132,11 +3169,30 @@ async def api_schedule_intro_day(
             status_code=400,
         )
 
-    # Resolve recruiter: city FK → city M2M (no user fallback)
-    recruiter = None
-    if getattr(city_record, "responsible_recruiter_id", None):
+    if principal.type == "recruiter":
+        # Recruiter can schedule intro day only for themselves.
+        if requested_recruiter_id is not None and requested_recruiter_id != principal.id:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "permission_denied",
+                    "message": "Недостаточно прав для назначения ознакомительного дня другому рекрутёру.",
+                },
+                status_code=403,
+            )
+        requested_recruiter_id = principal.id
+
+    # Resolve recruiter: explicit payload/self → city FK → city M2M → user fallback
+    if requested_recruiter_id is not None:
         async with async_session() as session:
-            recruiter = await session.get(Recruiter, city_record.responsible_recruiter_id)
+            candidate_recruiter = await session.get(Recruiter, requested_recruiter_id)
+            if candidate_recruiter is not None and getattr(candidate_recruiter, "active", True):
+                recruiter = candidate_recruiter
+
+    if getattr(city_record, "responsible_recruiter_id", None):
+        if recruiter is None:
+            async with async_session() as session:
+                recruiter = await session.get(Recruiter, city_record.responsible_recruiter_id)
 
     if not recruiter and getattr(city_record, "recruiters", None):
         for rec in city_record.recruiters:

@@ -220,3 +220,57 @@ async def test_finalize_test1_prompts_candidate_to_schedule(monkeypatch):
     combined = "\n".join(text for _, text in bot.messages)
     assert "Анкета получена" in combined
     assert "Выбор рекрутёра" in combined
+
+
+@pytest.mark.asyncio
+async def test_finalize_test1_no_slots_sends_single_manual_prompt(monkeypatch):
+    from backend.apps.bot.defaults import DEFAULT_TEMPLATES
+
+    async def _fake_render_tpl(_city_id, key, **_fmt):
+        return DEFAULT_TEMPLATES.get(key, "")
+
+    monkeypatch.setattr(
+        "backend.apps.bot.services._render_tpl",
+        _fake_render_tpl,
+    )
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Без слотов",
+            tz="Europe/Moscow",
+            active=True,
+            tg_chat_id=4343,
+        )
+        city = models.City(name="Пермь", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(city)
+
+    store = InMemoryStateStore(ttl_seconds=60)
+    state_manager = StateManager(store)
+    user_id = 9494
+    await state_manager.set(
+        user_id,
+        {
+            "fio": "БезСлотов Кандидат",
+            "city_name": "Пермь",
+            "city_id": city.id,
+            "candidate_tz": "Europe/Moscow",
+            "test1_answers": {TEST1_QUESTIONS[0]["id"]: "Answer"},
+            "t1_sequence": list(TEST1_QUESTIONS),
+        },
+    )
+
+    bot = DummyBot()
+    configure_bot_services(bot, state_manager)
+
+    await finalize_test1(user_id)
+
+    assert bot.messages, "Candidate should receive follow-up message"
+    # One candidate-facing prompt: completion + no-slots manual scheduling.
+    assert len([m for m in bot.messages if m[0] == user_id]) == 1
+    text = "\n".join(msg for chat_id, msg in bot.messages if chat_id == user_id)
+    assert "Анкета получена" in text
+    assert "Свободных слотов" in text
+    assert "Выбор рекрутёра" not in text

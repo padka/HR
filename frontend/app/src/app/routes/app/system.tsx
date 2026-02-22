@@ -506,20 +506,22 @@ export function SystemPage() {
         {activeTab === 'templates' && (
           <section className="glass page-section">
             <h2 className="section-title">Шаблоны / уведомления</h2>
-            <p className="subtitle">Управление текстами сообщений и системными шаблонами.</p>
-            <div className="data-grid">
-              <article className="glass glass--interactive data-card">
-                <div className="data-card__label">Шаблоны сообщений</div>
-                <div className="data-card__value">
-                  <Link to="/app/message-templates" className="ui-btn ui-btn--ghost ui-btn--sm">Открыть</Link>
+            <p className="subtitle">Простой вход в редактирование. Выберите нужный раздел.</p>
+            <div className="glass panel--tight" style={{ display: 'grid', gap: 10, padding: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>Шаблоны уведомлений</div>
+                  <div className="text-muted" style={{ fontSize: 12 }}>Точечные сообщения, версии, история изменений.</div>
                 </div>
-              </article>
-              <article className="glass glass--interactive data-card">
-                <div className="data-card__label">Системные шаблоны</div>
-                <div className="data-card__value">
-                  <Link to="/app/templates" className="ui-btn ui-btn--ghost ui-btn--sm">Открыть</Link>
+                <Link to="/app/message-templates" className="ui-btn ui-btn--ghost ui-btn--sm">Открыть редактор</Link>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>Системные шаблоны</div>
+                  <div className="text-muted" style={{ fontSize: 12 }}>Шаблоны по этапам воронки и городам.</div>
                 </div>
-              </article>
+                <Link to="/app/templates" className="ui-btn ui-btn--ghost ui-btn--sm">Открыть редактор</Link>
+              </div>
             </div>
           </section>
         )}

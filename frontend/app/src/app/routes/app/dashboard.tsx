@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { apiFetch } from '@/api/client'
 import { useProfile } from '@/app/hooks/useProfile'
 import { ScheduleCalendar, type SlotExtendedProps } from '@/app/components/Calendar/ScheduleCalendar'
+import { browserTimeZone, buildSlotTimePreview, formatTzOffset } from '@/app/lib/timezonePreview'
 import { Link } from '@tanstack/react-router'
 
 type SummaryPayload = {
@@ -22,6 +23,8 @@ type SummaryPayload = {
 type RescheduleTarget = {
   slotId: number
   candidateName: string
+  recruiterTz: string
+  candidateTz: string
 }
 
 type KPITrend = {
@@ -179,6 +182,7 @@ export function DashboardPage() {
   const [incomingSearch, setIncomingSearch] = useState('')
   const [incomingFilter, setIncomingFilter] = useState<'all' | 'new' | 'stalled'>('all')
   const [incomingSort, setIncomingSort] = useState<'waiting' | 'recent' | 'name'>('waiting')
+  const recruiterTz = profile.data?.recruiter?.tz || browserTimeZone()
 
   const showToast = (message: string) => {
     setToast(message)
@@ -319,6 +323,8 @@ export function DashboardPage() {
     setRescheduleTarget({
       slotId: slot.slot_id,
       candidateName: slot.candidate_name || 'Без имени',
+      recruiterTz: slot.recruiter_tz || recruiterTz,
+      candidateTz: slot.candidate_tz || slot.city_tz || slot.recruiter_tz || recruiterTz,
     })
     setRescheduleDate(slot.local_date || toIsoDate(new Date()))
     setRescheduleTime(slot.local_start || '09:00')
@@ -336,6 +342,39 @@ export function DashboardPage() {
   const handleInterviewClick = (_slotId: number, slot: SlotExtendedProps) => {
     setInterviewTarget(slot)
   }
+
+  const cityTzMap = useMemo(() => {
+    const map = new Map<number, string>()
+    const options = profile.data?.profile?.city_options || []
+    for (const city of options) {
+      if (city?.id && city?.tz) map.set(city.id, city.tz)
+    }
+    return map
+  }, [profile.data?.profile?.city_options])
+
+  const incomingCandidateTz = useMemo(() => {
+    if (!incomingTarget) return recruiterTz
+    const byCity = incomingTarget.city_id ? cityTzMap.get(incomingTarget.city_id) : null
+    return byCity || recruiterTz
+  }, [incomingTarget, cityTzMap, recruiterTz])
+
+  const reschedulePreview = useMemo(
+    () =>
+      rescheduleTarget
+        ? buildSlotTimePreview(
+            rescheduleDate,
+            rescheduleTime,
+            rescheduleTarget.recruiterTz || recruiterTz,
+            rescheduleTarget.candidateTz || recruiterTz,
+          )
+        : null,
+    [rescheduleDate, rescheduleTime, rescheduleTarget, recruiterTz],
+  )
+
+  const incomingPreview = useMemo(
+    () => buildSlotTimePreview(incomingDate, incomingTime, recruiterTz, incomingCandidateTz),
+    [incomingDate, incomingTime, recruiterTz, incomingCandidateTz],
+  )
 
   const summaryCards = useMemo(() => {
     const data = summaryQuery.data
@@ -914,7 +953,7 @@ export function DashboardPage() {
                     />
                   </label>
                   <label>
-                    Время (локальное)
+                    Время ({rescheduleTarget.recruiterTz} · {formatTzOffset(rescheduleTarget.recruiterTz)})
                     <input
                       type="time"
                       value={rescheduleTime}
@@ -922,6 +961,24 @@ export function DashboardPage() {
                     />
                   </label>
                 </div>
+                {reschedulePreview && (
+                  <div className="glass slot-preview">
+                    <div>
+                      <div className="slot-preview__label">Вы вводите (ваша TZ)</div>
+                      <div className="slot-preview__value">{reschedulePreview.recruiterLabel}</div>
+                      <div className="slot-preview__hint">
+                        {reschedulePreview.recruiterTz} · {formatTzOffset(reschedulePreview.recruiterTz)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="slot-preview__label">Кандидат увидит</div>
+                      <div className="slot-preview__value">{reschedulePreview.candidateLabel}</div>
+                      <div className="slot-preview__hint">
+                        {reschedulePreview.candidateTz} · {formatTzOffset(reschedulePreview.candidateTz)}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <label>
                   Причина
                   <textarea
@@ -985,10 +1042,28 @@ export function DashboardPage() {
                     <input type="date" value={incomingDate} onChange={(e) => setIncomingDate(e.target.value)} />
                   </label>
                   <label>
-                    Время (локальное)
+                    Время ({recruiterTz} · {formatTzOffset(recruiterTz)})
                     <input type="time" value={incomingTime} onChange={(e) => setIncomingTime(e.target.value)} />
                   </label>
                 </div>
+                {incomingPreview && (
+                  <div className="glass slot-preview">
+                    <div>
+                      <div className="slot-preview__label">Вы вводите (ваша TZ)</div>
+                      <div className="slot-preview__value">{incomingPreview.recruiterLabel}</div>
+                      <div className="slot-preview__hint">
+                        {incomingPreview.recruiterTz} · {formatTzOffset(incomingPreview.recruiterTz)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="slot-preview__label">Кандидат увидит</div>
+                      <div className="slot-preview__value">{incomingPreview.candidateLabel}</div>
+                      <div className="slot-preview__hint">
+                        {incomingPreview.candidateTz} · {formatTzOffset(incomingPreview.candidateTz)}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <label>
                   Сообщение кандидату (необязательно)
                   <textarea

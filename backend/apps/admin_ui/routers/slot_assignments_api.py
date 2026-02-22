@@ -116,7 +116,7 @@ async def confirm_assignment(assignment_id: int, payload: ActionPayload):
 
     if payload.candidate_tg_id:
         await set_status_interview_confirmed(payload.candidate_tg_id)
-    return {"ok": True, "message": "Время подтверждено. Приглашение отправлено."}
+    return {"ok": True, "message": ""}
 
 @router.post("/{assignment_id}/request-reschedule")
 async def request_reschedule(assignment_id: int, payload: ReschedulePayload):

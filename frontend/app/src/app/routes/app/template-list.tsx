@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import {
@@ -22,7 +22,6 @@ type MessageTemplate = {
   version?: number
   is_active?: boolean
   preview?: string | null
-  body?: string | null
 }
 
 type MessageTemplatesPayload = {
@@ -35,7 +34,10 @@ type TemplateIndexEntry = {
   city: Map<number, MessageTemplate>
 }
 
-const ALL_STAGES: TemplateStage[] = [
+const DEFAULT_LOCALE = 'ru'
+const DEFAULT_CHANNEL = 'tg'
+
+const STAGES: TemplateStage[] = [
   'registration',
   'testing',
   'interview',
@@ -45,9 +47,6 @@ const ALL_STAGES: TemplateStage[] = [
   'service',
 ]
 
-const DEFAULT_LOCALE = 'ru'
-const DEFAULT_CHANNEL = 'tg'
-
 function pickLatest(current: MessageTemplate | undefined, candidate: MessageTemplate): MessageTemplate {
   if (!current) return candidate
   const currentVersion = current.version ?? 0
@@ -56,13 +55,15 @@ function pickLatest(current: MessageTemplate | undefined, candidate: MessageTemp
 }
 
 export function TemplateListPage() {
+  const navigate = useNavigate()
   const { data, isLoading, isError, error } = useQuery<MessageTemplatesPayload>({
     queryKey: ['message-templates-summary'],
     queryFn: () => apiFetch('/message-templates'),
   })
 
   const [selectedCity, setSelectedCity] = useState<string>('global')
-  const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({})
+  const [search, setSearch] = useState('')
+  const [stageFilter, setStageFilter] = useState<string>('all')
 
   const cityOptions = useMemo(() => {
     const cities = data?.cities || []
@@ -91,194 +92,162 @@ export function TemplateListPage() {
     return index
   }, [filteredTemplates])
 
-  const allKeys = useMemo(() => {
-    const keys = new Set<string>(Object.keys(TEMPLATE_META))
-    filteredTemplates.forEach((tmpl) => keys.add(tmpl.key))
-    return Array.from(keys)
+  const keys = useMemo(() => {
+    const set = new Set<string>(Object.keys(TEMPLATE_META))
+    filteredTemplates.forEach((tmpl) => set.add(tmpl.key))
+    return Array.from(set)
   }, [filteredTemplates])
 
-  const groupedKeys = useMemo(() => {
-    const groups: Record<TemplateStage, string[]> = {
-      registration: [],
-      testing: [],
-      interview: [],
-      intro_day: [],
-      reminders: [],
-      results: [],
-      service: [],
-    }
-    allKeys.forEach((key) => {
-      const stage = templateStage(key)
-      groups[stage].push(key)
-    })
-    ALL_STAGES.forEach((stage) => {
-      groups[stage].sort((a, b) => templateTitle(a).localeCompare(templateTitle(b), 'ru'))
-    })
-    return groups
-  }, [allKeys])
-
   const selectedCityId = selectedCity === 'global' ? null : Number(selectedCity)
-  const selectedCityName = selectedCityId != null
-    ? cityOptions.find((c) => Number(c.id) === selectedCityId)?.name || `Город #${selectedCityId}`
-    : 'Глобальные настройки'
 
-  const toggleStage = (stage: string) =>
-    setCollapsedStages((prev) => ({ ...prev, [stage]: !prev[stage] }))
+  const rows = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase()
 
-  const renderRow = (key: string) => {
-    const entry = templateIndex.get(key)
-    const globalTemplate = entry?.global
-    const cityTemplate = selectedCityId != null ? entry?.city.get(selectedCityId) : undefined
-    const effectiveTemplate = selectedCityId != null ? (cityTemplate ?? globalTemplate) : globalTemplate
-    const isOverride = Boolean(cityTemplate)
-    const isFallback = selectedCityId != null && !cityTemplate && Boolean(globalTemplate)
-    const overrideCount = entry?.city.size ?? 0
-    const isActive = effectiveTemplate?.is_active ?? false
-    const title = templateTitle(key)
-    const desc = templateDesc(key)
+    return keys
+      .map((key) => {
+        const entry = templateIndex.get(key)
+        const globalTemplate = entry?.global
+        const cityTemplate = selectedCityId != null ? entry?.city.get(selectedCityId) : undefined
+        const effectiveTemplate = selectedCityId != null ? cityTemplate ?? globalTemplate : globalTemplate
+        const stage = templateStage(key)
+        const title = templateTitle(key)
+        const desc = templateDesc(key)
+        const overrideCount = entry?.city.size ?? 0
+        const status = effectiveTemplate ? (effectiveTemplate.is_active ? 'active' : 'draft') : 'missing'
+        const source = selectedCityId == null ? 'global' : cityTemplate ? 'city' : globalTemplate ? 'fallback' : 'missing'
 
-    const statusChip = effectiveTemplate
-      ? (isActive ? ['Активен', 'chip chip--success'] : ['Отключён', 'chip chip--danger'])
-      : ['Нет шаблона', 'chip chip--warning']
+        return {
+          key,
+          id: effectiveTemplate?.id ?? null,
+          stage,
+          title,
+          desc,
+          status,
+          source,
+          overrideCount,
+        }
+      })
+      .filter((row) => (stageFilter === 'all' ? true : row.stage === stageFilter))
+      .filter((row) => {
+        if (!normalizedSearch) return true
+        return [row.title, row.desc, row.key].join(' ').toLowerCase().includes(normalizedSearch)
+      })
+      .sort((a, b) => {
+        const stageCmp = STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage)
+        if (stageCmp !== 0) return stageCmp
+        return a.title.localeCompare(b.title, 'ru')
+      })
+  }, [keys, templateIndex, selectedCityId, stageFilter, search])
 
-    const scopeChip = selectedCityId != null
-      ? (isOverride
-        ? ['Переопределён', 'chip chip--accent']
-        : (globalTemplate ? ['Глобальный', 'chip'] : ['Нет', 'chip chip--warning']))
-      : (globalTemplate ? ['Глобальный', 'chip'] : ['Нет', 'chip chip--warning'])
-
-    let actionLabel = 'Создать'
-    let actionTo: { to: string; params?: Record<string, string>; search?: Record<string, string | number> }
-
-    if (selectedCityId != null) {
-      if (cityTemplate) {
-        actionLabel = 'Редактировать'
-        actionTo = { to: '/app/templates/$templateId/edit', params: { templateId: String(cityTemplate.id) } }
-      } else {
-        actionLabel = globalTemplate ? `Переопределить для ${selectedCityName}` : `Создать для ${selectedCityName}`
-        actionTo = { to: '/app/templates/new', search: { city_id: selectedCityId, key } }
-      }
-    } else {
-      if (globalTemplate) {
-        actionLabel = 'Редактировать'
-        actionTo = { to: '/app/templates/$templateId/edit', params: { templateId: String(globalTemplate.id) } }
-      } else {
-        actionLabel = 'Создать'
-        actionTo = { to: '/app/templates/new', search: { key } }
-      }
+  const openEditor = (row: (typeof rows)[number]) => {
+    if (selectedCityId != null && row.source !== 'city') {
+      navigate({ to: '/app/templates/new', search: { city_id: selectedCityId, key: row.key } })
+      return
     }
-
-    const rowStyle = {
-      display: 'grid',
-      gridTemplateColumns: 'minmax(240px, 2fr) minmax(180px, 1fr) minmax(160px, 0.6fr)',
-      gap: 12,
-      alignItems: 'center',
-      padding: '10px 12px',
-      borderBottom: '1px solid rgba(255,255,255,0.06)',
-      background: isOverride ? 'rgba(106, 165, 255, 0.08)' : 'transparent',
-      opacity: isFallback ? 0.6 : 1,
+    if (row.id) {
+      navigate({ to: '/app/templates/$templateId/edit', params: { templateId: String(row.id) } })
+      return
     }
-
-    return (
-      <div key={key} style={rowStyle}>
-        <div>
-          <div style={{ fontWeight: 600 }}>{title}</div>
-          {desc && <div className="text-muted" style={{ fontSize: 12 }}>{desc}</div>}
-          <div className="text-muted" style={{ fontSize: 11 }}><code>{key}</code></div>
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          <span className={statusChip[1]}>{statusChip[0]}</span>
-          <span className={scopeChip[1]}>{scopeChip[0]}</span>
-          {selectedCityId == null && overrideCount > 0 && (
-            <span className="chip chip--accent">+{overrideCount} город(а)</span>
-          )}
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Link
-            to={actionTo.to}
-            params={actionTo.params}
-            search={actionTo.search}
-            className={`ui-btn ui-btn--sm ${actionLabel.startsWith('Редактировать') ? 'ui-btn--ghost' : 'ui-btn--primary'}`}
-          >
-            {actionLabel}
-          </Link>
-        </div>
-      </div>
-    )
+    navigate({ to: '/app/templates/new', search: { key: row.key } })
   }
 
   return (
     <RoleGuard allow={['admin']}>
       <div className="page">
-        <header className="glass glass--elevated page-header page-header--row">
-          <div>
-            <h1 className="title">Шаблоны сообщений</h1>
-            <p className="subtitle">Единая консоль управления текстами по городам и этапам.</p>
+        <section className="glass panel" style={{ display: 'grid', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <h1 className="title">Шаблоны</h1>
+              <p className="subtitle">Простой режим редактирования шаблонов по этапам и городам.</p>
+            </div>
+            <Link to="/app/templates/new" className="ui-btn ui-btn--primary">+ Новый шаблон</Link>
           </div>
-          <div className="toolbar" style={{ gap: 8 }}>
+
+          <div className="action-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <input
+              placeholder="Поиск по названию, ключу, описанию"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ minWidth: 260 }}
+            />
             <select value={selectedCity} onChange={(e) => setSelectedCity(e.target.value)}>
               <option value="global">Глобальные настройки</option>
               {cityOptions.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
-            <Link to="/app/templates/new" className="ui-btn ui-btn--primary">+ Новый шаблон</Link>
+            <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
+              <option value="all">Все этапы</option>
+              {STAGES.map((stage) => (
+                <option key={stage} value={stage}>{STAGE_LABELS[stage].title}</option>
+              ))}
+            </select>
           </div>
-        </header>
 
-        <section className="glass page-section">
           {isLoading && <p className="subtitle">Загрузка…</p>}
           {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
 
           {!isLoading && !isError && (
-            <div className="page-section__content" style={{ display: 'grid', gap: 16 }}>
-              {ALL_STAGES.map((stage) => {
-                const keys = groupedKeys[stage] || []
-                if (!keys.length) return null
-                const label = STAGE_LABELS[stage]
-                const collapsed = collapsedStages[stage]
-                return (
-                  <div key={stage}>
-                    <div
-                      style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                      onClick={() => toggleStage(stage)}
-                    >
-                      <div>
-                        <h3 className="section-title" style={{ margin: 0 }}>
-                          {collapsed ? '▸' : '▾'} {label.title}
-                          <span className="text-muted" style={{ fontWeight: 400, fontSize: 13, marginLeft: 8 }}>
-                            ({keys.length})
-                          </span>
-                        </h3>
-                        <p className="text-muted" style={{ margin: '2px 0 0 0' }}>{label.desc}</p>
-                      </div>
-                    </div>
+            <div className="data-table-wrapper">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Этап</th>
+                    <th>Шаблон</th>
+                    <th>Источник</th>
+                    <th>Статус</th>
+                    <th>Действие</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="text-muted">Шаблоны не найдены.</td>
+                    </tr>
+                  )}
+                  {rows.map((row) => {
+                    const actionLabel = row.id && (selectedCityId == null || row.source === 'city')
+                      ? 'Редактировать'
+                      : selectedCityId != null
+                        ? 'Создать для города'
+                        : 'Создать'
 
-                    {!collapsed && (
-                      <div style={{ marginTop: 10 }}>
-                        <div
-                          style={{
-                            display: 'grid',
-                            gridTemplateColumns: 'minmax(240px, 2fr) minmax(180px, 1fr) minmax(160px, 0.6fr)',
-                            gap: 12,
-                            padding: '6px 12px',
-                            fontSize: 11,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.04em',
-                            color: 'var(--muted)',
-                            borderBottom: '1px solid rgba(255,255,255,0.08)',
-                          }}
-                        >
-                          <span>Шаблон</span>
-                          <span>Статус</span>
-                          <span style={{ textAlign: 'right' }}>Действия</span>
-                        </div>
-                        {keys.map((key) => renderRow(key))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+                    return (
+                      <tr key={row.key}>
+                        <td>{STAGE_LABELS[row.stage].title}</td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{row.title}</div>
+                          <div className="text-muted" style={{ fontSize: 12 }}>{row.desc || row.key}</div>
+                          <div className="text-muted" style={{ fontSize: 11 }}><code>{row.key}</code></div>
+                        </td>
+                        <td>
+                          {row.source === 'city' && <span className="chip chip--accent">Город</span>}
+                          {row.source === 'global' && <span className="chip">Глобальный</span>}
+                          {row.source === 'fallback' && <span className="chip">Глобальный fallback</span>}
+                          {row.source === 'missing' && <span className="chip chip--warning">Нет шаблона</span>}
+                          {selectedCityId == null && row.overrideCount > 0 && (
+                            <div className="text-muted" style={{ marginTop: 4, fontSize: 11 }}>Переопределений: {row.overrideCount}</div>
+                          )}
+                        </td>
+                        <td>
+                          {row.status === 'active' && <span className="chip chip--success">Активен</span>}
+                          {row.status === 'draft' && <span className="chip chip--danger">Отключён</span>}
+                          {row.status === 'missing' && <span className="chip chip--warning">Нет</span>}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className={`ui-btn ui-btn--sm ${actionLabel === 'Редактировать' ? 'ui-btn--ghost' : 'ui-btn--primary'}`}
+                            onClick={() => openEditor(row)}
+                          >
+                            {actionLabel}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </section>

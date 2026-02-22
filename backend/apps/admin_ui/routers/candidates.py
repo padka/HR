@@ -1082,6 +1082,15 @@ async def candidates_schedule_intro_day_submit(
         payload = dict(form)
     date = payload.get("date")
     time = payload.get("time")
+    recruiter = None
+    requested_recruiter_id: Optional[int] = None
+    recruiter_raw = payload.get("recruiter_id")
+    if recruiter_raw not in (None, "", "null"):
+        try:
+            requested_recruiter_id = int(recruiter_raw)
+        except (TypeError, ValueError):
+            errors = ["Некорректный рекрутёр"]
+            return PlainTextResponse("; ".join(errors), status_code=400)
 
     detail = await get_candidate_detail(candidate_id, principal=principal)
     if not detail:
@@ -1114,7 +1123,23 @@ async def candidates_schedule_intro_day_submit(
                         options=(selectinload(City.recruiters),),
                     )
 
-    recruiter = _select_primary_recruiter(city_record)
+    if principal.type == "recruiter":
+        # Recruiter can schedule intro day only for themselves.
+        if requested_recruiter_id is not None and requested_recruiter_id != principal.id:
+            return PlainTextResponse(
+                "Недостаточно прав для назначения ознакомительного дня другому рекрутёру.",
+                status_code=403,
+            )
+        requested_recruiter_id = principal.id
+
+    if requested_recruiter_id is not None:
+        async with async_session() as session:
+            candidate_recruiter = await session.get(Recruiter, requested_recruiter_id)
+            if candidate_recruiter is not None and getattr(candidate_recruiter, "active", True):
+                recruiter = candidate_recruiter
+
+    if recruiter is None:
+        recruiter = _select_primary_recruiter(city_record)
     if recruiter is None:
         async with async_session() as session:
             if user.responsible_recruiter_id:

@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { browserTimeZone, buildSlotTimePreview } from '@/app/lib/timezonePreview'
 
 type City = {
   id: number
@@ -488,6 +489,11 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
   const selectedCity = useMemo(() => cities.find((c) => c.id === resolvedCityId), [cities, resolvedCityId])
 
   const cityTz = selectedCity?.tz || 'Europe/Moscow'
+  const recruiterTz = browserTimeZone()
+  const slotPreview = useMemo(
+    () => buildSlotTimePreview(form.date, form.time, recruiterTz, cityTz),
+    [form.date, form.time, recruiterTz, cityTz],
+  )
 
 
 
@@ -619,7 +625,7 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
                 <label className="form-group">
 
-                  <span className="form-group__label">Время</span>
+                  <span className="form-group__label">Время ({recruiterTz})</span>
 
                   <input
 
@@ -634,6 +640,21 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
                 </label>
 
               </div>
+
+              {slotPreview && (
+                <div className="glass slot-preview">
+                  <div>
+                    <div className="slot-preview__label">Вы вводите (ваша TZ)</div>
+                    <div className="slot-preview__value">{slotPreview.recruiterLabel}</div>
+                    <div className="slot-preview__hint">{slotPreview.recruiterTz}</div>
+                  </div>
+                  <div>
+                    <div className="slot-preview__label">Кандидат увидит</div>
+                    <div className="slot-preview__value">{slotPreview.candidateLabel}</div>
+                    <div className="slot-preview__hint">{slotPreview.candidateTz}</div>
+                  </div>
+                </div>
+              )}
 
 
 
@@ -711,6 +732,17 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
     customMessage: '',
   })
   const [error, setError] = useState<string | null>(null)
+  const recruiterTz = browserTimeZone()
+  const citiesQuery = useQuery<City[]>({
+    queryKey: ['cities'],
+    queryFn: () => apiFetch('/cities'),
+  })
+  const introCityTz = useMemo(() => {
+    const cities = citiesQuery.data || []
+    if (!candidateCity) return 'Europe/Moscow'
+    const match = cities.find((c) => c.name.toLowerCase() === candidateCity.toLowerCase())
+    return match?.tz || 'Europe/Moscow'
+  }, [citiesQuery.data, candidateCity])
   const [template, setTemplate] = useState<string>('')
 
   // Helper to generate message
@@ -778,6 +810,10 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
   })
 
   const canSubmit = form.date && form.time
+  const introPreview = useMemo(
+    () => buildSlotTimePreview(form.date, form.time, recruiterTz, introCityTz),
+    [form.date, form.time, recruiterTz, introCityTz],
+  )
 
   return (
     <ModalPortal>
@@ -811,7 +847,7 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
                 />
               </label>
               <label className="form-group">
-                <span className="form-group__label">Время</span>
+                <span className="form-group__label">Время ({recruiterTz})</span>
                 <input
                   type="time"
                   value={form.time}
@@ -819,6 +855,21 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
                 />
               </label>
             </div>
+
+            {introPreview && (
+              <div className="glass slot-preview">
+                <div>
+                  <div className="slot-preview__label">Вы вводите (ваша TZ)</div>
+                  <div className="slot-preview__value">{introPreview.recruiterLabel}</div>
+                  <div className="slot-preview__hint">{introPreview.recruiterTz}</div>
+                </div>
+                <div>
+                  <div className="slot-preview__label">Кандидат увидит</div>
+                  <div className="slot-preview__value">{introPreview.candidateLabel}</div>
+                  <div className="slot-preview__hint">{introPreview.candidateTz}</div>
+                </div>
+              </div>
+            )}
             
             <label className="form-group" style={{ marginTop: 12 }}>
               <span className="form-group__label">Сообщение кандидату</span>

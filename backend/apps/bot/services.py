@@ -5221,13 +5221,7 @@ async def finalize_test1(user_id: int) -> None:
             await state_manager.atomic_update(user_id, _mark_shared)
 
     done_text = await _render_tpl(state.get("city_id"), "t1_done")
-    if done_text:
-        await bot.send_message(user_id, done_text)
-
-    try:
-        await show_recruiter_menu(user_id)
-    except Exception:
-        logger.exception("Failed to present recruiter menu after Test 1 completion")
+    manual_prompt_sent = False
 
     candidate = None
     try:
@@ -5303,7 +5297,10 @@ async def finalize_test1(user_id: int) -> None:
                                 candidate.telegram_id
                             )
                         try:
-                            await send_manual_scheduling_prompt(candidate.telegram_id)
+                            manual_prompt_sent = await send_manual_scheduling_prompt(
+                                candidate.telegram_id,
+                                notice=done_text,
+                            )
                         except Exception:
                             logger.exception(
                                 "Failed to prompt candidate %s for manual schedule window",
@@ -5324,6 +5321,12 @@ async def finalize_test1(user_id: int) -> None:
             logger.exception("Failed to persist Test 1 report for candidate %s", candidate.id)
     except Exception:  # pragma: no cover - auxiliary sync must not break flow
         logger.exception("Failed to persist candidate profile for Test1")
+
+    if not manual_prompt_sent:
+        try:
+            await show_recruiter_menu(user_id, notice=done_text)
+        except Exception:
+            logger.exception("Failed to present recruiter menu after Test 1 completion")
 
     await record_test1_completion()
     try:
@@ -5685,16 +5688,22 @@ async def finalize_test2(user_id: int) -> None:
         logger.exception("Failed to update candidate status to TEST2_COMPLETED for user %s", user_id)
 
 
-async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> None:
+async def show_recruiter_menu(user_id: int, *, notice: Optional[str] = None) -> bool:
     bot = get_bot()
     state_manager = get_state_manager()
     state = await state_manager.get(user_id) or {}
     tz_label = state.get("candidate_tz", DEFAULT_TZ)
     kb = await kb_recruiters(tz_label, city_id=state.get("city_id"))
-    text = await _render_tpl(state.get("city_id"), "choose_recruiter")
-    if notice:
-        text = f"{notice}\n\n{text}"
-    await bot.send_message(user_id, text, reply_markup=kb)
+    if kb.inline_keyboard:
+        text = await _render_tpl(state.get("city_id"), "choose_recruiter")
+        if notice:
+            text = f"{notice}\n\n{text}"
+        await bot.send_message(user_id, text, reply_markup=kb)
+        return True
+
+    # No recruiter with available slots in the selected city: switch to manual flow.
+    sent = await send_manual_scheduling_prompt(user_id, notice=notice)
+    return sent
 
 
 async def handle_home_start(callback: CallbackQuery) -> None:
@@ -5799,7 +5808,7 @@ def _parse_manual_availability_window(
     return start_dt, end_dt
 
 
-async def send_manual_scheduling_prompt(user_id: int) -> bool:
+async def send_manual_scheduling_prompt(user_id: int, *, notice: Optional[str] = None) -> bool:
     """Prompt the candidate to reach out when no automatic slots are available.
 
     Returns ``True`` when a new prompt was sent and ``False`` when the candidate
@@ -5831,9 +5840,13 @@ async def send_manual_scheduling_prompt(user_id: int) -> bool:
             "или завтра 10:00-13:00."
         )
 
+    payload = message
+    if notice:
+        payload = f"{notice}\n\n{message}"
+
     await bot.send_message(
         user_id,
-        message,
+        payload,
         reply_markup=ForceReply(selective=True, input_field_placeholder="25.07 12:00-16:00"),
     )
 
@@ -6970,6 +6983,7 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
             except Exception:
                 logger.exception("Failed to update intro day confirmation status for candidate %s", slot.candidate_tg_id)
 
+        is_intro_day = getattr(slot, "purpose", "interview") == "intro_day"
         ack_text = await _render_tpl(
             city_id,
             "att_confirmed_ack",
@@ -6978,7 +6992,10 @@ async def handle_attendance_yes(callback: CallbackQuery) -> None:
         )
         if ack_text:
             try:
-                await callback.message.edit_text(ack_text)
+                if is_intro_day:
+                    await bot.send_message(slot.candidate_tg_id, ack_text)
+                else:
+                    await callback.message.edit_text(ack_text)
             except TelegramBadRequest:
                 pass
         await safe_remove_reply_markup(callback.message)
