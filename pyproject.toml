@@ -5,13 +5,13 @@ target-version = ["py311"]
 [tool.isort]
 profile = "black"
 line_length = 88
-known_first_party = ["backend", "admin_server", "tests"]
+known_first_party = ["backend", "tests"]
 combine_as_imports = true
 
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-src = ["backend", "admin_server", "tests"]
+src = ["backend", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
@@ -77,4 +77,4 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["backend", "admin_server"]
+packages = ["backend"]
