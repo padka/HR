@@ -318,6 +318,68 @@ type AICoachResponse = {
   coach: AICoach
 }
 
+type InterviewRiskFlag = {
+  code: string
+  severity: 'low' | 'medium' | 'high'
+  reason: string
+  question: string
+  recommended_phrase: string
+}
+
+type InterviewScriptIfAnswer = {
+  pattern: string
+  hint: string
+}
+
+type InterviewScriptBlock = {
+  id: string
+  title: string
+  goal: string
+  recruiter_text: string
+  candidate_questions: string[]
+  if_answers: InterviewScriptIfAnswer[]
+}
+
+type InterviewObjection = {
+  topic: string
+  candidate_says: string
+  recruiter_answer: string
+}
+
+type InterviewCtaTemplate = {
+  type: string
+  text: string
+}
+
+type InterviewScriptPayload = {
+  risk_flags: InterviewRiskFlag[]
+  highlights: string[]
+  checks: string[]
+  objections: InterviewObjection[]
+  script_blocks: InterviewScriptBlock[]
+  cta_templates: InterviewCtaTemplate[]
+}
+
+type InterviewScriptResponse = {
+  ok: boolean
+  cached: boolean
+  input_hash: string
+  generated_at?: string | null
+  model?: string | null
+  prompt_version?: string | null
+  script: InterviewScriptPayload
+}
+
+type InterviewScriptFeedbackPayload = {
+  helped?: boolean | null
+  edited: boolean
+  quick_reasons: string[]
+  final_script?: InterviewScriptPayload | null
+  outcome: 'od_assigned' | 'showed_up' | 'no_show' | 'decline' | 'unknown'
+  outcome_reason?: string | null
+  idempotency_key: string
+}
+
 function formatTzOffset(tz: string): string {
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
@@ -1103,6 +1165,354 @@ function RejectModal({ candidateId, onClose, onSuccess, title, actionKey }: Reje
   )
 }
 
+type InterviewScriptModalProps = {
+  candidateId: number
+  onClose: () => void
+}
+
+const INTERVIEW_FEEDBACK_REASONS = [
+  'слишком длинно',
+  'не тот тон',
+  'не учёл опыт',
+  'не закрыл логистику',
+] as const
+
+function InterviewScriptModal({ candidateId, onClose }: InterviewScriptModalProps) {
+  const queryClient = useQueryClient()
+  const [helped, setHelped] = useState<boolean | null>(null)
+  const [edited, setEdited] = useState(false)
+  const [quickReasons, setQuickReasons] = useState<string[]>([])
+  const [outcome, setOutcome] = useState<'od_assigned' | 'showed_up' | 'no_show' | 'decline' | 'unknown'>('unknown')
+  const [outcomeReason, setOutcomeReason] = useState('')
+  const [scriptEditor, setScriptEditor] = useState('')
+  const [feedbackSaved, setFeedbackSaved] = useState(false)
+
+  const scriptQuery = useQuery<InterviewScriptResponse>({
+    queryKey: ['ai-interview-script', candidateId],
+    queryFn: () => apiFetch(`/ai/candidates/${candidateId}/interview-script`),
+    retry: false,
+  })
+
+  const refreshMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch<InterviewScriptResponse>(`/ai/candidates/${candidateId}/interview-script/refresh`, { method: 'POST' }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['ai-interview-script', candidateId], data)
+      setScriptEditor(JSON.stringify(data.script, null, 2))
+    },
+  })
+
+  const feedbackMutation = useMutation({
+    mutationFn: async (payload: InterviewScriptFeedbackPayload) =>
+      apiFetch<{ ok: boolean; created: boolean; feedback_id: number }>(
+        `/ai/candidates/${candidateId}/interview-script/feedback`,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }
+      ),
+    onSuccess: () => {
+      setFeedbackSaved(true)
+    },
+  })
+
+  useEffect(() => {
+    if (!scriptQuery.data?.script) return
+    setScriptEditor(JSON.stringify(scriptQuery.data.script, null, 2))
+  }, [scriptQuery.data?.script])
+
+  const script = scriptQuery.data?.script
+
+  const copyText = async (value: string) => {
+    const text = value.trim()
+    if (!text) return
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+      }
+    } catch {
+      // Clipboard may be unavailable in some environments.
+    }
+  }
+
+  const toggleReason = (value: string) => {
+    setQuickReasons((prev) => (prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]))
+  }
+
+  const submitFeedback = () => {
+    let finalScript: InterviewScriptPayload | null = null
+    if (edited) {
+      try {
+        finalScript = JSON.parse(scriptEditor) as InterviewScriptPayload
+      } catch {
+        window.alert('JSON в поле "Отредактировал" невалидный')
+        return
+      }
+    }
+    feedbackMutation.mutate({
+      helped,
+      edited,
+      quick_reasons: quickReasons,
+      final_script: finalScript,
+      outcome,
+      outcome_reason: outcomeReason.trim() || null,
+      idempotency_key: `isf-${candidateId}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+    })
+  }
+
+  return (
+    <ModalPortal>
+      <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+        <div className="glass glass--elevated modal cd-interview-script-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal__header">
+            <div>
+              <h2 className="modal__title">Скрипт интервью</h2>
+              <p className="modal__subtitle">Персонализированный сценарий звонка и фидбек для дообучения</p>
+            </div>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
+          </div>
+
+          <div className="modal__body">
+            <div className="cd-interview-script__toolbar">
+              <button
+                className="ui-btn ui-btn--ghost"
+                onClick={() => refreshMutation.mutate()}
+                disabled={refreshMutation.isPending || scriptQuery.isFetching}
+              >
+                {refreshMutation.isPending ? 'Обновление…' : 'Обновить'}
+              </button>
+              <button
+                className="ui-btn ui-btn--ghost"
+                onClick={() => copyText(JSON.stringify(script || {}, null, 2))}
+                disabled={!script}
+              >
+                Скопировать всё
+              </button>
+              {scriptQuery.data && (
+                <>
+                  <span className={`cd-chip cd-chip--small ${scriptQuery.data.cached ? '' : 'cd-chip--accent'}`}>
+                    {scriptQuery.data.cached ? 'Кэш' : 'Новый'}
+                  </span>
+                  {scriptQuery.data.model && <span className="cd-chip cd-chip--small">{scriptQuery.data.model}</span>}
+                  {scriptQuery.data.prompt_version && <span className="cd-chip cd-chip--small">{scriptQuery.data.prompt_version}</span>}
+                </>
+              )}
+            </div>
+
+            {scriptQuery.isLoading && <div className="subtitle">Генерация скрипта…</div>}
+            {scriptQuery.error && (
+              <ApiErrorBanner
+                error={scriptQuery.error}
+                title="Не удалось сгенерировать скрипт интервью"
+                onRetry={() => scriptQuery.refetch()}
+                className="glass panel"
+              />
+            )}
+
+            {script && (
+              <div className="cd-interview-script__sections">
+                <section className="cd-interview-script__section">
+                  <h3>Highlights</h3>
+                  <ul className="cd-ai__list">
+                    {script.highlights.map((item, idx) => (
+                      <li key={`highlight-${idx}`} className="cd-ai__point">
+                        <div className="cd-ai__point-text">{item}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+
+                <section className="cd-interview-script__section">
+                  <h3>Checks</h3>
+                  <ul className="cd-ai__list">
+                    {script.checks.map((item, idx) => (
+                      <li key={`check-${idx}`} className="cd-ai__point">
+                        <div className="cd-ai__point-text">{item}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+
+                <section className="cd-interview-script__section">
+                  <h3>Риски</h3>
+                  <div className="cd-interview-script__risk-grid">
+                    {script.risk_flags.map((risk) => (
+                      <div key={risk.code} className={`cd-ai__risk cd-ai__risk--${risk.severity}`}>
+                        <div className="cd-ai__risk-title">
+                          <span>{risk.code}</span>
+                          <span className="cd-chip cd-chip--small">{risk.severity}</span>
+                        </div>
+                        <div className="cd-ai__risk-text">{risk.reason}</div>
+                        <div className="cd-ai__point-text"><strong>Вопрос:</strong> {risk.question}</div>
+                        <div className="cd-ai__point-text"><strong>Фраза:</strong> {risk.recommended_phrase}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="cd-interview-script__section">
+                  <h3>Блоки скрипта</h3>
+                  <div className="cd-interview-script__blocks">
+                    {script.script_blocks.map((block) => (
+                      <details key={block.id} className="cd-test-card__history">
+                        <summary>{block.title}</summary>
+                        <div className="cd-interview-script__block">
+                          <div className="cd-ai__point-text"><strong>Цель:</strong> {block.goal}</div>
+                          <div className="cd-ai__point-text">{block.recruiter_text}</div>
+                          {block.candidate_questions.length > 0 && (
+                            <ul className="cd-ai__list">
+                              {block.candidate_questions.map((q, idx) => (
+                                <li key={`${block.id}-q-${idx}`} className="cd-ai__action">
+                                  <div className="cd-ai__action-text">{q}</div>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {block.if_answers.length > 0 && (
+                            <ul className="cd-ai__list">
+                              {block.if_answers.map((rule, idx) => (
+                                <li key={`${block.id}-if-${idx}`} className="cd-ai__point">
+                                  <div className="cd-ai__point-title">{rule.pattern}</div>
+                                  <div className="cd-ai__point-text">{rule.hint}</div>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          <button
+                            type="button"
+                            className="ui-btn ui-btn--ghost"
+                            onClick={() => copyText(`${block.title}\n${block.recruiter_text}`)}
+                          >
+                            Скопировать блок
+                          </button>
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="cd-interview-script__section">
+                  <h3>Возражения</h3>
+                  <div className="cd-interview-script__objections">
+                    {script.objections.map((obj, idx) => (
+                      <div key={`obj-${idx}`} className="cd-ai__point">
+                        <div className="cd-ai__point-title">{obj.topic}</div>
+                        <div className="cd-ai__point-text"><strong>Кандидат:</strong> {obj.candidate_says}</div>
+                        <div className="cd-ai__point-text"><strong>Ответ:</strong> {obj.recruiter_answer}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="cd-interview-script__section">
+                  <h3>CTA шаблоны</h3>
+                  <div className="cd-interview-script__objections">
+                    {script.cta_templates.map((item, idx) => (
+                      <div key={`cta-${idx}`} className="cd-ai__action">
+                        <div className="cd-ai__action-title">{item.type}</div>
+                        <div className="cd-ai__action-text">{item.text}</div>
+                        <button className="ui-btn ui-btn--ghost" onClick={() => copyText(item.text)}>Скопировать</button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="cd-interview-script__section cd-interview-script__section--feedback">
+                  <h3>Feedback</h3>
+                  <div className="cd-interview-script__feedback-row">
+                    <button
+                      type="button"
+                      className={`ui-btn ${helped === true ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+                      onClick={() => setHelped(true)}
+                    >
+                      Скрипт помог
+                    </button>
+                    <button
+                      type="button"
+                      className={`ui-btn ${helped === false ? 'ui-btn--danger' : 'ui-btn--ghost'}`}
+                      onClick={() => setHelped(false)}
+                    >
+                      Не помог
+                    </button>
+                    <label className="cd-interview-script__edited">
+                      <input
+                        type="checkbox"
+                        checked={edited}
+                        onChange={(e) => setEdited(e.target.checked)}
+                      />
+                      Отредактировал
+                    </label>
+                  </div>
+
+                  <div className="cd-interview-script__feedback-row">
+                    {INTERVIEW_FEEDBACK_REASONS.map((reason) => (
+                      <label key={reason} className="cd-interview-script__reason">
+                        <input
+                          type="checkbox"
+                          checked={quickReasons.includes(reason)}
+                          onChange={() => toggleReason(reason)}
+                        />
+                        {reason}
+                      </label>
+                    ))}
+                  </div>
+
+                  {edited && (
+                    <textarea
+                      className="ui-input"
+                      rows={8}
+                      value={scriptEditor}
+                      onChange={(e) => setScriptEditor(e.target.value)}
+                      placeholder="Вставьте итоговый JSON-скрипт"
+                    />
+                  )}
+
+                  <div className="cd-interview-script__feedback-row">
+                    <select
+                      className="ui-input"
+                      value={outcome}
+                      onChange={(e) => setOutcome(e.target.value as 'od_assigned' | 'showed_up' | 'no_show' | 'decline' | 'unknown')}
+                    >
+                      <option value="unknown">Исход: неизвестно</option>
+                      <option value="od_assigned">ОД назначен</option>
+                      <option value="showed_up">Пришёл</option>
+                      <option value="no_show">Не пришёл</option>
+                      <option value="decline">Отказ</option>
+                    </select>
+                    <input
+                      className="ui-input"
+                      value={outcomeReason}
+                      onChange={(e) => setOutcomeReason(e.target.value)}
+                      placeholder="Причина/комментарий (опционально)"
+                    />
+                  </div>
+
+                  {feedbackMutation.error && (
+                    <div className="subtitle" style={{ color: '#f07373' }}>
+                      Ошибка feedback: {(feedbackMutation.error as Error).message}
+                    </div>
+                  )}
+                  {feedbackSaved && <div className="subtitle" style={{ color: '#5BE1A5' }}>Feedback сохранён</div>}
+
+                  <div className="modal__footer" style={{ padding: 0, marginTop: 8 }}>
+                    <button
+                      className="ui-btn ui-btn--primary"
+                      onClick={submitFeedback}
+                      disabled={feedbackMutation.isPending}
+                    >
+                      {feedbackMutation.isPending ? 'Сохранение…' : 'Сохранить feedback'}
+                    </button>
+                  </div>
+                </section>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
+  )
+}
+
 export function CandidateDetailPage() {
   const queryClient = useQueryClient()
   const params = useParams({ from: '/app/candidates/$candidateId' })
@@ -1120,6 +1530,7 @@ export function CandidateDetailPage() {
   const [aiDraftsOpen, setAiDraftsOpen] = useState(false)
   const [aiDraftMode, setAiDraftMode] = useState<'short' | 'neutral' | 'supportive'>('neutral')
   const [aiCoachDrafts, setAiCoachDrafts] = useState<AIDraftItem[] | null>(null)
+  const [showInterviewScriptModal, setShowInterviewScriptModal] = useState(false)
 
   const detailQuery = useQuery<CandidateDetail>({
     queryKey: ['candidate-detail', candidateId],
@@ -1588,6 +1999,12 @@ export function CandidateDetailPage() {
                   {aiRefreshMutation.isPending ? 'Обновление…' : 'Обновить'}
                 </button>
               )}
+              <button
+                className="ui-btn ui-btn--ghost"
+                onClick={() => setShowInterviewScriptModal(true)}
+              >
+                Скрипт интервью
+              </button>
             </div>
           </div>
 
@@ -2014,6 +2431,13 @@ export function CandidateDetailPage() {
       </div>
 
       {/* Modals */}
+      {showInterviewScriptModal && (
+        <InterviewScriptModal
+          candidateId={candidateId}
+          onClose={() => setShowInterviewScriptModal(false)}
+        />
+      )}
+
       {showScheduleSlotModal && detail && (
         <ScheduleSlotModal
           candidateId={candidateId}
