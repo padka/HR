@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
 from backend.apps.admin_ui.security import Principal, require_admin, require_csrf_token, require_principal
+from backend.core.ai.llm_script_generator import KB_INTERVIEW_SCRIPT_CATEGORIES
 from backend.core.ai.knowledge_base import reindex_document
 from backend.core.db import async_session
 from backend.domain.ai.models import KnowledgeBaseChunk, KnowledgeBaseDocument
@@ -19,6 +20,14 @@ from backend.domain.ai.models import KnowledgeBaseChunk, KnowledgeBaseDocument
 router = APIRouter(prefix="/api/kb", tags=["kb"])
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_DEFAULT_KB_CATEGORY = "general"
+
+
+def _normalize_kb_category(value: Any) -> str:
+    raw = str(value or _DEFAULT_KB_CATEGORY).strip().lower()
+    if raw in KB_INTERVIEW_SCRIPT_CATEGORIES:
+        return raw
+    return _DEFAULT_KB_CATEGORY
 
 
 def _iso(dt) -> Optional[str]:
@@ -134,6 +143,7 @@ async def api_kb_documents_list(
                 KnowledgeBaseDocument.title,
                 KnowledgeBaseDocument.filename,
                 KnowledgeBaseDocument.mime_type,
+                KnowledgeBaseDocument.category,
                 KnowledgeBaseDocument.is_active,
                 KnowledgeBaseDocument.created_at,
                 KnowledgeBaseDocument.updated_at,
@@ -145,6 +155,7 @@ async def api_kb_documents_list(
                 KnowledgeBaseDocument.title,
                 KnowledgeBaseDocument.filename,
                 KnowledgeBaseDocument.mime_type,
+                KnowledgeBaseDocument.category,
                 KnowledgeBaseDocument.is_active,
                 KnowledgeBaseDocument.created_at,
                 KnowledgeBaseDocument.updated_at,
@@ -159,6 +170,7 @@ async def api_kb_documents_list(
                     "title": row.title or "",
                     "filename": row.filename or "",
                     "mime_type": row.mime_type or "",
+                    "category": row.category or _DEFAULT_KB_CATEGORY,
                     "is_active": bool(row.is_active),
                     "created_at": _iso(row.created_at),
                     "updated_at": _iso(row.updated_at),
@@ -189,6 +201,7 @@ async def api_kb_document_get(
             "title": doc.title or "",
             "filename": doc.filename or "",
             "mime_type": doc.mime_type or "",
+            "category": doc.category or _DEFAULT_KB_CATEGORY,
             "is_active": bool(doc.is_active),
             "created_at": _iso(doc.created_at),
             "updated_at": _iso(doc.updated_at),
@@ -209,12 +222,14 @@ async def api_kb_document_create(
     title = ""
     filename = ""
     mime_type = ""
+    category = _DEFAULT_KB_CATEGORY
     content_text = ""
 
     if "multipart/form-data" in content_type:
         form = await request.form()
         up = form.get("file")
         title = str(form.get("title") or "").strip()
+        category = _normalize_kb_category(form.get("category"))
         if up is None:
             raise HTTPException(status_code=400, detail={"message": "Файл не передан"})
         try:
@@ -242,6 +257,7 @@ async def api_kb_document_create(
         title = str(data.get("title") or "").strip()
         filename = str(data.get("filename") or "").strip()
         mime_type = str(data.get("mime_type") or "").strip()
+        category = _normalize_kb_category(data.get("category"))
         content_text = str(data.get("content_text") or "").strip()
 
     if not title:
@@ -254,6 +270,7 @@ async def api_kb_document_create(
             title=title,
             filename=filename,
             mime_type=mime_type,
+            category=category,
             content_text=content_text,
             is_active=True,
             created_by_type=principal.type,
@@ -291,6 +308,8 @@ async def api_kb_document_update(
             doc.title = str(data.get("title") or "").strip()
         if data.get("is_active") is not None:
             doc.is_active = bool(data.get("is_active"))
+        if data.get("category") is not None:
+            doc.category = _normalize_kb_category(data.get("category"))
         if data.get("content_text") is not None:
             next_text = str(data.get("content_text") or "")
             if next_text != (doc.content_text or ""):

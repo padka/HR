@@ -1,6 +1,23 @@
 """AI domain models and helpers."""
 
-from .models import AIOutput, AIRequestLog
+from .models import (
+    AIAgentMessage,
+    AIAgentThread,
+    AIInterviewScriptFeedback,
+    AIOutput,
+    AIRequestLog,
+    CandidateHHResume,
+    KnowledgeBaseChunk,
+    KnowledgeBaseDocument,
+)
 
-__all__ = ["AIOutput", "AIRequestLog"]
-
+__all__ = [
+    "AIOutput",
+    "AIRequestLog",
+    "KnowledgeBaseDocument",
+    "KnowledgeBaseChunk",
+    "AIAgentThread",
+    "AIAgentMessage",
+    "CandidateHHResume",
+    "AIInterviewScriptFeedback",
+]

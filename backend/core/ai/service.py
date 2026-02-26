@@ -13,12 +13,15 @@ All public methods follow the same pattern:
 from __future__ import annotations
 
 import logging
+import hashlib
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from backend.apps.admin_ui.security import Principal
@@ -28,11 +31,13 @@ from backend.domain import analytics
 from backend.domain.ai.models import (
     AIAgentMessage,
     AIAgentThread,
+    AIInterviewScriptFeedback,
     AIOutput,
     AIRequestLog,
+    CandidateHHResume,
 )
 from backend.domain.candidates.models import User
-from backend.domain.models import Recruiter
+from backend.domain.models import City, Recruiter, Vacancy
 
 from .context import (
     build_candidate_ai_context,
@@ -49,6 +54,13 @@ from .prompts import (
     city_candidate_recommendations_prompts,
     dashboard_insight_prompts,
 )
+from .llm_script_generator import (
+    KB_INTERVIEW_SCRIPT_CATEGORIES,
+    PROMPT_VERSION_INTERVIEW_SCRIPT,
+    generate_interview_script,
+    hash_resume_content,
+    normalize_hh_resume,
+)
 from .providers import AIProvider, AIProviderError, FakeProvider, OpenAIProvider
 from .redaction import redact_text
 from .schemas import (
@@ -58,6 +70,8 @@ from .schemas import (
     ChatReplyDraftsV1,
     CityCandidateRecommendationsV1,
     DashboardInsightV1,
+    InterviewScriptFeedbackPayload,
+    InterviewScriptPayload,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,6 +92,17 @@ class AIResult:
     payload: dict
     cached: bool
     input_hash: str
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat()
+    except Exception:
+        return None
 
 
 def _provider_for_settings() -> AIProvider:
@@ -896,6 +921,423 @@ class AIService:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"message": "AI provider error"},
             ) from exc
+
+    def _interview_script_model_for_candidate(self, candidate_id: int) -> str:
+        base_model = self._settings.openai_model
+        ft_model = (getattr(self._settings, "ai_interview_script_ft_model", "") or "").strip()
+        try:
+            ab_percent = int(getattr(self._settings, "ai_interview_script_ab_percent", 0) or 0)
+        except Exception:
+            ab_percent = 0
+        ab_percent = max(0, min(100, ab_percent))
+        if not ft_model or ab_percent <= 0:
+            return base_model
+
+        digest = hashlib.sha256(f"interview_script:{candidate_id}".encode("utf-8")).hexdigest()
+        bucket = int(digest[:8], 16) % 100
+        return ft_model if bucket < ab_percent else base_model
+
+    @staticmethod
+    def _extract_income_range(text: str | None) -> dict[str, int] | None:
+        if not text:
+            return None
+        vals = [int(x) for x in re.findall(r"\d{2,6}", text) if x.isdigit()]
+        if len(vals) < 2:
+            return None
+        return {"min": min(vals), "max": max(vals)}
+
+    @staticmethod
+    def _extract_min_age(text: str | None) -> int | None:
+        if not text:
+            return None
+        low = text.lower()
+        m = re.search(r"от\s+(\d{2})\s*лет", low)
+        if not m:
+            m = re.search(r"(\d{2})\s*\+", low)
+        if not m:
+            return None
+        try:
+            age = int(m.group(1))
+        except Exception:
+            return None
+        return age if 14 <= age <= 80 else None
+
+    async def _build_office_context(self, *, ctx: dict[str, Any]) -> dict[str, Any]:
+        candidate = ctx.get("candidate") or {}
+        city_profile = ctx.get("city_profile") or {}
+        city_id = city_profile.get("id")
+        desired_position = candidate.get("desired_position")
+
+        office_context: dict[str, Any] = {
+            "city_id": city_id,
+            "city": city_profile.get("name"),
+            "vacancy": desired_position,
+            "vacancy_id": None,
+            "vacancy_description": None,
+            "criteria": city_profile.get("criteria"),
+            "address": None,
+            "landmarks": None,
+            "contact_name": None,
+            "contact_phone": None,
+            "schedule_rules": None,
+            "income_range": None,
+            "min_age": None,
+            "must_have_experience": False,
+        }
+
+        async with async_session() as session:
+            city = await session.get(City, int(city_id)) if isinstance(city_id, int) else None
+            if city is not None:
+                office_context["address"] = city.intro_address
+                office_context["contact_name"] = city.contact_name
+                office_context["contact_phone"] = city.contact_phone
+                if city.intro_address:
+                    # Best-effort landmarks for script logistics.
+                    chunks = [part.strip() for part in str(city.intro_address).split(",") if part.strip()]
+                    if len(chunks) > 1:
+                        office_context["landmarks"] = ", ".join(chunks[1:3])
+
+            vacancy_obj: Vacancy | None = None
+            if isinstance(desired_position, str) and desired_position.strip():
+                desired = desired_position.strip().lower()
+                stmt = (
+                    select(Vacancy)
+                    .where(Vacancy.is_active.is_(True))
+                    .order_by(Vacancy.updated_at.desc(), Vacancy.id.desc())
+                )
+                if isinstance(city_id, int):
+                    stmt = stmt.where((Vacancy.city_id == city_id) | (Vacancy.city_id.is_(None)))
+                rows = (await session.execute(stmt.limit(30))).scalars().all()
+                for row in rows:
+                    if desired in (row.title or "").lower():
+                        vacancy_obj = row
+                        break
+                if vacancy_obj is None and rows:
+                    vacancy_obj = rows[0]
+            elif isinstance(city_id, int):
+                vacancy_obj = await session.scalar(
+                    select(Vacancy)
+                    .where(Vacancy.city_id == city_id, Vacancy.is_active.is_(True))
+                    .order_by(Vacancy.updated_at.desc(), Vacancy.id.desc())
+                    .limit(1)
+                )
+
+        if vacancy_obj is not None:
+            office_context["vacancy_id"] = int(vacancy_obj.id)
+            office_context["vacancy"] = vacancy_obj.title
+            office_context["vacancy_description"] = (vacancy_obj.description or "")[:1800] or None
+
+        rules_blob = " ".join(
+            str(x or "")
+            for x in (
+                office_context.get("criteria"),
+                office_context.get("vacancy_description"),
+            )
+        ).strip()
+        office_context["income_range"] = self._extract_income_range(rules_blob)
+        office_context["min_age"] = self._extract_min_age(rules_blob)
+        office_context["schedule_rules"] = rules_blob[:500] or None
+        office_context["must_have_experience"] = "опыт" in rules_blob.lower()
+        return office_context
+
+    async def _get_hh_resume_normalized(self, candidate_id: int) -> dict[str, Any]:
+        async with async_session() as session:
+            row = await session.scalar(
+                select(CandidateHHResume).where(CandidateHHResume.candidate_id == candidate_id)
+            )
+        if row is None:
+            return normalize_hh_resume(format="raw_text", resume_json=None, resume_text=None)
+        normalized = row.normalized_json if isinstance(row.normalized_json, dict) else {}
+        if not normalized:
+            normalized = normalize_hh_resume(
+                format=row.format or "raw_text",
+                resume_json=row.resume_json if isinstance(row.resume_json, dict) else None,
+                resume_text=row.resume_text,
+            )
+        return normalized
+
+    async def upsert_candidate_hh_resume(
+        self,
+        candidate_id: int,
+        *,
+        principal: Principal,
+        format: str,
+        resume_json: dict[str, Any] | None,
+        resume_text: str | None,
+    ) -> dict[str, Any]:
+        # Scope guard via existing context checker.
+        await build_candidate_ai_context(candidate_id, principal=principal, include_pii=False)
+        normalized = normalize_hh_resume(
+            format=format,
+            resume_json=resume_json if isinstance(resume_json, dict) else None,
+            resume_text=resume_text,
+        )
+        content_hash = hash_resume_content(
+            format=format,
+            resume_json=resume_json if isinstance(resume_json, dict) else None,
+            resume_text=resume_text,
+        )
+
+        now = datetime.now(UTC)
+        async with async_session() as session:
+            row = await session.scalar(
+                select(CandidateHHResume).where(CandidateHHResume.candidate_id == candidate_id)
+            )
+            if row is None:
+                row = CandidateHHResume(
+                    candidate_id=candidate_id,
+                    format=format,
+                    resume_json=resume_json if isinstance(resume_json, dict) else None,
+                    resume_text=resume_text,
+                    normalized_json=normalized,
+                    content_hash=content_hash,
+                    source_quality_ok=bool(normalized.get("source_quality_ok")),
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+            else:
+                row.format = format
+                row.resume_json = resume_json if isinstance(resume_json, dict) else None
+                row.resume_text = resume_text
+                row.normalized_json = normalized
+                row.content_hash = content_hash
+                row.source_quality_ok = bool(normalized.get("source_quality_ok"))
+                row.updated_at = now
+            await session.commit()
+
+        return {
+            "normalized_resume": normalized,
+            "content_hash": content_hash,
+            "updated_at": now.isoformat(),
+        }
+
+    async def get_candidate_interview_script(
+        self,
+        candidate_id: int,
+        *,
+        principal: Principal,
+        refresh: bool = False,
+    ) -> AIResult:
+        self._ensure_enabled()
+        kind = "interview_script_v1"
+        prompt_version = PROMPT_VERSION_INTERVIEW_SCRIPT
+        model = self._interview_script_model_for_candidate(candidate_id)
+
+        base_ctx = await build_candidate_ai_context(
+            candidate_id,
+            principal=principal,
+            include_pii=False,
+        )
+        candidate_profile = base_ctx.get("candidate_profile") or {}
+        hh_resume_norm = await self._get_hh_resume_normalized(candidate_id)
+        office_context = await self._build_office_context(ctx=base_ctx)
+
+        rag_query_parts = [
+            str(office_context.get("city") or ""),
+            str(office_context.get("vacancy") or ""),
+            str(office_context.get("criteria") or ""),
+            str(candidate_profile.get("work_experience") or ""),
+        ]
+        rag_query = " ".join(part for part in rag_query_parts if part).strip()
+        from .knowledge_base import search_excerpts
+
+        rag_context = await search_excerpts(
+            rag_query or "правила и возражения рекрутинга",
+            limit=6,
+            categories=list(KB_INTERVIEW_SCRIPT_CATEGORIES),
+        )
+
+        input_envelope = {
+            "candidate_profile": candidate_profile,
+            "hh_resume_normalized": hh_resume_norm,
+            "office_context": office_context,
+            "rag_keys": [
+                [int(item.get("document_id") or 0), int(item.get("chunk_index") or 0)]
+                for item in rag_context
+                if isinstance(item, dict)
+            ],
+            "model": model,
+            "prompt_version": prompt_version,
+        }
+        input_hash = compute_input_hash(input_envelope)
+
+        if not refresh:
+            cached = await _get_cached_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+            )
+            if cached is not None and isinstance(cached.payload_json, dict):
+                payload = dict(cached.payload_json)
+                if "script" not in payload:
+                    payload = {
+                        "generated_at": _iso(cached.created_at),
+                        "model": model,
+                        "prompt_version": prompt_version,
+                        "script": payload,
+                    }
+                return AIResult(payload=payload, cached=True, input_hash=input_hash)
+
+        await self._ensure_quota(principal)
+        started = time.monotonic()
+        script_tokens = int(getattr(self._settings, "ai_interview_script_max_tokens", 1800) or 1800)
+        timeout_seconds = int(getattr(self._settings, "ai_interview_script_timeout_seconds", self._settings.ai_timeout_seconds))
+        cache_ttl_hours = int(getattr(self._settings, "ai_interview_script_cache_ttl_hours", 24) or 24)
+
+        try:
+            generated = await generate_interview_script(
+                candidate_profile=candidate_profile,
+                hh_resume=hh_resume_norm,
+                office_context=office_context,
+                rag_context=rag_context,
+                provider=self._provider,
+                model=model,
+                timeout_seconds=timeout_seconds,
+                max_tokens=max(512, script_tokens),
+                retries=2,
+            )
+            script_payload = InterviewScriptPayload.model_validate(generated.payload).model_dump()
+            payload = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "model": model,
+                "prompt_version": prompt_version,
+                "script": script_payload,
+            }
+
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=generated.usage.tokens_in,
+                tokens_out=generated.usage.tokens_out,
+                status_value="ok",
+                error_code="",
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=payload,
+                ttl_hours=cache_ttl_hours,
+            )
+            return AIResult(payload=payload, cached=False, input_hash=input_hash)
+        except (ValidationError, AIProviderError, Exception) as exc:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=0,
+                tokens_out=0,
+                status_value="error",
+                error_code=exc.__class__.__name__,
+            )
+            logger.warning("ai.interview_script.failed", extra={"candidate_id": candidate_id}, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"message": "AI provider error"},
+            ) from exc
+
+    async def save_interview_script_feedback(
+        self,
+        candidate_id: int,
+        *,
+        principal: Principal,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        validated = InterviewScriptFeedbackPayload.model_validate(payload)
+
+        base_ctx = await build_candidate_ai_context(
+            candidate_id,
+            principal=principal,
+            include_pii=False,
+        )
+        hh_resume_norm = await self._get_hh_resume_normalized(candidate_id)
+        office_context = await self._build_office_context(ctx=base_ctx)
+        input_redacted_json = {
+            "candidate_profile": base_ctx.get("candidate_profile") or {},
+            "hh_resume_normalized": hh_resume_norm,
+            "office_context": office_context,
+        }
+
+        async with async_session() as session:
+            existing = await session.scalar(
+                select(AIInterviewScriptFeedback).where(
+                    AIInterviewScriptFeedback.idempotency_key == validated.idempotency_key
+                )
+            )
+            if existing is not None:
+                return {"feedback_id": int(existing.id), "created": False}
+
+            latest_output = await session.scalar(
+                select(AIOutput)
+                .where(
+                    AIOutput.scope_type == "candidate",
+                    AIOutput.scope_id == candidate_id,
+                    AIOutput.kind == "interview_script_v1",
+                )
+                .order_by(AIOutput.created_at.desc(), AIOutput.id.desc())
+                .limit(1)
+            )
+
+            output_original_json: dict[str, Any] = {}
+            output_model = self._interview_script_model_for_candidate(candidate_id)
+            output_prompt_version = PROMPT_VERSION_INTERVIEW_SCRIPT
+            input_hash = ""
+            if latest_output is not None:
+                input_hash = latest_output.input_hash or ""
+                src_payload = latest_output.payload_json if isinstance(latest_output.payload_json, dict) else {}
+                if "script" in src_payload and isinstance(src_payload.get("script"), dict):
+                    output_original_json = src_payload.get("script") or {}
+                else:
+                    output_original_json = src_payload
+                output_model = str(src_payload.get("model") or output_model)
+                output_prompt_version = str(src_payload.get("prompt_version") or output_prompt_version)
+
+            final_script = validated.final_script.model_dump() if validated.final_script else None
+            labels_json = {
+                "helped": validated.helped,
+                "edited": bool(validated.edited),
+                "quick_reasons": list(validated.quick_reasons),
+                "outcome": validated.outcome,
+                "outcome_reason": validated.outcome_reason,
+            }
+
+            row = AIInterviewScriptFeedback(
+                candidate_id=candidate_id,
+                principal_type=principal.type,
+                principal_id=principal.id,
+                helped=validated.helped,
+                edited=bool(validated.edited),
+                quick_reasons_json=list(validated.quick_reasons),
+                outcome=validated.outcome,
+                outcome_reason=validated.outcome_reason,
+                idempotency_key=validated.idempotency_key,
+                input_redacted_json=input_redacted_json,
+                output_original_json=output_original_json,
+                output_final_json=final_script,
+                labels_json=labels_json,
+                input_hash=input_hash,
+                model=output_model,
+                prompt_version=output_prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return {"feedback_id": int(row.id), "created": True}
 
     async def get_agent_chat_state(
         self,

@@ -80,6 +80,13 @@ class Settings:
     ai_store_prompts: bool
     ai_pii_mode: str
     ai_reasoning_effort: str
+    ai_interview_script_timeout_seconds: int
+    ai_interview_script_max_tokens: int
+    ai_interview_script_cache_ttl_hours: int
+    ai_interview_script_ft_model: str
+    ai_interview_script_ab_percent: int
+    ai_interview_script_ft_min_samples: int
+    ai_interview_script_pii_mode: str
     simulator_enabled: bool
 
 
@@ -648,6 +655,22 @@ def get_settings() -> Settings:
     if ai_reasoning_effort not in {"minimal", "low", "medium", "high"}:
         ai_reasoning_effort = "minimal"
 
+    ai_interview_script_timeout_seconds = _get_int(
+        "AI_INTERVIEW_SCRIPT_TIMEOUT_SECONDS",
+        ai_timeout_seconds,
+        minimum=1,
+    )
+    ai_interview_script_max_tokens = _get_int("AI_INTERVIEW_SCRIPT_MAX_TOKENS", 1800, minimum=256)
+    ai_interview_script_cache_ttl_hours = _get_int("AI_INTERVIEW_SCRIPT_CACHE_TTL_HOURS", 24, minimum=1)
+    ai_interview_script_ft_model = os.getenv("AI_INTERVIEW_SCRIPT_FT_MODEL", "").strip()
+    ai_interview_script_ab_percent = _get_int("AI_INTERVIEW_SCRIPT_AB_PERCENT", 0, minimum=0)
+    if ai_interview_script_ab_percent > 100:
+        ai_interview_script_ab_percent = 100
+    ai_interview_script_ft_min_samples = _get_int("AI_INTERVIEW_SCRIPT_FT_MIN_SAMPLES", 300, minimum=1)
+    ai_interview_script_pii_mode = os.getenv("AI_INTERVIEW_SCRIPT_PII_MODE", "redacted").strip().lower()
+    if ai_interview_script_pii_mode not in {"redacted", "full"}:
+        ai_interview_script_pii_mode = "redacted"
+
     simulator_enabled = _get_bool("SIMULATOR_ENABLED", default=False)
 
     settings = Settings(
@@ -716,6 +739,13 @@ def get_settings() -> Settings:
         ai_store_prompts=ai_store_prompts,
         ai_pii_mode=ai_pii_mode,
         ai_reasoning_effort=ai_reasoning_effort,
+        ai_interview_script_timeout_seconds=ai_interview_script_timeout_seconds,
+        ai_interview_script_max_tokens=ai_interview_script_max_tokens,
+        ai_interview_script_cache_ttl_hours=ai_interview_script_cache_ttl_hours,
+        ai_interview_script_ft_model=ai_interview_script_ft_model,
+        ai_interview_script_ab_percent=ai_interview_script_ab_percent,
+        ai_interview_script_ft_min_samples=ai_interview_script_ft_min_samples,
+        ai_interview_script_pii_mode=ai_interview_script_pii_mode,
         simulator_enabled=simulator_enabled,
     )
 

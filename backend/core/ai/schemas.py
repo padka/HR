@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 Severity = Literal["low", "medium", "high"]
 FitLevel = Literal["high", "medium", "low", "unknown"]
@@ -189,3 +189,72 @@ class CandidateCoachV1(BaseModel):
     interview_questions: list[str] = Field(default_factory=list)
     next_best_action: str = ""
     message_drafts: list[DraftItem] = Field(default_factory=list)
+
+
+class InterviewScriptIfAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pattern: str = Field(min_length=1, max_length=200)
+    hint: str = Field(min_length=1, max_length=400)
+
+
+class InterviewScriptBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=120)
+    goal: str = Field(min_length=1, max_length=300)
+    recruiter_text: str = Field(min_length=1, max_length=1200)
+    candidate_questions: list[str] = Field(default_factory=list, max_length=12)
+    if_answers: list[InterviewScriptIfAnswer] = Field(default_factory=list, max_length=12)
+
+
+class InterviewScriptRiskFlag(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=64)
+    severity: Severity = "medium"
+    reason: str = Field(min_length=1, max_length=500)
+    question: str = Field(min_length=1, max_length=300)
+    recommended_phrase: str = Field(min_length=1, max_length=500)
+
+
+class InterviewScriptObjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topic: str = Field(min_length=1, max_length=120)
+    candidate_says: str = Field(min_length=1, max_length=300)
+    recruiter_answer: str = Field(min_length=1, max_length=500)
+
+
+class InterviewScriptCTA(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(min_length=1, max_length=64)
+    text: str = Field(min_length=1, max_length=500)
+
+
+class InterviewScriptPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    risk_flags: list[InterviewScriptRiskFlag] = Field(default_factory=list, max_length=20)
+    highlights: list[str] = Field(default_factory=list, max_length=12)
+    checks: list[str] = Field(default_factory=list, max_length=20)
+    objections: list[InterviewScriptObjection] = Field(default_factory=list, max_length=12)
+    script_blocks: list[InterviewScriptBlock] = Field(min_length=3, max_length=12)
+    cta_templates: list[InterviewScriptCTA] = Field(default_factory=list, max_length=10)
+
+
+InterviewScriptOutcome = Literal["od_assigned", "showed_up", "no_show", "decline", "unknown"]
+
+
+class InterviewScriptFeedbackPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    helped: bool | None = None
+    edited: bool = False
+    quick_reasons: list[str] = Field(default_factory=list, max_length=12)
+    final_script: InterviewScriptPayload | None = None
+    outcome: InterviewScriptOutcome = "unknown"
+    outcome_reason: str | None = Field(default=None, max_length=500)
+    idempotency_key: str = Field(min_length=8, max_length=64)

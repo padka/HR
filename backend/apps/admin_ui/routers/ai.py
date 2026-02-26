@@ -5,6 +5,7 @@ from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from backend.apps.admin_ui.security import (
@@ -145,6 +146,120 @@ async def api_ai_candidate_coach_drafts(
     except AIRateLimitedError:
         return _rate_limited()
     return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, **result.payload})
+
+
+@router.get("/candidates/{candidate_id}/interview-script")
+async def api_ai_candidate_interview_script(
+    candidate_id: int,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    try:
+        result = await ai.get_candidate_interview_script(candidate_id, principal=principal, refresh=False)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    return JSONResponse(
+        {
+            "ok": True,
+            "cached": result.cached,
+            "input_hash": result.input_hash,
+            "generated_at": payload.get("generated_at"),
+            "model": payload.get("model"),
+            "prompt_version": payload.get("prompt_version"),
+            "script": payload.get("script") if isinstance(payload.get("script"), dict) else payload,
+        }
+    )
+
+
+@router.post("/candidates/{candidate_id}/interview-script/refresh")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
+async def api_ai_candidate_interview_script_refresh(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    try:
+        result = await ai.get_candidate_interview_script(candidate_id, principal=principal, refresh=True)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    return JSONResponse(
+        {
+            "ok": True,
+            "cached": result.cached,
+            "input_hash": result.input_hash,
+            "generated_at": payload.get("generated_at"),
+            "model": payload.get("model"),
+            "prompt_version": payload.get("prompt_version"),
+            "script": payload.get("script") if isinstance(payload.get("script"), dict) else payload,
+        }
+    )
+
+
+@router.put("/candidates/{candidate_id}/hh-resume")
+async def api_ai_candidate_hh_resume_upsert(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail={"message": "Ожидался JSON"})
+    format_value = str(payload.get("format") or "").strip().lower()
+    if format_value not in {"json", "raw_text"}:
+        raise HTTPException(status_code=400, detail={"message": "format должен быть json или raw_text"})
+
+    resume_json = payload.get("resume_json")
+    resume_text = payload.get("resume_text")
+    if format_value == "json":
+        if not isinstance(resume_json, dict):
+            raise HTTPException(status_code=400, detail={"message": "Для format=json требуется resume_json"})
+    else:
+        if resume_text is None:
+            resume_text = ""
+        if not isinstance(resume_text, str):
+            raise HTTPException(status_code=400, detail={"message": "Для format=raw_text требуется resume_text"})
+
+    try:
+        result = await ai.upsert_candidate_hh_resume(
+            candidate_id,
+            principal=principal,
+            format=format_value,
+            resume_json=resume_json if isinstance(resume_json, dict) else None,
+            resume_text=str(resume_text) if isinstance(resume_text, str) else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+
+    return JSONResponse({"ok": True, **result})
+
+
+@router.post("/candidates/{candidate_id}/interview-script/feedback")
+@limiter.limit("15/minute", key_func=get_principal_identifier)
+async def api_ai_candidate_interview_script_feedback(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail={"message": "Ожидался JSON"})
+    try:
+        result = await ai.save_interview_script_feedback(candidate_id, principal=principal, payload=payload)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+    return JSONResponse({"ok": True, **result})
 
 
 @router.post("/candidates/{candidate_id}/chat/drafts")

@@ -150,7 +150,12 @@ async def reindex_document(document_id: int) -> int:
         return len(chunks)
 
 
-async def _candidate_chunks_for_terms(terms: list[str], *, limit: int) -> list[KnowledgeBaseChunk]:
+async def _candidate_chunks_for_terms(
+    terms: list[str],
+    *,
+    limit: int,
+    categories: list[str] | None = None,
+) -> list[KnowledgeBaseChunk]:
     if not terms:
         return []
 
@@ -158,17 +163,22 @@ async def _candidate_chunks_for_terms(terms: list[str], *, limit: int) -> list[K
     for t in terms[:10]:
         pat = f"%{t}%"
         clauses.append(func.lower(KnowledgeBaseChunk.content_text).like(pat))
+    categories_norm = [str(c).strip().lower() for c in (categories or []) if str(c).strip()]
 
     async with async_session() as session:
+        stmt = (
+            select(KnowledgeBaseChunk)
+            .join(KnowledgeBaseDocument, KnowledgeBaseChunk.document_id == KnowledgeBaseDocument.id)
+            .where(
+                KnowledgeBaseDocument.is_active.is_(True),
+                or_(*clauses),
+            )
+        )
+        if categories_norm:
+            stmt = stmt.where(func.lower(KnowledgeBaseDocument.category).in_(categories_norm))
         rows = (
             await session.execute(
-                select(KnowledgeBaseChunk)
-                .join(KnowledgeBaseDocument, KnowledgeBaseChunk.document_id == KnowledgeBaseDocument.id)
-                .where(
-                    KnowledgeBaseDocument.is_active.is_(True),
-                    or_(*clauses),
-                )
-                .limit(int(limit))
+                stmt.limit(int(limit))
             )
         ).scalars().all()
         return list(rows)
@@ -205,37 +215,58 @@ def _rank_chunks(chunks: Iterable[KnowledgeBaseChunk], terms: list[str]) -> list
     return ranked
 
 
-async def search_excerpts(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+async def search_excerpts(
+    query: str,
+    *,
+    limit: int = 5,
+    categories: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """Return top KB excerpts for a query (anonymized; no PII expected)."""
 
     terms = extract_query_tokens(query, max_terms=10)
     # Fetch a bit more for ranking stability.
-    candidates = await _candidate_chunks_for_terms(terms, limit=max(20, limit * 6))
+    candidates = await _candidate_chunks_for_terms(
+        terms,
+        limit=max(20, limit * 6),
+        categories=categories,
+    )
     ranked = _rank_chunks(candidates, terms)
 
     # Fetch titles for returned docs.
     doc_ids = {int(ch.document_id) for ch in ranked[:limit]}
-    titles: dict[int, str] = {}
+    docs_meta: dict[int, dict[str, Any]] = {}
     if doc_ids:
         async with async_session() as session:
             rows = (
                 await session.execute(
-                    select(KnowledgeBaseDocument.id, KnowledgeBaseDocument.title).where(
+                    select(
+                        KnowledgeBaseDocument.id,
+                        KnowledgeBaseDocument.title,
+                        KnowledgeBaseDocument.category,
+                    ).where(
                         KnowledgeBaseDocument.id.in_(doc_ids)
                     )
                 )
             ).all()
-            titles = {int(i): str(t or "") for (i, t) in rows}
+            docs_meta = {
+                int(i): {
+                    "title": str(t or ""),
+                    "category": str(c or "general"),
+                }
+                for (i, t, c) in rows
+            }
 
     results: list[dict[str, Any]] = []
     for ch in ranked[:limit]:
         text = (ch.content_text or "").strip()
         if len(text) > 700:
             text = text[:700].rstrip() + "…"
+        doc_meta = docs_meta.get(int(ch.document_id), {})
         results.append(
             {
                 "document_id": int(ch.document_id),
-                "document_title": titles.get(int(ch.document_id), ""),
+                "document_title": str(doc_meta.get("title") or ""),
+                "document_category": str(doc_meta.get("category") or "general"),
                 "chunk_index": int(ch.chunk_index),
                 "excerpt": text,
             }
@@ -249,14 +280,25 @@ async def list_active_documents(*, limit: int = 10) -> list[dict[str, Any]]:
     async with async_session() as session:
         rows = (
             await session.execute(
-                select(KnowledgeBaseDocument.id, KnowledgeBaseDocument.title, KnowledgeBaseDocument.updated_at)
+                select(
+                    KnowledgeBaseDocument.id,
+                    KnowledgeBaseDocument.title,
+                    KnowledgeBaseDocument.category,
+                    KnowledgeBaseDocument.updated_at,
+                )
                 .where(KnowledgeBaseDocument.is_active.is_(True))
                 .order_by(KnowledgeBaseDocument.updated_at.desc(), KnowledgeBaseDocument.id.desc())
                 .limit(limit_value)
             )
         ).all()
     return [
-        {"id": int(r.id), "title": str(r.title or ""), "updated_at": _iso(r.updated_at)} for r in rows
+        {
+            "id": int(r.id),
+            "title": str(r.title or ""),
+            "category": str(r.category or "general"),
+            "updated_at": _iso(r.updated_at),
+        }
+        for r in rows
     ]
 
 

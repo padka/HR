@@ -145,6 +145,65 @@ def candidate_coach_prompts(*, context: dict, allow_pii: bool = False) -> tuple[
     return system, user
 
 
+def interview_script_prompts(
+    *,
+    candidate_profile: dict[str, Any],
+    hh_resume_normalized: dict[str, Any],
+    office_context: dict[str, Any],
+    rag_context: list[dict[str, Any]],
+    base_risk_hints: list[dict[str, Any]],
+) -> tuple[str, str]:
+    system = (
+        "You are RecruitSmart Interview Script Generator.\n"
+        "Task kind: interview_script_v1.\n"
+        "Hard rules:\n"
+        "- Output MUST be a single valid JSON object.\n"
+        "- Follow the exact schema keys and do not add extra keys.\n"
+        "- Do not use markdown.\n"
+        "- Do not invent candidate facts.\n"
+        "- If data is missing, explicitly mark uncertainty in wording.\n"
+        "- Keep recruiter text concise and practical.\n"
+        "- Prioritize logistics clarity, objection handling, and next-step conversion.\n"
+        "- Use provided RAG excerpts as internal policy source.\n"
+        "- Never include secrets.\n"
+        "- PII policy: input is redacted, keep output neutral and safe.\n"
+        "Quality rules:\n"
+        "- Use risk_flags with actionable question + recommended_phrase.\n"
+        "- script_blocks must be executable in real call flow.\n"
+        "- Include dynamic branches in if_answers.\n"
+        "- cta_templates must move candidate to next concrete step.\n"
+        "JSON schema:\n"
+        "{\n"
+        '  "risk_flags": [{"code":"string","severity":"low|medium|high","reason":"string","question":"string","recommended_phrase":"string"}],\n'
+        '  "highlights": ["string"],\n'
+        '  "checks": ["string"],\n'
+        '  "objections": [{"topic":"string","candidate_says":"string","recruiter_answer":"string"}],\n'
+        '  "script_blocks": [{"id":"string","title":"string","goal":"string","recruiter_text":"string","candidate_questions":["string"],"if_answers":[{"pattern":"string","hint":"string"}]}],\n'
+        '  "cta_templates": [{"type":"string","text":"string"}]\n'
+        "}\n"
+    )
+    user = (
+        "Generate Interview Script JSON for this candidate.\n\n"
+        "candidate_profile:\n"
+        f"{_json_block(candidate_profile)}\n\n"
+        "hh_resume_normalized:\n"
+        f"{_json_block(hh_resume_normalized)}\n\n"
+        "office_context:\n"
+        f"{_json_block(office_context)}\n\n"
+        "rag_context:\n"
+        f"{_json_block(rag_context)}\n\n"
+        "base_risk_hints:\n"
+        f"{_json_block(base_risk_hints)}\n\n"
+        "Constraints:\n"
+        "1) Keep script aligned to office/city logistics and vacancy rules.\n"
+        "2) Mention only facts present in input.\n"
+        "3) Cover objections likely for this candidate profile.\n"
+        "4) Keep output compact but complete.\n"
+        "5) Return valid JSON only.\n"
+    )
+    return system, user
+
+
 def candidate_coach_drafts_prompts(*, context: dict, mode: str, allow_pii: bool = False) -> tuple[str, str]:
     style_excerpt = _style_guide_excerpt()
     system = (

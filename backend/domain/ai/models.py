@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Index
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -66,12 +76,14 @@ class KnowledgeBaseDocument(Base):
     __tablename__ = "knowledge_base_documents"
     __table_args__ = (
         Index("ix_kb_documents_active_updated", "is_active", "updated_at"),
+        Index("ix_kb_documents_category", "category"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     filename: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     mime_type: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    category: Mapped[str] = mapped_column(String(64), nullable=False, default="general")
     content_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by_type: Mapped[str] = mapped_column(String(16), nullable=False, default="admin")
@@ -151,3 +163,72 @@ class AIAgentMessage(Base):
     )
 
     thread: Mapped["AIAgentThread"] = relationship(back_populates="messages")
+
+
+class CandidateHHResume(Base):
+    __tablename__ = "candidate_hh_resumes"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", name="uq_candidate_hh_resumes_candidate"),
+        Index("ix_candidate_hh_resumes_candidate", "candidate_id"),
+        Index("ix_candidate_hh_resumes_content_hash", "content_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    format: Mapped[str] = mapped_column(String(16), nullable=False, default="raw_text")
+    resume_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    resume_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    normalized_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    source_quality_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class AIInterviewScriptFeedback(Base):
+    __tablename__ = "ai_interview_script_feedback"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_ai_interview_script_feedback_idempotency"),
+        Index("ix_ai_interview_script_feedback_candidate", "candidate_id", "created_at"),
+        Index("ix_ai_interview_script_feedback_outcome", "outcome"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    principal_type: Mapped[str] = mapped_column(String(16), nullable=False, default="recruiter")
+    principal_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    helped: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    edited: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    quick_reasons_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    outcome_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_redacted_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    output_original_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    output_final_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    labels_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    model: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
