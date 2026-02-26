@@ -115,12 +115,12 @@ async def _ensure_auto_rows(principal: Principal) -> None:
         if assignment_ids:
             existing_assignment_ids = set(
                 (
-                    await session.scalars(
-                        select(DetailizationEntry.slot_assignment_id).where(
-                            DetailizationEntry.slot_assignment_id.in_(assignment_ids)
-                        )
+                await session.scalars(
+                    select(DetailizationEntry.slot_assignment_id).where(
+                        DetailizationEntry.slot_assignment_id.in_(assignment_ids)
                     )
-                ).all()
+                )
+            ).all()
             )
 
         created = 0
@@ -219,6 +219,7 @@ async def list_detailization(principal: Principal) -> dict[str, Any]:
             )
             .order_by(DetailizationEntry.conducted_at.desc().nullslast(), DetailizationEntry.id.desc())
         )
+        q = q.where(DetailizationEntry.is_deleted.is_(False))
         if principal.type == "recruiter":
             q = q.where(DetailizationEntry.recruiter_id == principal.id)
 
@@ -350,8 +351,28 @@ async def create_manual_detailization_entry(
             is_attached=payload.get("is_attached", None),
             created_by_type=principal.type,
             created_by_id=principal.id,
+            is_deleted=False,
         )
         session.add(entry)
         await session.commit()
         await session.refresh(entry)
         return {"ok": True, "id": int(entry.id)}
+
+
+async def delete_detailization_entry(
+    entry_id: int,
+    *,
+    principal: Principal,
+) -> dict[str, Any]:
+    """Delete detailization row with role-based scope checks."""
+    async with async_session() as session:
+        entry = await session.get(DetailizationEntry, entry_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail={"message": "Row not found"})
+
+        if principal.type == "recruiter" and entry.recruiter_id != principal.id:
+            raise HTTPException(status_code=404, detail={"message": "Row not found"})
+
+        entry.is_deleted = True
+        await session.commit()
+        return {"ok": True}

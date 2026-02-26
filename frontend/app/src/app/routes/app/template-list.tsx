@@ -27,6 +27,8 @@ type MessageTemplate = {
 type MessageTemplatesPayload = {
   templates: MessageTemplate[]
   cities: Array<{ id: number | null; name: string }>
+  coverage?: Array<{ key: string; city_id: number | null; missing: boolean }>
+  missing_required?: string[]
 }
 
 type TemplateIndexEntry = {
@@ -54,6 +56,136 @@ function pickLatest(current: MessageTemplate | undefined, candidate: MessageTemp
   return nextVersion >= currentVersion ? candidate : current
 }
 
+
+function CoverageMatrix({
+  keys,
+  cities,
+  templateIndex,
+  missingRequired,
+}: {
+  keys: string[]
+  cities: Array<{ id: number | null; name: string }>
+  templateIndex: Map<string, { global?: MessageTemplate; city: Map<number, MessageTemplate> }>
+  missingRequired: Set<string>
+}) {
+  const navigate = useNavigate()
+  const cityColumns = cities.filter((c) => c.id != null) as Array<{ id: number; name: string }>
+
+  return (
+    <div style={{ overflowX: 'auto', marginTop: 8 }}>
+      <table className="data-table" style={{ fontSize: 12, minWidth: 600 }}>
+        <thead>
+          <tr>
+            <th style={{ whiteSpace: 'nowrap', textAlign: 'left', minWidth: 180 }}>Ключ</th>
+            <th style={{ whiteSpace: 'nowrap', textAlign: 'center' }}>Global</th>
+            {cityColumns.map((c) => (
+              <th key={c.id} style={{ whiteSpace: 'nowrap', textAlign: 'center' }}>{c.name}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {keys.map((key) => {
+            const entry = templateIndex.get(key)
+            const hasGlobal = !!entry?.global
+            return (
+              <tr key={key}>
+                <td>
+                  <code style={{ fontSize: 11 }}>{key}</code>
+                </td>
+                {/* Global column */}
+                <td style={{ textAlign: 'center' }}>
+                  {hasGlobal ? (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn--ghost ui-btn--sm"
+                      style={{ padding: '0 6px', minWidth: 0, fontSize: 16 }}
+                      title="Редактировать глобальный шаблон"
+                      onClick={() => {
+                        const tmpl = entry?.global
+                        if (tmpl?.id) {
+                          navigate({ to: '/app/templates/$templateId/edit', params: { templateId: String(tmpl.id) } })
+                        } else {
+                          navigate({ to: '/app/templates/new', search: { key } })
+                        }
+                      }}
+                    >
+                      ✅
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn--ghost ui-btn--sm"
+                      style={{ padding: '0 6px', minWidth: 0, fontSize: 16 }}
+                      title="Создать глобальный шаблон"
+                      onClick={() => navigate({ to: '/app/templates/new', search: { key } })}
+                    >
+                      ❌
+                    </button>
+                  )}
+                </td>
+                {/* City columns */}
+                {cityColumns.map((c) => {
+                  const cityTmpl = entry?.city.get(c.id)
+                  const isMissing = missingRequired.has(`${key}:${c.id}`)
+                  if (cityTmpl) {
+                    return (
+                      <td key={c.id} style={{ textAlign: 'center' }}>
+                        <button
+                          type="button"
+                          className="ui-btn ui-btn--ghost ui-btn--sm"
+                          style={{ padding: '0 6px', minWidth: 0, fontSize: 16 }}
+                          title={`Редактировать шаблон для ${c.name}`}
+                          onClick={() =>
+                            navigate({ to: '/app/templates/$templateId/edit', params: { templateId: String(cityTmpl.id) } })
+                          }
+                        >
+                          ✅
+                        </button>
+                      </td>
+                    )
+                  }
+                  if (isMissing) {
+                    return (
+                      <td key={c.id} style={{ textAlign: 'center' }}>
+                        <button
+                          type="button"
+                          className="ui-btn ui-btn--ghost ui-btn--sm"
+                          style={{ padding: '0 6px', minWidth: 0, fontSize: 16 }}
+                          title={`Создать шаблон для ${c.name} (обязательно)`}
+                          onClick={() =>
+                            navigate({ to: '/app/templates/new', search: { key, city_id: c.id } })
+                          }
+                        >
+                          ❌
+                        </button>
+                      </td>
+                    )
+                  }
+                  return (
+                    <td key={c.id} style={{ textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn--ghost ui-btn--sm"
+                        style={{ padding: '0 6px', minWidth: 0, fontSize: 16, opacity: 0.45 }}
+                        title={hasGlobal ? `Использует глобальный шаблон. Нажмите, чтобы создать переопределение для ${c.name}` : `Создать шаблон для ${c.name}`}
+                        onClick={() =>
+                          navigate({ to: '/app/templates/new', search: { key, city_id: c.id } })
+                        }
+                      >
+                        ⬇
+                      </button>
+                    </td>
+                  )
+                })}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export function TemplateListPage() {
   const navigate = useNavigate()
   const { data, isLoading, isError, error } = useQuery<MessageTemplatesPayload>({
@@ -64,6 +196,7 @@ export function TemplateListPage() {
   const [selectedCity, setSelectedCity] = useState<string>('global')
   const [search, setSearch] = useState('')
   const [stageFilter, setStageFilter] = useState<string>('all')
+  const [showMatrix, setShowMatrix] = useState(false)
 
   const cityOptions = useMemo(() => {
     const cities = data?.cities || []
@@ -97,6 +230,20 @@ export function TemplateListPage() {
     filteredTemplates.forEach((tmpl) => set.add(tmpl.key))
     return Array.from(set)
   }, [filteredTemplates])
+
+  const missingRequired = useMemo(() => {
+    const set = new Set<string>()
+    // Build from coverage array if present, or from missing_required list
+    if (data?.coverage) {
+      data.coverage.forEach((gap) => {
+        if (gap.missing) set.add(`${gap.key}:${gap.city_id ?? 'global'}`)
+      })
+    }
+    if (data?.missing_required) {
+      data.missing_required.forEach((entry) => set.add(entry))
+    }
+    return set
+  }, [data?.coverage, data?.missing_required])
 
   const selectedCityId = selectedCity === 'global' ? null : Number(selectedCity)
 
@@ -183,6 +330,27 @@ export function TemplateListPage() {
               ))}
             </select>
           </div>
+
+          {!isLoading && !isError && (
+            <div style={{ marginBottom: 8 }}>
+              <button
+                type="button"
+                className="ui-btn ui-btn--ghost ui-btn--sm"
+                onClick={() => setShowMatrix((v) => !v)}
+              >
+                {showMatrix ? 'Скрыть матрицу покрытия' : 'Показать матрицу покрытия'}
+              </button>
+            </div>
+          )}
+
+          {showMatrix && !isLoading && !isError && (
+            <CoverageMatrix
+              keys={keys}
+              cities={data?.cities ?? []}
+              templateIndex={templateIndex}
+              missingRequired={missingRequired}
+            />
+          )}
 
           {isLoading && <p className="subtitle">Загрузка…</p>}
           {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}

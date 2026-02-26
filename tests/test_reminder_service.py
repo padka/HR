@@ -210,6 +210,58 @@ async def test_quiet_hours_adjustment_and_metrics():
 
 
 @pytest.mark.asyncio
+async def test_schedule_uses_candidate_city_tz_when_slot_tz_missing():
+    scheduler = create_scheduler(redis_url=None)
+    service = ReminderService(scheduler=scheduler)
+    service.start()
+
+    candidate_zone = ZoneInfo("Asia/Almaty")
+    start_local = (datetime.now(candidate_zone) + timedelta(days=3)).replace(
+        hour=10,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    start_utc = start_local.astimezone(timezone.utc)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="TZ Fallback", tz="Europe/Moscow", active=True)
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            candidate_city_id=city.id,
+            start_utc=start_utc,
+            status=models.SlotStatus.BOOKED,
+            candidate_tg_id=445566,
+            candidate_tz=None,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    try:
+        await service.schedule_for_slot(slot_id)
+        jobs = {job.id: job for job in scheduler.get_jobs()}
+        confirm_2h_job_id = f"slot:{slot_id}:{ReminderKind.CONFIRM_2H.value}"
+        assert confirm_2h_job_id in jobs
+
+        run_local = jobs[confirm_2h_job_id].next_run_time.astimezone(candidate_zone)
+        expected_local = start_local - timedelta(hours=2)
+        assert run_local.date() == expected_local.date()
+        assert run_local.hour == expected_local.hour
+        assert run_local.minute == expected_local.minute
+    finally:
+        await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_reminder_service_survives_restart(monkeypatch):
     scheduler = create_scheduler(redis_url=None)
     service = ReminderService(scheduler=scheduler)
@@ -391,6 +443,99 @@ async def test_reminder_retry_honors_retry_after_hint(monkeypatch):
     assert delay >= 12 - 0.5
     assert bucket.calls == 1
     await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_slot_reminder_uses_candidate_city_tz_and_link_aliases(monkeypatch):
+    slot_start_utc = datetime(2026, 2, 24, 16, 0, tzinfo=timezone.utc)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Almaty Recruiter",
+            tz="Europe/Moscow",
+            active=True,
+            telemost_url="https://telemost.example/almaty",
+        )
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            candidate_city_id=city.id,
+            start_utc=slot_start_utc,
+            status=models.SlotStatus.BOOKED,
+            candidate_tg_id=555444,
+            candidate_fio="Кандидат Алматы",
+            candidate_tz=None,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    outbox_entry = await add_outbox_notification(
+        notification_type="slot_reminder",
+        booking_id=slot.id,
+        candidate_tg_id=slot.candidate_tg_id,
+        payload={"reminder_kind": ReminderKind.CONFIRM_2H.value},
+    )
+    item = await get_outbox_item(outbox_entry.id)
+    assert item is not None
+
+    service = NotificationService(
+        poll_interval=0.05,
+        batch_size=1,
+        rate_limit_per_sec=10.0,
+    )
+    service._token_bucket = DummyBucket()
+    dummy_bot = SimpleNamespace()
+    monkeypatch.setattr("backend.apps.bot.services.get_bot", lambda: dummy_bot)
+
+    sent_methods: list[SendMessage] = []
+
+    async def fake_send(_bot, method, correlation_id):
+        sent_methods.append(method)
+        return SimpleNamespace(message_id=1)
+
+    captured: dict[str, object] = {}
+
+    async def fake_render(template_key: str, context: dict, **_kwargs):
+        captured["key"] = template_key
+        captured["context"] = dict(context)
+        return SimpleNamespace(
+            text=(
+                f"{context.get('slot_datetime_local')} | "
+                f"{context.get('join_link')} | {context.get('link')} | {context.get('meeting_link')}"
+            ),
+            key=template_key,
+            version=1,
+        )
+
+    monkeypatch.setattr("backend.apps.bot.services._send_with_retry", fake_send)
+    monkeypatch.setattr(service._template_provider, "render", fake_render)
+
+    try:
+        await service._process_interview_reminder(item)
+    finally:
+        await service.shutdown()
+
+    expected_local = slot_start_utc.astimezone(ZoneInfo("Asia/Almaty")).strftime("%d.%m %H:%M")
+    assert captured.get("key") == "confirm_2h"
+    context = captured.get("context")
+    assert isinstance(context, dict)
+    assert context["slot_datetime_local"] == expected_local
+    assert context["dt_local"] == expected_local
+    assert context["join_link"] == "https://telemost.example/almaty"
+    assert context["link"] == "https://telemost.example/almaty"
+    assert context["meeting_link"] == "https://telemost.example/almaty"
+
+    assert len(sent_methods) == 1
+    sent = sent_methods[0]
+    assert expected_local in sent.text
+    assert "https://telemost.example/almaty" in sent.text
 
 
 @pytest.mark.asyncio

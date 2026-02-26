@@ -17,7 +17,15 @@ from backend.apps.admin_ui.utils import (
     validate_timezone_name,
 )
 from backend.core.db import async_session
-from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
+from backend.domain.models import (
+    City,
+    Recruiter,
+    Slot,
+    SlotAssignment,
+    SlotAssignmentStatus,
+    SlotStatus,
+    recruiter_city_association,
+)
 from backend.domain.candidates.models import User
 
 try:  # pragma: no cover - optional dependency during tests
@@ -236,10 +244,14 @@ def _ensure_utc(dt: datetime) -> datetime:
     return dt
 
 
-def _slot_local_time(slot: Slot) -> str:
-    """Return ISO datetime string in slot timezone (fallback to default TZ)."""
+def _slot_local_time(slot: Slot, tz_override: Optional[str] = None) -> str:
+    """Return ISO datetime string in provided timezone (fallback to slot/default TZ)."""
     start = _ensure_utc(slot.start_utc)
-    tz_label = getattr(slot, "tz_name", None) or (slot.city.tz if getattr(slot, "city", None) else DEFAULT_TZ)
+    tz_label = (
+        tz_override
+        or getattr(slot, "tz_name", None)
+        or (slot.city.tz if getattr(slot, "city", None) else DEFAULT_TZ)
+    )
     try:
         zone = ZoneInfo(tz_label)
     except Exception:
@@ -251,12 +263,22 @@ async def api_slots_payload(
     recruiter_id: Optional[int],
     status: Optional[str],
     limit: int,
+    *,
+    sort_dir: str = "desc",
 ) -> List[Dict[str, object]]:
     async with async_session() as session:
+        direction = str(sort_dir or "desc").strip().lower()
+        if direction not in {"asc", "desc"}:
+            direction = "desc"
+        order_clause = (
+            Slot.start_utc.asc()
+            if direction == "asc"
+            else Slot.start_utc.desc()
+        )
         query = (
             select(Slot)
             .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-            .order_by(Slot.start_utc.asc())
+            .order_by(order_clause, Slot.id.desc())
         )
         if recruiter_id is not None:
             query = query.where(Slot.recruiter_id == recruiter_id)
@@ -266,39 +288,206 @@ async def api_slots_payload(
             query = query.limit(max(1, min(500, limit)))
         slots = (await session.scalars(query)).all()
 
-        candidate_ids = {sl.candidate_id for sl in slots if getattr(sl, "candidate_id", None)}
-        candidate_tg_ids = {sl.candidate_tg_id for sl in slots if getattr(sl, "candidate_tg_id", None)}
+        slot_ids = [int(sl.id) for sl in slots if getattr(sl, "id", None) is not None]
+        assignment_statuses = (
+            SlotAssignmentStatus.OFFERED,
+            SlotAssignmentStatus.CONFIRMED,
+            SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+            SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+        )
+        assignment_fallback: Dict[int, Dict[str, object]] = {}
+        if slot_ids:
+            assignment_rows = (
+                await session.execute(
+                    select(
+                        SlotAssignment.slot_id,
+                        SlotAssignment.status,
+                        SlotAssignment.candidate_id,
+                        SlotAssignment.candidate_tg_id,
+                        SlotAssignment.candidate_tz,
+                        User.id,
+                        User.fio,
+                        User.telegram_id,
+                        User.telegram_user_id,
+                    )
+                    .outerjoin(User, User.candidate_id == SlotAssignment.candidate_id)
+                    .where(
+                        SlotAssignment.slot_id.in_(slot_ids),
+                        SlotAssignment.status.in_(assignment_statuses),
+                    )
+                    .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
+                )
+            ).all()
+            for (
+                slot_id,
+                assignment_status,
+                assignment_candidate_id,
+                assignment_candidate_tg_id,
+                assignment_candidate_tz,
+                user_id,
+                user_fio,
+                telegram_id,
+                telegram_user_id,
+            ) in assignment_rows:
+                key = int(slot_id)
+                if key in assignment_fallback:
+                    continue
+                assignment_fallback[key] = {
+                    "status": assignment_status,
+                    "candidate_id": assignment_candidate_id,
+                    "candidate_tg_id": assignment_candidate_tg_id,
+                    "candidate_tz": assignment_candidate_tz,
+                    "candidate_user_id": int(user_id) if user_id is not None else None,
+                    "candidate_fio": user_fio,
+                    "telegram_id": telegram_id,
+                    "telegram_user_id": telegram_user_id,
+                }
+
+        candidate_ids = {str(sl.candidate_id) for sl in slots if getattr(sl, "candidate_id", None)}
+        candidate_tg_ids = {int(sl.candidate_tg_id) for sl in slots if getattr(sl, "candidate_tg_id", None)}
+        for fallback in assignment_fallback.values():
+            candidate_id = fallback.get("candidate_id")
+            candidate_tg_id = fallback.get("candidate_tg_id")
+            telegram_id = fallback.get("telegram_id")
+            telegram_user_id = fallback.get("telegram_user_id")
+            if candidate_id:
+                candidate_ids.add(str(candidate_id))
+            if candidate_tg_id is not None:
+                candidate_tg_ids.add(int(candidate_tg_id))
+            if telegram_id is not None:
+                candidate_tg_ids.add(int(telegram_id))
+            if telegram_user_id is not None:
+                candidate_tg_ids.add(int(telegram_user_id))
 
         candidate_id_map: Dict[str, int] = {}
         candidate_tg_map: Dict[int, int] = {}
+        candidate_name_map: Dict[str, str] = {}
+        candidate_tg_name_map: Dict[int, str] = {}
 
         if candidate_ids or candidate_tg_ids:
-            users_query = select(User.id, User.candidate_id, User.telegram_id).where(
+            users_query = select(User.id, User.candidate_id, User.telegram_id, User.telegram_user_id, User.fio).where(
                 or_(
                     User.candidate_id.in_(candidate_ids) if candidate_ids else literal(False),
                     User.telegram_id.in_(candidate_tg_ids) if candidate_tg_ids else literal(False),
+                    User.telegram_user_id.in_(candidate_tg_ids) if candidate_tg_ids else literal(False),
                 )
             )
-            for user_id, candidate_uuid, telegram_id in (await session.execute(users_query)).all():
+            for user_id, candidate_uuid, telegram_id, telegram_user_id, fio in (await session.execute(users_query)).all():
                 if candidate_uuid:
                     candidate_id_map[str(candidate_uuid)] = int(user_id)
+                    if fio:
+                        candidate_name_map[str(candidate_uuid)] = str(fio)
                 if telegram_id:
                     candidate_tg_map[int(telegram_id)] = int(user_id)
-    return [
-        {
-            "id": sl.id,
-            "recruiter_id": sl.recruiter_id,
-            "recruiter_name": sl.recruiter.name if sl.recruiter else None,
-            "start_utc": _ensure_utc(sl.start_utc).isoformat(),
-            "status": norm_status(sl.status),
-            "candidate_fio": getattr(sl, "candidate_fio", None),
-            "candidate_tg_id": getattr(sl, "candidate_tg_id", None),
-            "candidate_id": candidate_id_map.get(str(sl.candidate_id))
-            or (candidate_tg_map.get(int(sl.candidate_tg_id)) if sl.candidate_tg_id else None),
-            "tz_name": getattr(sl, "tz_name", None) or (sl.city.tz if getattr(sl, "city", None) else None),
-            "local_time": _slot_local_time(sl),
-            "city_name": sl.city.name if sl.city else None,
-            "purpose": getattr(sl, "purpose", None) or "interview",
-        }
-        for sl in slots
-    ]
+                    if fio:
+                        candidate_tg_name_map[int(telegram_id)] = str(fio)
+                if telegram_user_id:
+                    candidate_tg_map[int(telegram_user_id)] = int(user_id)
+                    if fio:
+                        candidate_tg_name_map[int(telegram_user_id)] = str(fio)
+    payload: List[Dict[str, object]] = []
+    for sl in slots:
+        fallback = assignment_fallback.get(int(sl.id), {})
+
+        recruiter_tz = (
+            getattr(getattr(sl, "recruiter", None), "tz", None)
+            or DEFAULT_TZ
+        )
+        candidate_tz = (
+            getattr(sl, "candidate_tz", None)
+            or fallback.get("candidate_tz")
+            or getattr(sl, "tz_name", None)
+            or (sl.city.tz if getattr(sl, "city", None) else None)
+        )
+
+        payload.append(
+            {
+                "id": sl.id,
+                "recruiter_id": sl.recruiter_id,
+                "recruiter_name": sl.recruiter.name if sl.recruiter else None,
+                "start_utc": _ensure_utc(sl.start_utc).isoformat(),
+                "status": (
+                    "PENDING"
+                    if (
+                        norm_status(sl.status) == "FREE"
+                        and fallback.get("status")
+                        in {
+                            SlotAssignmentStatus.OFFERED,
+                            SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+                        }
+                    )
+                    else (
+                        "BOOKED"
+                        if (
+                            norm_status(sl.status) == "FREE"
+                            and fallback.get("status")
+                            in {
+                                SlotAssignmentStatus.CONFIRMED,
+                                SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+                            }
+                        )
+                        else norm_status(sl.status)
+                    )
+                ),
+                "candidate_fio": (
+                    getattr(sl, "candidate_fio", None)
+                    or fallback.get("candidate_fio")
+                    or (
+                        candidate_name_map.get(str(sl.candidate_id))
+                        if getattr(sl, "candidate_id", None)
+                        else None
+                    )
+                    or (
+                        candidate_tg_name_map.get(int(sl.candidate_tg_id))
+                        if getattr(sl, "candidate_tg_id", None)
+                        else None
+                    )
+                    or (
+                        candidate_name_map.get(str(fallback.get("candidate_id")))
+                        if fallback.get("candidate_id")
+                        else None
+                    )
+                    or (
+                        candidate_tg_name_map.get(int(fallback.get("candidate_tg_id")))
+                        if fallback.get("candidate_tg_id") is not None
+                        else None
+                    )
+                ),
+                "candidate_tg_id": (
+                    getattr(sl, "candidate_tg_id", None)
+                    or fallback.get("candidate_tg_id")
+                ),
+                "candidate_id": (
+                    candidate_id_map.get(str(sl.candidate_id))
+                    if getattr(sl, "candidate_id", None)
+                    else None
+                )
+                or (
+                    candidate_tg_map.get(int(sl.candidate_tg_id))
+                    if getattr(sl, "candidate_tg_id", None)
+                    else None
+                )
+                or (
+                    candidate_id_map.get(str(fallback.get("candidate_id")))
+                    if fallback.get("candidate_id")
+                    else None
+                )
+                or (
+                    candidate_tg_map.get(int(fallback.get("candidate_tg_id")))
+                    if fallback.get("candidate_tg_id") is not None
+                    else None
+                ),
+                "tz_name": getattr(sl, "tz_name", None)
+                or (sl.city.tz if getattr(sl, "city", None) else None),
+                "local_time": _slot_local_time(sl),
+                "recruiter_tz": recruiter_tz,
+                "recruiter_local_time": _slot_local_time(sl, recruiter_tz),
+                "candidate_tz": candidate_tz,
+                "candidate_local_time": (
+                    _slot_local_time(sl, str(candidate_tz)) if candidate_tz else None
+                ),
+                "city_name": sl.city.name if sl.city else None,
+                "purpose": getattr(sl, "purpose", None) or "interview",
+            }
+        )
+    return payload

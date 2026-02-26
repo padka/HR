@@ -253,7 +253,21 @@ def _validate_production_settings(settings: Settings) -> None:
             "Set: NOTIFICATION_BROKER=redis"
         )
 
-    # 4.1 AI settings (optional, but strict when enabled)
+    # 4.1 Bot backend URL must be explicitly configured when Telegram bot is enabled.
+    bot_token_configured = bool((settings.bot_token or "").strip())
+    bot_backend_url = (settings.bot_backend_url or "").strip()
+    if settings.bot_enabled and bot_token_configured and not bot_backend_url:
+        errors.append(
+            "Production bot requires BOT_BACKEND_URL when BOT_ENABLED=true and BOT_TOKEN is set. "
+            "Example: BOT_BACKEND_URL=http://127.0.0.1:8000"
+        )
+    if bot_backend_url and not bot_backend_url.startswith(("http://", "https://")):
+        errors.append(
+            "BOT_BACKEND_URL must start with http:// or https://. "
+            "Example: BOT_BACKEND_URL=http://127.0.0.1:8000"
+        )
+
+    # 4.2 AI settings (optional, but strict when enabled)
     if settings.ai_enabled:
         provider = (settings.ai_provider or "").strip().lower()
         if provider in {"openai"}:

@@ -11,27 +11,27 @@ test.describe("/app/candidates", () => {
     await expect(page.getByRole("heading", { name: "Кандидаты", exact: false })).toBeVisible({ timeout: 10000 });
 
     // Check for table or empty state
-    const listOrEmpty = page.locator("table.data-table, .empty-state").first();
-    await expect(listOrEmpty).toBeVisible({ timeout: 10000 });
+    const table = page.getByTestId("candidates-table");
+    const empty = page.getByTestId("candidates-empty-state");
+    await expect(table.or(empty).first()).toBeVisible({ timeout: 10000 });
   });
 
   test("has view mode switcher", async ({ page }) => {
     await page.goto("/app/candidates");
     await page.waitForLoadState("domcontentloaded");
 
-    // Should have view mode buttons (list/kanban/calendar)
-    const viewButtons = page.locator("button").filter({ hasText: /список|канбан|календарь/i });
-    await expect(viewButtons.first()).toBeVisible({ timeout: 10000 });
+    const viewSwitcher = page.getByTestId("candidates-view-switcher");
+    await expect(viewSwitcher).toBeVisible({ timeout: 10000 });
+    await expect(viewSwitcher.getByRole("button").first()).toBeVisible({ timeout: 10000 });
   });
 
   test("can navigate to new candidate form", async ({ page }) => {
     await page.goto("/app/candidates");
     await page.waitForLoadState("domcontentloaded");
 
-    const newButton = page.locator("a[href*='new'], button").filter({ hasText: /создать|добавить|новый/i });
-    if (await newButton.count() > 0) {
-      await newButton.first().click();
-      await page.waitForURL("/app/candidates/new");
-    }
+    const newButton = page.getByTestId("candidates-create-btn");
+    await expect(newButton).toBeVisible({ timeout: 10000 });
+    await newButton.click();
+    await page.waitForURL("/app/candidates/new");
   });
 });

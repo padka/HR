@@ -83,6 +83,13 @@ class DetailizationEntry(Base):
     expert_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     column_9: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_attached: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        index=True,
+    )
 
     created_by_type: Mapped[str] = mapped_column(
         String(16), nullable=False, default="system"
@@ -113,4 +120,3 @@ class DetailizationEntry(Base):
             f"<DetailizationEntry {self.id} candidate={self.candidate_id} "
             f"slot_assignment={self.slot_assignment_id} conducted_at={self.conducted_at}>"
         )
-

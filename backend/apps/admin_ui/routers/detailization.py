@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from backend.apps.admin_ui.security import Principal, require_principal, require_csrf_token
 from backend.apps.admin_ui.services.detailization import (
     create_manual_detailization_entry,
+    delete_detailization_entry,
     list_detailization,
     update_detailization_entry,
 )
@@ -63,3 +64,14 @@ async def api_detailization_create(
     _ = await require_csrf_token(request)
     result = await create_manual_detailization_entry(payload.model_dump(), principal=principal)
     return JSONResponse(result, status_code=201 if result.get("ok") else 400)
+
+
+@router.delete("/{entry_id}")
+async def api_detailization_delete(
+    entry_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    result = await delete_detailization_entry(entry_id, principal=principal)
+    return JSONResponse(result)

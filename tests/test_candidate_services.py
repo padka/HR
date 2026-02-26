@@ -6,6 +6,7 @@ from sqlalchemy import select
 from backend.core.db import async_session
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.models import AutoMessage, Notification, QuestionAnswer, TestResult, User
+from backend.domain.models import Recruiter
 
 
 @pytest.mark.asyncio
@@ -27,6 +28,34 @@ async def test_create_or_update_user_and_lookup():
     active_users = await candidate_services.get_all_active_users()
     assert len(active_users) == 1
     assert active_users[0].telegram_id == 1001
+
+
+@pytest.mark.asyncio
+async def test_create_or_update_user_updates_responsible_recruiter():
+    async with async_session() as session:
+        recruiter_a = Recruiter(name="Rec A", tz="Europe/Moscow", active=True)
+        recruiter_b = Recruiter(name="Rec B", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter_a, recruiter_b])
+        await session.commit()
+        await session.refresh(recruiter_a)
+        await session.refresh(recruiter_b)
+
+    created = await candidate_services.create_or_update_user(
+        telegram_id=1002,
+        fio="Мария Кандидат",
+        city="Москва",
+        responsible_recruiter_id=recruiter_a.id,
+    )
+    assert created.responsible_recruiter_id == recruiter_a.id
+
+    updated = await candidate_services.create_or_update_user(
+        telegram_id=1002,
+        fio="Мария Кандидат",
+        city="Москва",
+        responsible_recruiter_id=recruiter_b.id,
+    )
+    assert updated.id == created.id
+    assert updated.responsible_recruiter_id == recruiter_b.id
 
 
 @pytest.mark.asyncio

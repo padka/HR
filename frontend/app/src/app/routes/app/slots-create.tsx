@@ -11,7 +11,7 @@ type RecruiterPayload = {
   id: number
   name: string
   tz?: string | null
-  tg_chat_id?: string | null
+  tg_chat_id?: number | null
   active?: boolean | null
   city_ids?: number[]
 }
@@ -106,7 +106,7 @@ export function SlotsCreateForm() {
     if (!date || !time || !cityObj?.tz) return null
     const tzCity = cityObj.tz || 'Europe/Moscow'
     const tzRecruiter = recruiter?.tz || tzCity
-    const utc = localToUtc(date, time, tzCity)
+    const utc = localToUtc(date, time, tzRecruiter)
     if (!utc) return null
     return {
       tzCity,
@@ -128,10 +128,18 @@ export function SlotsCreateForm() {
     mutationFn: async (data: FormValues) => {
       setServerError(null)
       setSuccessMessage(null)
+      const selectedCity = (cities || []).find((item) => String(item.id) === String(data.city_id))
+      const tzCity = selectedCity?.tz || recruiter?.tz || 'Europe/Moscow'
+      const tzRecruiter = recruiter?.tz || tzCity
+      const utc = localToUtc(data.date, data.time, tzRecruiter)
+      if (!utc) {
+        throw new Error('Не удалось преобразовать время')
+      }
+      const cityLocal = dateTimeInTz(utc, tzCity)
       const payload = {
         recruiter_id: Number(data.recruiter_id),
         city_id: Number(data.city_id),
-        starts_at_local: `${data.date}T${data.time}`,
+        starts_at_local: `${cityLocal.date}T${cityLocal.time}`,
       }
       const res = await fetch('/slots', {
         method: 'POST',
@@ -204,7 +212,7 @@ export function SlotsCreateForm() {
           <form onSubmit={onSubmit} className="glass panel slot-create-form">
             <div className="slot-create-section">
               <h2 className="title title--sm">Один слот</h2>
-              <p className="subtitle">Единичная встреча на конкретную дату и время.</p>
+              <p className="subtitle">Единичная встреча на конкретную дату и время в часовом поясе рекрутёра.</p>
             </div>
             <div className="slot-create-grid">
               <input type="hidden" {...register('recruiter_id')} />
@@ -336,36 +344,33 @@ function BulkCreateForm({
     mutationFn: async (data: z.infer<typeof bulkSchema>) => {
       setServerError(null)
       setSuccessMessage(null)
-      const body = new URLSearchParams({
-        recruiter_id: String(data.recruiter_id),
-        city_id: String(data.city_id),
-        start_date: data.start_date,
-        end_date: data.end_date,
-        start_time: data.start_time,
-        end_time: data.end_time,
-        break_start: data.break_start,
-        break_end: data.break_end,
-        step_min: String(data.step_min),
-        include_weekends: data.include_weekends ? '1' : '',
-        use_break: data.use_break ? '1' : '',
-      })
-      const res = await fetch('/slots/bulk_create', {
+      return apiFetch<{ ok: boolean; created: number; error?: string }>('/slots/bulk_create', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
+        body: JSON.stringify({
+          recruiter_id: Number(data.recruiter_id),
+          city_id: Number(data.city_id),
+          start_date: data.start_date,
+          end_date: data.end_date,
+          start_time: data.start_time,
+          end_time: data.end_time,
+          break_start: data.break_start,
+          break_end: data.break_end,
+          step_min: Number(data.step_min),
+          include_weekends: Boolean(data.include_weekends),
+          use_break: Boolean(data.use_break),
+        }),
       })
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text || `Ошибка ${res.status}`)
-      }
-      return true
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['slots'] })
-      const p = preview
-      setSuccessMessage(`Создано ${p.total} слотов (${p.days} дней × ${p.perDay} слотов/день)`)
-      showToast('Серия слотов создана', 'success')
+      const created = Number(result?.created || 0)
+      if (created <= 0) {
+        setSuccessMessage('Новые слоты не созданы: возможно, время уже занято или все окна в прошлом.')
+        showToast('Новые слоты не созданы', 'warning')
+        return
+      }
+      setSuccessMessage(`Создано ${created} слотов.`)
+      showToast(`Серия создана: ${created} слотов`, 'success')
       setTimeout(() => setSuccessMessage(null), 5000)
     },
     onError: (err: unknown) => {
@@ -380,7 +385,7 @@ function BulkCreateForm({
     if (!startDate || !startTime || !cityObj?.tz) return null
     const tzCity = cityObj.tz || 'Europe/Moscow'
     const tzRecruiter = recruiter?.tz || tzCity
-    const utc = localToUtc(startDate, startTime, tzCity)
+    const utc = localToUtc(startDate, startTime, tzRecruiter)
     if (!utc) return null
     return {
       tzCity,
@@ -394,7 +399,7 @@ function BulkCreateForm({
     <form onSubmit={handleSubmit((values) => mutation.mutate(values))} className="glass panel slot-create-form">
       <div className="slot-create-section">
         <h2 className="title title--sm">Серия слотов</h2>
-        <p className="subtitle">Диапазон дат, окно времени и шаг.</p>
+        <p className="subtitle">Диапазон дат, окно времени и шаг. Время вводится в часовом поясе рекрутёра.</p>
       </div>
       <div className="slot-create-grid">
         <input type="hidden" {...register('recruiter_id')} />
@@ -606,4 +611,22 @@ function localToUtc(date: string, time: string, tz: string) {
   const utcGuess = new Date(Date.UTC(y, m - 1, d, hh, mm, 0))
   const offset = getOffsetMinutes(utcGuess, tz)
   return new Date(utcGuess.getTime() - offset * 60000)
+}
+
+function dateTimeInTz(value: Date, tz: string) {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  const parts = fmt.formatToParts(value)
+  const pick = (type: string) => parts.find((p) => p.type === type)?.value || ''
+  return {
+    date: `${pick('year')}-${pick('month')}-${pick('day')}`,
+    time: `${pick('hour')}:${pick('minute')}`,
+  }
 }

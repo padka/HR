@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { apiFetch } from '@/api/client'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { browserTimeZone, buildSlotTimePreview } from '@/app/lib/timezonePreview'
 
@@ -35,6 +36,38 @@ type CandidateSlot = {
   candidate_tz?: string | null
 }
 
+type TestQuestionAnswer = {
+  question_index?: number
+  question_text?: string | null
+  user_answer?: string | null
+  correct_answer?: string | null
+  attempts_count?: number | null
+  time_spent?: number | null
+  is_correct?: boolean | null
+  overtime?: boolean | null
+}
+
+type TestStats = {
+  total_questions?: number
+  correct_answers?: number
+  overtime_questions?: number
+  raw_score?: number
+  final_score?: number
+  total_time?: number
+}
+
+type TestAttempt = {
+  id: number
+  completed_at?: string | null
+  raw_score?: number
+  final_score?: number
+  source?: string
+  details?: {
+    stats?: TestStats
+    questions?: TestQuestionAnswer[]
+  }
+}
+
 type TestSection = {
   key: string
   title: string
@@ -45,22 +78,10 @@ type TestSection = {
   pending_since?: string | null
   report_url?: string | null
   details?: {
-    stats?: {
-      total_questions?: number
-      correct_answers?: number
-      overtime_questions?: number
-      raw_score?: number
-      final_score?: number
-      total_time?: number
-    }
+    stats?: TestStats
+    questions?: TestQuestionAnswer[]
   }
-  history?: Array<{
-    id: number
-    completed_at?: string | null
-    raw_score?: number
-    final_score?: number
-    source?: string
-  }>
+  history?: TestAttempt[]
 }
 
 type ReportPreviewState = {
@@ -143,10 +164,42 @@ function formatSlotTime(startUtc: string | null | undefined, tz: string | null |
   }
 }
 
+function formatDateTime(value?: string | null): string {
+  if (!value) return '—'
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return '—'
+  return dt.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function formatSecondsToMinutes(value?: number | null): string {
+  if (typeof value !== 'number' || value <= 0) return '—'
+  return `${Math.max(1, Math.round(value / 60))} мин`
+}
+
 function normalizeTelegramUsername(username?: string | null): string | null {
   if (!username) return null
   const cleaned = username.trim().replace(/^@/, '')
   return cleaned || null
+}
+
+function normalizeConferenceUrl(url?: string | null): string | null {
+  if (!url) return null
+  const raw = url.trim()
+  if (!raw) return null
+  try {
+    const prepared = raw.includes('://') ? raw : `https://${raw}`
+    const parsed = new URL(prepared)
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null
+    return parsed.toString()
+  } catch {
+    return null
+  }
 }
 
 type ChatMessage = {
@@ -419,6 +472,86 @@ function ReportPreviewModal({ title, url, onClose }: ReportPreviewModalProps) {
                 ) : (
                   <pre className="report-preview__text">{text || 'Отчёт пустой.'}</pre>
                 )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
+  )
+}
+
+type TestAttemptModalProps = {
+  testTitle: string
+  attempt: TestAttempt
+  onClose: () => void
+}
+
+function TestAttemptModal({ testTitle, attempt, onClose }: TestAttemptModalProps) {
+  const stats = attempt.details?.stats
+  const questions = attempt.details?.questions || []
+  const totalQuestions = stats?.total_questions ?? questions.length
+  const correctAnswers = stats?.correct_answers ?? questions.filter((q) => q.is_correct).length
+
+  return (
+    <ModalPortal>
+      <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+        <div className="glass glass--elevated modal">
+          <div className="modal__header">
+            <div>
+              <h2 className="modal__title">
+                {testTitle} · попытка #{attempt.id}
+              </h2>
+              <p className="modal__subtitle">
+                {formatDateTime(attempt.completed_at)}
+                {attempt.source ? ` · ${attempt.source}` : ''}
+              </p>
+            </div>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
+          </div>
+
+          <div className="modal__body">
+            <div className="cd-test-attempt-modal__summary">
+              <TestScoreBar
+                correct={correctAnswers}
+                total={totalQuestions}
+                score={stats?.final_score ?? attempt.final_score}
+              />
+              <div className="cd-test-card__extra">
+                <span>Сырые: {typeof (stats?.raw_score ?? attempt.raw_score) === 'number' ? (stats?.raw_score ?? attempt.raw_score) : '—'}</span>
+                <span>Время: {formatSecondsToMinutes(stats?.total_time)}</span>
+                <span>Просрочено: {stats?.overtime_questions ?? 0}</span>
+              </div>
+            </div>
+
+            {questions.length === 0 ? (
+              <p className="subtitle">Для этой попытки нет подробных ответов.</p>
+            ) : (
+              <div className="cd-test-attempt-modal__questions">
+                {questions.map((question, index) => (
+                  <div key={`${attempt.id}-${question.question_index ?? index}`} className="glass cd-test-attempt-question">
+                    <div className="cd-test-attempt-question__header">
+                      <span>Вопрос {question.question_index ?? index + 1}</span>
+                      <span className={`cd-chip cd-chip--small ${question.is_correct ? 'cd-chip--success' : 'cd-chip--danger'}`}>
+                        {question.is_correct ? 'Верно' : 'Неверно'}
+                      </span>
+                    </div>
+                    <div className="cd-test-attempt-question__text">{question.question_text || '—'}</div>
+                    <div className="cd-test-attempt-question__answer">
+                      <strong>Ответ кандидата:</strong> {question.user_answer || '—'}
+                    </div>
+                    {question.correct_answer && (
+                      <div className="cd-test-attempt-question__answer">
+                        <strong>Эталон:</strong> {question.correct_answer}
+                      </div>
+                    )}
+                    <div className="cd-test-attempt-question__meta">
+                      <span>Попыток: {question.attempts_count ?? 1}</span>
+                      <span>Время: {formatSecondsToMinutes(question.time_spent)}</span>
+                      {question.overtime ? <span>Просрочено</span> : null}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -980,6 +1113,7 @@ export function CandidateDetailPage() {
   const [showScheduleIntroDayModal, setShowScheduleIntroDayModal] = useState(false)
   const [showRejectModal, setShowRejectModal] = useState<{ actionKey: string; title?: string } | null>(null)
   const [reportPreview, setReportPreview] = useState<ReportPreviewState | null>(null)
+  const [attemptPreview, setAttemptPreview] = useState<{ testTitle: string; attempt: TestAttempt } | null>(null)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -1187,6 +1321,13 @@ export function CandidateDetailPage() {
       ? `tg://user?id=${detail.telegram_id}`
       : null
   const hhLink = detail?.hh_profile_url || null
+  const conferenceLink = normalizeConferenceUrl(detail?.telemost_url)
+  const conferenceSourceLabel =
+    detail?.telemost_source === 'upcoming'
+      ? 'Источник: ближайший слот'
+      : detail?.telemost_source === 'recent'
+        ? 'Источник: последний слот'
+        : null
 
   const test2Action = actions.find((action) => {
     const key = action.key?.toLowerCase?.() || ''
@@ -1216,7 +1357,13 @@ export function CandidateDetailPage() {
     <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
         {detailQuery.isLoading && <div className="glass panel" style={{ textAlign: 'center', padding: 48 }}><p className="subtitle">Загрузка...</p></div>}
-        {detailQuery.isError && <div className="glass panel"><p style={{ color: '#f07373' }}>Ошибка: {(detailQuery.error as Error).message}</p></div>}
+        {detailQuery.isError && (
+          <ApiErrorBanner
+            error={detailQuery.error}
+            title="Не удалось загрузить профиль кандидата"
+            onRetry={() => detailQuery.refetch()}
+          />
+        )}
 
         {detail && (<>
         {/* ── Header Card ── */}
@@ -1281,15 +1428,21 @@ export function CandidateDetailPage() {
                 <span>Профиль</span>
               </span>
             )}
-            {hhLink ? (
-              <a href={hhLink} className="cd-contact-btn" target="_blank" rel="noopener">
-                <span className="cd-contact-btn__icon">HH</span>
-                <span>Профиль</span>
+            {conferenceLink ? (
+              <a
+                href={conferenceLink}
+                className="cd-contact-btn"
+                target="_blank"
+                rel="noopener noreferrer"
+                title={conferenceSourceLabel || 'Ссылка на конференцию'}
+              >
+                <span className="cd-contact-btn__icon">VC</span>
+                <span>В конференцию</span>
               </a>
             ) : (
-              <span className="cd-contact-btn cd-contact-btn--disabled">
-                <span className="cd-contact-btn__icon">HH</span>
-                <span>Профиль</span>
+              <span className="cd-contact-btn cd-contact-btn--disabled" title="У рекрутера не заполнена ссылка на конференцию">
+                <span className="cd-contact-btn__icon">VC</span>
+                <span>В конференцию</span>
               </span>
             )}
             {detail.telegram_id && (
@@ -1837,11 +1990,17 @@ export function CandidateDetailPage() {
                       <summary>История попыток ({section.history.length})</summary>
                       <div className="cd-test-card__history-list">
                         {section.history.map((h) => (
-                          <div key={h.id} className="cd-test-card__history-item">
-                            <span>{h.completed_at ? new Date(h.completed_at).toLocaleDateString('ru-RU') : '—'}</span>
+                          <button
+                            key={h.id}
+                            type="button"
+                            className="cd-test-card__history-item cd-test-card__history-item--button"
+                            onClick={() => setAttemptPreview({ testTitle: section.title, attempt: h })}
+                          >
+                            <span>{formatDateTime(h.completed_at)}</span>
                             <span>{typeof h.final_score === 'number' ? h.final_score.toFixed(1) : '—'}</span>
                             {h.source && <span className="cd-chip cd-chip--small">{h.source}</span>}
-                          </div>
+                            <span className="cd-test-card__history-link">Открыть</span>
+                          </button>
                         ))}
                       </div>
                     </details>
@@ -1905,6 +2064,14 @@ export function CandidateDetailPage() {
         />
       )}
 
+      {attemptPreview && (
+        <TestAttemptModal
+          testTitle={attemptPreview.testTitle}
+          attempt={attemptPreview.attempt}
+          onClose={() => setAttemptPreview(null)}
+        />
+      )}
+
       {isChatOpen && (
         <ModalPortal>
           <div className="drawer-overlay" onClick={(e) => e.target === e.currentTarget && setIsChatOpen(false)}>
@@ -1919,23 +2086,42 @@ export function CandidateDetailPage() {
 
               <div className="candidate-chat-drawer__body">
                 {chatQuery.isLoading && <p className="subtitle">Загрузка сообщений…</p>}
-                {chatQuery.isError && <p style={{ color: '#f07373' }}>Ошибка: {(chatQuery.error as Error).message}</p>}
+                {chatQuery.isError && (
+                  <ApiErrorBanner
+                    error={chatQuery.error}
+                    title="Не удалось загрузить сообщения"
+                    onRetry={() => chatQuery.refetch()}
+                    className="glass panel"
+                  />
+                )}
                 {chatMessages.length === 0 && !chatQuery.isLoading && (
                   <p className="subtitle">Сообщений пока нет.</p>
                 )}
                 {chatMessages.length > 0 && (
                   <div className="candidate-chat-drawer__messages" ref={chatMessagesRef}>
-                    {chatMessages.map((msg) => (
-                      <div
-                        key={msg.id}
-                        className={`candidate-chat-message ${msg.direction === 'outbound' ? 'candidate-chat-message--outbound' : 'candidate-chat-message--inbound'}`}
-                      >
-                        <div className="candidate-chat-message__text">{msg.text}</div>
-                        <div className="candidate-chat-message__meta">
-                          {new Date(msg.created_at).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
+                    {chatMessages.map((msg) => {
+                      const isOutbound = msg.direction === 'outbound'
+                      const isBot = isOutbound && (msg.author || '').trim().toLowerCase() === 'bot'
+                      const authorLabel = isBot
+                        ? 'Бот'
+                        : isOutbound
+                          ? (msg.author || 'Вы')
+                          : (msg.author || 'Кандидат')
+
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`candidate-chat-message ${isOutbound ? 'candidate-chat-message--outbound' : 'candidate-chat-message--inbound'} ${isBot ? 'candidate-chat-message--bot' : ''}`}
+                        >
+                          <div className="candidate-chat-message__text">{msg.text}</div>
+                          <div className="candidate-chat-message__meta">
+                            <span className="candidate-chat-message__author">{authorLabel}</span>
+                            <span> · </span>
+                            <span>{new Date(msg.created_at).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}</span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -2009,6 +2195,7 @@ export function CandidateDetailPage() {
                   value={chatText}
                   onChange={(e) => setChatText(e.target.value)}
                   placeholder="Написать сообщение…"
+                  data-testid="chat-textarea"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()

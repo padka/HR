@@ -12,6 +12,7 @@ from backend.apps.admin_ui.services.candidates import (
     update_candidate_status,
     upsert_candidate,
 )
+from backend.apps.admin_ui.security import Principal
 from backend.core.db import async_session
 from backend.domain.candidates import (
     models as candidate_models,
@@ -90,6 +91,44 @@ async def test_list_candidates_and_detail():
     assert detail["tests"]
     assert "slots" in detail
     assert "timeline" in detail
+
+
+@pytest.mark.asyncio
+async def test_list_candidates_includes_responsible_recruiter_fallback_fields():
+    async with async_session() as session:
+        recruiter = Recruiter(name="Fallback Recruiter", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999011,
+        fio="Fallback Candidate",
+        city="Москва",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=recruiter_id,
+    )
+
+    payload = await list_candidates(
+        page=1,
+        per_page=20,
+        search="Fallback Candidate",
+        city=None,
+        is_active=None,
+        rating=None,
+        has_tests=None,
+        has_messages=None,
+        statuses=["test1_completed"],
+        principal=Principal(type="admin", id=-1),
+    )
+
+    cards = payload["views"].get("candidates", [])
+    card = next((item for item in cards if item.get("id") == candidate.id), None)
+    assert card is not None
+    assert card.get("recruiter_id") == recruiter_id
+    assert card.get("recruiter_name") == "Fallback Recruiter"
+    assert card.get("recruiter", {}).get("name") == "Fallback Recruiter"
 
 
 @pytest.mark.asyncio
@@ -221,6 +260,76 @@ async def test_api_candidate_detail_payload_extracts_hh_profile_url_from_answers
     payload = await api_candidate_detail_payload(candidate.id)
     assert payload is not None
     assert payload.get("hh_profile_url") == "https://hh.ru/resume/abcdef12345"
+
+
+@pytest.mark.asyncio
+async def test_candidate_detail_test_history_contains_attempt_details():
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999102,
+        fio="Attempt History Candidate",
+        city="Екатеринбург",
+    )
+
+    await candidate_services.save_test_result(
+        user_id=candidate.id,
+        raw_score=2,
+        final_score=2.0,
+        rating="TEST1",
+        total_time=180,
+        question_data=[
+            {
+                "question_index": 1,
+                "question_text": "Q1",
+                "correct_answer": "A",
+                "user_answer": "A",
+                "attempts_count": 1,
+                "time_spent": 20,
+                "is_correct": True,
+                "overtime": False,
+            },
+            {
+                "question_index": 2,
+                "question_text": "Q2",
+                "correct_answer": "B",
+                "user_answer": "B",
+                "attempts_count": 1,
+                "time_spent": 25,
+                "is_correct": True,
+                "overtime": False,
+            },
+        ],
+    )
+
+    await candidate_services.save_test_result(
+        user_id=candidate.id,
+        raw_score=1,
+        final_score=1.0,
+        rating="TEST1",
+        total_time=120,
+        question_data=[
+            {
+                "question_index": 1,
+                "question_text": "Q1 retry",
+                "correct_answer": "A",
+                "user_answer": "C",
+                "attempts_count": 2,
+                "time_spent": 30,
+                "is_correct": False,
+                "overtime": True,
+            }
+        ],
+    )
+
+    detail = await get_candidate_detail(candidate.id)
+    assert detail is not None
+    sections = {section["key"]: section for section in detail["test_sections"]}
+    history = sections["test1"]["history"]
+    assert len(history) == 2
+    assert history[0]["details"]["stats"]["total_questions"] == 1
+    assert history[0]["details"]["stats"]["overtime_questions"] == 1
+    assert len(history[0]["details"]["questions"]) == 1
+    assert history[1]["details"]["stats"]["total_questions"] == 2
+    assert len(history[1]["details"]["questions"]) == 2
 
 
 @pytest.mark.asyncio
@@ -506,3 +615,108 @@ async def test_update_candidate_status_declined_without_slot():
     async with async_session() as session:
         refreshed = await session.get(candidate_models.User, candidate.id)
         assert refreshed.candidate_status == CandidateStatus.INTERVIEW_DECLINED
+
+
+@pytest.mark.asyncio
+async def test_recruiter_can_update_unassigned_candidate_in_city_scope():
+    async with async_session() as session:
+        city = City(name="Воронеж", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Scoped Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.flush()
+        recruiter_id = recruiter.id
+        await session.commit()
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=991001,
+        fio="Scoped Candidate",
+        city="Воронеж",
+    )
+
+    ok, message, stored_status, _ = await update_candidate_status(
+        candidate.id,
+        "interview_declined",
+        principal=Principal(type="recruiter", id=recruiter_id),
+    )
+
+    assert ok is True
+    assert message == "Статус обновлён"
+    assert stored_status == "interview_declined"
+    async with async_session() as session:
+        refreshed = await session.get(candidate_models.User, candidate.id)
+        assert refreshed is not None
+        assert refreshed.responsible_recruiter_id == recruiter_id
+
+
+@pytest.mark.asyncio
+async def test_recruiter_can_update_candidate_owned_by_another_recruiter_in_city_scope():
+    async with async_session() as session:
+        city = City(name="Томск", tz="Asia/Tomsk", active=True)
+        owner = Recruiter(name="Owner Recruiter", tz="Asia/Tomsk", active=True)
+        viewer = Recruiter(name="Viewer Recruiter", tz="Asia/Tomsk", active=True)
+        owner.cities.append(city)
+        viewer.cities.append(city)
+        session.add_all([city, owner, viewer])
+        await session.flush()
+        owner_id = owner.id
+        viewer_id = viewer.id
+        await session.commit()
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=991002,
+        fio="Foreign Candidate",
+        city="Томск",
+    )
+    async with async_session() as session:
+        db_candidate = await session.get(candidate_models.User, candidate.id)
+        assert db_candidate is not None
+        db_candidate.responsible_recruiter_id = owner_id
+        await session.commit()
+
+    ok, message, stored_status, _ = await update_candidate_status(
+        candidate.id,
+        "interview_declined",
+        principal=Principal(type="recruiter", id=viewer_id),
+    )
+
+    assert ok is True
+    assert message == "Статус обновлён"
+    assert stored_status == "interview_declined"
+
+
+@pytest.mark.asyncio
+async def test_recruiter_cannot_update_candidate_outside_city_scope():
+    async with async_session() as session:
+        city_owner = City(name="Тюмень", tz="Asia/Yekaterinburg", active=True)
+        city_viewer = City(name="Псков", tz="Europe/Moscow", active=True)
+        owner = Recruiter(name="Owner Outside City", tz="Asia/Yekaterinburg", active=True)
+        viewer = Recruiter(name="Viewer Outside City", tz="Europe/Moscow", active=True)
+        owner.cities.append(city_owner)
+        viewer.cities.append(city_viewer)
+        session.add_all([city_owner, city_viewer, owner, viewer])
+        await session.flush()
+        owner_id = owner.id
+        viewer_id = viewer.id
+        await session.commit()
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=991003,
+        fio="Outside City Candidate",
+        city="Тюмень",
+    )
+    async with async_session() as session:
+        db_candidate = await session.get(candidate_models.User, candidate.id)
+        assert db_candidate is not None
+        db_candidate.responsible_recruiter_id = owner_id
+        await session.commit()
+
+    ok, message, stored_status, _ = await update_candidate_status(
+        candidate.id,
+        "interview_declined",
+        principal=Principal(type="recruiter", id=viewer_id),
+    )
+
+    assert ok is False
+    assert message == "Кандидат не найден"
+    assert stored_status is None

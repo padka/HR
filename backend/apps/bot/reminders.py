@@ -106,7 +106,7 @@ from backend.apps.bot.runtime_config import (
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.core.redis_factory import parse_redis_target
-from backend.domain.models import SlotReminderJob, SlotStatus, Slot
+from backend.domain.models import City, Recruiter, SlotReminderJob, SlotStatus, Slot
 from backend.domain.repositories import add_outbox_notification, get_slot
 
 logger = logging.getLogger(__name__)
@@ -180,9 +180,10 @@ class ReminderService:
                     for slot in slot_rows:
                         slot_id = slot.id
                         try:
+                            candidate_tz = await self._resolve_slot_timezone(slot)
                             plans = self._build_schedule(
                                 slot.start_utc,
-                                slot.candidate_tz or DEFAULT_TZ,
+                                candidate_tz,
                                 getattr(slot, "purpose", None) or "interview",
                                 policy=reminder_policy,
                             )
@@ -305,7 +306,12 @@ class ReminderService:
                         )
                     )
                     for slot in slot_rows:
-                        plans = self._build_schedule(slot.start_utc, slot.candidate_tz or DEFAULT_TZ, getattr(slot, "purpose", None) or "interview")
+                        candidate_tz = await self._resolve_slot_timezone(slot)
+                        plans = self._build_schedule(
+                            slot.start_utc,
+                            candidate_tz,
+                            getattr(slot, "purpose", None) or "interview",
+                        )
                         for plan in plans:
                             if plan.run_at_utc <= datetime.now(timezone.utc):
                                 continue
@@ -383,12 +389,30 @@ class ReminderService:
                 return
 
             reminder_policy, _ = await get_reminder_policy_config()
+
+            # Load per-city reminder policy overrides
+            city_policy_data = None
+            if slot.city_id is not None:
+                try:
+                    from backend.apps.admin_ui.services.city_reminder_policy import get_city_reminder_policy
+                    city_policy_data = await get_city_reminder_policy(slot.city_id)
+                except Exception:
+                    logger.warning("Failed to load city reminder policy for city_id=%s", slot.city_id)
+
+            purpose = getattr(slot, "purpose", "interview") or "interview"
+            candidate_tz = await self._resolve_slot_timezone(slot)
             plans = self._build_schedule(
                 slot.start_utc,
-                slot.candidate_tz or DEFAULT_TZ,
-                getattr(slot, "purpose", "interview") or "interview",
+                candidate_tz,
+                purpose,
                 policy=reminder_policy,
                 dedupe_by_time=False,
+                city_quiet_start=city_policy_data.quiet_hours_start if city_policy_data and city_policy_data.is_custom else None,
+                city_quiet_end=city_policy_data.quiet_hours_end if city_policy_data and city_policy_data.is_custom else None,
+                city_confirm_6h_enabled=city_policy_data.confirm_6h_enabled if city_policy_data and city_policy_data.is_custom else None,
+                city_confirm_3h_enabled=city_policy_data.confirm_3h_enabled if city_policy_data and city_policy_data.is_custom else None,
+                city_confirm_2h_enabled=city_policy_data.confirm_2h_enabled if city_policy_data and city_policy_data.is_custom else None,
+                city_intro_remind_3h_enabled=city_policy_data.intro_remind_3h_enabled if city_policy_data and city_policy_data.is_custom else None,
             )
             if skip_confirmation_prompts:
                 confirm_kinds = {
@@ -405,7 +429,7 @@ class ReminderService:
                 )
                 return
 
-            candidate_zone = _safe_zone(slot.candidate_tz)
+            candidate_zone = _safe_zone(candidate_tz)
             now_local = datetime.now(candidate_zone)
             start_local = slot.start_utc.astimezone(candidate_zone)
             time_until_meeting = start_local - now_local
@@ -532,9 +556,56 @@ class ReminderService:
                     )
                 await session.commit()
 
+    async def _resolve_slot_timezone(self, slot: Slot) -> str:
+        direct_tz = _normalized_tz_name(getattr(slot, "candidate_tz", None))
+        if direct_tz:
+            return direct_tz
+
+        city_id = getattr(slot, "candidate_city_id", None) or getattr(slot, "city_id", None)
+        recruiter_id = getattr(slot, "recruiter_id", None)
+        if city_id is None and recruiter_id is None:
+            return DEFAULT_TZ
+
+        try:
+            async with async_session() as session:
+                if city_id is not None:
+                    city = await session.get(City, int(city_id))
+                    city_tz = _normalized_tz_name(getattr(city, "tz", None) if city else None)
+                    if city_tz:
+                        return city_tz
+                if recruiter_id is not None:
+                    recruiter = await session.get(Recruiter, int(recruiter_id))
+                    recruiter_tz = _normalized_tz_name(getattr(recruiter, "tz", None) if recruiter else None)
+                    if recruiter_tz:
+                        return recruiter_tz
+        except Exception:
+            logger.warning(
+                "reminder.resolve_slot_timezone_failed",
+                extra={"slot_id": getattr(slot, "id", None)},
+                exc_info=True,
+            )
+
+        return DEFAULT_TZ
+
     async def cancel_for_slot(self, slot_id: int) -> None:
         async with self._lock:
             await self._cancel_jobs(slot_id)
+
+    async def cancel_job(self, job_id: str) -> bool:
+        """Cancel a specific reminder job by job_id. Returns True if cancelled."""
+        try:
+            self._scheduler.remove_job(job_id)
+        except Exception:
+            pass  # job may have already fired or not exist in scheduler
+
+        async with async_session() as session:
+            from sqlalchemy import delete as sa_delete
+            from backend.domain.models import SlotReminderJob
+            result = await session.execute(
+                sa_delete(SlotReminderJob).where(SlotReminderJob.job_id == job_id)
+            )
+            await session.commit()
+            return result.rowcount > 0
 
     def stats(self) -> Dict[str, int]:
         jobs = self._scheduler.get_jobs()
@@ -739,6 +810,12 @@ class ReminderService:
         *,
         policy: Optional[Dict[str, Any]] = None,
         dedupe_by_time: bool = True,
+        city_quiet_start: Optional[int] = None,
+        city_quiet_end: Optional[int] = None,
+        city_confirm_6h_enabled: Optional[bool] = None,
+        city_confirm_3h_enabled: Optional[bool] = None,
+        city_confirm_2h_enabled: Optional[bool] = None,
+        city_intro_remind_3h_enabled: Optional[bool] = None,
     ) -> List[ReminderPlan]:
         zone = _safe_zone(tz)
         start_local = start_utc.astimezone(zone)
@@ -746,11 +823,16 @@ class ReminderService:
         effective_policy = policy or {}
         if normalized_purpose == "intro_day":
             targets: List[tuple[ReminderKind, timedelta]] = []
-            if is_reminder_kind_enabled(
-                effective_policy,
-                purpose=normalized_purpose,
-                kind=ReminderKind.INTRO_REMIND_3H.value,
-            ):
+            _intro_3h_enabled = (
+                city_intro_remind_3h_enabled
+                if city_intro_remind_3h_enabled is not None
+                else is_reminder_kind_enabled(
+                    effective_policy,
+                    purpose=normalized_purpose,
+                    kind=ReminderKind.INTRO_REMIND_3H.value,
+                )
+            )
+            if _intro_3h_enabled:
                 offset = reminder_kind_offset_hours(
                     effective_policy,
                     purpose=normalized_purpose,
@@ -762,12 +844,21 @@ class ReminderService:
                     )
         else:
             targets = []
+            _city_kind_overrides = {
+                ReminderKind.CONFIRM_6H: city_confirm_6h_enabled,
+                ReminderKind.CONFIRM_3H: city_confirm_3h_enabled,
+                ReminderKind.CONFIRM_2H: city_confirm_2h_enabled,
+            }
             for kind in (
                 ReminderKind.CONFIRM_6H,
                 ReminderKind.CONFIRM_3H,
                 ReminderKind.CONFIRM_2H,
             ):
-                if not is_reminder_kind_enabled(
+                _city_override = _city_kind_overrides.get(kind)
+                if _city_override is not None:
+                    if not _city_override:
+                        continue
+                elif not is_reminder_kind_enabled(
                     effective_policy,
                     purpose=normalized_purpose,
                     kind=kind.value,
@@ -789,7 +880,14 @@ class ReminderService:
                 continue
             seen.add(kind)
             local_time = start_local - delta
-            adjusted_local, reason = _apply_quiet_hours(local_time, meeting_local=start_local)
+            _eff_quiet_start = city_quiet_start if city_quiet_start is not None else _QUIET_HOURS_START
+            _eff_quiet_end = city_quiet_end if city_quiet_end is not None else _QUIET_HOURS_END
+            adjusted_local, reason = _apply_quiet_hours(
+                local_time,
+                meeting_local=start_local,
+                quiet_start=_eff_quiet_start,
+                quiet_end=_eff_quiet_end,
+            )
             rounded_local = adjusted_local.replace(second=0, microsecond=0)
             if dedupe_by_time:
                 # Avoid sending multiple reminders at the same timestamp after quiet-hours adjustment.
@@ -933,11 +1031,20 @@ def _safe_zone(tz: Optional[str]) -> ZoneInfo:
     return _resolve_zone(tz)
 
 
-def _in_quiet_hours(local_dt: datetime) -> bool:
-    if _QUIET_HOURS_START == _QUIET_HOURS_END:
+def _normalized_tz_name(value: Optional[str]) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _in_quiet_hours(local_dt: datetime, *, quiet_start: Optional[int] = None, quiet_end: Optional[int] = None) -> bool:
+    qs = quiet_start if quiet_start is not None else _QUIET_HOURS_START
+    qe = quiet_end if quiet_end is not None else _QUIET_HOURS_END
+    if qs == qe:
         return False
-    start_hour = _QUIET_HOURS_START % 24
-    end_hour = _QUIET_HOURS_END % 24
+    start_hour = qs % 24
+    end_hour = qe % 24
     minutes = local_dt.hour * 60 + local_dt.minute
     start_minutes = start_hour * 60
     end_minutes = end_hour * 60
@@ -946,21 +1053,23 @@ def _in_quiet_hours(local_dt: datetime) -> bool:
     return minutes >= start_minutes or minutes < end_minutes
 
 
-def _apply_quiet_hours(local_dt: datetime, *, meeting_local: Optional[datetime] = None) -> tuple[datetime, Optional[str]]:
-    if _QUIET_HOURS_START == _QUIET_HOURS_END:
+def _apply_quiet_hours(local_dt: datetime, *, meeting_local: Optional[datetime] = None, quiet_start: Optional[int] = None, quiet_end: Optional[int] = None) -> tuple[datetime, Optional[str]]:
+    qs = quiet_start if quiet_start is not None else _QUIET_HOURS_START
+    qe = quiet_end if quiet_end is not None else _QUIET_HOURS_END
+    if qs == qe:
         return local_dt, None
-    if not _in_quiet_hours(local_dt):
+    if not _in_quiet_hours(local_dt, quiet_start=qs, quiet_end=qe):
         return local_dt, None
 
-    start_hour = _QUIET_HOURS_START % 24
-    end_hour = _QUIET_HOURS_END % 24
+    start_hour = qs % 24
+    end_hour = qe % 24
     boundary_before = local_dt.replace(
         hour=start_hour,
         minute=0,
         second=0,
         microsecond=0,
     )
-    if _QUIET_HOURS_START > _QUIET_HOURS_END:
+    if qs > qe:
         if local_dt.hour > start_hour or (
             local_dt.hour == start_hour and local_dt.minute >= 0
         ):

@@ -71,6 +71,11 @@ export function useCalendarWebSocket(options: UseCalendarWebSocketOptions = {}) 
         console.log('[CalendarWS] Disconnected:', event.code, event.reason)
         wsRef.current = null
 
+        if (event.code === 1008 || event.code === 4401) {
+          console.warn('[CalendarWS] Authorization required, reconnect disabled')
+          return
+        }
+
         // Attempt to reconnect with exponential backoff
         if (enabled && reconnectAttempts.current < 5) {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000)

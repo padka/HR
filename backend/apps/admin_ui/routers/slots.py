@@ -349,8 +349,11 @@ async def slots_api_create(
         slot = Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
+            candidate_city_id=city.id,
+            tz_name=tz_name,
             start_utc=start_utc,
             status=SlotStatus.FREE,
+            candidate_tz=tz_name,
         )
         if payload.duration_min is not None:
             slot.duration_min = max(int(payload.duration_min), 1)
@@ -417,6 +420,15 @@ async def slots_api_update(
         slot.recruiter_id = recruiter.id
         slot.city_id = city.id
         slot.start_utc = start_utc
+        slot.tz_name = tz_name
+        has_candidate = bool(
+            getattr(slot, "candidate_id", None)
+            or getattr(slot, "candidate_tg_id", None)
+            or getattr(slot, "candidate_fio", None)
+        )
+        if not has_candidate:
+            slot.candidate_city_id = city.id
+            slot.candidate_tz = tz_name
         if payload.duration_min is not None:
             slot.duration_min = max(int(payload.duration_min), 1)
 
@@ -655,103 +667,26 @@ async def slots_propose_candidate(
     principal: Principal = Depends(require_principal),
 ):
     """Propose a FREE slot to a candidate, creating an 'offered' assignment and notification."""
-    import secrets
-    from datetime import timedelta
-
-    from sqlalchemy import and_, select as sql_select
-
-    from backend.domain.candidates.models import User
-    from backend.domain.models import (
-        ActionToken,
-        OutboxNotification,
-        SlotAssignment,
-        SlotStatus,
-    )
+    from backend.domain.slot_assignment_service import create_slot_assignment
 
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if slot is None:
             raise HTTPException(status_code=404, detail="Слот не найден")
         ensure_slot_scope(slot, principal)
-
-        if slot.status not in (SlotStatus.FREE, "free", "FREE"):
-            raise HTTPException(status_code=409, detail="Слот уже занят")
-
-        candidate = await session.scalar(
-            sql_select(User).where(User.candidate_id == payload.candidate_id)
-        )
-        if candidate is None:
-            raise HTTPException(status_code=404, detail="Кандидат не найден")
-
-        if candidate.telegram_id is None:
-            raise HTTPException(
-                status_code=400, detail="У кандидата не привязан Telegram"
-            )
-
-        existing_assignment = await session.scalar(
-            sql_select(SlotAssignment).where(
-                and_(
-                    SlotAssignment.candidate_id == candidate.candidate_id,
-                    SlotAssignment.status.in_(
-                        ("offered", "confirmed", "reschedule_requested")
-                    ),
-                )
-            )
-        )
-        if existing_assignment:
-            raise HTTPException(
-                status_code=409, detail="У кандидата уже есть активное предложение"
-            )
-
-        assignment = SlotAssignment(
-            slot_id=slot.id,
-            recruiter_id=slot.recruiter_id,
-            candidate_id=candidate.candidate_id,
-            candidate_tg_id=candidate.telegram_id,
-            status="offered",
-        )
-        session.add(assignment)
-        await session.flush()
-
-        now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(days=2)
-
-        confirm_token = ActionToken(
-            token=secrets.token_urlsafe(16),
-            action="confirm_assignment",
-            entity_id=str(assignment.id),
-            expires_at=expires_at,
-        )
-        reschedule_token = ActionToken(
-            token=secrets.token_urlsafe(16),
-            action="reschedule_assignment",
-            entity_id=str(assignment.id),
-            expires_at=expires_at,
-        )
-        session.add_all([confirm_token, reschedule_token])
-
-        notification = OutboxNotification(
-            type="slot_assignment_offer",
-            candidate_tg_id=candidate.telegram_id,
-            payload_json={
-                "assignment_id": assignment.id,
-                "slot_id": slot.id,
-                "start_utc": slot.start_utc.isoformat(),
-                "action_tokens": {
-                    "confirm": confirm_token.token,
-                    "reschedule": reschedule_token.token,
-                },
-            },
-        )
-        session.add(notification)
-
-        await session.commit()
+    result = await create_slot_assignment(
+        slot_id=slot_id,
+        candidate_id=payload.candidate_id,
+        created_by=f"{principal.type}:{principal.id}",
+    )
+    if not result.ok:
+        raise HTTPException(status_code=result.status_code, detail=result.message or result.status)
 
     return JSONResponse(
         {
             "ok": True,
             "message": "Предложение отправлено кандидату",
-            "assignment_id": assignment.id,
+            "assignment_id": int(result.payload.get("slot_assignment_id") or 0),
         },
         status_code=201,
     )

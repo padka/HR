@@ -21,6 +21,7 @@ _SERVICE_EXPORTS = {
     "bind_telegram_to_candidate",
     "update_chat_message_status",
     "log_inbound_chat_message",
+    "log_outbound_chat_message",
     "list_chat_messages",
     "set_conversation_mode",
     "is_chat_mode_active",

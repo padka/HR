@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, List, Optional, Sequence
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 
 from backend.core.db import async_session
 from backend.domain import analytics
@@ -36,6 +36,7 @@ async def create_or_update_user(
     *,
     candidate_id: Optional[str] = None,
     source: Optional[str] = None,
+    responsible_recruiter_id: Optional[int] = None,
 ) -> User:
     """Create or update user. For new users, optionally set initial candidate_status.
 
@@ -55,6 +56,11 @@ async def create_or_update_user(
             user.last_activity = now
             if not user.candidate_id:
                 user.candidate_id = candidate_id or str(uuid.uuid4())
+            if (
+                responsible_recruiter_id is not None
+                and user.responsible_recruiter_id != responsible_recruiter_id
+            ):
+                user.responsible_recruiter_id = responsible_recruiter_id
             if user.telegram_user_id is None:
                 user.telegram_user_id = telegram_id
             if user.telegram_linked_at is None:
@@ -77,6 +83,7 @@ async def create_or_update_user(
                 "last_activity": now,
                 "candidate_status": initial_status,
                 "source": source or "bot",
+                "responsible_recruiter_id": responsible_recruiter_id,
             }
             if candidate_id:
                 payload["candidate_id"] = candidate_id
@@ -305,6 +312,44 @@ async def log_inbound_chat_message(
         )
         session.add(message)
         user.last_activity = now
+        await session.commit()
+        await session.refresh(message)
+        return message
+
+
+async def log_outbound_chat_message(
+    telegram_user_id: int,
+    *,
+    text: Optional[str],
+    telegram_message_id: Optional[int] = None,
+    payload: Optional[dict] = None,
+    author_label: Optional[str] = "bot",
+) -> Optional[ChatMessage]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(
+                or_(
+                    User.telegram_id == telegram_user_id,
+                    User.telegram_user_id == telegram_user_id,
+                )
+            )
+        )
+        user = result.scalar_one_or_none()
+        if user is None:
+            return None
+
+        message = ChatMessage(
+            candidate_id=user.id,
+            telegram_user_id=telegram_user_id,
+            direction=ChatMessageDirection.OUTBOUND.value,
+            channel="telegram",
+            text=text,
+            payload_json=payload,
+            status=ChatMessageStatus.SENT.value,
+            telegram_message_id=telegram_message_id,
+            author_label=author_label,
+        )
+        session.add(message)
         await session.commit()
         await session.refresh(message)
         return message

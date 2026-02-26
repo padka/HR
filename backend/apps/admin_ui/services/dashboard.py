@@ -51,6 +51,8 @@ __all__ = [
     "get_ai_insights",
     "get_quick_slots",
     "get_waiting_candidates",
+    "normalize_waiting_candidates_limit",
+    "WAITING_CANDIDATES_MAX_LIMIT",
     "get_pipeline_snapshot",
     "smart_create_candidate",
     "format_dashboard_candidate",
@@ -118,6 +120,16 @@ FUNNEL_STEP_DEFS: List[Dict[str, object]] = [
 
 FUNNEL_DROP_TTL_HOURS = 24
 _DASHBOARD_CACHE_TTL = timedelta(seconds=2)
+WAITING_CANDIDATES_MAX_LIMIT = 100
+WAITING_CANDIDATES_DEFAULT_LIMIT = WAITING_CANDIDATES_MAX_LIMIT
+
+
+def normalize_waiting_candidates_limit(limit: int) -> int:
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        value = WAITING_CANDIDATES_DEFAULT_LIMIT
+    return max(1, min(value, WAITING_CANDIDATES_MAX_LIMIT))
 
 
 class SmartCreateError(Exception):
@@ -254,16 +266,21 @@ async def get_recent_candidates(limit: int = 5, *, principal: Optional[Principal
         return [format_dashboard_candidate(user) for user in users]
 
 
-async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principal] = None) -> List[Dict[str, object]]:
+async def get_waiting_candidates(
+    limit: int = WAITING_CANDIDATES_DEFAULT_LIMIT,
+    *,
+    principal: Optional[Principal] = None,
+) -> List[Dict[str, object]]:
     """Return candidates waiting for manual slot assignment (prioritized)."""
-    cache_key = cache_keys.dashboard_incoming(principal=principal, limit=limit).value
+    normalized_limit = normalize_waiting_candidates_limit(limit)
+    cache_key = cache_keys.dashboard_incoming(principal=principal, limit=normalized_limit).value
     async def _compute() -> List[Dict[str, object]]:
         last_message_map: Dict[int, dict] = {}
         recruiter_map: Dict[int, str] = {}
         ai_fit_map: Dict[int, Dict[str, Optional[object]]] = {}
         async with async_session() as session:
             recruiter_city_ids: set[int] = set()
-            query_limit = limit
+            query_limit = normalized_limit
             principal_type = getattr(principal, "type", None)
             principal_id = getattr(principal, "id", None)
             if principal_type == "recruiter" and principal_id is not None:
@@ -273,7 +290,7 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                     )
                 )
                 recruiter_city_ids = {row[0] for row in rows}
-                query_limit = max(limit * 5, 20)
+                query_limit = max(normalized_limit * 5, 20)
             status_filter = User.candidate_status.in_([
                 CandidateStatus.WAITING_SLOT,
                 CandidateStatus.STALLED_WAITING_SLOT,
@@ -424,7 +441,7 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
                 owner_id = user_responsible_recruiter_id
                 if owner_id == getattr(principal, "id", None):
                     pass
-                elif city_id and city_id in recruiter_city_ids:
+                elif owner_id is None and city_id and city_id in recruiter_city_ids:
                     pass
                 else:
                     continue
@@ -486,7 +503,7 @@ async def get_waiting_candidates(limit: int = 6, *, principal: Optional[Principa
             row["priority_score"] = idx
             row.pop("waiting_since_dt", None)
 
-        return prioritized[:limit]
+        return prioritized[:normalized_limit]
 
     return await get_or_compute(
         cache_key,

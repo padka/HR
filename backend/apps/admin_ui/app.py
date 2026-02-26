@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
+import os
 import time
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from typing import Optional
 
 try:
@@ -20,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette_wtf import CSRFProtectMiddleware
-from sqlalchemy import text
+from sqlalchemy import select, text
 from starlette.responses import Response, PlainTextResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -60,6 +61,7 @@ from backend.apps.admin_ui.security import (
     limiter,
     require_admin,
     require_principal,
+    try_get_current_principal,
 )
 from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
 from backend.apps.bot.services import configure_template_provider
@@ -84,6 +86,7 @@ from backend.core.error_handler import (
 )
 from backend.migrations.runner import upgrade_to_head
 from backend.core.redis_factory import parse_redis_target
+from backend.domain.models import recruiter_city_association
 from sqlalchemy.exc import OperationalError, TimeoutError as SQLAlchemyTimeoutError
 
 try:  # pragma: no cover - optional depending on installed DB driver
@@ -107,6 +110,31 @@ DB_HEALTH_MAX_INTERVAL = 60.0
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 SPA_DIST_DIR = BASE_DIR / "frontend" / "dist"
+
+
+def _is_truthy_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _legacy_assignments_enabled() -> bool:
+    return _is_truthy_env("ENABLE_LEGACY_ASSIGNMENTS_API", default=False)
+
+
+async def _recruiter_city_scope(recruiter_id: int) -> set[int]:
+    async with async_session() as session:
+        rows = await session.execute(
+            select(recruiter_city_association.c.city_id).where(
+                recruiter_city_association.c.recruiter_id == recruiter_id
+            )
+        )
+    return {
+        int(city_id)
+        for city_id in rows.scalars().all()
+        if city_id is not None
+    }
 
 
 def _init_sentry(settings) -> bool:
@@ -598,13 +626,26 @@ def create_app() -> FastAPI:
     # WebSocket endpoint for calendar real-time updates
     @app.websocket("/ws/calendar")
     async def ws_calendar(websocket: WebSocket):
-        await calendar_hub.connect(websocket)
+        principal = await try_get_current_principal(websocket)
+        if principal is None:
+            await websocket.close(code=1008, reason="Authentication required")
+            return
+
+        city_scope: set[int] = set()
+        if principal.type == "recruiter":
+            city_scope = await _recruiter_city_scope(principal.id)
+
+        await calendar_hub.connect(
+            websocket,
+            principal_type=principal.type,
+            principal_id=principal.id,
+            city_ids=city_scope,
+        )
         try:
             while True:
-                # Keep connection alive, listen for any incoming messages
-                data = await websocket.receive_text()
-                # For now, we just echo back to confirm connection is alive
-                # Client can send ping messages if needed
+                incoming = await websocket.receive_text()
+                if incoming.strip().lower() == "ping":
+                    await websocket.send_text("pong")
         except WebSocketDisconnect:
             pass
         finally:
@@ -628,14 +669,16 @@ def create_app() -> FastAPI:
     app.include_router(simulator.router, dependencies=[Depends(require_admin)])
     app.include_router(detailization.router, dependencies=[Depends(require_principal)])
     app.include_router(api.router, dependencies=[Depends(require_principal)])
-    app.include_router(assignments.router, prefix="/api/v1")
+    if _legacy_assignments_enabled():
+        app.include_router(assignments.router, prefix="/api/v1", dependencies=[Depends(require_principal)])
+    else:
+        logger.info("Legacy assignments API disabled (ENABLE_LEGACY_ASSIGNMENTS_API=1 to enable)")
     app.include_router(slot_assignments_api.router)
     app.include_router(reschedule_requests.router, prefix="/api/v1/admin", dependencies=[Depends(require_principal)])
 
     @app.get("/api/templates/list", dependencies=[Depends(require_principal)])
     async def list_templates():
         from backend.domain.template_stages import CITY_TEMPLATE_STAGES
-        from backend.apps.bot.defaults import DEFAULT_TEMPLATES
         from backend.domain.models import City, MessageTemplate
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload

@@ -164,3 +164,121 @@ async def test_recruiter_can_schedule_intro_day_via_api_without_recruiter_id(
         assert slot is not None
         assert slot.recruiter_id == actor_id
         assert (slot.purpose or "").lower() == "intro_day"
+
+
+@pytest.mark.asyncio
+async def test_recruiter_can_schedule_intro_day_twice_same_time_via_candidates_route(
+    recruiter_scoped_app,
+) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=990003,
+        fio="Тест Повтор",
+        city="Москва",
+        username="intro_repeat_web",
+        initial_status=CandidateStatus.TEST2_COMPLETED,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Repeat Recruiter Web", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+
+    payload = {
+        "date": "2026-02-23",
+        "time": "10:00",
+        "custom_message": "Тестовое приглашение",
+    }
+    first = await _request_with_recruiter_principal(
+        recruiter_scoped_app,
+        recruiter_id,
+        "post",
+        f"/candidates/{candidate.id}/schedule-intro-day",
+        json=payload,
+        follow_redirects=False,
+    )
+    second = await _request_with_recruiter_principal(
+        recruiter_scoped_app,
+        recruiter_id,
+        "post",
+        f"/candidates/{candidate.id}/schedule-intro-day",
+        json=payload,
+        follow_redirects=False,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json().get("ok") is True
+    assert second.json().get("ok") is True
+
+    async with async_session() as session:
+        slots = (
+            await session.execute(
+                select(models.Slot)
+                .where(models.Slot.candidate_tg_id == candidate.telegram_id)
+                .where(models.Slot.recruiter_id == recruiter_id)
+                .where(models.Slot.purpose == "intro_day")
+            )
+        ).scalars().all()
+    assert len(slots) == 2
+
+
+@pytest.mark.asyncio
+async def test_recruiter_can_schedule_intro_day_twice_same_time_via_api_route(
+    recruiter_scoped_app,
+) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=990004,
+        fio="Тест Повтор API",
+        city="Москва",
+        username="intro_repeat_api",
+        initial_status=CandidateStatus.TEST2_COMPLETED,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Repeat Recruiter API", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+
+    payload = {
+        "date": "2026-02-23",
+        "time": "10:00",
+        "custom_message": "Тестовое приглашение",
+    }
+    first = await _request_with_recruiter_principal(
+        recruiter_scoped_app,
+        recruiter_id,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-intro-day",
+        json=payload,
+    )
+    second = await _request_with_recruiter_principal(
+        recruiter_scoped_app,
+        recruiter_id,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-intro-day",
+        json=payload,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json().get("ok") is True
+    assert second.json().get("ok") is True
+
+    async with async_session() as session:
+        slots = (
+            await session.execute(
+                select(models.Slot)
+                .where(models.Slot.candidate_tg_id == candidate.telegram_id)
+                .where(models.Slot.recruiter_id == recruiter_id)
+                .where(models.Slot.purpose == "intro_day")
+            )
+        ).scalars().all()
+    assert len(slots) == 2

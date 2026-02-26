@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -15,6 +15,7 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.status import CandidateStatus
+from backend.domain.models import CalendarTask, Recruiter, Slot, SlotStatus
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -85,6 +86,7 @@ def admin_app(monkeypatch) -> Any:
 
     monkeypatch.setenv("ADMIN_USER", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+    monkeypatch.setenv("ALLOW_LEGACY_BASIC", "1")
     monkeypatch.setenv("LOG_FILE", "data/logs/test_app.log")
 
     from backend.core import settings as settings_module
@@ -199,3 +201,122 @@ async def test_candidate_action_updates_status(admin_app) -> None:
     async with async_session() as session:
         refreshed = await session.get(User, candidate.id)
         assert refreshed.candidate_status == CandidateStatus.INTERVIEW_DECLINED
+
+
+@pytest.mark.asyncio
+async def test_calendar_tasks_crud_and_events(admin_app) -> None:
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+
+    async with async_session() as session:
+        recruiter = Recruiter(name="Calendar Recruiter", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+
+    create_response = await _async_request(
+        admin_app,
+        "post",
+        "/api/calendar/tasks",
+        json={
+            "title": "Сверить список кандидатов",
+            "description": "Проверить подтверждения за день",
+            "start": now.isoformat(),
+            "end": (now + timedelta(minutes=45)).isoformat(),
+            "recruiter_id": recruiter_id,
+        },
+    )
+    assert create_response.status_code == 201
+    create_payload = create_response.json()
+    assert create_payload["ok"] is True
+    task_id = int(create_payload["task"]["id"])
+
+    start_date = (now.date() - timedelta(days=1)).isoformat()
+    end_date = (now.date() + timedelta(days=2)).isoformat()
+    events_response = await _async_request(
+        admin_app,
+        "get",
+        f"/api/calendar/events?start={start_date}&end={end_date}&recruiter_id={recruiter_id}&include_tasks=true",
+    )
+    assert events_response.status_code == 200
+    events_payload = events_response.json()
+    task_events = [
+        event
+        for event in events_payload.get("events", [])
+        if event.get("extendedProps", {}).get("event_type") == "task"
+        and event.get("extendedProps", {}).get("task_id") == task_id
+    ]
+    assert len(task_events) == 1
+
+    update_response = await _async_request(
+        admin_app,
+        "patch",
+        f"/api/calendar/tasks/{task_id}",
+        json={"is_done": True},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["task"]["is_done"] is True
+
+    delete_response = await _async_request(
+        admin_app,
+        "delete",
+        f"/api/calendar/tasks/{task_id}",
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json()["ok"] is True
+
+    async with async_session() as session:
+        task = await session.get(CalendarTask, task_id)
+        assert task is None
+
+
+@pytest.mark.asyncio
+async def test_calendar_confirmed_filter_includes_preconfirmed_slots(admin_app) -> None:
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+
+    async with async_session() as session:
+        recruiter = Recruiter(name="Filter Recruiter", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
+        await session.flush()
+
+        candidate = User(
+            telegram_id=775501,
+            telegram_user_id=775501,
+            fio="Кандидат Фильтра",
+            city="Москва",
+        )
+        session.add(candidate)
+        await session.flush()
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            start_utc=now + timedelta(days=1),
+            duration_min=30,
+            status=SlotStatus.CONFIRMED_BY_CANDIDATE,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_id=candidate.candidate_id,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+
+        recruiter_id = recruiter.id
+
+    start_date = now.date().isoformat()
+    end_date = (now.date() + timedelta(days=3)).isoformat()
+    response = await _async_request(
+        admin_app,
+        "get",
+        f"/api/calendar/events?start={start_date}&end={end_date}&recruiter_id={recruiter_id}&status=confirmed",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    matched = [
+        event
+        for event in payload.get("events", [])
+        if event.get("extendedProps", {}).get("status") == SlotStatus.CONFIRMED_BY_CANDIDATE
+    ]
+    assert len(matched) == 1
+    assert matched[0]["extendedProps"]["status_label"] == "Предв. подтверждён"

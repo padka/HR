@@ -3,6 +3,8 @@ import { RoleGuard } from '@/app/components/RoleGuard'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { apiFetch } from '@/api/client'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
+import { useProfile } from '@/app/hooks/useProfile'
 
 type CityOption = {
   id: number
@@ -36,6 +38,7 @@ type Candidate = {
   telegram_id?: string | null
   recruiter_id?: number | null
   recruiter_name?: string | null
+  recruiter?: { id?: number | null; name?: string | null } | null
 }
 
 type CandidateCard = {
@@ -96,6 +99,10 @@ const STATUS_OPTIONS = [
 ]
 
 export function CandidatesPage() {
+  const profile = useProfile()
+  const principalType = profile.data?.principal.type
+  const isAdmin = principalType === 'admin'
+
   const initialFilters = useMemo(() => {
     const params = new URLSearchParams(window.location.search)
     return {
@@ -163,17 +170,25 @@ export function CandidatesPage() {
     { slug: 'interview', label: 'Интервью' },
     { slug: 'intro_day', label: 'Ознакомительный день' },
   ]
+  const hasActiveFilters = Boolean(search.trim() || status || pipeline !== 'interview')
+
+  const resetFilters = () => {
+    setSearch('')
+    setStatus('')
+    setPipeline('interview')
+    setPage(1)
+  }
 
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
         <header className="glass glass--elevated page-header page-header--row">
           <h1 className="title">Кандидаты</h1>
-          <Link to="/app/candidates/new" className="ui-btn ui-btn--primary">+ Новый кандидат</Link>
+          <Link to="/app/candidates/new" className="ui-btn ui-btn--primary" data-testid="candidates-create-btn">+ Новый кандидат</Link>
         </header>
 
         <section className="glass page-section">
-          <div className="filter-bar">
+          <div className="filter-bar" data-testid="candidates-filter-bar">
             <input
               placeholder="Поиск по ФИО, городу, TG..."
               value={search}
@@ -198,7 +213,7 @@ export function CandidatesPage() {
                 <option key={opt.slug} value={opt.slug}>{opt.label}</option>
               ))}
             </select>
-            <div className="view-toggle">
+            <div className="view-toggle" data-testid="candidates-view-switcher">
               <button className={`ui-btn ui-btn--sm ${view === 'list' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('list')}>
                 Список
               </button>
@@ -298,10 +313,24 @@ export function CandidatesPage() {
           </div>
 
           {isLoading && <p className="text-muted">Загрузка…</p>}
-          {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
+          {isError && <ApiErrorBanner error={error} title="Не удалось загрузить кандидатов" />}
           {data && data.items.length === 0 && (
-            <div className="empty-state">
-              <p className="empty-state__text">Кандидаты не найдены. Попробуйте изменить фильтры.</p>
+            <div className="empty-state" data-testid="candidates-empty-state">
+              <p className="empty-state__text">
+                {hasActiveFilters
+                  ? 'Кандидаты не найдены по текущим фильтрам.'
+                  : 'Список кандидатов пуст. Добавьте первого кандидата, чтобы начать работу.'}
+              </p>
+              <div className="toolbar">
+                {hasActiveFilters && (
+                  <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={resetFilters}>
+                    Сбросить фильтры
+                  </button>
+                )}
+                <Link to="/app/candidates/new" className="ui-btn ui-btn--primary ui-btn--sm">
+                  + Новый кандидат
+                </Link>
+              </div>
             </div>
           )}
           {view === 'calendar' && (
@@ -383,19 +412,20 @@ export function CandidatesPage() {
           )}
 
           {view === 'list' && data && data.items.length > 0 && (
-            <table className="data-table">
+            <table className="data-table" data-testid="candidates-table">
               <thead>
                 <tr>
                   <th>ФИО</th>
                   <th>Город</th>
                   <th>Статус</th>
-                  <th>Рекрутёр</th>
+                  {isAdmin && <th>Рекрутёр</th>}
                   <th>Telegram</th>
                 </tr>
               </thead>
               <tbody>
                 {data.items.map((c) => {
                   const tone = c.status?.tone
+                  const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
                   return (
                     <tr key={c.id}>
                       <td>
@@ -409,7 +439,7 @@ export function CandidatesPage() {
                           {c.status?.label || c.status?.slug || '—'}
                         </span>
                       </td>
-                      <td>{c.recruiter_name || '—'}</td>
+                      {isAdmin && <td>{recruiterName}</td>}
                       <td>
                         {c.telegram_id ? (
                           <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="text-accent">

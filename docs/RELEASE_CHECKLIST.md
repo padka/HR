@@ -19,6 +19,7 @@
 
 ## Quality Gates
 
+- [ ] Run formal Sprint 1/2 gate: `python3 scripts/formal_gate_sprint12.py` (or `make gate-sprint12`).
 - [ ] Backend tests pass (`make test` / CI matrix).
 - [ ] Frontend checks pass (`npm run lint`, `npm run typecheck`, `npm run test`, `npm run test:e2e`).
 - [ ] Quality snapshot updated: `./scripts/quality_snapshot.sh --full`.

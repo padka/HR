@@ -9,21 +9,6 @@ from typing import Dict, Iterable, Optional
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 
-_ALLOWED_FORMATS = {
-    "Да, готов",
-    "Нужен гибкий график",
-    "Пока не готов",
-}
-
-_ALLOWED_STATUS = {
-    "Учусь",
-    "Работаю",
-    "Ищу работу",
-    "Предприниматель",
-    "Другое",
-}
-
-
 class Test1Payload(BaseModel):
     """Normalized Test 1 answers validated via Pydantic."""
 
@@ -59,25 +44,6 @@ class Test1Payload(BaseModel):
         if not 18 <= value <= 60:
             raise ValueError("Возраст должен быть в диапазоне 18–60 лет.")
         return value
-
-    @field_validator("status")
-    @classmethod
-    def _status_allowed(cls, value: Optional[str]) -> Optional[str]:
-        if value is None or not value:
-            return value
-        if value not in _ALLOWED_STATUS:
-            raise ValueError("Выберите вариант из списка.")
-        return value
-
-    @field_validator("format_choice")
-    @classmethod
-    def _format_allowed(cls, value: Optional[str]) -> Optional[str]:
-        if value is None or not value:
-            return value
-        if value not in _ALLOWED_FORMATS:
-            raise ValueError("Выберите вариант из предложенных.")
-        return value
-
 
 @dataclass
 class ValidationHint:

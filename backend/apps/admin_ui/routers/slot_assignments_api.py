@@ -9,7 +9,7 @@ from backend.domain.slot_assignment_service import request_reschedule as request
 from backend.domain.candidates.status_service import set_status_waiting_slot
 from backend.domain.candidates.services import save_manual_slot_response
 from backend.domain.models import SlotAssignment, RescheduleRequest, OutboxNotification, Recruiter, ActionToken, Slot, SlotStatus
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 from backend.domain.repositories import reject_slot, reserve_slot
 from backend.domain.candidates.status_service import set_status_interview_confirmed
 from backend.apps.bot.services import approve_slot_and_notify
@@ -45,6 +45,41 @@ async def _validate_token(session, token: str, actions: set[str], entity_id: int
     action_token.used_at = datetime.now(timezone.utc)
     return True
 
+
+async def _resolve_candidate_for_assignment(session, assignment: SlotAssignment) -> User | None:
+    candidate = None
+    if assignment.candidate_id:
+        candidate = await session.scalar(
+            select(User).where(User.candidate_id == assignment.candidate_id)
+        )
+    if candidate is None and assignment.candidate_tg_id is not None:
+        candidate = await session.scalar(
+            select(User).where(
+                or_(
+                    User.telegram_id == assignment.candidate_tg_id,
+                    User.telegram_user_id == assignment.candidate_tg_id,
+                )
+            )
+        )
+    return candidate
+
+
+def _known_candidate_tg_ids(assignment: SlotAssignment, candidate: User | None) -> set[int]:
+    ids: set[int] = set()
+    for raw in (
+        assignment.candidate_tg_id,
+        getattr(candidate, "telegram_id", None),
+        getattr(candidate, "telegram_user_id", None),
+    ):
+        if raw is None:
+            continue
+        try:
+            ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
 @router.post("/{assignment_id}/confirm")
 async def confirm_assignment(assignment_id: int, payload: ActionPayload):
     async with async_session() as session:
@@ -57,19 +92,33 @@ async def confirm_assignment(assignment_id: int, payload: ActionPayload):
             raise HTTPException(status_code=403, detail="Invalid or expired token")
 
         assignment = await session.get(SlotAssignment, assignment_id)
-        if not assignment or assignment.candidate_tg_id != payload.candidate_tg_id:
+        if not assignment:
             raise HTTPException(status_code=404, detail="Assignment not found")
+        candidate = await _resolve_candidate_for_assignment(session, assignment)
+        valid_tg_ids = _known_candidate_tg_ids(assignment, candidate)
+        if valid_tg_ids and int(payload.candidate_tg_id) not in valid_tg_ids:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        if assignment.candidate_tg_id is None or assignment.candidate_tg_id != payload.candidate_tg_id:
+            assignment.candidate_tg_id = payload.candidate_tg_id
+        if (
+            candidate is not None
+            and candidate.responsible_recruiter_id != assignment.recruiter_id
+        ):
+            candidate.responsible_recruiter_id = assignment.recruiter_id
 
-        if assignment.status not in {"offered", "confirmed"}:
+        if assignment.status not in {"offered", "confirmed", "reschedule_confirmed"}:
             raise HTTPException(status_code=409, detail="Assignment not in offered state")
 
         assignment.status = "confirmed"
         assignment.confirmed_at = datetime.now(timezone.utc)
 
         slot = await session.get(Slot, assignment.slot_id)
-        candidate = None
-        if assignment.candidate_id:
-            candidate = await session.scalar(select(User).where(User.candidate_id == assignment.candidate_id))
+        if slot is not None:
+            slot.candidate_id = assignment.candidate_id or slot.candidate_id
+            slot.candidate_tg_id = payload.candidate_tg_id
+            if candidate is not None and not slot.candidate_fio:
+                slot.candidate_fio = candidate.fio
+            slot.candidate_tz = assignment.candidate_tz or slot.candidate_tz or slot.tz_name
         await session.commit()
 
     if slot is None:
@@ -167,8 +216,14 @@ async def decline_assignment(assignment_id: int, payload: ActionPayload):
             raise HTTPException(status_code=403, detail="Invalid or expired token")
 
         assignment = await session.get(SlotAssignment, assignment_id)
-        if not assignment or assignment.candidate_tg_id != payload.candidate_tg_id:
+        if not assignment:
             raise HTTPException(status_code=404, detail="Assignment not found")
+        candidate = await _resolve_candidate_for_assignment(session, assignment)
+        valid_tg_ids = _known_candidate_tg_ids(assignment, candidate)
+        if valid_tg_ids and int(payload.candidate_tg_id) not in valid_tg_ids:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        if assignment.candidate_tg_id is None:
+            assignment.candidate_tg_id = payload.candidate_tg_id
 
         if assignment.status not in {"offered", "confirmed", "reschedule_requested", "reschedule_confirmed"}:
             raise HTTPException(

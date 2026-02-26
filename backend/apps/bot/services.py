@@ -13,6 +13,8 @@ import math
 import random
 import time
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from types import SimpleNamespace
 from datetime import date, datetime, timedelta, timezone, time as datetime_time
 from pathlib import Path
@@ -282,6 +284,10 @@ _template_provider: Optional[TemplateProvider] = None
 _interview_success_handlers: List[
     Callable[[InterviewSuccessEvent], Awaitable[None]]
 ] = []
+_suppress_outbound_chat_logging: ContextVar[bool] = ContextVar(
+    "suppress_outbound_chat_logging",
+    default=False,
+)
 
 
 def get_template_provider() -> TemplateProvider:
@@ -307,6 +313,27 @@ def _normalize_format_context(fmt: Dict[str, Any]) -> Dict[str, Any]:
         data["dt_local"] = data["dt"]
     if "interview_dt_hint" not in data:
         data["interview_dt_hint"] = data.get("dt_local") or data.get("slot_datetime_local") or ""
+
+    # Keep meeting-link aliases in sync so templates can use any common key.
+    link_value = None
+    for key in ("join_link", "link", "meeting_link", "meeting_url", "interview_link", "slot_link"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            link_value = value.strip()
+            break
+    if link_value is None:
+        link_value = ""
+    for key in ("join_link", "link", "meeting_link", "meeting_url", "interview_link", "slot_link"):
+        if key not in data or data.get(key) in (None, ""):
+            data[key] = link_value
+
+    # Keep interview datetime aliases in sync.
+    if "interview_datetime_local" not in data and "slot_datetime_local" in data:
+        data["interview_datetime_local"] = data["slot_datetime_local"]
+    if "interview_date_local" not in data and "slot_date_local" in data:
+        data["interview_date_local"] = data["slot_date_local"]
+    if "interview_time_local" not in data and "slot_time_local" in data:
+        data["interview_time_local"] = data["slot_time_local"]
     return data
 
 
@@ -2416,17 +2443,19 @@ class NotificationService:
             return
 
         recruiter = await get_recruiter(slot.recruiter_id) if slot.recruiter_id else None
-        tz = slot.candidate_tz or DEFAULT_TZ
+        state = await _resolve_candidate_state_for_slot(slot)
+        tz = await _resolve_candidate_timezone_for_slot(slot, state=state, recruiter=recruiter)
         labels = slot_local_labels(slot.start_utc, tz)
-        context = {
+        meeting_link = _resolve_recruiter_meeting_link(recruiter)
+        context = _normalize_format_context({
             "candidate_name": slot.candidate_fio or str(candidate_id or ""),
             "candidate_fio": slot.candidate_fio or str(candidate_id or ""),
             "recruiter_name": recruiter.name if recruiter else "",
             "dt_local": TemplateProvider.format_local_dt(slot.start_utc, tz),
             "tz_name": tz,
-            "join_link": getattr(recruiter, "telemost_url", "") or "",
+            "join_link": meeting_link,
             **labels,
-        }
+        })
         intro_address_safe, _ = _intro_detail(
             getattr(slot, "intro_address", None),
             fallback=None,
@@ -3857,11 +3886,60 @@ def configure(
     global _bot, _state_manager
     _bot = bot
     _state_manager = state_manager
+    if isinstance(_bot, Bot):
+        _install_outbound_chat_logging(_bot)
     if dispatcher is not None:
         logger.debug(
             "Dispatcher argument provided to configure(); interview events use internal handlers registry.",
             extra={"dispatcher": type(dispatcher).__name__},
         )
+
+
+@contextmanager
+def suppress_outbound_chat_logging():
+    token = _suppress_outbound_chat_logging.set(True)
+    try:
+        yield
+    finally:
+        _suppress_outbound_chat_logging.reset(token)
+
+
+def _install_outbound_chat_logging(bot: Bot) -> None:
+    if getattr(bot, "_recruitsmart_chat_logging_installed", False):
+        return
+
+    original_send_message = bot.send_message
+
+    async def _send_message_with_chat_log(chat_id: Any, text: Optional[str], *args: Any, **kwargs: Any):
+        sent_message = await original_send_message(chat_id, text, *args, **kwargs)
+        if _suppress_outbound_chat_logging.get():
+            return sent_message
+
+        try:
+            candidate_tg_id = int(chat_id)
+        except (TypeError, ValueError):
+            return sent_message
+
+        try:
+            clean_text = _strip_markup(text)
+            if clean_text:
+                await candidate_services.log_outbound_chat_message(
+                    candidate_tg_id,
+                    text=clean_text,
+                    telegram_message_id=getattr(sent_message, "message_id", None),
+                    payload={"source": "bot"},
+                    author_label="bot",
+                )
+        except Exception:
+            logger.exception(
+                "Failed to record outbound bot message in candidate chat",
+                extra={"candidate_tg_id": candidate_tg_id},
+            )
+
+        return sent_message
+
+    setattr(bot, "_recruitsmart_chat_logging_installed", True)
+    bot.send_message = _send_message_with_chat_log  # type: ignore[assignment]
 
 
 if not hasattr(builtins, "configure_bot_services"):
@@ -4088,7 +4166,10 @@ async def _build_slot_snapshot(slot: Slot) -> SlotSnapshot:
         recruiter = await get_recruiter(slot.recruiter_id)
     recruiter_name = recruiter.name if recruiter else ""
     recruiter_tz = (recruiter.tz if recruiter and recruiter.tz else DEFAULT_TZ)
-    candidate_tz = slot.candidate_tz or DEFAULT_TZ
+    state = await _resolve_candidate_state_for_slot(slot)
+    candidate_tz = await _resolve_candidate_timezone_for_slot(
+        slot, state=state, recruiter=recruiter
+    )
     candidate_id = int(slot.candidate_tg_id) if slot.candidate_tg_id is not None else None
     slot_tz = getattr(slot, "tz_name", None)
     city_name = ""
@@ -4789,6 +4870,30 @@ def _extract_option_value(option: Any) -> str:
     return str(option)
 
 
+def _match_question_option_value(question: Dict[str, Any], answer: str) -> Tuple[Optional[str], List[str]]:
+    raw_options = question.get("options")
+    if not isinstance(raw_options, list) or not raw_options:
+        return answer, []
+
+    normalized_answer = answer.strip().casefold()
+    hints: List[str] = []
+    seen_hints: set[str] = set()
+
+    for option in raw_options:
+        label = _extract_option_label(option).strip()
+        value = _extract_option_value(option).strip()
+        visible = label or value
+        if visible and visible not in seen_hints:
+            hints.append(visible)
+            seen_hints.add(visible)
+
+        candidates = {item.casefold() for item in (label, value) if item}
+        if normalized_answer and normalized_answer in candidates:
+            return (value or label), hints
+
+    return None, hints
+
+
 async def _resolve_test1_options(question: Dict[str, Any]) -> Optional[List[Any]]:
     qid = question.get("id")
     if qid == "city":
@@ -4864,6 +4969,16 @@ async def save_test1_answer(
     city_info = None
     should_insert_flex = False
 
+    if qid != "city":
+        matched_option, option_hints = _match_question_option_value(question, answer_clean)
+        if matched_option is None:
+            return Test1AnswerResult(
+                status="invalid",
+                message="Выберите один из вариантов в списке.",
+                hints=option_hints,
+            )
+        answer_clean = matched_option
+
     if qid == "fio":
         payload_data["fio"] = answer_clean
     elif qid == "city":
@@ -4887,15 +5002,15 @@ async def save_test1_answer(
                 hints=["Например: 23", "Возраст указываем цифрами"],
             )
     elif qid == "status":
-        payload_data["status"] = answer
+        payload_data["status"] = answer_clean
     elif qid == "format":
-        payload_data["format_choice"] = answer
+        payload_data["format_choice"] = answer_clean
     elif qid == FOLLOWUP_STUDY_MODE["id"]:
-        payload_data["study_mode"] = answer
+        payload_data["study_mode"] = answer_clean
     elif qid == FOLLOWUP_STUDY_SCHEDULE["id"]:
-        payload_data["study_schedule"] = answer
+        payload_data["study_schedule"] = answer_clean
     elif qid == FOLLOWUP_STUDY_FLEX["id"]:
-        payload_data["study_flex"] = answer
+        payload_data["study_flex"] = answer_clean
 
     try:
         validated_model = apply_partial_validation(payload_data)
@@ -4904,7 +5019,7 @@ async def save_test1_answer(
         return Test1AnswerResult(status="invalid", message=message, hints=hints)
 
     if qid == FOLLOWUP_STUDY_SCHEDULE["id"]:
-        should_insert_flex = _should_insert_study_flex(validated_model, answer)
+        should_insert_flex = _should_insert_study_flex(validated_model, answer_clean)
 
     def _apply(state: State) -> Tuple[State, Dict[str, Any]]:
         working = state
@@ -4914,20 +5029,20 @@ async def save_test1_answer(
         _ensure_question_id(question, current_idx)
 
         if qid == "fio":
-            working["fio"] = validated_model.fio or answer
+            working["fio"] = validated_model.fio or answer_clean
         elif qid == "city" and city_info is not None:
             working["city_name"] = city_info.name
             working["city_id"] = city_info.id
             working["candidate_tz"] = city_info.tz or DEFAULT_TZ
             answers[qid] = city_info.name
         elif qid == "age":
-            answers[qid] = str(payload_data.get("age", answer))
+            answers[qid] = str(payload_data.get("age", answer_clean))
         elif qid == "status":
-            answers[qid] = answer
+            answers[qid] = answer_clean
             insert_pos = current_idx + 1
             existing_ids = {item.get("id") for item in sequence}
 
-            lowered = answer.lower()
+            lowered = answer_clean.lower()
             if "работ" in lowered:
                 if FOLLOWUP_NOTICE_PERIOD["id"] not in existing_ids:
                     sequence.insert(insert_pos, FOLLOWUP_NOTICE_PERIOD.copy())
@@ -4943,18 +5058,18 @@ async def save_test1_answer(
                     existing_ids.add(FOLLOWUP_STUDY_SCHEDULE["id"])
         else:
             if qid:
-                answers[qid] = answer
+                answers[qid] = answer_clean
 
         if qid == FOLLOWUP_STUDY_MODE["id"]:
-            answers[qid] = answer
+            answers[qid] = answer_clean
         if qid == FOLLOWUP_STUDY_SCHEDULE["id"]:
-            answers[qid] = answer
+            answers[qid] = answer_clean
             if should_insert_flex:
                 existing_ids = {item.get("id") for item in sequence}
                 if FOLLOWUP_STUDY_FLEX["id"] not in existing_ids:
                     sequence.insert(current_idx + 1, FOLLOWUP_STUDY_FLEX.copy())
         if qid == FOLLOWUP_STUDY_FLEX["id"]:
-            answers[qid] = answer
+            answers[qid] = answer_clean
 
         working["test1_answers"] = answers
         working["test1_payload"] = validated_model.model_dump(exclude_none=True)
@@ -4978,7 +5093,7 @@ async def save_test1_answer(
 
     update_info = await state_manager.atomic_update(user_id, _apply)
 
-    branch = _determine_test1_branch(qid, answer, validated_model)
+    branch = _determine_test1_branch(qid, answer_clean, validated_model)
     if branch is not None:
         if not branch.template_key:
             branch.template_key = REJECTION_TEMPLATES.get(branch.reason or "", "")
@@ -6429,10 +6544,67 @@ async def _resolve_candidate_state_for_slot(slot: Slot) -> Dict[str, Any]:
         return {}
 
 
+def _resolve_recruiter_meeting_link(recruiter: Optional[Recruiter]) -> str:
+    if recruiter is None:
+        return ""
+    value = getattr(recruiter, "telemost_url", None)
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _extract_tz(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+async def _resolve_candidate_timezone_for_slot(
+    slot: Slot,
+    *,
+    state: Optional[Dict[str, Any]] = None,
+    recruiter: Optional[Recruiter] = None,
+) -> str:
+    tz_value = _extract_tz(getattr(slot, "candidate_tz", None))
+    if tz_value:
+        return tz_value
+
+    if state:
+        tz_value = _extract_tz(state.get("candidate_tz"))
+        if tz_value:
+            return tz_value
+
+    city_id = getattr(slot, "candidate_city_id", None) or getattr(slot, "city_id", None)
+    if city_id is not None:
+        try:
+            city = await get_city(int(city_id))
+        except Exception:
+            city = None
+        if city is not None:
+            tz_value = _extract_tz(getattr(city, "tz", None))
+            if tz_value:
+                return tz_value
+
+    recruiter_obj = recruiter
+    if recruiter_obj is None and getattr(slot, "recruiter_id", None):
+        try:
+            recruiter_obj = await get_recruiter(int(slot.recruiter_id))
+        except Exception:
+            recruiter_obj = None
+    if recruiter_obj is not None:
+        tz_value = _extract_tz(getattr(recruiter_obj, "tz", None))
+        if tz_value:
+            return tz_value
+
+    return DEFAULT_TZ
+
+
 async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str, Optional[int]]:
-    tz = slot.candidate_tz or DEFAULT_TZ
-    labels = slot_local_labels(slot.start_utc, tz)
     state = await _resolve_candidate_state_for_slot(slot)
+    recruiter = await get_recruiter(slot.recruiter_id) if slot.recruiter_id else None
+    tz = await _resolve_candidate_timezone_for_slot(slot, state=state, recruiter=recruiter)
+    labels = slot_local_labels(slot.start_utc, tz)
     candidate_name_raw = slot.candidate_fio or ""
     city_name_raw = state.get("city_name") or ""
     candidate_name = _sanitize_text(candidate_name_raw)
@@ -6448,7 +6620,7 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
         default=INTRO_CONTACT_FALLBACK,
     )
     is_intro_day = (getattr(slot, "purpose", "") or "").strip().lower() == "intro_day"
-    context = {
+    context = _normalize_format_context({
         "candidate_name": candidate_name,
         "candidate_fio": candidate_name,
         "candidate_city": city_name,
@@ -6459,11 +6631,11 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
         "slot_time_local": labels.get("slot_time_local", ""),
         "slot_datetime_local": labels.get("slot_datetime_local", ""),
         "slot_day_name_local": labels.get("slot_day_name_local", ""),
-        "recruiter_name": "",
-        "join_link": "",
+        "recruiter_name": recruiter.name if recruiter else "",
+        "join_link": _resolve_recruiter_meeting_link(recruiter),
         "intro_address": intro_address_safe,
         "intro_contact": intro_contact_safe,
-    }
+    })
     if getattr(slot, "purpose", "interview") == "intro_day":
         context.update(
             {

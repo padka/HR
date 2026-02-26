@@ -1203,22 +1203,6 @@ async def candidates_schedule_intro_day_submit(
         city_id = city_record.id
         candidate_tz = slot_tz
 
-        # Check if intro_day slot already exists for this candidate+recruiter
-        existing_slot_query = select(Slot).where(
-            Slot.candidate_tg_id == candidate_tg_id,
-            Slot.recruiter_id == recruiter.id,
-            Slot.purpose == "intro_day",
-        )
-        existing_slot_result = await session.execute(existing_slot_query)
-        existing_slot = existing_slot_result.scalar_one_or_none()
-
-        if existing_slot:
-            errors.append(
-                f"Ознакомительный день уже назначен для этого кандидата с рекрутером {recruiter.name}. "
-                f"Дата: {existing_slot.start_utc.strftime('%d.%m.%Y %H:%M')} UTC"
-            )
-            return PlainTextResponse("; ".join(errors), status_code=400)
-
         # Create intro_day slot
         slot = Slot(
             recruiter_id=recruiter.id,

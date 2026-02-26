@@ -93,6 +93,32 @@ async def test_post_slot_uses_region_timezone_novosibirsk():
 
 
 @pytest.mark.asyncio
+async def test_post_slot_persists_region_timezones_for_free_slot():
+    ids = await _create_recruiter_and_city("Almaty", "Asia/Almaty")
+    app = create_app()
+
+    response = await _async_request(
+        app,
+        "post",
+        "/slots",
+        json={
+            "recruiter_id": ids["recruiter_id"],
+            "region_id": ids["city_id"],
+            "starts_at_local": "2025-10-06T20:00",
+        },
+    )
+    assert response.status_code == 201
+    payload = response.json()
+
+    async with async_session() as session:
+        slot = await session.get(models.Slot, payload["id"])
+        assert slot is not None
+        assert slot.tz_name == "Asia/Almaty"
+        assert slot.candidate_tz == "Asia/Almaty"
+        assert slot.candidate_city_id == ids["city_id"]
+
+
+@pytest.mark.asyncio
 async def test_get_slot_returns_local_time():
     ids = await _create_recruiter_and_city("LocalView", "Asia/Novosibirsk")
     async with async_session() as session:
@@ -170,3 +196,55 @@ async def test_post_allows_starts_at_utc_for_compatibility():
     assert response.status_code == 201
     payload = response.json()
     assert payload["starts_at_utc"].startswith("2025-10-06T07:00:00")
+
+
+@pytest.mark.asyncio
+async def test_put_slot_updates_timezones_for_free_slot():
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Update TZ Recruiter", tz="Europe/Moscow", active=True)
+        city_moscow = models.City(name="Update TZ Moscow", tz="Europe/Moscow", active=True)
+        city_almaty = models.City(name="Update TZ Almaty", tz="Asia/Almaty", active=True)
+        session.add_all([recruiter, city_moscow, city_almaty])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city_moscow)
+        await session.refresh(city_almaty)
+
+        city_moscow.responsible_recruiter_id = recruiter.id
+        city_almaty.responsible_recruiter_id = recruiter.id
+        await session.commit()
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city_moscow.id,
+            candidate_city_id=city_moscow.id,
+            tz_name="Europe/Moscow",
+            candidate_tz="Europe/Moscow",
+            start_utc=datetime(2025, 10, 6, 7, 0, tzinfo=timezone.utc),
+            status=models.SlotStatus.FREE,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    app = create_app()
+    response = await _async_request(
+        app,
+        "put",
+        f"/slots/{slot_id}",
+        json={
+            "recruiter_id": recruiter.id,
+            "region_id": city_almaty.id,
+            "starts_at_local": "2025-10-06T20:00",
+        },
+    )
+    assert response.status_code == 200
+
+    async with async_session() as session:
+        updated = await session.get(models.Slot, slot_id)
+        assert updated is not None
+        assert updated.city_id == city_almaty.id
+        assert updated.candidate_city_id == city_almaty.id
+        assert updated.tz_name == "Asia/Almaty"
+        assert updated.candidate_tz == "Asia/Almaty"

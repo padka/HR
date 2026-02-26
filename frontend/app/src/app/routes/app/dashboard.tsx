@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { apiFetch } from '@/api/client'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { useProfile } from '@/app/hooks/useProfile'
 import { ScheduleCalendar, type SlotExtendedProps } from '@/app/components/Calendar/ScheduleCalendar'
 import { browserTimeZone, buildSlotTimePreview, formatTzOffset } from '@/app/lib/timezonePreview'
@@ -128,6 +129,8 @@ const AI_LEVEL_LABELS: Record<'high' | 'medium' | 'low' | 'unknown', string> = {
 }
 
 const INTERVIEW_CAL_STATUSES = ['confirmed_by_candidate']
+const INCOMING_FETCH_LIMIT = 100
+const INCOMING_PAGE_SIZE_OPTIONS = [25, 50, 100] as const
 
 function formatAiRelevance(candidate: IncomingCandidate): string {
   if (typeof candidate.ai_relevance_score === 'number') {
@@ -180,8 +183,11 @@ export function DashboardPage() {
   const [incomingTime, setIncomingTime] = useState('')
   const [incomingMessage, setIncomingMessage] = useState('')
   const [incomingSearch, setIncomingSearch] = useState('')
+  const [incomingCityFilter, setIncomingCityFilter] = useState('all')
   const [incomingFilter, setIncomingFilter] = useState<'all' | 'new' | 'stalled'>('all')
   const [incomingSort, setIncomingSort] = useState<'waiting' | 'recent' | 'name'>('waiting')
+  const [incomingPage, setIncomingPage] = useState(1)
+  const [incomingPageSize, setIncomingPageSize] = useState<number>(50)
   const recruiterTz = profile.data?.recruiter?.tz || browserTimeZone()
 
   const showToast = (message: string) => {
@@ -211,7 +217,7 @@ export function DashboardPage() {
 
   const incomingQuery = useQuery<IncomingPayload>({
     queryKey: ['dashboard-incoming'],
-    queryFn: () => apiFetch('/dashboard/incoming'),
+    queryFn: () => apiFetch(`/dashboard/incoming?limit=${INCOMING_FETCH_LIMIT}`),
     enabled: profileReady && !isAdmin,
     refetchInterval: 20000,
   })
@@ -392,12 +398,18 @@ export function DashboardPage() {
     ]
   }, [summaryQuery.data])
 
+  const incomingCityOptions = profile.data?.recruiter?.cities || []
+
   const incomingItems = useMemo(() => {
     const base = [...(incomingQuery.data?.items || [])]
     const search = incomingSearch.trim().toLowerCase()
     const now = Date.now()
 
     const filtered = base.filter((candidate) => {
+      if (incomingCityFilter !== 'all' && candidate.city_id !== Number(incomingCityFilter)) {
+        return false
+      }
+
       if (incomingFilter === 'new') {
         if (!candidate.last_message_at) return false
         const ageMs = now - new Date(candidate.last_message_at).getTime()
@@ -416,6 +428,7 @@ export function DashboardPage() {
         candidate.city,
         candidate.status_display,
         candidate.telegram_username,
+        String(candidate.telegram_id || ''),
         candidate.last_message,
         candidate.availability_note,
       ]
@@ -443,7 +456,32 @@ export function DashboardPage() {
     })
 
     return filtered
-  }, [incomingFilter, incomingQuery.data?.items, incomingSearch, incomingSort])
+  }, [incomingCityFilter, incomingFilter, incomingQuery.data?.items, incomingSearch, incomingSort])
+
+  useEffect(() => {
+    setIncomingPage(1)
+  }, [incomingCityFilter, incomingFilter, incomingSearch, incomingSort, incomingPageSize])
+
+  const incomingPagesTotal = useMemo(() => {
+    if (!incomingItems.length) return 1
+    return Math.ceil(incomingItems.length / incomingPageSize)
+  }, [incomingItems.length, incomingPageSize])
+
+  useEffect(() => {
+    if (incomingPage > incomingPagesTotal) {
+      setIncomingPage(incomingPagesTotal)
+    }
+  }, [incomingPage, incomingPagesTotal])
+
+  const incomingPageStart = useMemo(
+    () => (incomingPage - 1) * incomingPageSize,
+    [incomingPage, incomingPageSize],
+  )
+  const incomingPageEnd = incomingPageStart + incomingPageSize
+  const incomingPageItems = useMemo(
+    () => incomingItems.slice(incomingPageStart, incomingPageEnd),
+    [incomingItems, incomingPageEnd, incomingPageStart],
+  )
 
   return (
     <div className="page dashboard-page">
@@ -517,11 +555,7 @@ export function DashboardPage() {
             </div>
           )}
           
-          {summaryQuery.isError && (
-            <div className="glass panel text-danger">
-              Ошибка: {(summaryQuery.error as Error).message}
-            </div>
-          )}
+          {summaryQuery.isError && <ApiErrorBanner error={summaryQuery.error} title="Ошибка загрузки сводки" onRetry={() => summaryQuery.refetch()} />}
           
           {summaryCards.length > 0 && (
             <div className="grid-cards">
@@ -551,11 +585,7 @@ export function DashboardPage() {
               </button>
             </div>
             {leaderboardQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-            {leaderboardQuery.isError && (
-              <p style={{ color: '#f07373' }}>
-                Ошибка: {(leaderboardQuery.error as Error).message}
-              </p>
-            )}
+            {leaderboardQuery.isError && <ApiErrorBanner error={leaderboardQuery.error} title="Ошибка загрузки лидерборда" />}
             {leaderboardQuery.data?.items?.length ? (
               <div className="leaderboard-table-wrap">
                 <table className="leaderboard-table">
@@ -617,9 +647,7 @@ export function DashboardPage() {
               </button>
             </div>
             {planQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-            {planQuery.isError && (
-              <p style={{ color: '#f07373' }}>Ошибка: {(planQuery.error as Error).message}</p>
-            )}
+            {planQuery.isError && <ApiErrorBanner error={planQuery.error} title="Ошибка загрузки плана" />}
             {planQuery.data && planQuery.data.length === 0 && (
               <p className="subtitle">Нет назначенных городов.</p>
             )}
@@ -737,9 +765,7 @@ export function DashboardPage() {
               </button>
             </div>
             {incomingQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-            {incomingQuery.isError && (
-              <p style={{ color: '#f07373' }}>Ошибка: {(incomingQuery.error as Error).message}</p>
-            )}
+            {incomingQuery.isError && <ApiErrorBanner error={incomingQuery.error} title="Ошибка загрузки входящих" />}
             {incomingQuery.data && incomingQuery.data.items.length === 0 && (
               <div>
                 <p className="subtitle">Нет кандидатов, ожидающих слот.</p>
@@ -760,15 +786,30 @@ export function DashboardPage() {
                   <div className="incoming-toolbar__stats">
                     <strong>{incomingItems.length}</strong>
                     <span className="text-muted text-sm">из {incomingQuery.data.items.length} кандидатов</span>
+                    <span className="text-muted text-sm">
+                      · страница {incomingPage} / {incomingPagesTotal}
+                    </span>
                   </div>
                   <div className="incoming-toolbar__controls">
                     <input
                       className="incoming-toolbar__search"
                       type="search"
-                      placeholder="Поиск: имя, город…"
+                      placeholder="Поиск: имя, город, TG…"
                       value={incomingSearch}
                       onChange={(e) => setIncomingSearch(e.target.value)}
                     />
+                    <select
+                      className="incoming-toolbar__select"
+                      value={incomingCityFilter}
+                      onChange={(e) => setIncomingCityFilter(e.target.value)}
+                    >
+                      <option value="all">Все города</option>
+                      {incomingCityOptions.map((city) => (
+                        <option key={city.id} value={String(city.id)}>
+                          {city.name}
+                        </option>
+                      ))}
+                    </select>
                     <select
                       className="incoming-toolbar__select"
                       value={incomingFilter}
@@ -787,58 +828,125 @@ export function DashboardPage() {
                       <option value="recent">Последние сообщения</option>
                       <option value="name">По имени</option>
                     </select>
+                    <select
+                      className="incoming-toolbar__select"
+                      value={String(incomingPageSize)}
+                      onChange={(e) => setIncomingPageSize(Number(e.target.value))}
+                    >
+                      {INCOMING_PAGE_SIZE_OPTIONS.map((size) => (
+                        <option key={size} value={String(size)}>
+                          По {size}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
                 {incomingItems.length === 0 ? (
                   <p className="subtitle">По текущим фильтрам кандидатов нет.</p>
                 ) : (
-                  <div className="incoming-list">
-                    {incomingItems.map((candidate) => (
-                      <article key={candidate.id} className="incoming-min-card">
-                        <div className="incoming-min-card__head">
-                          <div className="incoming-min-card__name">{candidate.name || 'Без имени'}</div>
-                          <div className="incoming-min-card__city">{candidate.city || 'Город не указан'}</div>
-                        </div>
+                  <>
+                    <div className="incoming-list">
+                      {incomingPageItems.map((candidate) => (
+                        <article key={candidate.id} className="incoming-min-card">
+                          <div className="incoming-min-card__head">
+                            <div className="incoming-min-card__name">{candidate.name || 'Без имени'}</div>
+                            <div className="incoming-min-card__city">{candidate.city || 'Город не указан'}</div>
+                          </div>
 
-                        <div className="incoming-min-card__chips">
-                          <span className="incoming-min-chip incoming-min-chip--time">
-                            Предпочтение: {candidate.availability_window || 'не указано'}
-                          </span>
-                          <span className="incoming-min-chip incoming-min-chip--wait">
-                            Ждёт: {candidate.waiting_hours != null ? `${candidate.waiting_hours} ч` : '—'}
-                          </span>
-                          <span className="incoming-min-chip incoming-min-chip--ai">
-                            AI: {formatAiRelevance(candidate)}
-                          </span>
-                        </div>
+                          <div className="incoming-min-card__chips">
+                            <span className="incoming-min-chip incoming-min-chip--time">
+                              Предпочтение: {candidate.availability_window || 'не указано'}
+                            </span>
+                            <span className="incoming-min-chip incoming-min-chip--wait">
+                              Ждёт: {candidate.waiting_hours != null ? `${candidate.waiting_hours} ч` : '—'}
+                            </span>
+                            <span className="incoming-min-chip incoming-min-chip--ai">
+                              AI: {formatAiRelevance(candidate)}
+                            </span>
+                          </div>
 
-                        <div className="incoming-min-card__actions">
-                          <Link
-                            className="ui-btn ui-btn--ghost ui-btn--sm"
-                            to="/app/candidates/$candidateId"
-                            params={{ candidateId: String(candidate.id) }}
-                          >
-                            Профиль
-                          </Link>
-                          <button
-                            className="ui-btn ui-btn--primary ui-btn--sm"
-                            type="button"
-                            onClick={() => openIncomingSchedule(candidate)}
-                          >
-                            Согласовать время
-                          </button>
-                          <button
-                            className="ui-btn ui-btn--danger ui-btn--sm"
-                            type="button"
-                            onClick={() => rejectCandidate.mutate(candidate.id)}
-                          >
-                            Отказать
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
+                          {candidate.last_message && (
+                            <div className="incoming-min-card__note">
+                              <span>💬 {candidate.last_message}</span>
+                              {candidate.last_message_at && (
+                                <span className="incoming-min-card__time">
+                                  {new Date(candidate.last_message_at).toLocaleString('ru-RU', {
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="incoming-min-card__actions">
+                            <Link
+                              className="ui-btn ui-btn--ghost ui-btn--sm"
+                              to="/app/candidates/$candidateId"
+                              params={{ candidateId: String(candidate.id) }}
+                            >
+                              Профиль
+                            </Link>
+                            <button
+                              className="ui-btn ui-btn--primary ui-btn--sm"
+                              type="button"
+                              onClick={() => openIncomingSchedule(candidate)}
+                            >
+                              Согласовать время
+                            </button>
+                            <button
+                              className="ui-btn ui-btn--danger ui-btn--sm"
+                              type="button"
+                              onClick={() => rejectCandidate.mutate(candidate.id)}
+                            >
+                              Отказать
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+
+                    <div className="pagination incoming-pagination">
+                      <span className="pagination__info">
+                        Показано {incomingPageStart + 1}–{Math.min(incomingPageEnd, incomingItems.length)} из {incomingItems.length}
+                      </span>
+                      <button
+                        className="ui-btn ui-btn--ghost ui-btn--sm"
+                        type="button"
+                        onClick={() => setIncomingPage(1)}
+                        disabled={incomingPage <= 1}
+                      >
+                        ⏮
+                      </button>
+                      <button
+                        className="ui-btn ui-btn--ghost ui-btn--sm"
+                        type="button"
+                        onClick={() => setIncomingPage((prev) => Math.max(1, prev - 1))}
+                        disabled={incomingPage <= 1}
+                      >
+                        Назад
+                      </button>
+                      <button
+                        className="ui-btn ui-btn--ghost ui-btn--sm"
+                        type="button"
+                        onClick={() => setIncomingPage((prev) => Math.min(incomingPagesTotal, prev + 1))}
+                        disabled={incomingPage >= incomingPagesTotal}
+                      >
+                        Вперёд
+                      </button>
+                      <button
+                        className="ui-btn ui-btn--ghost ui-btn--sm"
+                        type="button"
+                        onClick={() => setIncomingPage(incomingPagesTotal)}
+                        disabled={incomingPage >= incomingPagesTotal}
+                      >
+                        ⏭
+                      </button>
+                    </div>
+                  </>
                 )}
               </>
             )}
@@ -1116,9 +1224,7 @@ export function DashboardPage() {
             </button>
           </div>
           {kpiQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-          {kpiQuery.isError && (
-            <p style={{ color: '#f07373' }}>Ошибка: {(kpiQuery.error as Error).message}</p>
-          )}
+          {kpiQuery.isError && <ApiErrorBanner error={kpiQuery.error} title="Ошибка загрузки KPI" />}
           {kpiQuery.data?.current?.metrics && (
             <div className="kpi-grid">
               {kpiQuery.data.current.metrics.map((metric) => (

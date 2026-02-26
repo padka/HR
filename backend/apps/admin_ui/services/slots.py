@@ -8,7 +8,7 @@ from datetime import date as date_type, datetime, time as time_type, timedelta, 
 from typing import Dict, List, Literal, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.inspection import inspect as sa_inspect
 from sqlalchemy.orm import selectinload
@@ -59,6 +59,8 @@ from backend.domain.models import (
     ManualSlotAuditLog,
     Recruiter,
     Slot,
+    SlotAssignment,
+    SlotAssignmentStatus,
     SlotStatus,
 )
 from backend.domain.repositories import (
@@ -790,7 +792,8 @@ async def schedule_manual_candidate_slot(
     custom_message_text: Optional[str] = None,
     principal: Optional[Principal] = None,
 ) -> SlotApprovalResult:
-    if candidate.telegram_id is None:
+    candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id
+    if candidate_tg_id is None:
         raise ManualSlotError("Для кандидата не указан Telegram ID.")
 
     principal = principal or principal_ctx.get()
@@ -807,6 +810,7 @@ async def schedule_manual_candidate_slot(
             select(Slot.id)
             .where(Slot.recruiter_id == recruiter.id)
             .where(Slot.start_utc == normalized_dt)
+            .where(func.coalesce(Slot.purpose, "interview") == "interview")
         )
         if existing:
             raise ManualSlotError(
@@ -820,6 +824,7 @@ async def schedule_manual_candidate_slot(
         overlapping_slots = await session.execute(
             select(Slot.id, Slot.start_utc, Slot.duration_min)
             .where(Slot.recruiter_id == recruiter.id)
+            .where(func.coalesce(Slot.purpose, "interview") == "interview")
             .where(Slot.start_utc >= surrounding_start)
             .where(Slot.start_utc <= surrounding_end)
         )
@@ -875,7 +880,7 @@ async def schedule_manual_candidate_slot(
         assignment_result = await create_slot_assignment(
             slot_id=slot_id,
             candidate_id=candidate.candidate_id,
-            candidate_tg_id=candidate.telegram_id,
+            candidate_tg_id=candidate_tg_id,
             candidate_tz=slot_tz,
             created_by=admin_username,
         )
@@ -896,17 +901,17 @@ async def schedule_manual_candidate_slot(
     try:
         from backend.domain.candidates.status_service import set_status_slot_pending
 
-        await set_status_slot_pending(candidate.telegram_id)
+        await set_status_slot_pending(candidate_tg_id)
     except Exception:
         logger = logging.getLogger(__name__)
         logger.exception(
             "Failed to update candidate status to SLOT_PENDING for %s",
-            candidate.telegram_id,
+            candidate_tg_id,
         )
 
     await _log_manual_slot_assignment(
         slot_id=slot_id,
-        candidate_tg_id=candidate.telegram_id,
+        candidate_tg_id=candidate_tg_id,
         recruiter_id=recruiter.id,
         city_id=city.id,
         slot_datetime_utc=normalized_dt,
@@ -945,6 +950,9 @@ async def schedule_manual_candidate_slot_silent(
     principal = principal or principal_ctx.get()
     if principal and principal.type == "recruiter" and recruiter.id != principal.id:
         raise ManualSlotError("Слот не найден или недоступен.")
+    candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id
+    if candidate_tg_id is None:
+        raise ManualSlotError("Для кандидата не указан Telegram ID.")
     normalized_dt = ensure_aware_utc(dt_utc)
     requested_duration = max(SLOT_MIN_DURATION_MIN, duration_min)
     overlap_end = normalized_dt + timedelta(minutes=SLOT_MIN_DURATION_MIN)
@@ -954,6 +962,7 @@ async def schedule_manual_candidate_slot_silent(
             select(Slot.id)
             .where(Slot.recruiter_id == recruiter.id)
             .where(Slot.start_utc == normalized_dt)
+            .where(func.coalesce(Slot.purpose, "interview") == "interview")
         )
         if existing:
             raise ManualSlotError(
@@ -965,6 +974,7 @@ async def schedule_manual_candidate_slot_silent(
         overlapping_slots = await session.execute(
             select(Slot.id, Slot.start_utc, Slot.duration_min)
             .where(Slot.recruiter_id == recruiter.id)
+            .where(func.coalesce(Slot.purpose, "interview") == "interview")
             .where(Slot.start_utc >= surrounding_start)
             .where(Slot.start_utc <= surrounding_end)
         )
@@ -1013,7 +1023,7 @@ async def schedule_manual_candidate_slot_silent(
 
     reservation = await reserve_slot(
         slot_id,
-        candidate.telegram_id,
+        candidate_tg_id,
         candidate.fio,
         slot_tz,
         candidate_id=candidate.candidate_id,
@@ -1061,7 +1071,7 @@ async def schedule_manual_candidate_slot_silent(
 
     await _log_manual_slot_assignment(
         slot_id=slot_id,
-        candidate_tg_id=candidate.telegram_id,
+        candidate_tg_id=candidate_tg_id,
         recruiter_id=recruiter.id,
         city_id=city.id,
         slot_datetime_utc=normalized_dt,
@@ -1346,6 +1356,82 @@ async def _mark_dispatch_state(slot_id: int, kind: str, success: bool) -> None:
         await session.commit()
 
 
+async def _hydrate_slot_candidate_binding(slot_id: int) -> Optional[Slot]:
+    """Best-effort sync for legacy slots that have active assignment but empty slot binding."""
+    active_assignment_statuses = (
+        SlotAssignmentStatus.OFFERED,
+        SlotAssignmentStatus.CONFIRMED,
+        SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+        SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+    )
+    async with async_session() as session:
+        slot = await session.scalar(
+            select(Slot)
+            .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+            .where(Slot.id == slot_id)
+        )
+        if slot is None:
+            return None
+
+        assignment = await session.scalar(
+            select(SlotAssignment)
+            .where(
+                SlotAssignment.slot_id == slot_id,
+                SlotAssignment.status.in_(active_assignment_statuses),
+            )
+            .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
+        )
+        if assignment is None:
+            return slot
+
+        candidate = None
+        if assignment.candidate_id:
+            candidate = await session.scalar(
+                select(User).where(User.candidate_id == assignment.candidate_id)
+            )
+        if candidate is None and assignment.candidate_tg_id is not None:
+            candidate = await session.scalar(
+                select(User).where(
+                    or_(
+                        User.telegram_id == assignment.candidate_tg_id,
+                        User.telegram_user_id == assignment.candidate_tg_id,
+                    )
+                )
+            )
+
+        changed = False
+        if assignment.candidate_id and slot.candidate_id != assignment.candidate_id:
+            slot.candidate_id = assignment.candidate_id
+            changed = True
+        if assignment.candidate_tg_id and slot.candidate_tg_id != assignment.candidate_tg_id:
+            slot.candidate_tg_id = assignment.candidate_tg_id
+            changed = True
+        if not slot.candidate_fio and candidate is not None and candidate.fio:
+            slot.candidate_fio = candidate.fio
+            changed = True
+        if not slot.candidate_tz and assignment.candidate_tz:
+            slot.candidate_tz = assignment.candidate_tz
+            changed = True
+        if slot.candidate_city_id is None and slot.city_id is not None:
+            slot.candidate_city_id = slot.city_id
+            changed = True
+
+        if norm_status(slot.status) == "FREE":
+            if assignment.status in {
+                SlotAssignmentStatus.CONFIRMED,
+                SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+            }:
+                slot.status = SlotStatus.BOOKED
+            else:
+                slot.status = SlotStatus.PENDING
+            changed = True
+
+        if changed:
+            await session.commit()
+            await session.refresh(slot)
+        return slot
+
+
 async def _trigger_test2(
     candidate_id: int,
     candidate_tz: Optional[str],
@@ -1394,6 +1480,11 @@ async def reschedule_slot_booking(
             .options(selectinload(Slot.recruiter), selectinload(Slot.city))
             .where(Slot.id == slot_id)
         )
+    if slot and (
+        (slot.candidate_tg_id is None and slot.candidate_id is None)
+        or norm_status(slot.status) == "FREE"
+    ):
+        slot = await _hydrate_slot_candidate_binding(slot_id) or slot
 
     if not slot:
         return False, "Слот не найден.", False
@@ -1476,6 +1567,11 @@ async def reject_slot_booking(
             .options(selectinload(Slot.recruiter), selectinload(Slot.city))
             .where(Slot.id == slot_id)
         )
+    if slot and (
+        (slot.candidate_tg_id is None and slot.candidate_id is None)
+        or norm_status(slot.status) == "FREE"
+    ):
+        slot = await _hydrate_slot_candidate_binding(slot_id) or slot
 
     if not slot:
         return False, "Слот не найден.", False

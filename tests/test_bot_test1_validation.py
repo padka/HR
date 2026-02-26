@@ -282,6 +282,56 @@ async def test_format_flexible_request_triggers_clarification(bot_context):
 
 
 @pytest.mark.asyncio
+async def test_save_test1_answer_uses_dynamic_status_options(bot_context):
+    manager, _ = bot_context
+
+    status_options = ["Учусь", "Работаю", "Ищу работу"]
+    await manager.set(
+        USER_ID,
+        State(
+            flow="interview",
+            questions_bank_version=get_questions_bank_version(),
+            t1_idx=0,
+            t1_current_idx=0,
+            test1_answers={},
+            t1_last_prompt_id=None,
+            t1_last_question_text="",
+            t1_requires_free_text=False,
+            t1_sequence=[
+                {
+                    "id": "status",
+                    "prompt": "Текущий статус?",
+                    "options": status_options,
+                }
+            ],
+            fio="",
+            city_name="",
+            city_id=None,
+            candidate_tz=DEFAULT_TZ,
+            t2_attempts={},
+            picked_recruiter_id=None,
+            picked_slot_id=None,
+            test1_payload={},
+        ),
+    )
+
+    state = await manager.get(USER_ID)
+    question = state["t1_sequence"][0]
+
+    invalid = await save_test1_answer(USER_ID, question, "Предприниматель")
+    assert invalid.status == "invalid"
+    assert "Выберите" in (invalid.message or "")
+    assert invalid.hints == status_options
+
+    ok = await save_test1_answer(USER_ID, question, "Работаю")
+    assert ok.status == "ok"
+
+    updated_state = await manager.get(USER_ID)
+    assert updated_state.get("test1_payload", {}).get("status") == "Работаю"
+    assert updated_state.get("test1_answers", {}).get("status") == "Работаю"
+
+
+@pytest.mark.asyncio
 async def test_resolve_test1_options_uses_display_name(monkeypatch):
     cities = [
         CityInfo(

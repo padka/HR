@@ -236,6 +236,7 @@ export function CityNewPage() {
                   value={form.tz}
                   onChange={(e) => { setForm({ ...form, tz: e.target.value }); setTzTouched(true) }}
                   required
+                  data-testid="city-tz-input"
                 >
                   {tzOptions.map((tz) => (
                     <option key={tz.value} value={tz.value}>{tz.label}</option>
