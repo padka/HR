@@ -7,6 +7,8 @@ export type ProfileResponse = {
     id: number
     name: string
     tz: string
+    tg_chat_id?: number | null
+    telemost_url?: string | null
     active: boolean
     cities: { id: number; name: string }[]
   } | null

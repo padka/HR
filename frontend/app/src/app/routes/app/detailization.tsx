@@ -2,6 +2,7 @@ import { apiFetch } from '@/api/client'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { useProfile } from '@/app/hooks/useProfile'
 
 type DetailizationItem = {
@@ -124,6 +125,13 @@ export function DetailizationPage() {
       apiFetch(`/detailization/${payload.id}`, { method: 'PATCH', body: JSON.stringify(payload.patch) }),
     onSuccess: async () => {
       setDirty({})
+      await query.refetch()
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => apiFetch(`/detailization/${id}`, { method: 'DELETE' }),
+    onSuccess: async () => {
       await query.refetch()
     },
   })
@@ -402,12 +410,7 @@ export function DetailizationPage() {
           </div>
         )}
 
-        {query.isError && (
-          <div className="glass" style={{ padding: 12, marginTop: 12 }}>
-            <strong>Ошибка загрузки</strong>
-            <div className="text-muted text-sm">{String((query.error as Error)?.message || query.error)}</div>
-          </div>
-        )}
+        {query.isError && <ApiErrorBanner error={query.error} title="Ошибка загрузки" onRetry={() => query.refetch()} />}
 
         <div className={`detailization-grid ${isAdmin ? '' : 'detailization-grid--recruiter'}`} style={{ marginTop: 12 }}>
           <div className="detailization-grid__head">
@@ -425,6 +428,7 @@ export function DetailizationPage() {
             const patch = dirty[row.id] || {}
             const attached = attachLabel((patch as any).is_attached ?? row.is_attached)
             const canSave = Object.keys(patch).length > 0 && !updateMutation.isPending
+            const canDelete = !deleteMutation.isPending
             return (
               <div key={row.id} className="detailization-grid__row">
                 <div className="text-sm">
@@ -503,6 +507,16 @@ export function DetailizationPage() {
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                   <button className="ui-btn ui-btn--secondary" disabled={!canSave} onClick={() => saveRow(row.id)}>
                     Сохранить
+                  </button>
+                  <button
+                    className="ui-btn ui-btn--danger"
+                    disabled={!canDelete}
+                    onClick={async () => {
+                      if (!window.confirm('Удалить строку детализации?')) return
+                      await deleteMutation.mutateAsync(row.id)
+                    }}
+                  >
+                    Удалить
                   </button>
                 </div>
               </div>

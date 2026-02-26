@@ -124,6 +124,7 @@ async def list_test_questions() -> List[Dict[str, object]]:
         questions = sorted(getattr(test, "questions", []) or [], key=lambda q: getattr(q, "order", 0))
         for q in questions:
             options = list(getattr(q, "answer_options", []) or [])
+            sorted_options = _sorted_options(options)
             index = int(getattr(q, "order", 0)) + 1
             prompt = getattr(q, "text", "") or ""
             title = getattr(q, "title", None) or prompt or f"Вопрос {index}"
@@ -131,9 +132,11 @@ async def list_test_questions() -> List[Dict[str, object]]:
                 {
                     "id": q.id,
                     "index": index,
+                    "key": getattr(q, "key", None),
                     "title": title,
                     "prompt": prompt,
                     "kind": _question_kind(len(options)),
+                    "options": [str(opt.text or "") for opt in sorted_options],
                     "options_count": len(options),
                     "correct_label": _correct_option_label(options),
                     "is_active": bool(getattr(q, "is_active", True)),

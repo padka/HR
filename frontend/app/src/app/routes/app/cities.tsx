@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '@/api/client'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { RoleGuard } from '@/app/components/RoleGuard'
 
 type City = {
@@ -108,17 +109,20 @@ export function CitiesPage() {
       <div className="page">
       <header className="glass glass--elevated page-header page-header--row">
         <h1 className="title">Города</h1>
-        <Link to="/app/cities/new" className="ui-btn ui-btn--primary">+ Добавить</Link>
+        <Link to="/app/cities/new" className="ui-btn ui-btn--primary" data-testid="cities-create-btn">+ Добавить</Link>
       </header>
 
       <section className="glass page-section">
         {isLoading && <p className="subtitle">Загрузка…</p>}
-        {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
+        {isError && <ApiErrorBanner error={error} title="Не удалось загрузить города" />}
         {data && (
           <>
             {data.length === 0 && (
-              <div className="empty-state">
+              <div className="empty-state" data-testid="cities-empty-state">
                 <p className="empty-state__text">Пока нет городов. Добавьте первый, чтобы начать работу.</p>
+                <div className="toolbar">
+                  <Link to="/app/cities/new" className="ui-btn ui-btn--primary ui-btn--sm">+ Добавить город</Link>
+                </div>
               </div>
             )}
             <div className="page-section__content">
@@ -177,7 +181,7 @@ export function CitiesPage() {
                         />
                         <span>{(edits[c.id]?.active ?? c.active) ? 'Активен' : 'Не активен'}</span>
                       </label>
-                      <Link to="/app/cities/$cityId/edit" params={{ cityId: String(c.id) }} className="ui-btn ui-btn--ghost">
+                      <Link to="/app/cities/$cityId/edit" params={{ cityId: String(c.id) }} className="ui-btn ui-btn--ghost" data-testid="city-edit-link">
                         Настроить
                       </Link>
                       <button

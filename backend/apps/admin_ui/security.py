@@ -13,14 +13,13 @@ from contextvars import ContextVar
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
+from starlette.requests import HTTPConnection
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from jose import JWTError, jwt
 
 from backend.core.audit import AuditContext, set_audit_context
 from backend.core.db import async_session
-from backend.core.auth import verify_password
-from backend.domain.auth_account import AuthAccount
 from backend.domain.models import Recruiter
 from starlette_wtf import csrf_token
 from backend.core.settings import get_settings
@@ -29,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 # Replaced Basic auth with OAuth2 (Bearer token)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
+_LOCAL_ONLY_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+_TRUTHY = {"1", "true", "yes", "on"}
 
 
 def get_admin_identifier(request: Request) -> str:
@@ -166,22 +167,76 @@ class Principal:
 
 SESSION_KEY = "principal"
 principal_ctx: ContextVar[Optional[Principal]] = ContextVar("principal_ctx", default=None)
-def _allow_legacy_basic() -> bool:
-    env_flag = os.getenv("ALLOW_LEGACY_BASIC", "false").lower() in {"1", "true", "yes"}
-    settings = get_settings()
-    return bool(env_flag or getattr(settings, "allow_legacy_basic", False))
 
 
-@limiter.limit("60/minute", key_func=get_client_ip)
-async def get_current_principal(
-    request: Request, 
-    token: str = Depends(oauth2_scheme),
+def _connection_client_host(connection: Request | HTTPConnection) -> str:
+    return (
+        connection.client.host.strip().lower()
+        if connection and getattr(connection, "client", None) and connection.client.host
+        else ""
+    )
+
+
+def _is_local_connection(connection: Request | HTTPConnection) -> bool:
+    host = (connection.url.hostname or "").strip().lower() if connection and getattr(connection, "url", None) else ""
+    client_host = _connection_client_host(connection)
+    return host in _LOCAL_ONLY_HOSTS or client_host in _LOCAL_ONLY_HOSTS
+
+
+def _extract_bearer_token(connection: Request | HTTPConnection) -> str:
+    auth_header = connection.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header.split(" ", 1)[1].strip()
+    return ""
+
+
+def _allow_legacy_basic(connection: Request | HTTPConnection, settings) -> bool:
+    env_flag = os.getenv("ALLOW_LEGACY_BASIC", "false").lower() in _TRUTHY
+    configured = bool(getattr(settings, "allow_legacy_basic", False))
+    if not (env_flag or configured):
+        return False
+    if settings.environment not in {"development", "test"}:
+        return False
+    return _is_local_connection(connection)
+
+
+def _allow_dev_autoadmin(connection: Request | HTTPConnection, settings) -> bool:
+    env_flag = os.getenv("ALLOW_DEV_AUTOADMIN", "0").lower() in _TRUTHY
+    if not env_flag:
+        return False
+    if settings.environment not in {"development", "test"}:
+        return False
+    return _is_local_connection(connection)
+
+
+def _assign_principal(
+    connection: Request | HTTPConnection,
+    principal: Principal,
+    *,
+    username: str,
+) -> Principal:
+    principal_ctx.set(principal)
+    connection.state.principal = principal
+    set_audit_context(
+        AuditContext(
+            username=username,
+            ip_address=_connection_client_host(connection) or None,
+            user_agent=connection.headers.get("user-agent"),
+        )
+    )
+    return principal
+
+
+async def _resolve_current_principal(
+    connection: Request | HTTPConnection,
+    *,
+    token: str = "",
 ) -> Principal:
     """
     Resolve principal from:
     1. JWT Token (Bearer header)
     2. Session (Cookie)
-    3. Legacy Basic Auth (if enabled)
+    3. Legacy Basic Auth (local dev/test only)
     """
     settings = get_settings()
 
@@ -189,48 +244,32 @@ async def get_current_principal(
     if token:
         try:
             payload = jwt.decode(
-                token, 
-                settings.session_secret, 
-                algorithms=["HS256"]
+                token,
+                settings.session_secret,
+                algorithms=["HS256"],
             )
             username: str = payload.get("sub")
-            if username:
-                # Validate admin username from token
-                # In a real DB-backed system, we'd fetch the user here.
-                # For this simple admin setup:
-                if secrets.compare_digest(username, settings.admin_username):
-                    principal = Principal(type="admin", id=-1)
-                    principal_ctx.set(principal)
-                    request.state.principal = principal
-                    set_audit_context(
-                        AuditContext(
-                            username=f"admin:{username}",
-                            ip_address=request.client.host if request and request.client else None,
-                            user_agent=request.headers.get("user-agent"),
-                        )
-                    )
-                    return principal
+            if username and secrets.compare_digest(username, settings.admin_username):
+                return _assign_principal(
+                    connection,
+                    Principal(type="admin", id=-1),
+                    username=f"admin:{username}",
+                )
         except JWTError:
-            # Invalid token, proceed to other methods or fail if only token expected
+            # Invalid token, proceed to other methods or fail.
             pass
 
     # 2. Session principal
-    principal_data = request.session.get(SESSION_KEY) if hasattr(request, "session") else None
+    principal_data = connection.session.get(SESSION_KEY) if hasattr(connection, "session") else None
     if principal_data and isinstance(principal_data, dict):
         p_type = principal_data.get("type")
         p_id = principal_data.get("id")
         if p_type == "admin" and isinstance(p_id, int):
-            principal = Principal(type="admin", id=p_id)
-            principal_ctx.set(principal)
-            request.state.principal = principal
-            set_audit_context(
-                AuditContext(
-                    username=f"admin:{p_id}",
-                    ip_address=request.client.host if request and request.client else None,
-                    user_agent=request.headers.get("user-agent"),
-                )
+            return _assign_principal(
+                connection,
+                Principal(type="admin", id=p_id),
+                username=f"admin:{p_id}",
             )
-            return principal
         if p_type == "recruiter" and isinstance(p_id, int):
             async with async_session() as session:
                 recruiter = await session.get(Recruiter, p_id)
@@ -242,26 +281,19 @@ async def get_current_principal(
                     if last_seen is None or (now - last_seen) > timedelta(minutes=5):
                         recruiter.last_seen_at = now
                         await session.commit()
-                    principal = Principal(type="recruiter", id=recruiter.id)
-                    principal_ctx.set(principal)
-                    request.state.principal = principal
-                    set_audit_context(
-                        AuditContext(
-                            username=f"recruiter:{recruiter.id}",
-                            ip_address=request.client.host if request and request.client else None,
-                            user_agent=request.headers.get("user-agent"),
-                        )
+                    return _assign_principal(
+                        connection,
+                        Principal(type="recruiter", id=recruiter.id),
+                        username=f"recruiter:{recruiter.id}",
                     )
-                    return principal
             # stale session -> clear
-            request.session.pop(SESSION_KEY, None)
+            connection.session.pop(SESSION_KEY, None)
 
-    # Legacy Basic admin fallback
-    settings = get_settings()
+    # Legacy Basic admin fallback (strictly local dev/test only)
     legacy_user = settings.admin_username
     legacy_pass = settings.admin_password
-    auth_header = request.headers.get("authorization", "")
-    if _allow_legacy_basic() and auth_header.lower().startswith("basic ") and legacy_user and legacy_pass:
+    auth_header = connection.headers.get("authorization", "")
+    if _allow_legacy_basic(connection, settings) and auth_header.lower().startswith("basic ") and legacy_user and legacy_pass:
         # Important: don't use FastAPI's HTTPBasic dependency here.
         # Even with auto_error=False, having HTTPBasic in the dependency graph can
         # cause some servers to advertise "WWW-Authenticate: Basic" on 401, which
@@ -277,41 +309,49 @@ async def get_current_principal(
         pass_ok = secrets.compare_digest(candidate_pass, legacy_pass)
         if user_ok and pass_ok:
             # Persist into session for subsequent requests
-            if hasattr(request, "session"):
-                request.session[SESSION_KEY] = {"type": "admin", "id": -1}
-            principal = Principal(type="admin", id=-1)
-            principal_ctx.set(principal)
-            request.state.principal = principal
-            set_audit_context(
-                AuditContext(
-                    username=f"admin:{candidate_user}",
-                    ip_address=request.client.host if request and request.client else None,
-                    user_agent=request.headers.get("user-agent"),
-                )
+            if hasattr(connection, "session"):
+                connection.session[SESSION_KEY] = {"type": "admin", "id": -1}
+            return _assign_principal(
+                connection,
+                Principal(type="admin", id=-1),
+                username=f"admin:{candidate_user}",
             )
-            return principal
 
-    # Development/test safety valve: allow anonymous admin when not in production.
-    # Disabled by default; set ALLOW_DEV_AUTOADMIN=1 to skip login locally.
-    allow_dev_autoadmin = os.getenv("ALLOW_DEV_AUTOADMIN", "0").lower() in {"1", "true", "yes"}
-    if settings.environment != "production" and allow_dev_autoadmin:
-        principal = Principal(type="admin", id=-1)
-        principal_ctx.set(principal)
-        request.state.principal = principal
-        set_audit_context(
-            AuditContext(
-                username="anon-admin",
-                ip_address=request.client.host if request and request.client else None,
-                user_agent=request.headers.get("user-agent"),
-            )
+    # Development/test safety valve: allow anonymous admin locally only.
+    if _allow_dev_autoadmin(connection, settings):
+        return _assign_principal(
+            connection,
+            Principal(type="admin", id=-1),
+            username="anon-admin",
         )
-        return principal
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+@limiter.limit("60/minute", key_func=get_client_ip)
+async def get_current_principal(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+) -> Principal:
+    return await _resolve_current_principal(request, token=token or "")
+
+
+async def try_get_current_principal(
+    connection: Request | HTTPConnection,
+    *,
+    token: Optional[str] = None,
+) -> Optional[Principal]:
+    try:
+        resolved_token = token if token is not None else _extract_bearer_token(connection)
+        return await _resolve_current_principal(connection, token=resolved_token or "")
+    except HTTPException as exc:
+        if exc.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}:
+            return None
+        raise
 
 
 async def require_principal(principal: Principal = Depends(get_current_principal)) -> Principal:
@@ -328,6 +368,7 @@ __all__ = [
     "require_admin",
     "require_principal",
     "get_current_principal",
+    "try_get_current_principal",
     "principal_ctx",
     "limiter",
     "RateLimitExceeded",

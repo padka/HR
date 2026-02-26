@@ -2,9 +2,26 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { apiFetch } from '@/api/client'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useProfile } from '@/app/hooks/useProfile'
 import { Link } from '@tanstack/react-router'
+import {
+  buildStatusCounts,
+  matchesStatusFilter,
+  normalizeSlotStatus,
+  slotDateForFilter,
+  slotHasCandidate,
+  slotPurpose,
+  slotRecruiterTimeLabel,
+  slotRecruiterTimestamp,
+  slotRecruiterTz,
+  slotRegionTimeLabel,
+  slotRegionTimestamp,
+  slotRegionTz,
+  type SlotApiItem,
+  type SlotStatusFilter,
+} from './slots.utils'
 
 type CandidateSearchItem = {
   id: number
@@ -15,27 +32,8 @@ type CandidateSearchItem = {
   status?: { slug?: string; label?: string }
 }
 
-type SlotApiItem = {
-  id: number
-  recruiter_id?: number | null
-  recruiter_name?: string | null
-  start_utc: string
-  status?: string | null
-  candidate_fio?: string | null
-  candidate_tg_id?: string | null
-  candidate_id?: number | null
-  tz_name?: string | null
-  local_time?: string | null
-  recruiter_tz?: string | null
-  recruiter_local_time?: string | null
-  candidate_tz?: string | null
-  candidate_local_time?: string | null
-  city_name?: string | null
-  purpose?: string | null
-}
-
 function statusLabel(status?: string) {
-  switch (status) {
+  switch (normalizeSlotStatus(status)) {
     case 'FREE':
       return 'Свободен'
     case 'PENDING':
@@ -49,35 +47,8 @@ function statusLabel(status?: string) {
   }
 }
 
-function formatLocal(startUtc: string, tz?: string | null) {
-  try {
-    const d = new Date(startUtc)
-    return new Intl.DateTimeFormat('ru-RU', {
-      timeZone: tz || 'Europe/Moscow',
-      day: '2-digit',
-      month: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(d)
-  } catch {
-    return startUtc
-  }
-}
-
-function formatLocalLabel(iso?: string | null) {
-  if (!iso) return '—'
-  try {
-    const d = new Date(iso)
-    return new Intl.DateTimeFormat('ru-RU', {
-      day: '2-digit',
-      month: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(d)
-  } catch {
-    return iso
-  }
-}
+type SlotSortField = 'recruiter_time' | 'region_time' | 'city' | 'candidate' | 'status' | 'type'
+type SlotSortDir = 'asc' | 'desc'
 
 type BookingModalProps = {
   slot: SlotApiItem
@@ -137,9 +108,7 @@ function BookingModal({ slot, onClose, onSuccess, showToast }: BookingModalProps
           <div>
             <h2 className="modal__title">Предложить слот</h2>
             <p className="modal__subtitle">
-              {slot.recruiter_local_time
-                ? formatLocalLabel(slot.recruiter_local_time)
-                : formatLocal(slot.start_utc, slot.recruiter_tz || slot.tz_name || 'Europe/Moscow')}
+              {slotRecruiterTimeLabel(slot)}
             </p>
           </div>
           <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
@@ -329,10 +298,20 @@ function RescheduleModal({ slot, onClose, onSuccess, showToast }: RescheduleModa
 
 export function SlotsPage() {
   const profile = useProfile()
-  const canUse = profile.data?.principal.type === 'recruiter'
-  const [status, setStatus] = useState<string | undefined>(undefined)
-  const [purposeFilter, setPurposeFilter] = useState<string>('interview')
-  const [limit, setLimit] = useState<number>(100)
+  const canUse = Boolean(profile.data?.principal?.type)
+  const isAdmin = profile.data?.principal.type === 'admin'
+  const [statusFilter, setStatusFilter] = useState<SlotStatusFilter>('ALL')
+  const [purposeFilter, setPurposeFilter] = useState<string>('all')
+  const [search, setSearch] = useState('')
+  const [cityFilter, setCityFilter] = useState<string>('all')
+  const [recruiterFilter, setRecruiterFilter] = useState<string>('all')
+  const [candidateFilter, setCandidateFilter] = useState<'all' | 'with' | 'without'>('all')
+  const [tzRelationFilter, setTzRelationFilter] = useState<'all' | 'same' | 'diff'>('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [sortField, setSortField] = useState<SlotSortField>('recruiter_time')
+  const [sortDir, setSortDir] = useState<SlotSortDir>('desc')
+  const [limit, setLimit] = useState<number>(500)
   const [page, setPage] = useState<number>(1)
   const [perPage, setPerPage] = useState<number>(20)
   const [sheetSlot, setSheetSlot] = useState<SlotApiItem | null>(null)
@@ -344,48 +323,150 @@ export function SlotsPage() {
 
   const queryPath = useMemo(() => {
     const params = new URLSearchParams()
-    if (status) params.set('status', status)
     if (limit) params.set('limit', String(limit))
-    params.set('page', String(page))
-    params.set('per_page', String(perPage))
+    params.set('sort_dir', 'desc')
     return `/slots?${params.toString()}`
-  }, [status, limit, page, perPage])
+  }, [limit])
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<SlotApiItem[]>({
-    queryKey: ['slots', { status, limit, page, perPage }],
+    queryKey: ['slots', { limit }],
     queryFn: () => apiFetch<SlotApiItem[]>(queryPath),
     staleTime: 20_000,
     enabled: Boolean(canUse),
   })
 
-  const filteredByPurpose = useMemo(() => {
-    if (!data) return []
-    if (purposeFilter === 'all') return data
-    return data.filter((item) => (item.purpose || 'interview') === purposeFilter)
-  }, [data, purposeFilter])
+  const allItems = useMemo(() => data || [], [data])
 
-  const total = filteredByPurpose.length
-  const pagesTotal = Math.max(1, Math.ceil(total / perPage))
-  const pagedItems = filteredByPurpose.slice((page - 1) * perPage, page * perPage)
+  const cityOptions = useMemo(() => {
+    return Array.from(new Set(allItems.map((item) => item.city_name || '').filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, 'ru'),
+    )
+  }, [allItems])
+
+  const recruiterOptions = useMemo(() => {
+    return Array.from(new Set(allItems.map((item) => item.recruiter_name || '').filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, 'ru'),
+    )
+  }, [allItems])
 
   const purposeCounts = useMemo(() => {
-    if (!data) return { interview: 0, intro_day: 0 }
-    let interview = 0, intro_day = 0
-    data.forEach((item) => {
-      if ((item.purpose || 'interview') === 'intro_day') intro_day++
-      else interview++
+    let interview = 0
+    let intro_day = 0
+    allItems.forEach((item) => {
+      if (slotPurpose(item) === 'intro_day') intro_day += 1
+      else interview += 1
     })
-    return { interview, intro_day }
-  }, [data])
+    return { interview, intro_day, all: allItems.length }
+  }, [allItems])
 
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    filteredByPurpose.forEach((item) => {
-      const key = String(item.status || 'UNKNOWN')
-      counts[key] = (counts[key] || 0) + 1
+  const filteredByPurpose = useMemo(() => {
+    if (purposeFilter === 'all') return allItems
+    return allItems.filter((item) => slotPurpose(item) === purposeFilter)
+  }, [allItems, purposeFilter])
+
+  const filteredBeforeStatus = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return filteredByPurpose.filter((item) => {
+      if (cityFilter !== 'all' && (item.city_name || '') !== cityFilter) return false
+      if (recruiterFilter !== 'all' && (item.recruiter_name || '') !== recruiterFilter) return false
+
+      const hasCandidate = slotHasCandidate(item)
+      if (candidateFilter === 'with' && !hasCandidate) return false
+      if (candidateFilter === 'without' && hasCandidate) return false
+
+      if (tzRelationFilter !== 'all') {
+        const recruiterTz = slotRecruiterTz(item)
+        const regionTz = slotRegionTz(item)
+        if (!regionTz) return false
+        const sameTz = recruiterTz === regionTz
+        if (tzRelationFilter === 'same' && !sameTz) return false
+        if (tzRelationFilter === 'diff' && sameTz) return false
+      }
+
+      const date = slotDateForFilter(item)
+      if (dateFrom && date && date < dateFrom) return false
+      if (dateTo && date && date > dateTo) return false
+
+      if (!q) return true
+      const searchable = [
+        String(item.id),
+        item.candidate_fio || '',
+        String(item.candidate_tg_id || ''),
+        item.city_name || '',
+        item.recruiter_name || '',
+        item.status || '',
+        slotPurpose(item),
+      ]
+        .join(' ')
+        .toLowerCase()
+      return searchable.includes(q)
     })
-    return counts
-  }, [filteredByPurpose])
+  }, [
+    candidateFilter,
+    cityFilter,
+    dateFrom,
+    dateTo,
+    filteredByPurpose,
+    recruiterFilter,
+    search,
+    tzRelationFilter,
+  ])
+
+  const statusCounts = useMemo(() => buildStatusCounts(filteredBeforeStatus), [filteredBeforeStatus])
+
+  const filteredByStatus = useMemo(() => {
+    return filteredBeforeStatus.filter((item) => matchesStatusFilter(item, statusFilter))
+  }, [filteredBeforeStatus, statusFilter])
+
+  const sortedItems = useMemo(() => {
+    const statusOrder: Record<string, number> = {
+      FREE: 1,
+      PENDING: 2,
+      BOOKED: 3,
+      CONFIRMED_BY_CANDIDATE: 4,
+    }
+    const compareText = (a: string, b: string) => a.localeCompare(b, 'ru')
+    const multiplier = sortDir === 'asc' ? 1 : -1
+    return [...filteredByStatus].sort((left, right) => {
+      let result = 0
+      if (sortField === 'recruiter_time') {
+        result = slotRecruiterTimestamp(left) - slotRecruiterTimestamp(right)
+      } else if (sortField === 'region_time') {
+        result = slotRegionTimestamp(left) - slotRegionTimestamp(right)
+      } else if (sortField === 'city') {
+        result = compareText(left.city_name || '', right.city_name || '')
+      } else if (sortField === 'candidate') {
+        result = compareText(left.candidate_fio || '', right.candidate_fio || '')
+      } else if (sortField === 'status') {
+        result =
+          (statusOrder[normalizeSlotStatus(left.status)] || 99) -
+          (statusOrder[normalizeSlotStatus(right.status)] || 99)
+      } else if (sortField === 'type') {
+        result = compareText(slotPurpose(left), slotPurpose(right))
+      }
+      if (result === 0) {
+        result = left.id - right.id
+      }
+      return result * multiplier
+    })
+  }, [filteredByStatus, sortDir, sortField])
+
+  const total = sortedItems.length
+  const hasActiveFilters = Boolean(
+    search.trim()
+      || cityFilter !== 'all'
+      || recruiterFilter !== 'all'
+      || candidateFilter !== 'all'
+      || tzRelationFilter !== 'all'
+      || dateFrom
+      || dateTo
+      || statusFilter !== 'ALL'
+      || purposeFilter !== 'all'
+      || sortField !== 'recruiter_time'
+      || sortDir !== 'desc',
+  )
+  const pagesTotal = Math.max(1, Math.ceil(total / perPage))
+  const pagedItems = sortedItems.slice((page - 1) * perPage, page * perPage)
 
   const canPrev = page > 1
   const canNext = page < pagesTotal
@@ -441,7 +522,7 @@ export function SlotsPage() {
   }
 
   const selectAll = () => {
-    if (pagedItems.length === selectedIds.size) {
+    if (pagedItems.length > 0 && pagedItems.every((item) => selectedIds.has(item.id))) {
       setSelectedIds(new Set())
     } else {
       setSelectedIds(new Set(pagedItems.map((s) => s.id)))
@@ -488,6 +569,29 @@ export function SlotsPage() {
   }
 
   useEffect(() => {
+    setPage(1)
+  }, [
+    candidateFilter,
+    cityFilter,
+    dateFrom,
+    dateTo,
+    perPage,
+    purposeFilter,
+    recruiterFilter,
+    search,
+    sortDir,
+    sortField,
+    statusFilter,
+    tzRelationFilter,
+  ])
+
+  useEffect(() => {
+    if (page > pagesTotal) {
+      setPage(pagesTotal)
+    }
+  }, [page, pagesTotal])
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeSheet()
     }
@@ -505,17 +609,35 @@ export function SlotsPage() {
     }
   }, [modalOpen])
 
+  const clearAllFilters = () => {
+    setStatusFilter('ALL')
+    setPurposeFilter('all')
+    setSearch('')
+    setCityFilter('all')
+    setRecruiterFilter('all')
+    setCandidateFilter('all')
+    setTzRelationFilter('all')
+    setDateFrom('')
+    setDateTo('')
+    setSortField('recruiter_time')
+    setSortDir('desc')
+    setPage(1)
+  }
+
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
-      <div className="page">
-        <section className="glass glass--elevated page-header page-header--row">
-          <div>
+      <div className="page slots-page">
+        <header className="glass glass--elevated page-header page-header--row slots-page__hero">
+          <div className="page-header__content">
             <h1 className="title">Слоты</h1>
+            <p className="subtitle" style={{ marginBottom: 10 }}>
+              Сортируйте и фильтруйте расписание по статусу, городу, времени и часовым поясам.
+            </p>
             <div className="slots-summary" role="group" aria-label="Тип слотов" style={{ marginBottom: 8 }}>
               {[
+                { key: 'all', label: 'Все', value: purposeCounts.all, tone: 'neutral' },
                 { key: 'interview', label: 'Собеседования', value: purposeCounts.interview, tone: 'accent' },
                 { key: 'intro_day', label: 'Ознакомительные дни', value: purposeCounts.intro_day, tone: 'success' },
-                { key: 'all', label: 'Все', value: (data?.length || 0), tone: 'neutral' },
               ].map((item) => {
                 const isActive = item.key === purposeFilter
                 return (
@@ -534,19 +656,20 @@ export function SlotsPage() {
             </div>
             <div className="slots-summary" role="group" aria-label="Сводка слотов">
               {[
-                { key: 'all', label: 'Всего', value: total, status: undefined, tone: 'neutral' },
-                { key: 'free', label: 'Свободные', value: statusCounts['FREE'] ?? 0, status: 'FREE', tone: 'success' },
-                { key: 'booked', label: 'Забронировано', value: statusCounts['BOOKED'] ?? 0, status: 'BOOKED', tone: 'accent' },
-                { key: 'pending', label: 'Ожидают', value: statusCounts['PENDING'] ?? 0, status: 'PENDING', tone: 'warning' },
+                { key: 'all', label: 'Всего', value: statusCounts.total, status: 'ALL' as SlotStatusFilter, tone: 'neutral' },
+                { key: 'free', label: 'Свободные', value: statusCounts.free, status: 'FREE' as SlotStatusFilter, tone: 'success' },
+                { key: 'booked', label: 'Забронировано', value: statusCounts.booked, status: 'BOOKED' as SlotStatusFilter, tone: 'accent' },
+                { key: 'confirmed', label: 'Подтверждены', value: statusCounts.confirmed, status: 'CONFIRMED_BY_CANDIDATE' as SlotStatusFilter, tone: 'accent' },
+                { key: 'pending', label: 'Ожидают', value: statusCounts.pending, status: 'PENDING' as SlotStatusFilter, tone: 'warning' },
               ].map((item) => {
-                const isActive = item.status === status || (!item.status && !status)
+                const isActive = item.status === statusFilter
                 return (
                   <button
                     key={item.key}
                     type="button"
                     className={`slots-summary__card slots-summary__card--${item.tone} ${isActive ? 'is-active' : ''}`}
                     onClick={() => {
-                      setStatus(item.status)
+                      setStatusFilter(item.status)
                       setPage(1)
                     }}
                     aria-pressed={isActive}
@@ -558,40 +681,110 @@ export function SlotsPage() {
               })}
             </div>
           </div>
-          <Link to="/app/slots/create" className="ui-btn ui-btn--primary" style={{ marginBottom: '16px' }}>
-            + Создать слоты
-          </Link>
+          <div className="page-header__actions">
+            <button className="ui-btn ui-btn--ghost" onClick={() => refetch()}>
+              {isFetching ? 'Обновляем…' : 'Обновить'}
+            </button>
+            <Link to="/app/slots/create" className="ui-btn ui-btn--primary" data-testid="slots-create-btn">
+              + Создать слоты
+            </Link>
+          </div>
+        </header>
 
-          <div className="filter-bar">
+        <section className="glass page-section slots-page__section">
+          <div className="slots-filters-grid slots-filters-grid--enhanced" data-testid="slots-filter-bar">
             <label className="filter-bar__item">
-              <span className="filter-bar__label">Статус</span>
-              <select value={status ?? ''} onChange={(e) => setStatus(e.target.value || undefined)}>
-                <option value="">Любой</option>
-                <option value="FREE">Свободные</option>
-                <option value="PENDING">Ожидают</option>
-                <option value="BOOKED">Забронированы</option>
-                <option value="CONFIRMED_BY_CANDIDATE">Подтверждены</option>
+              <span className="filter-bar__label">Поиск</span>
+              <input
+                className="filter-bar__search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="ID, кандидат, город, рекрутёр, tg"
+              />
+            </label>
+            <label className="filter-bar__item">
+              <span className="filter-bar__label">Город</span>
+              <select value={cityFilter} onChange={(e) => setCityFilter(e.target.value)}>
+                <option value="all">Все</option>
+                {cityOptions.map((city) => (
+                  <option key={city} value={city}>{city}</option>
+                ))}
+              </select>
+            </label>
+            {isAdmin && (
+              <label className="filter-bar__item">
+                <span className="filter-bar__label">Рекрутёр</span>
+                <select value={recruiterFilter} onChange={(e) => setRecruiterFilter(e.target.value)}>
+                  <option value="all">Все</option>
+                  {recruiterOptions.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="filter-bar__item">
+              <span className="filter-bar__label">Кандидат</span>
+              <select value={candidateFilter} onChange={(e) => setCandidateFilter(e.target.value as 'all' | 'with' | 'without')}>
+                <option value="all">Любой</option>
+                <option value="with">Назначен</option>
+                <option value="without">Свободный слот</option>
               </select>
             </label>
             <label className="filter-bar__item">
-              <span className="filter-bar__label">Лимит</span>
+              <span className="filter-bar__label">TZ рекрутёр/регион</span>
+              <select value={tzRelationFilter} onChange={(e) => setTzRelationFilter(e.target.value as 'all' | 'same' | 'diff')}>
+                <option value="all">Любое</option>
+                <option value="same">Совпадают</option>
+                <option value="diff">Разные</option>
+              </select>
+            </label>
+            <label className="filter-bar__item">
+              <span className="filter-bar__label">Дата с</span>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </label>
+            <label className="filter-bar__item">
+              <span className="filter-bar__label">Дата по</span>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </label>
+            <label className="filter-bar__item">
+              <span className="filter-bar__label">Сортировать</span>
+              <select value={sortField} onChange={(e) => setSortField(e.target.value as SlotSortField)}>
+                <option value="recruiter_time">По времени рекрутёра</option>
+                <option value="region_time">По времени региона/кандидата</option>
+                <option value="city">По городу</option>
+                <option value="candidate">По кандидату</option>
+                <option value="status">По статусу</option>
+                <option value="type">По типу</option>
+              </select>
+            </label>
+            <label className="filter-bar__item">
+              <span className="filter-bar__label">Порядок</span>
+              <select value={sortDir} onChange={(e) => setSortDir(e.target.value as SlotSortDir)}>
+                <option value="desc">Убывание</option>
+                <option value="asc">Возрастание</option>
+              </select>
+            </label>
+            <label className="filter-bar__item">
+              <span className="filter-bar__label">Лимит загрузки</span>
               <select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-                {[50, 100, 200, 300, 500].map((v) => (
+                {[100, 300, 500].map((v) => (
                   <option key={v} value={v}>{v}</option>
                 ))}
               </select>
             </label>
-            <button className="ui-btn ui-btn--primary" onClick={() => refetch()}>
-              {isFetching ? 'Обновляем…' : 'Обновить'}
-            </button>
+            <div className="slots-filters-grid__actions">
+              <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={clearAllFilters}>
+                Сбросить фильтры
+              </button>
+            </div>
           </div>
 
           <div className="pagination">
-            <span className="pagination__info">Страница: {page} / {pagesTotal}</span>
+            <span className="pagination__info">Показано: {total} · Страница {page} / {pagesTotal}</span>
             <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={!canPrev} onClick={() => setPage((p) => Math.max(1, p - 1))}>Назад</button>
             <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={!canNext} onClick={() => setPage((p) => p + 1)}>Вперёд</button>
             <label className="filter-bar__item">
-              <span className="filter-bar__label">Per page</span>
+              <span className="filter-bar__label">На странице</span>
               <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}>
                 {[10, 20, 50, 100].map((v) => (
                   <option key={v} value={v}>{v}</option>
@@ -607,15 +800,25 @@ export function SlotsPage() {
               ))}
             </div>
           )}
-          {isError && (
-            <div className="glass page-section__error">
-              Ошибка загрузки: {(error as Error).message}
-            </div>
-          )}
+          {isError && <ApiErrorBanner error={error} title="Не удалось загрузить слоты" onRetry={() => refetch()} />}
 
-          {!isLoading && data && data.length === 0 && (
-            <div className="empty-state">
-              <p className="empty-state__text">Слотов нет.</p>
+          {!isLoading && total === 0 && (
+            <div className="empty-state" data-testid="slots-empty-state">
+              <p className="empty-state__text">
+                {hasActiveFilters
+                  ? 'По текущим фильтрам слоты не найдены.'
+                  : 'Слотов пока нет. Создайте первую сетку слотов для запуска воронки.'}
+              </p>
+              <div className="toolbar">
+                {hasActiveFilters && (
+                  <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={clearAllFilters}>
+                    Сбросить фильтры
+                  </button>
+                )}
+                <Link to="/app/slots/create" className="ui-btn ui-btn--primary ui-btn--sm">
+                  + Создать слоты
+                </Link>
+              </div>
             </div>
           )}
 
@@ -634,147 +837,147 @@ export function SlotsPage() {
             </div>
           )}
 
-          {!isLoading && data && data.length > 0 && (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th className="data-table__th--checkbox">
-                    <input
-                      type="checkbox"
-                      checked={pagedItems.length > 0 && pagedItems.every((s) => selectedIds.has(s.id))}
-                      onChange={selectAll}
-                      title="Выбрать все"
-                    />
-                  </th>
-                  <th>Тип</th>
-                  <th>Кандидат</th>
-                  <th>Город</th>
-                  <th>Время</th>
-                  <th>Статус</th>
-                  <th>Действия</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagedItems.map((row: SlotApiItem) => {
-                  const recruiterTz = row.recruiter_tz || row.tz_name || 'Europe/Moscow'
-                  const recruiterTimeLabel = row.recruiter_local_time
-                    ? formatLocalLabel(row.recruiter_local_time)
-                    : formatLocal(row.start_utc, recruiterTz)
-                  const candidateTz = row.candidate_tz
-                  const candidateTimeLabel = row.candidate_local_time
-                    ? formatLocalLabel(row.candidate_local_time)
-                    : (candidateTz ? formatLocal(row.start_utc, candidateTz) : null)
-                  const hasCandidate = Boolean(row.candidate_fio || row.candidate_tg_id)
-                  const candidateProfileId = row.candidate_id ? String(row.candidate_id) : null
-                  return (
-                  <tr key={row.id} className={selectedIds.has(row.id) ? 'data-table__row--selected' : ''}>
-                    <td>
+          {!isLoading && total > 0 && (
+            <div className="data-table-wrapper slots-table-wrapper">
+              <table className="data-table" data-testid="slots-table">
+                <thead>
+                  <tr>
+                    <th className="data-table__th--checkbox">
                       <input
                         type="checkbox"
-                        checked={selectedIds.has(row.id)}
-                        onChange={() => toggleSelect(row.id)}
+                        checked={pagedItems.length > 0 && pagedItems.every((s) => selectedIds.has(s.id))}
+                        onChange={selectAll}
+                        title="Выбрать все"
+                        data-testid="slots-select-all"
                       />
-                    </td>
-                    <td>
-                      <span className={`cd-chip ${(row.purpose || 'interview') === 'intro_day' ? 'cd-chip--accent' : ''}`}>
-                        {(row.purpose || 'interview') === 'intro_day' ? 'ОД' : 'Собес'}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="slot-candidate">
-                        <div className="slot-candidate__name">
-                          {row.candidate_fio || 'Свободный слот'}
-                        </div>
-                        <div className="slot-candidate__meta">
-                          {row.candidate_tg_id ? `tg_id: ${row.candidate_tg_id}` : (hasCandidate ? 'Без tg_id' : 'Назначьте кандидата')}
-                        </div>
-                      </div>
-                    </td>
-                    <td>{row.city_name || '—'}</td>
-                    <td>
-                  <div className="slot-time">
-                    <div className="slot-time__primary">
-                      {recruiterTimeLabel}
-                      <span className="slot-time__tz">{recruiterTz}</span>
-                    </div>
-                    {candidateTimeLabel &&
-                      (candidateTimeLabel !== recruiterTimeLabel || candidateTz !== recruiterTz) &&
-                      candidateTz && (
-                        <div className="slot-time__secondary">
-                          {candidateTimeLabel} · {candidateTz}
-                        </div>
-                      )}
-                  </div>
-                </td>
-                    <td>
-                      <span className={`status-badge status-badge--${
-                        row.status === 'PENDING' ? 'warning' :
-                        row.status === 'BOOKED' ? 'success' :
-                        row.status === 'FREE' ? 'info' : 'muted'
-                      }`}>
-                        {statusLabel(row.status || undefined)}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="toolbar toolbar--compact">
-                        {candidateProfileId ? (
-                          <Link
-                            to="/app/candidates/$candidateId"
-                            params={{ candidateId: String(candidateProfileId) }}
-                            className="ui-btn ui-btn--ghost ui-btn--sm"
-                          >
-                            Профиль
-                          </Link>
-                        ) : (
-                          <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled title="Нет кандидата">
-                            Профиль
-                          </button>
-                        )}
-                        {row.status === 'FREE' ? (
-                          <>
-                            <button
-                              className="ui-btn ui-btn--ghost ui-btn--sm"
-                              onClick={() => setBookingSlot(row)}
-                            >
-                              Назначить
-                            </button>
-                            <button
-                              className="ui-btn ui-btn--danger ui-btn--sm"
-                              onClick={() => deleteSlot(row.id)}
-                            >
-                              Удалить
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              className="ui-btn ui-btn--ghost ui-btn--sm"
-                              onClick={() => setRescheduleTarget(row)}
-                            >
-                              Перенести
-                            </button>
-                            <button
-                              className="ui-btn ui-btn--danger ui-btn--sm"
-                              onClick={() => rejectSlot(row.id)}
-                            >
-                              Освободить
-                            </button>
-                          </>
-                        )}
-                        <button
-                          className="ui-btn ui-btn--ghost ui-btn--sm"
-                          onClick={() => setSheetSlot(row)}
-                          title="Подробнее"
-                        >
-                          ...
-                        </button>
-                      </div>
-                    </td>
+                    </th>
+                    <th>Тип</th>
+                    <th>Кандидат</th>
+                    <th>Город</th>
+                    <th>Время рекрутера</th>
+                    <th>Время региона/кандидата</th>
+                    <th>Статус</th>
+                    <th>Действия</th>
                   </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {pagedItems.map((row: SlotApiItem) => {
+                    const slotStatus = normalizeSlotStatus(row.status)
+                    const recruiterTz = slotRecruiterTz(row)
+                    const recruiterTimeLabel = slotRecruiterTimeLabel(row)
+                    const hasCandidate = slotHasCandidate(row)
+                    const regionTz = slotRegionTz(row)
+                    const regionTimeLabel = slotRegionTimeLabel(row)
+                    const isFree = slotStatus === 'FREE'
+                    const candidateProfileId = row.candidate_id ? String(row.candidate_id) : null
+                    return (
+                      <tr key={row.id} className={selectedIds.has(row.id) ? 'data-table__row--selected' : ''}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(row.id)}
+                            onChange={() => toggleSelect(row.id)}
+                          />
+                        </td>
+                        <td>
+                          <span className={`cd-chip ${(row.purpose || 'interview') === 'intro_day' ? 'cd-chip--accent' : ''}`}>
+                            {(row.purpose || 'interview') === 'intro_day' ? 'ОД' : 'Собес'}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="slot-candidate">
+                            <div className="slot-candidate__name">
+                              {row.candidate_fio || 'Свободный слот'}
+                            </div>
+                            <div className="slot-candidate__meta">
+                              {row.candidate_tg_id ? `tg_id: ${row.candidate_tg_id}` : (hasCandidate ? 'Без tg_id' : 'Назначьте кандидата')}
+                            </div>
+                          </div>
+                        </td>
+                        <td>{row.city_name || '—'}</td>
+                        <td>
+                          <div className="slot-time">
+                            <div className="slot-time__primary">{recruiterTimeLabel}</div>
+                            <div className="slot-time__secondary">{recruiterTz}</div>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="slot-time">
+                            <div className="slot-time__primary">{regionTimeLabel}</div>
+                            <div className="slot-time__secondary">{regionTz || '—'} · {hasCandidate ? 'кандидат' : 'город'}</div>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`status-badge status-badge--${
+                            slotStatus === 'PENDING' ? 'warning' :
+                            slotStatus === 'BOOKED' || slotStatus === 'CONFIRMED_BY_CANDIDATE' ? 'success' :
+                            slotStatus === 'FREE' ? 'info' : 'muted'
+                          }`}>
+                            {statusLabel(row.status || undefined)}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="toolbar toolbar--compact">
+                            {candidateProfileId ? (
+                              <Link
+                                to="/app/candidates/$candidateId"
+                                params={{ candidateId: String(candidateProfileId) }}
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
+                              >
+                                Профиль
+                              </Link>
+                            ) : (
+                              <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled title="Нет кандидата">
+                                Профиль
+                              </button>
+                            )}
+                            {isFree ? (
+                              <>
+                                <button
+                                  className="ui-btn ui-btn--ghost ui-btn--sm"
+                                  onClick={() => setBookingSlot(row)}
+                                >
+                                  Назначить
+                                </button>
+                                <button
+                                  className="ui-btn ui-btn--danger ui-btn--sm"
+                                  onClick={() => deleteSlot(row.id)}
+                                >
+                                  Удалить
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  className="ui-btn ui-btn--ghost ui-btn--sm"
+                                  onClick={() => setRescheduleTarget(row)}
+                                >
+                                  Перенести
+                                </button>
+                                <button
+                                  className="ui-btn ui-btn--danger ui-btn--sm"
+                                  onClick={() => rejectSlot(row.id)}
+                                >
+                                  Освободить
+                                </button>
+                              </>
+                            )}
+                            <button
+                              className="ui-btn ui-btn--ghost ui-btn--sm"
+                              onClick={() => setSheetSlot(row)}
+                              title="Подробнее"
+                              data-testid="slot-details-btn"
+                            >
+                              ...
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
 
           {sheetSlot && (
@@ -790,25 +993,21 @@ export function SlotsPage() {
                 </div>
                 <div className="modal__body">
                   <div className="modal__row">
-                    <strong>Время рекрутёра:</strong> {sheetSlot.recruiter_local_time
-                      ? formatLocalLabel(sheetSlot.recruiter_local_time)
-                      : formatLocal(sheetSlot.start_utc, sheetSlot.recruiter_tz || sheetSlot.tz_name || 'Europe/Moscow')} · {sheetSlot.recruiter_tz || sheetSlot.tz_name || 'Europe/Moscow'}
+                    <strong>Время рекрутёра:</strong> {slotRecruiterTimeLabel(sheetSlot)} · {slotRecruiterTz(sheetSlot)}
                   </div>
                   <div className="modal__row">
-                    <strong>Время кандидата:</strong> {sheetSlot.candidate_local_time
-                      ? formatLocalLabel(sheetSlot.candidate_local_time)
-                      : (sheetSlot.candidate_tz ? formatLocal(sheetSlot.start_utc, sheetSlot.candidate_tz) : '—')} · {sheetSlot.candidate_tz || '—'}
+                    <strong>Время региона/кандидата:</strong> {slotRegionTimeLabel(sheetSlot)} · {slotRegionTz(sheetSlot) || '—'}
                   </div>
                   <div className="modal__row"><strong>Кандидат:</strong> {sheetSlot.candidate_fio || 'Нет брони'} · tg_id: {sheetSlot.candidate_tg_id || '—'}</div>
                   <div className="modal__row"><strong>Статус:</strong> {statusLabel(sheetSlot.status || undefined)}</div>
                 </div>
                 <div className="modal__footer">
-                  {sheetSlot.status === 'FREE' && (
+                  {normalizeSlotStatus(sheetSlot.status) === 'FREE' && (
                     <button className="ui-btn ui-btn--primary" onClick={() => { closeSheet(); setBookingSlot(sheetSlot) }}>
                       Назначить кандидата
                     </button>
                   )}
-                  {sheetSlot.status !== 'FREE' && (
+                  {normalizeSlotStatus(sheetSlot.status) !== 'FREE' && (
                     <>
                       <button className="ui-btn ui-btn--ghost" onClick={() => setRescheduleTarget(sheetSlot)}>
                         Перенести
@@ -818,7 +1017,7 @@ export function SlotsPage() {
                       </button>
                     </>
                   )}
-                  {sheetSlot.status === 'FREE' && (
+                  {normalizeSlotStatus(sheetSlot.status) === 'FREE' && (
                     <button className="ui-btn ui-btn--danger" onClick={() => deleteSlot(sheetSlot.id)}>Удалить</button>
                   )}
                 </div>

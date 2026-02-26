@@ -50,6 +50,7 @@ def calendar_events(
     statuses: Optional[Iterable[str]],
     tz_name: str,
     include_canceled: bool,
+    include_tasks: bool = False,
 ) -> Key:
     statuses_key = ",".join(
         sorted((s or "").strip().lower() for s in (statuses or []) if (s or "").strip())
@@ -59,6 +60,5 @@ def calendar_events(
         f"{start_date.isoformat()}:{end_date.isoformat()}:"
         f"r{recruiter_id or 'all'}:c{city_id or 'all'}:"
         f"s{statuses_key or 'all'}:"
-        f"tz{tz_name}:x{int(bool(include_canceled))}"
+        f"tz{tz_name}:x{int(bool(include_canceled))}:t{int(bool(include_tasks))}"
     )
-

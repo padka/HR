@@ -251,10 +251,28 @@
   color: #ffffff !important;
 }
 
+.slot-status-preconfirmed {
+  background: #8b5cf6 !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
 .slot-status-canceled {
   background: #F07373 !important;
   color: #ffffff !important;
   opacity: 0.6;
+}
+
+.task-status-planned {
+  background: #f59e0b !important;
+  color: #ffffff !important;
+}
+
+.task-status-done {
+  background: #4a5568 !important;
+  color: #f2f5fb !important;
+  text-decoration: line-through;
+  opacity: 0.85;
 }
 
 /* Now indicator */

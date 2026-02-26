@@ -6,8 +6,8 @@ test.describe("/app/cities focus and navigation", () => {
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
-    // Find a city card or row
-    const cityLink = page.locator("a[href*='/app/cities/'][href*='/edit']").first();
+    // Find a city edit link
+    const cityLink = page.getByTestId("city-edit-link").first();
     if (await cityLink.count() > 0) {
       await cityLink.click();
       await page.waitForURL(/\/app\/cities\/\d+\/edit/);
@@ -18,11 +18,10 @@ test.describe("/app/cities focus and navigation", () => {
     await page.goto("/app/cities");
     await page.waitForLoadState("domcontentloaded");
 
-    const newButton = page.locator("a[href*='new'], button").filter({ hasText: /создать|добавить|новый/i });
-    if (await newButton.count() > 0) {
-      await newButton.first().click();
-      await page.waitForURL("/app/cities/new");
-    }
+    const newButton = page.getByTestId("cities-create-btn");
+    await expect(newButton).toBeVisible({ timeout: 10000 });
+    await newButton.click();
+    await page.waitForURL("/app/cities/new");
   });
 
   test("city form has timezone input", async ({ page }) => {
@@ -30,7 +29,7 @@ test.describe("/app/cities focus and navigation", () => {
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
-    // Check for timezone input
-    await expect(page.locator("input[name*='tz'], input[placeholder*='часов'], select").first()).toBeVisible({ timeout: 10000 });
+    // Check for timezone select
+    await expect(page.getByTestId("city-tz-input")).toBeVisible({ timeout: 10000 });
   });
 });

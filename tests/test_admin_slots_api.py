@@ -105,6 +105,22 @@ async def _async_request(
             return await client.request(method, path, **kwargs)
 
 
+async def _async_request_with_csrf(app, method: str, path: str, **kwargs) -> Any:
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+            auth=("admin", "admin"),
+        ) as client:
+            csrf = await client.get("/api/csrf")
+            assert csrf.status_code == 200
+            token = (csrf.json() or {}).get("token")
+            assert token
+            headers = dict(kwargs.pop("headers", {}) or {})
+            headers["x-csrf-token"] = str(token)
+            return await client.request(method, path, headers=headers, **kwargs)
+
+
 @pytest.fixture
 def admin_slots_app(monkeypatch) -> Any:
     class _DummyIntegration:
@@ -732,3 +748,83 @@ async def test_api_slots_returns_local_time(admin_slots_app) -> None:
     # Accept both with and without timezone suffix
     assert found["start_utc"] in ["2024-01-01T06:00:00+00:00", "2024-01-01T06:00:00"]
     assert found["local_time"] in ["2024-01-01T13:00:00+07:00", "2024-01-01T13:00:00"]
+
+
+@pytest.mark.asyncio
+async def test_api_slots_defaults_to_latest_first(admin_slots_app) -> None:
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Sort Recruiter", tz="Europe/Moscow", active=True)
+        city = models.City(name="Sort City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        early = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime(2024, 1, 1, 8, 0, tzinfo=timezone.utc),
+            status=models.SlotStatus.FREE,
+            tz_name=city.tz,
+        )
+        late = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            status=models.SlotStatus.FREE,
+            tz_name=city.tz,
+        )
+        session.add_all([early, late])
+        await session.commit()
+
+        recruiter_id = recruiter.id
+
+    response = await _async_request(
+        admin_slots_app,
+        "get",
+        "/api/slots",
+        params={"limit": 10, "recruiter_id": str(recruiter_id)},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) >= 2
+    assert payload[0]["start_utc"] >= payload[1]["start_utc"]
+
+
+@pytest.mark.asyncio
+async def test_api_slots_bulk_create_returns_created_count(admin_slots_app) -> None:
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Bulk API Recruiter", tz="Europe/Moscow", active=True)
+        city = models.City(name="Bulk API City", tz="Asia/Almaty", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        recruiter_id = recruiter.id
+        city_id = city.id
+
+    target_day = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    response = await _async_request_with_csrf(
+        admin_slots_app,
+        "post",
+        "/api/slots/bulk_create",
+        json={
+            "recruiter_id": recruiter_id,
+            "city_id": city_id,
+            "start_date": target_day,
+            "end_date": target_day,
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "break_start": "00:00",
+            "break_end": "00:10",
+            "step_min": 30,
+            "include_weekends": True,
+            "use_break": False,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["created"] == 2

@@ -201,3 +201,48 @@ async def test_schedule_manual_slot_creates_entry_without_conflicts(monkeypatch)
         )
         assert stored_slot is not None
         assert ensure_aware_utc(stored_slot.start_utc) == ensure_aware_utc(dt_utc)
+
+
+@pytest.mark.asyncio
+async def test_schedule_manual_slot_ignores_intro_day_slot_conflict(monkeypatch):
+    candidate, city, recruiter = await _setup_candidate_recruiter(telegram_id=101004)
+
+    async def fake_create_slot_assignment(*_args, **_kwargs):
+        return SimpleNamespace(ok=True, message="ok")
+
+    monkeypatch.setattr(
+        "backend.domain.slot_assignment_service.create_slot_assignment",
+        fake_create_slot_assignment,
+    )
+
+    target_dt = (datetime.now(timezone.utc) + timedelta(days=5)).replace(
+        hour=10,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+    async with async_session() as session:
+        intro_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=target_dt,
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="intro_day",
+        )
+        session.add(intro_slot)
+        await session.commit()
+
+    result = await schedule_manual_candidate_slot(
+        candidate=candidate,
+        recruiter=recruiter,
+        city=city,
+        dt_utc=target_dt,
+        slot_tz=city.tz,
+    )
+
+    assert result.status == "pending_offer"
+    assert result.slot is not None
+    assert (result.slot.purpose or "interview") == "interview"

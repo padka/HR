@@ -39,7 +39,7 @@ test.describe('AI Copilot', () => {
     const insertButton = page.getByRole('button', { name: 'Вставить', exact: true }).first()
     await insertButton.click()
 
-    const chatTextarea = page.locator('.candidate-chat-drawer__footer textarea').first()
+    const chatTextarea = page.getByTestId('chat-textarea')
     await expect(chatTextarea).toHaveValue(/Здравствуйте!/i, { timeout: 10000 })
   })
 })

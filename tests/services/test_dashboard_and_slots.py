@@ -1,21 +1,58 @@
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from backend.apps.admin_ui.services.dashboard import (
     dashboard_counts,
     get_recruiter_leaderboard,
+    get_waiting_candidates,
 )
 from backend.apps.admin_ui.services.slots import api_slots_payload, create_slot, list_slots
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
+from backend.domain.repositories import reject_slot
 from backend.apps.bot.metrics import (
     record_test1_completion,
     record_test1_rejection,
     reset_test1_metrics,
 )
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_list_is_capped_to_hundred(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    async with async_session() as session:
+        city = models.City(name="Incoming City", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+
+        now = datetime.now(timezone.utc)
+        users = []
+        for idx in range(130):
+            users.append(
+                User(
+                    fio=f"Incoming Candidate {idx}",
+                    city="Incoming City",
+                    telegram_id=900000 + idx,
+                    candidate_status=CandidateStatus.WAITING_SLOT,
+                    status_changed_at=now - timedelta(minutes=idx),
+                    last_activity=now - timedelta(minutes=idx),
+                    is_active=True,
+                )
+            )
+        session.add_all(users)
+        await session.commit()
+
+    default_items = await get_waiting_candidates()
+    explicit_items = await get_waiting_candidates(limit=500)
+
+    assert len(default_items) == 100
+    assert len(explicit_items) == 100
 
 
 @pytest.mark.asyncio
@@ -235,3 +272,201 @@ async def test_recruiter_leaderboard_scores_and_ranking():
     assert item_a["conversion_interview"] == 70.0
     assert item_a["score"] >= item_b["score"]
     assert item_a["rank"] == 1
+
+
+@pytest.mark.asyncio
+async def test_api_slots_payload_uses_assignment_fallback_for_legacy_free_slot():
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Legacy Recruiter", tz="Europe/Moscow", active=True)
+        city = models.City(name="Legacy City", tz="Europe/Moscow", active=True)
+        candidate = User(
+            fio="Legacy Candidate",
+            city="Legacy City",
+            telegram_id=901001,
+            candidate_status=CandidateStatus.TEST1_COMPLETED,
+        )
+        session.add_all([recruiter, city, candidate])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        await session.refresh(candidate)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=now + timedelta(hours=3),
+            status=models.SlotStatus.FREE,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz="Europe/Moscow",
+            status=models.SlotAssignmentStatus.OFFERED,
+        )
+        session.add(assignment)
+        await session.commit()
+
+        slot_id = slot.id
+        candidate_fio = candidate.fio
+        recruiter_id = recruiter.id
+
+    payload = await api_slots_payload(recruiter_id=recruiter_id, status=None, limit=10)
+    row = next(item for item in payload if item["id"] == slot_id)
+    assert row["status"] == "PENDING"
+    assert row["candidate_fio"] == candidate_fio
+
+
+@pytest.mark.asyncio
+async def test_api_slots_payload_keeps_recruiter_and_candidate_timezones_separate():
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="TZ Recruiter", tz="Europe/Moscow", active=True)
+        city = models.City(name="Almaty City", tz="Asia/Almaty", active=True)
+        candidate = User(
+            fio="TZ Candidate",
+            city="Almaty City",
+            telegram_id=901777,
+            candidate_status=CandidateStatus.TEST1_COMPLETED,
+        )
+        session.add_all([recruiter, city, candidate])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        await session.refresh(candidate)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=now + timedelta(hours=1),
+            status=models.SlotStatus.FREE,
+            tz_name="Asia/Almaty",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz="Asia/Almaty",
+            status=models.SlotAssignmentStatus.OFFERED,
+        )
+        session.add(assignment)
+        await session.commit()
+
+        recruiter_id = recruiter.id
+        slot_id = slot.id
+
+    payload = await api_slots_payload(recruiter_id=recruiter_id, status=None, limit=10)
+    row = next(item for item in payload if item["id"] == slot_id)
+
+    assert row["recruiter_tz"] == "Europe/Moscow"
+    assert row["candidate_tz"] == "Asia/Almaty"
+    assert row["recruiter_local_time"].endswith("+03:00")
+    assert row["candidate_local_time"].endswith("+05:00")
+
+
+@pytest.mark.asyncio
+async def test_reject_slot_cancels_active_assignment_and_disables_fallback():
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Reject Recruiter", tz="Europe/Moscow", active=True)
+        city = models.City(name="Reject City", tz="Europe/Moscow", active=True)
+        candidate = User(
+            fio="Reject Candidate",
+            city="Reject City",
+            telegram_id=902001,
+            candidate_status=CandidateStatus.INTERVIEW_CONFIRMED,
+        )
+        session.add_all([recruiter, city, candidate])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+        await session.refresh(candidate)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=now + timedelta(hours=4),
+            status=models.SlotStatus.BOOKED,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz="Europe/Moscow",
+            status=models.SlotAssignmentStatus.CONFIRMED,
+            confirmed_at=now,
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+
+        session.add_all(
+            [
+                models.ActionToken(
+                    token="reject-confirm-token",
+                    action="slot_assignment_confirm",
+                    entity_id=str(assignment.id),
+                    expires_at=now + timedelta(hours=2),
+                    created_at=now,
+                ),
+                models.ActionToken(
+                    token="reject-reschedule-token",
+                    action="slot_assignment_reschedule_request",
+                    entity_id=str(assignment.id),
+                    expires_at=now + timedelta(hours=2),
+                    created_at=now,
+                ),
+            ]
+        )
+        await session.commit()
+
+        slot_id = slot.id
+        assignment_id = assignment.id
+        recruiter_id = recruiter.id
+
+    await reject_slot(slot_id)
+
+    async with async_session() as session:
+        slot = await session.get(models.Slot, slot_id)
+        assignment = await session.get(models.SlotAssignment, assignment_id)
+        assert slot is not None
+        assert assignment is not None
+        assert slot.status == models.SlotStatus.FREE
+        assert slot.candidate_id is None
+        assert slot.candidate_tg_id is None
+        assert assignment.status == models.SlotAssignmentStatus.CANCELLED
+        assert assignment.cancelled_at is not None
+
+        tokens = list(
+            await session.scalars(
+                select(models.ActionToken).where(models.ActionToken.entity_id == str(assignment_id))
+            )
+        )
+        assert tokens
+        assert all(token.used_at is not None for token in tokens)
+
+    payload = await api_slots_payload(recruiter_id=recruiter_id, status=None, limit=10)
+    row = next(item for item in payload if item["id"] == slot_id)
+    assert row["status"] == "FREE"
+    assert row["candidate_tg_id"] is None

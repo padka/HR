@@ -395,3 +395,51 @@ async def test_slot_overlap_constraint_allows_separated_slots():
         ).scalars().all()
 
         assert len(slots) == 2
+
+
+@pytest.mark.asyncio
+async def test_slot_overlap_constraint_allows_parallel_intro_day_same_time():
+    """Intro-day slots may overlap for the same recruiter at the same time."""
+    async with async_session() as session:
+        recruiter = Recruiter(name="Intro Day Recruiter", tz="Europe/Moscow", active=True)
+        city = City(name="Intro Day City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        start_time = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=8)
+
+        slot1 = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name="Europe/Moscow",
+            start_utc=start_time,
+            duration_min=20,
+            status=SlotStatus.BOOKED,
+            purpose="intro_day",
+            candidate_tg_id=700001,
+        )
+        slot2 = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name="Europe/Moscow",
+            start_utc=start_time,
+            duration_min=20,
+            status=SlotStatus.BOOKED,
+            purpose="intro_day",
+            candidate_tg_id=700002,
+        )
+
+        session.add_all([slot1, slot2])
+        await session.commit()
+
+        rows = (
+            await session.execute(
+                select(Slot)
+                .where(Slot.recruiter_id == recruiter.id)
+                .where(Slot.start_utc == start_time)
+                .where(Slot.purpose == "intro_day")
+            )
+        ).scalars().all()
+        assert len(rows) == 2

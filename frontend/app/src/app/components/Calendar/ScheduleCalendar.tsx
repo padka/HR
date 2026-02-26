@@ -3,6 +3,7 @@ import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
+import type { EventResizeDoneArg } from '@fullcalendar/interaction'
 import type { EventClickArg, EventDropArg, DateSelectArg, DatesSetArg } from '@fullcalendar/core'
 import type { EventInput } from '@fullcalendar/core'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -11,6 +12,7 @@ import './calendar.css'
 
 // Types for API response
 export interface SlotExtendedProps {
+  event_type?: 'slot'
   slot_id: number
   status: string
   status_label: string
@@ -30,8 +32,26 @@ export interface SlotExtendedProps {
   local_date: string
 }
 
+export interface TaskExtendedProps {
+  event_type: 'task'
+  task_id: number
+  task_title: string
+  task_description: string
+  is_done: boolean
+  start_utc: string
+  end_utc: string
+  recruiter_id: number
+  recruiter_name: string
+  recruiter_tz: string
+  local_start: string
+  local_end: string
+  local_date: string
+}
+
+type CalendarExtendedProps = SlotExtendedProps | TaskExtendedProps
+
 interface CalendarEvent extends EventInput {
-  extendedProps: SlotExtendedProps
+  extendedProps: CalendarExtendedProps
 }
 
 interface CalendarResource {
@@ -61,10 +81,16 @@ interface ScheduleCalendarProps {
   cityId?: number
   statuses?: string[]
   onSlotClick?: (slotId: number, slot: SlotExtendedProps) => void
+  onTaskClick?: (taskId: number, task: TaskExtendedProps) => void
   onSlotCreate?: (start: Date, end: Date) => void
   onSlotMove?: (slotId: number, newStart: Date) => void
   editable?: boolean
   embedded?: boolean
+  includeTasks?: boolean
+}
+
+function isTaskEvent(props: CalendarExtendedProps): props is TaskExtendedProps {
+  return (props as TaskExtendedProps).event_type === 'task'
 }
 
 export function ScheduleCalendar({
@@ -72,10 +98,12 @@ export function ScheduleCalendar({
   cityId,
   statuses,
   onSlotClick,
+  onTaskClick,
   onSlotCreate,
   onSlotMove,
   editable = true,
   embedded = false,
+  includeTasks = false,
 }: ScheduleCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null)
   const queryClient = useQueryClient()
@@ -104,8 +132,9 @@ export function ScheduleCalendar({
     if (statuses?.length) {
       statuses.forEach((s) => params.append('status', s))
     }
+    if (includeTasks) params.set('include_tasks', 'true')
     return params.toString()
-  }, [dateRange, recruiterId, cityId, statuses])
+  }, [dateRange, recruiterId, cityId, statuses, includeTasks])
 
   // Fetch calendar events
   const { data, isLoading, error } = useQuery<CalendarApiResponse>({
@@ -128,6 +157,24 @@ export function ScheduleCalendar({
     },
   })
 
+  const moveTaskMutation = useMutation({
+    mutationFn: async ({
+      taskId,
+      patch,
+    }: {
+      taskId: number
+      patch: { start?: string; end?: string }
+    }) => {
+      return apiFetch(`/calendar/tasks/${taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['calendar-events'] })
+    },
+  })
+
   // Handle date range change
   const handleDatesSet = useCallback((arg: DatesSetArg) => {
     const start = arg.start.toISOString().split('T')[0]
@@ -138,12 +185,14 @@ export function ScheduleCalendar({
   // Handle event click
   const handleEventClick = useCallback(
     (arg: EventClickArg) => {
-      const props = arg.event.extendedProps as SlotExtendedProps
-      if (onSlotClick) {
-        onSlotClick(props.slot_id, props)
+      const props = arg.event.extendedProps as CalendarExtendedProps
+      if (isTaskEvent(props)) {
+        if (onTaskClick) onTaskClick(props.task_id, props)
+        return
       }
+      if (onSlotClick) onSlotClick(props.slot_id, props)
     },
-    [onSlotClick]
+    [onSlotClick, onTaskClick]
   )
 
   // Handle date selection (create new slot)
@@ -162,7 +211,26 @@ export function ScheduleCalendar({
   // Handle event drop (move slot)
   const handleEventDrop = useCallback(
     (arg: EventDropArg) => {
-      const props = arg.event.extendedProps as SlotExtendedProps
+      const props = arg.event.extendedProps as CalendarExtendedProps
+
+      if (isTaskEvent(props)) {
+        const newStart = arg.event.start?.toISOString()
+        const newEnd = (arg.event.end || arg.event.start)?.toISOString()
+        if (!newStart || !newEnd) {
+          arg.revert()
+          return
+        }
+        moveTaskMutation.mutate(
+          {
+            taskId: props.task_id,
+            patch: { start: newStart, end: newEnd },
+          },
+          {
+            onError: () => arg.revert(),
+          }
+        )
+        return
+      }
 
       // Only allow moving FREE slots directly
       if (props.status !== 'free') {
@@ -188,12 +256,53 @@ export function ScheduleCalendar({
         )
       }
     },
-    [moveSlotMutation, onSlotMove]
+    [moveSlotMutation, moveTaskMutation, onSlotMove]
+  )
+
+  const handleEventResize = useCallback(
+    (arg: EventResizeDoneArg) => {
+      const props = arg.event.extendedProps as CalendarExtendedProps
+      if (!isTaskEvent(props)) {
+        arg.revert()
+        return
+      }
+      const newStart = arg.event.start?.toISOString()
+      const newEnd = arg.event.end?.toISOString()
+      if (!newStart || !newEnd) {
+        arg.revert()
+        return
+      }
+      moveTaskMutation.mutate(
+        {
+          taskId: props.task_id,
+          patch: { start: newStart, end: newEnd },
+        },
+        {
+          onError: () => arg.revert(),
+        }
+      )
+    },
+    [moveTaskMutation]
   )
 
   // Custom event content renderer
-  const renderEventContent = useCallback((eventInfo: { event: { title: string; extendedProps: SlotExtendedProps } }) => {
+  const renderEventContent = useCallback((eventInfo: { event: { title: string; extendedProps: CalendarExtendedProps } }) => {
     const props = eventInfo.event.extendedProps
+    if (isTaskEvent(props)) {
+      return (
+        <div className="fc-event-content-custom fc-event-content-custom--task">
+          <div className="fc-event-title">{eventInfo.event.title}</div>
+          <div className="fc-event-meta">
+            <span className="fc-event-time">
+              {props.local_start} - {props.local_end}
+            </span>
+            <span className="fc-event-city">
+              {props.is_done ? 'Готово' : 'Задача'}
+            </span>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="fc-event-content-custom">
         <div className="fc-event-title">{eventInfo.event.title}</div>
@@ -269,12 +378,13 @@ export function ScheduleCalendar({
         selectable={editable}
         selectMirror={true}
         eventStartEditable={editable}
-        eventDurationEditable={false}
+        eventDurationEditable={editable}
         // Handlers
         datesSet={handleDatesSet}
         eventClick={handleEventClick}
         select={handleDateSelect}
         eventDrop={handleEventDrop}
+        eventResize={handleEventResize}
         // Styling
         eventDisplay="block"
         dayMaxEvents={true}

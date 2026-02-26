@@ -1,5 +1,4 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 
 type Vacancy = {
@@ -78,13 +77,12 @@ function VacancyCard({
         </div>
       </div>
       <div className="list-item__actions" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-        <Link
-          to="/app/vacancy-edit"
-          search={{ id: vacancy.id }}
+        <a
+          href={`/app/vacancy-edit?id=${vacancy.id}`}
           className="ui-btn ui-btn--ghost ui-btn--sm"
         >
           Редактировать
-        </Link>
+        </a>
         <button
           className="ui-btn ui-btn--ghost ui-btn--sm"
           onClick={() => onToggle(vacancy)}
@@ -145,9 +143,9 @@ export default function VacanciesPage() {
       <div className="page-header">
         <h1 className="page-title">Вакансии</h1>
         <div className="page-header__actions">
-          <Link to="/app/vacancy-edit" className="ui-btn ui-btn--primary">
+          <a href="/app/vacancy-edit" className="ui-btn ui-btn--primary">
             + Новая вакансия
-          </Link>
+          </a>
         </div>
       </div>
 

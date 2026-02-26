@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '@/api/client'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { RoleGuard } from '@/app/components/RoleGuard'
 
 type Recruiter = {
@@ -76,15 +77,18 @@ export function RecruitersPage() {
         <div className="glass panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <h1 className="title">Рекрутёры</h1>
-          <Link to="/app/recruiters/new" className="glass action-link">+ Добавить</Link>
+          <Link to="/app/recruiters/new" className="glass action-link" data-testid="recruiters-create-btn">+ Добавить</Link>
         </div>
           {isLoading && <p className="subtitle">Загрузка…</p>}
-          {isError && <p style={{ color: '#f07373' }}>Ошибка: {(error as Error).message}</p>}
+          {isError && <ApiErrorBanner error={error} title="Не удалось загрузить рекрутёров" />}
           {data && (
             <>
             {data.length === 0 && (
-              <div className="glass panel--tight" style={{ marginTop: 12 }}>
-                <p className="subtitle">Пока нет рекрутёров. Добавьте первого, чтобы начать работу.</p>
+              <div className="empty-state" data-testid="recruiters-empty-state">
+                <p className="empty-state__text">Пока нет рекрутёров. Добавьте первого, чтобы начать работу.</p>
+                <div className="toolbar">
+                  <Link to="/app/recruiters/new" className="ui-btn ui-btn--primary ui-btn--sm">+ Добавить рекрутёра</Link>
+                </div>
               </div>
             )}
             <div className="recruiter-cards">
@@ -101,7 +105,7 @@ export function RecruitersPage() {
                   ? (r.is_online ? 'is-online' : 'is-away')
                   : 'is-inactive'
                 return (
-                  <div key={r.id} className="glass recruiter-card">
+                  <div key={r.id} className="glass recruiter-card" data-testid="recruiter-card">
                     <div className="recruiter-card__header">
                       <div className="recruiter-card__identity">
                         <div className={`recruiter-avatar ${presenceClass}`} aria-hidden="true">

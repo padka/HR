@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 from typing import Dict, Optional
 
@@ -20,7 +21,13 @@ try:  # pragma: no cover - optional dependency handling
     from backend.apps.bot import services
     from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS
     from backend.apps.bot.config import State as BotState
-    from backend.apps.bot.services import StateManager, get_bot, start_test2, get_template_provider
+    from backend.apps.bot.services import (
+        StateManager,
+        get_bot,
+        start_test2,
+        get_template_provider,
+        suppress_outbound_chat_logging,
+    )
     from backend.apps.bot.events import InterviewSuccessEvent
 
     BOT_RUNTIME_AVAILABLE = True
@@ -68,6 +75,10 @@ except Exception:  # pragma: no cover - fallback when bot package is unavailable
 
     def get_bot():  # type: ignore[override]
         raise RuntimeError("Bot runtime is unavailable")
+
+    @contextmanager
+    def suppress_outbound_chat_logging():  # type: ignore[override]
+        yield
 
     async def _dummy_async(*_args, **_kwargs):  # pragma: no cover - runtime safety net
         return None
@@ -396,6 +407,7 @@ class BotService:
         text: str,
         *,
         reply_markup: Optional[object] = None,
+        log_outbound_history: bool = False,
     ) -> BotSendResult:
         """Send a plain text message to candidate via bot."""
 
@@ -424,7 +436,9 @@ class BotService:
             )
 
         try:
-            response = await bot.send_message(telegram_id, text, reply_markup=reply_markup)
+            outbound_log_context = nullcontext() if log_outbound_history else suppress_outbound_chat_logging()
+            with outbound_log_context:
+                response = await bot.send_message(telegram_id, text, reply_markup=reply_markup)
         except Exception as exc:  # pragma: no cover - network errors
             if _is_transient_error(exc):
                 logger.exception("Transient error while sending chat message")

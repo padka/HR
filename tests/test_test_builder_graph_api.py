@@ -142,7 +142,7 @@ def test_test_builder_graph_apply_reorders_questions(admin_app):
         assert got_ids == list(reversed(qids))
 
 
-def test_test_builder_graph_apply_rejects_non_linear(admin_app):
+def test_test_builder_graph_apply_accepts_branching_and_keeps_question_order(admin_app):
     qids = _run(_seed_test1_questions())
     graph = _linear_graph(qids)
     # Add extra outgoing edge from start to create a branch.
@@ -155,8 +155,15 @@ def test_test_builder_graph_apply_rejects_non_linear(admin_app):
             headers={"x-csrf-token": token},
             json={"test_id": "test1", "graph": graph},
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 200
         payload = resp.json()
-        assert payload["ok"] is False
-        assert payload["error"] in {"graph_not_linear", "invalid_graph"}
+        assert payload["ok"] is True
 
+        listed = client.get("/api/questions", auth=("admin", "admin"))
+        assert listed.status_code == 200
+        groups = listed.json()
+        test1 = next((g for g in groups if g.get("test_id") == "test1"), None)
+        assert test1 is not None
+        got_ids = [int(q["id"]) for q in test1["questions"]]
+        # For branching graph DB order is not recompiled; only graph is saved.
+        assert got_ids == qids

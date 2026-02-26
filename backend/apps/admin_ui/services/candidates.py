@@ -1041,16 +1041,34 @@ def _build_test_sections(
                 "total_time": latest.total_time,
             }
             section["source"] = (latest.source or "bot").lower() if latest.source else "bot"
-            section["history"] = [
-                {
-                    "id": res.id,
-                    "completed_at": _ensure_aware(res.created_at),
-                    "raw_score": res.raw_score,
-                    "final_score": res.final_score,
-                    "source": (res.source or "bot").lower() if res.source else "bot",
-                }
-                for res in entries
-            ]
+            history: list[dict[str, Any]] = []
+            for res in entries:
+                attempt_answers = answers_by_result.get(res.id, [])
+                attempt_questions = [_serialize_answer(answer) for answer in attempt_answers]
+                attempt_total = len(attempt_answers)
+                attempt_correct = sum(1 for answer in attempt_answers if answer.is_correct)
+                attempt_overtime = sum(1 for answer in attempt_answers if answer.overtime)
+                history.append(
+                    {
+                        "id": res.id,
+                        "completed_at": _ensure_aware(res.created_at),
+                        "raw_score": res.raw_score,
+                        "final_score": res.final_score,
+                        "source": (res.source or "bot").lower() if res.source else "bot",
+                        "details": {
+                            "questions": attempt_questions,
+                            "stats": {
+                                "total_questions": attempt_total,
+                                "correct_answers": attempt_correct,
+                                "overtime_questions": attempt_overtime,
+                                "raw_score": res.raw_score,
+                                "final_score": res.final_score,
+                                "total_time": res.total_time,
+                            },
+                        },
+                    }
+                )
+            section["history"] = history
 
             if key == "TEST1":
                 section["status"] = "passed"
@@ -1701,6 +1719,21 @@ async def list_candidates(
                 upcoming_slot_map[candidate_id_key] = upcoming_slot
                 stage_map[candidate_id_key] = _stage_label(latest_slot, now)
 
+        responsible_recruiters: Dict[int, Recruiter] = {}
+        responsible_ids = {
+            int(user.responsible_recruiter_id)
+            for user in users
+            if getattr(user, "responsible_recruiter_id", None) is not None
+        }
+        if responsible_ids:
+            recruiter_rows = await session.execute(
+                select(Recruiter).where(Recruiter.id.in_(responsible_ids))
+            )
+            responsible_recruiters = {
+                int(recruiter.id): recruiter
+                for recruiter in recruiter_rows.scalars()
+            }
+
         ratings = await _distinct_ratings(session)
         cities = await _distinct_cities(session)
         analytics = await _collect_candidate_analytics(session, now)
@@ -1786,6 +1819,13 @@ async def list_candidates(
         elif latest_slot and latest_slot.recruiter:
             recruiter_name = latest_slot.recruiter.name
             recruiter_id_value = latest_slot.recruiter.id
+        else:
+            responsible_recruiter = responsible_recruiters.get(
+                int(user.responsible_recruiter_id)
+            ) if getattr(user, "responsible_recruiter_id", None) is not None else None
+            if responsible_recruiter is not None:
+                recruiter_name = responsible_recruiter.name
+                recruiter_id_value = responsible_recruiter.id
 
         candidate_cards.append(
             {
@@ -1832,10 +1872,12 @@ async def list_candidates(
                 },
                 'telemost_url': telemost_url,
                 'telemost_source': telemost_source,
+                'recruiter_id': recruiter_id_value,
+                'recruiter_name': recruiter_name,
                 'recruiter': {
                     'id': recruiter_id_value,
                     'name': recruiter_name,
-                } if recruiter_name else None,
+                } if recruiter_id_value is not None else None,
             }
         )
 
@@ -2301,6 +2343,36 @@ async def _release_intro_day_slots_for_candidate(
     return released
 
 
+async def _recruiter_city_ids(session, recruiter_id: int) -> Set[int]:
+    rows = await session.execute(
+        select(recruiter_city_association.c.city_id).where(
+            recruiter_city_association.c.recruiter_id == recruiter_id
+        )
+    )
+    return {int(row[0]) for row in rows if row[0] is not None}
+
+
+async def _recruiter_can_access_candidate(
+    session,
+    user: User,
+    recruiter_id: int,
+) -> bool:
+    """Recruiter can access own candidates or candidates from their cities."""
+
+    owner_id = getattr(user, "responsible_recruiter_id", None)
+    if owner_id == recruiter_id:
+        return True
+    if not user.city:
+        return False
+
+    city_record = await find_city_by_plain_name(user.city)
+    if not city_record:
+        return False
+
+    allowed_city_ids = await _recruiter_city_ids(session, recruiter_id)
+    return city_record.id in allowed_city_ids
+
+
 async def update_candidate_status(
     candidate_id: int,
     status_slug: str,
@@ -2334,8 +2406,11 @@ async def update_candidate_status(
         user = await session.get(User, candidate_id)
         if not user:
             return False, "Кандидат не найден", None, None
-        if principal and principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
-            return False, "Кандидат не найден", None, None
+        if principal and principal.type == "recruiter":
+            if not await _recruiter_can_access_candidate(session, user, principal.id):
+                return False, "Кандидат не найден", None, None
+            if user.responsible_recruiter_id is None:
+                user.responsible_recruiter_id = principal.id
         if user.telegram_id is None and normalized not in STATUS_DEFINITIONS:
             return False, "Для кандидата не указан Telegram ID", None, None
         
@@ -2585,21 +2660,8 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         if not user:
             return None
         if principal and principal.type == "recruiter":
-            if user.responsible_recruiter_id != principal.id:
-                # Allow access if candidate city belongs to recruiter's assigned cities
-                allowed = False
-                if user.city:
-                    city_record = await find_city_by_plain_name(user.city)
-                    if city_record:
-                        rows = await session.execute(
-                            select(recruiter_city_association.c.city_id)
-                            .where(recruiter_city_association.c.recruiter_id == principal.id)
-                        )
-                        allowed_city_ids = {row[0] for row in rows}
-                        if city_record.id in allowed_city_ids:
-                            allowed = True
-                if not allowed:
-                    return None
+            if not await _recruiter_can_access_candidate(session, user, principal.id):
+                return None
 
         interview_note = await _load_interview_note(session, user_id)
         test_results = sorted(user.test_results, key=lambda r: (r.created_at or datetime.min, r.id), reverse=True)
@@ -3263,12 +3325,26 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
                 stats_payload[key] = value
         history_payload = []
         for item in section.get("history", []):
+            attempt_details = item.get("details") or {}
+            attempt_stats = attempt_details.get("stats") or {}
             history_payload.append(
                 {
                     "id": item.get("id"),
                     "completed_at": _iso(item.get("completed_at")),
                     "raw_score": item.get("raw_score"),
                     "final_score": item.get("final_score"),
+                    "source": item.get("source"),
+                    "details": {
+                        "questions": attempt_details.get("questions", []),
+                        "stats": {
+                            "total_questions": attempt_stats.get("total_questions"),
+                            "correct_answers": attempt_stats.get("correct_answers"),
+                            "overtime_questions": attempt_stats.get("overtime_questions"),
+                            "raw_score": attempt_stats.get("raw_score"),
+                            "final_score": attempt_stats.get("final_score"),
+                            "total_time": attempt_stats.get("total_time"),
+                        },
+                    },
                 }
             )
         test_results_payload[slug] = {

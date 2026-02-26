@@ -7,11 +7,11 @@ test.describe("/app/slots navigation and modals", () => {
     await page.waitForTimeout(500);
 
     // Try to open details via the "..." button
-    const detailsButton = page.locator("button[title='Подробнее']").first();
+    const detailsButton = page.getByTestId("slot-details-btn").first();
     if (await detailsButton.count() > 0) {
       await detailsButton.click();
 
-      const dialog = page.locator('[role="dialog"]').first();
+      const dialog = page.getByRole("dialog").first();
       await expect(dialog).toBeVisible({ timeout: 5000 });
 
       const closeButton = page.getByRole("button", { name: /закрыть/i }).first();
@@ -27,11 +27,12 @@ test.describe("/app/slots navigation and modals", () => {
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
-    const headerCheckbox = page.locator("thead input[type='checkbox']").first();
+    const headerCheckbox = page.getByTestId("slots-select-all");
     if (await headerCheckbox.count() > 0) {
       await expect(headerCheckbox).toBeVisible({ timeout: 10000 });
     } else {
-      await expect(page.locator(".filter-bar").first()).toBeVisible({ timeout: 10000 });
+      const filters = page.getByTestId("slots-filter-bar");
+      await expect(filters).toBeVisible({ timeout: 10000 });
     }
   });
 
@@ -40,7 +41,8 @@ test.describe("/app/slots navigation and modals", () => {
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
-    const summaryButton = page.locator("button").filter({ hasText: /свободные|забронировано|ожидают/i }).first();
-    await expect(summaryButton).toBeVisible({ timeout: 10000 });
+    const summary = page.getByRole("group", { name: /Сводка слотов/i });
+    await expect(summary).toBeVisible({ timeout: 10000 });
+    await expect(summary.getByRole("button").first()).toBeVisible({ timeout: 10000 });
   });
 });

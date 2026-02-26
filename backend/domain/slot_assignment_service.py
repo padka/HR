@@ -60,6 +60,10 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _resolve_candidate_tg_id(candidate: User, preferred: Optional[int] = None) -> Optional[int]:
+    return preferred or candidate.telegram_user_id or candidate.telegram_id
+
+
 async def _create_action_token(
     session, action: str, entity_id: int, *, ttl_hours: int = ACTION_TOKEN_TTL_HOURS
 ) -> str:
@@ -128,6 +132,8 @@ async def create_slot_assignment(
                     return ServiceResult(False, "slot_not_found", 404, "Слот не найден.")
                 if (slot.status or "").lower() == SlotStatus.CANCELED:
                     return ServiceResult(False, "slot_cancelled", 409, "Слот отменён.")
+                if (slot.status or "").lower() != SlotStatus.FREE:
+                    return ServiceResult(False, "slot_not_available", 409, "Слот уже занят.")
 
                 try:
                     ensure_slot_not_in_past(slot.start_utc, slot_tz=slot.tz_name)
@@ -140,7 +146,14 @@ async def create_slot_assignment(
                 if candidate is None:
                     return ServiceResult(False, "candidate_not_found", 404, "Кандидат не найден.")
 
-                candidate_tg_id = candidate_tg_id or candidate.telegram_id
+                candidate_tg_id = _resolve_candidate_tg_id(candidate, candidate_tg_id)
+                if candidate_tg_id is None:
+                    return ServiceResult(
+                        False,
+                        "candidate_telegram_missing",
+                        400,
+                        "У кандидата не привязан Telegram.",
+                    )
                 candidate_tz = candidate_tz or slot.tz_name
 
                 existing = await session.scalar(
@@ -170,6 +183,13 @@ async def create_slot_assignment(
                 capacity = max(int(getattr(slot, "capacity", 1) or 1), 1)
                 if (active_count or 0) >= capacity:
                     return ServiceResult(False, "slot_full", 409, "Слот заполнен.")
+
+                slot.status = SlotStatus.PENDING
+                slot.candidate_id = candidate.candidate_id
+                slot.candidate_tg_id = candidate_tg_id
+                slot.candidate_fio = candidate.fio
+                slot.candidate_tz = candidate_tz or slot.tz_name
+                slot.candidate_city_id = slot.candidate_city_id or slot.city_id
 
                 assignment = SlotAssignment(
                     slot_id=slot.id,

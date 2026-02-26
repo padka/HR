@@ -15,7 +15,7 @@ from backend.apps.admin_ui.perf.cache import keys as cache_keys
 from backend.apps.admin_ui.perf.cache.readthrough import get_or_compute
 from backend.core.db import async_session
 from backend.domain.candidates.models import User
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import CalendarTask, City, Recruiter, Slot, SlotStatus
 
 __all__ = ["get_calendar_events"]
 
@@ -47,10 +47,10 @@ STATUS_CONFIG = {
         "className": "slot-status-confirmed",
     },
     SlotStatus.CONFIRMED_BY_CANDIDATE: {
-        "label": "Подтверждён",
+        "label": "Предв. подтверждён",
         "color": "#a78bfa",
         "textColor": "#ffffff",
-        "className": "slot-status-confirmed",
+        "className": "slot-status-preconfirmed",
     },
     SlotStatus.CANCELED: {
         "label": "Отменён",
@@ -92,6 +92,7 @@ async def get_calendar_events(
     statuses: Optional[List[str]] = None,
     tz_name: str = DEFAULT_TZ,
     include_canceled: bool = False,
+    include_tasks: bool = False,
 ) -> Dict[str, Any]:
     """
     Fetch slots for calendar view in FullCalendar-compatible format.
@@ -104,6 +105,7 @@ async def get_calendar_events(
         statuses: List of status values to include (e.g., ['free', 'booked'])
         tz_name: Timezone for date interpretation
         include_canceled: Whether to include canceled slots
+        include_tasks: Whether to include manual calendar tasks
 
     Returns:
         Dictionary with 'events' and 'resources' arrays for FullCalendar
@@ -116,6 +118,7 @@ async def get_calendar_events(
         statuses=statuses,
         tz_name=tz_name,
         include_canceled=include_canceled,
+        include_tasks=include_tasks,
     ).value
     async def _compute() -> Dict[str, Any]:
         zone = safe_zone(tz_name)
@@ -165,6 +168,9 @@ async def get_calendar_events(
 
             if statuses:
                 normalized_statuses = [s.lower() for s in statuses]
+                if SlotStatus.CONFIRMED in normalized_statuses:
+                    normalized_statuses.append(SlotStatus.CONFIRMED_BY_CANDIDATE)
+                normalized_statuses = list(set(normalized_statuses))
                 query = query.where(Slot.status.in_(normalized_statuses))
             elif not include_canceled:
                 # Exclude canceled by default
@@ -203,6 +209,31 @@ async def get_calendar_events(
                     )
                 ).all()
                 candidates_map = {int(tg_id): (int(user_id), fio) for tg_id, user_id, fio in users if tg_id is not None}
+
+            task_rows = []
+            if include_tasks:
+                task_query = (
+                    select(
+                        CalendarTask.id,
+                        CalendarTask.recruiter_id,
+                        CalendarTask.title,
+                        CalendarTask.description,
+                        CalendarTask.start_utc,
+                        CalendarTask.end_utc,
+                        CalendarTask.is_done,
+                        Recruiter.name,
+                        Recruiter.tz,
+                    )
+                    .join(Recruiter, Recruiter.id == CalendarTask.recruiter_id)
+                    .where(
+                        CalendarTask.start_utc < end_utc,
+                        CalendarTask.end_utc >= start_utc,
+                    )
+                    .order_by(CalendarTask.start_utc.asc(), CalendarTask.id.asc())
+                )
+                if recruiter_id is not None:
+                    task_query = task_query.where(CalendarTask.recruiter_id == recruiter_id)
+                task_rows = (await session.execute(task_query)).all()
 
             # Load all recruiters for resources
             recruiters_query = select(Recruiter.id, Recruiter.name, Recruiter.tz).where(Recruiter.active == True)
@@ -274,6 +305,7 @@ async def get_calendar_events(
                 "editable": status == SlotStatus.FREE.lower(),
                 "resourceId": f"recruiter-{slot_recruiter_id}",
                 "extendedProps": {
+                    "event_type": "slot",
                     "slot_id": slot_id,
                     "status": status,
                     "status_label": status_config["label"],
@@ -294,6 +326,64 @@ async def get_calendar_events(
                 },
             }
             events.append(event)
+
+        # Build manual task events
+        for (
+            task_id,
+            task_recruiter_id,
+            task_title,
+            task_description,
+            task_start_utc,
+            task_end_utc,
+            task_is_done,
+            task_recruiter_name,
+            task_recruiter_tz,
+        ) in task_rows:
+            start_utc_value = task_start_utc
+            end_utc_value = task_end_utc
+            if start_utc_value and start_utc_value.tzinfo is None:
+                start_utc_value = start_utc_value.replace(tzinfo=timezone.utc)
+            if end_utc_value and end_utc_value.tzinfo is None:
+                end_utc_value = end_utc_value.replace(tzinfo=timezone.utc)
+
+            task_zone = safe_zone(task_recruiter_tz or tz_name or DEFAULT_TZ)
+            local_start = (start_utc_value or start_utc).astimezone(task_zone)
+            local_end = (end_utc_value or end_utc).astimezone(task_zone)
+
+            done = bool(task_is_done)
+            background_color = "#4a5568" if done else "#f59e0b"
+            class_name = "task-status-done" if done else "task-status-planned"
+
+            task_event: Dict[str, Any] = {
+                "id": f"task-{task_id}",
+                "title": str(task_title or "Задача"),
+                "start": (start_utc_value or start_utc).isoformat(),
+                "end": (end_utc_value or end_utc).isoformat(),
+                "backgroundColor": background_color,
+                "borderColor": background_color,
+                "textColor": "#ffffff",
+                "classNames": [class_name],
+                "editable": True,
+                "startEditable": True,
+                "durationEditable": True,
+                "resourceId": f"recruiter-{task_recruiter_id}",
+                "extendedProps": {
+                    "event_type": "task",
+                    "task_id": int(task_id),
+                    "task_title": task_title or "Задача",
+                    "task_description": task_description or "",
+                    "is_done": done,
+                    "start_utc": (start_utc_value or start_utc).isoformat(),
+                    "end_utc": (end_utc_value or end_utc).isoformat(),
+                    "recruiter_id": int(task_recruiter_id),
+                    "recruiter_name": task_recruiter_name or "",
+                    "recruiter_tz": task_recruiter_tz or DEFAULT_TZ,
+                    "local_start": local_start.strftime("%H:%M"),
+                    "local_end": local_end.strftime("%H:%M"),
+                    "local_date": local_start.strftime("%Y-%m-%d"),
+                },
+            }
+            events.append(task_event)
 
         # Build resources array (recruiters)
         resources: List[Dict[str, Any]] = []

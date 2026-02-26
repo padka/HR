@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { STAGE_LABELS, TEMPLATE_META, templateStage, type TemplateStage } from './template_meta'
 
@@ -86,7 +87,7 @@ function ReminderPolicySection({ cityId }: { cityId: number }) {
     queryKey: ['city-reminder-policy', cityId],
     queryFn: async () => {
       const r = await apiFetch<{ ok: boolean; policy: ReminderPolicy }>(
-        `/api/cities/${cityId}/reminder-policy`
+        `/cities/${cityId}/reminder-policy`
       )
       return r.policy
     },
@@ -120,7 +121,7 @@ function ReminderPolicySection({ cityId }: { cityId: number }) {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      await apiFetch(`/api/cities/${cityId}/reminder-policy`, {
+      await apiFetch(`/cities/${cityId}/reminder-policy`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -131,7 +132,7 @@ function ReminderPolicySection({ cityId }: { cityId: number }) {
 
   const resetMutation = useMutation({
     mutationFn: async () => {
-      await apiFetch(`/api/cities/${cityId}/reminder-policy`, { method: 'DELETE' })
+      await apiFetch(`/cities/${cityId}/reminder-policy`, { method: 'DELETE' })
     },
     onSuccess: () => {
       setUseCustom(false)
@@ -491,7 +492,7 @@ export function CityEditPage() {
           </div>
 
           {detailQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-          {detailQuery.isError && <p style={{ color: '#f07373' }}>Ошибка: {(detailQuery.error as Error).message}</p>}
+          {detailQuery.isError && <ApiErrorBanner error={detailQuery.error} title="Не удалось загрузить город" />}
 
           {!detailQuery.isLoading && (
             <>
@@ -563,7 +564,7 @@ export function CityEditPage() {
 
                 {templatesQuery.isLoading && <p className="subtitle" style={{ marginTop: 12 }}>Загрузка шаблонов…</p>}
                 {templatesQuery.isError && (
-                  <p style={{ color: '#f07373', marginTop: 12 }}>Ошибка: {(templatesQuery.error as Error).message}</p>
+                  <ApiErrorBanner error={templatesQuery.error} title="Не удалось загрузить шаблоны" />
                 )}
 
                 {!templatesQuery.isLoading && !templatesQuery.isError && cityTemplates.length === 0 && (
@@ -993,8 +994,8 @@ export function CityEditPage() {
                   {deleteMutation.isPending ? 'Удаляем…' : 'Удалить'}
                 </button>
               </div>
-              {formError && <p style={{ color: '#f07373' }}>Ошибка: {formError}</p>}
-              {deleteMutation.isError && <p style={{ color: '#f07373' }}>Ошибка: {(deleteMutation.error as Error).message}</p>}
+              {formError && <ApiErrorBanner error={formError} title="Ошибка сохранения" />}
+              {deleteMutation.isError && <ApiErrorBanner error={deleteMutation.error} title="Ошибка удаления" />}
             </>
           )}
         </div>

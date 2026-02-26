@@ -1,4 +1,4 @@
-.PHONY: help test test-cov migrate docker-up docker-down docker-logs clean install dev dev-postgres ensure-venv dev-migrate dev-admin dev-bot dev-up
+.PHONY: help test test-cov migrate docker-up docker-down docker-logs clean install dev dev-postgres ensure-venv dev-migrate dev-admin dev-bot dev-up gate-sprint12
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -14,6 +14,7 @@ help:
 	@echo "  make dev-admin        - Start admin UI (dev)"
 	@echo "  make dev-bot          - Start bot (dev, polling)"
 	@echo "  make dev-up           - Print dev run instructions (admin + bot)"
+	@echo "  make gate-sprint12    - Run formal Sprint 1/2 gate and generate report"
 	@echo ""
 	@echo "  make test             - Run all tests (requires PostgreSQL test DB)"
 	@echo "  make test-cov         - Run all tests with coverage"
@@ -103,6 +104,9 @@ dev-up:
 	@echo "  make dev-admin"
 	@echo "  make dev-bot"
 	@echo "Using env file: $(DEV_ENV_FILE)"
+
+gate-sprint12: ensure-venv
+	$(PYTHON) scripts/formal_gate_sprint12.py
 
 # Clean temporary files
 clean:

@@ -59,6 +59,34 @@ async def test_log_inbound_chat_message_creates_history_record():
 
 
 @pytest.mark.asyncio
+async def test_log_outbound_chat_message_creates_history_record():
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777001,
+        fio="Бот Исходящий",
+        city="Москва",
+    )
+
+    await candidate_services.log_outbound_chat_message(
+        candidate.telegram_id,
+        text="Ваше интервью подтверждено",
+        telegram_message_id=111,
+        payload={"source": "bot"},
+        author_label="bot",
+    )
+
+    async with async_session() as session:
+        rows = await session.execute(select(ChatMessage).order_by(ChatMessage.id.asc()))
+        messages = rows.scalars().all()
+        assert len(messages) == 1
+        message = messages[0]
+        assert message.direction == "outbound"
+        assert message.text == "Ваше интервью подтверждено"
+        assert message.telegram_message_id == 111
+        assert message.status == "sent"
+        assert message.author_label == "bot"
+
+
+@pytest.mark.asyncio
 async def test_send_chat_message_updates_status_and_persists():
     candidate = await candidate_services.create_or_update_user(
         telegram_id=654321,

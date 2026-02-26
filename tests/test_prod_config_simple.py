@@ -134,6 +134,35 @@ def test_prod_rejects_non_redis_broker(monkeypatch):
         settings_module.get_settings.cache_clear()
 
 
+def test_prod_rejects_missing_bot_backend_url_when_bot_enabled(monkeypatch):
+    """Production must fail if bot is enabled with token but BOT_BACKEND_URL is missing."""
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+
+    temp_dir = tempfile.mkdtemp(prefix="test_prod_")
+    try:
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        _set_admin_credentials(monkeypatch)
+        monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
+        monkeypatch.setenv("DATA_DIR", temp_dir)
+        monkeypatch.setenv("SESSION_SECRET", "test-prod-secret-32chars-long-0123456789abcdef")
+        monkeypatch.setenv("BOT_ENABLED", "1")
+        monkeypatch.setenv("BOT_TOKEN", "123456:test-token")
+        monkeypatch.delenv("BOT_BACKEND_URL", raising=False)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            settings_module.get_settings()
+        assert "BOT_BACKEND_URL" in str(exc_info.value)
+    finally:
+        settings_module.get_settings.cache_clear()
+        import shutil
+        if Path(temp_dir).exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_prod_rejects_data_dir_in_repo(monkeypatch):
     """Production must fail if DATA_DIR is inside the repository."""
     from backend.core import settings as settings_module

@@ -174,3 +174,33 @@ def test_detailization_patch_updates_manual_fields():
         assert row2 is not None
         assert row2["expert_name"] == "Эксперт ФИО"
         assert row2["is_attached"] is True
+
+
+def test_detailization_delete_removes_row():
+    seed = _run(
+        _seed_intro_day_assignment(
+            fio="DET Candidate Delete",
+            rejection_reason=None,
+            candidate_status=CandidateStatus.NOT_HIRED,
+        )
+    )
+    app = create_app()
+    with TestClient(app) as client:
+        payload = client.get("/api/detailization", auth=("admin", "admin")).json()
+        row = next((it for it in payload["items"] if it["candidate"]["id"] == seed["user_id"]), None)
+        assert row is not None
+        entry_id = int(row["id"])
+
+        csrf = client.get("/api/csrf", auth=("admin", "admin"))
+        token = csrf.json()["token"]
+        deleted = client.delete(
+            f"/api/detailization/{entry_id}",
+            auth=("admin", "admin"),
+            headers={"x-csrf-token": token},
+        )
+        assert deleted.status_code == 200
+        assert deleted.json()["ok"] is True
+
+        payload2 = client.get("/api/detailization", auth=("admin", "admin")).json()
+        row2 = next((it for it in payload2["items"] if it["candidate"]["id"] == seed["user_id"]), None)
+        assert row2 is None

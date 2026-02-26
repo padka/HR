@@ -130,6 +130,10 @@ class Recruiter(Base):
         back_populates="recruiter",
         cascade="all, delete-orphan",
     )
+    calendar_tasks: Mapped[List["CalendarTask"]] = relationship(
+        back_populates="recruiter",
+        cascade="all, delete-orphan",
+    )
 
     @validates("tz")
     def _validate_timezone(self, _key, value: Optional[str]) -> str:
@@ -233,6 +237,52 @@ class RecruiterPlanEntry(Base):
 
     def __repr__(self) -> str:
         return f"<RecruiterPlanEntry {self.id} recruiter={self.recruiter_id} city={self.city_id}>"
+
+
+class CalendarTask(Base):
+    __tablename__ = "calendar_tasks"
+    __table_args__ = (
+        Index("ix_calendar_tasks_recruiter_start", "recruiter_id", "start_utc"),
+        Index("ix_calendar_tasks_start_end", "start_utc", "end_utc"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recruiter_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("recruiters.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    start_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by_type: Mapped[str] = mapped_column(String(16), nullable=False, default="recruiter")
+    created_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    recruiter: Mapped["Recruiter"] = relationship(back_populates="calendar_tasks")
+
+    @validates("title")
+    def _sanitize_title(self, _key, value: Optional[str]) -> str:
+        sanitized = sanitize_plain_text(value, max_length=180)
+        if not sanitized:
+            raise ValueError("Task title cannot be empty")
+        return sanitized
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<CalendarTask {self.id} recruiter={self.recruiter_id} start={self.start_utc}>"
 
 
 
@@ -445,11 +495,24 @@ def _enforce_slot_overlap(mapper, connection, target: Slot) -> None:  # pragma: 
     new_duration = max(target.duration_min or SLOT_MIN_DURATION_MIN, SLOT_MIN_DURATION_MIN)
     new_end = new_start + timedelta(minutes=new_duration)
 
+    target_purpose = (target.purpose or "interview").strip().lower()
+    if target_purpose == "intro_day":
+        # Intro-day events may run in parallel at the same time.
+        return
     existing_rows = connection.execute(
-        select(Slot.start_utc, Slot.duration_min).where(Slot.recruiter_id == target.recruiter_id)
+        select(Slot.start_utc, Slot.duration_min, Slot.purpose).where(
+            Slot.recruiter_id == target.recruiter_id
+        )
     )
     for row in existing_rows:
-        start_raw, duration_raw = (row.start_utc, row.duration_min) if hasattr(row, "start_utc") else row
+        if hasattr(row, "start_utc"):
+            start_raw, duration_raw, purpose_raw = row.start_utc, row.duration_min, row.purpose
+        else:
+            start_raw, duration_raw, purpose_raw = row
+        existing_purpose = (purpose_raw or "interview").strip().lower()
+        if existing_purpose != target_purpose:
+            # Different slot purposes may overlap by design (e.g. intro day + interview).
+            continue
         existing = _normalize_slot_start(start_raw)
         if existing is None:
             continue

@@ -106,7 +106,7 @@ from backend.apps.bot.runtime_config import (
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.core.redis_factory import parse_redis_target
-from backend.domain.models import SlotReminderJob, SlotStatus, Slot
+from backend.domain.models import City, Recruiter, SlotReminderJob, SlotStatus, Slot
 from backend.domain.repositories import add_outbox_notification, get_slot
 
 logger = logging.getLogger(__name__)
@@ -180,9 +180,10 @@ class ReminderService:
                     for slot in slot_rows:
                         slot_id = slot.id
                         try:
+                            candidate_tz = await self._resolve_slot_timezone(slot)
                             plans = self._build_schedule(
                                 slot.start_utc,
-                                slot.candidate_tz or DEFAULT_TZ,
+                                candidate_tz,
                                 getattr(slot, "purpose", None) or "interview",
                                 policy=reminder_policy,
                             )
@@ -305,7 +306,12 @@ class ReminderService:
                         )
                     )
                     for slot in slot_rows:
-                        plans = self._build_schedule(slot.start_utc, slot.candidate_tz or DEFAULT_TZ, getattr(slot, "purpose", None) or "interview")
+                        candidate_tz = await self._resolve_slot_timezone(slot)
+                        plans = self._build_schedule(
+                            slot.start_utc,
+                            candidate_tz,
+                            getattr(slot, "purpose", None) or "interview",
+                        )
                         for plan in plans:
                             if plan.run_at_utc <= datetime.now(timezone.utc):
                                 continue
@@ -394,7 +400,7 @@ class ReminderService:
                     logger.warning("Failed to load city reminder policy for city_id=%s", slot.city_id)
 
             purpose = getattr(slot, "purpose", "interview") or "interview"
-            candidate_tz = slot.candidate_tz or DEFAULT_TZ
+            candidate_tz = await self._resolve_slot_timezone(slot)
             plans = self._build_schedule(
                 slot.start_utc,
                 candidate_tz,
@@ -423,7 +429,7 @@ class ReminderService:
                 )
                 return
 
-            candidate_zone = _safe_zone(slot.candidate_tz)
+            candidate_zone = _safe_zone(candidate_tz)
             now_local = datetime.now(candidate_zone)
             start_local = slot.start_utc.astimezone(candidate_zone)
             time_until_meeting = start_local - now_local
@@ -549,6 +555,37 @@ class ReminderService:
                         },
                     )
                 await session.commit()
+
+    async def _resolve_slot_timezone(self, slot: Slot) -> str:
+        direct_tz = _normalized_tz_name(getattr(slot, "candidate_tz", None))
+        if direct_tz:
+            return direct_tz
+
+        city_id = getattr(slot, "candidate_city_id", None) or getattr(slot, "city_id", None)
+        recruiter_id = getattr(slot, "recruiter_id", None)
+        if city_id is None and recruiter_id is None:
+            return DEFAULT_TZ
+
+        try:
+            async with async_session() as session:
+                if city_id is not None:
+                    city = await session.get(City, int(city_id))
+                    city_tz = _normalized_tz_name(getattr(city, "tz", None) if city else None)
+                    if city_tz:
+                        return city_tz
+                if recruiter_id is not None:
+                    recruiter = await session.get(Recruiter, int(recruiter_id))
+                    recruiter_tz = _normalized_tz_name(getattr(recruiter, "tz", None) if recruiter else None)
+                    if recruiter_tz:
+                        return recruiter_tz
+        except Exception:
+            logger.warning(
+                "reminder.resolve_slot_timezone_failed",
+                extra={"slot_id": getattr(slot, "id", None)},
+                exc_info=True,
+            )
+
+        return DEFAULT_TZ
 
     async def cancel_for_slot(self, slot_id: int) -> None:
         async with self._lock:
@@ -992,6 +1029,13 @@ def _safe_zone(tz: Optional[str]) -> ZoneInfo:
     if not tz:
         return _DEFAULT_ZONE
     return _resolve_zone(tz)
+
+
+def _normalized_tz_name(value: Optional[str]) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def _in_quiet_hours(local_dt: datetime, *, quiet_start: Optional[int] = None, quiet_end: Optional[int] = None) -> bool:

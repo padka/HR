@@ -24,6 +24,7 @@ from backend.domain.candidates.status import CandidateStatus
 _UNSET = object()
 
 from .models import (
+    ActionToken,
     City,
     MessageTemplate,
     NotificationLog,
@@ -32,6 +33,8 @@ from .models import (
     OutboxNotification,
     Recruiter,
     Slot,
+    SlotAssignment,
+    SlotAssignmentStatus,
     SlotReservationLock,
     SlotStatus,
     TelegramCallbackLog,
@@ -1320,6 +1323,7 @@ async def reserve_slot(
                 initial_status=initial_status,
                 candidate_id=candidate_uuid,
                 source="bot",
+                responsible_recruiter_id=slot_recruiter_id,
             )
         except Exception:
             # Candidate directory sync should not break reservation flow
@@ -1391,10 +1395,44 @@ async def reject_slot(
         slot = await session.get(Slot, slot_id, with_for_update=True)
         if not slot:
             return None
+        now_utc = datetime.now(timezone.utc)
         reservation_date = _to_aware_utc(slot.start_utc).date()
         candidate_tg_id = slot.candidate_tg_id
         candidate_id = slot.candidate_id
         recruiter_id = slot.recruiter_id
+
+        # Keep slot_assignments in sync with released slot state.
+        active_assignment_statuses = (
+            SlotAssignmentStatus.OFFERED,
+            SlotAssignmentStatus.CONFIRMED,
+            SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+            SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+        )
+        active_assignments = list(
+            await session.scalars(
+                select(SlotAssignment)
+                .where(
+                    SlotAssignment.slot_id == slot.id,
+                    SlotAssignment.status.in_(active_assignment_statuses),
+                )
+                .with_for_update()
+            )
+        )
+        if active_assignments:
+            assignment_ids = [str(assignment.id) for assignment in active_assignments]
+            for assignment in active_assignments:
+                assignment.status = SlotAssignmentStatus.CANCELLED
+                assignment.cancelled_at = assignment.cancelled_at or now_utc
+                assignment.status_before_reschedule = None
+            await session.execute(
+                update(ActionToken)
+                .where(
+                    ActionToken.entity_id.in_(assignment_ids),
+                    ActionToken.used_at.is_(None),
+                )
+                .values(used_at=now_utc)
+            )
+
         await session.execute(
             delete(SlotReservationLock).where(SlotReservationLock.slot_id == slot.id)
         )

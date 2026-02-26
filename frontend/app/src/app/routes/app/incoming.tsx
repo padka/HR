@@ -60,7 +60,7 @@ export function IncomingPage() {
 
   const incomingQuery = useQuery<IncomingPayload>({
     queryKey: ['dashboard-incoming'],
-    queryFn: () => apiFetch('/dashboard/incoming?limit=200'),
+    queryFn: () => apiFetch('/dashboard/incoming?limit=100'),
     refetchInterval: 20000,
   })
 

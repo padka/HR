@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { getTzPreview, validateRecruiterForm } from './recruiter-form'
 
@@ -259,7 +260,7 @@ export function RecruiterEditPage() {
           </div>
 
           {detailQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-          {detailQuery.isError && <p style={{ color: '#f07373' }}>Ошибка: {(detailQuery.error as Error).message}</p>}
+          {detailQuery.isError && <ApiErrorBanner error={detailQuery.error} title="Не удалось загрузить рекрутёра" />}
 
           {!detailQuery.isLoading && (
             <>
@@ -418,7 +419,7 @@ export function RecruiterEditPage() {
                       )}
                     </div>
 
-                    <div className="recruiter-edit__cities">
+                    <div className="recruiter-edit__cities" data-testid="recruiter-city-selection">
                       {filteredCities.map((city) => {
                         const selected = form.city_ids.includes(city.id)
                         return (
@@ -547,8 +548,8 @@ export function RecruiterEditPage() {
                   {deleteMutation.isPending ? 'Удаляем…' : 'Удалить'}
                 </button>
               </div>
-              {formError && <p style={{ color: '#f07373' }}>Ошибка: {formError}</p>}
-              {deleteMutation.isError && <p style={{ color: '#f07373' }}>Ошибка: {(deleteMutation.error as Error).message}</p>}
+              {formError && <ApiErrorBanner error={formError} title="Ошибка сохранения" />}
+              {deleteMutation.isError && <ApiErrorBanner error={deleteMutation.error} title="Ошибка удаления" />}
             </>
           )}
         </div>
