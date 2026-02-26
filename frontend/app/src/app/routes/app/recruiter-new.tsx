@@ -380,7 +380,7 @@ export function RecruiterNewPage() {
                   )}
                 </div>
 
-                <div className="recruiter-edit__cities">
+                <div className="recruiter-edit__cities" data-testid="recruiter-city-selection">
                   {filteredCities.map(city => {
                     const selected = form.city_ids.includes(city.id)
                     return (
