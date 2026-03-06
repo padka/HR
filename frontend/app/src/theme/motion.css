@@ -1,0 +1,165 @@
+html[data-ui='liquid-glass-v2'] body {
+  animation: ui-page-enter var(--ui-motion-slow) var(--ui-ease-standard);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-reveal,
+html[data-ui='liquid-glass-v2'] .glass,
+html[data-ui='liquid-glass-v2'] .ui-btn,
+html[data-ui='liquid-glass-v2'] .data-card,
+html[data-ui='liquid-glass-v2'] .incoming-card,
+html[data-ui='liquid-glass-v2'] .slots-summary__card,
+html[data-ui='liquid-glass-v2'] .vision-nav__item {
+  transition-property: transform, opacity, background-color, border-color, box-shadow, filter;
+  transition-duration: var(--ui-motion-base);
+  transition-timing-function: var(--ui-ease-standard);
+  will-change: transform;
+}
+
+html[data-ui='liquid-glass-v2'] .ui-btn:active,
+html[data-ui='liquid-glass-v2'] .vision-nav__item:active,
+html[data-ui='liquid-glass-v2'] .slots-summary__card:active {
+  transform: scale(0.985);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-reveal:hover,
+html[data-ui='liquid-glass-v2'] .glass--interactive:hover,
+html[data-ui='liquid-glass-v2'] .slots-summary__card:hover,
+html[data-ui='liquid-glass-v2'] .vision-nav__item:hover {
+  transform: translateY(-1px);
+}
+
+html[data-ui='liquid-glass-v2'] :where(button, a, input, select, textarea, summary):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@keyframes ui-page-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInRight {
+  0% {
+    opacity: 0.86;
+    transform: translateX(100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideOutLeft {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0.88;
+    transform: translateX(-30%);
+  }
+}
+
+@keyframes slideInLeft {
+  0% {
+    opacity: 0.9;
+    transform: translateX(-30%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideOutRight {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0.88;
+    transform: translateX(100%);
+  }
+}
+
+@keyframes sheetSlideUp {
+  0% {
+    transform: translateY(100%);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes sheetSlideDown {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes pullRefreshSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 768px) {
+  .app-main.mobile-route-transition--push {
+    animation: slideInRight 320ms var(--ease-emphasized);
+  }
+
+  .app-main.mobile-route-transition--pop {
+    animation: slideInLeft 280ms var(--ease-emphasized);
+  }
+
+  .app-main.mobile-route-transition--fade {
+    animation: fadeIn 180ms var(--ease-standard);
+  }
+
+  .mobile-sheet.is-open .mobile-sheet__backdrop {
+    animation: fadeIn 200ms ease;
+  }
+
+  .mobile-sheet.is-open .mobile-sheet__body {
+    animation: sheetSlideUp 320ms var(--ease-emphasized);
+  }
+
+  .overlay .sheet,
+  .modal {
+    animation: sheetSlideUp 320ms var(--ease-emphasized);
+  }
+
+  .stagger-children > * {
+    animation: slideUp 220ms ease both;
+    animation-delay: calc(var(--i, 0) * 30ms);
+  }
+}
+
+html[data-ui='liquid-glass-v2'][data-motion='reduced'] *,
+html[data-ui='liquid-glass-v2'][data-motion='reduced'] *::before,
+html[data-ui='liquid-glass-v2'][data-motion='reduced'] *::after {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transform: none !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui='liquid-glass-v2'] *,
+  html[data-ui='liquid-glass-v2'] *::before,
+  html[data-ui='liquid-glass-v2'] *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

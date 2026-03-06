@@ -1,0 +1,293 @@
+.ui-error-boundary {
+  margin: 24px;
+  padding: 24px;
+  border-radius: 14px;
+  border: 1px solid rgba(240, 115, 115, 0.3);
+  background: rgba(240, 115, 115, 0.1);
+}
+
+.ui-error-boundary__title {
+  margin: 0 0 12px;
+  color: #f07373;
+  font-size: 18px;
+}
+
+.ui-error-boundary__text {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.ui-error-boundary__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ui-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ui-section-header__title {
+  margin: 0;
+}
+
+.ui-section-header__text {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.ui-section-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ui-form-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.ui-form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ui-form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.ui-form-grid--md {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.ui-form-grid--lg {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.ui-field {
+  display: grid;
+  gap: 6px;
+}
+
+.ui-field__label {
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+
+.ui-field__hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ui-field__error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.ui-required {
+  color: var(--danger);
+}
+
+.ui-inline-controls {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ui-inline-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ui-table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius);
+  -webkit-overflow-scrolling: touch;
+}
+
+.ui-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ui-toolbar--compact {
+  gap: 8px;
+}
+
+.ui-toolbar--between {
+  justify-content: space-between;
+}
+
+.ui-state {
+  display: grid;
+  gap: 10px;
+  border: 1px dashed color-mix(in srgb, var(--glass-border) 86%, transparent);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.ui-state__title {
+  margin: 0;
+  font-weight: 650;
+  font-size: var(--text-base);
+}
+
+.ui-state__text {
+  margin: 0;
+  color: var(--muted);
+}
+
+.ui-state__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ui-state--loading {
+  border-style: solid;
+}
+
+.ui-state--empty {
+  border-style: dashed;
+}
+
+.ui-state--error {
+  border-color: color-mix(in srgb, var(--danger) 52%, transparent);
+  background: color-mix(in srgb, var(--danger-soft) 78%, transparent);
+}
+
+.ui-state--success {
+  border-color: color-mix(in srgb, var(--success) 46%, transparent);
+  background: color-mix(in srgb, var(--success-soft) 78%, transparent);
+}
+
+.ui-message {
+  margin: 0;
+}
+
+.ui-message--error {
+  color: var(--danger);
+}
+
+.ui-message--muted {
+  color: var(--muted);
+}
+
+:where(.ui-btn, .ui-control, input:not([type='checkbox']):not([type='radio']), select, textarea) {
+  min-height: 40px;
+}
+
+:where(.ui-btn, .ui-control, input, select, textarea):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-btn,
+html[data-ui='liquid-glass-v2'] .ui-control,
+html[data-ui='liquid-glass-v2'] input:not([type='checkbox']):not([type='radio']),
+html[data-ui='liquid-glass-v2'] select,
+html[data-ui='liquid-glass-v2'] textarea {
+  border-radius: var(--ui-radius-2);
+  min-height: 40px;
+  border: 1px solid var(--ui-border-subtle);
+  background: color-mix(in srgb, var(--ui-surface-2) 86%, transparent);
+}
+
+html[data-ui='liquid-glass-v2'] input::placeholder,
+html[data-ui='liquid-glass-v2'] textarea::placeholder {
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-btn {
+  min-height: 40px;
+  padding: 0 14px;
+  font-weight: 560;
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(var(--ui-blur-1));
+  -webkit-backdrop-filter: blur(var(--ui-blur-1));
+}
+
+html[data-ui='liquid-glass-v2'] .ui-btn.ui-btn--sm {
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+html[data-ui='liquid-glass-v2'] .ui-btn.ui-btn--primary {
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--accent) 88%, white),
+    color-mix(in srgb, var(--accent) 82%, black)
+  );
+  border-color: color-mix(in srgb, var(--accent) 58%, white);
+  color: #f7fbff;
+}
+
+html[data-ui='liquid-glass-v2'] .ui-btn.ui-btn--ghost {
+  background: color-mix(in srgb, var(--ui-surface-2) 90%, transparent);
+  border-color: var(--ui-border-subtle);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-btn:disabled,
+html[data-ui='liquid-glass-v2'] input:disabled,
+html[data-ui='liquid-glass-v2'] select:disabled,
+html[data-ui='liquid-glass-v2'] textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+html[data-ui='liquid-glass-v2'] .filter-bar__label,
+html[data-ui='liquid-glass-v2'] .form-group__label,
+html[data-ui='liquid-glass-v2'] .ui-field__label {
+  font-size: 12px;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--fg) 76%, transparent);
+}
+
+html[data-ui='liquid-glass-v2'] .status-badge,
+html[data-ui='liquid-glass-v2'] .cd-chip,
+html[data-ui='liquid-glass-v2'] .chip {
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--ui-border-subtle) 80%, transparent);
+}
+
+html[data-ui='liquid-glass-v2'] .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  backdrop-filter: blur(var(--ui-blur-1));
+  -webkit-backdrop-filter: blur(var(--ui-blur-1));
+  background: color-mix(in srgb, var(--ui-surface-3) 94%, transparent);
+}
+
+html[data-ui='liquid-glass-v2'] .data-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--ui-surface-1) 28%, transparent);
+}
+
+html[data-ui='liquid-glass-v2'] .modal-overlay {
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  backdrop-filter: blur(var(--ui-blur-1));
+  -webkit-backdrop-filter: blur(var(--ui-blur-1));
+}
+
+html[data-ui='liquid-glass-v2'] .ui-error-boundary {
+  border-radius: var(--ui-radius-4);
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, transparent);
+  background: color-mix(in srgb, var(--danger-soft) 88%, transparent);
+}

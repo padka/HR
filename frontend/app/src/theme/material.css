@@ -1,0 +1,76 @@
+html[data-ui='liquid-glass-v2'] .ui-surface,
+html[data-ui='liquid-glass-v2'] .glass {
+  position: relative;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-surface::before,
+html[data-ui='liquid-glass-v2'] .glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0));
+  opacity: 0.55;
+}
+
+html[data-ui='liquid-glass-v2'] .ui-surface--base {
+  background: var(--ui-surface-1);
+  border-color: var(--ui-border-subtle);
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-surface--raised,
+html[data-ui='liquid-glass-v2'] .glass--elevated {
+  background: var(--ui-surface-2);
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-3), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-surface--floating {
+  background: var(--ui-surface-3);
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-4), inset 0 1px 0 var(--ui-highlight-strong);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-surface--overlay,
+html[data-ui='liquid-glass-v2'] .modal,
+html[data-ui='liquid-glass-v2'] .sheet {
+  background: var(--ui-surface-4);
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-4), inset 0 1px 0 var(--ui-highlight-strong);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-card,
+html[data-ui='liquid-glass-v2'] .data-card,
+html[data-ui='liquid-glass-v2'] .incoming-card,
+html[data-ui='liquid-glass-v2'] .kpi-card,
+html[data-ui='liquid-glass-v2'] .stat-card,
+html[data-ui='liquid-glass-v2'] .recruiter-card {
+  border-radius: var(--ui-radius-4);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-table,
+html[data-ui='liquid-glass-v2'] .data-table {
+  border-radius: var(--ui-radius-3);
+  overflow: hidden;
+}
+
+html[data-ui='liquid-glass-v2'] .ui-modal,
+html[data-ui='liquid-glass-v2'] .modal,
+html[data-ui='liquid-glass-v2'] .sheet {
+  border-radius: var(--ui-radius-5);
+}
+
+html[data-ui='liquid-glass-v2'] .ui-filter,
+html[data-ui='liquid-glass-v2'] .filter-bar,
+html[data-ui='liquid-glass-v2'] .slots-filters-grid--enhanced {
+  border-radius: var(--ui-radius-4);
+  background: var(--ui-surface-1);
+  border: 1px solid var(--ui-border-subtle);
+}
