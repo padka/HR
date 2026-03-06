@@ -1,6 +1,7 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useProfile } from '@/app/hooks/useProfile'
+import { useIsMobile } from '@/app/hooks/useIsMobile'
 import { apiFetch, queryClient } from '@/api/client'
 
 type BubblePopFx = {
@@ -32,6 +33,10 @@ type BubblePopSplash = {
 }
 
 const TAU = Math.PI * 2
+const LIQUID_GLASS_V2_OVERRIDE_KEY = 'ui:liquidGlassV2'
+const LIQUID_GLASS_V2_DATASET_VALUE = 'liquid-glass-v2'
+
+type MotionMode = 'full' | 'reduced'
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 const clamp01 = (value: number) => clamp(value, 0, 1)
@@ -46,6 +51,21 @@ const easeOutQuint = (t: number) => 1 - Math.pow(1 - clamp01(t), 5)
 
 const randRange = (min: number, max: number) => min + Math.random() * (max - min)
 const randInt = (min: number, max: number) => Math.floor(randRange(min, max + 1))
+
+const envLiquidGlassV2Enabled = String(import.meta.env.VITE_LIQUID_GLASS_V2 || '0') === '1'
+
+function resolveLiquidGlassV2Enabled() {
+  if (typeof window === 'undefined') return envLiquidGlassV2Enabled
+  const override = window.localStorage.getItem(LIQUID_GLASS_V2_OVERRIDE_KEY)?.trim().toLowerCase()
+  if (override === '1' || override === 'true' || override === 'on') return true
+  if (override === '0' || override === 'false' || override === 'off') return false
+  return envLiquidGlassV2Enabled
+}
+
+function resolveMotionMode(): MotionMode {
+  if (typeof window === 'undefined') return 'full'
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'reduced' : 'full'
+}
 
 const sampleNoiseLoop = (noise: number[], at: number) => {
   const n = noise.length
@@ -444,10 +464,72 @@ const ICONS = {
       <path d="M19 20l-1-3" />
     </svg>
   ),
+  more: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <circle cx="6" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="18" cy="12" r="1.6" />
+    </svg>
+  ),
+}
+
+type NavItem = {
+  to: string
+  label: string
+  icon: ReactNode
+  tone: string
+}
+
+const MOBILE_PRIMARY_TABS = 4
+
+const PAGE_TITLES: Array<{ match: (pathname: string) => boolean; title: string }> = [
+  { match: (pathname) => pathname === '/app/incoming', title: 'Входящие' },
+  { match: (pathname) => pathname === '/app/dashboard', title: 'Дашборд' },
+  { match: (pathname) => pathname === '/app/slots', title: 'Слоты' },
+  { match: (pathname) => pathname === '/app/candidates', title: 'Кандидаты' },
+  { match: (pathname) => pathname.startsWith('/app/candidates/'), title: 'Кандидат' },
+  { match: (pathname) => pathname === '/app/messenger', title: 'Чаты' },
+  { match: (pathname) => pathname.startsWith('/app/profile'), title: 'Профиль' },
+  { match: (pathname) => pathname.startsWith('/app/recruiters'), title: 'Рекрутёры' },
+  { match: (pathname) => pathname.startsWith('/app/cities'), title: 'Города' },
+  { match: (pathname) => pathname.startsWith('/app/copilot'), title: 'Copilot' },
+  { match: (pathname) => pathname.startsWith('/app/system'), title: 'Система' },
+]
+
+const DETAIL_ROUTE_PREFIXES = [
+  '/app/candidates/',
+  '/app/slots/create',
+  '/app/recruiters/',
+  '/app/cities/',
+  '/app/questions/',
+  '/app/templates/',
+  '/app/test-builder/',
+]
+
+const normalizePathname = (pathname: string) => pathname.replace(/\/+$/, '') || '/'
+
+const isPathActive = (pathname: string, targetPath: string) => {
+  const current = normalizePathname(pathname)
+  const target = normalizePathname(targetPath)
+  return current === target || current.startsWith(`${target}/`)
+}
+
+const isDetailRoute = (pathname: string) => {
+  if (pathname === '/app') return false
+  if (pathname === '/app/login') return false
+  return DETAIL_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+}
+
+const getMobileTitle = (pathname: string) => {
+  const match = PAGE_TITLES.find((item) => item.match(pathname))
+  return match?.title || 'RecruitSmart'
 }
 
 export function RootLayout() {
   const { location } = useRouterState()
+  const isMobile = useIsMobile()
+  const [liquidGlassV2Enabled, setLiquidGlassV2Enabled] = useState<boolean>(resolveLiquidGlassV2Enabled)
+  const [motionMode, setMotionMode] = useState<MotionMode>(resolveMotionMode)
   const hideNav = location.pathname.startsWith('/app/login')
   const profileQuery = useProfile(!hideNav)
   const principalType = profileQuery.data?.principal.type
@@ -456,10 +538,14 @@ export function RootLayout() {
   const principalId = profileQuery.data?.principal.id
 
   const [chatToast, setChatToast] = useState<{ title: string; preview: string } | null>(null)
+  const [chatUnreadCount, setChatUnreadCount] = useState(0)
+  const [isMoreSheetOpen, setIsMoreSheetOpen] = useState(false)
+  const [mobileTransition, setMobileTransition] = useState<'push' | 'pop' | 'fade'>('fade')
   const chatToastTimerRef = useRef<number | null>(null)
   const chatLastSeenRef = useRef<Record<number, string>>({})
   const chatInitializedRef = useRef(false)
   const audioCtxRef = useRef<AudioContext | null>(null)
+  const lastPathRef = useRef(location.pathname)
 
   const bubbleStateRef = useRef<{
     hovered: HTMLSpanElement | null
@@ -482,6 +568,136 @@ export function RootLayout() {
   })
 
   useEffect(() => {
+    const syncUiMode = () => setLiquidGlassV2Enabled(resolveLiquidGlassV2Enabled())
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === LIQUID_GLASS_V2_OVERRIDE_KEY) syncUiMode()
+    }
+
+    window.addEventListener('storage', onStorage)
+    window.addEventListener('focus', syncUiMode)
+    document.addEventListener('visibilitychange', syncUiMode)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('focus', syncUiMode)
+      document.removeEventListener('visibilitychange', syncUiMode)
+    }
+  }, [])
+
+  useEffect(() => {
+    const storedTheme = window.localStorage.getItem('theme')
+    if (storedTheme === 'dark' || storedTheme === 'light') {
+      document.documentElement.dataset.theme = storedTheme
+    }
+  }, [])
+
+  useEffect(() => {
+    const root = document.documentElement
+    if (liquidGlassV2Enabled) root.dataset.ui = LIQUID_GLASS_V2_DATASET_VALUE
+    else delete root.dataset.ui
+  }, [liquidGlassV2Enabled])
+
+  useEffect(() => {
+    const media: MediaQueryList | null =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null
+    const syncMotionMode = () => setMotionMode(media?.matches ? 'reduced' : 'full')
+    syncMotionMode()
+
+    if (!media) return
+    const listener = () => syncMotionMode()
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', listener)
+      return () => media.removeEventListener('change', listener)
+    }
+    const legacyMedia = media as MediaQueryList & {
+      addListener?: (listener: (this: MediaQueryList, ev: MediaQueryListEvent) => unknown) => void
+      removeListener?: (listener: (this: MediaQueryList, ev: MediaQueryListEvent) => unknown) => void
+    }
+    if (typeof legacyMedia.addListener === 'function') {
+      legacyMedia.addListener(listener)
+      return () => legacyMedia.removeListener?.(listener)
+    }
+  }, [])
+
+  useEffect(() => {
+    document.documentElement.dataset.motion = motionMode
+  }, [motionMode])
+
+  useEffect(() => {
+    if (!isMobile) {
+      setIsMoreSheetOpen(false)
+      return
+    }
+
+    const prevPath = lastPathRef.current
+    const nextPath = location.pathname
+    if (prevPath === nextPath) return
+
+    const prevDepth = prevPath.split('/').filter(Boolean).length
+    const nextDepth = nextPath.split('/').filter(Boolean).length
+    const transition: 'push' | 'pop' | 'fade' =
+      nextDepth > prevDepth ? 'push' : nextDepth < prevDepth ? 'pop' : 'fade'
+
+    setMobileTransition(transition)
+    setIsMoreSheetOpen(false)
+    lastPathRef.current = nextPath
+
+    const timer = window.setTimeout(() => setMobileTransition('fade'), 340)
+    return () => window.clearTimeout(timer)
+  }, [isMobile, location.pathname])
+
+  useEffect(() => {
+    if (!isMobile || !isDetailRoute(location.pathname)) return
+
+    let tracking = false
+    let startX = 0
+    let startY = 0
+    let fired = false
+
+    const onStart = (event: TouchEvent) => {
+      const point = event.touches[0]
+      if (!point) return
+      if (point.clientX > 24) return
+      tracking = true
+      fired = false
+      startX = point.clientX
+      startY = point.clientY
+    }
+
+    const onMove = (event: TouchEvent) => {
+      if (!tracking || fired) return
+      const point = event.touches[0]
+      if (!point) return
+      const dx = point.clientX - startX
+      const dy = point.clientY - startY
+      if (dx > 72 && Math.abs(dy) < 44) {
+        fired = true
+        tracking = false
+        window.history.back()
+      }
+    }
+
+    const onEnd = () => {
+      tracking = false
+      fired = false
+    }
+
+    window.addEventListener('touchstart', onStart, { passive: true })
+    window.addEventListener('touchmove', onMove, { passive: true })
+    window.addEventListener('touchend', onEnd, { passive: true })
+    window.addEventListener('touchcancel', onEnd, { passive: true })
+
+    return () => {
+      window.removeEventListener('touchstart', onStart)
+      window.removeEventListener('touchmove', onMove)
+      window.removeEventListener('touchend', onEnd)
+      window.removeEventListener('touchcancel', onEnd)
+    }
+  }, [isMobile, location.pathname])
+
+  useEffect(() => {
+    if (isMobile) return
     const state = bubbleStateRef.current
     let destroyed = false
     const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false
@@ -658,10 +874,13 @@ export function RootLayout() {
       for (const timer of state.timers) window.clearTimeout(timer)
       state.timers = []
     }
-  }, [])
+  }, [isMobile])
 
   useEffect(() => {
-    if (hideNav || isUnauthed) return
+    if (hideNav || isUnauthed) {
+      setChatUnreadCount(0)
+      return
+    }
     if (!principalType || typeof principalId !== 'number') return
 
     let isActive = true
@@ -707,11 +926,15 @@ export function RootLayout() {
       return 'Файл'
     }
 
+    const unreadTotal = (threads: ThreadItem[] = []) =>
+      threads.reduce((sum, thread) => sum + (Number(thread.unread_count) || 0), 0)
+
     const loop = async () => {
       // Baseline: load once without notifications to avoid beeping on existing unread.
       try {
         const initial = await apiFetch<ThreadsPayload>('/staff/threads')
         queryClient.setQueryData(['staff-threads'], initial)
+        setChatUnreadCount(unreadTotal(initial.threads || []))
         since = initial.latest_event_at || since
         const seen: Record<number, string> = {}
         ;(initial.threads || []).forEach((t) => {
@@ -738,6 +961,7 @@ export function RootLayout() {
 
           if (payload.updated && payload.threads?.length) {
             queryClient.setQueryData(['staff-threads'], payload)
+            setChatUnreadCount(unreadTotal(payload.threads))
 
             const prevSeen = chatLastSeenRef.current || {}
             const nextSeen: Record<number, string> = { ...prevSeen }
@@ -799,18 +1023,18 @@ export function RootLayout() {
 
   if (isUnauthed && !hideNav) {
     return (
-      <div style={{ minHeight: '100vh', padding: '24px', display: 'grid', gap: '16px' }}>
+      <div className="root-auth-panel">
         <main>
-          <div className="glass" style={{ padding: 24 }}>
-            <h1 style={{ marginTop: 0 }}>Требуется вход</h1>
-            <p style={{ color: 'var(--muted)' }}>
+          <div className="glass ui-surface ui-surface--raised root-auth-panel__card">
+            <h1 className="root-auth-panel__title">Требуется вход</h1>
+            <p className="root-auth-panel__text">
               Сессия не активна. Перейдите на страницу авторизации, чтобы продолжить работу.
             </p>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              <Link to="/app/login" style={{ textDecoration: 'underline', color: 'var(--fg)' }}>
+            <div className="root-auth-panel__actions">
+              <Link to="/app/login" className="ui-link">
                 Открыть вход
               </Link>
-              <a href="/auth/login?redirect_to=/app" style={{ textDecoration: 'underline', color: 'var(--fg)' }}>
+              <a href="/auth/login?redirect_to=/app" className="ui-link">
                 Вход (прямой линк)
               </a>
             </div>
@@ -823,30 +1047,37 @@ export function RootLayout() {
   const simulatorEnabled =
     String(import.meta.env.VITE_SIMULATOR_ENABLED || (import.meta.env.DEV ? 'true' : 'false')).toLowerCase() ===
     'true'
-  const navItems =
-    principalType === 'recruiter'
+  const navItems: NavItem[] = principalType === 'recruiter'
+    ? [
+        { to: '/app/incoming', label: 'Входящие', icon: ICONS.dashboard, tone: 'blue' },
+        { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
+        { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
+        { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
+        { to: '/app/detailization', label: 'Детализация', icon: ICONS.candidates, tone: 'mint' },
+        { to: '/app/copilot', label: 'Copilot', icon: ICONS.copilot, tone: 'amber' },
+        { to: '/app/profile', label: 'Профиль', icon: ICONS.profile, tone: 'slate' },
+      ]
+    : principalType === 'admin'
       ? [
           { to: '/app/dashboard', label: 'Дашборд', icon: ICONS.dashboard, tone: 'blue' },
           { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
           { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
-          { to: '/app/detailization', label: 'Детализация', icon: ICONS.candidates, tone: 'mint' },
           { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
+          { to: '/app/detailization', label: 'Детализация', icon: ICONS.candidates, tone: 'mint' },
+          { to: '/app/recruiters', label: 'Рекрутёры', icon: ICONS.recruiters, tone: 'indigo' },
+          { to: '/app/cities', label: 'Города', icon: ICONS.cities, tone: 'sunset' },
           { to: '/app/copilot', label: 'Copilot', icon: ICONS.copilot, tone: 'amber' },
+          ...(simulatorEnabled ? [{ to: '/app/simulator', label: 'Симулятор', icon: ICONS.slots, tone: 'violet' }] : []),
+          { to: '/app/system', label: 'Система', icon: ICONS.bot, tone: 'emerald' },
+          { to: '/app/profile', label: 'Профиль', icon: ICONS.profile, tone: 'slate' },
         ]
-      : principalType === 'admin'
-        ? [
-            { to: '/app/dashboard', label: 'Дашборд', icon: ICONS.dashboard, tone: 'blue' },
-            { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
-            { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
-            { to: '/app/detailization', label: 'Детализация', icon: ICONS.candidates, tone: 'mint' },
-            { to: '/app/recruiters', label: 'Рекрутёры', icon: ICONS.recruiters, tone: 'indigo' },
-            { to: '/app/cities', label: 'Города', icon: ICONS.cities, tone: 'sunset' },
-            { to: '/app/messenger', label: 'Чаты', icon: ICONS.messenger, tone: 'aqua' },
-            { to: '/app/copilot', label: 'Copilot', icon: ICONS.copilot, tone: 'amber' },
-            ...(simulatorEnabled ? [{ to: '/app/simulator', label: 'Симулятор', icon: ICONS.slots, tone: 'violet' }] : []),
-            { to: '/app/system', label: 'Бот', icon: ICONS.bot, tone: 'emerald' },
-          ]
-        : []
+      : []
+
+  const mobilePrimaryTabs = navItems.slice(0, MOBILE_PRIMARY_TABS)
+  const mobileMoreItems = navItems.slice(MOBILE_PRIMARY_TABS)
+  const desktopNavItems = navItems.filter((item) => item.to !== '/app/profile')
+  const mobileTitle = getMobileTitle(location.pathname)
+  const showMobileBack = isDetailRoute(location.pathname)
 
   return (
     <div className="app-shell">
@@ -867,12 +1098,29 @@ export function RootLayout() {
           <span className="bubble"><span className="bubble__core" /></span>
         </div>
       </div>
+      {!hideNav && isMobile && (
+        <header className="mobile-header glass" aria-label="Мобильный заголовок">
+          <button
+            type="button"
+            className="mobile-header__back ui-btn ui-btn--ghost ui-btn--sm"
+            onClick={() => window.history.back()}
+            aria-hidden={!showMobileBack}
+            tabIndex={showMobileBack ? 0 : -1}
+          >
+            ←
+          </button>
+          <div className="mobile-header__title">{mobileTitle}</div>
+          <Link to="/app/profile" className="mobile-header__profile" title="Профиль">
+            {ICONS.profile}
+          </Link>
+        </header>
+      )}
       {!hideNav && (
         <header className="app-header">
           <div className="app-header-left" />
-          
-          <nav className="vision-nav-pill" aria-label="Основная навигация">
-            {navItems.map((item) => (
+
+          <nav className="vision-nav-pill ui-surface ui-surface--raised" aria-label="Основная навигация">
+            {desktopNavItems.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
@@ -888,19 +1136,89 @@ export function RootLayout() {
           </nav>
 
           <div className="app-header-right">
-            <Link to="/app/profile" className="app-profile-pill glass" title="Профиль">
+            <Link to="/app/profile" className="app-profile-pill ui-surface ui-surface--raised" title="Профиль">
               <span className="app-profile__icon">{ICONS.profile}</span>
             </Link>
           </div>
         </header>
       )}
-      <main>
+      <main
+        className={`app-main${isMobile ? ` mobile-route-transition mobile-route-transition--${mobileTransition}` : ''}`}
+      >
         <Outlet />
       </main>
+      {!hideNav && isMobile && (
+        <>
+          <nav className="mobile-tab-bar glass" aria-label="Мобильная навигация">
+            {mobilePrimaryTabs.map((item) => {
+              const active = isPathActive(location.pathname, item.to)
+              const isChatTab = item.to === '/app/messenger'
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={`mobile-tab-item ${active ? 'is-active' : ''}`}
+                  data-tone={item.tone}
+                  title={item.label}
+                >
+                  <span className="mobile-tab-item__icon">{item.icon}</span>
+                  <span className="mobile-tab-item__label">{item.label}</span>
+                  {isChatTab && chatUnreadCount > 0 && (
+                    <span className="mobile-tab-item__badge">{chatUnreadCount > 99 ? '99+' : chatUnreadCount}</span>
+                  )}
+                  <span className="mobile-tab-item__dot" />
+                </Link>
+              )
+            })}
+            <button
+              type="button"
+              className={`mobile-tab-item ${isMoreSheetOpen ? 'is-active' : ''}`}
+              onClick={() => setIsMoreSheetOpen((open) => !open)}
+              aria-expanded={isMoreSheetOpen}
+              aria-controls="mobile-more-sheet"
+              title="Ещё"
+            >
+              <span className="mobile-tab-item__icon">{ICONS.more}</span>
+              <span className="mobile-tab-item__label">Ещё</span>
+              <span className="mobile-tab-item__dot" />
+            </button>
+          </nav>
+
+          <div
+            id="mobile-more-sheet"
+            className={`mobile-sheet ${isMoreSheetOpen ? 'is-open' : ''}`}
+            aria-hidden={!isMoreSheetOpen}
+          >
+            <button
+              type="button"
+              className="mobile-sheet__backdrop"
+              onClick={() => setIsMoreSheetOpen(false)}
+              aria-label="Закрыть меню"
+            />
+            <div className="mobile-sheet__body glass" role="dialog" aria-modal="true">
+              <div className="mobile-sheet__handle" />
+              <div className="mobile-sheet__title">Ещё разделы</div>
+              <div className="mobile-sheet__list">
+                {mobileMoreItems.map((item) => (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className={`mobile-sheet__item ${isPathActive(location.pathname, item.to) ? 'is-active' : ''}`}
+                    onClick={() => setIsMoreSheetOpen(false)}
+                  >
+                    <span className="mobile-sheet__item-icon">{item.icon}</span>
+                    <span>{item.label}</span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
       {chatToast && (
-        <div className="toast" data-tone="success" style={{ top: 20, right: 20, bottom: 'auto' }}>
-          <strong style={{ fontSize: 13 }}>{chatToast.title}</strong>
-          <span style={{ color: 'var(--muted)', fontSize: 12, lineHeight: 1.2 }}>{chatToast.preview}</span>
+        <div className="toast chat-toast ui-surface ui-surface--floating" data-tone="success">
+          <strong className="chat-toast__title">{chatToast.title}</strong>
+          <span className="chat-toast__preview">{chatToast.preview}</span>
         </div>
       )}
     </div>
