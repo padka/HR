@@ -732,9 +732,9 @@ export function TestBuilderGraphPage() {
     <RoleGuard allow={['admin']}>
       <div className="page">
         <header className="glass glass--elevated page-header page-header--row">
-          <div style={{ display: 'grid', gap: 4 }}>
-            <h1 className="title" style={{ margin: 0 }}>Конструктор тестов: Граф</h1>
-            <div className="subtitle" style={{ margin: 0 }}>
+          <div className="test-builder-graph__header-copy">
+            <h1 className="title test-builder-graph__header-title">Конструктор тестов: Граф</h1>
+            <div className="subtitle test-builder-graph__header-subtitle">
               v2: if/else ветки, reject-сценарии, редактирование вопросов и live-превью бота.
             </div>
           </div>
@@ -745,8 +745,8 @@ export function TestBuilderGraphPage() {
         </header>
 
         <section className="glass page-section">
-          <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap' }}>
-            <div className="toolbar toolbar--compact" style={{ flexWrap: 'wrap' }}>
+          <div className="toolbar test-builder-graph__toolbar">
+            <div className="toolbar toolbar--compact test-builder-graph__toolbar-left">
               {groups.map((group) => (
                 <button
                   key={group.test_id}
@@ -758,7 +758,7 @@ export function TestBuilderGraphPage() {
                 </button>
               ))}
             </div>
-            <div className="toolbar toolbar--compact" style={{ flexWrap: 'wrap' }}>
+            <div className="toolbar toolbar--compact test-builder-graph__toolbar-right">
               <button
                 type="button"
                 className="ui-btn ui-btn--ghost ui-btn--sm"
@@ -778,13 +778,13 @@ export function TestBuilderGraphPage() {
             </div>
           </div>
 
-          {message && <p className="subtitle" style={{ marginTop: 0 }}>{message}</p>}
+          {message && <p className="subtitle test-builder-graph__message">{message}</p>}
           {graphQuery.isLoading && <p className="subtitle">Загрузка графа...</p>}
           {graphQuery.isError && <p className="text-danger">Ошибка: {(graphQuery.error as Error).message}</p>}
 
-          <div className="test-builder-grid" style={{ marginTop: 8 }}>
-            <div style={{ display: 'grid', gap: 12 }}>
-              <div style={{ height: 560 }} className="rs-flow-canvas">
+          <div className="test-builder-grid test-builder-graph__layout">
+            <div className="test-builder-graph__main">
+              <div className="rs-flow-canvas test-builder-graph__canvas-wrap">
                 <ReactFlow
                   nodes={nodes}
                   edges={edges}
@@ -808,11 +808,11 @@ export function TestBuilderGraphPage() {
                 </ReactFlow>
               </div>
 
-              <div className="glass" style={{ padding: 16, borderRadius: 18 }}>
-                <div className="data-card__header" style={{ marginBottom: 10 }}>
+              <div className="glass test-builder-graph__preview">
+                <div className="data-card__header test-builder-graph__preview-header">
                   <div>
-                    <h3 className="section-title" style={{ margin: 0 }}>Тестовая среда (превью бота)</h3>
-                    <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                    <h3 className="section-title test-builder-graph__preview-title">Тестовая среда (превью бота)</h3>
+                    <p className="subtitle test-builder-graph__preview-subtitle">
                       Прогоняет текущий граф и показывает реакцию бота на ответы кандидата.
                     </p>
                   </div>
@@ -828,14 +828,14 @@ export function TestBuilderGraphPage() {
 
                 {previewQuery.isLoading && <p className="subtitle">Рассчитываем превью...</p>}
                 {previewQuery.isError && (
-                  <p className="text-danger" style={{ marginTop: 0 }}>
+                  <p className="text-danger test-builder-graph__preview-error">
                     Ошибка превью: {(previewQuery.error as Error).message}
                   </p>
                 )}
 
                 {previewQuery.data && (
-                  <div style={{ display: 'grid', gap: 12 }}>
-                    <div className="subtitle" style={{ margin: 0 }}>
+                  <div className="test-builder-graph__preview-body">
+                    <div className="subtitle test-builder-graph__header-subtitle">
                       Вопросов в графе: {previewQuery.data.base_count}. Веток в сценарии: {previewQuery.data.sequence_count}.
                     </div>
 
@@ -944,7 +944,7 @@ export function TestBuilderGraphPage() {
               )}
             </div>
 
-            <aside className="glass" style={{ padding: 16, borderRadius: 18 }}>
+            <aside className="glass test-builder-graph__preview">
               {!selectedQuestionId && !selectedEdgeId && (
                 <>
                   <h3 className="section-title" style={{ marginTop: 0 }}>Редактор графа</h3>

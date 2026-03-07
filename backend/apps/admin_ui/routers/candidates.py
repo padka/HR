@@ -49,7 +49,7 @@ from backend.apps.admin_ui.services.slots import (
     _trigger_test2,
     recruiter_time_to_utc,
 )
-from backend.apps.bot.services import approve_slot_and_notify
+from backend.apps.bot.services import approve_slot_and_notify, cancel_slot_reminders
 from backend.core.guards import ensure_candidate_scope, ensure_slot_scope
 from backend.apps.admin_ui.security import require_csrf_token
 from backend.apps.admin_ui.utils import fmt_local
@@ -964,8 +964,9 @@ async def candidates_schedule_slot_submit(
     if recruiter is None or city is None:
         return PlainTextResponse("Некорректные рекрутёр или город", status_code=400)
 
-    slot_tz = city.tz or recruiter.tz or DEFAULT_TZ
-    dt_utc = recruiter_time_to_utc(str(date), str(time), slot_tz)
+    recruiter_tz = recruiter.tz or DEFAULT_TZ
+    slot_tz = city.tz or recruiter_tz
+    dt_utc = recruiter_time_to_utc(str(date), str(time), recruiter_tz)
     if not dt_utc:
         return PlainTextResponse("Некорректная дата или время", status_code=400)
 
@@ -1073,6 +1074,10 @@ async def candidates_schedule_intro_day_submit(
 ) -> Response:
     """Create intro_day slot and send invitation to candidate"""
     from backend.domain.repositories import add_outbox_notification
+    from backend.apps.admin_ui.services.max_sales_handoff import (
+        IntroDayHandoffContext,
+        dispatch_intro_day_handoff_to_max,
+    )
 
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
@@ -1199,6 +1204,30 @@ async def candidates_schedule_intro_day_submit(
             time_str=str(time),
         )
 
+    candidate_telegram_ids = {
+        value
+        for value in (user.telegram_id, user.telegram_user_id, candidate_tg_id)
+        if value is not None
+    }
+    old_interview_slot_ids: List[int] = []
+    try:
+        from backend.domain.slot_assignment_service import cancel_active_interview_slots_for_candidate
+
+        cleanup_result = await cancel_active_interview_slots_for_candidate(
+            candidate_id=user.candidate_id,
+            candidate_tg_ids=candidate_telegram_ids,
+            cancelled_by="superseded_by_intro_day",
+        )
+        old_interview_slot_ids = [int(slot_id) for slot_id in cleanup_result.get("slot_ids", [])]
+    except Exception:
+        logger.exception(
+            "Failed to cancel active interview slots before intro day scheduling",
+            extra={
+                "candidate_id": candidate_id,
+                "candidate_tg_id": candidate_tg_id,
+            },
+        )
+
     async with async_session() as session:
         city_id = city_record.id
         candidate_tz = slot_tz
@@ -1223,6 +1252,15 @@ async def candidates_schedule_intro_day_submit(
         session.add(slot)
         await session.commit()
         await session.refresh(slot)
+
+        for old_slot_id in old_interview_slot_ids:
+            try:
+                await cancel_slot_reminders(old_slot_id)
+            except Exception:
+                logger.warning(
+                    "Failed to cancel interview reminders when intro day is scheduled",
+                    extra={"slot_id": old_slot_id, "candidate_id": candidate_id},
+                )
 
         # Mark candidate as приглашён на ОД даже если предыдущие этапы не были сохранены
         try:
@@ -1250,8 +1288,6 @@ async def candidates_schedule_intro_day_submit(
             await session.execute(stale_update)
             await session.commit()
         except Exception:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.exception("Failed to mark old intro_day notifications as stale")
 
         try:
@@ -1264,10 +1300,8 @@ async def candidates_schedule_intro_day_submit(
                 candidate_tg_id=candidate_tg_id,
                 payload=outbox_payload,
             )
-        except Exception as e:
+        except Exception:
             # Log error but don't fail the request
-            import logging
-            logger = logging.getLogger(__name__)
             logger.exception("Failed to enqueue intro day invitation", extra={"slot_id": slot.id})
 
         # Schedule reminders
@@ -1276,11 +1310,41 @@ async def candidates_schedule_intro_day_submit(
             reminder_service = get_reminder_service()
             await reminder_service.schedule_for_slot(slot.id, skip_confirmation_prompts=False)
         except Exception:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.exception("Failed to schedule reminders for intro day", extra={"slot_id": slot.id})
 
-    return JSONResponse({"ok": True, "slot_id": slot.id})
+    hh_profile_url = None
+    hh_resume_id = (getattr(user, "hh_resume_id", None) or "").strip()
+    if hh_resume_id:
+        hh_profile_url = f"https://hh.ru/resume/{hh_resume_id}"
+
+    base_url = str(request.base_url).rstrip("/")
+    candidate_card_url = f"{base_url}/app/candidates/{candidate_id}" if base_url else None
+    max_handoff: dict[str, object]
+    try:
+        max_handoff = await dispatch_intro_day_handoff_to_max(
+            IntroDayHandoffContext(
+                candidate_id=user.id,
+                candidate_fio=user.fio or f"Кандидат #{user.id}",
+                slot_id=slot.id,
+                slot_start_utc=slot.start_utc,
+                slot_tz=slot_tz,
+                recruiter_id=getattr(recruiter, "id", None),
+                recruiter_name=getattr(recruiter, "name", None),
+                city_id=getattr(city_record, "id", None) if city_record is not None else None,
+                city_name=getattr(city_record, "name", None) if city_record is not None else None,
+                candidate_card_url=candidate_card_url,
+                hh_profile_url=hh_profile_url,
+            ),
+            bot=getattr(request.app.state, "bot", None),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to dispatch intro day handoff to Max",
+            extra={"candidate_id": candidate_id, "slot_id": slot.id},
+        )
+        max_handoff = {"ok": False, "status": "error"}
+
+    return JSONResponse({"ok": True, "slot_id": slot.id, "max_handoff": max_handoff})
 
 
 @router.post("/{candidate_id}/actions/{action_key}")

@@ -35,6 +35,7 @@ from backend.apps.bot.services import (
     configure,
     configure_notification_service,
 )
+from backend.apps.bot.broker import InMemoryNotificationBroker
 from backend.apps.bot.state_store import InMemoryStateStore, StateManager
 from backend.core.db import async_session
 from backend.domain import models
@@ -91,11 +92,18 @@ class TelegramSandbox:
         entry = {"method": method, "payload": payload}
         self.requests.append(entry)
         logger.debug("Sandbox received %s: %s", method, payload)
+        chat_id_raw = payload.get("chat_id", 0)
+        try:
+            chat_id = int(chat_id_raw)
+        except (TypeError, ValueError):
+            chat_id = 0
         response = {
             "ok": True,
             "result": {
                 "message_id": len(self.requests),
                 "date": int(datetime.now(timezone.utc).timestamp()),
+                "chat": {"id": chat_id, "type": "private"},
+                "text": str(payload.get("text", "")),
             },
         }
         return web.json_response(response)
@@ -134,13 +142,16 @@ async def ensure_templates(session, now: datetime) -> None:
 
 async def seed_demo_entities(candidate_chat_id: int, recruiter_chat_id: int) -> Tuple[int, int]:
     now = datetime.now(timezone.utc)
+    suffix = f"{candidate_chat_id}_{recruiter_chat_id}"
+    slot_id: int | None = None
+    candidate_tg_id: int | None = None
     async with async_session() as session:
         async with session.begin():
             await ensure_templates(session, now)
 
-            city = models.City(name="Sandbox City", tz="Europe/Moscow", active=True)
+            city = models.City(name=f"Sandbox City {suffix}", tz="Europe/Moscow", active=True)
             recruiter = models.Recruiter(
-                name="Sandbox Recruiter",
+                name=f"Sandbox Recruiter {suffix}",
                 tz="Europe/Moscow",
                 telemost_url="https://t.me/joinchat/sandbox",
                 active=True,
@@ -148,6 +159,7 @@ async def seed_demo_entities(candidate_chat_id: int, recruiter_chat_id: int) -> 
             )
             recruiter.cities.append(city)
             session.add_all([city, recruiter])
+            await session.flush()
 
             slot = models.Slot(
                 recruiter=recruiter,
@@ -160,10 +172,10 @@ async def seed_demo_entities(candidate_chat_id: int, recruiter_chat_id: int) -> 
                 candidate_tz=city.tz,
             )
             session.add(slot)
-
-        await session.refresh(slot)
-        await session.refresh(recruiter)
-        return slot.id, slot.candidate_tg_id
+            await session.flush()
+            slot_id = int(slot.id)
+            candidate_tg_id = int(slot.candidate_tg_id)
+    return int(slot_id or 0), int(candidate_tg_id or candidate_chat_id)
 
 
 async def enqueue_notifications(slot_id: int, candidate_tg_id: int) -> None:
@@ -209,6 +221,8 @@ async def run_sandbox_flow(args) -> Dict[str, object]:
         rate_limit_per_sec=50,
         worker_concurrency=1,
     )
+    broker = InMemoryNotificationBroker()
+    await service.attach_broker(broker)
     configure_notification_service(service)
 
     logs: List[NotificationLog] = []

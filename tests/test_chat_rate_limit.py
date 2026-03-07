@@ -3,18 +3,25 @@
 These tests use @pytest.mark.no_db_cleanup to skip database setup
 and test the rate limiting logic directly without database access.
 """
+from types import SimpleNamespace
+
 import pytest
 from datetime import datetime, timezone
 
 from backend.apps.admin_ui.services import chat as chat_service
 
+try:
+    from fakeredis import aioredis as fakeredis_aioredis
+except ImportError:  # pragma: no cover - dependency guarded in tests only
+    fakeredis_aioredis = None
+
 
 @pytest.fixture(autouse=True)
 def clean_rate_limit_store():
     """Clear rate limit store before and after each test."""
-    chat_service._rate_limit_store.clear()
+    chat_service._clear_rate_limit_state()
     yield
-    chat_service._rate_limit_store.clear()
+    chat_service._clear_rate_limit_state()
 
 
 @pytest.mark.no_db_cleanup
@@ -109,3 +116,31 @@ def test_multiple_candidates_independent():
     is_allowed_b, remaining_b = chat_service._check_rate_limit(candidate_b)
     assert is_allowed_b is True
     assert remaining_b == chat_service.CHAT_RATE_LIMIT_PER_HOUR
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_redis_backend_roundtrip(monkeypatch):
+    if fakeredis_aioredis is None:
+        pytest.skip("fakeredis is required for Redis limiter tests")
+
+    fake = fakeredis_aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(
+        chat_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            environment="development",
+            rate_limit_redis_url="redis://test:6379/1",
+            redis_url="",
+        ),
+    )
+    monkeypatch.setattr(chat_service, "_rate_limit_redis_client", fake)
+    monkeypatch.setattr(chat_service, "_rate_limit_redis_url", "redis://test:6379/1")
+    monkeypatch.setattr(chat_service, "_rate_limit_redis_failed", False)
+
+    candidate_id = 333333
+    for _ in range(3):
+        await chat_service._record_message_sent_async(candidate_id)
+
+    is_allowed, remaining = await chat_service._check_rate_limit_async(candidate_id)
+    assert is_allowed is True
+    assert remaining == chat_service.CHAT_RATE_LIMIT_PER_HOUR - 3

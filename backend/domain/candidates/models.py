@@ -97,6 +97,20 @@ class User(Base):
     intro_decline_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="bot")
 
+    # hh.ru integration fields
+    hh_resume_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    hh_negotiation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    hh_vacancy_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    hh_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    hh_sync_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    hh_sync_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Messenger integration fields
+    messenger_platform: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="telegram"
+    )
+    max_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
     test_results: Mapped[List["TestResult"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

@@ -6,10 +6,11 @@ of the RecruitSmart Admin system. It is a high-level companion to the detailed
 procedures in `docs/LOCAL_DEV.md`, `docs/MIGRATIONS.md`, and `README.md`.
 
 ## Architecture at a Glance
-- Admin UI: FastAPI web app for recruiters and operators.
+- Admin UI backend: FastAPI application for recruiters and operators.
+- Admin UI frontend: React 18 + TypeScript + Vite SPA with TanStack Router/Query.
 - Admin API: SQLAdmin + REST endpoints for internal management.
 - Telegram Bot: Aiogram worker for candidate interactions.
-- Data: PostgreSQL in production, SQLite in dev/test.
+- Data: PostgreSQL in production and primary development flows; isolated smoke/e2e runs may use temporary SQLite.
 - Queues/Cache: Redis (notifications broker + optional cache).
 
 ## Key Runtime Flows
@@ -33,6 +34,8 @@ procedures in `docs/LOCAL_DEV.md`, `docs/MIGRATIONS.md`, and `README.md`.
 - `backend/core/`: Settings, DB, logging, cache, DI, utilities.
 - `backend/domain/`: Domain models, services, workflow, repositories.
 - `backend/migrations/`: Alembic migrations and utilities.
+- `frontend/app/src/api/services/`: typed domain adapters for SPA pages.
+- `frontend/app/src/theme/`: layered theme system (`tokens`, `material`, `motion`, `components`, `pages`, `mobile`).
 - `tests/`: Unit, integration, and e2e coverage.
 
 ## Configuration
@@ -50,11 +53,13 @@ Critical production settings:
 ## Database Migrations
 - Apply migrations before starting services.
 - Use `python scripts/run_migrations.py` or `make dev-migrate`.
-- See `docs/MIGRATIONS.md` for details and safety guidelines.
+- The current repo uses a migration runner entrypoint over the repository migration stack; see `docs/MIGRATIONS.md` for details and safety guidelines.
 
 ## Testing
 - Core tests: `make test` (requires Postgres test DB).
 - Targeted runs: `pytest tests/...`.
+- Frontend gates: `npm --prefix frontend/app run typecheck`, `lint`, `test`, `build:verify`.
+- Frontend browser smoke: `npx playwright test tests/e2e/smoke.spec.ts tests/e2e/mobile-smoke.spec.ts`.
 - Production config checks: `tests/test_prod_*.py` and
   `tests/test_session_cookie_config.py`.
 

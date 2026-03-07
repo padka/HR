@@ -177,7 +177,7 @@ export function RecruiterNewPage() {
   return (
     <RoleGuard allow={['admin']}>
       <div className="page recruiter-edit">
-        <div className="glass panel recruiter-edit__panel">
+        <div className="glass panel recruiter-edit__panel ui-form-shell">
           {createdCredentials && (
             <div className="glass recruiter-edit__section" style={{ marginBottom: 16 }}>
               <div className="recruiter-edit__section-header">
@@ -278,7 +278,7 @@ export function RecruiterNewPage() {
                   </label>
                 </div>
                 <div className="recruiter-edit__fields">
-                  <label className="recruiter-edit__field">
+                  <label className="recruiter-edit__field ui-field">
                     <span>Имя <span className="required">*</span></span>
                     <input
                       value={form.name}
@@ -287,20 +287,28 @@ export function RecruiterNewPage() {
                       placeholder="Например: Анна Соколова"
                       required
                     />
-                    {fieldError.name && <span className="field-error">{fieldError.name}</span>}
+                    {fieldError.name && (
+                      <span className="ui-field__support">
+                        <span className="ui-message ui-message--error">{fieldError.name}</span>
+                      </span>
+                    )}
                   </label>
-                  <label className="recruiter-edit__field">
+                  <label className="recruiter-edit__field ui-field">
                     <span>Регион <span className="required">*</span></span>
                     <select value={form.tz} onChange={(e) => setForm({ ...form, tz: e.target.value })} required disabled={isSaving}>
                       {tzOptions.map((tz) => (
                         <option key={tz.value} value={tz.value}>{tz.label}</option>
                       ))}
                     </select>
-                    <span className="subtitle">
-                      Определяет локальное время при создании слотов.
-                      {tzPreview && ` Сейчас: ${tzPreview}`}
+                    <span className="ui-field__support">
+                      <span className="ui-field__note">
+                        Определяет локальное время при создании слотов.
+                        {tzPreview && ` Сейчас: ${tzPreview}`}
+                      </span>
+                      {fieldError.tz && (
+                        <span className="ui-message ui-message--error">{fieldError.tz}</span>
+                      )}
                     </span>
-                    {fieldError.tz && <span className="field-error">{fieldError.tz}</span>}
                   </label>
                 </div>
               </div>
@@ -313,30 +321,38 @@ export function RecruiterNewPage() {
                   </div>
                 </div>
                 <div className="recruiter-edit__fields">
-                  <label className="recruiter-edit__field">
+                  <label className="recruiter-edit__field ui-field">
                     <span>Ссылка на Телемост</span>
-                      <input
-                        type="url"
-                        value={form.telemost_url}
-                        disabled={isSaving}
-                        onChange={(e) => setForm({ ...form, telemost_url: e.target.value })}
-                        placeholder="https://telemost.yandex.ru/j/XXXXX"
-                      />
-                    {fieldError.telemost_url && <span className="field-error">{fieldError.telemost_url}</span>}
+                    <input
+                      type="url"
+                      value={form.telemost_url}
+                      disabled={isSaving}
+                      onChange={(e) => setForm({ ...form, telemost_url: e.target.value })}
+                      placeholder="https://telemost.yandex.ru/j/XXXXX"
+                    />
+                    {fieldError.telemost_url && (
+                      <span className="ui-field__support">
+                        <span className="ui-message ui-message--error">{fieldError.telemost_url}</span>
+                      </span>
+                    )}
                   </label>
 
-                  <label className="recruiter-edit__field">
+                  <label className="recruiter-edit__field ui-field">
                     <span>Telegram chat_id</span>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={form.tg_chat_id}
-                        disabled={isSaving}
-                        onChange={(e) => setForm({ ...form, tg_chat_id: e.target.value })}
-                        placeholder="Например: 7588303412"
-                      />
-                    <span className="subtitle">Только цифры; можно оставить пустым.</span>
-                    {fieldError.tg_chat_id && <span className="field-error">{fieldError.tg_chat_id}</span>}
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={form.tg_chat_id}
+                      disabled={isSaving}
+                      onChange={(e) => setForm({ ...form, tg_chat_id: e.target.value })}
+                      placeholder="Например: 7588303412"
+                    />
+                    <span className="ui-field__support">
+                      <span className="ui-field__note">Только цифры; можно оставить пустым.</span>
+                      {fieldError.tg_chat_id && (
+                        <span className="ui-message ui-message--error">{fieldError.tg_chat_id}</span>
+                      )}
+                    </span>
                   </label>
                 </div>
               </div>
@@ -385,12 +401,12 @@ export function RecruiterNewPage() {
                     const selected = form.city_ids.includes(city.id)
                     return (
                       <label key={city.id} className={`recruiter-edit__city ${selected ? 'is-selected' : ''}`}>
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        disabled={isSaving}
-                        onChange={() => toggleCity(city.id)}
-                      />
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          disabled={isSaving}
+                          onChange={() => toggleCity(city.id)}
+                        />
                         <span>{city.name}</span>
                         <small>{city.tz || '—'}</small>
                       </label>
@@ -418,7 +434,7 @@ export function RecruiterNewPage() {
             </aside>
           </div>
 
-          <div className="action-row recruiter-edit__actions">
+          <div className="ui-form-actions ui-form-actions--end recruiter-edit__actions">
             <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={isSaving}>
               {isSaving ? 'Сохраняем…' : 'Создать'}
             </button>
@@ -432,7 +448,7 @@ export function RecruiterNewPage() {
             </button>
             <Link to="/app/recruiters" className="ui-btn ui-btn--ghost">Отмена</Link>
           </div>
-          {formError && <p style={{ color: '#f07373' }}>Ошибка: {formError}</p>}
+          {formError && <p className="ui-message ui-message--error">Ошибка: {formError}</p>}
         </div>
       </div>
     </RoleGuard>

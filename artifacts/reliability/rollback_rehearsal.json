@@ -1,0 +1,9 @@
+{
+  "canary_port": 18008,
+  "stable_port": 18005,
+  "canary_ready_http": "200",
+  "stable_ready_http_after_rollback": "200",
+  "canary_health": {"status":"ok","checks":{"database":"ok","state_manager":"ok","cache":"ok","background_tasks":{"cache_watcher":"running","stalled_candidate_checker":"running"},"bot_client":"disabled","bot_integration":"disabled","bot":"disabled"}},
+  "stable_health_after_rollback": {"status":"ok","checks":{"database":"ok","state_manager":"ok","cache":"ok","background_tasks":{"cache_watcher":"running","stalled_candidate_checker":"running"},"bot_client":"disabled","bot_integration":"disabled","bot":"disabled"}},
+  "status": "PASS"
+}

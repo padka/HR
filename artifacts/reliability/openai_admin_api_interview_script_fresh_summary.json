@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "duration_s": 0.03,
+  "ok": true,
+  "cached": true,
+  "model": "gpt-5-mini",
+  "generated_at": "2026-03-01T09:37:36.772245+00:00",
+  "has_script": true,
+  "script_keys": [
+    "checks",
+    "cta_templates",
+    "highlights",
+    "objections",
+    "risk_flags",
+    "script_blocks"
+  ]
+}

@@ -27,6 +27,7 @@ from backend.domain.models import (
     enforce_slot_transition,
     DEFAULT_INTERVIEW_DURATION_MIN,
 )
+from backend.domain.slot_service import reserve_slot as reserve_domain_slot
 from backend.domain.repositories import slot_status_free_sql
 from backend.core.dependencies import get_async_session
 
@@ -120,6 +121,23 @@ class CancelBookingRequest(BaseModel):
 
     booking_id: int = Field(..., gt=0)
     reason: Optional[str] = Field(None, max_length=500)
+
+
+def _booking_conflict_error(result_status: str) -> HTTPException:
+    if result_status == "duplicate_candidate":
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Candidate already has an active interview booking.",
+        )
+    if result_status == "already_reserved":
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Booking already exists for this candidate.",
+        )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Slot is already booked. Please choose another slot.",
+    )
 
 
 # ============================================================================
@@ -280,7 +298,7 @@ async def create_booking(
     # Get candidate_id from telegram_id
     candidate_query = _safe_text(
         """
-        SELECT u.id, u.candidate_id, ci.id
+        SELECT u.id, u.candidate_id, u.fio, u.username, ci.id, COALESCE(u.manual_slot_timezone, ci.tz, 'Europe/Moscow')
         FROM users u
         LEFT JOIN cities ci ON LOWER(ci.name) = LOWER(u.city)
         WHERE u.telegram_id = :telegram_id
@@ -297,90 +315,55 @@ async def create_booking(
             detail="Candidate not found. Please complete registration first.",
         )
 
-    candidate_id, candidate_uuid, candidate_city_id = candidate_row
+    candidate_id, candidate_uuid, candidate_fio, candidate_username, candidate_city_id, candidate_tz = candidate_row
 
-    # Check if slot is available
-    slot_query = _safe_text(
+    # Strict cross-purpose guard: one candidate cannot hold active interview + intro_day at once.
+    active_other_purpose_query = _safe_text(
         """
-        SELECT s.id, s.recruiter_id, r.name, s.start_utc, s.end_utc, s.status, s.city_id
+        SELECT s.id
         FROM slots s
-        INNER JOIN recruiters r ON s.recruiter_id = r.id
-        WHERE s.id = :slot_id
-        FOR UPDATE
+        WHERE s.candidate_tg_id = :candidate_tg_id
+          AND lower(coalesce(s.purpose, 'interview')) <> 'interview'
+          AND lower(s.status) IN ('pending', 'booked', 'confirmed', 'confirmed_by_candidate')
+        LIMIT 1
         """,
-        ("slot_id",),
+        ("candidate_tg_id",),
     )
-    slot_result = await session.execute(slot_query, {"slot_id": request.slot_id})
-    slot_row = slot_result.fetchone()
-
-    if not slot_row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Slot not found",
-        )
-
-    slot_id, recruiter_id, recruiter_name, start_utc, end_utc, slot_status, slot_city_id = slot_row
-
-    status_lower = (slot_status or "").lower()
-    if status_lower != SlotStatus.FREE:
+    active_other_purpose_slot = await session.scalar(
+        active_other_purpose_query,
+        {"candidate_tg_id": user.user_id},
+    )
+    if active_other_purpose_slot is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Slot is already booked. Please choose another slot.",
+            detail="Candidate already has an active slot in another meeting type.",
         )
 
-    now_utc = datetime.now(timezone.utc)
-
-    # Validate transition to pending
-    try:
-        next_status = enforce_slot_transition(status_lower, SlotStatus.PENDING)
-    except SlotStatusTransitionError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-
-    # Mark slot as booked (status-based) and attach candidate info
-    effective_city_id = candidate_city_id or slot_city_id
-    update_slot_query = _safe_text(
-        """
-        UPDATE slots
-        SET status = :status_pending,
-            candidate_id = :candidate_uuid,
-            candidate_tg_id = :candidate_tg_id,
-            candidate_city_id = :candidate_city_id,
-            candidate_fio = :candidate_fio,
-            purpose = 'interview',
-            updated_at = :updated_at
-        WHERE id = :slot_id
-        """,
-        (
-            "status_pending",
-            "candidate_uuid",
-            "candidate_tg_id",
-            "candidate_city_id",
-            "candidate_fio",
-            "updated_at",
-            "slot_id",
-        ),
+    reservation = await reserve_domain_slot(
+        request.slot_id,
+        user.user_id,
+        candidate_fio or user.full_name,
+        candidate_tz or "Europe/Moscow",
+        candidate_id=candidate_uuid,
+        candidate_city_id=candidate_city_id,
+        candidate_username=candidate_username or user.username,
+        purpose="interview",
     )
-    await session.execute(
-        update_slot_query,
-        {
-            "slot_id": slot_id,
-            "status_pending": next_status,
-            "candidate_uuid": candidate_uuid,
-            "candidate_tg_id": user.user_id,
-            "candidate_city_id": effective_city_id,
-            "candidate_fio": user.full_name,
-            "updated_at": now_utc,
-        },
-    )
+    if reservation.status != "reserved" or reservation.slot is None:
+        raise _booking_conflict_error(reservation.status)
 
-    await session.commit()
-    booking_id = slot_id
+    slot = reservation.slot
+    booking_id = slot.id
+    slot_city_id = slot.city_id
+    recruiter_name = getattr(getattr(slot, "recruiter", None), "name", None) or ""
+    start_utc = slot.start_utc
+    end_utc = start_utc + timedelta(minutes=slot.duration_min or DEFAULT_INTERVIEW_DURATION_MIN)
 
     # Log analytics event
     await analytics.log_slot_booked(
         user_id=user.user_id,
         candidate_id=candidate_id,
-        slot_id=slot_id,
+        slot_id=slot.id,
         booking_id=booking_id,
         city_id=slot_city_id,
         metadata={"source": "webapp"},
@@ -388,12 +371,12 @@ async def create_booking(
 
     return BookingInfo(
         booking_id=booking_id,
-        slot_id=slot_id,
+        slot_id=slot.id,
         candidate_id=candidate_id,
         recruiter_name=recruiter_name,
         start_utc=start_utc,
         end_utc=end_utc,
-        status="pending",
+        status=slot.status,
         meet_link=None,
         address=None,
     )

@@ -205,8 +205,8 @@ export function CityNewPage() {
   return (
     <RoleGuard allow={['admin']}>
       <div className="page">
-        <div className="glass panel" style={{ display: 'grid', gap: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <div className="glass panel ui-form-shell">
+          <div className="ui-form-header">
             <div>
               <h1 className="title">Новый город</h1>
               <p className="subtitle">Кириллица поддерживается, таймзона подставится автоматически.</p>
@@ -215,11 +215,11 @@ export function CityNewPage() {
           </div>
 
           {/* Basic parameters */}
-          <div className="glass" style={{ padding: 16 }}>
-            <h3 style={{ marginBottom: 12 }}>Параметры</h3>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-              <label style={{ display: 'grid', gap: 6 }}>
-                <span>Название <span style={{ color: 'var(--accent)' }}>*</span></span>
+          <div className="glass city-form__section">
+            <h3 className="city-form__section-title">Параметры</h3>
+            <div className="ui-form-grid ui-form-grid--md">
+              <label className="ui-field">
+                <span>Название <span className="ui-required">*</span></span>
                 <input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -227,11 +227,11 @@ export function CityNewPage() {
                   autoFocus
                   required
                 />
-                {fieldError.name && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.name}</span>}
+                {fieldError.name && <span className="ui-field__error">{fieldError.name}</span>}
               </label>
 
-              <label style={{ display: 'grid', gap: 6 }}>
-                <span>Часовой пояс (IANA) <span style={{ color: 'var(--accent)' }}>*</span></span>
+              <label className="ui-field">
+                <span>Часовой пояс (IANA) <span className="ui-required">*</span></span>
                 <select
                   value={form.tz}
                   onChange={(e) => { setForm({ ...form, tz: e.target.value }); setTzTouched(true) }}
@@ -242,27 +242,18 @@ export function CityNewPage() {
                     <option key={tz.value} value={tz.value}>{tz.label}</option>
                   ))}
                 </select>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span
-                    style={{
-                      padding: '2px 8px',
-                      borderRadius: 6,
-                      fontSize: 11,
-                      background: tzValid ? 'rgba(100, 200, 100, 0.15)' : 'rgba(240, 115, 115, 0.15)',
-                      border: tzValid ? '1px solid rgba(100, 200, 100, 0.3)' : '1px solid rgba(240, 115, 115, 0.3)',
-                      color: tzValid ? 'rgb(100, 200, 100)' : '#f07373'
-                    }}
-                  >
+                <div className="ui-field__status-row city-form__tz-status">
+                  <span className={`city-form__tz-pill ${tzValid ? 'is-valid' : 'is-invalid'}`}>
                     {tzValid ? 'TZ OK' : 'Некорректная TZ'}
                   </span>
-                  {tzNow && <span className="subtitle" style={{ fontSize: 11 }}>Сейчас там: {tzNow}</span>}
+                  {tzNow && <span className="ui-field__note city-form__tz-now">Сейчас там: {tzNow}</span>}
                 </div>
-                {fieldError.tz && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.tz}</span>}
+                {fieldError.tz && <span className="ui-field__error">{fieldError.tz}</span>}
               </label>
             </div>
 
-            <div style={{ marginTop: 12 }}>
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+            <div className="city-form__toggle">
+              <label className="ui-inline-checkbox">
                 <input
                   type="checkbox"
                   checked={form.active}
@@ -274,11 +265,11 @@ export function CityNewPage() {
           </div>
 
           {/* Plan section */}
-          <div className="glass" style={{ padding: 16 }}>
-            <h3 style={{ marginBottom: 12 }}>План найма</h3>
-            <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+          <div className="glass city-form__section">
+            <h3 className="city-form__section-title">План найма</h3>
+            <div className="ui-form-grid ui-form-grid--md">
               <div>
-                <label style={{ display: 'grid', gap: 6 }}>
+                <label className="ui-field">
                   <span>План, неделя</span>
                   <input
                     type="number"
@@ -288,23 +279,26 @@ export function CityNewPage() {
                     placeholder="0"
                   />
                 </label>
-                <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                <div className="city-form__chips">
                   {[5, 10, 20].map(v => (
                     <button
                       key={v}
                       type="button"
-                      className="ui-btn ui-btn--ghost"
-                      style={{ padding: '4px 10px', fontSize: 12 }}
+                      className="ui-btn ui-btn--ghost city-form__chip-btn"
                       onClick={() => setForm({ ...form, plan_week: String(v) })}
                     >
                       {v}
                     </button>
                   ))}
                 </div>
-                {fieldError.plan_week && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.plan_week}</span>}
+                {fieldError.plan_week && (
+                  <div className="ui-field__support">
+                    <span className="ui-field__error">{fieldError.plan_week}</span>
+                  </div>
+                )}
               </div>
               <div>
-                <label style={{ display: 'grid', gap: 6 }}>
+                <label className="ui-field">
                   <span>План, месяц</span>
                   <input
                     type="number"
@@ -314,29 +308,32 @@ export function CityNewPage() {
                     placeholder="0"
                   />
                 </label>
-                <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                <div className="city-form__chips">
                   {[30, 60, 100].map(v => (
                     <button
                       key={v}
                       type="button"
-                      className="ui-btn ui-btn--ghost"
-                      style={{ padding: '4px 10px', fontSize: 12 }}
+                      className="ui-btn ui-btn--ghost city-form__chip-btn"
                       onClick={() => setForm({ ...form, plan_month: String(v) })}
                     >
                       {v}
                     </button>
                   ))}
                 </div>
-                {fieldError.plan_month && <span style={{ color: '#f07373', fontSize: 12 }}>{fieldError.plan_month}</span>}
+                {fieldError.plan_month && (
+                  <div className="ui-field__support">
+                    <span className="ui-field__error">{fieldError.plan_month}</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
           {/* Additional info */}
-          <div className="glass" style={{ padding: 16 }}>
-            <h3 style={{ marginBottom: 12 }}>Дополнительно</h3>
-            <div style={{ display: 'grid', gap: 12 }}>
-              <label style={{ display: 'grid', gap: 6 }}>
+          <div className="glass city-form__section">
+            <h3 className="city-form__section-title">Дополнительно</h3>
+            <div className="ui-form-grid">
+              <label className="ui-field">
                 <span>Фильтр/Критерии</span>
                 <textarea
                   rows={3}
@@ -346,8 +343,8 @@ export function CityNewPage() {
                 />
               </label>
 
-              <div style={{ display: 'grid', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+              <div className="ui-form-grid">
+                <div className="city-form__experts-head">
                   <span>Эксперты</span>
                   <button type="button" className="ui-btn ui-btn--secondary" onClick={addExpert}>
                     + Эксперт
@@ -357,17 +354,17 @@ export function CityNewPage() {
                   Список экспертов для города. Используется в «Детализации» при выборе города.
                 </div>
                 {expertsItems.length === 0 && <div className="text-muted text-sm">Эксперты не добавлены</div>}
-                <div style={{ display: 'grid', gap: 8 }}>
+                <div className="city-form__experts-list">
                   {expertsItems.map((exp, idx) => (
-                    <div key={exp.id ?? `new-${idx}`} className="glass" style={{ padding: 12, display: 'grid', gap: 8 }}>
-                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div key={exp.id ?? `new-${idx}`} className="glass city-form__expert-item">
+                      <div className="city-form__expert-row">
                         <input
                           value={exp.name}
                           onChange={(e) => setExpertPatch(idx, { name: e.target.value })}
                           placeholder="ФИО эксперта"
-                          style={{ flex: 1, minWidth: 220 }}
+                          className="city-form__expert-input"
                         />
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <label className="ui-inline-checkbox">
                           <input
                             type="checkbox"
                             checked={exp.is_active !== false}
@@ -387,107 +384,63 @@ export function CityNewPage() {
           </div>
 
           {/* Recruiters section */}
-          <div className="glass" style={{ padding: 16 }}>
-            <h3 style={{ marginBottom: 4 }}>Ответственные рекрутёры</h3>
-            <p className="subtitle" style={{ marginBottom: 12 }}>Выберите одного или нескольких рекрутёров</p>
+          <div className="glass city-form__section">
+            <h3 className="city-form__section-title--compact">Ответственные рекрутёры</h3>
+            <p className="subtitle city-form__section-note">Выберите одного или нескольких рекрутёров</p>
 
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+            <div className="city-form__recruiters-head">
               <input
                 type="search"
                 placeholder="Поиск рекрутёра"
                 value={recruiterSearch}
                 onChange={(e) => setRecruiterSearch(e.target.value)}
-                style={{ flex: 1, minWidth: 180 }}
+                className="city-form__recruiters-search"
               />
               <span
-                style={{
-                  background: selectedRecruiterCount > 0 ? 'var(--accent)' : 'rgba(150, 150, 150, 0.3)',
-                  color: 'white',
-                  padding: '6px 12px',
-                  borderRadius: 16,
-                  fontSize: 14,
-                  fontWeight: 600,
-                  minWidth: 70,
-                  textAlign: 'center'
-                }}
+                className={`city-form__recruiters-counter ${
+                  selectedRecruiterCount > 0 ? 'is-selected' : 'is-empty'
+                }`}
               >
                 {selectedRecruiterCount === 0 ? '0 выбрано' : selectedRecruiterCount === 1 ? '1 выбран' : `${selectedRecruiterCount} выбрано`}
               </span>
             </div>
 
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                gap: 8,
-                maxHeight: 250,
-                overflowY: 'auto',
-                padding: 4
-              }}
-            >
+            <div className="city-form__recruiters-grid">
               {filteredRecruiters.map(rec => {
                 const selected = form.recruiter_ids.includes(rec.id)
                 return (
                   <label
                     key={rec.id}
-                    style={{
-                      display: 'grid',
-                      gap: 2,
-                      padding: '10px 12px',
-                      borderRadius: 8,
-                      cursor: 'pointer',
-                      background: selected ? 'rgba(105, 183, 255, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                      border: selected ? '2px solid var(--accent)' : '2px solid transparent',
-                      position: 'relative',
-                      transition: 'all 0.15s ease'
-                    }}
+                    className={`city-form__recruiter-card ${selected ? 'is-selected' : ''}`}
                   >
                     <input
                       type="checkbox"
                       checked={selected}
                       onChange={() => toggleRecruiter(rec.id)}
-                      style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
+                      className="city-form__recruiter-check-input"
                     />
                     {selected && (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          top: 6,
-                          right: 6,
-                          width: 18,
-                          height: 18,
-                          borderRadius: 4,
-                          background: 'var(--accent)',
-                          color: 'white',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 12,
-                          fontWeight: 'bold'
-                        }}
-                      >
-                        ✓
-                      </span>
+                      <span className="city-form__recruiter-check">✓</span>
                     )}
-                    <span style={{ fontWeight: 500 }}>{rec.name}</span>
-                    <span className="subtitle" style={{ fontSize: 11 }}>{rec.tz || '—'}</span>
+                    <span className="city-form__recruiter-name">{rec.name}</span>
+                    <span className="subtitle city-form__recruiter-tz">{rec.tz || '—'}</span>
                   </label>
                 )
               })}
             </div>
 
             {filteredRecruiters.length === 0 && (
-              <p className="subtitle" style={{ marginTop: 8 }}>Рекрутёров не найдено</p>
+              <p className="subtitle">Рекрутёров не найдено</p>
             )}
           </div>
 
-          <div className="action-row">
+          <div className="ui-form-actions ui-form-actions--end">
             <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
               {mutation.isPending ? 'Сохраняем…' : 'Создать'}
             </button>
             <Link to="/app/cities" className="ui-btn ui-btn--ghost">Отмена</Link>
           </div>
-          {formError && <p style={{ color: '#f07373' }}>Ошибка: {formError}</p>}
+          {formError && <p className="ui-message ui-message--error">Ошибка: {formError}</p>}
         </div>
       </div>
     </RoleGuard>

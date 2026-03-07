@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { useIsMobile } from '@/app/hooks/useIsMobile'
 import {
   STAGE_LABELS,
   TEMPLATE_META,
@@ -62,14 +63,71 @@ function CoverageMatrix({
   cities,
   templateIndex,
   missingRequired,
+  isMobile,
 }: {
   keys: string[]
   cities: Array<{ id: number | null; name: string }>
   templateIndex: Map<string, { global?: MessageTemplate; city: Map<number, MessageTemplate> }>
   missingRequired: Set<string>
+  isMobile: boolean
 }) {
   const navigate = useNavigate()
   const cityColumns = cities.filter((c) => c.id != null) as Array<{ id: number; name: string }>
+
+  if (isMobile) {
+    return (
+      <div className="mobile-card-list template-matrix-mobile-list">
+        {keys.map((key) => {
+          const entry = templateIndex.get(key)
+          const hasGlobal = Boolean(entry?.global)
+          return (
+            <article key={key} className="mobile-card template-matrix-mobile-card">
+              <div className="template-matrix-mobile-card__head">
+                <code>{key}</code>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn--ghost ui-btn--sm"
+                  onClick={() => {
+                    const tmpl = entry?.global
+                    if (tmpl?.id) {
+                      navigate({ to: '/app/templates/$templateId/edit', params: { templateId: String(tmpl.id) } })
+                    } else {
+                      navigate({ to: '/app/templates/new', search: { key } })
+                    }
+                  }}
+                >
+                  {hasGlobal ? 'Global: ✅' : 'Global: ❌'}
+                </button>
+              </div>
+              <div className="template-matrix-mobile-card__cities">
+                {cityColumns.map((city) => {
+                  const cityTmpl = entry?.city.get(city.id)
+                  const isMissing = missingRequired.has(`${key}:${city.id}`)
+                  const label = cityTmpl ? '✅' : isMissing ? '❌' : '⬇'
+                  return (
+                    <button
+                      key={city.id}
+                      type="button"
+                      className="ui-btn ui-btn--ghost ui-btn--sm"
+                      onClick={() => {
+                        if (cityTmpl?.id) {
+                          navigate({ to: '/app/templates/$templateId/edit', params: { templateId: String(cityTmpl.id) } })
+                          return
+                        }
+                        navigate({ to: '/app/templates/new', search: { key, city_id: city.id } })
+                      }}
+                    >
+                      {city.name}: {label}
+                    </button>
+                  )
+                })}
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    )
+  }
 
   return (
     <div style={{ overflowX: 'auto', marginTop: 8 }}>
@@ -188,6 +246,7 @@ function CoverageMatrix({
 
 export function TemplateListPage() {
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const { data, isLoading, isError, error } = useQuery<MessageTemplatesPayload>({
     queryKey: ['message-templates-summary'],
     queryFn: () => apiFetch('/message-templates'),
@@ -315,7 +374,7 @@ export function TemplateListPage() {
               placeholder="Поиск по названию, ключу, описанию"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ minWidth: 260 }}
+              style={{ minWidth: isMobile ? '100%' : 260 }}
             />
             <select value={selectedCity} onChange={(e) => setSelectedCity(e.target.value)}>
               <option value="global">Глобальные настройки</option>
@@ -349,6 +408,7 @@ export function TemplateListPage() {
               cities={data?.cities ?? []}
               templateIndex={templateIndex}
               missingRequired={missingRequired}
+              isMobile={isMobile}
             />
           )}
 
@@ -356,67 +416,112 @@ export function TemplateListPage() {
           {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
 
           {!isLoading && !isError && (
-            <div className="data-table-wrapper">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Этап</th>
-                    <th>Шаблон</th>
-                    <th>Источник</th>
-                    <th>Статус</th>
-                    <th>Действие</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="text-muted">Шаблоны не найдены.</td>
-                    </tr>
-                  )}
-                  {rows.map((row) => {
-                    const actionLabel = row.id && (selectedCityId == null || row.source === 'city')
-                      ? 'Редактировать'
-                      : selectedCityId != null
-                        ? 'Создать для города'
-                        : 'Создать'
+            isMobile ? (
+              <div className="mobile-card-list template-mobile-list" data-testid="template-mobile-list">
+                {rows.length === 0 && (
+                  <article className="mobile-card template-mobile-card">
+                    <p className="text-muted">Шаблоны не найдены.</p>
+                  </article>
+                )}
+                {rows.map((row) => {
+                  const actionLabel = row.id && (selectedCityId == null || row.source === 'city')
+                    ? 'Редактировать'
+                    : selectedCityId != null
+                      ? 'Создать для города'
+                      : 'Создать'
 
-                    return (
-                      <tr key={row.key}>
-                        <td>{STAGE_LABELS[row.stage].title}</td>
-                        <td>
-                          <div style={{ fontWeight: 600 }}>{row.title}</div>
-                          <div className="text-muted" style={{ fontSize: 12 }}>{row.desc || row.key}</div>
-                          <div className="text-muted" style={{ fontSize: 11 }}><code>{row.key}</code></div>
-                        </td>
-                        <td>
-                          {row.source === 'city' && <span className="chip chip--accent">Город</span>}
-                          {row.source === 'global' && <span className="chip">Глобальный</span>}
-                          {row.source === 'fallback' && <span className="chip">Глобальный fallback</span>}
-                          {row.source === 'missing' && <span className="chip chip--warning">Нет шаблона</span>}
-                          {selectedCityId == null && row.overrideCount > 0 && (
-                            <div className="text-muted" style={{ marginTop: 4, fontSize: 11 }}>Переопределений: {row.overrideCount}</div>
-                          )}
-                        </td>
-                        <td>
-                          {row.status === 'active' && <span className="chip chip--success">Активен</span>}
-                          {row.status === 'draft' && <span className="chip chip--danger">Отключён</span>}
-                          {row.status === 'missing' && <span className="chip chip--warning">Нет</span>}
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className={`ui-btn ui-btn--sm ${actionLabel === 'Редактировать' ? 'ui-btn--ghost' : 'ui-btn--primary'}`}
-                            onClick={() => openEditor(row)}
-                          >
-                            {actionLabel}
-                          </button>
-                        </td>
+                  return (
+                    <article key={row.key} className="mobile-card template-mobile-card">
+                      <div className="template-mobile-card__stage">{STAGE_LABELS[row.stage].title}</div>
+                      <div className="template-mobile-card__title">{row.title}</div>
+                      <div className="text-muted text-sm">{row.desc || row.key}</div>
+                      <div className="text-muted text-xs"><code>{row.key}</code></div>
+                      <div className="template-mobile-card__chips">
+                        {row.source === 'city' && <span className="chip chip--accent">Город</span>}
+                        {row.source === 'global' && <span className="chip">Глобальный</span>}
+                        {row.source === 'fallback' && <span className="chip">Глобальный fallback</span>}
+                        {row.source === 'missing' && <span className="chip chip--warning">Нет шаблона</span>}
+                        {row.status === 'active' && <span className="chip chip--success">Активен</span>}
+                        {row.status === 'draft' && <span className="chip chip--danger">Отключён</span>}
+                        {row.status === 'missing' && <span className="chip chip--warning">Нет</span>}
+                      </div>
+                      {selectedCityId == null && row.overrideCount > 0 && (
+                        <div className="text-muted text-xs">Переопределений: {row.overrideCount}</div>
+                      )}
+                      <button
+                        type="button"
+                        className={`ui-btn ui-btn--sm ${actionLabel === 'Редактировать' ? 'ui-btn--ghost' : 'ui-btn--primary'}`}
+                        onClick={() => openEditor(row)}
+                      >
+                        {actionLabel}
+                      </button>
+                    </article>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="data-table-wrapper">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Этап</th>
+                      <th>Шаблон</th>
+                      <th>Источник</th>
+                      <th>Статус</th>
+                      <th>Действие</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="text-muted">Шаблоны не найдены.</td>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    )}
+                    {rows.map((row) => {
+                      const actionLabel = row.id && (selectedCityId == null || row.source === 'city')
+                        ? 'Редактировать'
+                        : selectedCityId != null
+                          ? 'Создать для города'
+                          : 'Создать'
+
+                      return (
+                        <tr key={row.key}>
+                          <td>{STAGE_LABELS[row.stage].title}</td>
+                          <td>
+                            <div style={{ fontWeight: 600 }}>{row.title}</div>
+                            <div className="text-muted" style={{ fontSize: 12 }}>{row.desc || row.key}</div>
+                            <div className="text-muted" style={{ fontSize: 11 }}><code>{row.key}</code></div>
+                          </td>
+                          <td>
+                            {row.source === 'city' && <span className="chip chip--accent">Город</span>}
+                            {row.source === 'global' && <span className="chip">Глобальный</span>}
+                            {row.source === 'fallback' && <span className="chip">Глобальный fallback</span>}
+                            {row.source === 'missing' && <span className="chip chip--warning">Нет шаблона</span>}
+                            {selectedCityId == null && row.overrideCount > 0 && (
+                              <div className="text-muted" style={{ marginTop: 4, fontSize: 11 }}>Переопределений: {row.overrideCount}</div>
+                            )}
+                          </td>
+                          <td>
+                            {row.status === 'active' && <span className="chip chip--success">Активен</span>}
+                            {row.status === 'draft' && <span className="chip chip--danger">Отключён</span>}
+                            {row.status === 'missing' && <span className="chip chip--warning">Нет</span>}
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className={`ui-btn ui-btn--sm ${actionLabel === 'Редактировать' ? 'ui-btn--ghost' : 'ui-btn--primary'}`}
+                              onClick={() => openEditor(row)}
+                            >
+                              {actionLabel}
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
           )}
         </section>
       </div>

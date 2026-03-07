@@ -52,7 +52,7 @@ const easeOutQuint = (t: number) => 1 - Math.pow(1 - clamp01(t), 5)
 const randRange = (min: number, max: number) => min + Math.random() * (max - min)
 const randInt = (min: number, max: number) => Math.floor(randRange(min, max + 1))
 
-const envLiquidGlassV2Enabled = String(import.meta.env.VITE_LIQUID_GLASS_V2 || '0') === '1'
+const envLiquidGlassV2Enabled = String(import.meta.env.VITE_LIQUID_GLASS_V2 || '1') === '1'
 
 function resolveLiquidGlassV2Enabled() {
   if (typeof window === 'undefined') return envLiquidGlassV2Enabled
@@ -506,6 +506,8 @@ const DETAIL_ROUTE_PREFIXES = [
   '/app/test-builder/',
 ]
 
+const AMBIENT_BACKGROUND_ROUTES = ['/app', '/app/dashboard', '/app/login']
+
 const normalizePathname = (pathname: string) => pathname.replace(/\/+$/, '') || '/'
 
 const isPathActive = (pathname: string, targetPath: string) => {
@@ -542,6 +544,8 @@ export function RootLayout() {
   const [isMoreSheetOpen, setIsMoreSheetOpen] = useState(false)
   const [mobileTransition, setMobileTransition] = useState<'push' | 'pop' | 'fade'>('fade')
   const chatToastTimerRef = useRef<number | null>(null)
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null)
+  const wasMoreSheetOpenRef = useRef(false)
   const chatLastSeenRef = useRef<Record<number, string>>({})
   const chatInitializedRef = useRef(false)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -648,6 +652,58 @@ export function RootLayout() {
   }, [isMobile, location.pathname])
 
   useEffect(() => {
+    if (!isMobile) return
+    if (!isMoreSheetOpen) return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMoreSheetOpen(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isMobile, isMoreSheetOpen])
+
+  useEffect(() => {
+    if (!isMobile) return
+
+    const nodes = [
+      document.querySelector<HTMLElement>('.mobile-header'),
+      document.querySelector<HTMLElement>('.app-main'),
+      document.querySelector<HTMLElement>('.mobile-tab-bar'),
+    ].filter((node): node is HTMLElement => node instanceof HTMLElement)
+
+    if (isMoreSheetOpen) {
+      wasMoreSheetOpenRef.current = true
+      const prevBodyOverflow = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      nodes.forEach((node) => {
+        node.setAttribute('aria-hidden', 'true')
+        node.setAttribute('inert', '')
+      })
+
+      return () => {
+        document.body.style.overflow = prevBodyOverflow
+        nodes.forEach((node) => {
+          node.removeAttribute('aria-hidden')
+          node.removeAttribute('inert')
+        })
+      }
+    }
+
+    nodes.forEach((node) => {
+      node.removeAttribute('aria-hidden')
+      node.removeAttribute('inert')
+    })
+
+    if (wasMoreSheetOpenRef.current) {
+      wasMoreSheetOpenRef.current = false
+      moreButtonRef.current?.focus()
+    }
+  }, [isMobile, isMoreSheetOpen])
+
+  useEffect(() => {
     if (!isMobile || !isDetailRoute(location.pathname)) return
 
     let tracking = false
@@ -696,8 +752,11 @@ export function RootLayout() {
     }
   }, [isMobile, location.pathname])
 
+  const showAmbientBackground =
+    !isMobile && AMBIENT_BACKGROUND_ROUTES.includes(normalizePathname(location.pathname))
+
   useEffect(() => {
-    if (isMobile) return
+    if (isMobile || !showAmbientBackground) return
     const state = bubbleStateRef.current
     let destroyed = false
     const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false
@@ -874,7 +933,7 @@ export function RootLayout() {
       for (const timer of state.timers) window.clearTimeout(timer)
       state.timers = []
     }
-  }, [isMobile])
+  }, [isMobile, showAmbientBackground])
 
   useEffect(() => {
     if (hideNav || isUnauthed) {
@@ -1080,24 +1139,26 @@ export function RootLayout() {
   const showMobileBack = isDetailRoute(location.pathname)
 
   return (
-    <div className="app-shell">
-      <div className="background-scene">
-        <div className="bubbles-layer layer-1">
-          <span className="bubble"><span className="bubble__core" /></span>
-          <span className="bubble"><span className="bubble__core" /></span>
-          <span className="bubble"><span className="bubble__core" /></span>
+    <div className={`app-shell ${showAmbientBackground ? 'app-shell--ambient' : 'app-shell--quiet'}`}>
+      {showAmbientBackground && (
+        <div className="background-scene" aria-hidden="true">
+          <div className="bubbles-layer layer-1">
+            <span className="bubble"><span className="bubble__core" /></span>
+            <span className="bubble"><span className="bubble__core" /></span>
+            <span className="bubble"><span className="bubble__core" /></span>
+          </div>
+          <div className="bubbles-layer layer-2">
+            <span className="bubble"><span className="bubble__core" /></span>
+            <span className="bubble"><span className="bubble__core" /></span>
+            <span className="bubble"><span className="bubble__core" /></span>
+            <span className="bubble"><span className="bubble__core" /></span>
+          </div>
+          <div className="bubbles-layer layer-3">
+            <span className="bubble"><span className="bubble__core" /></span>
+            <span className="bubble"><span className="bubble__core" /></span>
+          </div>
         </div>
-        <div className="bubbles-layer layer-2">
-          <span className="bubble"><span className="bubble__core" /></span>
-          <span className="bubble"><span className="bubble__core" /></span>
-          <span className="bubble"><span className="bubble__core" /></span>
-          <span className="bubble"><span className="bubble__core" /></span>
-        </div>
-        <div className="bubbles-layer layer-3">
-          <span className="bubble"><span className="bubble__core" /></span>
-          <span className="bubble"><span className="bubble__core" /></span>
-        </div>
-      </div>
+      )}
       {!hideNav && isMobile && (
         <header className="mobile-header glass" aria-label="Мобильный заголовок">
           <button
@@ -1177,6 +1238,7 @@ export function RootLayout() {
               aria-expanded={isMoreSheetOpen}
               aria-controls="mobile-more-sheet"
               title="Ещё"
+              ref={moreButtonRef}
             >
               <span className="mobile-tab-item__icon">{ICONS.more}</span>
               <span className="mobile-tab-item__label">Ещё</span>
@@ -1184,39 +1246,37 @@ export function RootLayout() {
             </button>
           </nav>
 
-          <div
-            id="mobile-more-sheet"
-            className={`mobile-sheet ${isMoreSheetOpen ? 'is-open' : ''}`}
-            aria-hidden={!isMoreSheetOpen}
-          >
-            <button
-              type="button"
-              className="mobile-sheet__backdrop"
-              onClick={() => setIsMoreSheetOpen(false)}
-              aria-label="Закрыть меню"
-            />
-            <div className="mobile-sheet__body glass" role="dialog" aria-modal="true">
-              <div className="mobile-sheet__handle" />
-              <div className="mobile-sheet__title">Ещё разделы</div>
-              <div className="mobile-sheet__list">
-                {mobileMoreItems.map((item) => (
-                  <Link
-                    key={item.to}
-                    to={item.to}
-                    className={`mobile-sheet__item ${isPathActive(location.pathname, item.to) ? 'is-active' : ''}`}
-                    onClick={() => setIsMoreSheetOpen(false)}
-                  >
-                    <span className="mobile-sheet__item-icon">{item.icon}</span>
-                    <span>{item.label}</span>
-                  </Link>
-                ))}
+          {isMoreSheetOpen && (
+            <div id="mobile-more-sheet" className="mobile-sheet is-open">
+              <button
+                type="button"
+                className="mobile-sheet__backdrop"
+                onClick={() => setIsMoreSheetOpen(false)}
+                aria-label="Закрыть меню"
+              />
+              <div className="mobile-sheet__body glass" role="dialog" aria-modal="true" aria-label="Ещё разделы">
+                <div className="mobile-sheet__handle" />
+                <div className="mobile-sheet__title">Ещё разделы</div>
+                <div className="mobile-sheet__list">
+                  {mobileMoreItems.map((item) => (
+                    <Link
+                      key={item.to}
+                      to={item.to}
+                      className={`mobile-sheet__item ${isPathActive(location.pathname, item.to) ? 'is-active' : ''}`}
+                      onClick={() => setIsMoreSheetOpen(false)}
+                    >
+                      <span className="mobile-sheet__item-icon">{item.icon}</span>
+                      <span>{item.label}</span>
+                    </Link>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </>
       )}
       {chatToast && (
-        <div className="toast chat-toast ui-surface ui-surface--floating" data-tone="success">
+        <div className="toast chat-toast ui-surface ui-surface--floating" data-tone="success" role="status" aria-live="polite" aria-atomic="true">
           <strong className="chat-toast__title">{chatToast.title}</strong>
           <span className="chat-toast__preview">{chatToast.preview}</span>
         </div>

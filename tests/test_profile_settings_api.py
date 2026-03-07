@@ -1,8 +1,10 @@
 import asyncio
+from datetime import timedelta
 
 import pytest
 from backend.apps.admin_ui.app import create_app
 from backend.core import settings as settings_module
+from backend.core.auth import create_access_token
 from backend.core.auth import verify_password as verify_auth_password
 from backend.core.db import async_session
 from backend.core.passwords import hash_password
@@ -87,6 +89,17 @@ async def _get_recruiter_account(username: str) -> AuthAccount | None:
         )
 
 
+async def _deactivate_recruiter_account(username: str) -> None:
+    async with async_session() as session:
+        account = await session.scalar(select(AuthAccount).where(AuthAccount.username == username))
+        assert account is not None
+        account.is_active = False
+        recruiter = await session.get(models.Recruiter, int(account.principal_id))
+        if recruiter is not None:
+            recruiter.active = False
+        await session.commit()
+
+
 def _login(client: TestClient, *, username: str, password: str, expected_status: int = 303) -> None:
     response = client.post(
         "/auth/login",
@@ -143,6 +156,65 @@ def test_recruiter_can_update_profile_settings(profile_settings_app):
     assert persisted["name"] == "Мария Иванова"
     assert persisted["tz"] == "Asia/Novosibirsk"
     assert persisted["telemost_url"] == "https://telemost.yandex.ru/j/new-room"
+
+
+def test_recruiter_bearer_token_can_access_profile(profile_settings_app):
+    username = "recruiter_token_profile"
+    password = "RecruiterPass123!"
+    recruiter_id = asyncio.run(_create_recruiter_account(username=username, password=password))
+
+    with TestClient(profile_settings_app) as client:
+        token_response = client.post(
+            "/auth/token",
+            data={"username": username, "password": password},
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+        assert token_response.status_code == 200
+        access_token = token_response.json().get("access_token")
+        assert access_token
+
+        profile = client.get("/api/profile", headers={"authorization": f"Bearer {access_token}"})
+        assert profile.status_code == 200
+        payload = profile.json()
+        assert payload["principal"]["type"] == "recruiter"
+        assert int(payload["principal"]["id"]) == recruiter_id
+
+
+def test_recruiter_bearer_token_rejects_expired_token(profile_settings_app):
+    username = "recruiter_token_expired"
+    password = "RecruiterPass123!"
+    asyncio.run(_create_recruiter_account(username=username, password=password))
+
+    expired_token = create_access_token(
+        data={"sub": username},
+        expires_delta=timedelta(seconds=-10),
+    )
+
+    with TestClient(profile_settings_app) as client:
+        profile = client.get("/api/profile", headers={"authorization": f"Bearer {expired_token}"})
+        assert profile.status_code == 401
+
+
+def test_recruiter_bearer_token_rejects_deactivated_account(profile_settings_app):
+    username = "recruiter_token_deactivated"
+    password = "RecruiterPass123!"
+    asyncio.run(_create_recruiter_account(username=username, password=password))
+
+    with TestClient(profile_settings_app) as client:
+        token_response = client.post(
+            "/auth/token",
+            data={"username": username, "password": password},
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+        assert token_response.status_code == 200
+        access_token = token_response.json().get("access_token")
+        assert access_token
+
+    asyncio.run(_deactivate_recruiter_account(username))
+
+    with TestClient(profile_settings_app) as client:
+        profile = client.get("/api/profile", headers={"authorization": f"Bearer {access_token}"})
+        assert profile.status_code == 401
 
 
 def test_recruiter_profile_settings_reject_invalid_telemost_url(profile_settings_app):

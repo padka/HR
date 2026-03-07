@@ -1,14 +1,18 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from backend.apps.admin_ui.app import create_app
+from backend.apps.admin_ui.security import Principal, require_principal
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.candidates import services as candidate_services
+from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.slot_assignment_service import create_slot_assignment, request_reschedule
 
@@ -47,6 +51,25 @@ async def _async_request(app, method: str, path: str, **kwargs) -> Any:
         with TestClient(app) as client:
             client.auth = ("admin", "admin")
             return client.request(method, path, **kwargs)
+
+    return await asyncio.to_thread(_call)
+
+
+async def _async_request_with_principal(
+    app,
+    principal: Principal,
+    method: str,
+    path: str,
+    **kwargs,
+) -> Any:
+    def _call() -> Any:
+        app.dependency_overrides[require_principal] = lambda: principal
+        try:
+            with TestClient(app) as client:
+                client.auth = ("admin", "admin")
+                return client.request(method, path, **kwargs)
+        finally:
+            app.dependency_overrides.pop(require_principal, None)
 
     return await asyncio.to_thread(_call)
 
@@ -102,6 +125,189 @@ async def test_schedule_slot_conflict_returns_validation_error(admin_app) -> Non
     )
 
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_api_create_candidate_create_only_without_datetime(admin_app) -> None:
+    async with async_session() as session:
+        city = models.City(name="Новосибирск", tz="Asia/Novosibirsk", active=True)
+        recruiter = models.Recruiter(name="CreateOnly Recruiter 1", tz="Asia/Novosibirsk", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+        city_id = city.id
+        recruiter_id = recruiter.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        "/api/candidates",
+        json={
+            "fio": "Create Only Candidate",
+            "city_id": city_id,
+            "recruiter_id": recruiter_id,
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["slot_scheduled"] is False
+    created_id = int(payload["id"])
+
+    async with async_session() as session:
+        user = await session.get(User, created_id)
+        assert user is not None
+        assert user.fio == "Create Only Candidate"
+        assert user.responsible_recruiter_id == recruiter_id
+        assert user.manual_slot_from is None
+        assert user.manual_slot_to is None
+
+
+@pytest.mark.asyncio
+async def test_api_create_candidate_with_datetime_without_telegram_keeps_candidate(admin_app) -> None:
+    async with async_session() as session:
+        city = models.City(name="Омск", tz="Asia/Omsk", active=True)
+        recruiter = models.Recruiter(name="CreateOnly Recruiter 2", tz="Asia/Omsk", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+        city_id = city.id
+        recruiter_id = recruiter.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        "/api/candidates",
+        json={
+            "fio": "Create With Datetime Candidate",
+            "city_id": city_id,
+            "recruiter_id": recruiter_id,
+            "interview_date": "2031-06-01",
+            "interview_time": "14:00",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["slot_scheduled"] is False
+    created_id = int(payload["id"])
+
+    async with async_session() as session:
+        user = await session.get(User, created_id)
+        assert user is not None
+        assert user.fio == "Create With Datetime Candidate"
+        assert user.manual_slot_from is None
+        assert user.manual_slot_to is None
+        slot = await session.scalar(select(models.Slot).where(models.Slot.candidate_fio == user.fio))
+        assert slot is None
+
+
+@pytest.mark.asyncio
+async def test_api_create_candidate_with_telegram_id(admin_app) -> None:
+    async with async_session() as session:
+        city = models.City(name="Томск", tz="Asia/Tomsk", active=True)
+        recruiter = models.Recruiter(name="CreateOnly Recruiter 3", tz="Asia/Tomsk", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+        city_id = city.id
+        recruiter_id = recruiter.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        "/api/candidates",
+        json={
+            "fio": "Create With Telegram Candidate",
+            "city_id": city_id,
+            "recruiter_id": recruiter_id,
+            "telegram_id": 79991234001,
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["slot_scheduled"] is False
+    created_id = int(payload["id"])
+
+    async with async_session() as session:
+        user = await session.get(User, created_id)
+        assert user is not None
+        assert user.telegram_id == 79991234001
+
+
+@pytest.mark.asyncio
+async def test_api_delete_candidate_removes_user(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=79991239991,
+        fio="Candidate To Delete",
+        city="Москва",
+        username="candidate_to_delete",
+        initial_status=CandidateStatus.LEAD,
+    )
+
+    response = await _async_request(
+        admin_app,
+        "delete",
+        f"/api/candidates/{candidate.id}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["id"] == candidate.id
+
+    async with async_session() as session:
+        deleted_user = await session.get(User, candidate.id)
+        assert deleted_user is None
+
+
+@pytest.mark.asyncio
+async def test_api_candidates_list_includes_views_for_kanban_and_calendar(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=79991239992,
+        fio="Candidate Views Contract",
+        city="Москва",
+        username="candidate_views_contract",
+        initial_status=CandidateStatus.LEAD,
+    )
+    assert candidate is not None
+
+    list_response = await _async_request(
+        admin_app,
+        "get",
+        "/api/candidates?page=1&per_page=20&pipeline=interview",
+        follow_redirects=False,
+    )
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    assert isinstance(list_payload.get("views"), dict)
+    assert isinstance(list_payload["views"].get("kanban", {}).get("columns"), list)
+    assert isinstance(list_payload.get("pipeline_options"), list)
+
+    calendar_response = await _async_request(
+        admin_app,
+        "get",
+        "/api/candidates?page=1&per_page=20&pipeline=interview&calendar_mode=day&date_from=2026-02-25&date_to=2026-03-10",
+        follow_redirects=False,
+    )
+    assert calendar_response.status_code == 200
+    calendar_payload = calendar_response.json()
+    assert isinstance(calendar_payload.get("views"), dict)
+    assert isinstance(calendar_payload["views"].get("calendar", {}).get("days"), list)
 
 
 @pytest.mark.asyncio
@@ -179,3 +385,778 @@ async def test_schedule_slot_reuses_active_reschedule_assignment(admin_app) -> N
     assert payload["ok"] is True
     assert payload["status"] == "pending_offer"
     assert int(payload.get("slot_assignment_id") or 0) == assignment_id
+
+
+@pytest.mark.asyncio
+async def test_schedule_slot_assigns_existing_free_slot(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777003,
+        fio="API Кандидат 3",
+        city="Москва",
+        username="api_candidate3",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="API Recruiter 3", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        free_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=3),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+        )
+        session.add(free_slot)
+        await session.commit()
+        await session.refresh(free_slot)
+        slot_id = free_slot.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-slot",
+        json={"slot_id": slot_id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "pending_offer"
+    assert int(payload.get("slot_assignment_id") or 0) > 0
+    assert int(payload.get("slot_id") or 0) == slot_id
+
+    async with async_session() as session:
+        db_slot = await session.get(models.Slot, slot_id)
+        db_user = await session.get(User, candidate.id)
+        assignment = await session.scalar(
+            select(models.SlotAssignment).where(models.SlotAssignment.slot_id == slot_id)
+        )
+
+    assert db_slot is not None
+    assert db_slot.status == models.SlotStatus.PENDING
+    assert db_slot.candidate_id == candidate.candidate_id
+    assert db_slot.candidate_tg_id == candidate.telegram_id
+    assert db_user is not None
+    assert db_user.candidate_status == CandidateStatus.SLOT_PENDING
+    assert assignment is not None
+    assert assignment.status == models.SlotAssignmentStatus.OFFERED
+
+
+@pytest.mark.asyncio
+async def test_schedule_slot_manual_uses_recruiter_timezone_for_input(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777117,
+        fio="API Кандидат TZ",
+        city="Алматы",
+        username="api_candidate_tz",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        recruiter = models.Recruiter(name="API Recruiter TZ", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+        city_id = city.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-slot",
+        json={
+            "recruiter_id": recruiter_id,
+            "city_id": city_id,
+            "date": "2032-01-15",
+            "time": "14:00",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "pending_offer"
+
+    expected_utc = datetime(2032, 1, 15, 14, 0, tzinfo=ZoneInfo("Europe/Moscow")).astimezone(timezone.utc)
+
+    async with async_session() as session:
+        slot = await session.scalar(
+            select(models.Slot)
+            .where(models.Slot.candidate_tg_id == candidate.telegram_id)
+            .order_by(models.Slot.id.desc())
+        )
+
+    assert slot is not None
+    assert slot.start_utc == expected_utc
+    assert slot.candidate_tz == "Asia/Almaty"
+    assert slot.tz_name == "Asia/Almaty"
+    assert slot.start_utc.astimezone(ZoneInfo("Europe/Moscow")).hour == 14
+    assert slot.start_utc.astimezone(ZoneInfo("Asia/Almaty")).hour != 14
+
+
+@pytest.mark.asyncio
+async def test_schedule_slot_replaces_existing_active_assignment(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777005,
+        fio="API Кандидат 5",
+        city="Москва",
+        username="api_candidate5",
+        initial_status=CandidateStatus.INTERVIEW_SCHEDULED,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="API Recruiter 5", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        old_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=3, hours=1),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+        )
+        new_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=3, hours=2),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+        )
+        session.add_all([old_slot, new_slot])
+        await session.commit()
+        await session.refresh(old_slot)
+        await session.refresh(new_slot)
+        old_slot_id = old_slot.id
+        new_slot_id = new_slot.id
+
+    initial_offer = await create_slot_assignment(
+        slot_id=old_slot_id,
+        candidate_id=candidate.candidate_id,
+        candidate_tg_id=candidate.telegram_id,
+        candidate_tz="Europe/Moscow",
+        created_by="admin",
+    )
+    assert initial_offer.ok is True
+    old_assignment_id = int(initial_offer.payload["slot_assignment_id"])
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-slot",
+        json={"slot_id": new_slot_id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "pending_offer"
+    assert int(payload.get("slot_id") or 0) == new_slot_id
+
+    async with async_session() as session:
+        old_slot_db = await session.get(models.Slot, old_slot_id)
+        new_slot_db = await session.get(models.Slot, new_slot_id)
+        old_assignment = await session.get(models.SlotAssignment, old_assignment_id)
+        active_assignments = (
+            await session.execute(
+                select(models.SlotAssignment).where(
+                    models.SlotAssignment.candidate_id == candidate.candidate_id,
+                    models.SlotAssignment.status.in_(
+                        (
+                            models.SlotAssignmentStatus.OFFERED,
+                            models.SlotAssignmentStatus.CONFIRMED,
+                            models.SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+                            models.SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+                        )
+                    ),
+                )
+            )
+        ).scalars().all()
+
+    assert old_slot_db is not None
+    assert old_slot_db.status == models.SlotStatus.FREE
+    assert old_slot_db.candidate_id is None
+    assert old_slot_db.candidate_tg_id is None
+    assert new_slot_db is not None
+    assert new_slot_db.status == models.SlotStatus.PENDING
+    assert new_slot_db.candidate_id == candidate.candidate_id
+    assert new_slot_db.candidate_tg_id == candidate.telegram_id
+    assert old_assignment is not None
+    assert old_assignment.status == models.SlotAssignmentStatus.CANCELLED
+    assert len(active_assignments) == 1
+    assert active_assignments[0].slot_id == new_slot_id
+
+
+@pytest.mark.asyncio
+async def test_available_slots_endpoint_filters_by_candidate_city(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777004,
+        fio="API Кандидат 4",
+        city="Москва",
+        username="api_candidate4",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    async with async_session() as session:
+        city_msk = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        city_spb = models.City(name="Санкт-Петербург", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="API Recruiter 4", tz="Europe/Moscow", active=True)
+        recruiter.cities.extend([city_msk, city_spb])
+        session.add_all([city_msk, city_spb, recruiter])
+        await session.commit()
+        await session.refresh(city_msk)
+        await session.refresh(city_spb)
+        await session.refresh(recruiter)
+
+        session.add_all(
+            [
+                models.Slot(
+                    recruiter_id=recruiter.id,
+                    city_id=city_msk.id,
+                    tz_name=city_msk.tz,
+                    start_utc=datetime.now(timezone.utc) + timedelta(days=2, hours=1),
+                    duration_min=60,
+                    status=models.SlotStatus.FREE,
+                ),
+                models.Slot(
+                    recruiter_id=recruiter.id,
+                    city_id=city_spb.id,
+                    tz_name=city_spb.tz,
+                    start_utc=datetime.now(timezone.utc) + timedelta(days=2, hours=2),
+                    duration_min=60,
+                    status=models.SlotStatus.FREE,
+                ),
+                models.Slot(
+                    recruiter_id=recruiter.id,
+                    city_id=city_msk.id,
+                    tz_name=city_msk.tz,
+                    start_utc=datetime.now(timezone.utc) + timedelta(days=2, hours=3),
+                    duration_min=60,
+                    status=models.SlotStatus.BOOKED,
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await _async_request(
+        admin_app,
+        "get",
+        f"/api/candidates/{candidate.id}/available-slots?limit=20",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert int(payload.get("candidate_city_id") or 0) > 0
+    items = payload.get("items") or []
+    assert len(items) == 1
+    assert items[0]["city_name"] == "Москва"
+
+
+@pytest.mark.asyncio
+async def test_api_slot_propose_assigns_candidate_and_sets_slot_pending(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777110,
+        fio="API Propose Candidate",
+        city="Алматы",
+        username="api_propose_candidate",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        recruiter = models.Recruiter(name="Almaty Recruiter", tz="Asia/Almaty", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/slots/{slot_id}/propose",
+        json={"candidate_id": candidate.candidate_id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "pending_offer"
+    assert int(payload["slot_id"]) == slot_id
+    assert int(payload["slot_assignment_id"]) > 0
+
+    async with async_session() as session:
+        db_slot = await session.get(models.Slot, slot_id)
+        db_user = await session.get(User, candidate.id)
+        assignment = await session.scalar(
+            select(models.SlotAssignment).where(models.SlotAssignment.slot_id == slot_id)
+        )
+
+    assert db_slot is not None
+    assert db_slot.status == models.SlotStatus.PENDING
+    assert db_slot.candidate_id == candidate.candidate_id
+    assert db_slot.candidate_tg_id == candidate.telegram_id
+    assert db_user is not None
+    assert db_user.candidate_status == CandidateStatus.SLOT_PENDING
+    assert assignment is not None
+    assert assignment.status == models.SlotAssignmentStatus.OFFERED
+
+
+@pytest.mark.asyncio
+async def test_api_slot_propose_returns_slot_not_free(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777111,
+        fio="API Propose Busy Slot Candidate",
+        city="Алматы",
+        username="api_propose_busy",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        recruiter = models.Recruiter(name="Almaty Recruiter Busy", tz="Asia/Almaty", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+            duration_min=60,
+            status=models.SlotStatus.BOOKED,
+            purpose="interview",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/slots/{slot_id}/propose",
+        json={"candidate_id": candidate.candidate_id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "slot_not_free"
+
+
+@pytest.mark.asyncio
+async def test_api_slot_propose_uses_telegram_user_id_fallback(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777112,
+        fio="API Telegram User Id Fallback",
+        city="Алматы",
+        username="api_tg_fallback",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+    fallback_tg_id = 88800112
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        assert user is not None
+        user.telegram_user_id = fallback_tg_id
+        user.telegram_id = None
+        await session.commit()
+
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        recruiter = models.Recruiter(name="Almaty Recruiter Fallback", tz="Asia/Almaty", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=3),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/slots/{slot_id}/propose",
+        json={"candidate_id": candidate.candidate_id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 201
+    async with async_session() as session:
+        db_slot = await session.get(models.Slot, slot_id)
+    assert db_slot is not None
+    assert db_slot.candidate_tg_id == fallback_tg_id
+
+
+@pytest.mark.asyncio
+async def test_api_schedule_slot_returns_candidate_telegram_missing_when_no_identifiers(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777113,
+        fio="API No Telegram Candidate",
+        city="Алматы",
+        username="api_no_tg",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        assert user is not None
+        user.telegram_user_id = None
+        user.telegram_id = None
+        await session.commit()
+
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        recruiter = models.Recruiter(name="Almaty Recruiter NoTG", tz="Asia/Almaty", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=4),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-slot",
+        json={"slot_id": slot_id},
+        follow_redirects=False,
+    )
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "candidate_telegram_missing"
+
+
+@pytest.mark.asyncio
+async def test_api_slot_propose_recruiter_scope_blocks_foreign_slot(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777114,
+        fio="API Scoped Candidate",
+        city="Алматы",
+        username="api_scoped",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+    async with async_session() as session:
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        owner = models.Recruiter(name="Owner Recruiter", tz="Asia/Almaty", active=True)
+        outsider = models.Recruiter(name="Outsider Recruiter", tz="Asia/Almaty", active=True)
+        owner.cities.append(city)
+        outsider.cities.append(city)
+        session.add_all([city, owner, outsider])
+        await session.commit()
+        await session.refresh(owner)
+        await session.refresh(outsider)
+
+        slot = models.Slot(
+            recruiter_id=owner.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+        outsider_id = outsider.id
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=outsider_id),
+        "post",
+        f"/api/slots/{slot_id}/propose",
+        json={"candidate_id": candidate.candidate_id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_schedule_intro_day_cancels_active_interview_slot_and_assignment(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777115,
+        fio="Алматы Кандидат ОД",
+        city="Алматы",
+        username="api_intro_day_cleanup",
+        initial_status=CandidateStatus.INTERVIEW_CONFIRMED,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        recruiter = models.Recruiter(name="Алматы Рекрутер", tz="Asia/Almaty", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        interview_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime(2032, 3, 1, 9, 0, tzinfo=timezone.utc),
+            duration_min=60,
+            status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz=city.tz,
+        )
+        session.add(interview_slot)
+        await session.commit()
+        await session.refresh(interview_slot)
+        interview_start_utc = interview_slot.start_utc
+
+        assignment = models.SlotAssignment(
+            slot_id=interview_slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz=city.tz,
+            status=models.SlotAssignmentStatus.CONFIRMED,
+            offered_at=datetime.now(timezone.utc) - timedelta(days=1),
+            confirmed_at=datetime.now(timezone.utc) - timedelta(hours=12),
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+
+        assignment_id = assignment.id
+        recruiter_id = recruiter.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-intro-day",
+        json={
+            "date": "2032-03-02",
+            "time": "11:00",
+            "recruiter_id": recruiter_id,
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    intro_slot_id = int(payload["slot_id"])
+
+    async with async_session() as session:
+        intro_slot = await session.get(models.Slot, intro_slot_id)
+        removed_interview_slot = await session.scalar(
+            select(models.Slot).where(
+                models.Slot.recruiter_id == recruiter_id,
+                models.Slot.start_utc == interview_start_utc,
+                models.Slot.purpose == "interview",
+            )
+        )
+        updated_assignment = await session.get(models.SlotAssignment, assignment_id)
+
+    assert removed_interview_slot is None
+    assert intro_slot is not None
+    assert intro_slot.purpose == "intro_day"
+    assert intro_slot.status == models.SlotStatus.BOOKED
+    assert updated_assignment is None
+
+    slots_response = await _async_request(
+        admin_app,
+        "get",
+        "/api/slots?limit=200",
+        follow_redirects=False,
+    )
+    assert slots_response.status_code == 200
+    rows = slots_response.json()
+    candidate_rows = [row for row in rows if str(row.get("candidate_tg_id") or "") == str(candidate.telegram_id)]
+    assert any((row.get("purpose") or "interview") == "intro_day" for row in candidate_rows)
+    assert not any(
+        (row.get("purpose") or "interview") == "interview"
+        and str(row.get("status") or "").upper() in {"PENDING", "BOOKED", "CONFIRMED", "CONFIRMED_BY_CANDIDATE"}
+        for row in candidate_rows
+    )
+
+
+@pytest.mark.asyncio
+async def test_schedule_slot_blocked_when_intro_day_active(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777116,
+        fio="Кандидат с ОД",
+        city="Москва",
+        username="api_intro_day_active",
+        initial_status=CandidateStatus.INTRO_DAY_SCHEDULED,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Москва Рекрутер", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        intro_day_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=models.SlotStatus.BOOKED,
+            purpose="intro_day",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz=city.tz,
+            candidate_city_id=city.id,
+        )
+        interview_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add_all([intro_day_slot, interview_slot])
+        await session.commit()
+        await session.refresh(interview_slot)
+        interview_slot_id = interview_slot.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-slot",
+        json={"slot_id": interview_slot_id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "candidate_has_active_assignment"
+    assert "активная встреча" in (payload.get("message") or "").lower()
+
+    async with async_session() as session:
+        unchanged = await session.get(models.Slot, interview_slot_id)
+    assert unchanged is not None
+    assert unchanged.status == models.SlotStatus.FREE
+    assert unchanged.candidate_tg_id is None
+
+
+@pytest.mark.asyncio
+async def test_api_kanban_move_updates_candidate_status(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777117,
+        fio="Кандидат канбан move",
+        city="Москва",
+        username="kanban_move_ok",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/kanban-status",
+        json={"target_status": "slot_pending"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "slot_pending"
+
+    async with async_session() as session:
+        refreshed = await session.get(User, candidate.id)
+    assert refreshed is not None
+    assert refreshed.candidate_status == CandidateStatus.SLOT_PENDING
+
+
+@pytest.mark.asyncio
+async def test_api_kanban_move_rejects_invalid_target_status(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777118,
+        fio="Кандидат канбан invalid",
+        city="Москва",
+        username="kanban_move_invalid",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/kanban-status",
+        json={"target_status": "hired"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert "канбана" in payload["message"].lower()

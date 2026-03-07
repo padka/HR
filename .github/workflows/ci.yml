@@ -30,6 +30,7 @@ jobs:
           cache: "pip"
 
       - name: Set up Node.js
+        if: matrix.python-version == '3.12'
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -42,23 +43,54 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Install npm dependencies
+        if: matrix.python-version == '3.12'
         working-directory: frontend/app
         run: npm ci
 
-      - name: Build UI assets
+      - name: Frontend typecheck
+        if: matrix.python-version == '3.12'
         working-directory: frontend/app
-        run: npm run build
+        run: npm run typecheck
+
+      - name: Frontend lint
+        if: matrix.python-version == '3.12'
+        working-directory: frontend/app
+        run: npm run lint
+
+      - name: Frontend unit tests
+        if: matrix.python-version == '3.12'
+        working-directory: frontend/app
+        run: npm run test
+
+      - name: Build and verify UI bundle
+        if: matrix.python-version == '3.12'
+        working-directory: frontend/app
+        run: npm run build:verify
 
       - name: Install Playwright browsers
+        if: matrix.python-version == '3.12'
         working-directory: frontend/app
         run: npx playwright install --with-deps
 
       - name: Run Playwright smoke tests
+        if: matrix.python-version == '3.12'
         working-directory: frontend/app
-        run: npm run test:e2e
+        env:
+          PYTHON_BIN: python
+        run: npx playwright test tests/e2e/smoke.spec.ts tests/e2e/mobile-smoke.spec.ts
+
+      - name: Check active build references
+        if: matrix.python-version == '3.12'
+        run: |
+          ! rg -n 'Build Tailwind bundle|frontend/app/src/theme/tokens\.ts|testing \(интеграционная\)|feature/\*' \
+            README.md docs/TECH_STRATEGY.md docs/TECHNICAL_OVERVIEW.md
 
       - name: Run pre-commit
         run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Run backend config smoke tests
+        if: matrix.python-version == '3.12'
+        run: pytest -q tests/test_prod_config_simple.py tests/test_session_cookie_config.py tests/test_admin_state_nullbot.py
 
       - name: Run tests
         run: pytest --cov=backend --cov=tests --cov-report=xml --cov-report=term

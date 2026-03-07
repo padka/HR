@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.apps.admin_ui.security import Principal
 from backend.apps.admin_ui.services.bot_service import BotSendResult
 from backend.core.db import async_session
 from backend.domain.candidates import services as candidate_services
@@ -15,7 +16,7 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.status import CandidateStatus
-from backend.domain.models import CalendarTask, Recruiter, Slot, SlotStatus
+from backend.domain.models import CalendarTask, City, Recruiter, Slot, SlotStatus
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -116,6 +117,57 @@ async def _async_request(app, method: str, path: str, **kwargs) -> Any:
     return await asyncio.to_thread(_call)
 
 
+async def _async_request_with_principal(
+    app,
+    principal: Any,
+    method: str,
+    path: str,
+    **kwargs,
+) -> Any:
+    def _call() -> Any:
+        from backend.apps.admin_ui.security import require_principal
+
+        app.dependency_overrides[require_principal] = lambda: principal
+        try:
+            with TestClient(app) as client:
+                client.auth = ("admin", "admin")
+                return client.request(method, path, **kwargs)
+        finally:
+            app.dependency_overrides.pop(require_principal, None)
+
+    return await asyncio.to_thread(_call)
+
+
+async def _create_recruiter(name: str, *, city_name: str) -> int:
+    async with async_session() as session:
+        city = City(name=city_name, tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name=name, tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(recruiter)
+        return recruiter.id
+
+
+async def _create_recruiter_pair_in_city(
+    owner_name: str,
+    viewer_name: str,
+    *,
+    city_name: str,
+) -> tuple[int, int]:
+    async with async_session() as session:
+        city = City(name=city_name, tz="Europe/Moscow", active=True)
+        owner = Recruiter(name=owner_name, tz="Europe/Moscow", active=True)
+        viewer = Recruiter(name=viewer_name, tz="Europe/Moscow", active=True)
+        owner.cities.append(city)
+        viewer.cities.append(city)
+        session.add_all([city, owner, viewer])
+        await session.commit()
+        await session.refresh(owner)
+        await session.refresh(viewer)
+        return owner.id, viewer.id
+
+
 @pytest.mark.asyncio
 async def test_chat_history_and_send(admin_app) -> None:
     candidate = await candidate_services.create_or_update_user(
@@ -179,6 +231,204 @@ async def test_chat_retry_marks_as_sent(admin_app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_recruiter_can_access_chat_for_scoped_candidate(admin_app) -> None:
+    recruiter_id = await _create_recruiter("Scoped Chat Recruiter", city_name="Москва")
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90104,
+        fio="Scoped Chat Tester",
+        city="Москва",
+        username="scoped_chat_tester",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=recruiter_id,
+    )
+
+    history_response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=recruiter_id),
+        "get",
+        f"/api/candidates/{candidate.id}/chat",
+    )
+    assert history_response.status_code == 200
+    assert history_response.json()["messages"] == []
+
+    send_response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=recruiter_id),
+        "post",
+        f"/api/candidates/{candidate.id}/chat",
+        json={"text": "Сообщение в пределах scope", "client_request_id": "scoped-req-1"},
+    )
+    assert send_response.status_code == 200
+    payload = send_response.json()
+    assert payload["message"]["text"] == "Сообщение в пределах scope"
+    assert payload["message"]["direction"] == ChatMessageDirection.OUTBOUND.value
+
+
+@pytest.mark.asyncio
+async def test_recruiter_can_access_chat_for_city_scoped_candidate(admin_app) -> None:
+    owner_id, viewer_id = await _create_recruiter_pair_in_city(
+        "Chat City Owner Recruiter",
+        "Chat City Viewer Recruiter",
+        city_name="Томск",
+    )
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90108,
+        fio="City Scoped Chat Candidate",
+        city="Томск",
+        username="city_scoped_chat_candidate",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=owner_id,
+    )
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=viewer_id),
+        "get",
+        f"/api/candidates/{candidate.id}/chat",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["messages"] == []
+
+
+@pytest.mark.asyncio
+async def test_recruiter_cannot_view_foreign_candidate_chat(admin_app) -> None:
+    owner_id = await _create_recruiter("Chat Owner Recruiter", city_name="Москва")
+    outsider_id = await _create_recruiter("Chat Outsider Recruiter", city_name="Тверь")
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90105,
+        fio="Foreign Chat Candidate",
+        city="Москва",
+        username="foreign_chat_candidate",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=owner_id,
+    )
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=outsider_id),
+        "get",
+        f"/api/candidates/{candidate.id}/chat",
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_recruiter_can_view_city_scoped_candidate_detail(admin_app) -> None:
+    owner_id, viewer_id = await _create_recruiter_pair_in_city(
+        "Detail City Owner Recruiter",
+        "Detail City Viewer Recruiter",
+        city_name="Воронеж",
+    )
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90109,
+        fio="City Scoped Detail Candidate",
+        city="Воронеж",
+        username="city_scoped_detail_candidate",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=owner_id,
+    )
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=viewer_id),
+        "get",
+        f"/api/candidates/{candidate.id}",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == candidate.id
+    assert payload["fio"] == "City Scoped Detail Candidate"
+
+
+@pytest.mark.asyncio
+async def test_recruiter_cannot_view_foreign_candidate_detail(admin_app) -> None:
+    owner_id = await _create_recruiter("Detail Owner Recruiter", city_name="Москва")
+    outsider_id = await _create_recruiter("Detail Outsider Recruiter", city_name="Омск")
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90110,
+        fio="Foreign Detail Candidate",
+        city="Москва",
+        username="foreign_detail_candidate",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=owner_id,
+    )
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=outsider_id),
+        "get",
+        f"/api/candidates/{candidate.id}",
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_recruiter_cannot_send_chat_to_foreign_candidate(admin_app) -> None:
+    owner_id = await _create_recruiter("Chat Send Owner Recruiter", city_name="Москва")
+    outsider_id = await _create_recruiter("Chat Send Outsider Recruiter", city_name="Казань")
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90106,
+        fio="Foreign Send Candidate",
+        city="Москва",
+        username="foreign_send_candidate",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=owner_id,
+    )
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=outsider_id),
+        "post",
+        f"/api/candidates/{candidate.id}/chat",
+        json={"text": "Чужое сообщение", "client_request_id": "foreign-send-1"},
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_recruiter_cannot_retry_foreign_candidate_chat(admin_app) -> None:
+    owner_id = await _create_recruiter("Chat Retry Owner Recruiter", city_name="Москва")
+    outsider_id = await _create_recruiter("Chat Retry Outsider Recruiter", city_name="Самара")
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90107,
+        fio="Foreign Retry Candidate",
+        city="Москва",
+        username="foreign_retry_candidate",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=owner_id,
+    )
+
+    async with async_session() as session:
+        msg = ChatMessage(
+            candidate_id=candidate.id,
+            telegram_user_id=candidate.telegram_id,
+            direction=ChatMessageDirection.OUTBOUND.value,
+            channel="telegram",
+            text="Чужой ретрай",
+            status=ChatMessageStatus.FAILED.value,
+            created_at=datetime.now(timezone.utc),
+        )
+        session.add(msg)
+        await session.commit()
+        await session.refresh(msg)
+        message_id = msg.id
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=outsider_id),
+        "post",
+        f"/api/candidates/{candidate.id}/chat/{message_id}/retry",
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_candidate_action_updates_status(admin_app) -> None:
     candidate = await candidate_services.create_or_update_user(
         telegram_id=90103,
@@ -201,6 +451,112 @@ async def test_candidate_action_updates_status(admin_app) -> None:
     async with async_session() as session:
         refreshed = await session.get(User, candidate.id)
         assert refreshed.candidate_status == CandidateStatus.INTERVIEW_DECLINED
+
+
+@pytest.mark.asyncio
+async def test_recruiter_can_execute_action_for_city_scoped_candidate(admin_app) -> None:
+    owner_id, viewer_id = await _create_recruiter_pair_in_city(
+        "Action City Owner Recruiter",
+        "Action City Viewer Recruiter",
+        city_name="Тюмень",
+    )
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90111,
+        fio="City Scoped Action Candidate",
+        city="Тюмень",
+        username="city_scoped_action_candidate",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=owner_id,
+    )
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=viewer_id),
+        "post",
+        f"/api/candidates/{candidate.id}/actions/reject",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == CandidateStatus.INTERVIEW_DECLINED.value
+
+
+@pytest.mark.asyncio
+async def test_recruiter_cannot_execute_action_for_foreign_candidate(admin_app) -> None:
+    owner_id = await _create_recruiter("Action Owner Recruiter", city_name="Москва")
+    outsider_id = await _create_recruiter("Action Outsider Recruiter", city_name="Пермь")
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90112,
+        fio="Foreign Action Candidate",
+        city="Москва",
+        username="foreign_action_candidate",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+        responsible_recruiter_id=owner_id,
+    )
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=outsider_id),
+        "post",
+        f"/api/candidates/{candidate.id}/actions/reject",
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_recruiter_can_delete_owned_candidate(admin_app) -> None:
+    recruiter_id = await _create_recruiter("Delete Owned Recruiter", city_name="Ярославль")
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90113,
+        fio="Owned Delete Candidate",
+        city="Ярославль",
+        username="owned_delete_candidate",
+        initial_status=CandidateStatus.LEAD,
+        responsible_recruiter_id=recruiter_id,
+    )
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=recruiter_id),
+        "delete",
+        f"/api/candidates/{candidate.id}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["id"] == candidate.id
+
+    async with async_session() as session:
+        deleted_user = await session.get(User, candidate.id)
+        assert deleted_user is None
+
+
+@pytest.mark.asyncio
+async def test_recruiter_cannot_delete_foreign_candidate(admin_app) -> None:
+    owner_id = await _create_recruiter("Delete Owner Recruiter", city_name="Москва")
+    outsider_id = await _create_recruiter("Delete Outsider Recruiter", city_name="Сочи")
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90114,
+        fio="Foreign Delete Candidate",
+        city="Москва",
+        username="foreign_delete_candidate",
+        initial_status=CandidateStatus.LEAD,
+        responsible_recruiter_id=owner_id,
+    )
+
+    response = await _async_request_with_principal(
+        admin_app,
+        Principal(type="recruiter", id=outsider_id),
+        "delete",
+        f"/api/candidates/{candidate.id}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

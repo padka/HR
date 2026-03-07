@@ -1,5 +1,4 @@
 """Test candidate action system for simplified card."""
-import pytest
 
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.actions import (
@@ -71,9 +70,10 @@ def test_get_candidate_actions_test1_completed():
         has_intro_day_slot=False,
     )
 
-    assert len(actions) == 2
+    assert len(actions) == 3
     assert any(a.key == "schedule_interview" for a in actions)
     assert any(a.key == "reject" for a in actions)
+    assert any(a.key == "resend_test2" for a in actions)
 
     # Check schedule interview action
     schedule_action = next(a for a in actions if a.key == "schedule_interview")
@@ -92,9 +92,10 @@ def test_get_candidate_actions_test2_completed():
         has_intro_day_slot=False,
     )
 
-    assert len(actions) == 2
+    assert len(actions) == 3
     assert any(a.key == "schedule_intro_day" for a in actions)
     assert any(a.key == "reject" for a in actions)
+    assert any(a.key == "resend_test2" for a in actions)
 
     # With intro day slot - should hide schedule intro day
     actions_with_slot = get_candidate_actions(
@@ -104,9 +105,10 @@ def test_get_candidate_actions_test2_completed():
         has_intro_day_slot=True,
     )
 
-    # Should only have reject action, schedule_intro_day filtered out
-    assert len(actions_with_slot) == 1
+    # Should keep reject + always-available Test2 action, schedule_intro_day filtered out
+    assert len(actions_with_slot) == 2
     assert not any(a.key == "schedule_intro_day" for a in actions_with_slot)
+    assert any(a.key == "resend_test2" for a in actions_with_slot)
 
 
 def test_get_candidate_actions_stalled_waiting_slot():
@@ -118,12 +120,13 @@ def test_get_candidate_actions_stalled_waiting_slot():
         has_intro_day_slot=False,
     )
 
-    assert len(actions) == 2
+    assert len(actions) == 3
     schedule_action = next(a for a in actions if a.key == "schedule_interview")
     assert schedule_action.variant == "danger"  # Urgent!
     assert "СРОЧНО" in schedule_action.label
     assert schedule_action.icon == "⚠️"
     assert any(a.key == "reject" for a in actions)
+    assert any(a.key == "resend_test2" for a in actions)
 
 
 def test_get_candidate_actions_intro_day_confirmed():
@@ -135,10 +138,11 @@ def test_get_candidate_actions_intro_day_confirmed():
         has_intro_day_slot=True,
     )
 
-    assert len(actions) == 3
+    assert len(actions) == 4
     assert any(a.key == "mark_hired" for a in actions)
     assert any(a.key == "mark_not_hired" for a in actions)
     assert any(a.key == "decline_after_intro" for a in actions)
+    assert any(a.key == "resend_test2" for a in actions)
 
     # Check that dangerous actions have confirmation
     decline_action = next(a for a in actions if a.key == "decline_after_intro")
@@ -161,11 +165,20 @@ def test_get_candidate_actions_lead_status():
         has_intro_day_slot=False,
     )
 
-    assert len(actions) == 1
-    contact_action = actions[0]
+    assert len(actions) == 2
+    contact_action = next(a for a in actions if a.key == "contact")
     assert contact_action.key == "contact"
     assert contact_action.label == "Связаться"
     assert contact_action.icon == "📞"
+    assert any(a.key == "resend_test2" for a in actions)
+
+
+def test_get_candidate_actions_terminal_status_keeps_test2_action():
+    """Even terminal statuses should still allow manual Test 2 dispatch."""
+    actions = get_candidate_actions(CandidateStatus.NOT_HIRED)
+    assert len(actions) == 1
+    assert actions[0].key == "resend_test2"
+    assert actions[0].url_pattern == "/candidates/{id}/resend-test2"
 
 
 def test_confirmation_messages():
@@ -192,7 +205,7 @@ def test_url_patterns_correct():
         "resend_test2": "/candidates/{id}/resend-test2",
     }
 
-    for status, actions in STATUS_ACTIONS.items():
+    for _status, actions in STATUS_ACTIONS.items():
         for action in actions:
             if action.key in expected_patterns:
                 assert action.url_pattern == expected_patterns[action.key], \

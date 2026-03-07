@@ -1,0 +1,10 @@
+{
+  "candidate_create_flow_fixed": true,
+  "candidate_create_smoke": "artifacts/recheck_v2/logs/api_smoke_candidate_create_contract_postfix_18111.txt",
+  "schedule_missing_tg_contract": "artifacts/recheck_v2/logs/api_smoke_schedule_slot_missing_tg_postfix_18111.txt",
+  "backend_contract_tests_rc": 0,
+  "frontend_contract_tests_rc": 0,
+  "formal_gate_rc": 0,
+  "formal_gate_status": "manual_pending",
+  "perf_gate_rc": 1
+}

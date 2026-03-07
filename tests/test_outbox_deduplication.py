@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 
 from backend.core.db import async_session
 from backend.domain.models import OutboxNotification, Slot, Recruiter, City, SlotStatus
-from backend.domain.repositories import add_outbox_notification, update_outbox_entry
+from backend.domain.repositories import (
+    add_outbox_notification,
+    claim_outbox_item_by_id,
+    update_outbox_entry,
+)
 
 
 @pytest.mark.asyncio
@@ -241,3 +245,42 @@ async def test_add_outbox_notification_different_types_are_separate():
         )
         all_entries = result.scalars().all()
         assert len(all_entries) == 2
+
+
+@pytest.mark.asyncio
+async def test_claim_outbox_item_by_id_is_single_consumer():
+    """Claiming the same outbox id twice should only return one claim."""
+
+    async with async_session() as session:
+        city = City(name="Claim City", tz="UTC", active=True)
+        recruiter = Recruiter(name="Claim Recruiter", tz="UTC", active=True)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc),
+            duration_min=60,
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=987654321,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    entry = await add_outbox_notification(
+        notification_type="slot_reminder",
+        booking_id=slot.id,
+        candidate_tg_id=slot.candidate_tg_id,
+        payload={"reminder_kind": "confirm_2h"},
+    )
+
+    first = await claim_outbox_item_by_id(entry.id)
+    second = await claim_outbox_item_by_id(entry.id)
+
+    assert first is not None
+    assert first.id == entry.id
+    assert second is None

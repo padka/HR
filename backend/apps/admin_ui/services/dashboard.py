@@ -16,7 +16,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.admin_ui.utils import fmt_local, safe_zone
 from backend.core.db import async_session
-from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
+from backend.domain.models import (
+    City,
+    Recruiter,
+    Slot,
+    SlotStatus,
+    SlotAssignment,
+    SlotAssignmentStatus,
+    RescheduleRequest,
+    RescheduleRequestStatus,
+    recruiter_city_association,
+)
 from backend.domain.candidates.models import User, ChatMessage, ChatMessageDirection
 from backend.domain.ai.models import AIOutput
 from backend.domain.analytics import FunnelEvent
@@ -277,6 +287,7 @@ async def get_waiting_candidates(
     async def _compute() -> List[Dict[str, object]]:
         last_message_map: Dict[int, dict] = {}
         recruiter_map: Dict[int, str] = {}
+        reschedule_request_map: Dict[str, Dict[str, Optional[object]]] = {}
         ai_fit_map: Dict[int, Dict[str, Optional[object]]] = {}
         async with async_session() as session:
             recruiter_city_ids: set[int] = set()
@@ -294,10 +305,12 @@ async def get_waiting_candidates(
             status_filter = User.candidate_status.in_([
                 CandidateStatus.WAITING_SLOT,
                 CandidateStatus.STALLED_WAITING_SLOT,
+                CandidateStatus.SLOT_PENDING,
             ])
             stmt = (
                 select(
                     User.id,
+                    User.candidate_id,
                     User.fio,
                     User.city,
                     User.candidate_status,
@@ -322,6 +335,7 @@ async def get_waiting_candidates(
             users = result.all()
 
             user_ids = [int(row.id) for row in users]
+            candidate_ids = [str(row.candidate_id) for row in users if row.candidate_id]
             if user_ids:
                 last_msg_sq = (
                     select(
@@ -398,6 +412,44 @@ async def get_waiting_candidates(
                         "updated_at": created_at.isoformat() if created_at else None,
                     }
 
+            if candidate_ids:
+                pending_reschedule_sq = (
+                    select(
+                        SlotAssignment.candidate_id.label("candidate_id"),
+                        RescheduleRequest.created_at.label("created_at"),
+                        RescheduleRequest.candidate_comment.label("candidate_comment"),
+                        func.row_number()
+                        .over(
+                            partition_by=SlotAssignment.candidate_id,
+                            order_by=RescheduleRequest.created_at.desc(),
+                        )
+                        .label("rn"),
+                    )
+                    .join(
+                        RescheduleRequest,
+                        RescheduleRequest.slot_assignment_id == SlotAssignment.id,
+                    )
+                    .where(
+                        SlotAssignment.candidate_id.in_(candidate_ids),
+                        SlotAssignment.status == SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+                        RescheduleRequest.status == RescheduleRequestStatus.PENDING,
+                    )
+                ).subquery()
+                pending_rows = await session.execute(
+                    select(
+                        pending_reschedule_sq.c.candidate_id,
+                        pending_reschedule_sq.c.created_at,
+                        pending_reschedule_sq.c.candidate_comment,
+                    ).where(pending_reschedule_sq.c.rn == 1)
+                )
+                for candidate_id, created_at, candidate_comment in pending_rows:
+                    if not candidate_id:
+                        continue
+                    reschedule_request_map[str(candidate_id)] = {
+                        "created_at": created_at.isoformat() if created_at else None,
+                        "candidate_comment": candidate_comment,
+                    }
+
             recruiter_ids = {row.responsible_recruiter_id for row in users if row.responsible_recruiter_id}
             if recruiter_ids:
                 recruiters = (
@@ -422,6 +474,7 @@ async def get_waiting_candidates(
         waiting_rows: List[Dict[str, object]] = []
         for (
             user_id,
+            user_candidate_id,
             user_fio,
             user_city,
             user_candidate_status,
@@ -457,15 +510,35 @@ async def get_waiting_candidates(
             waiting_since_iso = waiting_since.isoformat() if waiting_since else None
             last_msg = last_message_map.get(int(user_id))
             last_msg_at = last_msg.get("created_at") if last_msg else None
+            status_slug = user_candidate_status.value if user_candidate_status else None
+            reschedule_request = (
+                reschedule_request_map.get(str(user_candidate_id))
+                if user_candidate_id
+                else None
+            )
+            requested_another_time = bool(reschedule_request)
+            if requested_another_time:
+                incoming_substatus = "requested_other_time"
+            elif status_slug == CandidateStatus.SLOT_PENDING.value:
+                incoming_substatus = "awaiting_candidate_confirmation"
+            elif status_slug == CandidateStatus.STALLED_WAITING_SLOT.value:
+                incoming_substatus = "stalled_waiting_slot"
+            else:
+                incoming_substatus = "waiting_slot"
+            status_display = (
+                "На согласовании"
+                if status_slug == CandidateStatus.SLOT_PENDING.value
+                else get_status_label(user_candidate_status)
+            )
             waiting_rows.append(
                 {
                     "id": int(user_id),
                     "name": user_fio,
                     "city": user_city or "Не указан",
                     "city_id": city_id,
-                    "status_display": get_status_label(user_candidate_status),
+                    "status_display": status_display,
                     "status_color": get_status_color(user_candidate_status),
-                    "status_slug": user_candidate_status.value if user_candidate_status else None,
+                    "status_slug": status_slug,
                     "waiting_since": waiting_since_iso,
                     "waiting_since_dt": normalized_waiting_since,
                     "waiting_hours": waiting_hours,
@@ -477,6 +550,18 @@ async def get_waiting_candidates(
                     "telegram_username": user_telegram_username or user_username,
                     "last_message": last_msg.get("text") if last_msg else None,
                     "last_message_at": last_msg_at.isoformat() if last_msg_at else None,
+                    "requested_another_time": requested_another_time,
+                    "requested_another_time_at": (
+                        reschedule_request.get("created_at")
+                        if isinstance(reschedule_request, dict)
+                        else None
+                    ),
+                    "requested_another_time_comment": (
+                        reschedule_request.get("candidate_comment")
+                        if isinstance(reschedule_request, dict)
+                        else None
+                    ),
+                    "incoming_substatus": incoming_substatus,
                     "ai_relevance_score": ai_fit_map.get(int(user_id), {}).get("score"),
                     "ai_relevance_level": ai_fit_map.get(int(user_id), {}).get("level"),
                     "ai_relevance_updated_at": ai_fit_map.get(int(user_id), {}).get("updated_at"),
@@ -489,10 +574,12 @@ async def get_waiting_candidates(
             )
 
         def _priority(row: Dict[str, object]) -> tuple:
+            is_requested = bool(row.get("requested_another_time"))
             is_stalled = (row.get("status_slug") == CandidateStatus.STALLED_WAITING_SLOT.value)
             wait_hours = row.get("waiting_hours") or 0
             wait_since = row.get("waiting_since_dt") or datetime.now(timezone.utc)
             return (
+                0 if is_requested else 1,         # reschedule requests first
                 0 if is_stalled else 1,            # stalled first
                 -int(wait_hours),                  # longer waiting first
                 wait_since,                        # older requests first

@@ -53,10 +53,99 @@
   text-underline-offset: 3px;
 }
 
+.app-shell--quiet {
+  background:
+    radial-gradient(circle at top right, rgba(66, 122, 214, 0.14), transparent 26%),
+    radial-gradient(circle at top left, rgba(68, 187, 172, 0.1), transparent 24%),
+    linear-gradient(180deg, rgba(6, 11, 19, 0.98), rgba(4, 8, 15, 0.995));
+}
+
+.app-shell--ambient {
+  background:
+    radial-gradient(circle at top center, rgba(123, 177, 255, 0.09), transparent 30%),
+    linear-gradient(180deg, rgba(8, 14, 24, 0.96), rgba(4, 8, 15, 1));
+}
+
+.app-page {
+  width: min(100%, 1480px);
+  margin: 0 auto;
+  gap: clamp(16px, 2vw, 26px);
+}
+
+.app-page--ops {
+  width: min(100%, 1520px);
+}
+
+.app-page__hero,
+.app-page__section {
+  position: relative;
+  gap: clamp(14px, 1.6vw, 20px);
+}
+
+.app-page__hero {
+  padding: clamp(18px, 2vw, 28px);
+}
+
+.app-page__section {
+  padding: clamp(18px, 2vw, 24px);
+}
+
+.app-page__hero .title,
+.app-page__section .section-title {
+  margin: 0;
+}
+
+.app-page__hero .subtitle,
+.app-page__section .subtitle {
+  max-width: 72ch;
+}
+
+.app-page__section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.app-page__section-head > * {
+  min-width: 0;
+}
+
+.app-page__toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.page-header {
+  gap: clamp(14px, 1.6vw, 22px);
+}
+
+.page-header__content {
+  display: grid;
+  gap: 6px;
+}
+
+.page-section {
+  gap: clamp(14px, 1.6vw, 20px);
+}
+
+.page-section__content {
+  overflow-x: visible;
+}
+
+.page--ops .toolbar,
+.page--ops .pagination {
+  gap: 10px;
+}
+
 html[data-ui='liquid-glass-v2'] .app-header {
   position: sticky;
   top: 10px;
-  z-index: 40;
+  z-index: var(--z-app-header);
 }
 
 html[data-ui='liquid-glass-v2'] .vision-nav-pill {
@@ -87,6 +176,36 @@ html[data-ui='liquid-glass-v2'] .page-section {
   border-radius: var(--ui-radius-5);
 }
 
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .ui-surface,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .glass {
+  background: color-mix(in srgb, var(--ui-surface-2) 96%, rgba(5, 9, 18, 0.72));
+  border-color: color-mix(in srgb, var(--ui-border-subtle) 92%, rgba(255, 255, 255, 0.08));
+  box-shadow: var(--ui-shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .ui-surface::before,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .glass::before {
+  opacity: 0.32;
+}
+
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .glass--interactive:hover,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .vision-nav__item:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--ui-shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .app-page__hero,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .app-page__section {
+  background: color-mix(in srgb, var(--ui-surface-2) 98%, rgba(4, 8, 15, 0.76));
+}
+
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .filter-bar,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .ui-filter,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .slots-filters-grid--enhanced {
+  background: color-mix(in srgb, var(--ui-surface-1) 98%, rgba(4, 8, 15, 0.76));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
 html[data-ui='liquid-glass-v2'] .slots-filters-grid--enhanced,
 html[data-ui='liquid-glass-v2'] .filter-bar {
   box-shadow: var(--ui-shadow-1), inset 0 1px 0 var(--ui-highlight-soft);
@@ -97,6 +216,118 @@ html[data-ui='liquid-glass-v2'] .data-card,
 html[data-ui='liquid-glass-v2'] .kanban-card,
 html[data-ui='liquid-glass-v2'] .cd-stage {
   box-shadow: var(--ui-shadow-1), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .incoming-card,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .data-card,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .kanban-card,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .cd-stage,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .stat-card,
+html[data-ui='liquid-glass-v2'] .app-shell--quiet .slots-summary__card {
+  background: color-mix(in srgb, var(--ui-surface-2) 98%, rgba(4, 8, 15, 0.76));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] body {
+  background:
+    radial-gradient(circle at top left, rgba(79, 159, 255, 0.12), transparent 24%),
+    radial-gradient(circle at top right, rgba(84, 193, 177, 0.09), transparent 22%),
+    radial-gradient(circle at bottom center, rgba(10, 124, 255, 0.06), transparent 26%),
+    linear-gradient(180deg, #f5f8fc, var(--bg));
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet {
+  background:
+    radial-gradient(circle at top left, rgba(79, 159, 255, 0.12), transparent 26%),
+    radial-gradient(circle at top right, rgba(84, 193, 177, 0.08), transparent 22%),
+    linear-gradient(180deg, rgba(247, 250, 253, 0.98), rgba(236, 242, 248, 1));
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--ambient {
+  background:
+    radial-gradient(circle at top center, rgba(79, 159, 255, 0.16), transparent 28%),
+    radial-gradient(circle at bottom center, rgba(107, 182, 255, 0.1), transparent 24%),
+    linear-gradient(180deg, rgba(249, 252, 255, 0.98), rgba(236, 242, 248, 1));
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-header {
+  box-shadow: var(--ui-shadow-1);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .vision-nav-pill {
+  background: color-mix(in srgb, var(--ui-surface-3) 97%, rgba(239, 245, 251, 0.84));
+  border-color: color-mix(in srgb, var(--ui-border-strong) 92%, rgba(255, 255, 255, 0.48));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .vision-nav__item {
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .vision-nav__item.is-active {
+  color: var(--fg);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.92),
+    color-mix(in srgb, var(--accent-soft) 88%, rgba(255, 255, 255, 0.94))
+  );
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--ui-border-strong));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 var(--ui-highlight-strong);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-profile-pill {
+  background: color-mix(in srgb, var(--ui-surface-3) 96%, rgba(242, 247, 252, 0.76));
+  border-color: color-mix(in srgb, var(--ui-border-subtle) 96%, rgba(255, 255, 255, 0.5));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .page-header,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .page-section,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-page__hero,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-page__section {
+  border: 1px solid color-mix(in srgb, var(--ui-border-subtle) 96%, rgba(255, 255, 255, 0.54));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-page__hero .subtitle,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-page__section .subtitle,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .page-header__content .subtitle {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet .ui-surface,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet .glass {
+  background: color-mix(in srgb, var(--ui-surface-2) 97%, rgba(238, 244, 250, 0.76));
+  border-color: color-mix(in srgb, var(--ui-border-subtle) 96%, rgba(255, 255, 255, 0.48));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.84);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet .ui-surface::before,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet .glass::before {
+  opacity: 0.78;
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet .app-page__hero,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet .app-page__section {
+  background: color-mix(in srgb, var(--ui-surface-3) 98%, rgba(241, 247, 252, 0.82));
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet .filter-bar,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet .ui-filter,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--quiet .slots-filters-grid--enhanced {
+  background: color-mix(in srgb, var(--ui-surface-2) 98%, rgba(244, 248, 252, 0.84));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .incoming-card,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .data-card,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .kanban-card,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .cd-stage,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .stat-card,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .slots-summary__card {
+  background: color-mix(in srgb, var(--ui-surface-3) 98%, rgba(242, 247, 252, 0.82));
+  border-color: color-mix(in srgb, var(--ui-border-subtle) 96%, rgba(255, 255, 255, 0.52));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.88);
 }
 
 .candidate-new__section-title {

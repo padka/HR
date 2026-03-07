@@ -1,183 +1,69 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { apiFetch } from '@/api/client'
+import {
+  cancelNotification,
+  fetchBotIntegration,
+  fetchNotificationLogs,
+  fetchNotificationsFeed,
+  fetchQuestionGroups,
+  fetchReminderJobs,
+  fetchReminderPolicy,
+  fetchSystemHealth,
+  refreshBotCities as refreshBotCitiesRequest,
+  resyncReminderJobs,
+  retryNotification,
+  type BotStatus,
+  type HealthPayload,
+  type NotificationLogsPayload,
+  type OutboxFeedPayload,
+  type QuestionGroup,
+  type ReminderKindConfig,
+  type ReminderPolicy,
+  type ReminderPolicyPayload,
+  updateReminderPolicy,
+} from '@/api/services/system'
 import { RoleGuard } from '@/app/components/RoleGuard'
 
-type HealthPayload = {
-  recruiters: number
-  cities: number
-  slots_total: number
-  slots_free: number
-  slots_pending: number
-  slots_booked: number
-  waiting_candidates_total: number
-  test1_rejections_total: number
-  test1_total_seen: number
-  test1_rejections_percent: number
-}
-
-type BotStatus = {
-  config_enabled: boolean
-  runtime_enabled: boolean
-  updated_at: string | null
-  switch_source: 'operator' | 'runtime'
-  switch_reason: string | null
-  service_health: string
-  service_ready: boolean
-}
-
-type ReminderKindConfig = {
-  enabled: boolean
-  offset_hours: number
-}
-
-type ReminderPolicy = {
-  interview: {
-    confirm_6h: ReminderKindConfig
-    confirm_3h: ReminderKindConfig
-    confirm_2h: ReminderKindConfig
-  }
-  intro_day: {
-    intro_remind_3h: ReminderKindConfig
-  }
-  min_time_before_immediate_hours: number
-}
-
-type ReminderPolicyPayload = {
-  policy: ReminderPolicy
-  updated_at: string | null
-  links: {
-    questions: string
-    message_templates: string
-    templates: string
-  }
-}
-
-type ReminderPolicyUpdatePayload = {
-  ok: boolean
-  policy: ReminderPolicy
-  updated_at: string
-  rescheduled_slots: number
-  reschedule_failed: number
-}
-
-type ReminderJob = {
-  id: number
-  slot_id: number
-  kind: string
-  job_id: string
-  scheduled_at: string | null
-  slot_start_utc: string | null
-  slot_status: string
-  purpose: string
-  candidate_tg_id: number | null
-  candidate_fio: string | null
-}
-
-type ReminderJobsPayload = {
-  items: ReminderJob[]
-  now_utc: string
-  degraded: boolean
-}
-
-type ReminderResyncPayload = {
-  ok: boolean
-  scheduled: number
-  failed: number
-}
-
-type OutboxItem = {
-  id: number
-  type: string
-  status: string
-  attempts: number
-  created_at: string | null
-  locked_at: string | null
-  next_retry_at: string | null
-  last_error: string | null
-  booking_id: number | null
-  candidate_tg_id: number | null
-  recruiter_tg_id: number | null
-  correlation_id: string | null
-}
-
-type OutboxFeedPayload = {
-  items: OutboxItem[]
-  latest_id: number
-  degraded: boolean
-}
-
-type NotificationLogItem = {
-  id: number
-  type: string
-  status: string
-  attempts: number
-  created_at: string | null
-  next_retry_at: string | null
-  last_error: string | null
-  booking_id: number
-  candidate_tg_id: number | null
-  template_key: string | null
-  template_version: number | null
-}
-
-type NotificationLogsPayload = {
-  items: NotificationLogItem[]
-  latest_id: number
-  degraded: boolean
-}
-
 type BotCenterTab = 'health' | 'tests' | 'templates' | 'reminders' | 'delivery'
-
-type QuestionGroup = {
-  test_id: string
-  title: string
-  questions: Array<{
-    id: number
-    index: number
-    title: string
-    is_active: boolean
-  }>
-}
 
 export function SystemPage() {
   const [activeTab, setActiveTab] = useState<BotCenterTab>('health')
 
   const healthQuery = useQuery<HealthPayload>({
     queryKey: ['system-health'],
-    queryFn: () => apiFetch('/health'),
+    queryFn: fetchSystemHealth,
     enabled: activeTab === 'health',
   })
 
   const botQuery = useQuery<BotStatus>({
     queryKey: ['system-bot'],
-    queryFn: () => apiFetch('/bot/integration'),
+    queryFn: fetchBotIntegration,
     enabled: activeTab === 'health',
   })
 
   const questionsQuery = useQuery<QuestionGroup[]>({
     queryKey: ['bot-center-questions'],
-    queryFn: () => apiFetch('/questions'),
+    queryFn: fetchQuestionGroups,
     enabled: activeTab === 'tests',
   })
 
   const reminderPolicyQuery = useQuery<ReminderPolicyPayload>({
     queryKey: ['system-bot-reminder-policy'],
-    queryFn: () => apiFetch('/bot/reminder-policy'),
+    queryFn: fetchReminderPolicy,
     enabled: activeTab === 'reminders',
   })
 
-  const reminderJobsQuery = useQuery<ReminderJobsPayload>({
+  const reminderJobsQuery = useQuery({
     queryKey: ['system-bot-reminder-jobs'],
-    queryFn: () => apiFetch('/bot/reminders/jobs?limit=50'),
+    queryFn: () => fetchReminderJobs(50),
     enabled: activeTab === 'reminders',
     refetchInterval: 15_000,
   })
 
   const [resyncResult, setResyncResult] = useState<string | null>(null)
   const resyncRemindersMutation = useMutation({
-    mutationFn: async () => apiFetch<ReminderResyncPayload>('/bot/reminders/resync', { method: 'POST' }),
+    mutationFn: resyncReminderJobs,
     onSuccess: async (payload) => {
       setResyncResult(`Resync: scheduled=${payload.scheduled}, failed=${payload.failed}`)
       await reminderJobsQuery.refetch()
@@ -199,7 +85,7 @@ export function SystemPage() {
       params.set('limit', '50')
       if (outboxStatusFilter) params.set('status', outboxStatusFilter)
       if (outboxTypeFilter.trim()) params.set('type', outboxTypeFilter.trim())
-      return apiFetch(`/notifications/feed?${params.toString()}`)
+      return fetchNotificationsFeed(params.toString())
     },
     refetchInterval: 10_000,
     enabled: activeTab === 'delivery',
@@ -219,19 +105,19 @@ export function SystemPage() {
       if (logTypeFilter.trim()) params.set('type', logTypeFilter.trim())
       const candidate = Number(logCandidateFilter)
       if (Number.isFinite(candidate) && candidate > 0) params.set('candidate_tg_id', String(candidate))
-      return apiFetch(`/notifications/logs?${params.toString()}`)
+      return fetchNotificationLogs(params.toString())
     },
     refetchInterval: 15_000,
     enabled: activeTab === 'delivery',
   })
 
   const retryOutboxMutation = useMutation({
-    mutationFn: async (id: number) => apiFetch(`/notifications/${id}/retry`, { method: 'POST' }),
+    mutationFn: retryNotification,
     onSuccess: () => outboxQuery.refetch(),
   })
 
   const cancelOutboxMutation = useMutation({
-    mutationFn: async (id: number) => apiFetch(`/notifications/${id}/cancel`, { method: 'POST' }),
+    mutationFn: cancelNotification,
     onSuccess: () => outboxQuery.refetch(),
   })
 
@@ -251,7 +137,7 @@ export function SystemPage() {
     setRefreshingCities(true)
     setRefreshResult(null)
     try {
-      await apiFetch('/bot/cities/refresh', { method: 'POST' })
+      await refreshBotCitiesRequest()
       setRefreshResult('Города обновлены.')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Ошибка обновления городов.'
@@ -305,10 +191,7 @@ export function SystemPage() {
     setSavingPolicy(true)
     setPolicyResult(null)
     try {
-      const payload = await apiFetch<ReminderPolicyUpdatePayload>('/bot/reminder-policy', {
-        method: 'PUT',
-        body: JSON.stringify({ policy: policyDraft }),
-      })
+      const payload = await updateReminderPolicy(policyDraft)
       setPolicyDraft(payload.policy)
       setPolicyResult(
         `Сохранено. Пересобрано слотов: ${payload.rescheduled_slots}, ошибок: ${payload.reschedule_failed}.`,

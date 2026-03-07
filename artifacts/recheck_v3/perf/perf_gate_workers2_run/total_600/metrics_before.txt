@@ -1,0 +1,244 @@
+# HELP python_gc_objects_collected_total Objects collected during gc
+# TYPE python_gc_objects_collected_total counter
+python_gc_objects_collected_total{generation="0"} 61290.0
+python_gc_objects_collected_total{generation="1"} 69563.0
+python_gc_objects_collected_total{generation="2"} 29047.0
+# HELP python_gc_objects_uncollectable_total Uncollectable objects found during GC
+# TYPE python_gc_objects_uncollectable_total counter
+python_gc_objects_uncollectable_total{generation="0"} 0.0
+python_gc_objects_uncollectable_total{generation="1"} 0.0
+python_gc_objects_uncollectable_total{generation="2"} 0.0
+# HELP python_gc_collections_total Number of times this generation was collected
+# TYPE python_gc_collections_total counter
+python_gc_collections_total{generation="0"} 512.0
+python_gc_collections_total{generation="1"} 46.0
+python_gc_collections_total{generation="2"} 4.0
+# HELP python_info Python platform information
+# TYPE python_info gauge
+python_info{implementation="CPython",major="3",minor="13",patchlevel="7",version="3.13.7"} 1.0
+# HELP http_inflight_requests Number of in-flight HTTP requests (global).
+# TYPE http_inflight_requests gauge
+http_inflight_requests 1.0
+# HELP http_requests_total Total HTTP requests by route/method/status/outcome.
+# TYPE http_requests_total counter
+http_requests_total{method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_requests_total{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+# HELP http_requests_created Total HTTP requests by route/method/status/outcome.
+# TYPE http_requests_created gauge
+http_requests_created{method="GET",outcome="success",route="/api/profile",status="401"} 1.772365094484839e+09
+http_requests_created{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.772365286327827e+09
+# HELP http_request_duration_seconds HTTP request latency in seconds by route/method/status/outcome.
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{le="0.001",method="GET",outcome="success",route="/api/profile",status="401"} 0.0
+http_request_duration_seconds_bucket{le="0.0025",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="0.005",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="0.01",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="0.025",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="0.05",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="0.1",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="0.25",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="0.5",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="1.0",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="2.5",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="5.0",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="10.0",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_bucket{le="+Inf",method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_count{method="GET",outcome="success",route="/api/profile",status="401"} 1.0
+http_request_duration_seconds_sum{method="GET",outcome="success",route="/api/profile",status="401"} 0.002250958001241088
+http_request_duration_seconds_bucket{le="0.001",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 0.0
+http_request_duration_seconds_bucket{le="0.0025",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.005",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.01",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.025",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.05",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.1",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.25",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.5",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="1.0",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="2.5",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="5.0",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="10.0",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_bucket{le="+Inf",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_count{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.0
+http_request_duration_seconds_sum{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 0.0015899999998509884
+# HELP http_request_duration_seconds_created HTTP request latency in seconds by route/method/status/outcome.
+# TYPE http_request_duration_seconds_created gauge
+http_request_duration_seconds_created{method="GET",outcome="success",route="/api/profile",status="401"} 1.77236509448486e+09
+http_request_duration_seconds_created{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.772365286327839e+09
+# HELP http_errors_total HTTP errors by route/method/status/outcome (only outcome!=success).
+# TYPE http_errors_total counter
+# HELP served_from_cache_total Responses served from cache by route and backend.
+# TYPE served_from_cache_total counter
+served_from_cache_total{backend="redis",route="/api/dashboard/incoming"} 1.0
+# HELP served_from_cache_created Responses served from cache by route and backend.
+# TYPE served_from_cache_created gauge
+served_from_cache_created{backend="redis",route="/api/dashboard/incoming"} 1.772365286327863e+09
+# HELP served_stale_total Responses served stale (degraded mode) by route and backend.
+# TYPE served_stale_total counter
+# HELP cache_refresh_inflight Number of in-flight cache background refresh tasks (process-wide).
+# TYPE cache_refresh_inflight gauge
+cache_refresh_inflight 0.0
+# HELP cache_refresh_total Background cache refresh tasks started, labeled by triggering route.
+# TYPE cache_refresh_total counter
+# HELP cache_refresh_errors_total Background cache refresh task errors, labeled by triggering route.
+# TYPE cache_refresh_errors_total counter
+# HELP slot_propose_404_total 404 responses for slot propose flow by reason.
+# TYPE slot_propose_404_total counter
+# HELP http_db_queries_per_request Number of DB queries executed during a single HTTP request (best-effort).
+# TYPE http_db_queries_per_request histogram
+http_db_queries_per_request_bucket{le="0.0",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_bucket{le="1.0",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_bucket{le="2.0",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_bucket{le="5.0",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_bucket{le="10.0",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_bucket{le="20.0",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_bucket{le="50.0",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_bucket{le="100.0",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_bucket{le="200.0",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_bucket{le="+Inf",outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_count{outcome="success",route="/api/profile"} 1.0
+http_db_queries_per_request_sum{outcome="success",route="/api/profile"} 0.0
+http_db_queries_per_request_bucket{le="0.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_bucket{le="1.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_bucket{le="2.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_bucket{le="5.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_bucket{le="10.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_bucket{le="20.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_bucket{le="50.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_bucket{le="100.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_bucket{le="200.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_bucket{le="+Inf",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_count{outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_queries_per_request_sum{outcome="success",route="/api/dashboard/incoming"} 0.0
+# HELP http_db_queries_per_request_created Number of DB queries executed during a single HTTP request (best-effort).
+# TYPE http_db_queries_per_request_created gauge
+http_db_queries_per_request_created{outcome="success",route="/api/profile"} 1.772365094484938e+09
+http_db_queries_per_request_created{outcome="success",route="/api/dashboard/incoming"} 1.77236528632787e+09
+# HELP http_db_query_time_seconds Total DB time spent during a single HTTP request in seconds (best-effort).
+# TYPE http_db_query_time_seconds histogram
+http_db_query_time_seconds_bucket{le="0.0005",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="0.001",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="0.0025",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="0.005",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="0.01",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="0.025",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="0.05",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="0.1",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="0.25",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="0.5",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="1.0",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="2.5",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="5.0",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="10.0",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_bucket{le="+Inf",outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_count{outcome="success",route="/api/profile"} 1.0
+http_db_query_time_seconds_sum{outcome="success",route="/api/profile"} 0.0
+http_db_query_time_seconds_bucket{le="0.0005",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="0.001",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="0.0025",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="0.005",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="0.01",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="0.025",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="0.05",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="0.1",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="0.25",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="0.5",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="1.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="2.5",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="5.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="10.0",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_bucket{le="+Inf",outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_count{outcome="success",route="/api/dashboard/incoming"} 1.0
+http_db_query_time_seconds_sum{outcome="success",route="/api/dashboard/incoming"} 0.0
+# HELP http_db_query_time_seconds_created Total DB time spent during a single HTTP request in seconds (best-effort).
+# TYPE http_db_query_time_seconds_created gauge
+http_db_query_time_seconds_created{outcome="success",route="/api/profile"} 1.772365094484954e+09
+http_db_query_time_seconds_created{outcome="success",route="/api/dashboard/incoming"} 1.77236528632788e+09
+# HELP db_queries_total Total number of DB queries executed, labeled by route and operation.
+# TYPE db_queries_total counter
+db_queries_total{operation="select",route="unknown"} 70.0
+# HELP db_queries_created Total number of DB queries executed, labeled by route and operation.
+# TYPE db_queries_created gauge
+db_queries_created{operation="select",route="unknown"} 1.7723648476384242e+09
+# HELP db_query_duration_seconds DB query latency in seconds, labeled by route and operation.
+# TYPE db_query_duration_seconds histogram
+db_query_duration_seconds_bucket{le="0.0005",operation="select",route="unknown"} 36.0
+db_query_duration_seconds_bucket{le="0.001",operation="select",route="unknown"} 62.0
+db_query_duration_seconds_bucket{le="0.0025",operation="select",route="unknown"} 65.0
+db_query_duration_seconds_bucket{le="0.005",operation="select",route="unknown"} 69.0
+db_query_duration_seconds_bucket{le="0.01",operation="select",route="unknown"} 69.0
+db_query_duration_seconds_bucket{le="0.025",operation="select",route="unknown"} 70.0
+db_query_duration_seconds_bucket{le="0.05",operation="select",route="unknown"} 70.0
+db_query_duration_seconds_bucket{le="0.1",operation="select",route="unknown"} 70.0
+db_query_duration_seconds_bucket{le="0.25",operation="select",route="unknown"} 70.0
+db_query_duration_seconds_bucket{le="0.5",operation="select",route="unknown"} 70.0
+db_query_duration_seconds_bucket{le="1.0",operation="select",route="unknown"} 70.0
+db_query_duration_seconds_bucket{le="2.5",operation="select",route="unknown"} 70.0
+db_query_duration_seconds_bucket{le="5.0",operation="select",route="unknown"} 70.0
+db_query_duration_seconds_bucket{le="+Inf",operation="select",route="unknown"} 70.0
+db_query_duration_seconds_count{operation="select",route="unknown"} 70.0
+db_query_duration_seconds_sum{operation="select",route="unknown"} 0.06189395813271403
+# HELP db_query_duration_seconds_created DB query latency in seconds, labeled by route and operation.
+# TYPE db_query_duration_seconds_created gauge
+db_query_duration_seconds_created{operation="select",route="unknown"} 1.772364847638438e+09
+# HELP db_slow_queries_total Slow DB queries (above threshold), labeled by route and operation.
+# TYPE db_slow_queries_total counter
+# HELP db_pool_checked_out SQLAlchemy pool checked-out connections (best-effort).
+# TYPE db_pool_checked_out gauge
+db_pool_checked_out 0.0
+# HELP db_pool_size SQLAlchemy pool size (best-effort).
+# TYPE db_pool_size gauge
+db_pool_size 20.0
+# HELP db_pool_overflow SQLAlchemy pool overflow (best-effort).
+# TYPE db_pool_overflow gauge
+db_pool_overflow -18.0
+# HELP db_pool_timeouts_total Total pool timeout errors observed (best-effort).
+# TYPE db_pool_timeouts_total counter
+db_pool_timeouts_total 0.0
+# HELP db_pool_timeouts_created Total pool timeout errors observed (best-effort).
+# TYPE db_pool_timeouts_created gauge
+db_pool_timeouts_created 1.772364845345432e+09
+# HELP db_too_many_connections_total Total asyncpg TooManyConnectionsError observed (best-effort).
+# TYPE db_too_many_connections_total counter
+db_too_many_connections_total 0.0
+# HELP db_too_many_connections_created Total asyncpg TooManyConnectionsError observed (best-effort).
+# TYPE db_too_many_connections_created gauge
+db_too_many_connections_created 1.772364845345442e+09
+# HELP db_pool_acquire_seconds Time spent acquiring a DB connection from the SQLAlchemy pool (best-effort), labeled by route.
+# TYPE db_pool_acquire_seconds histogram
+db_pool_acquire_seconds_bucket{le="0.0005",route="unknown"} 67.0
+db_pool_acquire_seconds_bucket{le="0.001",route="unknown"} 67.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="unknown"} 67.0
+db_pool_acquire_seconds_bucket{le="0.005",route="unknown"} 68.0
+db_pool_acquire_seconds_bucket{le="0.01",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="0.025",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="0.05",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="0.1",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="0.25",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="0.5",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="1.0",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="2.5",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="5.0",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="10.0",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="30.0",route="unknown"} 69.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="unknown"} 69.0
+db_pool_acquire_seconds_count{route="unknown"} 69.0
+db_pool_acquire_seconds_sum{route="unknown"} 0.009547962108626962
+# HELP db_pool_acquire_seconds_created Time spent acquiring a DB connection from the SQLAlchemy pool (best-effort), labeled by route.
+# TYPE db_pool_acquire_seconds_created gauge
+db_pool_acquire_seconds_created{route="unknown"} 1.77236484534548e+09
+# HELP db_active_connections Active DB connections (pg_stat_activity, best-effort; -1 when unknown).
+# TYPE db_active_connections gauge
+db_active_connections 9.0
+# HELP latency_p50_seconds Approx rolling-window p50 latency in seconds.
+# TYPE latency_p50_seconds gauge
+latency_p50_seconds{method="GET",outcome="success",route="/api/profile",status="401"} 0.002250958001241088
+latency_p50_seconds{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 0.0015899999998509884
+# HELP latency_p95_seconds Approx rolling-window p95 latency in seconds.
+# TYPE latency_p95_seconds gauge
+latency_p95_seconds{method="GET",outcome="success",route="/api/profile",status="401"} 0.002250958001241088
+latency_p95_seconds{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 0.0015899999998509884
+# HELP latency_p99_seconds Approx rolling-window p99 latency in seconds.
+# TYPE latency_p99_seconds gauge
+latency_p99_seconds{method="GET",outcome="success",route="/api/profile",status="401"} 0.002250958001241088
+latency_p99_seconds{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 0.0015899999998509884

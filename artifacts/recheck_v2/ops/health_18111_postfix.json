@@ -1,0 +1,1 @@
+{"status":"ok","checks":{"database":"ok","state_manager":"ok","cache":"ok","background_tasks":{"cache_watcher":"running","stalled_candidate_checker":"running"},"bot_client":"disabled","bot_integration":"disabled","bot":"disabled"}}

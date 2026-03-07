@@ -1,0 +1,201 @@
+diff --git a/backend/apps/admin_ui/services/slots.py b/backend/apps/admin_ui/services/slots.py
+index 4d79c72..ae37230 100644
+--- a/backend/apps/admin_ui/services/slots.py
++++ b/backend/apps/admin_ui/services/slots.py
+@@ -725,7 +725,7 @@ async def delete_past_free_slots(
+ def _reservation_error_message(status: str) -> str:
+     messages = {
+         "slot_taken": "На выбранное время уже есть слот. Попробуйте другое время.",
+-        "duplicate_candidate": "У кандидата уже назначено собеседование.",
++        "duplicate_candidate": "У кандидата уже есть активная встреча.",
+         "already_reserved": "У кандидата уже забронирован слот на эту дату.",
+     }
+     return messages.get(
+@@ -883,6 +883,9 @@ async def schedule_manual_candidate_slot(
+             candidate_tg_id=candidate_tg_id,
+             candidate_tz=slot_tz,
+             created_by=admin_username,
++            # Manual initial scheduling must not silently replace an active assignment.
++            # Explicit reschedule flow handles replacements via propose_alternative().
++            allow_replace_active_assignment=False,
+         )
+     except Exception as exc:
+         # Slot was created but we failed to create the assignment/outbox.
+diff --git a/frontend/app/src/app/routes/__root.tsx b/frontend/app/src/app/routes/__root.tsx
+index 7b3de2c..8a650a9 100644
+--- a/frontend/app/src/app/routes/__root.tsx
++++ b/frontend/app/src/app/routes/__root.tsx
+@@ -32,6 +32,10 @@ type BubblePopSplash = {
+ }
+ 
+ const TAU = Math.PI * 2
++const LIQUID_GLASS_V2_OVERRIDE_KEY = 'ui:liquidGlassV2'
++const LIQUID_GLASS_V2_DATASET_VALUE = 'liquid-glass-v2'
++
++type MotionMode = 'full' | 'reduced'
+ 
+ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+ const clamp01 = (value: number) => clamp(value, 0, 1)
+@@ -47,6 +51,21 @@ const easeOutQuint = (t: number) => 1 - Math.pow(1 - clamp01(t), 5)
+ const randRange = (min: number, max: number) => min + Math.random() * (max - min)
+ const randInt = (min: number, max: number) => Math.floor(randRange(min, max + 1))
+ 
++const envLiquidGlassV2Enabled = String(import.meta.env.VITE_LIQUID_GLASS_V2 || '0') === '1'
++
++function resolveLiquidGlassV2Enabled() {
++  if (typeof window === 'undefined') return envLiquidGlassV2Enabled
++  const override = window.localStorage.getItem(LIQUID_GLASS_V2_OVERRIDE_KEY)?.trim().toLowerCase()
++  if (override === '1' || override === 'true' || override === 'on') return true
++  if (override === '0' || override === 'false' || override === 'off') return false
++  return envLiquidGlassV2Enabled
++}
++
++function resolveMotionMode(): MotionMode {
++  if (typeof window === 'undefined') return 'full'
++  return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'reduced' : 'full'
++}
++
+ const sampleNoiseLoop = (noise: number[], at: number) => {
+   const n = noise.length
+   if (!n) return 0
+@@ -448,6 +467,8 @@ const ICONS = {
+ 
+ export function RootLayout() {
+   const { location } = useRouterState()
++  const [liquidGlassV2Enabled, setLiquidGlassV2Enabled] = useState<boolean>(resolveLiquidGlassV2Enabled)
++  const [motionMode, setMotionMode] = useState<MotionMode>(resolveMotionMode)
+   const hideNav = location.pathname.startsWith('/app/login')
+   const profileQuery = useProfile(!hideNav)
+   const principalType = profileQuery.data?.principal.type
+@@ -481,6 +502,63 @@ export function RootLayout() {
+     layers: { layer1: [], layer2: [], layer3: [] },
+   })
+ 
++  useEffect(() => {
++    const syncUiMode = () => setLiquidGlassV2Enabled(resolveLiquidGlassV2Enabled())
++    const onStorage = (event: StorageEvent) => {
++      if (event.key === LIQUID_GLASS_V2_OVERRIDE_KEY) syncUiMode()
++    }
++
++    window.addEventListener('storage', onStorage)
++    window.addEventListener('focus', syncUiMode)
++    document.addEventListener('visibilitychange', syncUiMode)
++    return () => {
++      window.removeEventListener('storage', onStorage)
++      window.removeEventListener('focus', syncUiMode)
++      document.removeEventListener('visibilitychange', syncUiMode)
++    }
++  }, [])
++
++  useEffect(() => {
++    const storedTheme = window.localStorage.getItem('theme')
++    if (storedTheme === 'dark' || storedTheme === 'light') {
++      document.documentElement.dataset.theme = storedTheme
++    }
++  }, [])
++
++  useEffect(() => {
++    const root = document.documentElement
++    if (liquidGlassV2Enabled) root.dataset.ui = LIQUID_GLASS_V2_DATASET_VALUE
++    else delete root.dataset.ui
++  }, [liquidGlassV2Enabled])
++
++  useEffect(() => {
++    const media: MediaQueryList | null =
++      typeof window.matchMedia === 'function'
++        ? window.matchMedia('(prefers-reduced-motion: reduce)')
++        : null
++    const syncMotionMode = () => setMotionMode(media?.matches ? 'reduced' : 'full')
++    syncMotionMode()
++
++    if (!media) return
++    const listener = () => syncMotionMode()
++    if (typeof media.addEventListener === 'function') {
++      media.addEventListener('change', listener)
++      return () => media.removeEventListener('change', listener)
++    }
++    const legacyMedia = media as MediaQueryList & {
++      addListener?: (listener: (this: MediaQueryList, ev: MediaQueryListEvent) => unknown) => void
++      removeListener?: (listener: (this: MediaQueryList, ev: MediaQueryListEvent) => unknown) => void
++    }
++    if (typeof legacyMedia.addListener === 'function') {
++      legacyMedia.addListener(listener)
++      return () => legacyMedia.removeListener?.(listener)
++    }
++  }, [])
++
++  useEffect(() => {
++    document.documentElement.dataset.motion = motionMode
++  }, [motionMode])
++
+   useEffect(() => {
+     const state = bubbleStateRef.current
+     let destroyed = false
+@@ -799,18 +877,18 @@ export function RootLayout() {
+ 
+   if (isUnauthed && !hideNav) {
+     return (
+-      <div style={{ minHeight: '100vh', padding: '24px', display: 'grid', gap: '16px' }}>
++      <div className="root-auth-panel">
+         <main>
+-          <div className="glass" style={{ padding: 24 }}>
+-            <h1 style={{ marginTop: 0 }}>Требуется вход</h1>
+-            <p style={{ color: 'var(--muted)' }}>
++          <div className="glass ui-surface ui-surface--raised root-auth-panel__card">
++            <h1 className="root-auth-panel__title">Требуется вход</h1>
++            <p className="root-auth-panel__text">
+               Сессия не активна. Перейдите на страницу авторизации, чтобы продолжить работу.
+             </p>
+-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+-              <Link to="/app/login" style={{ textDecoration: 'underline', color: 'var(--fg)' }}>
++            <div className="root-auth-panel__actions">
++              <Link to="/app/login" className="ui-link">
+                 Открыть вход
+               </Link>
+-              <a href="/auth/login?redirect_to=/app" style={{ textDecoration: 'underline', color: 'var(--fg)' }}>
++              <a href="/auth/login?redirect_to=/app" className="ui-link">
+                 Вход (прямой линк)
+               </a>
+             </div>
+@@ -826,7 +904,7 @@ export function RootLayout() {
+   const navItems =
+     principalType === 'recruiter'
+       ? [
+-          { to: '/app/dashboard', label: 'Дашборд', icon: ICONS.dashboard, tone: 'blue' },
++          { to: '/app/incoming', label: 'Входящие', icon: ICONS.dashboard, tone: 'blue' },
+           { to: '/app/slots', label: 'Слоты', icon: ICONS.slots, tone: 'violet' },
+           { to: '/app/candidates', label: 'Кандидаты', icon: ICONS.candidates, tone: 'sky' },
+           { to: '/app/detailization', label: 'Детализация', icon: ICONS.candidates, tone: 'mint' },
+@@ -870,8 +948,8 @@ export function RootLayout() {
+       {!hideNav && (
+         <header className="app-header">
+           <div className="app-header-left" />
+-          
+-          <nav className="vision-nav-pill" aria-label="Основная навигация">
++
++          <nav className="vision-nav-pill ui-surface ui-surface--raised" aria-label="Основная навигация">
+             {navItems.map((item) => (
+               <Link
+                 key={item.to}
+@@ -888,7 +966,7 @@ export function RootLayout() {
+           </nav>
+ 
+           <div className="app-header-right">
+-            <Link to="/app/profile" className="app-profile-pill glass" title="Профиль">
++            <Link to="/app/profile" className="app-profile-pill ui-surface ui-surface--raised" title="Профиль">
+               <span className="app-profile__icon">{ICONS.profile}</span>
+             </Link>
+           </div>
+@@ -898,9 +976,9 @@ export function RootLayout() {
+         <Outlet />
+       </main>
+       {chatToast && (
+-        <div className="toast" data-tone="success" style={{ top: 20, right: 20, bottom: 'auto' }}>
+-          <strong style={{ fontSize: 13 }}>{chatToast.title}</strong>
+-          <span style={{ color: 'var(--muted)', fontSize: 12, lineHeight: 1.2 }}>{chatToast.preview}</span>
++        <div className="toast chat-toast ui-surface ui-surface--floating" data-tone="success">
++          <strong className="chat-toast__title">{chatToast.title}</strong>
++          <span className="chat-toast__preview">{chatToast.preview}</span>
+         </div>
+       )}
+     </div>

@@ -1,74 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiFetch } from '@/api/client'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { useProfile, type ProfileResponse } from '@/app/hooks/useProfile'
-
-type AvatarUploadResponse = { ok: boolean; url?: string }
-type AvatarDeleteResponse = { ok: boolean; removed?: boolean }
-
-type TimezoneOption = {
-  value: string
-  label: string
-  region: string
-  offset: string
-}
-
-type KpiTrend = {
-  direction?: 'up' | 'down' | 'flat'
-  display?: string
-  label?: string
-  percent?: number | null
-}
-
-type KpiDetailRow = {
-  candidate?: string
-  recruiter?: string
-  event_label?: string
-  city?: string
-}
-
-type KpiMetric = {
-  key: string
-  label: string
-  tone: string
-  icon?: string
-  value: number
-  previous: number
-  trend?: KpiTrend
-  details?: KpiDetailRow[]
-}
-
-type KpiResponse = {
-  timezone: string
-  current: {
-    label: string
-    metrics: KpiMetric[]
-  }
-}
-
-type ProfileSettingsPayload = {
-  name: string
-  tz: string
-  telemost_url?: string | null
-}
-
-type ProfileSettingsResponse = {
-  ok: boolean
-  recruiter: {
-    id: number
-    name: string
-    tz: string
-    telemost_url?: string | null
-    cities: { id: number; name: string }[]
-  }
-}
-
-type ChangePasswordPayload = {
-  current_password: string
-  new_password: string
-}
+import {
+  changeProfilePassword,
+  deleteProfileAvatar,
+  fetchProfileKpis,
+  fetchProfileTimezones,
+  type KpiDetailRow,
+  type ProfileSettingsPayload,
+  type ProfileSettingsResponse,
+  type TimezoneOption,
+  updateProfileSettings,
+  uploadProfileAvatar,
+} from '@/api/services/profile'
 
 function CameraIcon() {
   return (
@@ -176,45 +122,34 @@ export function ProfilePage() {
 
   const timezoneQuery = useQuery({
     queryKey: ['timezones'],
-    queryFn: () => apiFetch<TimezoneOption[]>('/timezones'),
+    queryFn: fetchProfileTimezones,
     enabled: Boolean(isRecruiter),
     staleTime: 60_000,
   })
 
   const kpiQuery = useQuery({
     queryKey: ['profile-kpis'],
-    queryFn: () => apiFetch<KpiResponse>('/kpis/current'),
+    queryFn: fetchProfileKpis,
     enabled: Boolean(isRecruiter),
     staleTime: 30_000,
   })
 
   const avatarUpload = useMutation({
-    mutationFn: async (file: File) => {
-      const form = new FormData()
-      form.append('file', file)
-      return apiFetch<AvatarUploadResponse>('/profile/avatar', { method: 'POST', body: form })
-    },
+    mutationFn: uploadProfileAvatar,
     onSuccess: () => {
       refetch()
     },
   })
 
   const avatarDelete = useMutation({
-    mutationFn: async () => {
-      return apiFetch<AvatarDeleteResponse>('/profile/avatar', { method: 'DELETE' })
-    },
+    mutationFn: deleteProfileAvatar,
     onSuccess: () => {
       refetch()
     },
   })
 
   const settingsMutation = useMutation({
-    mutationFn: async (payload: ProfileSettingsPayload) => {
-      return apiFetch<ProfileSettingsResponse>('/profile/settings', {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      })
-    },
+    mutationFn: updateProfileSettings,
     onSuccess: (response) => {
       queryClient.setQueryData<ProfileResponse>(['profile'], (previous) =>
         mergeProfileRecruiter(previous, response.recruiter),
@@ -224,12 +159,7 @@ export function ProfilePage() {
   })
 
   const passwordMutation = useMutation({
-    mutationFn: async (payload: ChangePasswordPayload) => {
-      return apiFetch<{ ok: boolean }>('/profile/change-password', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
-    },
+    mutationFn: changeProfilePassword,
     onSuccess: () => {
       setPasswordForm({ current: '', next: '', confirm: '' })
       setPasswordError(null)

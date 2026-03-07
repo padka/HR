@@ -1,0 +1,13 @@
+/Users/mikhail/Projects/recruitsmart_admin/.venv/lib/python3.13/site-packages/pydantic/_internal/_fields.py:161: UserWarning: Field "model_custom_emoji_id" has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+Falling back to empty questions; database is not available. error=(sqlite3.OperationalError) no such table: tests
+[SQL: SELECT tests.id, tests.title, tests.slug 
+FROM tests]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-03-01 12:56:38,128 [INFO] backend.apps.admin_ui.app: Legacy assignments API disabled (ENABLE_LEGACY_ASSIGNMENTS_API=1 to enable)
+2026-03-01 12:56:38,226 [INFO] backend.apps.admin_ui.app: Legacy assignments API disabled (ENABLE_LEGACY_ASSIGNMENTS_API=1 to enable)
+Formal gate report: /Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/latest.md
+Formal gate JSON:   /Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/latest.json
+Overall status:     manual_pending

@@ -9,7 +9,8 @@
 ```bash
 ENVIRONMENT=development BOT_ENABLED=false \
 METRICS_ENABLED=1 PERF_DIAGNOSTIC_HEADERS=1 \
-./.venv/bin/uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000
+WEB_CONCURRENCY=2 \
+./.venv/bin/uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000 --workers ${WEB_CONCURRENCY}
 ```
 
 2. Убедиться что `/metrics` доступен:
@@ -126,3 +127,20 @@ PYTHONPATH=. ./.venv/bin/python scripts/seed_test_candidates.py
 - `scripts/loadtest_http_spike.sh`
 
 Для текущего perf-цикла используйте `scripts/loadtest_profiles/*`.
+
+## GO perf gate
+
+Для релизного gate используйте:
+
+```bash
+./scripts/perf_gate.sh
+```
+
+Рекомендуемый режим для репрезентативного perf gate:
+- запуск `admin_ui` минимум с `--workers 2` (`WEB_CONCURRENCY>=2`);
+- Redis для rate limit/cache должен быть доступен (или `RATE_LIMIT_ENABLED=false` в локальной диагностике).
+
+Скрипт запускает mixed-профиль на `600 rps` (по умолчанию) и валидирует пороги:
+- `error rate < 1%`
+- `max p95 < 250ms`
+- `max p99 < 1000ms`

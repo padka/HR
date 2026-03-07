@@ -1,0 +1,27 @@
+# HELP notification_broker_up Broker ping status (1=up)
+# TYPE notification_broker_up gauge
+notification_broker_up 1
+# HELP notification_seconds_since_poll Seconds since the last poll iteration completed
+# TYPE notification_seconds_since_poll gauge
+notification_seconds_since_poll 24.668033666035626
+# HELP notification_outbox_queue_depth Number of pending notifications in outbox
+# TYPE notification_outbox_queue_depth gauge
+notification_outbox_queue_depth 0
+# HELP notification_poll_skipped_total Total number of skipped poll iterations
+# TYPE notification_poll_skipped_total counter
+notification_poll_skipped_total 9
+# HELP notification_poll_skipped_reason_total Skipped poll iterations by reason
+# TYPE notification_poll_skipped_reason_total counter
+notification_poll_skipped_reason_total{reason="lock_busy"} 9
+# HELP notification_poll_backoff_total Total poll backoff events
+# TYPE notification_poll_backoff_total counter
+notification_poll_backoff_total 0
+# HELP notification_rate_limit_wait_total Total rate-limit throttling events
+# TYPE notification_rate_limit_wait_total counter
+notification_rate_limit_wait_total 0
+# HELP notification_rate_limit_wait_seconds_total Total seconds spent waiting due to rate limits
+# TYPE notification_rate_limit_wait_seconds_total counter
+notification_rate_limit_wait_seconds_total 0.0
+# HELP notification_poll_staleness_seconds Seconds since worker watchdog recorded an active poll
+# TYPE notification_poll_staleness_seconds gauge
+notification_poll_staleness_seconds 0.0

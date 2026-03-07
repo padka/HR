@@ -17,6 +17,26 @@ type Recruiter = {
   active?: boolean
 }
 
+type CandidateCreateResponse = {
+  id: number
+  fio?: string
+  city?: string | null
+  slot_scheduled?: boolean
+}
+
+type ScheduleSlotResponse = {
+  status?: string
+  message?: string
+}
+
+type SubmitResult = {
+  candidate: CandidateCreateResponse
+  schedule:
+    | { status: 'skipped' }
+    | { status: 'success'; message: string }
+    | { status: 'warning'; message: string }
+}
+
 function formatTzOffset(tz: string): string {
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
@@ -47,19 +67,32 @@ function getTodayDate(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+function extractError(err: unknown): { code: string; message: string } {
+  if (err instanceof Error) {
+    const data = (err as Error & { data?: { error?: string; message?: string } }).data
+    const code = data?.error || ''
+    const message = data?.message || err.message || 'Ошибка'
+    return { code, message }
+  }
+  return { code: '', message: 'Ошибка' }
+}
+
 export function CandidateNewPage() {
   const navigate = useNavigate()
 
   const [form, setForm] = useState({
     fio: '',
     phone: '',
+    telegram_id: '',
     city_id: '',
     recruiter_id: '',
     interview_date: getTomorrowDate(),
     interview_time: '10:00',
+    schedule_now: true,
   })
 
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ tone: 'success' | 'warning'; message: string; candidateId?: number } | null>(null)
 
   const citiesQuery = useQuery<City[]>({
     queryKey: ['cities'],
@@ -99,25 +132,98 @@ export function CandidateNewPage() {
   const tzLabel = formatTzOffset(cityTz)
 
   const mutation = useMutation({
-    mutationFn: async () => {
-      const payload = {
+    mutationFn: async (): Promise<SubmitResult> => {
+      const telegramId = form.telegram_id.trim()
+      const payload: {
+        fio: string
+        phone: string | null
+        telegram_id: number | null
+        city_id: number | null
+        recruiter_id: number | null
+        interview_date?: string
+        interview_time?: string
+      } = {
         fio: form.fio.trim(),
         phone: form.phone.trim() || null,
+        telegram_id: telegramId ? Number(telegramId) : null,
         city_id: form.city_id ? Number(form.city_id) : null,
         recruiter_id: form.recruiter_id ? Number(form.recruiter_id) : null,
-        interview_date: form.interview_date,
-        interview_time: form.interview_time,
       }
-      return apiFetch<{ id: number }>('/candidates', {
+      if (form.schedule_now && form.interview_date && form.interview_time) {
+        payload.interview_date = form.interview_date
+        payload.interview_time = form.interview_time
+      }
+
+      const candidate = await apiFetch<CandidateCreateResponse>('/candidates', {
         method: 'POST',
         body: JSON.stringify(payload),
       })
+
+      if (!form.schedule_now || !form.interview_date || !form.interview_time) {
+        return {
+          candidate,
+          schedule: { status: 'skipped' },
+        }
+      }
+
+      try {
+        const schedule = await apiFetch<ScheduleSlotResponse>(`/candidates/${candidate.id}/schedule-slot`, {
+          method: 'POST',
+          body: JSON.stringify({
+            recruiter_id: payload.recruiter_id,
+            city_id: payload.city_id,
+            date: form.interview_date,
+            time: form.interview_time,
+          }),
+        })
+        return {
+          candidate,
+          schedule: {
+            status: 'success',
+            message: schedule.message || 'Собеседование назначено',
+          },
+        }
+      } catch (err) {
+        const { code, message } = extractError(err)
+        if (code === 'candidate_telegram_missing' || code === 'slot_conflict') {
+          return {
+            candidate,
+            schedule: {
+              status: 'warning',
+              message,
+            },
+          }
+        }
+        throw err
+      }
     },
-    onSuccess: (data: { id: number }) => {
-      navigate({ to: '/app/candidates/$candidateId', params: { candidateId: String(data.id) } })
+    onSuccess: (result: SubmitResult) => {
+      if (result.schedule.status === 'warning') {
+        setNotice({
+          tone: 'warning',
+          message: `Кандидат создан. ${result.schedule.message} Назначьте слот позже из карточки кандидата.`,
+          candidateId: result.candidate.id,
+        })
+        return
+      }
+      if (result.schedule.status === 'success') {
+        setNotice({
+          tone: 'success',
+          message: `Кандидат создан. ${result.schedule.message}.`,
+          candidateId: result.candidate.id,
+        })
+      } else {
+        setNotice({
+          tone: 'success',
+          message: 'Кандидат успешно создан.',
+          candidateId: result.candidate.id,
+        })
+      }
+      navigate({ to: '/app/candidates/$candidateId', params: { candidateId: String(result.candidate.id) } })
     },
     onError: (err: Error) => {
-      setError(err.message)
+      const parsed = extractError(err)
+      setError(parsed.message)
     },
   })
 
@@ -125,13 +231,13 @@ export function CandidateNewPage() {
     form.fio.trim() &&
     form.city_id &&
     form.recruiter_id &&
-    form.interview_date &&
-    form.interview_time
+    (!form.schedule_now || (form.interview_date && form.interview_time))
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (canSubmit) {
       setError(null)
+      setNotice(null)
       mutation.mutate()
     }
   }
@@ -153,8 +259,8 @@ export function CandidateNewPage() {
     <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page">
         <form onSubmit={handleSubmit}>
-          <div className="glass panel" style={{ display: 'grid', gap: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <div className="glass panel ui-form-shell candidate-new">
+            <div className="ui-form-header">
               <div>
                 <h1 className="title">Новый кандидат</h1>
                 <p className="subtitle">Создайте лид и назначьте собеседование</p>
@@ -165,36 +271,36 @@ export function CandidateNewPage() {
             </div>
 
             {(citiesQuery.isLoading || recruitersQuery.isLoading) && (
-              <p className="subtitle">Загрузка данных...</p>
+              <p className="ui-message ui-message--muted">Загрузка данных...</p>
             )}
 
             {cities.length === 0 && !citiesQuery.isLoading && (
-              <div className="glass panel--tight" style={{ background: 'rgba(240, 115, 115, 0.1)', border: '1px solid rgba(240, 115, 115, 0.3)' }}>
-                <p style={{ color: '#f07373', margin: 0 }}>
+              <div className="glass panel--tight ui-state ui-state--error">
+                <p className="ui-message ui-message--error">
                   Нет доступных городов. Обратитесь к администратору, чтобы продолжить работу.
                 </p>
               </div>
             )}
 
             {recruiters.length === 0 && !recruitersQuery.isLoading && (
-              <div className="glass panel--tight" style={{ background: 'rgba(240, 115, 115, 0.1)', border: '1px solid rgba(240, 115, 115, 0.3)' }}>
-                <p style={{ color: '#f07373', margin: 0 }}>
+              <div className="glass panel--tight ui-state ui-state--error">
+                <p className="ui-message ui-message--error">
                   Нет активных рекрутёров. <Link to="/app/recruiters/new">Добавьте рекрутёра</Link>.
                 </p>
               </div>
             )}
 
             {error && (
-              <div className="glass panel--tight" style={{ background: 'rgba(240, 115, 115, 0.1)', border: '1px solid rgba(240, 115, 115, 0.3)' }}>
-                <p style={{ color: '#f07373', margin: 0 }}>Ошибка: {error}</p>
+              <div className="glass panel--tight ui-state ui-state--error">
+                <p className="ui-message ui-message--error">Ошибка: {error}</p>
               </div>
             )}
 
             <section>
-              <h2 className="title" style={{ fontSize: 18, marginBottom: 12 }}>Карточка кандидата</h2>
-              <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span>ФИО <span style={{ color: '#f07373' }}>*</span></span>
+              <h2 className="title candidate-new__section-title">Карточка кандидата</h2>
+              <div className="ui-form-grid ui-form-grid--lg candidate-new__secondary-grid">
+                <label className="ui-field">
+                  <span>ФИО <span className="ui-required">*</span></span>
                   <input
                     type="text"
                     value={form.fio}
@@ -203,7 +309,7 @@ export function CandidateNewPage() {
                     required
                   />
                 </label>
-                <label style={{ display: 'grid', gap: 6 }}>
+                <label className="ui-field">
                   <span>Телефон</span>
                   <input
                     type="text"
@@ -212,11 +318,20 @@ export function CandidateNewPage() {
                     placeholder="+7 900 000-00-00"
                   />
                 </label>
+                <label className="ui-field">
+                  <span>Telegram ID</span>
+                  <input
+                    type="text"
+                    value={form.telegram_id}
+                    onChange={(e) => setForm({ ...form, telegram_id: e.target.value.replace(/[^\d]/g, '') })}
+                    placeholder="79991234567"
+                  />
+                </label>
               </div>
 
-              <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', marginTop: 12 }}>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span>Город <span style={{ color: '#f07373' }}>*</span></span>
+              <div className="ui-form-grid ui-form-grid--lg">
+                <label className="ui-field">
+                  <span>Город <span className="ui-required">*</span></span>
                   <select
                     value={form.city_id}
                     onChange={(e) => setForm({ ...form, city_id: e.target.value })}
@@ -231,8 +346,8 @@ export function CandidateNewPage() {
                     ))}
                   </select>
                 </label>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span>Ответственный рекрутёр <span style={{ color: '#f07373' }}>*</span></span>
+                <label className="ui-field">
+                  <span>Ответственный рекрутёр <span className="ui-required">*</span></span>
                   <select
                     value={form.recruiter_id}
                     onChange={(e) => setForm({ ...form, recruiter_id: e.target.value })}
@@ -251,77 +366,91 @@ export function CandidateNewPage() {
             </section>
 
             <section>
-              <h2 className="title" style={{ fontSize: 18, marginBottom: 12 }}>Назначение собеседования</h2>
+              <h2 className="title candidate-new__section-title">Назначение собеседования</h2>
               {selectedCity && (
-                <p className="subtitle" style={{ marginBottom: 8 }}>
+                <p className="subtitle candidate-new__section-note">
                   Часовой пояс города: <strong>{cityTz}</strong> ({tzLabel})
                 </p>
               )}
-              <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span>Дата собеседования <span style={{ color: '#f07373' }}>*</span></span>
+              <label className="ui-inline-checkbox candidate-new__toggle">
+                <input
+                  type="checkbox"
+                  checked={form.schedule_now}
+                  onChange={(e) => setForm({ ...form, schedule_now: e.target.checked })}
+                />
+                <span>Назначить собеседование сразу</span>
+              </label>
+              <div className="ui-form-grid ui-form-grid--md">
+                <label className="ui-field">
+                  <span>
+                    Дата собеседования {form.schedule_now ? <span className="ui-required">*</span> : null}
+                  </span>
                   <input
                     type="date"
                     value={form.interview_date}
                     onChange={(e) => setForm({ ...form, interview_date: e.target.value })}
-                    required
+                    required={form.schedule_now}
+                    disabled={!form.schedule_now}
                   />
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <div className="ui-inline-controls">
                     <button
                       type="button"
-                      className="ui-btn ui-btn--ghost"
-                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      className="ui-btn ui-btn--ghost candidate-new__quick-btn"
+                      disabled={!form.schedule_now}
                       onClick={() => setForm({ ...form, interview_date: getTodayDate() })}
                     >
                       Сегодня
                     </button>
                     <button
                       type="button"
-                      className="ui-btn ui-btn--ghost"
-                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      className="ui-btn ui-btn--ghost candidate-new__quick-btn"
+                      disabled={!form.schedule_now}
                       onClick={() => setForm({ ...form, interview_date: getTomorrowDate() })}
                     >
                       Завтра
                     </button>
                     <button
                       type="button"
-                      className="ui-btn ui-btn--ghost"
-                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      className="ui-btn ui-btn--ghost candidate-new__quick-btn"
+                      disabled={!form.schedule_now}
                       onClick={() => setForm({ ...form, interview_date: getNextWeekDate() })}
                     >
                       Через неделю
                     </button>
                   </div>
                 </label>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span>Время собеседования <span style={{ color: '#f07373' }}>*</span></span>
+                <label className="ui-field">
+                  <span>
+                    Время собеседования {form.schedule_now ? <span className="ui-required">*</span> : null}
+                  </span>
                   <input
                     type="time"
                     value={form.interview_time}
                     onChange={(e) => setForm({ ...form, interview_time: e.target.value })}
-                    required
+                    required={form.schedule_now}
+                    disabled={!form.schedule_now}
                   />
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <div className="ui-inline-controls">
                     <button
                       type="button"
-                      className="ui-btn ui-btn--ghost"
-                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      className="ui-btn ui-btn--ghost candidate-new__quick-btn"
+                      disabled={!form.schedule_now}
                       onClick={() => setForm({ ...form, interview_time: '10:00' })}
                     >
                       10:00
                     </button>
                     <button
                       type="button"
-                      className="ui-btn ui-btn--ghost"
-                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      className="ui-btn ui-btn--ghost candidate-new__quick-btn"
+                      disabled={!form.schedule_now}
                       onClick={() => setForm({ ...form, interview_time: '14:00' })}
                     >
                       14:00
                     </button>
                     <button
                       type="button"
-                      className="ui-btn ui-btn--ghost"
-                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      className="ui-btn ui-btn--ghost candidate-new__quick-btn"
+                      disabled={!form.schedule_now}
                       onClick={() => setForm({ ...form, interview_time: '16:30' })}
                     >
                       16:30
@@ -329,22 +458,48 @@ export function CandidateNewPage() {
                   </div>
                 </label>
               </div>
+              {!form.schedule_now && (
+                <div className="ui-field__support">
+                  <p className="ui-field__note">Собеседование можно назначить позже в карточке кандидата.</p>
+                </div>
+              )}
             </section>
 
+            {notice && (
+              <div
+                className={`glass panel--tight candidate-new__notice ${
+                  notice.tone === 'warning' ? 'candidate-new__notice--warning' : 'candidate-new__notice--success'
+                }`}
+              >
+                <p className="ui-message">{notice.message}</p>
+                {notice.candidateId ? (
+                  <div>
+                    <Link to="/app/candidates/$candidateId" params={{ candidateId: String(notice.candidateId) }} className="ui-btn ui-btn--ghost">
+                      Открыть карточку кандидата
+                    </Link>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
             {canSubmit && (
-              <div className="glass panel--tight" style={{ background: 'rgba(105, 183, 255, 0.1)' }}>
-                <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Превью</h3>
-                <div style={{ fontSize: 13, display: 'grid', gap: 4 }}>
+              <div className="glass panel--tight candidate-new__preview">
+                <h3 className="candidate-new__preview-title">Превью</h3>
+                <div className="candidate-new__preview-list">
                   <div><strong>ФИО:</strong> {form.fio}</div>
                   {form.phone && <div><strong>Телефон:</strong> {form.phone}</div>}
+                  {form.telegram_id && <div><strong>Telegram ID:</strong> {form.telegram_id}</div>}
                   <div><strong>Город:</strong> {selectedCity?.name || '—'}</div>
                   <div><strong>Рекрутёр:</strong> {selectedRecruiter?.name || '—'}</div>
-                  <div><strong>Интервью:</strong> {formatPreviewDate()} ({tzLabel})</div>
+                  <div>
+                    <strong>Интервью:</strong>{' '}
+                    {form.schedule_now ? `${formatPreviewDate()} (${tzLabel})` : 'Назначение позже'}
+                  </div>
                 </div>
               </div>
             )}
 
-            <div className="action-row">
+            <div className="ui-form-actions ui-form-actions--end">
               <button
                 type="submit"
                 className="ui-btn ui-btn--primary"

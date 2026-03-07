@@ -128,6 +128,20 @@ async def create_application(
         scheduler=scheduler,
     )
     configure_services(bot, state_manager, dispatcher)
+
+    # Bootstrap messenger adapters (Telegram + optionally VK Max)
+    try:
+        from backend.core.messenger.bootstrap import bootstrap_messenger_adapters
+
+        await bootstrap_messenger_adapters(
+            bot=bot,
+            max_bot_enabled=getattr(settings, "max_bot_enabled", False),
+            max_bot_token=getattr(settings, "max_bot_token", ""),
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Failed to bootstrap messenger adapters")
+
     return bot, dispatcher, state_manager, reminder_service, notification_service
 
 

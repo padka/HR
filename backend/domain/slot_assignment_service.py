@@ -6,9 +6,9 @@ import logging
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -45,6 +45,12 @@ CONFIRMED_ASSIGNMENT_STATUSES = {
     SlotAssignmentStatus.CONFIRMED,
     SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
 }
+ACTIVE_SLOT_STATUSES = {
+    SlotStatus.PENDING,
+    SlotStatus.BOOKED,
+    SlotStatus.CONFIRMED,
+    SlotStatus.CONFIRMED_BY_CANDIDATE,
+}
 
 
 @dataclass
@@ -62,6 +68,118 @@ def _now() -> datetime:
 
 def _resolve_candidate_tg_id(candidate: User, preferred: Optional[int] = None) -> Optional[int]:
     return preferred or candidate.telegram_user_id or candidate.telegram_id
+
+
+async def cancel_active_interview_slots_for_candidate(
+    *,
+    candidate_id: Optional[str],
+    candidate_tg_ids: Iterable[int],
+    cancelled_by: str = "superseded_by_intro_day",
+) -> Dict[str, list[int]]:
+    """Remove active interview slots/assignments so candidate stays in one active stage."""
+    tg_ids = {int(value) for value in candidate_tg_ids if value is not None}
+    if not candidate_id and not tg_ids:
+        return {"slot_ids": [], "assignment_ids": []}
+
+    slot_statuses = {
+        SlotStatus.PENDING,
+        SlotStatus.BOOKED,
+        SlotStatus.CONFIRMED,
+        SlotStatus.CONFIRMED_BY_CANDIDATE,
+    }
+    assignment_statuses = {
+        SlotAssignmentStatus.OFFERED,
+        SlotAssignmentStatus.CONFIRMED,
+        SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+        SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+    }
+    async with async_session() as session:
+        async with session.begin():
+            candidate_predicates = []
+            if candidate_id:
+                candidate_predicates.append(Slot.candidate_id == candidate_id)
+            if tg_ids:
+                candidate_predicates.append(Slot.candidate_tg_id.in_(list(tg_ids)))
+
+            slot_ids_set: set[int] = set()
+            if candidate_predicates:
+                slots = (
+                    await session.execute(
+                        select(Slot)
+                        .where(
+                            func.coalesce(Slot.purpose, "interview") == "interview",
+                            Slot.status.in_(slot_statuses),
+                            or_(*candidate_predicates),
+                        )
+                        .with_for_update()
+                    )
+                ).scalars().all()
+            else:
+                slots = []
+
+            for slot in slots:
+                slot_ids_set.add(int(slot.id))
+
+            assignment_predicates = []
+            if candidate_id:
+                assignment_predicates.append(SlotAssignment.candidate_id == candidate_id)
+            if tg_ids:
+                assignment_predicates.append(SlotAssignment.candidate_tg_id.in_(list(tg_ids)))
+
+            if assignment_predicates:
+                assignments = (
+                    await session.execute(
+                        select(SlotAssignment)
+                        .join(Slot, Slot.id == SlotAssignment.slot_id)
+                        .where(
+                            func.coalesce(Slot.purpose, "interview") == "interview",
+                            SlotAssignment.status.in_(assignment_statuses),
+                            or_(*assignment_predicates),
+                        )
+                        .with_for_update()
+                    )
+                ).scalars().all()
+            else:
+                assignments = []
+
+            assignment_ids: list[int] = []
+            for assignment in assignments:
+                assignment_ids.append(int(assignment.id))
+                if assignment.slot_id:
+                    slot_ids_set.add(int(assignment.slot_id))
+
+            if assignment_ids:
+                for assignment_id in assignment_ids:
+                    await _invalidate_action_tokens(session, assignment_id=assignment_id)
+                await session.execute(
+                    delete(RescheduleRequest).where(
+                        RescheduleRequest.slot_assignment_id.in_(assignment_ids),
+                    )
+                )
+                await session.execute(
+                    delete(SlotAssignment).where(
+                        SlotAssignment.id.in_(assignment_ids),
+                    )
+                )
+
+            if slot_ids_set:
+                slots_to_delete = (
+                    await session.execute(
+                        select(Slot)
+                        .where(
+                            Slot.id.in_(list(slot_ids_set)),
+                            func.coalesce(Slot.purpose, "interview") == "interview",
+                        )
+                        .with_for_update()
+                    )
+                ).scalars().all()
+                for slot in slots_to_delete:
+                    await session.delete(slot)
+
+    return {
+        "slot_ids": sorted(slot_ids_set),
+        "assignment_ids": assignment_ids,
+    }
 
 
 async def _create_action_token(
@@ -118,6 +236,7 @@ async def create_slot_assignment(
     candidate_tg_id: Optional[int] = None,
     candidate_tz: Optional[str] = None,
     created_by: Optional[str] = None,
+    allow_replace_active_assignment: bool = False,
 ) -> ServiceResult:
     async with async_session() as session:
         try:
@@ -157,7 +276,7 @@ async def create_slot_assignment(
                 candidate_tz = candidate_tz or slot.tz_name
 
                 existing = await session.scalar(
-                    select(SlotAssignment.id)
+                    select(SlotAssignment)
                     .where(
                         SlotAssignment.candidate_id == candidate_id,
                         SlotAssignment.status.in_(ACTIVE_ASSIGNMENT_STATUSES),
@@ -165,11 +284,89 @@ async def create_slot_assignment(
                     .with_for_update()
                 )
                 if existing:
+                    if not allow_replace_active_assignment:
+                        return ServiceResult(
+                            False,
+                            "candidate_has_active_assignment",
+                            409,
+                            "У кандидата уже есть активное назначение.",
+                        )
+                    if existing.recruiter_id != slot.recruiter_id:
+                        return ServiceResult(
+                            False,
+                            "candidate_has_active_assignment",
+                            409,
+                            "У кандидата уже есть активное назначение у другого рекрутёра.",
+                        )
+
+                    replacement_now = _now()
+                    existing_slot = await session.scalar(
+                        select(Slot)
+                        .where(Slot.id == existing.slot_id)
+                        .with_for_update()
+                    )
+                    if existing_slot is not None and existing_slot.id != slot.id:
+                        old_status = (existing_slot.status or "").lower()
+                        if old_status in {
+                            SlotStatus.PENDING,
+                            SlotStatus.BOOKED,
+                            SlotStatus.CONFIRMED_BY_CANDIDATE,
+                        } and (
+                            existing_slot.candidate_id == candidate_id
+                            or (
+                                candidate_tg_id is not None
+                                and existing_slot.candidate_tg_id == candidate_tg_id
+                            )
+                        ):
+                            existing_slot.status = SlotStatus.FREE
+                            existing_slot.candidate_id = None
+                            existing_slot.candidate_tg_id = None
+                            existing_slot.candidate_fio = None
+                            existing_slot.candidate_tz = None
+                            existing_slot.candidate_city_id = None
+
+                    await _invalidate_action_tokens(session, assignment_id=existing.id)
+                    pending_requests = await session.execute(
+                        select(RescheduleRequest)
+                        .where(
+                            RescheduleRequest.slot_assignment_id == existing.id,
+                            RescheduleRequest.status == RescheduleRequestStatus.PENDING,
+                        )
+                        .with_for_update()
+                    )
+                    for req in pending_requests.scalars():
+                        req.status = RescheduleRequestStatus.EXPIRED
+                        req.decided_at = replacement_now
+                        req.recruiter_comment = "superseded_by_recruiter_reschedule"
+
+                    existing.status = SlotAssignmentStatus.CANCELLED
+                    existing.cancelled_at = replacement_now
+                    existing.status_before_reschedule = None
+                    existing.reschedule_requested_at = None
+                    # SQLite test schema may keep UNIQUE(candidate_id) without partial filter.
+                    # Preserve cross-DB portability of replacement flow.
+                    existing.candidate_id = None
+
+                slot_purpose = (slot.purpose or "interview").strip().lower()
+                active_slot_predicates = [Slot.candidate_id == candidate_id]
+                if candidate_tg_id is not None:
+                    active_slot_predicates.append(Slot.candidate_tg_id == candidate_tg_id)
+                active_slot_other_purpose = await session.scalar(
+                    select(Slot)
+                    .where(
+                        Slot.id != slot.id,
+                        or_(*active_slot_predicates),
+                        Slot.status.in_(ACTIVE_SLOT_STATUSES),
+                        func.lower(func.coalesce(Slot.purpose, "interview")) != slot_purpose,
+                    )
+                    .with_for_update()
+                )
+                if active_slot_other_purpose is not None:
                     return ServiceResult(
                         False,
                         "candidate_has_active_assignment",
                         409,
-                        "У кандидата уже есть активное назначение.",
+                        "У кандидата уже есть активная встреча в другом типе.",
                     )
 
                 active_count = await session.scalar(

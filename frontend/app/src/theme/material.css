@@ -74,3 +74,51 @@ html[data-ui='liquid-glass-v2'] .slots-filters-grid--enhanced {
   background: var(--ui-surface-1);
   border: 1px solid var(--ui-border-subtle);
 }
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .ui-surface,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .glass {
+  background: color-mix(in srgb, var(--ui-surface-2) 96%, rgba(235, 242, 249, 0.48));
+  border-color: color-mix(in srgb, var(--ui-border-subtle) 96%, rgba(255, 255, 255, 0.56));
+  box-shadow: var(--ui-shadow-2), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .ui-surface::before,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .glass::before {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0));
+  opacity: 0.72;
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .ui-surface--base {
+  background: color-mix(in srgb, var(--ui-surface-1) 98%, rgba(235, 242, 249, 0.54));
+  border-color: color-mix(in srgb, var(--ui-border-subtle) 94%, rgba(255, 255, 255, 0.52));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .ui-surface--raised,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .glass--elevated {
+  background: color-mix(in srgb, var(--ui-surface-2) 98%, rgba(241, 247, 252, 0.62));
+  border-color: color-mix(in srgb, var(--ui-border-strong) 92%, rgba(255, 255, 255, 0.46));
+  box-shadow: var(--ui-shadow-2), inset 0 1px 0 var(--ui-highlight-soft);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .ui-surface--floating {
+  background: color-mix(in srgb, var(--ui-surface-3) 98%, rgba(245, 249, 253, 0.68));
+  border-color: color-mix(in srgb, var(--ui-border-strong) 96%, rgba(255, 255, 255, 0.42));
+  box-shadow: var(--ui-shadow-3), inset 0 1px 0 var(--ui-highlight-strong);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .ui-surface--overlay,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .modal,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .sheet {
+  background: color-mix(in srgb, var(--ui-surface-4) 98%, rgba(243, 248, 252, 0.82));
+  border-color: color-mix(in srgb, var(--ui-border-strong) 96%, rgba(255, 255, 255, 0.46));
+  box-shadow: var(--ui-shadow-4), inset 0 1px 0 var(--ui-highlight-strong);
+}
+
+html[data-ui='liquid-glass-v2'][data-theme='light'] .ui-filter,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .filter-bar,
+html[data-ui='liquid-glass-v2'][data-theme='light'] .slots-filters-grid--enhanced {
+  background: color-mix(in srgb, var(--ui-surface-2) 98%, rgba(240, 246, 251, 0.66));
+  border-color: color-mix(in srgb, var(--ui-border-subtle) 96%, rgba(255, 255, 255, 0.52));
+  box-shadow: var(--ui-shadow-1), inset 0 1px 0 var(--ui-highlight-soft);
+}

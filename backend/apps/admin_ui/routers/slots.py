@@ -678,6 +678,7 @@ async def slots_propose_candidate(
         slot_id=slot_id,
         candidate_id=payload.candidate_id,
         created_by=f"{principal.type}:{principal.id}",
+        allow_replace_active_assignment=True,
     )
     if not result.ok:
         raise HTTPException(status_code=result.status_code, detail=result.message or result.status)

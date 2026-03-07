@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -87,6 +87,8 @@ interface ScheduleCalendarProps {
   editable?: boolean
   embedded?: boolean
   includeTasks?: boolean
+  isMobile?: boolean
+  viewMode?: 'timeGridDay' | 'timeGridThreeDay' | 'timeGridWeek'
 }
 
 function isTaskEvent(props: CalendarExtendedProps): props is TaskExtendedProps {
@@ -104,6 +106,8 @@ export function ScheduleCalendar({
   editable = true,
   embedded = false,
   includeTasks = false,
+  isMobile = false,
+  viewMode,
 }: ScheduleCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null)
   const queryClient = useQueryClient()
@@ -316,6 +320,15 @@ export function ScheduleCalendar({
     )
   }, [])
 
+  useEffect(() => {
+    if (!viewMode) return
+    const calendarApi = calendarRef.current?.getApi()
+    if (!calendarApi) return
+    if (calendarApi.view.type !== viewMode) {
+      calendarApi.changeView(viewMode)
+    }
+  }, [viewMode])
+
   // Calendar events
   const events = useMemo(() => data?.events || [], [data])
 
@@ -336,17 +349,33 @@ export function ScheduleCalendar({
       <FullCalendar
         ref={calendarRef}
         plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-        initialView="timeGridWeek"
-        headerToolbar={{
-          left: 'prev,next today',
-          center: 'title',
-          right: 'dayGridMonth,timeGridWeek,timeGridDay',
-        }}
+        initialView={viewMode || (isMobile ? 'timeGridDay' : 'timeGridWeek')}
+        headerToolbar={
+          isMobile
+            ? {
+                left: 'prev,next today',
+                center: 'title',
+                right: '',
+              }
+            : {
+                left: 'prev,next today',
+                center: 'title',
+                right: 'dayGridMonth,timeGridWeek,timeGridDay',
+              }
+        }
         buttonText={{
           today: 'Сегодня',
           month: 'Месяц',
           week: 'Неделя',
           day: 'День',
+          timeGridThreeDay: '3 дня',
+        }}
+        views={{
+          timeGridThreeDay: {
+            type: 'timeGrid',
+            duration: { days: 3 },
+            buttonText: '3 дня',
+          },
         }}
         locale="ru"
         firstDay={1}

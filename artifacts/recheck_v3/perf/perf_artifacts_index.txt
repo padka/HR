@@ -1,0 +1,15 @@
+total 88
+drwxr-xr-x@ 14 mikhail  staff   448 Mar  1 14:42 .
+drwxr-xr-x@  8 mikhail  staff   256 Mar  1 14:32 ..
+-rw-r--r--@  1 mikhail  staff  2025 Mar  1 14:42 analyze_step_v3_workers2_manual.json
+-rw-r--r--@  1 mikhail  staff   261 Mar  1 14:41 install_autocannon_v3.log
+-rw-r--r--@  1 mikhail  staff     0 Mar  1 14:42 perf_artifacts_index.txt
+-rw-r--r--@  1 mikhail  staff  2025 Mar  1 14:42 perf_gate_summary_v3_workers2_pass.json
+-rw-r--r--@  1 mikhail  staff  4856 Mar  1 14:41 perf_gate_v3_workers2.log
+-rw-r--r--@  1 mikhail  staff  4856 Mar  1 14:42 perf_gate_v3_workers2_pass.log
+-rw-r--r--@  1 mikhail  staff     2 Mar  1 14:42 perf_gate_v3_workers2_pass.rc
+drwxr-xr-x@  5 mikhail  staff   160 Mar  1 14:41 perf_gate_workers2_run
+drwxr-xr-x@  4 mikhail  staff   128 Mar  1 14:42 read_heavy_short_v3
+-rw-r--r--@  1 mikhail  staff  3886 Mar  1 14:42 read_heavy_short_v3.log
+-rw-r--r--@  1 mikhail  staff  1956 Mar  1 14:42 read_heavy_short_v3_step.json
+-rw-r--r--@  1 mikhail  staff    48 Mar  1 14:40 tools_check_v3.txt

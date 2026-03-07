@@ -26,12 +26,14 @@ This repository contains:
 2. Provide secrets via environment variables (do not commit `.env`).
 3. Configure `DATA_DIR` as a persistent volume.
 4. Run migrations before starting services (use the `migrate` service if deploying with Docker Compose).
-5. Ensure SQLAdmin is protected (admin credentials required).
+5. In production, set `MIGRATIONS_DATABASE_URL` to a dedicated migration role (DDL grants).
+6. Ensure SQLAdmin is protected (admin credentials required).
 
 ## Example production run (docker compose)
 ```bash
 export ENVIRONMENT=production
-export DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/recruitsmart
+export DATABASE_URL=postgresql+asyncpg://app_user:pass@db:5432/recruitsmart
+export MIGRATIONS_DATABASE_URL=postgresql+asyncpg://migrator:pass@db:5432/recruitsmart
 export REDIS_URL=redis://redis_notifications:6379/0
 export NOTIFICATION_BROKER=redis
 export DATA_DIR=/var/lib/recruitsmart_admin
@@ -39,10 +41,15 @@ export ADMIN_USER=admin
 export ADMIN_PASSWORD="strong-password-here"
 export SESSION_SECRET="32+ chars"
 export BOT_CALLBACK_SECRET="32+ chars"
+export WEB_CONCURRENCY=2
 
 docker compose up -d migrate
 docker compose up -d
 ```
+
+## DB role contract (recommended)
+- `migrator`: DDL rights on schema (CREATE/ALTER/DROP)
+- `app_user`: DML-only runtime rights
 
 ## References
 - `docs/LOCAL_DEV.md`

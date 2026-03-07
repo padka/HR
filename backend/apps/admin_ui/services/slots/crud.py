@@ -386,6 +386,7 @@ async def api_slots_payload(
                     if fio:
                         candidate_tg_name_map[int(telegram_user_id)] = str(fio)
     payload: List[Dict[str, object]] = []
+    candidate_row_keys: Dict[int, Optional[str]] = {}
     for sl in slots:
         fallback = assignment_fallback.get(int(sl.id), {})
 
@@ -400,35 +401,64 @@ async def api_slots_payload(
             or (sl.city.tz if getattr(sl, "city", None) else None)
         )
 
+        computed_status = (
+            "PENDING"
+            if (
+                norm_status(sl.status) == "FREE"
+                and fallback.get("status")
+                in {
+                    SlotAssignmentStatus.OFFERED,
+                    SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+                }
+            )
+            else (
+                "BOOKED"
+                if (
+                    norm_status(sl.status) == "FREE"
+                    and fallback.get("status")
+                    in {
+                        SlotAssignmentStatus.CONFIRMED,
+                        SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+                    }
+                )
+                else norm_status(sl.status)
+            )
+        )
+        candidate_tg_id = (
+            getattr(sl, "candidate_tg_id", None)
+            or fallback.get("candidate_tg_id")
+        )
+        candidate_user_id = (
+            candidate_id_map.get(str(sl.candidate_id))
+            if getattr(sl, "candidate_id", None)
+            else None
+        ) or (
+            candidate_tg_map.get(int(sl.candidate_tg_id))
+            if getattr(sl, "candidate_tg_id", None)
+            else None
+        ) or (
+            candidate_id_map.get(str(fallback.get("candidate_id")))
+            if fallback.get("candidate_id")
+            else None
+        ) or (
+            candidate_tg_map.get(int(fallback.get("candidate_tg_id")))
+            if fallback.get("candidate_tg_id") is not None
+            else None
+        )
+        candidate_key: Optional[str] = None
+        if candidate_user_id is not None:
+            candidate_key = f"cid:{int(candidate_user_id)}"
+        elif candidate_tg_id is not None:
+            candidate_key = f"tg:{int(candidate_tg_id)}"
+
+        candidate_row_keys[int(sl.id)] = candidate_key
         payload.append(
             {
                 "id": sl.id,
                 "recruiter_id": sl.recruiter_id,
                 "recruiter_name": sl.recruiter.name if sl.recruiter else None,
                 "start_utc": _ensure_utc(sl.start_utc).isoformat(),
-                "status": (
-                    "PENDING"
-                    if (
-                        norm_status(sl.status) == "FREE"
-                        and fallback.get("status")
-                        in {
-                            SlotAssignmentStatus.OFFERED,
-                            SlotAssignmentStatus.RESCHEDULE_REQUESTED,
-                        }
-                    )
-                    else (
-                        "BOOKED"
-                        if (
-                            norm_status(sl.status) == "FREE"
-                            and fallback.get("status")
-                            in {
-                                SlotAssignmentStatus.CONFIRMED,
-                                SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
-                            }
-                        )
-                        else norm_status(sl.status)
-                    )
-                ),
+                "status": computed_status,
                 "candidate_fio": (
                     getattr(sl, "candidate_fio", None)
                     or fallback.get("candidate_fio")
@@ -453,30 +483,8 @@ async def api_slots_payload(
                         else None
                     )
                 ),
-                "candidate_tg_id": (
-                    getattr(sl, "candidate_tg_id", None)
-                    or fallback.get("candidate_tg_id")
-                ),
-                "candidate_id": (
-                    candidate_id_map.get(str(sl.candidate_id))
-                    if getattr(sl, "candidate_id", None)
-                    else None
-                )
-                or (
-                    candidate_tg_map.get(int(sl.candidate_tg_id))
-                    if getattr(sl, "candidate_tg_id", None)
-                    else None
-                )
-                or (
-                    candidate_id_map.get(str(fallback.get("candidate_id")))
-                    if fallback.get("candidate_id")
-                    else None
-                )
-                or (
-                    candidate_tg_map.get(int(fallback.get("candidate_tg_id")))
-                    if fallback.get("candidate_tg_id") is not None
-                    else None
-                ),
+                "candidate_tg_id": candidate_tg_id,
+                "candidate_id": candidate_user_id,
                 "tz_name": getattr(sl, "tz_name", None)
                 or (sl.city.tz if getattr(sl, "city", None) else None),
                 "local_time": _slot_local_time(sl),
@@ -490,4 +498,27 @@ async def api_slots_payload(
                 "purpose": getattr(sl, "purpose", None) or "interview",
             }
         )
-    return payload
+
+    # Candidate should not appear in interview and intro_day active rows simultaneously.
+    active_intro_keys = {
+        candidate_row_keys.get(int(row.get("id") or 0))
+        for row in payload
+        if (row.get("purpose") or "interview") == "intro_day"
+        and str(row.get("status") or "").upper() in {"PENDING", "BOOKED", "CONFIRMED", "CONFIRMED_BY_CANDIDATE"}
+    }
+    active_intro_keys.discard(None)
+
+    if not active_intro_keys:
+        return payload
+
+    filtered_payload: List[Dict[str, object]] = []
+    for row in payload:
+        row_key = candidate_row_keys.get(int(row.get("id") or 0))
+        if (
+            row_key in active_intro_keys
+            and (row.get("purpose") or "interview") == "interview"
+            and str(row.get("status") or "").upper() in {"PENDING", "BOOKED", "CONFIRMED", "CONFIRMED_BY_CANDIDATE"}
+        ):
+            continue
+        filtered_payload.append(row)
+    return filtered_payload

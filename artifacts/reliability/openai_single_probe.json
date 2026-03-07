@@ -1,0 +1,33 @@
+{
+  "status": 200,
+  "keys": [
+    "id",
+    "object",
+    "created_at",
+    "status",
+    "background",
+    "billing",
+    "completed_at",
+    "error",
+    "frequency_penalty",
+    "incomplete_details",
+    "instructions",
+    "max_output_tokens",
+    "max_tool_calls",
+    "model",
+    "output",
+    "parallel_tool_calls",
+    "presence_penalty",
+    "previous_response_id",
+    "prompt_cache_key",
+    "prompt_cache_retention"
+  ],
+  "output_text": null,
+  "output": [
+    {
+      "id": "rs_04e95d2e599fb7210069a4086b689c8196b45e2c3b60f64e0a",
+      "type": "reasoning",
+      "summary": []
+    }
+  ]
+}

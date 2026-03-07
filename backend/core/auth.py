@@ -3,11 +3,11 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from jose import jwt
+import jwt
 from passlib.context import CryptContext
 
-from backend.core.settings import get_settings
 from backend.core.passwords import verify_password as verify_legacy_pbkdf2
+from backend.core.settings import get_settings
 
 # Setup Passlib context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

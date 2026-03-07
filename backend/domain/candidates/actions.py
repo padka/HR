@@ -302,6 +302,15 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
     CandidateStatus.NOT_HIRED: [],
 }
 
+UNIVERSAL_TEST2_ACTION = CandidateAction(
+    key="resend_test2",
+    label="Отправить Тест 2",
+    url_pattern="/candidates/{id}/resend-test2",
+    icon="📤",
+    variant="secondary",
+    method="GET",
+)
+
 
 def get_candidate_actions(
     status: Optional[CandidateStatus],
@@ -369,6 +378,15 @@ def get_candidate_actions(
             continue
 
         filtered_actions.append(action)
+
+    # Keep Test 2 dispatch available on every candidate stage.
+    has_test2_action = any(
+        ("test2" in (action.key or "").lower())
+        or (action.target_status == CandidateStatus.TEST2_SENT.value)
+        for action in filtered_actions
+    )
+    if not has_test2_action:
+        filtered_actions.append(UNIVERSAL_TEST2_ACTION)
 
     return filtered_actions
 

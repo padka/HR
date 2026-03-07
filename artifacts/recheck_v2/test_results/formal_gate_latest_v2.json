@@ -1,0 +1,164 @@
+{
+  "generated_at": "2026-03-01T09:56:38.327694+00:00",
+  "overall_status": "manual_pending",
+  "sprint_gate_status": {
+    "sprint1": "manual_pending",
+    "sprint2": "manual_pending"
+  },
+  "checks": [
+    {
+      "check_id": "backend_security_regression",
+      "title": "Backend security regression tests",
+      "command": "/Users/mikhail/Projects/recruitsmart_admin/.venv/bin/pytest tests/test_admin_surface_hardening.py tests/test_calendar_hub_scope.py tests/test_perf_metrics_endpoint.py tests/test_admin_auth_no_basic_challenge.py tests/test_rate_limiting.py -q",
+      "cwd": "/Users/mikhail/Projects/recruitsmart_admin",
+      "status": "pass",
+      "return_code": 0,
+      "duration_sec": 12.59034574998077,
+      "log_file": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/logs/backend_security_regression.log",
+      "summary": "..............................                                           [100%] | =============================== warnings summary =============================== | .venv/lib/python3.13/site-packages/pydantic/_internal/_fields.py:161 |   /Users/mikhail/Projects/recruitsmart_admin/.venv/lib/python3.13/site-packages/pydantic/_internal/_fields.py:161: UserWarning: Field \"model_custom_emoji_id\" has conflict with protected namespace \"model_\". |   You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`. |     warnings.warn( | -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html | 30 passed, 1 warning in 11.32s"
+    },
+    {
+      "check_id": "backend_crud_regression",
+      "title": "Backend CRUD regression tests",
+      "command": "/Users/mikhail/Projects/recruitsmart_admin/.venv/bin/pytest tests/test_admin_slots_api.py tests/test_admin_candidates_service.py -q",
+      "cwd": "/Users/mikhail/Projects/recruitsmart_admin",
+      "status": "pass",
+      "return_code": 0,
+      "duration_sec": 16.150597792002372,
+      "log_file": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/logs/backend_crud_regression.log",
+      "summary": "......................................                                   [100%] | =============================== warnings summary =============================== | .venv/lib/python3.13/site-packages/pydantic/_internal/_fields.py:161 |   /Users/mikhail/Projects/recruitsmart_admin/.venv/lib/python3.13/site-packages/pydantic/_internal/_fields.py:161: UserWarning: Field \"model_custom_emoji_id\" has conflict with protected namespace \"model_\". |   You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`. |     warnings.warn( | -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html | 38 passed, 1 warning in 14.82s"
+    },
+    {
+      "check_id": "frontend_lint",
+      "title": "Frontend lint",
+      "command": "npm run lint",
+      "cwd": "/Users/mikhail/Projects/recruitsmart_admin/frontend/app",
+      "status": "pass",
+      "return_code": 0,
+      "duration_sec": 1.7159770419821143,
+      "log_file": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/logs/frontend_lint.log",
+      "summary": "> recruitsmart-admin-spa@0.0.1 lint | > eslint --ext .ts,.tsx src"
+    },
+    {
+      "check_id": "frontend_typecheck",
+      "title": "Frontend typecheck",
+      "command": "npm run typecheck",
+      "cwd": "/Users/mikhail/Projects/recruitsmart_admin/frontend/app",
+      "status": "pass",
+      "return_code": 0,
+      "duration_sec": 3.763574459007941,
+      "log_file": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/logs/frontend_typecheck.log",
+      "summary": "> recruitsmart-admin-spa@0.0.1 typecheck | > tsc --noEmit"
+    },
+    {
+      "check_id": "frontend_unit",
+      "title": "Frontend unit tests",
+      "command": "npm run test",
+      "cwd": "/Users/mikhail/Projects/recruitsmart_admin/frontend/app",
+      "status": "pass",
+      "return_code": 0,
+      "duration_sec": 1.4706944590434432,
+      "log_file": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/logs/frontend_unit.log",
+      "summary": " ✓ src/app/routes/app/slots.utils.test.ts (3 tests) 22ms |  ✓ src/app/components/RoleGuard.test.tsx (4 tests) 23ms |  ✓ src/app/routes/__root.ui-mode.test.tsx (3 tests) 31ms |  ✓ src/app/routes/app/ui-cosmetics.test.tsx (5 tests) 93ms |  Test Files  7 passed (7) |       Tests  22 passed (22) |    Start at  12:56:03 |    Duration  1.10s (transform 661ms, setup 1.18s, import 780ms, tests 201ms, environment 3.52s)"
+    },
+    {
+      "check_id": "frontend_build",
+      "title": "Frontend build (fresh dist assets for e2e)",
+      "command": "npm run build",
+      "cwd": "/Users/mikhail/Projects/recruitsmart_admin/frontend/app",
+      "status": "pass",
+      "return_code": 0,
+      "duration_sec": 1.5390664999722503,
+      "log_file": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/logs/frontend_build.log",
+      "summary": "../dist/assets/slots-create-BrSPpJkG.js           105.96 kB │ gzip:  31.20 kB | ../dist/assets/calendar-B4AWwdAB.js               107.85 kB │ gzip:  28.57 kB | ../dist/assets/react-vendor-DBWWZ-VC.js           574.44 kB │ gzip: 183.62 kB | ✓ built in 1.34s | (!) Some chunks are larger than 500 kB after minification. Consider: | - Using dynamic import() to code-split the application | - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks | - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit."
+    },
+    {
+      "check_id": "frontend_e2e_gate",
+      "title": "Frontend smoke+a11y+focus e2e",
+      "command": "npx playwright test tests/e2e/smoke.spec.ts tests/e2e/a11y.spec.ts tests/e2e/focus.cities.spec.ts tests/e2e/focus.slots.spec.ts tests/e2e/regression-flow.spec.ts",
+      "cwd": "/Users/mikhail/Projects/recruitsmart_admin/frontend/app",
+      "status": "pass",
+      "return_code": 0,
+      "duration_sec": 29.600842290965375,
+      "log_file": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/logs/frontend_e2e_gate.log",
+      "summary": "\u001b[2m[WebServer] \u001b[22m2026-03-01 12:56:09,930 [WARNING] backend.apps.admin_ui.app: Starting in degraded mode: redis_unavailable | \u001b[2m[WebServer] \u001b[22m2026-03-01 12:56:09,930 [INFO] backend.apps.admin_ui.app: Application started with 243 routes | \u001b[2m[WebServer] \u001b[22mINFO:     Application startup complete. | \u001b[2m[WebServer] \u001b[22mINFO:     Uvicorn running on http://127.0.0.1:18000 (Press CTRL+C to quit) | (node:89997) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set. | (Use `node --trace-warnings ...` to show where the warning was created) | (node:89997) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set. | (Use `node --trace-warnings ...` to show where the warning was created)"
+    }
+  ],
+  "route_inventory": {
+    "status": "pass",
+    "findings": [],
+    "sensitive_routes_total": 212,
+    "inventory_markdown": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/route_inventory.md",
+    "legacy_default_absent": true,
+    "legacy_enabled_count": 2,
+    "ws_calendar_exists": true,
+    "pytest_binary_exists": true
+  },
+  "criteria": [
+    {
+      "id": "S1-1",
+      "sprint": "Sprint 1",
+      "criterion": "Smoke/a11y/focus e2e green",
+      "status": "pass",
+      "evidence": "frontend_e2e_gate log"
+    },
+    {
+      "id": "S1-2",
+      "sprint": "Sprint 1",
+      "criterion": "Core CRUD UI/API flows without blocking regressions",
+      "status": "pass",
+      "evidence": "backend_crud_regression + frontend checks"
+    },
+    {
+      "id": "S1-3",
+      "sprint": "Sprint 1",
+      "criterion": "No P1 UX defects in slots/cities/candidates",
+      "status": "manual_pending",
+      "evidence": "manual QA sign-off"
+    },
+    {
+      "id": "S1-4",
+      "sprint": "Sprint 1",
+      "criterion": "Live demo gate: city -> slot -> candidate",
+      "status": "manual_pending",
+      "evidence": "demo protocol sign-off"
+    },
+    {
+      "id": "S2-1",
+      "sprint": "Sprint 2",
+      "criterion": "Unauthorized access to closed endpoints returns 401/403",
+      "status": "pass",
+      "evidence": "backend_security_regression"
+    },
+    {
+      "id": "S2-2",
+      "sprint": "Sprint 2",
+      "criterion": "Security regression covers API and websocket",
+      "status": "pass",
+      "evidence": "tests/test_admin_surface_hardening.py"
+    },
+    {
+      "id": "S2-3",
+      "sprint": "Sprint 2",
+      "criterion": "No critical open routes without auth in admin surface",
+      "status": "pass",
+      "evidence": "route_inventory.md"
+    },
+    {
+      "id": "S2-4",
+      "sprint": "Sprint 2",
+      "criterion": "Internal security review sign-off",
+      "status": "manual_pending",
+      "evidence": "security review record"
+    }
+  ],
+  "manual_signoff": {
+    "sprint1_ux": "manual_pending",
+    "sprint1_demo": "manual_pending",
+    "sprint2_security_review": "manual_pending"
+  },
+  "artifacts": {
+    "json": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/latest.json",
+    "markdown": "/Users/mikhail/Projects/recruitsmart_admin/.local/gates/sprint1_2/latest.md"
+  }
+}

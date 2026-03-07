@@ -103,8 +103,8 @@ async def test_intro_day_slot_can_be_reserved_with_matching_purpose():
 
 
 @pytest.mark.asyncio
-async def test_intro_day_booking_does_not_block_interview_booking():
-    """Candidate can hold intro_day + interview for same recruiter (different purpose)."""
+async def test_intro_day_booking_blocks_interview_booking_for_same_candidate():
+    """Candidate cannot hold intro_day + interview in parallel."""
     async with async_session() as session:
         recruiter = Recruiter(name="Intro Rec4", tz="Europe/Moscow", active=True)
         city = City(name="Intro City4", tz="Europe/Moscow", active=True)
@@ -159,4 +159,4 @@ async def test_intro_day_booking_does_not_block_interview_booking():
         expected_city_id=city.id,
         purpose="interview",
     )
-    assert interview_reservation.status == "reserved"
+    assert interview_reservation.status == "duplicate_candidate"

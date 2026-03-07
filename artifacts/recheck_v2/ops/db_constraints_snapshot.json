@@ -1,0 +1,100 @@
+{
+  "constraints": [
+    {
+      "conname": "fk_notification_logs_booking_id",
+      "contype": "f",
+      "table_name": "notification_logs",
+      "definition": "FOREIGN KEY (booking_id) REFERENCES slots(id) ON DELETE CASCADE"
+    },
+    {
+      "conname": "notification_logs_pkey",
+      "contype": "p",
+      "table_name": "notification_logs",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "conname": "fk_outbox_booking_id",
+      "contype": "f",
+      "table_name": "outbox_notifications",
+      "definition": "FOREIGN KEY (booking_id) REFERENCES slots(id) ON DELETE CASCADE"
+    },
+    {
+      "conname": "outbox_notifications_pkey",
+      "contype": "p",
+      "table_name": "outbox_notifications",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "conname": "slot_assignments_candidate_id_fkey",
+      "contype": "f",
+      "table_name": "slot_assignments",
+      "definition": "FOREIGN KEY (candidate_id) REFERENCES users(candidate_id) ON DELETE SET NULL"
+    },
+    {
+      "conname": "slot_assignments_recruiter_id_fkey",
+      "contype": "f",
+      "table_name": "slot_assignments",
+      "definition": "FOREIGN KEY (recruiter_id) REFERENCES recruiters(id) ON DELETE CASCADE"
+    },
+    {
+      "conname": "slot_assignments_slot_id_fkey",
+      "contype": "f",
+      "table_name": "slot_assignments",
+      "definition": "FOREIGN KEY (slot_id) REFERENCES slots(id) ON DELETE CASCADE"
+    },
+    {
+      "conname": "slot_assignments_pkey",
+      "contype": "p",
+      "table_name": "slot_assignments",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "conname": "fk_slots_candidate_city_id",
+      "contype": "f",
+      "table_name": "slots",
+      "definition": "FOREIGN KEY (candidate_city_id) REFERENCES cities(id) ON DELETE SET NULL"
+    },
+    {
+      "conname": "fk_slots_city_id",
+      "contype": "f",
+      "table_name": "slots",
+      "definition": "FOREIGN KEY (city_id) REFERENCES cities(id) ON DELETE SET NULL"
+    },
+    {
+      "conname": "fk_slots_recruiter_id",
+      "contype": "f",
+      "table_name": "slots",
+      "definition": "FOREIGN KEY (recruiter_id) REFERENCES recruiters(id) ON DELETE CASCADE"
+    },
+    {
+      "conname": "slots_pkey",
+      "contype": "p",
+      "table_name": "slots",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "conname": "slots_no_recruiter_time_overlap_excl",
+      "contype": "x",
+      "table_name": "slots",
+      "definition": "EXCLUDE USING gist (recruiter_id WITH =, purpose WITH =, tstzrange(start_utc, slot_end_time(start_utc, duration_min), '[)'::text) WITH &&) WHERE ((lower((COALESCE(purpose, 'interview'::character varying))::text) <> 'intro_day'::text))"
+    },
+    {
+      "conname": "fk_users_assigned_recruiter",
+      "contype": "f",
+      "table_name": "users",
+      "definition": "FOREIGN KEY (assigned_recruiter_id) REFERENCES recruiter_users(id) ON DELETE SET NULL"
+    },
+    {
+      "conname": "users_pkey",
+      "contype": "p",
+      "table_name": "users",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "conname": "users_telegram_id_key",
+      "contype": "u",
+      "table_name": "users",
+      "definition": "UNIQUE (telegram_id)"
+    }
+  ]
+}

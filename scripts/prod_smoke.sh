@@ -87,6 +87,21 @@ else
     fi
 fi
 
+# Check MIGRATIONS_DATABASE_URL contract
+if [[ "${ENVIRONMENT:-}" == "production" ]]; then
+    if [[ -z "${MIGRATIONS_DATABASE_URL:-}" ]]; then
+        fail "MIGRATIONS_DATABASE_URL must be set in production (dedicated migration role)"
+    else
+        pass "MIGRATIONS_DATABASE_URL is set"
+    fi
+else
+    if [[ -n "${MIGRATIONS_DATABASE_URL:-}" ]]; then
+        pass "MIGRATIONS_DATABASE_URL is set"
+    else
+        warn "MIGRATIONS_DATABASE_URL is not set (non-production fallback to DATABASE_URL)"
+    fi
+fi
+
 # Check REDIS_URL
 if [[ -z "${REDIS_URL:-}" ]]; then
     fail "REDIS_URL is not set"

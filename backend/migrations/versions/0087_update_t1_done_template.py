@@ -1,0 +1,76 @@
+"""Update t1_done template text after Test 1 completion."""
+
+from __future__ import annotations
+
+import sqlalchemy as sa
+from sqlalchemy.engine import Connection
+
+from backend.migrations.utils import table_exists
+
+revision = "0087_update_t1_done_template"
+down_revision = "0086_update_interview_notification_templates"
+branch_labels = None
+depends_on = None
+
+_T1_DONE_TEXT = (
+    "Благодарим, что уделили нам время, мы уже просматриваем ваше резюме и ответы, "
+    "совсем скоро мы отправил вам свое решение"
+)
+
+
+def _upsert_active_template(conn: Connection, key: str, body: str) -> None:
+    updated = conn.execute(
+        sa.text(
+            """
+            UPDATE message_templates
+               SET body_md = :body,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE key = :key
+               AND locale = 'ru'
+               AND channel = 'tg'
+               AND is_active = TRUE
+            """
+        ),
+        {"key": key, "body": body},
+    )
+    if (updated.rowcount or 0) > 0:
+        return
+
+    next_version = int(
+        conn.execute(
+            sa.text(
+                """
+                SELECT COALESCE(MAX(version), 0)
+                  FROM message_templates
+                 WHERE key = :key
+                   AND locale = 'ru'
+                   AND channel = 'tg'
+                """
+            ),
+            {"key": key},
+        ).scalar()
+        or 0
+    ) + 1
+
+    conn.execute(
+        sa.text(
+            """
+            INSERT INTO message_templates
+                (key, locale, channel, body_md, version, is_active, created_at, updated_at)
+            VALUES
+                (:key, 'ru', 'tg', :body, :version, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        ),
+        {"key": key, "body": body, "version": next_version},
+    )
+
+
+def upgrade(conn: Connection) -> None:
+    if not table_exists(conn, "message_templates"):
+        return
+    _upsert_active_template(conn, "t1_done", _T1_DONE_TEXT)
+
+
+def downgrade(conn: Connection) -> None:  # pragma: no cover
+    # Irreversible content migration: keep current template version.
+    return None

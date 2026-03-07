@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from backend.apps.admin_ui.app import create_app
+from backend.apps.admin_ui.security import ADMIN_PRINCIPAL_ID, SESSION_KEY
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 
 class _DummyIntegration:
@@ -82,3 +86,32 @@ def test_auth_token_bruteforce_lock(secure_app):
             headers={"content-type": "application/x-www-form-urlencoded"},
         )
         assert still_blocked.status_code == 429
+
+
+def test_legacy_admin_session_is_normalized(monkeypatch):
+    monkeypatch.setenv("ADMIN_USER", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123456789abcd")
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    try:
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/api/profile",
+                "headers": [],
+                "client": ("127.0.0.1", 12345),
+                "server": ("localhost", 80),
+                "session": {SESSION_KEY: {"type": "admin", "id": -1}},
+            }
+        )
+        import backend.apps.admin_ui.security as security_module
+
+        principal = asyncio.run(security_module._resolve_current_principal(request))
+        assert principal.type == "admin"
+        assert principal.id == ADMIN_PRINCIPAL_ID
+    finally:
+        settings_module.get_settings.cache_clear()

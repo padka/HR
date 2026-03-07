@@ -1,0 +1,6 @@
+total 24
+drwxr-xr-x@  5 mikhail  staff  160 Feb 26 11:14 .
+drwxr-xr-x@ 11 mikhail  staff  352 Feb 26 11:14 ..
+-rw-r--r--@  1 mikhail  staff  951 Feb 26 11:14 mixed.profile
+-rw-r--r--@  1 mikhail  staff  871 Feb 26 11:14 read_heavy.profile
+-rw-r--r--@  1 mikhail  staff  660 Feb 26 11:14 write_heavy.profile

@@ -37,6 +37,19 @@ export default defineConfig({
             if (id.includes('react-dom') || id.includes('/react/')) {
               return 'react-vendor'
             }
+            if (id.includes('@fullcalendar')) {
+              return 'calendar'
+            }
+            if (id.includes('@xyflow/react')) {
+              return 'graph-editor'
+            }
+            if (
+              id.includes('react-hook-form')
+              || id.includes('@hookform/resolvers')
+              || id.includes('/zod/')
+            ) {
+              return 'forms'
+            }
             if (id.includes('lucide-react')) {
               return 'icons'
             }

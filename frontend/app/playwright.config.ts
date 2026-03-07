@@ -9,7 +9,7 @@ const baseURL = `http://${host}:${port}`;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '../..');
-const pythonBin = path.join(repoRoot, '.venv', 'bin', 'python');
+const pythonBin = process.env.PYTHON_BIN || path.join(repoRoot, '.venv', 'bin', 'python');
 const e2eDataDir = path.join(repoRoot, '.tmp', 'e2e-data');
 const sqlitePath = path.join(
   os.tmpdir(),

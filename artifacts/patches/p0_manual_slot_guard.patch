@@ -1,0 +1,13 @@
+diff --git a/backend/apps/admin_ui/services/slots.py b/backend/apps/admin_ui/services/slots.py
+--- a/backend/apps/admin_ui/services/slots.py
++++ b/backend/apps/admin_ui/services/slots.py
+@@ -883,6 +883,9 @@ async def schedule_manual_candidate_slot(
+             candidate_tg_id=candidate_tg_id,
+             candidate_tz=slot_tz,
+             created_by=admin_username,
++            # Manual initial scheduling must not silently replace an active assignment.
++            # Explicit reschedule flow handles replacements via propose_alternative().
++            allow_replace_active_assignment=False,
+         )
+     except Exception as exc:
+         # Slot was created but we failed to create the assignment/outbox.

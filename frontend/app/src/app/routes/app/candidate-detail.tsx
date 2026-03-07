@@ -2,9 +2,30 @@ import { Link, useParams } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { apiFetch } from '@/api/client'
+import {
+  applyCandidateAction,
+  fetchCandidateAiCoach,
+  fetchCandidateAiSummary,
+  fetchCandidateChat,
+  fetchCandidateChatDrafts,
+  fetchCandidateCoachDrafts,
+  fetchCandidateDetail,
+  fetchCandidateHHSummary,
+  fetchCandidateInterviewScript,
+  fetchCities,
+  fetchTemplateByKey,
+  refreshCandidateAiCoach,
+  refreshCandidateAiSummary,
+  refreshCandidateInterviewScript,
+  scheduleCandidateInterview,
+  scheduleCandidateIntroDay,
+  sendCandidateChatMessage,
+  submitCandidateInterviewScriptFeedback,
+  type CandidateHHSummary,
+} from '@/api/services/candidates'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { useIsMobile } from '@/app/hooks/useIsMobile'
 import { browserTimeZone, buildSlotTimePreview } from '@/app/lib/timezonePreview'
 
 type City = {
@@ -96,6 +117,13 @@ type CandidateDetail = {
   telegram_id?: number | null
   telegram_username?: string | null
   hh_profile_url?: string | null
+  hh_resume_id?: string | null
+  hh_negotiation_id?: string | null
+  hh_vacancy_id?: string | null
+  hh_sync_status?: string | null
+  hh_sync_error?: string | null
+  messenger_platform?: string | null
+  max_user_id?: string | null
   phone?: string | null
   is_active?: boolean
   stage?: string | null
@@ -126,7 +154,7 @@ const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
   test1_completed: { label: 'Тест 1 пройден', tone: 'success' },
   waiting_slot: { label: 'Ожидает слот', tone: 'warning' },
   stalled_waiting_slot: { label: 'Застрял (ожидание слота)', tone: 'warning' },
-  slot_pending: { label: 'Ожидает подтверждения времени', tone: 'info' },
+  slot_pending: { label: 'На согласовании', tone: 'info' },
   interview_scheduled: { label: 'Собеседование назначено', tone: 'info' },
   interview_confirmed: { label: 'Собеседование подтверждено', tone: 'info' },
   interview_declined: { label: 'Отказ на собеседовании', tone: 'danger' },
@@ -175,6 +203,17 @@ function formatDateTime(value?: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function getHhSyncBadge(status?: string | null) {
+  if (status === 'synced') return { label: 'HH синхр.', tone: 'success' }
+  if (status === 'failed_sync' || status === 'error') return { label: 'HH ошибка', tone: 'danger' }
+  if (status === 'pending_sync' || status === 'pending') return { label: 'HH ожидание', tone: 'warning' }
+  if (status === 'conflicted') return { label: 'HH конфликт', tone: 'warning' }
+  if (status === 'stale') return { label: 'HH устарело', tone: 'warning' }
+  if (status === 'skipped') return { label: 'HH не найден', tone: 'muted' }
+  if (!status) return null
+  return { label: `HH: ${status}`, tone: 'muted' }
 }
 
 function formatSecondsToMinutes(value?: number | null): string {
@@ -288,15 +327,6 @@ type AISummaryResponse = {
 type AIDraftItem = {
   text: string
   reason: string
-}
-
-type AIDraftsResponse = {
-  ok: boolean
-  cached: boolean
-  input_hash: string
-  analysis?: string | null
-  drafts: AIDraftItem[]
-  used_context?: Record<string, any>
 }
 
 type AICoach = {
@@ -420,7 +450,7 @@ function SlotStatusBadge({ status }: { status?: string | null }) {
   const map: Record<string, { label: string; cls: string }> = {
     FREE: { label: 'Свободен', cls: 'cd-slot-badge--free' },
     PENDING: { label: 'Ожидание', cls: 'cd-slot-badge--pending' },
-    BOOKED: { label: 'Забронирован', cls: 'cd-slot-badge--booked' },
+    BOOKED: { label: 'Согласован слот', cls: 'cd-slot-badge--booked' },
     CONFIRMED: { label: 'Подтверждён', cls: 'cd-slot-badge--confirmed' },
     CONFIRMED_BY_CANDIDATE: { label: 'Подтверждён кандидатом', cls: 'cd-slot-badge--confirmed' },
     CANCELED: { label: 'Отменён', cls: 'cd-slot-badge--canceled' },
@@ -505,14 +535,19 @@ function ReportPreviewModal({ title, url, onClose }: ReportPreviewModalProps) {
 
   return (
     <ModalPortal>
-      <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+      <div
+        className="modal-overlay"
+        onClick={(e) => e.target === e.currentTarget && onClose()}
+        role="dialog"
+        aria-modal="true"
+      >
         <div className="glass glass--elevated modal">
           <div className="modal__header">
             <div>
               <h2 className="modal__title">Отчёт · {title}</h2>
               <p className="modal__subtitle">{isPdf ? 'PDF-документ' : 'Текстовый отчёт'}</p>
             </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div className="report-preview__actions">
               <a href={url} className="ui-btn ui-btn--ghost" target="_blank" rel="noopener">
                 Скачать
               </a>
@@ -523,9 +558,7 @@ function ReportPreviewModal({ title, url, onClose }: ReportPreviewModalProps) {
           <div className="modal__body">
             {status === 'loading' && <p className="subtitle">Загрузка отчёта...</p>}
             {status === 'error' && (
-              <div className="glass panel--tight" style={{ borderColor: 'rgba(240, 115, 115, 0.3)' }}>
-                <p style={{ color: '#f07373', margin: 0 }}>{error}</p>
-              </div>
+              <div className="ui-alert ui-alert--error">{error}</div>
             )}
             {status === 'ready' && (
               <div className="report-preview__frame">
@@ -653,7 +686,7 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
     queryKey: ['cities'],
 
-    queryFn: () => apiFetch('/cities'),
+    queryFn: fetchCities,
 
   })
 
@@ -696,22 +729,11 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
     mutationFn: async () => {
 
-      return apiFetch(`/candidates/${candidateId}/schedule-slot`, {
-
-        method: 'POST',
-
-        body: JSON.stringify({
-
-          city_id: resolvedCityId,
-
-          date: form.date,
-
-          time: form.time,
-
-          custom_message: form.custom_message || null,
-
-        }),
-
+      return scheduleCandidateInterview(candidateId, {
+        city_id: resolvedCityId,
+        date: form.date,
+        time: form.time,
+        custom_message: form.custom_message || null,
       })
 
     },
@@ -766,21 +788,13 @@ function ScheduleSlotModal({ candidateId, candidateFio, candidateCity, onClose, 
 
 
 
-          {error && (
-
-            <div className="glass panel--tight" style={{ borderColor: 'rgba(240, 115, 115, 0.3)' }}>
-
-              <p style={{ color: '#f07373', margin: 0 }}>{error}</p>
-
-            </div>
-
-          )}
+          {error && <div className="ui-alert ui-alert--error">{error}</div>}
 
 
 
           <div className="modal__body">
 
-            <p className="text-muted text-sm" style={{ marginTop: 0 }}>
+            <p className="text-muted text-sm subtitle--mt-0">
               Кандидату придёт предложение времени. После подтверждения отправится приглашение на собеседование.
             </p>
 
@@ -930,7 +944,7 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
   const recruiterTz = browserTimeZone()
   const citiesQuery = useQuery<City[]>({
     queryKey: ['cities'],
-    queryFn: () => apiFetch('/cities'),
+    queryFn: fetchCities,
   })
   const introCityTz = useMemo(() => {
     const cities = citiesQuery.data || []
@@ -964,11 +978,12 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
       setTemplate(introDayTemplate)
       setForm(prev => ({ ...prev, customMessage: generateMessage(introDayTemplate, prev.date, prev.time) }))
     } else {
-      apiFetch('/templates?key=intro_day_invitation')
-        .then((data: any) => {
-          if (data && data.text) {
-            setTemplate(data.text)
-            setForm(prev => ({ ...prev, customMessage: generateMessage(data.text, prev.date, prev.time) }))
+      fetchTemplateByKey('intro_day_invitation')
+        .then((data) => {
+          const text = Array.isArray(data) ? data[0]?.text : data?.text
+          if (text) {
+            setTemplate(text)
+            setForm(prev => ({ ...prev, customMessage: generateMessage(text, prev.date, prev.time) }))
           }
         })
         .catch(() => {
@@ -986,13 +1001,10 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
 
   const mutation = useMutation({
     mutationFn: async () => {
-      return apiFetch(`/candidates/${candidateId}/schedule-intro-day`, {
-        method: 'POST',
-        body: JSON.stringify({
-          date: form.date,
-          time: form.time,
-          custom_message: form.customMessage,
-        }),
+      return scheduleCandidateIntroDay(candidateId, {
+        date: form.date,
+        time: form.time,
+        custom_message: form.customMessage,
       })
     },
     onSuccess: () => {
@@ -1025,11 +1037,7 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
             <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
           </div>
 
-          {error && (
-            <div className="glass panel--tight" style={{ borderColor: 'rgba(240, 115, 115, 0.3)' }}>
-              <p style={{ color: '#f07373', margin: 0 }}>{error}</p>
-            </div>
-          )}
+          {error && <div className="ui-alert ui-alert--error">{error}</div>}
 
           <div className="modal__body">
             <div className="form-row">
@@ -1066,19 +1074,18 @@ function ScheduleIntroDayModal({ candidateId, candidateFio, candidateCity, intro
               </div>
             )}
             
-            <label className="form-group" style={{ marginTop: 12 }}>
+            <label className="form-group form-group--mt">
               <span className="form-group__label">Сообщение кандидату</span>
               <textarea
                 rows={6}
                 value={form.customMessage}
                 onChange={(e) => setForm({ ...form, customMessage: e.target.value })}
                 placeholder="Текст приглашения..."
-                className="ui-input"
-                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)', color: 'inherit' }}
+                className="ui-input ui-input--multiline"
               />
             </label>
 
-            <p className="subtitle" style={{ marginTop: 12 }}>
+            <p className="subtitle subtitle--mt-sm">
               Адрес и контакт руководителя будут взяты из шаблона города.
             </p>
           </div>
@@ -1115,10 +1122,7 @@ function RejectModal({ candidateId, onClose, onSuccess, title, actionKey }: Reje
 
   const mutation = useMutation({
     mutationFn: async () => {
-      return apiFetch(`/candidates/${candidateId}/actions/${actionKey}`, {
-        method: 'POST',
-        body: JSON.stringify({ reason }),
-      })
+      return applyCandidateAction(candidateId, actionKey, { reason })
     },
     onSuccess: () => {
       onSuccess()
@@ -1138,15 +1142,14 @@ function RejectModal({ candidateId, onClose, onSuccess, title, actionKey }: Reje
             <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
           </div>
           <div className="modal__body">
-            {error && <p style={{ color: '#f07373', marginBottom: 12 }}>{error}</p>}
+            {error && <p className="subtitle subtitle--danger">{error}</p>}
             <textarea
               rows={4}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="Причина отказа..."
-              className="ui-input"
+              className="ui-input ui-input--multiline"
               autoFocus
-              style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)', color: 'inherit' }}
             />
           </div>
           <div className="modal__footer">
@@ -1189,13 +1192,12 @@ function InterviewScriptModal({ candidateId, onClose }: InterviewScriptModalProp
 
   const scriptQuery = useQuery<InterviewScriptResponse>({
     queryKey: ['ai-interview-script', candidateId],
-    queryFn: () => apiFetch(`/ai/candidates/${candidateId}/interview-script`),
+    queryFn: () => fetchCandidateInterviewScript(candidateId),
     retry: false,
   })
 
   const refreshMutation = useMutation({
-    mutationFn: async () =>
-      apiFetch<InterviewScriptResponse>(`/ai/candidates/${candidateId}/interview-script/refresh`, { method: 'POST' }),
+    mutationFn: () => refreshCandidateInterviewScript(candidateId),
     onSuccess: (data) => {
       queryClient.setQueryData(['ai-interview-script', candidateId], data)
       setScriptEditor(JSON.stringify(data.script, null, 2))
@@ -1203,14 +1205,8 @@ function InterviewScriptModal({ candidateId, onClose }: InterviewScriptModalProp
   })
 
   const feedbackMutation = useMutation({
-    mutationFn: async (payload: InterviewScriptFeedbackPayload) =>
-      apiFetch<{ ok: boolean; created: boolean; feedback_id: number }>(
-        `/ai/candidates/${candidateId}/interview-script/feedback`,
-        {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        }
-      ),
+    mutationFn: (payload: InterviewScriptFeedbackPayload) =>
+      submitCandidateInterviewScriptFeedback(candidateId, payload),
     onSuccess: () => {
       setFeedbackSaved(true)
     },
@@ -1262,7 +1258,13 @@ function InterviewScriptModal({ candidateId, onClose }: InterviewScriptModalProp
 
   return (
     <ModalPortal>
-      <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+      <div
+        className="modal-overlay"
+        onClick={(e) => e.target === e.currentTarget && onClose()}
+        role="dialog"
+        aria-modal="true"
+        data-testid="interview-script-modal"
+      >
         <div className="glass glass--elevated modal cd-interview-script-modal" onClick={(e) => e.stopPropagation()}>
           <div className="modal__header">
             <div>
@@ -1334,20 +1336,24 @@ function InterviewScriptModal({ candidateId, onClose }: InterviewScriptModalProp
                 </section>
 
                 <section className="cd-interview-script__section">
-                  <h3>Риски</h3>
-                  <div className="cd-interview-script__risk-grid">
-                    {script.risk_flags.map((risk) => (
-                      <div key={risk.code} className={`cd-ai__risk cd-ai__risk--${risk.severity}`}>
-                        <div className="cd-ai__risk-title">
-                          <span>{risk.code}</span>
-                          <span className="cd-chip cd-chip--small">{risk.severity}</span>
-                        </div>
-                        <div className="cd-ai__risk-text">{risk.reason}</div>
-                        <div className="cd-ai__point-text"><strong>Вопрос:</strong> {risk.question}</div>
-                        <div className="cd-ai__point-text"><strong>Фраза:</strong> {risk.recommended_phrase}</div>
+                  <details className="ui-disclosure" open>
+                    <summary className="ui-disclosure__trigger" data-testid="cd-ai-section-toggle-risks">Риски</summary>
+                    <div className="ui-disclosure__content">
+                      <div className="cd-interview-script__risk-grid">
+                        {script.risk_flags.map((risk) => (
+                          <div key={risk.code} className={`cd-ai__risk cd-ai__risk--${risk.severity}`}>
+                            <div className="cd-ai__risk-title">
+                              <span>{risk.code}</span>
+                              <span className="cd-chip cd-chip--small">{risk.severity}</span>
+                            </div>
+                            <div className="cd-ai__risk-text">{risk.reason}</div>
+                            <div className="cd-ai__point-text"><strong>Вопрос:</strong> {risk.question}</div>
+                            <div className="cd-ai__point-text"><strong>Фраза:</strong> {risk.recommended_phrase}</div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  </details>
                 </section>
 
                 <section className="cd-interview-script__section">
@@ -1392,29 +1398,37 @@ function InterviewScriptModal({ candidateId, onClose }: InterviewScriptModalProp
                 </section>
 
                 <section className="cd-interview-script__section">
-                  <h3>Возражения</h3>
-                  <div className="cd-interview-script__objections">
-                    {script.objections.map((obj, idx) => (
-                      <div key={`obj-${idx}`} className="cd-ai__point">
-                        <div className="cd-ai__point-title">{obj.topic}</div>
-                        <div className="cd-ai__point-text"><strong>Кандидат:</strong> {obj.candidate_says}</div>
-                        <div className="cd-ai__point-text"><strong>Ответ:</strong> {obj.recruiter_answer}</div>
+                  <details className="ui-disclosure">
+                    <summary className="ui-disclosure__trigger" data-testid="cd-ai-section-toggle-objections">Возражения</summary>
+                    <div className="ui-disclosure__content">
+                      <div className="cd-interview-script__objections">
+                        {script.objections.map((obj, idx) => (
+                          <div key={`obj-${idx}`} className="cd-ai__point">
+                            <div className="cd-ai__point-title">{obj.topic}</div>
+                            <div className="cd-ai__point-text"><strong>Кандидат:</strong> {obj.candidate_says}</div>
+                            <div className="cd-ai__point-text"><strong>Ответ:</strong> {obj.recruiter_answer}</div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  </details>
                 </section>
 
                 <section className="cd-interview-script__section">
-                  <h3>CTA шаблоны</h3>
-                  <div className="cd-interview-script__objections">
-                    {script.cta_templates.map((item, idx) => (
-                      <div key={`cta-${idx}`} className="cd-ai__action">
-                        <div className="cd-ai__action-title">{item.type}</div>
-                        <div className="cd-ai__action-text">{item.text}</div>
-                        <button className="ui-btn ui-btn--ghost" onClick={() => copyText(item.text)}>Скопировать</button>
+                  <details className="ui-disclosure">
+                    <summary className="ui-disclosure__trigger" data-testid="cd-ai-section-toggle-cta">CTA шаблоны</summary>
+                    <div className="ui-disclosure__content">
+                      <div className="cd-interview-script__objections">
+                        {script.cta_templates.map((item, idx) => (
+                          <div key={`cta-${idx}`} className="cd-ai__action">
+                            <div className="cd-ai__action-title">{item.type}</div>
+                            <div className="cd-ai__action-text">{item.text}</div>
+                            <button className="ui-btn ui-btn--ghost" onClick={() => copyText(item.text)}>Скопировать</button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  </details>
                 </section>
 
                 <section className="cd-interview-script__section cd-interview-script__section--feedback">
@@ -1488,13 +1502,13 @@ function InterviewScriptModal({ candidateId, onClose }: InterviewScriptModalProp
                   </div>
 
                   {feedbackMutation.error && (
-                    <div className="subtitle" style={{ color: '#f07373' }}>
+                    <div className="ui-alert ui-alert--error">
                       Ошибка feedback: {(feedbackMutation.error as Error).message}
                     </div>
                   )}
-                  {feedbackSaved && <div className="subtitle" style={{ color: '#5BE1A5' }}>Feedback сохранён</div>}
+                  {feedbackSaved && <div className="ui-alert ui-alert--success">Feedback сохранён</div>}
 
-                  <div className="modal__footer" style={{ padding: 0, marginTop: 8 }}>
+                  <div className="modal__footer modal__footer--flat">
                     <button
                       className="ui-btn ui-btn--primary"
                       onClick={submitFeedback}
@@ -1516,7 +1530,9 @@ function InterviewScriptModal({ candidateId, onClose }: InterviewScriptModalProp
 export function CandidateDetailPage() {
   const queryClient = useQueryClient()
   const params = useParams({ from: '/app/candidates/$candidateId' })
+  const isMobile = useIsMobile()
   const candidateId = Number(params.candidateId)
+  const [mobileTab, setMobileTab] = useState<'profile' | 'tests' | 'timeline' | 'chat'>('profile')
   const [chatText, setChatText] = useState('')
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [showScheduleSlotModal, setShowScheduleSlotModal] = useState(false)
@@ -1525,6 +1541,7 @@ export function CandidateDetailPage() {
   const [reportPreview, setReportPreview] = useState<ReportPreviewState | null>(null)
   const [attemptPreview, setAttemptPreview] = useState<{ testTitle: string; attempt: TestAttempt } | null>(null)
   const [isChatOpen, setIsChatOpen] = useState(false)
+  const pipelineActionsRef = useRef<HTMLDivElement | null>(null)
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [aiDraftsOpen, setAiDraftsOpen] = useState(false)
@@ -1534,12 +1551,18 @@ export function CandidateDetailPage() {
 
   const detailQuery = useQuery<CandidateDetail>({
     queryKey: ['candidate-detail', candidateId],
-    queryFn: () => apiFetch(`/candidates/${candidateId}`),
+    queryFn: () => fetchCandidateDetail(candidateId),
+  })
+
+  const hhSummaryQuery = useQuery<CandidateHHSummary>({
+    queryKey: ['candidate-hh-summary', candidateId],
+    queryFn: () => fetchCandidateHHSummary(candidateId),
+    retry: false,
   })
 
   const chatQuery = useQuery<ChatPayload>({
     queryKey: ['candidate-chat', candidateId],
-    queryFn: () => apiFetch(`/candidates/${candidateId}/chat?limit=50`),
+    queryFn: () => fetchCandidateChat(candidateId, 50),
     enabled: isChatOpen,
     refetchInterval: isChatOpen ? 3000 : false,
     refetchIntervalInBackground: false,
@@ -1548,10 +1571,7 @@ export function CandidateDetailPage() {
 
   const sendMutation = useMutation({
     mutationFn: async (text: string) => {
-      return apiFetch(`/candidates/${candidateId}/chat`, {
-        method: 'POST',
-        body: JSON.stringify({ text, client_request_id: String(Date.now()) }),
-      })
+      return sendCandidateChatMessage(candidateId, text, String(Date.now()))
     },
     onSuccess: () => {
       setChatText('')
@@ -1561,27 +1581,27 @@ export function CandidateDetailPage() {
 
   const aiSummaryQuery = useQuery<AISummaryResponse>({
     queryKey: ['ai-summary', candidateId],
-    queryFn: () => apiFetch(`/ai/candidates/${candidateId}/summary`),
+    queryFn: () => fetchCandidateAiSummary(candidateId),
     enabled: false,
     retry: false,
   })
 
   const aiCoachQuery = useQuery<AICoachResponse>({
     queryKey: ['ai-coach', candidateId],
-    queryFn: () => apiFetch(`/ai/candidates/${candidateId}/coach`),
+    queryFn: () => fetchCandidateAiCoach(candidateId),
     enabled: false,
     retry: false,
   })
 
   const aiRefreshMutation = useMutation({
-    mutationFn: async () => apiFetch<AISummaryResponse>(`/ai/candidates/${candidateId}/summary/refresh`, { method: 'POST' }),
+    mutationFn: () => refreshCandidateAiSummary(candidateId),
     onSuccess: (data) => {
       queryClient.setQueryData(['ai-summary', candidateId], data)
     },
   })
 
   const aiCoachRefreshMutation = useMutation({
-    mutationFn: async () => apiFetch<AICoachResponse>(`/ai/candidates/${candidateId}/coach/refresh`, { method: 'POST' }),
+    mutationFn: () => refreshCandidateAiCoach(candidateId),
     onSuccess: (data) => {
       queryClient.setQueryData(['ai-coach', candidateId], data)
       setAiCoachDrafts(null)
@@ -1589,33 +1609,19 @@ export function CandidateDetailPage() {
   })
 
   const aiDraftsMutation = useMutation({
-    mutationFn: async (mode: 'short' | 'neutral' | 'supportive') => {
-      return apiFetch<AIDraftsResponse>(`/ai/candidates/${candidateId}/chat/drafts`, {
-        method: 'POST',
-        body: JSON.stringify({ mode }),
-      })
-    },
+    mutationFn: (mode: 'short' | 'neutral' | 'supportive') => fetchCandidateChatDrafts(candidateId, mode),
   })
 
   const aiCoachDraftsMutation = useMutation({
-    mutationFn: async (mode: 'short' | 'neutral' | 'supportive') => {
-      return apiFetch<AIDraftsResponse>(`/ai/candidates/${candidateId}/coach/drafts`, {
-        method: 'POST',
-        body: JSON.stringify({ mode }),
-      })
-    },
+    mutationFn: (mode: 'short' | 'neutral' | 'supportive') => fetchCandidateCoachDrafts(candidateId, mode),
     onSuccess: (data) => {
       setAiCoachDrafts(data.drafts || [])
     },
   })
 
   const actionMutation = useMutation({
-    mutationFn: async ({ actionKey, payload }: { actionKey: string; payload?: any }) => {
-      return apiFetch(`/candidates/${candidateId}/actions/${actionKey}`, {
-        method: 'POST',
-        body: payload ? JSON.stringify(payload) : undefined,
-      })
-    },
+    mutationFn: ({ actionKey, payload }: { actionKey: string; payload?: any }) =>
+      applyCandidateAction(candidateId, actionKey, payload),
     onSuccess: () => {
       setActionMessage('Действие выполнено')
       detailQuery.refetch()
@@ -1627,6 +1633,7 @@ export function CandidateDetailPage() {
   })
 
   const detail = detailQuery.data
+  const hhSummary = hhSummaryQuery.data
   const actions = detail?.candidate_actions || []
   const slots = detail?.slots || []
   const testSections = useMemo(() => {
@@ -1732,6 +1739,16 @@ export function CandidateDetailPage() {
       ? `tg://user?id=${detail.telegram_id}`
       : null
   const hhLink = detail?.hh_profile_url || null
+  const hhBadge = getHhSyncBadge(hhSummary?.sync_status ?? detail?.hh_sync_status)
+  const hhAvailableActions = (hhSummary?.available_actions || []).filter((item) => item.enabled !== false)
+  const shouldShowHhPanel = Boolean(
+    hhSummaryQuery.isPending
+      || hhSummary?.linked
+      || hhSummaryQuery.isError
+      || detail?.hh_resume_id
+      || detail?.hh_negotiation_id
+      || detail?.hh_sync_status,
+  )
   const conferenceLink = normalizeConferenceUrl(detail?.telemost_url)
   const conferenceSourceLabel =
     detail?.telemost_source === 'upcoming'
@@ -1763,11 +1780,35 @@ export function CandidateDetailPage() {
     if (['schedule_interview', 'reschedule_interview', 'schedule_intro_day'].includes(action.key)) return false
     return true
   })
+  const inlineActions = filteredActions.slice(0, 2)
+  const overflowActions = filteredActions.slice(2)
+
+  useEffect(() => {
+    setMobileTab('profile')
+  }, [candidateId])
+
+  useEffect(() => {
+    if (!isMobile) return
+    if (mobileTab === 'chat') {
+      setIsChatOpen(true)
+      return
+    }
+    setIsChatOpen(false)
+  }, [isMobile, mobileTab])
+
+  useEffect(() => {
+    if (!isMobile) return
+    if (!isChatOpen && mobileTab === 'chat') setMobileTab('profile')
+  }, [isMobile, isChatOpen, mobileTab])
+
+  const showProfileSection = !isMobile || mobileTab === 'profile'
+  const showTimelineSection = !isMobile || mobileTab === 'timeline'
+  const showTestsSection = !isMobile || mobileTab === 'tests'
 
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
-      <div className="page">
-        {detailQuery.isLoading && <div className="glass panel" style={{ textAlign: 'center', padding: 48 }}><p className="subtitle">Загрузка...</p></div>}
+      <div className="page app-page app-page--ops candidate-detail-page">
+        {detailQuery.isLoading && <div className="glass panel cd-loading-panel app-page__section"><p className="subtitle">Загрузка...</p></div>}
         {detailQuery.isError && (
           <ApiErrorBanner
             error={detailQuery.error}
@@ -1777,8 +1818,41 @@ export function CandidateDetailPage() {
         )}
 
         {detail && (<>
+        {isMobile && (
+          <div className="cd-mobile-tabs glass">
+            <button
+              type="button"
+              className={`ui-btn ui-btn--sm ${mobileTab === 'profile' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+              onClick={() => setMobileTab('profile')}
+            >
+              Профиль
+            </button>
+            <button
+              type="button"
+              className={`ui-btn ui-btn--sm ${mobileTab === 'tests' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+              onClick={() => setMobileTab('tests')}
+            >
+              Тесты
+            </button>
+            <button
+              type="button"
+              className={`ui-btn ui-btn--sm ${mobileTab === 'timeline' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+              onClick={() => setMobileTab('timeline')}
+            >
+              Таймлайн
+            </button>
+            <button
+              type="button"
+              className={`ui-btn ui-btn--sm ${mobileTab === 'chat' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+              onClick={() => setMobileTab('chat')}
+            >
+              Чат
+            </button>
+          </div>
+        )}
+        {showProfileSection && (<>
         {/* ── Header Card ── */}
-        <div className="glass panel cd-header">
+        <div className="glass panel cd-header app-page__hero" data-testid="candidate-header">
           <div className="cd-header__top">
             <div className="cd-header__avatar">
               {(detail.fio || '?').charAt(0).toUpperCase()}
@@ -1824,7 +1898,14 @@ export function CandidateDetailPage() {
                 <span>Telegram</span>
               </span>
             )}
-            <button className="cd-contact-btn" onClick={() => setIsChatOpen(true)} disabled={!detail.telegram_id}>
+            <button
+              className="cd-contact-btn"
+              onClick={() => {
+                if (isMobile) setMobileTab('chat')
+                setIsChatOpen(true)
+              }}
+              disabled={!detail.telegram_id}
+            >
               <span className="cd-contact-btn__icon">CH</span>
               <span>Чат</span>
             </button>
@@ -1837,6 +1918,27 @@ export function CandidateDetailPage() {
               <span className="cd-contact-btn cd-contact-btn--disabled">
                 <span className="cd-contact-btn__icon">HH</span>
                 <span>Профиль</span>
+              </span>
+            )}
+            {hhBadge && (
+              <span
+                className={`cd-chip ${
+                  hhBadge.tone === 'success' ? 'cd-chip--success'
+                  : hhBadge.tone === 'danger' ? 'cd-chip--danger'
+                  : hhBadge.tone === 'warning' ? 'cd-chip--warning'
+                  : ''
+                }`}
+                title={hhSummary?.sync_error || detail.hh_sync_error || hhBadge.label}
+              >
+                {hhBadge.label}
+              </span>
+            )}
+            {detail.messenger_platform && detail.messenger_platform !== 'telegram' && (
+              <span
+                className="cd-chip cd-chip--info"
+                title={`Мессенджер: ${detail.messenger_platform}${detail.max_user_id ? ` (ID: ${detail.max_user_id})` : ''}`}
+              >
+                {detail.messenger_platform === 'max' ? '💬 Max' : detail.messenger_platform}
               </span>
             )}
             {conferenceLink ? (
@@ -1857,8 +1959,8 @@ export function CandidateDetailPage() {
               </span>
             )}
             {detail.telegram_id && (
-              <span className="cd-contact-btn cd-contact-btn--disabled" style={{ marginLeft: 'auto' }}>
-                <span className="cd-contact-btn__icon" style={{ fontSize: 10 }}>ID</span>
+              <span className="cd-contact-btn cd-contact-btn--disabled cd-contact-btn--id">
+                <span className="cd-contact-btn__icon cd-contact-btn__icon--small">ID</span>
                 <span>{detail.telegram_id}</span>
               </span>
             )}
@@ -1900,11 +2002,129 @@ export function CandidateDetailPage() {
             )}
             {!test2Section?.details?.stats && <div className="cd-stat__sub">{test2Section?.summary || 'Нет данных'}</div>}
           </div>
-        </div>
+          </div>
+
+          {shouldShowHhPanel && (
+            <div className="glass panel cd-hh-panel app-page__section">
+              <div className="cd-section-header app-page__section-head">
+                <div>
+                  <h2 className="cd-section-title">HH.ru</h2>
+                  <p className="ui-message ui-message--muted">Внешняя связка резюме, вакансии и negotiation lifecycle.</p>
+                </div>
+                <div className="ui-section-header__actions">
+                  {hhSummary?.resume?.url ? (
+                    <a href={hhSummary.resume.url} className="ui-btn ui-btn--ghost ui-btn--sm" target="_blank" rel="noopener">
+                      Открыть в HH
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+
+              {hhSummaryQuery.isPending ? (
+                <div className="ui-state ui-state--loading">
+                  <p className="ui-state__text">Загружаю HH metadata…</p>
+                </div>
+              ) : hhSummaryQuery.isError ? (
+                <ApiErrorBanner
+                  title="Не удалось загрузить HH metadata"
+                  error={hhSummaryQuery.error}
+                  onRetry={() => hhSummaryQuery.refetch()}
+                />
+              ) : hhSummary?.linked ? (
+                <div className="cd-hh-panel__grid">
+                  <div className="cd-hh-card">
+                    <div className="cd-hh-card__label">Resume</div>
+                    <div className="cd-hh-card__value">{hhSummary.resume?.title || hhSummary.resume?.id || '—'}</div>
+                    <div className="cd-hh-card__meta">
+                      {hhSummary.resume?.id ? <span className="cd-chip">resume {hhSummary.resume.id}</span> : null}
+                      {hhSummary.resume?.source_updated_at ? (
+                        <span className="cd-chip">обновлено {formatDateTime(hhSummary.resume.source_updated_at)}</span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="cd-hh-card">
+                    <div className="cd-hh-card__label">Negotiation</div>
+                    <div className="cd-hh-card__value">{hhSummary.negotiation?.employer_state || '—'}</div>
+                    <div className="cd-hh-card__meta">
+                      {hhSummary.negotiation?.collection_name ? (
+                        <span className="cd-chip">{hhSummary.negotiation.collection_name}</span>
+                      ) : null}
+                      {hhSummary.negotiation?.id ? (
+                        <span className="cd-chip">negotiation {hhSummary.negotiation.id}</span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="cd-hh-card">
+                    <div className="cd-hh-card__label">Vacancy</div>
+                    <div className="cd-hh-card__value">{hhSummary.vacancy?.title || hhSummary.vacancy?.id || '—'}</div>
+                    <div className="cd-hh-card__meta">
+                      {hhSummary.vacancy?.id ? <span className="cd-chip">vacancy {hhSummary.vacancy.id}</span> : null}
+                      {hhSummary.vacancy?.area_name ? <span className="cd-chip">{hhSummary.vacancy.area_name}</span> : null}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="ui-state ui-state--empty">
+                  <p className="ui-state__text">Прямая HH-связка для этого кандидата ещё не сформирована.</p>
+                </div>
+              )}
+
+              {hhSummary?.linked ? (
+                <>
+                  <div className="cd-hh-panel__meta">
+                    {hhBadge ? (
+                      <span className={`cd-chip ${hhBadge.tone === 'success' ? 'cd-chip--success' : hhBadge.tone === 'danger' ? 'cd-chip--danger' : hhBadge.tone === 'warning' ? 'cd-chip--warning' : ''}`}>
+                        {hhBadge.label}
+                      </span>
+                    ) : null}
+                    {hhSummary.last_hh_sync_at ? (
+                      <span className="cd-chip">sync {formatDateTime(hhSummary.last_hh_sync_at)}</span>
+                    ) : null}
+                    {hhSummary.sync_error ? (
+                      <span className="cd-chip cd-chip--danger" title={hhSummary.sync_error}>есть ошибка sync</span>
+                    ) : null}
+                  </div>
+
+                  {hhAvailableActions.length > 0 ? (
+                    <div className="cd-hh-panel__actions">
+                      {hhAvailableActions.slice(0, 8).map((action) => (
+                        <span key={action.id || action.name} className="cd-chip cd-chip--accent" title={action.resulting_employer_state?.name || undefined}>
+                          {action.name || action.id}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {hhSummary.recent_jobs && hhSummary.recent_jobs.length > 0 ? (
+                    <div className="cd-hh-panel__jobs">
+                      <div className="cd-hh-card__label">Последние HH sync jobs</div>
+                      <div className="cd-hh-panel__job-list">
+                        {hhSummary.recent_jobs.slice(0, 3).map((job) => (
+                          <div key={job.id} className="cd-hh-job">
+                            <span className="cd-hh-job__title">{job.job_type}</span>
+                            <span className={`cd-chip ${job.status === 'done' ? 'cd-chip--success' : job.status === 'dead' ? 'cd-chip--danger' : job.status === 'running' ? 'cd-chip--warning' : ''}`}>
+                              {job.status}
+                            </span>
+                            <span className="cd-hh-job__meta">
+                              #{job.id}
+                              {job.finished_at ? ` · ${formatDateTime(job.finished_at)}` : ''}
+                              {job.attempts ? ` · попыток ${job.attempts}` : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          )}
 
         {/* ── Pipeline & Status Center (Funnel) ── */}
-        <div className="glass panel cd-pipeline">
-          <div className="cd-section-header">
+        <div className="glass panel cd-pipeline app-page__section">
+          <div className="cd-section-header app-page__section-head">
             <h2 className="cd-section-title">Воронка</h2>
           </div>
 
@@ -1923,7 +2143,7 @@ export function CandidateDetailPage() {
             </div>
           )}
 
-          <div className="cd-pipeline__actions" style={{ marginTop: 24, display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <div className="cd-pipeline__actions" data-testid="candidate-actions" ref={pipelineActionsRef}>
             {canScheduleInterview && (
               <button className="ui-btn ui-btn--primary" onClick={() => setShowScheduleSlotModal(true)}>
                 {scheduleLabel}
@@ -1936,7 +2156,7 @@ export function CandidateDetailPage() {
                 onClick={() => canSendTest2 && onActionClick(test2Action)}
                 disabled={!canSendTest2 || actionMutation.isPending}
               >
-                {test2Action.label}
+                Отправить Тест 2
               </button>
             )}
 
@@ -1946,7 +2166,7 @@ export function CandidateDetailPage() {
               </button>
             )}
 
-            {filteredActions.map((action) => (
+            {inlineActions.map((action) => (
               <button
                 key={action.key}
                 className={`ui-btn ${action.variant === 'primary' ? 'ui-btn--primary' : action.variant === 'danger' ? 'ui-btn--danger' : 'ui-btn--ghost'}`}
@@ -1956,6 +2176,23 @@ export function CandidateDetailPage() {
                 {action.label}
               </button>
             ))}
+            {overflowActions.length > 0 && (
+              <details className="ui-disclosure cd-actions-overflow" data-testid="candidate-actions-overflow">
+                <summary className="ui-disclosure__trigger">Ещё действия</summary>
+                <div className="ui-disclosure__content cd-actions-overflow__content">
+                  {overflowActions.map((action) => (
+                    <button
+                      key={action.key}
+                      className={`ui-btn ${action.variant === 'primary' ? 'ui-btn--primary' : action.variant === 'danger' ? 'ui-btn--danger' : 'ui-btn--ghost'}`}
+                      onClick={() => onActionClick(action)}
+                      disabled={actionMutation.isPending}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              </details>
+            )}
 
             {rejectAction && (
               <button
@@ -1967,13 +2204,13 @@ export function CandidateDetailPage() {
               </button>
             )}
 
-            {actionMessage && <p className="subtitle" style={{ width: '100%', textAlign: 'center', marginTop: 8 }}>{actionMessage}</p>}
+            {actionMessage && <p className="subtitle subtitle--center cd-action-message">{actionMessage}</p>}
           </div>
         </div>
 
         {/* ── AI Copilot ── */}
-        <div className="glass panel cd-ai">
-          <div className="cd-section-header">
+        <div className="glass panel cd-ai app-page__section">
+          <div className="cd-section-header app-page__section-head">
             <h2 className="cd-section-title">AI Copilot</h2>
             <div className="cd-ai__actions">
               {aiSummaryQuery.data && (
@@ -2008,9 +2245,10 @@ export function CandidateDetailPage() {
             </div>
           </div>
 
-          <div className="cd-ai__card cd-ai__card--span">
-            <div className="cd-ai__label">Recruiter Coach</div>
-            <div className="cd-ai-coach__toolbar">
+          <details className="ui-disclosure cd-ai__disclosure">
+            <summary className="ui-disclosure__trigger" data-testid="cd-ai-section-toggle-coach">Recruiter Coach</summary>
+            <div className="ui-disclosure__content">
+              <div className="cd-ai-coach__toolbar">
               {!aiCoachData ? (
                 <button
                   className="ui-btn ui-btn--ghost"
@@ -2044,24 +2282,24 @@ export function CandidateDetailPage() {
                   </button>
                 ))}
               </div>
-            </div>
+              </div>
 
-            {aiCoachError && (
-              <p className="subtitle" style={{ color: '#f07373' }}>
-                AI Coach: {aiCoachError.message}
-              </p>
-            )}
-            {aiCoachDraftsMutation.error && (
-              <p className="subtitle" style={{ color: '#f07373' }}>
-                AI Coach drafts: {(aiCoachDraftsMutation.error as Error).message}
-              </p>
-            )}
-            {!aiCoachData && !aiCoachQuery.isFetching && !aiCoachRefreshMutation.isPending && (
-              <p className="subtitle">Сгенерируйте рекомендации по релевантности, рискам и вопросам интервью.</p>
-            )}
+              {aiCoachError && (
+                <p className="subtitle subtitle--danger">
+                  AI Coach: {aiCoachError.message}
+                </p>
+              )}
+              {aiCoachDraftsMutation.error && (
+                <p className="subtitle subtitle--danger">
+                  AI Coach drafts: {(aiCoachDraftsMutation.error as Error).message}
+                </p>
+              )}
+              {!aiCoachData && !aiCoachQuery.isFetching && !aiCoachRefreshMutation.isPending && (
+                <p className="subtitle">Сгенерируйте рекомендации по релевантности, рискам и вопросам интервью.</p>
+              )}
 
-            {aiCoachData && (
-              <div className="cd-ai-coach__grid">
+              {aiCoachData && (
+                <div className="cd-ai-coach__grid">
                 <div className="cd-ai__card">
                   <div className="cd-ai__label">Релевантность</div>
                   <div className="cd-ai-fit">
@@ -2162,12 +2400,13 @@ export function CandidateDetailPage() {
                     </div>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
+          </details>
 
           {aiSummaryError && (
-            <p className="subtitle" style={{ color: '#f07373' }}>
+            <p className="subtitle subtitle--danger">
               AI: {aiSummaryError.message}
             </p>
           )}
@@ -2179,30 +2418,35 @@ export function CandidateDetailPage() {
           )}
 
           {aiSummaryData && (
-            <div className="cd-ai__grid">
-              <div className="cd-ai__card">
-                <div className="cd-ai__label">TL;DR</div>
-                <div className="cd-ai__text">{aiSummaryData.tldr}</div>
-              </div>
-
-              <div className="cd-ai__card">
-                <div className="cd-ai__label">Релевантность</div>
-                <div className="cd-ai-fit">
-                  <div className="cd-ai-fit__score">{aiFit?.score != null ? `${aiFit.score}/100` : '—'}</div>
-                  <div className={`cd-ai-fit__badge cd-ai-fit__badge--${aiFit?.level || 'unknown'}`}>
-                    {aiFit?.level === 'high' ? 'Высокая' : aiFit?.level === 'medium' ? 'Средняя' : aiFit?.level === 'low' ? 'Низкая' : 'Неизвестно'}
-                  </div>
+            <>
+              <div className="cd-ai__grid">
+                <div className="cd-ai__card">
+                  <div className="cd-ai__label">TL;DR</div>
+                  <div className="cd-ai__text">{aiSummaryData.tldr}</div>
                 </div>
-                {aiFit?.criteria_used === false && (
-                  <div className="subtitle">Критерии города не заданы, оценка ограничена.</div>
-                )}
-                {aiFit?.rationale && <div className="cd-ai__text">{aiFit.rationale}</div>}
-              </div>
 
+                <div className="cd-ai__card">
+                  <div className="cd-ai__label">Релевантность</div>
+                  <div className="cd-ai-fit">
+                    <div className="cd-ai-fit__score">{aiFit?.score != null ? `${aiFit.score}/100` : '—'}</div>
+                    <div className={`cd-ai-fit__badge cd-ai-fit__badge--${aiFit?.level || 'unknown'}`}>
+                      {aiFit?.level === 'high' ? 'Высокая' : aiFit?.level === 'medium' ? 'Средняя' : aiFit?.level === 'low' ? 'Низкая' : 'Неизвестно'}
+                    </div>
+                  </div>
+                  {aiFit?.criteria_used === false && (
+                    <div className="subtitle">Критерии города не заданы, оценка ограничена.</div>
+                  )}
+                  {aiFit?.rationale && <div className="cd-ai__text">{aiFit.rationale}</div>}
+                </div>
+              </div>
+              <details className="ui-disclosure cd-ai__disclosure">
+                <summary className="ui-disclosure__trigger" data-testid="cd-ai-section-toggle-analysis">Развернуть полный AI анализ</summary>
+                <div className="ui-disclosure__content">
+                  <div className="cd-ai__grid">
               {aiSummaryData.vacancy_fit && (
                 <div className="cd-ai__card cd-ai__card--span">
                   <div className="cd-ai__label">Оценка релевантности вакансии</div>
-                  <div className="cd-ai-fit" style={{ marginBottom: 8 }}>
+                  <div className="cd-ai-fit cd-ai-fit--spaced">
                     <div className="cd-ai-fit__score">{aiSummaryData.vacancy_fit.score != null ? `${aiSummaryData.vacancy_fit.score}/100` : '—'}</div>
                     <div className={`cd-ai-fit__badge cd-ai-fit__badge--${aiSummaryData.vacancy_fit.level || 'unknown'}`}>
                       {aiSummaryData.vacancy_fit.level === 'high' ? 'Высокая' : aiSummaryData.vacancy_fit.level === 'medium' ? 'Средняя' : aiSummaryData.vacancy_fit.level === 'low' ? 'Низкая' : 'Неизвестно'}
@@ -2213,7 +2457,7 @@ export function CandidateDetailPage() {
                       </span>
                     )}
                   </div>
-                  {aiSummaryData.vacancy_fit.summary && <div className="cd-ai__text" style={{ marginBottom: 8 }}>{aiSummaryData.vacancy_fit.summary}</div>}
+                  {aiSummaryData.vacancy_fit.summary && <div className="cd-ai__text cd-ai__text--spaced">{aiSummaryData.vacancy_fit.summary}</div>}
                   {(aiSummaryData.vacancy_fit.evidence || []).length > 0 && (
                     <ul className="cd-ai__list">
                       {(aiSummaryData.vacancy_fit.evidence || []).map((e, i) => (
@@ -2323,13 +2567,18 @@ export function CandidateDetailPage() {
                   <div className="cd-ai__text">{aiSummaryData.notes}</div>
                 </div>
               )}
-            </div>
+                  </div>
+                </div>
+              </details>
+            </>
           )}
         </div>
+        </>)}
 
         {/* ── Slots Table ── */}
-        <div className="glass panel">
-          <div className="cd-section-header">
+        {showTimelineSection && (
+        <div className="glass panel app-page__section">
+          <div className="cd-section-header app-page__section-head">
             <h2 className="cd-section-title">Слоты и интервью</h2>
             {detail.telegram_id && !hasUpcomingSlot && (
               <button className="ui-btn ui-btn--ghost" onClick={() => setShowScheduleSlotModal(true)}>
@@ -2358,10 +2607,12 @@ export function CandidateDetailPage() {
             </div>
           )}
         </div>
+        )}
 
         {/* ── Tests ── */}
-        <div className="glass panel">
-          <div className="cd-section-header">
+        {showTestsSection && (
+        <div className="glass panel app-page__section">
+          <div className="cd-section-header app-page__section-head">
             <h2 className="cd-section-title">Тесты</h2>
           </div>
           {testSections.length === 0 && <p className="subtitle">Данные по тестам отсутствуют.</p>}
@@ -2427,7 +2678,34 @@ export function CandidateDetailPage() {
             </div>
           )}
         </div>
+        )}
         </>)}
+        {detail && isMobile && (
+          <div className="cd-mobile-actions glass">
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              onClick={() => {
+                setMobileTab('profile')
+                requestAnimationFrame(() =>
+                  pipelineActionsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+                )
+              }}
+            >
+              Сменить статус
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--primary ui-btn--sm"
+              onClick={() => {
+                setMobileTab('chat')
+                setIsChatOpen(true)
+              }}
+            >
+              Написать
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Modals */}
@@ -2578,7 +2856,7 @@ export function CandidateDetailPage() {
 
                     {aiDraftsMutation.isPending && <p className="subtitle">Генерация…</p>}
                     {aiDraftsMutation.error && (
-                      <p className="subtitle" style={{ color: '#f07373' }}>
+                      <p className="subtitle subtitle--danger">
                         AI: {(aiDraftsMutation.error as Error).message}
                       </p>
                     )}

@@ -34,6 +34,25 @@ async def _create_user(status: CandidateStatus) -> int:
     return tg_id
 
 
+async def _create_user_with_external_tg_id(
+    status: CandidateStatus,
+) -> tuple[int, int]:
+    tg_id = next(_tg_counter)
+    ext_tg_id = tg_id + 10_000_000
+    async with async_session() as session:
+        user = User(
+            telegram_id=tg_id,
+            telegram_user_id=ext_tg_id,
+            fio=f"External TG User {tg_id}",
+            city="Test City",
+            is_active=True,
+            candidate_status=status,
+        )
+        session.add(user)
+        await session.commit()
+    return tg_id, ext_tg_id
+
+
 @pytest.mark.asyncio
 async def test_invalid_jump_requires_force():
     tg_id = await _create_user(CandidateStatus.TEST1_COMPLETED)
@@ -81,6 +100,18 @@ async def test_retreating_status_is_ignored_but_not_error():
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.telegram_id == tg_id))
     assert user.candidate_status == CandidateStatus.TEST2_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_update_status_falls_back_to_telegram_user_id():
+    tg_id, ext_tg_id = await _create_user_with_external_tg_id(
+        CandidateStatus.INTERVIEW_SCHEDULED
+    )
+    assert await update_candidate_status(ext_tg_id, CandidateStatus.INTRO_DAY_SCHEDULED, force=True)
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == tg_id))
+    assert user is not None
+    assert user.candidate_status == CandidateStatus.INTRO_DAY_SCHEDULED
 
 
 @pytest.mark.asyncio

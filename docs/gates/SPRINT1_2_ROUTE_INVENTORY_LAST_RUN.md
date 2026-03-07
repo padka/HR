@@ -1,7 +1,7 @@
 # Sprint 1/2 Route Inventory
 
-- Generated at: `2026-02-25T14:15:05.518145+00:00`
-- Sensitive routes inspected: `204`
+- Generated at: `2026-03-01T11:36:08.302764+00:00`
+- Sensitive routes inspected: `214`
 - Findings: `0`
 
 | Path | Methods | Guard | Status |
@@ -10,6 +10,10 @@
 | `/api/ai/candidates/{candidate_id}/coach` | `GET` | `require_principal` | `pass` |
 | `/api/ai/candidates/{candidate_id}/coach/drafts` | `POST` | `require_principal` | `pass` |
 | `/api/ai/candidates/{candidate_id}/coach/refresh` | `POST` | `require_principal` | `pass` |
+| `/api/ai/candidates/{candidate_id}/hh-resume` | `PUT` | `require_principal` | `pass` |
+| `/api/ai/candidates/{candidate_id}/interview-script` | `GET` | `require_principal` | `pass` |
+| `/api/ai/candidates/{candidate_id}/interview-script/feedback` | `POST` | `require_principal` | `pass` |
+| `/api/ai/candidates/{candidate_id}/interview-script/refresh` | `POST` | `require_principal` | `pass` |
 | `/api/ai/candidates/{candidate_id}/summary` | `GET` | `require_principal` | `pass` |
 | `/api/ai/candidates/{candidate_id}/summary/refresh` | `POST` | `require_principal` | `pass` |
 | `/api/ai/chat` | `GET` | `require_principal` | `pass` |
@@ -32,11 +36,14 @@
 | `/api/candidates` | `GET` | `require_principal` | `pass` |
 | `/api/candidates` | `POST` | `require_principal` | `pass` |
 | `/api/candidates/{candidate_id}` | `GET` | `require_principal` | `pass` |
+| `/api/candidates/{candidate_id}` | `DELETE` | `require_principal` | `pass` |
 | `/api/candidates/{candidate_id}/actions/{action_key}` | `POST` | `require_principal` | `pass` |
 | `/api/candidates/{candidate_id}/assign-recruiter` | `POST` | `require_admin` | `pass` |
+| `/api/candidates/{candidate_id}/available-slots` | `GET` | `require_principal` | `pass` |
 | `/api/candidates/{candidate_id}/chat` | `GET` | `require_principal` | `pass` |
 | `/api/candidates/{candidate_id}/chat` | `POST` | `require_principal` | `pass` |
 | `/api/candidates/{candidate_id}/chat/{message_id}/retry` | `POST` | `require_principal` | `pass` |
+| `/api/candidates/{candidate_id}/kanban-status` | `POST` | `require_principal` | `pass` |
 | `/api/candidates/{candidate_id}/schedule-intro-day` | `POST` | `require_principal` | `pass` |
 | `/api/candidates/{candidate_id}/schedule-slot` | `POST` | `require_principal` | `pass` |
 | `/api/cities` | `GET` | `require_principal` | `pass` |
@@ -80,6 +87,8 @@
 | `/api/profile/avatar` | `GET` | `require_principal` | `pass` |
 | `/api/profile/avatar` | `POST` | `require_principal` | `pass` |
 | `/api/profile/avatar` | `DELETE` | `require_principal` | `pass` |
+| `/api/profile/change-password` | `POST` | `require_principal` | `pass` |
+| `/api/profile/settings` | `PATCH` | `require_principal` | `pass` |
 | `/api/questions` | `GET` | `require_admin` | `pass` |
 | `/api/questions` | `POST` | `require_admin` | `pass` |
 | `/api/questions/reorder` | `POST` | `require_admin` | `pass` |
@@ -112,6 +121,7 @@
 | `/api/slots/{slot_id}/approve_booking` | `POST` | `require_principal` | `pass` |
 | `/api/slots/{slot_id}/book` | `POST` | `require_principal` | `pass` |
 | `/api/slots/{slot_id}/outcome` | `POST` | `require_principal` | `pass` |
+| `/api/slots/{slot_id}/propose` | `POST` | `require_principal` | `pass` |
 | `/api/slots/{slot_id}/reject_booking` | `POST` | `require_principal` | `pass` |
 | `/api/slots/{slot_id}/reschedule` | `POST` | `require_principal` | `pass` |
 | `/api/staff/attachments/{attachment_id}` | `GET` | `require_principal` | `pass` |

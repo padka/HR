@@ -1,0 +1,126 @@
+# HELP python_gc_objects_collected_total Objects collected during gc
+# TYPE python_gc_objects_collected_total counter
+python_gc_objects_collected_total{generation="0"} 60949.0
+python_gc_objects_collected_total{generation="1"} 69501.0
+python_gc_objects_collected_total{generation="2"} 29260.0
+# HELP python_gc_objects_uncollectable_total Uncollectable objects found during GC
+# TYPE python_gc_objects_uncollectable_total counter
+python_gc_objects_uncollectable_total{generation="0"} 0.0
+python_gc_objects_uncollectable_total{generation="1"} 0.0
+python_gc_objects_uncollectable_total{generation="2"} 0.0
+# HELP python_gc_collections_total Number of times this generation was collected
+# TYPE python_gc_collections_total counter
+python_gc_collections_total{generation="0"} 512.0
+python_gc_collections_total{generation="1"} 46.0
+python_gc_collections_total{generation="2"} 4.0
+# HELP python_info Python platform information
+# TYPE python_info gauge
+python_info{implementation="CPython",major="3",minor="13",patchlevel="7",version="3.13.7"} 1.0
+# HELP http_inflight_requests Number of in-flight HTTP requests (global).
+# TYPE http_inflight_requests gauge
+http_inflight_requests 1.0
+# HELP http_requests_total Total HTTP requests by route/method/status/outcome.
+# TYPE http_requests_total counter
+# HELP http_request_duration_seconds HTTP request latency in seconds by route/method/status/outcome.
+# TYPE http_request_duration_seconds histogram
+# HELP http_errors_total HTTP errors by route/method/status/outcome (only outcome!=success).
+# TYPE http_errors_total counter
+# HELP served_from_cache_total Responses served from cache by route and backend.
+# TYPE served_from_cache_total counter
+# HELP served_stale_total Responses served stale (degraded mode) by route and backend.
+# TYPE served_stale_total counter
+# HELP cache_refresh_inflight Number of in-flight cache background refresh tasks (process-wide).
+# TYPE cache_refresh_inflight gauge
+cache_refresh_inflight 0.0
+# HELP cache_refresh_total Background cache refresh tasks started, labeled by triggering route.
+# TYPE cache_refresh_total counter
+# HELP cache_refresh_errors_total Background cache refresh task errors, labeled by triggering route.
+# TYPE cache_refresh_errors_total counter
+# HELP slot_propose_404_total 404 responses for slot propose flow by reason.
+# TYPE slot_propose_404_total counter
+# HELP http_db_queries_per_request Number of DB queries executed during a single HTTP request (best-effort).
+# TYPE http_db_queries_per_request histogram
+# HELP http_db_query_time_seconds Total DB time spent during a single HTTP request in seconds (best-effort).
+# TYPE http_db_query_time_seconds histogram
+# HELP db_queries_total Total number of DB queries executed, labeled by route and operation.
+# TYPE db_queries_total counter
+db_queries_total{operation="select",route="unknown"} 8.0
+# HELP db_queries_created Total number of DB queries executed, labeled by route and operation.
+# TYPE db_queries_created gauge
+db_queries_created{operation="select",route="unknown"} 1.7723570351084218e+09
+# HELP db_query_duration_seconds DB query latency in seconds, labeled by route and operation.
+# TYPE db_query_duration_seconds histogram
+db_query_duration_seconds_bucket{le="0.0005",operation="select",route="unknown"} 2.0
+db_query_duration_seconds_bucket{le="0.001",operation="select",route="unknown"} 2.0
+db_query_duration_seconds_bucket{le="0.0025",operation="select",route="unknown"} 6.0
+db_query_duration_seconds_bucket{le="0.005",operation="select",route="unknown"} 7.0
+db_query_duration_seconds_bucket{le="0.01",operation="select",route="unknown"} 7.0
+db_query_duration_seconds_bucket{le="0.025",operation="select",route="unknown"} 8.0
+db_query_duration_seconds_bucket{le="0.05",operation="select",route="unknown"} 8.0
+db_query_duration_seconds_bucket{le="0.1",operation="select",route="unknown"} 8.0
+db_query_duration_seconds_bucket{le="0.25",operation="select",route="unknown"} 8.0
+db_query_duration_seconds_bucket{le="0.5",operation="select",route="unknown"} 8.0
+db_query_duration_seconds_bucket{le="1.0",operation="select",route="unknown"} 8.0
+db_query_duration_seconds_bucket{le="2.5",operation="select",route="unknown"} 8.0
+db_query_duration_seconds_bucket{le="5.0",operation="select",route="unknown"} 8.0
+db_query_duration_seconds_bucket{le="+Inf",operation="select",route="unknown"} 8.0
+db_query_duration_seconds_count{operation="select",route="unknown"} 8.0
+db_query_duration_seconds_sum{operation="select",route="unknown"} 0.03725470812059939
+# HELP db_query_duration_seconds_created DB query latency in seconds, labeled by route and operation.
+# TYPE db_query_duration_seconds_created gauge
+db_query_duration_seconds_created{operation="select",route="unknown"} 1.772357035108431e+09
+# HELP db_slow_queries_total Slow DB queries (above threshold), labeled by route and operation.
+# TYPE db_slow_queries_total counter
+# HELP db_pool_checked_out SQLAlchemy pool checked-out connections (best-effort).
+# TYPE db_pool_checked_out gauge
+db_pool_checked_out 0.0
+# HELP db_pool_size SQLAlchemy pool size (best-effort).
+# TYPE db_pool_size gauge
+db_pool_size 20.0
+# HELP db_pool_overflow SQLAlchemy pool overflow (best-effort).
+# TYPE db_pool_overflow gauge
+db_pool_overflow -17.0
+# HELP db_pool_timeouts_total Total pool timeout errors observed (best-effort).
+# TYPE db_pool_timeouts_total counter
+db_pool_timeouts_total 0.0
+# HELP db_pool_timeouts_created Total pool timeout errors observed (best-effort).
+# TYPE db_pool_timeouts_created gauge
+db_pool_timeouts_created 1.7723570331977432e+09
+# HELP db_too_many_connections_total Total asyncpg TooManyConnectionsError observed (best-effort).
+# TYPE db_too_many_connections_total counter
+db_too_many_connections_total 0.0
+# HELP db_too_many_connections_created Total asyncpg TooManyConnectionsError observed (best-effort).
+# TYPE db_too_many_connections_created gauge
+db_too_many_connections_created 1.772357033197748e+09
+# HELP db_pool_acquire_seconds Time spent acquiring a DB connection from the SQLAlchemy pool (best-effort), labeled by route.
+# TYPE db_pool_acquire_seconds histogram
+db_pool_acquire_seconds_bucket{le="0.0005",route="unknown"} 3.0
+db_pool_acquire_seconds_bucket{le="0.001",route="unknown"} 3.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="unknown"} 3.0
+db_pool_acquire_seconds_bucket{le="0.005",route="unknown"} 3.0
+db_pool_acquire_seconds_bucket{le="0.01",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="0.025",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="0.05",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="0.1",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="0.25",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="0.5",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="1.0",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="2.5",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="5.0",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="10.0",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="30.0",route="unknown"} 6.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="unknown"} 6.0
+db_pool_acquire_seconds_count{route="unknown"} 6.0
+db_pool_acquire_seconds_sum{route="unknown"} 0.024798374040983617
+# HELP db_pool_acquire_seconds_created Time spent acquiring a DB connection from the SQLAlchemy pool (best-effort), labeled by route.
+# TYPE db_pool_acquire_seconds_created gauge
+db_pool_acquire_seconds_created{route="unknown"} 1.772357033197762e+09
+# HELP db_active_connections Active DB connections (pg_stat_activity, best-effort; -1 when unknown).
+# TYPE db_active_connections gauge
+db_active_connections -1.0
+# HELP latency_p50_seconds Approx rolling-window p50 latency in seconds.
+# TYPE latency_p50_seconds gauge
+# HELP latency_p95_seconds Approx rolling-window p95 latency in seconds.
+# TYPE latency_p95_seconds gauge
+# HELP latency_p99_seconds Approx rolling-window p99 latency in seconds.
+# TYPE latency_p99_seconds gauge

@@ -25,6 +25,7 @@ from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import City, Recruiter
 from backend.domain.repositories import get_active_recruiters_for_city
 from backend.domain.candidate_status_service import CandidateStatusService
+from backend.domain.hh_integration.jobs import process_pending_hh_sync_jobs
 from backend.apps.admin_ui.services.slots import delete_past_free_slots
 
 logger = logging.getLogger(__name__)
@@ -228,4 +229,51 @@ async def periodic_past_free_slot_cleanup(
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
             logger.info("Past free slot cleanup cancelled during sleep")
+            raise
+
+
+@resilient_task(
+    task_name="periodic_hh_sync_job_worker",
+    retry_on_error=True,
+    retry_delay=60.0,
+    log_errors=True,
+)
+async def periodic_hh_sync_job_worker(
+    interval_seconds: int = 30,
+    *,
+    app: Optional[FastAPI] = None,
+) -> None:
+    logger.info("Started HH sync job worker (interval: %ds)", interval_seconds)
+    last_db_warning = 0.0
+    warning_interval = 600.0
+
+    while True:
+        try:
+            if app is not None and not getattr(app.state, "db_available", True):
+                now = time.monotonic()
+                if now - last_db_warning >= warning_interval:
+                    logger.warning("DB unavailable, HH sync worker paused")
+                    last_db_warning = now
+                await asyncio.sleep(min(warning_interval, interval_seconds))
+                continue
+            processed = await process_pending_hh_sync_jobs(batch_size=1)
+            if processed:
+                logger.info("HH sync worker processed %d job(s)", processed)
+            if app is not None:
+                app.state.db_available = True
+        except asyncio.CancelledError:
+            logger.info("HH sync worker cancelled, shutting down")
+            raise
+        except Exception as exc:
+            if app is not None:
+                app.state.db_available = False
+            now = time.monotonic()
+            if now - last_db_warning >= warning_interval:
+                logger.warning("HH sync worker skipped due to DB error: %s", exc)
+                last_db_warning = now
+
+        try:
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            logger.info("HH sync worker cancelled during sleep")
             raise

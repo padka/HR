@@ -1,0 +1,26 @@
+{
+  "database": "recruitsmart",
+  "backup_schema": "backup_drill_20260301_124104",
+  "restore_schema": "restore_drill_20260301_124104",
+  "tables": [
+    "users",
+    "slots",
+    "outbox_notifications",
+    "notification_logs"
+  ],
+  "public_counts": {
+    "users": 4,
+    "slots": 5,
+    "outbox_notifications": 10,
+    "notification_logs": 6
+  },
+  "restore_counts": {
+    "users": 4,
+    "slots": 5,
+    "outbox_notifications": 10,
+    "notification_logs": 6
+  },
+  "counts_match": true,
+  "status": "PASS",
+  "note": "Schema-level backup/restore drill (fallback when pg_dump/CREATEDB are unavailable)."
+}

@@ -13,6 +13,9 @@ Database migrations are managed using Alembic and should be run **separately** b
 ### Local Development
 
 ```bash
+# Prefer dedicated migration URL (same DB, role with DDL grants)
+export MIGRATIONS_DATABASE_URL=postgresql+asyncpg://migrator:pass@localhost:5432/recruitsmart
+
 # Run migrations
 python scripts/run_migrations.py
 
@@ -31,7 +34,8 @@ services:
     build: .
     command: python scripts/run_migrations.py
     environment:
-      DATABASE_URL: postgresql://user:pass@db:5432/dbname
+      DATABASE_URL: postgresql+asyncpg://app_user:pass@db:5432/dbname
+      MIGRATIONS_DATABASE_URL: postgresql+asyncpg://migrator:pass@db:5432/dbname
     depends_on:
       - db
 
@@ -43,7 +47,7 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql://user:pass@db:5432/dbname
+      DATABASE_URL: postgresql+asyncpg://app_user:pass@db:5432/dbname
 
   bot:
     build: .
@@ -52,7 +56,7 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql://user:pass@db:5432/dbname
+      DATABASE_URL: postgresql+asyncpg://app_user:pass@db:5432/dbname
 ```
 
 ### Kubernetes
@@ -72,11 +76,11 @@ spec:
         image: your-app:latest
         command: ["python", "scripts/run_migrations.py"]
         env:
-        - name: DATABASE_URL
+        - name: MIGRATIONS_DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: db-credentials
-              key: url
+              key: migrator_url
       restartPolicy: OnFailure
 ```
 
@@ -95,7 +99,8 @@ jobs:
         run: |
           python scripts/run_migrations.py
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.APP_DATABASE_URL }}
+          MIGRATIONS_DATABASE_URL: ${{ secrets.MIGRATIONS_DATABASE_URL }}
 
   deploy:
     needs: migrate
@@ -157,6 +162,10 @@ cat backend/migrations/versions/XXXX_add_new_field.py
    - One migration per logical change
    - Easier to debug and rollback
 
+6. **Use dedicated migration role**
+   - Migration role must have DDL on target schema
+   - Runtime app role should remain DML-only
+
 ### DON'T ❌
 
 1. **Don't run migrations in application startup**
@@ -178,6 +187,32 @@ cat backend/migrations/versions/XXXX_add_new_field.py
 ---
 
 ## Troubleshooting
+
+### Migration fails with "role does not have DDL rights"
+
+This means migration was started with an app-only role.
+
+Use `MIGRATIONS_DATABASE_URL` with a dedicated migration role.
+
+Example SQL contract:
+
+```sql
+-- One-time setup (run as DB owner/admin)
+CREATE ROLE app_user LOGIN PASSWORD 'change-me';
+CREATE ROLE migrator LOGIN PASSWORD 'change-me';
+
+GRANT CONNECT ON DATABASE recruitsmart TO app_user, migrator;
+GRANT USAGE ON SCHEMA public TO app_user, migrator;
+GRANT CREATE ON SCHEMA public TO migrator;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO app_user;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO app_user;
+```
 
 ### Migration fails with "table already exists"
 
@@ -240,7 +275,8 @@ The `scripts/run_migrations.py` script:
 ### Environment Variables
 
 Required:
-- `DATABASE_URL` - Database connection string
+- `MIGRATIONS_DATABASE_URL` in production (dedicated migration role)
+- `DATABASE_URL` runtime app connection URL
 
 Optional:
 - `SQL_ECHO` - Enable SQL logging (default: false)

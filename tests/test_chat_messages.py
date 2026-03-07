@@ -32,6 +32,13 @@ class _DummyBotService:
         )
 
 
+@pytest.fixture(autouse=True)
+def clean_chat_rate_limits():
+    chat_service._clear_rate_limit_state()
+    yield
+    chat_service._clear_rate_limit_state()
+
+
 @pytest.mark.asyncio
 async def test_log_inbound_chat_message_creates_history_record():
     candidate = await candidate_services.create_or_update_user(
@@ -113,3 +120,77 @@ async def test_send_chat_message_updates_status_and_persists():
         assert stored.status == "sent"
         assert stored.direction == "outbound"
         assert stored.author_label == "admin"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_client_request_id_returns_existing_message_even_when_limit_reached():
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=654322,
+        fio="Дубликат",
+        city="Санкт-Петербург",
+    )
+    bot = _DummyBotService(ok=True)
+
+    first = await chat_service.send_chat_message(
+        candidate.id,
+        text="Повторяемое сообщение",
+        client_request_id="req-duplicate",
+        author_label="admin",
+        bot_service=bot,
+    )
+    assert first["status"] == "sent"
+
+    for _ in range(chat_service.CHAT_RATE_LIMIT_PER_HOUR):
+        chat_service._record_message_sent(candidate.id)
+
+    duplicate = await chat_service.send_chat_message(
+        candidate.id,
+        text="Повторяемое сообщение",
+        client_request_id="req-duplicate",
+        author_label="admin",
+        bot_service=bot,
+    )
+
+    assert duplicate["status"] == "duplicate"
+    assert duplicate["message"]["id"] == first["message"]["id"]
+    assert bot.calls == [(candidate.telegram_id, "Повторяемое сообщение")]
+
+
+@pytest.mark.asyncio
+async def test_retry_chat_message_success_counts_against_rate_limit():
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=654323,
+        fio="Повторная отправка",
+        city="Санкт-Петербург",
+    )
+    bot = _DummyBotService(ok=True)
+
+    async with async_session() as session:
+        message = ChatMessage(
+            candidate_id=candidate.id,
+            telegram_user_id=candidate.telegram_id,
+            direction="outbound",
+            channel="telegram",
+            text="Нужно отправить повторно",
+            status="failed",
+            author_label="admin",
+        )
+        session.add(message)
+        await session.commit()
+        await session.refresh(message)
+        message_id = message.id
+
+    before_allowed, before_remaining = chat_service._check_rate_limit(candidate.id)
+    assert before_allowed is True
+    assert before_remaining == chat_service.CHAT_RATE_LIMIT_PER_HOUR
+
+    retried = await chat_service.retry_chat_message(
+        candidate.id,
+        message_id,
+        bot_service=bot,
+    )
+    assert retried["status"] == "sent"
+
+    after_allowed, after_remaining = chat_service._check_rate_limit(candidate.id)
+    assert after_allowed is True
+    assert after_remaining == chat_service.CHAT_RATE_LIMIT_PER_HOUR - 1

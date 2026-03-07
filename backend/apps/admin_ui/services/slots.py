@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Dict, List, Literal, Optional, Tuple
@@ -23,7 +22,6 @@ from backend.apps.bot.services import (
     NotificationNotConfigured,
     SlotApprovalResult,
     SlotSnapshot,
-    approve_slot_and_notify,
     cancel_slot_reminders,
     capture_slot_snapshot,
     get_notification_service,
@@ -34,7 +32,7 @@ try:  # pragma: no cover - optional dependency during tests
     from backend.apps.bot.reminders import get_reminder_service
 except Exception:  # pragma: no cover - safe fallback when bot package unavailable
     get_reminder_service = None  # type: ignore[assignment]
-from backend.apps.admin_ui.security import Principal, principal_ctx
+from backend.apps.admin_ui.security import Principal, admin_principal, principal_ctx
 from backend.apps.admin_ui.utils import (
     DEFAULT_TZ,
     fmt_local,
@@ -295,7 +293,7 @@ async def list_slots(
 
         settings = get_settings()
         if settings.environment != "production":
-            principal = Principal(type="admin", id=-1)
+            principal = admin_principal()
         else:
             raise RuntimeError("principal is required for list_slots")
     async with async_session() as session:
@@ -725,7 +723,7 @@ async def delete_past_free_slots(
 def _reservation_error_message(status: str) -> str:
     messages = {
         "slot_taken": "На выбранное время уже есть слот. Попробуйте другое время.",
-        "duplicate_candidate": "У кандидата уже назначено собеседование.",
+        "duplicate_candidate": "У кандидата уже есть активная встреча.",
         "already_reserved": "У кандидата уже забронирован слот на эту дату.",
     }
     return messages.get(
@@ -883,6 +881,9 @@ async def schedule_manual_candidate_slot(
             candidate_tg_id=candidate_tg_id,
             candidate_tz=slot_tz,
             created_by=admin_username,
+            # Manual initial scheduling must not silently replace an active assignment.
+            # Explicit reschedule flow handles replacements via propose_alternative().
+            allow_replace_active_assignment=False,
         )
     except Exception as exc:
         # Slot was created but we failed to create the assignment/outbox.

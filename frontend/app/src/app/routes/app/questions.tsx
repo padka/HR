@@ -2,9 +2,11 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { apiFetch } from '@/api/client'
+import { useIsMobile } from '@/app/hooks/useIsMobile'
 
 export function QuestionsPage() {
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['questions'],
     queryFn: () => apiFetch<any[]>('/questions'),
@@ -37,49 +39,82 @@ export function QuestionsPage() {
               {(data as any[]).map((group) => (
                 <article key={group.test_id} className="glass glass--subtle data-card">
                   <h3 className="data-card__title">{group.title}</h3>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>ID</th>
-                        <th>Индекс</th>
-                        <th>Вопрос</th>
-                        <th>Статус</th>
-                        <th>Действия</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                  {isMobile ? (
+                    <div className="mobile-card-list questions-mobile-list">
                       {group.questions.map((q: any) => (
-                        <tr key={q.id}>
-                          <td>{q.id}</td>
-                          <td>{q.index}</td>
-                          <td>{q.title}</td>
-                          <td>
+                        <article key={q.id} className="mobile-card question-mobile-card">
+                          <div className="question-mobile-card__head">
+                            <strong>#{q.index}</strong>
                             <span className={`status-badge status-badge--${q.is_active ? 'success' : 'muted'}`}>
                               {q.is_active ? 'Активен' : 'Отключён'}
                             </span>
-                          </td>
-                          <td>
-                            <div className="toolbar toolbar--compact">
-                              <Link
-                                to="/app/questions/$questionId/edit"
-                                params={{ questionId: String(q.id) }}
-                                className="ui-btn ui-btn--ghost ui-btn--sm"
-                              >
-                                Редактировать
-                              </Link>
-                              <button
-                                className="ui-btn ui-btn--ghost ui-btn--sm"
-                                onClick={() => cloneMutation.mutate(q.id)}
-                                disabled={cloneMutation.isPending}
-                              >
-                                Клонировать
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
+                          </div>
+                          <div className="question-mobile-card__title">{q.title}</div>
+                          <div className="text-muted text-xs">ID: {q.id}</div>
+                          <div className="toolbar toolbar--compact">
+                            <Link
+                              to="/app/questions/$questionId/edit"
+                              params={{ questionId: String(q.id) }}
+                              className="ui-btn ui-btn--ghost ui-btn--sm"
+                            >
+                              Редактировать
+                            </Link>
+                            <button
+                              className="ui-btn ui-btn--ghost ui-btn--sm"
+                              onClick={() => cloneMutation.mutate(q.id)}
+                              disabled={cloneMutation.isPending}
+                            >
+                              Клонировать
+                            </button>
+                          </div>
+                        </article>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  ) : (
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>Индекс</th>
+                          <th>Вопрос</th>
+                          <th>Статус</th>
+                          <th>Действия</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.questions.map((q: any) => (
+                          <tr key={q.id}>
+                            <td>{q.id}</td>
+                            <td>{q.index}</td>
+                            <td>{q.title}</td>
+                            <td>
+                              <span className={`status-badge status-badge--${q.is_active ? 'success' : 'muted'}`}>
+                                {q.is_active ? 'Активен' : 'Отключён'}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="toolbar toolbar--compact">
+                                <Link
+                                  to="/app/questions/$questionId/edit"
+                                  params={{ questionId: String(q.id) }}
+                                  className="ui-btn ui-btn--ghost ui-btn--sm"
+                                >
+                                  Редактировать
+                                </Link>
+                                <button
+                                  className="ui-btn ui-btn--ghost ui-btn--sm"
+                                  onClick={() => cloneMutation.mutate(q.id)}
+                                  disabled={cloneMutation.isPending}
+                                >
+                                  Клонировать
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </article>
               ))}
             </div>

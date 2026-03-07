@@ -88,6 +88,25 @@ class Settings:
     ai_interview_script_ft_min_samples: int
     ai_interview_script_pii_mode: str
     simulator_enabled: bool
+    # hh.ru integration
+    hh_sync_enabled: bool
+    n8n_hh_sync_webhook_url: str
+    n8n_hh_resolve_webhook_url: str
+    hh_webhook_secret: str
+    hh_integration_enabled: bool
+    hh_api_base_url: str
+    hh_oauth_authorize_url: str
+    hh_client_id: str
+    hh_client_secret: str
+    hh_redirect_uri: str
+    hh_user_agent: str
+    hh_oauth_state_ttl_seconds: int
+    hh_webhook_base_url: str
+    # Messenger integration (VK Max)
+    max_bot_enabled: bool
+    max_bot_token: str
+    max_webhook_url: str
+    max_webhook_secret: str
 
 
 def _get_int(name: str, default: int, *, minimum: int | None = None) -> int:
@@ -673,6 +692,27 @@ def get_settings() -> Settings:
 
     simulator_enabled = _get_bool("SIMULATOR_ENABLED", default=False)
 
+    # hh.ru integration
+    hh_sync_enabled = _get_bool("HH_SYNC_ENABLED", default=False)
+    n8n_hh_sync_webhook_url = os.getenv("N8N_HH_SYNC_WEBHOOK_URL", "").strip()
+    n8n_hh_resolve_webhook_url = os.getenv("N8N_HH_RESOLVE_WEBHOOK_URL", "").strip()
+    hh_webhook_secret = os.getenv("HH_WEBHOOK_SECRET", "").strip()
+    hh_integration_enabled = _get_bool("HH_INTEGRATION_ENABLED", default=False)
+    hh_api_base_url = os.getenv("HH_API_BASE_URL", "https://api.hh.ru").strip() or "https://api.hh.ru"
+    hh_oauth_authorize_url = os.getenv("HH_OAUTH_AUTHORIZE_URL", "https://hh.ru/oauth/authorize").strip() or "https://hh.ru/oauth/authorize"
+    hh_client_id = os.getenv("HH_CLIENT_ID", "").strip()
+    hh_client_secret = os.getenv("HH_CLIENT_SECRET", "").strip()
+    hh_redirect_uri = os.getenv("HH_REDIRECT_URI", "").strip()
+    hh_user_agent = os.getenv("HH_USER_AGENT", "RecruitSmart/1.0 (engineering@recruitsmart.local)").strip() or "RecruitSmart/1.0 (engineering@recruitsmart.local)"
+    hh_oauth_state_ttl_seconds = _get_int("HH_OAUTH_STATE_TTL_SECONDS", 900, minimum=60)
+    hh_webhook_base_url = os.getenv("HH_WEBHOOK_BASE_URL", "").strip()
+
+    # VK Max messenger integration
+    max_bot_enabled = _get_bool("MAX_BOT_ENABLED", default=False)
+    max_bot_token = os.getenv("MAX_BOT_TOKEN", "").strip()
+    max_webhook_url = os.getenv("MAX_WEBHOOK_URL", "").strip()
+    max_webhook_secret = os.getenv("MAX_WEBHOOK_SECRET", "").strip()
+
     settings = Settings(
         environment=environment,
         data_dir=data_dir,
@@ -747,6 +787,23 @@ def get_settings() -> Settings:
         ai_interview_script_ft_min_samples=ai_interview_script_ft_min_samples,
         ai_interview_script_pii_mode=ai_interview_script_pii_mode,
         simulator_enabled=simulator_enabled,
+        hh_sync_enabled=hh_sync_enabled,
+        n8n_hh_sync_webhook_url=n8n_hh_sync_webhook_url,
+        n8n_hh_resolve_webhook_url=n8n_hh_resolve_webhook_url,
+        hh_webhook_secret=hh_webhook_secret,
+        hh_integration_enabled=hh_integration_enabled,
+        hh_api_base_url=hh_api_base_url,
+        hh_oauth_authorize_url=hh_oauth_authorize_url,
+        hh_client_id=hh_client_id,
+        hh_client_secret=hh_client_secret,
+        hh_redirect_uri=hh_redirect_uri,
+        hh_user_agent=hh_user_agent,
+        hh_oauth_state_ttl_seconds=hh_oauth_state_ttl_seconds,
+        hh_webhook_base_url=hh_webhook_base_url,
+        max_bot_enabled=max_bot_enabled,
+        max_bot_token=max_bot_token,
+        max_webhook_url=max_webhook_url,
+        max_webhook_secret=max_webhook_secret,
     )
 
     # Validate production configuration (fails fast with clear error messages)

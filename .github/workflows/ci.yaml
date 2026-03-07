@@ -1,4 +1,4 @@
-name: Dry-run CI (manual)
+name: Diagnostics (manual)
 
 on:
   workflow_dispatch:
@@ -36,21 +36,42 @@ jobs:
         working-directory: frontend/app
         run: npm ci
 
-      - name: Build Tailwind bundle
+      - name: Frontend typecheck
         working-directory: frontend/app
-        run: npm run build
+        run: npm run typecheck
+
+      - name: Frontend lint
+        working-directory: frontend/app
+        run: npm run lint
+
+      - name: Frontend unit tests
+        working-directory: frontend/app
+        run: npm run test
+
+      - name: Build and verify Vite SPA bundle
+        working-directory: frontend/app
+        run: npm run build:verify
 
       - name: Install Playwright browsers
         working-directory: frontend/app
         run: npx playwright install --with-deps
 
-      - name: Run Playwright tests
+      - name: Run Playwright smoke tests
         working-directory: frontend/app
-        run: npm run test:e2e
+        env:
+          PYTHON_BIN: python
+        run: npx playwright test tests/e2e/smoke.spec.ts tests/e2e/mobile-smoke.spec.ts
 
       - name: Run E2E (focus trap)
         working-directory: frontend/app
+        env:
+          PYTHON_BIN: python
         run: npx playwright test -g "focus trap|focus"
+
+      - name: Check active build references
+        run: |
+          ! rg -n 'Build Tailwind bundle|frontend/app/src/theme/tokens\.ts|testing \(интеграционная\)|feature/\*' \
+            README.md docs/TECH_STRATEGY.md docs/TECHNICAL_OVERVIEW.md
 
       - name: Run pytest
         run: |

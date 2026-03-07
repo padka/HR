@@ -6,6 +6,7 @@ import os
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy.exc import IntegrityError
 
 os.environ.setdefault("ADMIN_USER", "test-admin")
 os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
@@ -667,6 +668,128 @@ async def test_candidate_slot_approval_validates_owner(monkeypatch, admin_slots_
     assert response.status_code == 303
     location = response.headers.get("location", "")
     assert "approval=invalid_candidate" in location
+
+
+@pytest.mark.asyncio
+async def test_api_slot_book_duplicate_candidate_returns_conflict(admin_slots_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=88001,
+        fio="Дубль Кандидат",
+        city="Москва",
+        username="duplicate_candidate",
+    )
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Duplicate Recruiter", tz="Europe/Moscow", active=True)
+        city = models.City(name="Duplicate City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        now = datetime.now(timezone.utc)
+        occupied_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=now + timedelta(hours=2),
+            duration_min=60,
+            status=models.SlotStatus.BOOKED,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz=city.tz,
+            candidate_city_id=city.id,
+        )
+        target_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=now + timedelta(hours=3),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add_all([occupied_slot, target_slot])
+        await session.commit()
+        await session.refresh(occupied_slot)
+        await session.refresh(target_slot)
+        occupied_slot_id = occupied_slot.id
+        target_slot_id = target_slot.id
+
+    response = await _async_request_with_csrf(
+        admin_slots_app,
+        "post",
+        f"/api/slots/{target_slot_id}/book",
+        json={
+            "candidate_tg_id": candidate.telegram_id,
+            "candidate_fio": candidate.fio,
+        },
+    )
+
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "candidate_already_booked"
+    assert int(payload["existing_slot_id"]) == occupied_slot_id
+
+    async with async_session() as session:
+        target_slot = await session.get(models.Slot, target_slot_id)
+        assert target_slot is not None
+        assert target_slot.status == models.SlotStatus.FREE
+        assert target_slot.candidate_tg_id is None
+
+
+@pytest.mark.asyncio
+async def test_api_slot_book_maps_integrity_error_to_conflict(admin_slots_app, monkeypatch) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=88011,
+        fio="Конфликтный Кандидат",
+        city="Москва",
+    )
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Integrity Recruiter", tz="Europe/Moscow", active=True)
+        city = models.City(name="Integrity City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(city)
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=4),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    async def _raise_integrity(*args, **kwargs):
+        raise IntegrityError("duplicate", params={}, orig=Exception("dup"))
+
+    monkeypatch.setattr("backend.apps.admin_ui.routers.api.reserve_domain_slot", _raise_integrity)
+
+    response = await _async_request_with_csrf(
+        admin_slots_app,
+        "post",
+        f"/api/slots/{slot_id}/book",
+        json={
+            "candidate_tg_id": candidate.telegram_id,
+            "candidate_fio": candidate.fio,
+        },
+    )
+
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "candidate_already_booked"
 
 
 @pytest.mark.asyncio

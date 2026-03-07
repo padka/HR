@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -8,6 +9,7 @@ from sqlalchemy import select
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.security import Principal, require_principal
 from backend.core.db import async_session
+from backend.domain.candidates.models import User
 from backend.domain import models
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.status import CandidateStatus
@@ -282,3 +284,138 @@ async def test_recruiter_can_schedule_intro_day_twice_same_time_via_api_route(
             )
         ).scalars().all()
     assert len(slots) == 2
+
+
+@pytest.mark.asyncio
+async def test_schedule_intro_day_cancels_active_interview_slot_via_candidates_route(
+    recruiter_scoped_app,
+) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=990005,
+        fio="Тест Отмена Собеса Web",
+        city="Москва",
+        username="intro_cancel_web",
+        initial_status=CandidateStatus.INTERVIEW_CONFIRMED,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Cancel Recruiter Web", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.flush()
+        interview_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            candidate_city_id=city.id,
+            purpose="interview",
+            tz_name="Europe/Moscow",
+            start_utc=datetime(2026, 2, 24, 9, 0, tzinfo=timezone.utc),
+            duration_min=30,
+            status=models.SlotStatus.CONFIRMED,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(interview_slot)
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+        interview_start_utc = interview_slot.start_utc
+
+    response = await _request_with_recruiter_principal(
+        recruiter_scoped_app,
+        recruiter_id,
+        "post",
+        f"/candidates/{candidate.id}/schedule-intro-day",
+        json={
+            "date": "2026-02-25",
+            "time": "10:00",
+            "custom_message": "Назначаем ОД",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert response.json().get("ok") is True
+
+    async with async_session() as session:
+        old_slot = await session.scalar(
+            select(models.Slot).where(
+                models.Slot.recruiter_id == recruiter_id,
+                models.Slot.start_utc == interview_start_utc,
+                models.Slot.purpose == "interview",
+            )
+        )
+        assert old_slot is None
+        refreshed_candidate = await session.get(User, candidate.id)
+        assert refreshed_candidate is not None
+        assert refreshed_candidate.candidate_status == CandidateStatus.INTRO_DAY_SCHEDULED
+
+
+@pytest.mark.asyncio
+async def test_schedule_intro_day_cancels_active_interview_slot_via_api_route(
+    recruiter_scoped_app,
+) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=990006,
+        fio="Тест Отмена Собеса API",
+        city="Москва",
+        username="intro_cancel_api",
+        initial_status=CandidateStatus.INTERVIEW_CONFIRMED,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Cancel Recruiter API", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.flush()
+        interview_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            candidate_city_id=city.id,
+            purpose="interview",
+            tz_name="Europe/Moscow",
+            start_utc=datetime(2026, 2, 24, 11, 0, tzinfo=timezone.utc),
+            duration_min=30,
+            status=models.SlotStatus.BOOKED,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(interview_slot)
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+        interview_start_utc = interview_slot.start_utc
+
+    response = await _request_with_recruiter_principal(
+        recruiter_scoped_app,
+        recruiter_id,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-intro-day",
+        json={
+            "date": "2026-02-25",
+            "time": "12:00",
+            "custom_message": "Назначаем ОД API",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json().get("ok") is True
+
+    async with async_session() as session:
+        old_slot = await session.scalar(
+            select(models.Slot).where(
+                models.Slot.recruiter_id == recruiter_id,
+                models.Slot.start_utc == interview_start_utc,
+                models.Slot.purpose == "interview",
+            )
+        )
+        assert old_slot is None
+        refreshed_candidate = await session.get(User, candidate.id)
+        assert refreshed_candidate is not None
+        assert refreshed_candidate.candidate_status == CandidateStatus.INTRO_DAY_SCHEDULED

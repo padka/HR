@@ -13,6 +13,8 @@ from backend.core.db import async_engine, async_session
 from backend.apps.admin_api.admin import mount_admin
 from backend.apps.admin_api.webapp.routers import router as webapp_router
 from backend.apps.admin_api.slot_assignments import router as slot_assignments_router
+from backend.apps.admin_api.hh_integration import router as hh_integration_router
+from backend.apps.admin_api.hh_sync import router as hh_sync_router
 from backend.core.settings import get_settings
 from backend.core.cache import CacheConfig, init_cache, connect_cache, disconnect_cache, get_cache
 
@@ -77,6 +79,10 @@ def create_app() -> FastAPI:
 
     # Bot-facing slot assignment endpoints
     app.include_router(slot_assignments_router)
+
+    # hh.ru sync callback endpoints (called by n8n)
+    app.include_router(hh_sync_router)
+    app.include_router(hh_integration_router)
 
     @app.get("/")
     async def root():

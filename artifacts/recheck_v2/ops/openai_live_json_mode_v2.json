@@ -1,0 +1,13 @@
+{
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-5-mini",
+  "requests_total": 10,
+  "success_total": 10,
+  "errors_total": 0,
+  "success_rate": 100.0,
+  "latency_avg_s": 1.438,
+  "latency_p95_s": 1.8,
+  "latency_max_s": 1.844,
+  "errors": [],
+  "status": "pass"
+}

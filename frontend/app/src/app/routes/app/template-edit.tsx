@@ -189,7 +189,7 @@ export function TemplateEditPage() {
   return (
     <RoleGuard allow={['admin']}>
       <div className="page">
-        <div className="glass panel" style={{ display: 'grid', gap: 12 }}>
+        <div className="glass panel ui-form-shell" style={{ gap: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <div>
               <h1 className="title">
@@ -235,7 +235,11 @@ export function TemplateEditPage() {
                       </optgroup>
                     )}
                   </select>
-                  {selectedMeta && <span className="subtitle">{selectedMeta.desc}</span>}
+                  {selectedMeta && (
+                    <span className="ui-field__support">
+                      <span className="ui-field__note">{selectedMeta.desc}</span>
+                    </span>
+                  )}
                 </label>
               </div>
 
@@ -261,9 +265,11 @@ export function TemplateEditPage() {
                       ))
                   }
                 </div>
-                <div className="action-row" style={{ justifyContent: 'space-between' }}>
-                  <span className="subtitle">Символы: {charCount} / 4096</span>
-                  {charCount > 4096 && <span style={{ color: '#f07373' }}>Превышен лимит Telegram</span>}
+                <div className="ui-field__status-row">
+                  <span className="ui-field__status-item">Символы: {charCount} / 4096</span>
+                  {charCount > 4096 && (
+                    <span className="ui-field__status-item ui-message ui-message--error">Превышен лимит Telegram</span>
+                  )}
                 </div>
               </label>
 
@@ -289,8 +295,8 @@ export function TemplateEditPage() {
                 </div>
               </details>
 
-              <div className="action-row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div className="ui-form-actions ui-form-actions--between">
+                <label className="ui-inline-checkbox">
                   <input
                     type="checkbox"
                     checked={form.is_active}
@@ -311,8 +317,10 @@ export function TemplateEditPage() {
                   </button>
                 </div>
               </div>
-              {formError && <p style={{ color: '#f07373' }}>Ошибка: {formError}</p>}
-              {deleteMutation.isError && <p style={{ color: '#f07373' }}>Ошибка: {(deleteMutation.error as Error).message}</p>}
+              {formError && <p className="ui-message ui-message--error">Ошибка: {formError}</p>}
+              {deleteMutation.isError && (
+                <p className="ui-message ui-message--error">Ошибка: {(deleteMutation.error as Error).message}</p>
+              )}
             </>
           )}
 

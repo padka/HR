@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.services.bot_service import BotService
 from backend.core.db import async_session
+from backend.core.redis_factory import create_redis_client
+from backend.core.settings import get_settings
 from backend.domain.candidates.models import ChatMessage, ChatMessageStatus, ChatMessageDirection, User
 from backend.domain.candidates.services import (
     list_chat_messages as domain_list_chat_messages,
@@ -28,6 +32,9 @@ CHAT_RATE_LIMIT_WINDOW_SECONDS = 3600  # 1 hour window
 # In-memory rate limit store (candidate_id -> list of timestamps)
 # In production, consider using Redis for persistence across workers
 _rate_limit_store: Dict[int, List[float]] = defaultdict(list)
+_rate_limit_redis_client = None
+_rate_limit_redis_url = ""
+_rate_limit_redis_failed = False
 
 CHAT_TEMPLATES: List[Dict[str, str]] = [
     {
@@ -63,10 +70,55 @@ CHAT_TEMPLATES: List[Dict[str, str]] = [
 ]
 
 CHAT_MODE_TTL_MINUTES = 45
+CHAT_RATE_LIMIT_REDIS_TTL_SECONDS = CHAT_RATE_LIMIT_WINDOW_SECONDS + 60
 
 
 def get_chat_templates() -> List[Dict[str, str]]:
     return CHAT_TEMPLATES
+
+
+def _chat_rate_limit_key(candidate_id: int) -> str:
+    return f"chat:rate_limit:{candidate_id}"
+
+
+def _clear_rate_limit_state() -> None:
+    global _rate_limit_redis_client, _rate_limit_redis_url, _rate_limit_redis_failed
+    _rate_limit_store.clear()
+    _rate_limit_redis_client = None
+    _rate_limit_redis_url = ""
+    _rate_limit_redis_failed = False
+
+
+async def _get_rate_limit_redis_client():
+    global _rate_limit_redis_client, _rate_limit_redis_url, _rate_limit_redis_failed
+
+    settings = get_settings()
+    if settings.environment == "test":
+        return None
+
+    redis_url = (settings.rate_limit_redis_url or settings.redis_url or "").strip()
+    if not redis_url:
+        return None
+
+    if _rate_limit_redis_client is not None and _rate_limit_redis_url == redis_url:
+        return _rate_limit_redis_client
+    if _rate_limit_redis_failed and _rate_limit_redis_url == redis_url:
+        return None
+
+    try:
+        client = create_redis_client(redis_url, component="chat_rate_limit", decode_responses=True)
+        await client.ping()
+    except Exception as exc:
+        _rate_limit_redis_client = None
+        _rate_limit_redis_url = redis_url
+        _rate_limit_redis_failed = True
+        logger.warning("chat.rate_limit.redis_unavailable", extra={"error": str(exc)})
+        return None
+
+    _rate_limit_redis_client = client
+    _rate_limit_redis_url = redis_url
+    _rate_limit_redis_failed = False
+    return client
 
 
 def _check_rate_limit(candidate_id: int) -> Tuple[bool, int]:
@@ -94,6 +146,59 @@ def _record_message_sent(candidate_id: int) -> None:
     _rate_limit_store[candidate_id].append(now)
 
 
+async def _check_rate_limit_async(candidate_id: int) -> Tuple[bool, int]:
+    client = await _get_rate_limit_redis_client()
+    if client is None:
+        return _check_rate_limit(candidate_id)
+
+    now = datetime.now(timezone.utc).timestamp()
+    window_start = now - CHAT_RATE_LIMIT_WINDOW_SECONDS
+    key = _chat_rate_limit_key(candidate_id)
+    try:
+        async with client.pipeline(transaction=True) as pipe:
+            pipe.zremrangebyscore(key, "-inf", window_start)
+            pipe.zcard(key)
+            pipe.expire(key, CHAT_RATE_LIMIT_REDIS_TTL_SECONDS)
+            _, current_count, _ = await pipe.execute()
+    except (RedisError, OSError) as exc:
+        logger.warning("chat.rate_limit.redis_fallback", extra={"error": str(exc)})
+        return _check_rate_limit(candidate_id)
+
+    remaining = max(0, CHAT_RATE_LIMIT_PER_HOUR - int(current_count))
+    return int(current_count) < CHAT_RATE_LIMIT_PER_HOUR, remaining
+
+
+async def _record_message_sent_async(candidate_id: int) -> None:
+    client = await _get_rate_limit_redis_client()
+    if client is None:
+        _record_message_sent(candidate_id)
+        return
+
+    now = datetime.now(timezone.utc).timestamp()
+    key = _chat_rate_limit_key(candidate_id)
+    member = f"{now:.6f}:{uuid.uuid4().hex}"
+    try:
+        async with client.pipeline(transaction=True) as pipe:
+            pipe.zadd(key, {member: now})
+            pipe.zremrangebyscore(key, "-inf", now - CHAT_RATE_LIMIT_WINDOW_SECONDS)
+            pipe.expire(key, CHAT_RATE_LIMIT_REDIS_TTL_SECONDS)
+            await pipe.execute()
+    except (RedisError, OSError) as exc:
+        logger.warning("chat.rate_limit.redis_record_fallback", extra={"error": str(exc)})
+        _record_message_sent(candidate_id)
+
+
+def _delivery_stage(status_value: Optional[str]) -> str:
+    normalized = (status_value or "").strip().lower()
+    if normalized == ChatMessageStatus.QUEUED.value:
+        return "queued"
+    if normalized == ChatMessageStatus.SENT.value:
+        return "provider_accepted"
+    if normalized == ChatMessageStatus.FAILED.value:
+        return "terminal_failed"
+    return normalized or "unknown"
+
+
 def serialize_chat_message(message: ChatMessage) -> Dict[str, object]:
     return {
         "id": message.id,
@@ -101,7 +206,9 @@ def serialize_chat_message(message: ChatMessage) -> Dict[str, object]:
         "channel": message.channel,
         "text": message.text or "",
         "status": message.status,
+        "delivery_stage": _delivery_stage(message.status),
         "error": message.error,
+        "telegram_message_id": message.telegram_message_id,
         "created_at": message.created_at.isoformat(),
         "author": message.author_label,
         "can_retry": message.direction == ChatMessageDirection.OUTBOUND.value and message.status == ChatMessageStatus.FAILED.value,
@@ -165,23 +272,23 @@ async def send_chat_message(
             detail={"message": "Для кандидата не найден Telegram ID"},
         )
 
-    # Check rate limit before processing
-    is_allowed, remaining = _check_rate_limit(candidate_id)
-    if not is_allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "message": f"Превышен лимит сообщений ({CHAT_RATE_LIMIT_PER_HOUR} в час). Попробуйте позже.",
-                "retry_after": CHAT_RATE_LIMIT_WINDOW_SECONDS,
-            },
-        )
-
     duplicate = await _existing_message(candidate_id, client_request_id)
     if duplicate:
         return {
             "message": serialize_chat_message(duplicate),
             "status": "duplicate",
         }
+
+    is_allowed, remaining = await _check_rate_limit_async(candidate_id)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "message": f"Превышен лимит сообщений ({CHAT_RATE_LIMIT_PER_HOUR} в час). Попробуйте позже.",
+                "retry_after": CHAT_RATE_LIMIT_WINDOW_SECONDS,
+                "remaining": remaining,
+            },
+        )
 
     text = await _fill_dynamic_fields(text, candidate)
 
@@ -207,8 +314,7 @@ async def send_chat_message(
         reply_markup=reply_markup,
     )
     if send_result.ok:
-        # Record successful send for rate limiting
-        _record_message_sent(candidate_id)
+        await _record_message_sent_async(candidate_id)
 
         await update_chat_message_status(
             message_id,
@@ -311,8 +417,19 @@ async def retry_chat_message(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"message": "Нет Telegram ID для повторной отправки"},
         )
+    is_allowed, remaining = await _check_rate_limit_async(candidate_id)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "message": f"Превышен лимит сообщений ({CHAT_RATE_LIMIT_PER_HOUR} в час). Попробуйте позже.",
+                "retry_after": CHAT_RATE_LIMIT_WINDOW_SECONDS,
+                "remaining": remaining,
+            },
+        )
     send_result = await bot_service.send_chat_message(telegram_user_id, text)
     if send_result.ok:
+        await _record_message_sent_async(candidate_id)
         await update_chat_message_status(
             message_id,
             status=ChatMessageStatus.SENT,

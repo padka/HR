@@ -1,10 +1,11 @@
 import { Link } from '@tanstack/react-router'
 import { RoleGuard } from '@/app/components/RoleGuard'
-import { useQuery } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useState, type DragEvent } from 'react'
 import { apiFetch } from '@/api/client'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { useProfile } from '@/app/hooks/useProfile'
+import { useIsMobile } from '@/app/hooks/useIsMobile'
 
 type CityOption = {
   id: number
@@ -52,13 +53,12 @@ type CandidateCard = {
   recruiter?: { id?: number | null; name?: string | null } | null
 }
 
-type KanbanColumn = {
+type KanbanWorkflowColumn = {
   slug: string
   label: string
-  icon?: string | null
-  tone?: string | null
-  total?: number
-  candidates: CandidateCard[]
+  icon: string
+  targetStatus: string
+  sourceStatuses: string[]
 }
 
 type CalendarDay = {
@@ -81,9 +81,23 @@ type CandidateListPayload = {
   pipeline?: string
   pipeline_options?: Array<{ slug: string; label: string }>
   views?: {
-    kanban?: { columns: KanbanColumn[] }
+    kanban?: { columns: Array<{ slug: string; label: string; candidates: CandidateCard[] }> }
     calendar?: { days: CalendarDay[] }
+    candidates?: CandidateCard[]
   }
+}
+
+type CandidateKanbanMoveResponse = {
+  ok: boolean
+  message?: string
+  status?: string
+  candidate_id?: number
+}
+
+type KanbanMoveVariables = {
+  candidateId: number
+  targetStatus: string
+  previousStatus?: string | null
 }
 
 const STATUS_OPTIONS = [
@@ -92,14 +106,92 @@ const STATUS_OPTIONS = [
   { value: 'not_hired', label: '⚠️ Не закреплён' },
   { value: 'waiting_slot', label: '⏳ Ожидает слот' },
   { value: 'slot_pending', label: '⌛ Ожидает подтверждения' },
-  { value: 'slot_booked', label: '📅 Слот забронирован' },
+  { value: 'slot_booked', label: '📅 Согласован слот' },
   { value: 'interview_passed', label: '✅ Интервью пройдено' },
   { value: 'test2_passed', label: '✅ Тест 2 пройден' },
   { value: 'interview_declined', label: '❌ Отказ' },
 ]
 
+const KANBAN_INCOMING_SOURCE_STATUSES = [
+  'new',
+  'lead',
+  'contacted',
+  'invited',
+  'test1_completed',
+  'waiting_slot',
+  'stalled_waiting_slot',
+]
+
+const KANBAN_WORKFLOW_COLUMNS: KanbanWorkflowColumn[] = [
+  {
+    slug: 'incoming',
+    label: 'Входящие',
+    icon: '📥',
+    targetStatus: 'waiting_slot',
+    sourceStatuses: KANBAN_INCOMING_SOURCE_STATUSES,
+  },
+  {
+    slug: 'slot_pending',
+    label: 'На согласовании',
+    icon: '🕐',
+    targetStatus: 'slot_pending',
+    sourceStatuses: ['slot_pending'],
+  },
+  {
+    slug: 'interview_scheduled',
+    label: 'Назначено собеседование',
+    icon: '📅',
+    targetStatus: 'interview_scheduled',
+    sourceStatuses: ['interview_scheduled'],
+  },
+  {
+    slug: 'interview_confirmed',
+    label: 'Подтвердил собеседование',
+    icon: '✅',
+    targetStatus: 'interview_confirmed',
+    sourceStatuses: ['interview_confirmed'],
+  },
+  {
+    slug: 'test2_sent',
+    label: 'Отправлен тест 2',
+    icon: '📨',
+    targetStatus: 'test2_sent',
+    sourceStatuses: ['test2_sent'],
+  },
+  {
+    slug: 'test2_completed',
+    label: 'Прошел тест 2',
+    icon: '🧪',
+    targetStatus: 'test2_completed',
+    sourceStatuses: ['test2_completed'],
+  },
+  {
+    slug: 'intro_day_scheduled',
+    label: 'Ознакомительный день назначен',
+    icon: '📆',
+    targetStatus: 'intro_day_scheduled',
+    sourceStatuses: ['intro_day_scheduled'],
+  },
+  {
+    slug: 'intro_day_confirmed_preliminary',
+    label: 'Предварительно подтвердил ОД',
+    icon: '👍',
+    targetStatus: 'intro_day_confirmed_preliminary',
+    sourceStatuses: ['intro_day_confirmed_preliminary'],
+  },
+  {
+    slug: 'intro_day_confirmed_day_of',
+    label: 'Подтвердил ОД',
+    icon: '🎯',
+    targetStatus: 'intro_day_confirmed_day_of',
+    sourceStatuses: ['intro_day_confirmed_day_of'],
+  },
+]
+
 export function CandidatesPage() {
   const profile = useProfile()
+  const isMobile = useIsMobile()
+  const queryClient = useQueryClient()
   const principalType = profile.data?.principal.type
   const isAdmin = principalType === 'admin'
 
@@ -119,6 +211,13 @@ export function CandidatesPage() {
   const [pipeline, setPipeline] = useState(initialFilters.pipeline)
   const [view, setView] = useState<'list' | 'kanban' | 'calendar'>('list')
   const [aiCityId, setAiCityId] = useState('')
+  const [deletingCandidateId, setDeletingCandidateId] = useState<number | null>(null)
+  const [deleteCandidateError, setDeleteCandidateError] = useState<Error | null>(null)
+  const [kanbanMoveError, setKanbanMoveError] = useState<Error | null>(null)
+  const [kanbanStatusOverrides, setKanbanStatusOverrides] = useState<Record<number, string>>({})
+  const [draggingCardId, setDraggingCardId] = useState<number | null>(null)
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null)
+  const [movingCandidateId, setMovingCandidateId] = useState<number | null>(null)
   const [calendarFrom, setCalendarFrom] = useState(() => {
     const d = new Date()
     return d.toISOString().slice(0, 10)
@@ -129,10 +228,11 @@ export function CandidatesPage() {
     return d.toISOString().slice(0, 10)
   })
 
+  const pipelineForRequest = view === 'kanban' ? 'main' : pipeline
   const params = new URLSearchParams()
   if (search) params.set('search', search)
   if (status) params.set('status', status)
-  if (pipeline) params.set('pipeline', pipeline)
+  if (pipelineForRequest) params.set('pipeline', pipelineForRequest)
   params.set('page', String(page))
   params.set('per_page', String(perPage))
   if (view === 'calendar') {
@@ -142,7 +242,7 @@ export function CandidatesPage() {
   }
 
   const { data, isLoading, isError, error } = useQuery<CandidateListPayload>({
-    queryKey: ['candidates', { search, status, page, perPage, pipeline, view, calendarFrom, calendarTo }],
+    queryKey: ['candidates', { search, status, page, perPage, pipeline: pipelineForRequest, view, calendarFrom, calendarTo }],
     queryFn: () => apiFetch(`/candidates?${params.toString()}`),
   })
 
@@ -162,15 +262,95 @@ export function CandidatesPage() {
     retry: false,
   })
 
+  const deleteCandidateMutation = useMutation({
+    mutationFn: async (candidateId: number) =>
+      apiFetch<{ ok: boolean; id: number }>(`/candidates/${candidateId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: async () => {
+      setDeleteCandidateError(null)
+      await queryClient.invalidateQueries({ queryKey: ['candidates'] })
+    },
+    onError: (error: Error) => {
+      setDeleteCandidateError(error)
+    },
+    onSettled: () => {
+      setDeletingCandidateId(null)
+    },
+  })
+
+  const moveKanbanCandidateMutation = useMutation({
+    mutationFn: async ({ candidateId, targetStatus }: KanbanMoveVariables) =>
+      apiFetch<CandidateKanbanMoveResponse>(`/candidates/${candidateId}/kanban-status`, {
+        method: 'POST',
+        body: JSON.stringify({ target_status: targetStatus }),
+      }),
+    onMutate: ({ candidateId }: KanbanMoveVariables) => {
+      setKanbanMoveError(null)
+      setMovingCandidateId(candidateId)
+    },
+    onSuccess: async (_data, variables) => {
+      setKanbanMoveError(null)
+      setKanbanStatusOverrides((prev) => {
+        const next = { ...prev }
+        delete next[variables.candidateId]
+        return next
+      })
+      await queryClient.invalidateQueries({ queryKey: ['candidates'] })
+    },
+    onError: (error: Error, variables) => {
+      setKanbanMoveError(error)
+      setKanbanStatusOverrides((prev) => {
+        const next = { ...prev }
+        if (variables.previousStatus) {
+          next[variables.candidateId] = variables.previousStatus
+        } else {
+          delete next[variables.candidateId]
+        }
+        return next
+      })
+    },
+    onSettled: () => {
+      setMovingCandidateId(null)
+    },
+  })
+
   const total = data?.total ?? 0
   const pagesTotal = data?.pages_total ?? 1
-  const kanbanColumns = data?.views?.kanban?.columns || []
+  const kanbanCards = useMemo(
+    () => data?.views?.candidates ?? [],
+    [data?.views?.candidates],
+  )
+  const effectiveStatusById = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const card of kanbanCards) {
+      const statusSlug = kanbanStatusOverrides[card.id] || card.status?.slug || ''
+      map.set(card.id, statusSlug)
+    }
+    return map
+  }, [kanbanCards, kanbanStatusOverrides])
+  const kanbanColumns = useMemo(
+    () =>
+      KANBAN_WORKFLOW_COLUMNS.map((column) => {
+        const cards = kanbanCards.filter((card) => {
+          const currentStatus = effectiveStatusById.get(card.id) || ''
+          return column.sourceStatuses.includes(currentStatus)
+        })
+        return {
+          ...column,
+          total: cards.length,
+          candidates: cards,
+        }
+      }),
+    [kanbanCards, effectiveStatusById],
+  )
   const calendarDays = data?.views?.calendar?.days || []
   const pipelineOptions = data?.pipeline_options || [
+    { slug: 'main', label: 'Основной канбан' },
     { slug: 'interview', label: 'Интервью' },
     { slug: 'intro_day', label: 'Ознакомительный день' },
   ]
-  const hasActiveFilters = Boolean(search.trim() || status || pipeline !== 'interview')
+  const hasActiveFilters = Boolean(search.trim() || status || (view !== 'kanban' && pipeline !== 'interview'))
 
   const resetFilters = () => {
     setSearch('')
@@ -179,16 +359,79 @@ export function CandidatesPage() {
     setPage(1)
   }
 
+  useEffect(() => {
+    if (!isMobile) return
+    if (view === 'calendar') setView('list')
+  }, [isMobile, view])
+
+  const deleteCandidate = (candidate: { id: number; fio?: string | null }) => {
+    const name = candidate.fio?.trim() || `#${candidate.id}`
+    const confirmed = window.confirm(`Удалить кандидата ${name}? Действие необратимо.`)
+    if (!confirmed) return
+    setDeletingCandidateId(candidate.id)
+    deleteCandidateMutation.mutate(candidate.id)
+  }
+
+  const handleKanbanDragStart = (event: DragEvent<HTMLDivElement>, candidateId: number) => {
+    event.dataTransfer.setData('text/candidate-id', String(candidateId))
+    event.dataTransfer.effectAllowed = 'move'
+    setDraggingCardId(candidateId)
+    setKanbanMoveError(null)
+  }
+
+  const handleKanbanDragEnd = () => {
+    setDraggingCardId(null)
+    setDragOverColumn(null)
+  }
+
+  const handleKanbanDrop = (
+    event: DragEvent<HTMLDivElement>,
+    targetColumn: KanbanWorkflowColumn,
+  ) => {
+    event.preventDefault()
+    const rawCandidateId = event.dataTransfer.getData('text/candidate-id')
+    const candidateId = Number(rawCandidateId)
+    setDragOverColumn(null)
+    setDraggingCardId(null)
+    if (!Number.isFinite(candidateId)) return
+
+    const previousStatus = effectiveStatusById.get(candidateId) || null
+    if (!previousStatus) return
+
+    if (
+      targetColumn.slug === 'incoming' &&
+      KANBAN_INCOMING_SOURCE_STATUSES.includes(previousStatus)
+    ) {
+      return
+    }
+    if (targetColumn.targetStatus === previousStatus) {
+      return
+    }
+
+    setKanbanStatusOverrides((prev) => ({
+      ...prev,
+      [candidateId]: targetColumn.targetStatus,
+    }))
+    moveKanbanCandidateMutation.mutate({
+      candidateId,
+      targetStatus: targetColumn.targetStatus,
+      previousStatus,
+    })
+  }
+
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
-      <div className="page">
-        <header className="glass glass--elevated page-header page-header--row">
-          <h1 className="title">Кандидаты</h1>
+      <div className="page app-page app-page--ops">
+        <header className="glass glass--elevated page-header page-header--row app-page__hero">
+          <div className="page-header__content">
+            <h1 className="title">Кандидаты</h1>
+            <p className="subtitle">Операционная база кандидатов с быстрым переходом между списком, канбаном и календарём.</p>
+          </div>
           <Link to="/app/candidates/new" className="ui-btn ui-btn--primary" data-testid="candidates-create-btn">+ Новый кандидат</Link>
         </header>
 
-        <section className="glass page-section">
-          <div className="filter-bar" data-testid="candidates-filter-bar">
+        <section className="glass page-section app-page__section">
+          <div className="filter-bar ui-filter" data-testid="candidates-filter-bar">
             <input
               placeholder="Поиск по ФИО, городу, TG..."
               value={search}
@@ -208,21 +451,24 @@ export function CandidatesPage() {
               aria-label="Воронка"
               value={pipeline}
               onChange={(e) => { setPipeline(e.target.value); setPage(1) }}
+              disabled={view === 'kanban'}
             >
               {pipelineOptions.map((opt) => (
                 <option key={opt.slug} value={opt.slug}>{opt.label}</option>
               ))}
             </select>
             <div className="view-toggle" data-testid="candidates-view-switcher">
-              <button className={`ui-btn ui-btn--sm ${view === 'list' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('list')}>
+              <button className={`ui-btn ui-btn--sm ${view === 'list' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => { setView('list'); setPage(1) }}>
                 Список
               </button>
-              <button className={`ui-btn ui-btn--sm ${view === 'kanban' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('kanban')}>
+              <button className={`ui-btn ui-btn--sm ${view === 'kanban' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => { setView('kanban'); setPipeline('main'); setPage(1) }}>
                 Канбан
               </button>
-              <button className={`ui-btn ui-btn--sm ${view === 'calendar' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setView('calendar')}>
-                Календарь
-              </button>
+              {!isMobile && (
+                <button className={`ui-btn ui-btn--sm ${view === 'calendar' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => { setView('calendar'); setPage(1) }}>
+                  Календарь
+                </button>
+              )}
             </div>
           </div>
 
@@ -298,7 +544,7 @@ export function CandidatesPage() {
             )}
           </div>
 
-          <div className="pagination">
+          <div className="pagination app-page__toolbar">
             <span className="pagination__info">Всего: {total}</span>
             <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Назад</button>
             <span className="pagination__info">{page} / {pagesTotal}</span>
@@ -314,6 +560,8 @@ export function CandidatesPage() {
 
           {isLoading && <p className="text-muted">Загрузка…</p>}
           {isError && <ApiErrorBanner error={error} title="Не удалось загрузить кандидатов" />}
+          {deleteCandidateError && <ApiErrorBanner error={deleteCandidateError} title="Не удалось удалить кандидата" />}
+          {kanbanMoveError && <ApiErrorBanner error={kanbanMoveError} title="Не удалось переместить кандидата в канбане" />}
           {data && data.items.length === 0 && (
             <div className="empty-state" data-testid="candidates-empty-state">
               <p className="empty-state__text">
@@ -335,7 +583,7 @@ export function CandidatesPage() {
           )}
           {view === 'calendar' && (
             <div className="page-section__content">
-              <div className="filter-bar">
+              <div className="filter-bar ui-filter">
                 <label className="form-group">
                   <span className="form-group__label">От</span>
                   <input type="date" value={calendarFrom} onChange={(e) => setCalendarFrom(e.target.value)} />
@@ -385,73 +633,196 @@ export function CandidatesPage() {
           )}
 
           {view === 'kanban' && (
-            <div className="kanban">
-              {kanbanColumns.map((col) => (
-                <article key={col.slug} className="glass kanban__column">
-                  <div className="kanban__header">
-                    <span className="kanban__title">{col.icon ? `${col.icon} ` : ''}{col.label}</span>
-                    <span className="kanban__count">{col.total ?? col.candidates.length}</span>
-                  </div>
-                  <div className="kanban__cards">
-                    {col.candidates.map((card) => (
-                      <div key={card.id} className="glass glass--interactive kanban__card">
-                        <div className="font-semibold">{card.fio || '—'}</div>
-                        <div className="text-muted text-sm">{card.city || '—'}</div>
-                        <div className="kanban__card-footer">
-                          <span className="text-muted text-sm">{card.recruiter?.name || '—'}</span>
-                          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(card.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
-                            Открыть →
-                          </Link>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </article>
-              ))}
+            <div className="page-section__content">
+              <p className="subtitle">
+                Перетаскивайте карточки между этапами. Канбан зафиксирован на основном сценарии из 9 статусов.
+              </p>
+              <div className="kanban">
+                {kanbanColumns.map((col) => (
+                  <article key={col.slug} className="glass kanban__column" data-kanban-column={col.slug}>
+                    <div className="kanban__header">
+                      <span className="kanban__title">{col.icon} {col.label}</span>
+                      <span className="kanban__count">{col.total ?? col.candidates.length}</span>
+                    </div>
+                    <div
+                      className={`kanban__cards ${dragOverColumn === col.slug ? 'kanban__cards--drag-over' : ''}`}
+                      onDragEnter={(event) => {
+                        event.preventDefault()
+                        setDragOverColumn(col.slug)
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault()
+                        event.dataTransfer.dropEffect = 'move'
+                        setDragOverColumn(col.slug)
+                      }}
+                      onDragLeave={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                          setDragOverColumn((current) => (current === col.slug ? null : current))
+                        }
+                      }}
+                      onDrop={(event) => handleKanbanDrop(event, col)}
+                    >
+                      {col.candidates.map((card) => {
+                        const canDeleteCard =
+                          isAdmin ||
+                          (principalType === 'recruiter' && card.recruiter?.id === profile.data?.principal.id)
+                        const isDeletingCard = deletingCandidateId === card.id && deleteCandidateMutation.isPending
+                        const isDraggingCard = draggingCardId === card.id
+                        const isMovingCard = movingCandidateId === card.id && moveKanbanCandidateMutation.isPending
+                        return (
+                          <div
+                            key={card.id}
+                            className={`glass glass--interactive kanban__card ${isDraggingCard ? 'kanban__card--dragging' : ''} ${isMovingCard ? 'kanban__card--moving' : ''}`}
+                            draggable={!isMovingCard}
+                            onDragStart={(event) => handleKanbanDragStart(event, card.id)}
+                            onDragEnd={handleKanbanDragEnd}
+                            data-candidate-id={card.id}
+                          >
+                            <div className="font-semibold">{card.fio || '—'}</div>
+                            <div className="text-muted text-sm">{card.city || '—'}</div>
+                            <div className="kanban__card-footer">
+                              <span className="text-muted text-sm">{card.recruiter?.name || '—'}</span>
+                              <div className="toolbar">
+                                {canDeleteCard && (
+                                  <button
+                                    type="button"
+                                    className="ui-btn ui-btn--danger ui-btn--sm"
+                                    onClick={() => deleteCandidate({ id: card.id, fio: card.fio })}
+                                    disabled={isDeletingCard || isMovingCard}
+                                  >
+                                    {isDeletingCard ? 'Удаление…' : 'Удалить'}
+                                  </button>
+                                )}
+                                <Link to="/app/candidates/$candidateId" params={{ candidateId: String(card.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
+                                  Открыть →
+                                </Link>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </article>
+                ))}
+              </div>
             </div>
           )}
 
           {view === 'list' && data && data.items.length > 0 && (
-            <table className="data-table" data-testid="candidates-table">
-              <thead>
-                <tr>
-                  <th>ФИО</th>
-                  <th>Город</th>
-                  <th>Статус</th>
-                  {isAdmin && <th>Рекрутёр</th>}
-                  <th>Telegram</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.items.map((c) => {
-                  const tone = c.status?.tone
-                  const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
-                  return (
-                    <tr key={c.id}>
-                      <td>
-                        <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="font-semibold">
-                          {c.fio || '—'}
-                        </Link>
-                      </td>
-                      <td>{c.city || '—'}</td>
-                      <td>
-                        <span className={`status-badge status-badge--${tone || 'muted'}`}>
-                          {c.status?.label || c.status?.slug || '—'}
-                        </span>
-                      </td>
-                      {isAdmin && <td>{recruiterName}</td>}
-                      <td>
-                        {c.telegram_id ? (
-                          <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="text-accent">
-                            {c.telegram_id}
-                          </a>
-                        ) : '—'}
-                      </td>
+            <>
+              {isMobile && (
+                <div className="mobile-card-list" data-testid="candidates-mobile-list">
+                  {data.items.map((c) => {
+                    const tone = c.status?.tone
+                    const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
+                    const canDelete =
+                      isAdmin ||
+                      (principalType === 'recruiter' && c.recruiter_id === profile.data?.principal.id)
+                    const isDeleting = deletingCandidateId === c.id && deleteCandidateMutation.isPending
+                    return (
+                      <article key={`mobile-candidate-${c.id}`} className="candidate-mobile-card glass glass--subtle">
+                        <div className="list-item__header">
+                          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="font-semibold">
+                            {c.fio || '—'}
+                          </Link>
+                          <span className={`status-badge status-badge--${tone || 'muted'}`}>
+                            {c.status?.label || c.status?.slug || '—'}
+                          </span>
+                        </div>
+                        <div className="text-muted text-sm">
+                          {c.city || '—'}{isAdmin ? ` · ${recruiterName}` : ''}
+                        </div>
+                        <div className="toolbar toolbar--compact">
+                          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
+                            Открыть
+                          </Link>
+                          {c.telegram_id ? (
+                            <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="ui-btn ui-btn--ghost ui-btn--sm">
+                              Telegram
+                            </a>
+                          ) : (
+                            <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled>
+                              Telegram
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              type="button"
+                              className="ui-btn ui-btn--danger ui-btn--sm"
+                              onClick={() => deleteCandidate(c)}
+                              disabled={isDeleting}
+                            >
+                              {isDeleting ? 'Удаление…' : 'Удалить'}
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="data-table-wrapper candidates-table-wrapper">
+                <table className="data-table" data-testid="candidates-table">
+                  <thead>
+                    <tr>
+                      <th>ФИО</th>
+                      <th>Город</th>
+                      <th>Статус</th>
+                      {isAdmin && <th>Рекрутёр</th>}
+                      <th>Telegram</th>
+                      <th>Действия</th>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {data.items.map((c) => {
+                      const tone = c.status?.tone
+                      const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
+                      const canDelete =
+                        isAdmin ||
+                        (principalType === 'recruiter' && c.recruiter_id === profile.data?.principal.id)
+                      const isDeleting = deletingCandidateId === c.id && deleteCandidateMutation.isPending
+                      return (
+                        <tr key={c.id}>
+                          <td>
+                            <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="font-semibold">
+                              {c.fio || '—'}
+                            </Link>
+                          </td>
+                          <td>{c.city || '—'}</td>
+                          <td>
+                            <span className={`status-badge status-badge--${tone || 'muted'}`}>
+                              {c.status?.label || c.status?.slug || '—'}
+                            </span>
+                          </td>
+                          {isAdmin && <td>{recruiterName}</td>}
+                          <td>
+                            {c.telegram_id ? (
+                              <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="text-accent">
+                                {c.telegram_id}
+                              </a>
+                            ) : '—'}
+                          </td>
+                          <td>
+                            {canDelete ? (
+                              <button
+                                type="button"
+                                className="ui-btn ui-btn--danger ui-btn--sm"
+                                onClick={() => deleteCandidate(c)}
+                                disabled={isDeleting}
+                              >
+                                {isDeleting ? 'Удаление…' : 'Удалить'}
+                              </button>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
       </div>

@@ -1,0 +1,40 @@
+{
+  "overall_status": "manual_pending",
+  "checks": [
+    {
+      "id": "backend_security_regression",
+      "title": "Backend security regression tests",
+      "status": "pass"
+    },
+    {
+      "id": "backend_crud_regression",
+      "title": "Backend CRUD regression tests",
+      "status": "pass"
+    },
+    {
+      "id": "frontend_lint",
+      "title": "Frontend lint",
+      "status": "pass"
+    },
+    {
+      "id": "frontend_typecheck",
+      "title": "Frontend typecheck",
+      "status": "pass"
+    },
+    {
+      "id": "frontend_unit",
+      "title": "Frontend unit tests",
+      "status": "pass"
+    },
+    {
+      "id": "frontend_build",
+      "title": "Frontend build (fresh dist assets for e2e)",
+      "status": "pass"
+    },
+    {
+      "id": "frontend_e2e_gate",
+      "title": "Frontend smoke+a11y+focus e2e",
+      "status": "pass"
+    }
+  ]
+}

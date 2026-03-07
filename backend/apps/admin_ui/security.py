@@ -2,27 +2,30 @@
 
 from __future__ import annotations
 
-import logging
 import base64
-from datetime import datetime, timezone, timedelta
+import logging
 import os
 import secrets
-from dataclasses import dataclass
-from typing import Optional, Literal
 from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Literal, Optional
 
+import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from starlette.requests import HTTPConnection
+from jwt import InvalidTokenError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from jose import JWTError, jwt
+from sqlalchemy import select
+from starlette.requests import HTTPConnection
+from starlette_wtf import csrf_token
 
 from backend.core.audit import AuditContext, set_audit_context
 from backend.core.db import async_session
-from backend.domain.models import Recruiter
-from starlette_wtf import csrf_token
 from backend.core.settings import get_settings
+from backend.domain.auth_account import AuthAccount
+from backend.domain.models import Recruiter
 
 logger = logging.getLogger(__name__)
 
@@ -165,8 +168,20 @@ class Principal:
     id: int
 
 
+ADMIN_PRINCIPAL_ID = 0
+LEGACY_ADMIN_PRINCIPAL_ID = -1
 SESSION_KEY = "principal"
 principal_ctx: ContextVar[Optional[Principal]] = ContextVar("principal_ctx", default=None)
+
+
+def normalize_admin_principal_id(principal_id: int | None) -> int:
+    if principal_id in {None, LEGACY_ADMIN_PRINCIPAL_ID}:
+        return ADMIN_PRINCIPAL_ID
+    return int(principal_id)
+
+
+def admin_principal(principal_id: int | None = None) -> Principal:
+    return Principal(type="admin", id=normalize_admin_principal_id(principal_id))
 
 
 def _connection_client_host(connection: Request | HTTPConnection) -> str:
@@ -240,6 +255,8 @@ async def _resolve_current_principal(
     """
     settings = get_settings()
 
+    token_provided = bool((token or "").strip())
+
     # 1. JWT Token Check
     if token:
         try:
@@ -248,16 +265,57 @@ async def _resolve_current_principal(
                 settings.session_secret,
                 algorithms=["HS256"],
             )
-            username: str = payload.get("sub")
+            username = str(payload.get("sub") or "").strip()
             if username and secrets.compare_digest(username, settings.admin_username):
                 return _assign_principal(
                     connection,
-                    Principal(type="admin", id=-1),
+                    admin_principal(),
                     username=f"admin:{username}",
                 )
-        except JWTError:
-            # Invalid token, proceed to other methods or fail.
-            pass
+            if username:
+                async with async_session() as session:
+                    account = await session.scalar(
+                        select(AuthAccount).where(
+                            AuthAccount.username == username,
+                            AuthAccount.is_active.is_(True),
+                        )
+                    )
+                    if account:
+                        account_type = (account.principal_type or "").strip().lower()
+                        if account_type == "admin":
+                            return _assign_principal(
+                                connection,
+                                Principal(type="admin", id=int(account.principal_id)),
+                                username=f"admin:{username}",
+                            )
+                        if account_type == "recruiter":
+                            recruiter = await session.get(Recruiter, int(account.principal_id))
+                            if recruiter and getattr(recruiter, "active", True):
+                                now = datetime.now(timezone.utc)
+                                last_seen = getattr(recruiter, "last_seen_at", None)
+                                if last_seen and last_seen.tzinfo is None:
+                                    last_seen = last_seen.replace(tzinfo=timezone.utc)
+                                if last_seen is None or (now - last_seen) > timedelta(minutes=5):
+                                    recruiter.last_seen_at = now
+                                    await session.commit()
+                                return _assign_principal(
+                                    connection,
+                                    Principal(type="recruiter", id=recruiter.id),
+                                    username=f"recruiter:{recruiter.id}",
+                                )
+                if token_provided:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid authentication token",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+        except InvalidTokenError as exc:
+            if token_provided:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication token",
+                    headers={"WWW-Authenticate": "Bearer"},
+                ) from exc
 
     # 2. Session principal
     principal_data = connection.session.get(SESSION_KEY) if hasattr(connection, "session") else None
@@ -267,7 +325,7 @@ async def _resolve_current_principal(
         if p_type == "admin" and isinstance(p_id, int):
             return _assign_principal(
                 connection,
-                Principal(type="admin", id=p_id),
+                admin_principal(p_id),
                 username=f"admin:{p_id}",
             )
         if p_type == "recruiter" and isinstance(p_id, int):
@@ -310,10 +368,10 @@ async def _resolve_current_principal(
         if user_ok and pass_ok:
             # Persist into session for subsequent requests
             if hasattr(connection, "session"):
-                connection.session[SESSION_KEY] = {"type": "admin", "id": -1}
+                connection.session[SESSION_KEY] = {"type": "admin", "id": ADMIN_PRINCIPAL_ID}
             return _assign_principal(
                 connection,
-                Principal(type="admin", id=-1),
+                admin_principal(),
                 username=f"admin:{candidate_user}",
             )
 
@@ -321,7 +379,7 @@ async def _resolve_current_principal(
     if _allow_dev_autoadmin(connection, settings):
         return _assign_principal(
             connection,
-            Principal(type="admin", id=-1),
+            admin_principal(),
             username="anon-admin",
         )
 
@@ -380,6 +438,10 @@ __all__ = [
     "Principal",
     "PrincipalType",
     "SESSION_KEY",
+    "ADMIN_PRINCIPAL_ID",
+    "LEGACY_ADMIN_PRINCIPAL_ID",
+    "admin_principal",
+    "normalize_admin_principal_id",
 ]
 
 

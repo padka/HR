@@ -206,10 +206,14 @@ class TelegramWebAppAuth:
         """
         bot_token = self._bot_token
         if not bot_token:
-            # Fetch bot token from config/env
-            from backend.apps.bot.config import get_bot_token
+            from backend.core.settings import get_settings
 
-            bot_token = get_bot_token()
+            bot_token = get_settings().bot_token
+        if not bot_token:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Telegram bot token is not configured",
+            )
 
         try:
             return validate_init_data(

@@ -84,7 +84,7 @@ export function QuestionEditPage() {
   return (
     <RoleGuard allow={['admin']}>
       <div className="page">
-        <div className="glass panel" style={{ display: 'grid', gap: 12 }}>
+        <div className="glass panel ui-form-shell" style={{ gap: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <div>
               <h1 className="title">Редактирование вопроса</h1>
@@ -94,15 +94,15 @@ export function QuestionEditPage() {
           </div>
 
           {detailQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-          {detailQuery.isError && <p style={{ color: '#f07373' }}>Ошибка: {(detailQuery.error as Error).message}</p>}
+          {detailQuery.isError && <p className="ui-message ui-message--error">Ошибка: {(detailQuery.error as Error).message}</p>}
 
           {!detailQuery.isLoading && (
             <>
-              <label style={{ display: 'grid', gap: 6 }}>
+              <label className="ui-field">
                 Заголовок
                 <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
               </label>
-              <label style={{ display: 'grid', gap: 6 }}>
+              <label className="ui-field">
                 Тест
                 <select value={form.test_id} onChange={(e) => setForm({ ...form, test_id: e.target.value })}>
                   {(detailQuery.data?.test_choices || []).map(([id, label]) => (
@@ -110,7 +110,7 @@ export function QuestionEditPage() {
                   ))}
                 </select>
               </label>
-              <label style={{ display: 'grid', gap: 6 }}>
+              <label className="ui-field">
                 Индекс
                 <input
                   type="number"
@@ -118,20 +118,24 @@ export function QuestionEditPage() {
                   onChange={(e) => setForm({ ...form, question_index: Number(e.target.value) })}
                 />
               </label>
-              <div className="subtitle">Payload (JSON)</div>
-              <QuestionPayloadEditor
-                value={form.payload}
-                onChange={(payload) => setForm({ ...form, payload })}
-                onValidityChange={setPayloadValid}
-              />
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
-                Активен
-              </label>
-              <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-                {mutation.isPending ? 'Сохраняем…' : 'Сохранить'}
-              </button>
-              {formError && <p style={{ color: '#f07373' }}>Ошибка: {formError}</p>}
+              <div className="ui-field">
+                <span>Payload (JSON)</span>
+                <QuestionPayloadEditor
+                  value={form.payload}
+                  onChange={(payload) => setForm({ ...form, payload })}
+                  onValidityChange={setPayloadValid}
+                />
+              </div>
+              <div className="ui-form-actions ui-form-actions--between">
+                <label className="ui-inline-checkbox">
+                  <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
+                  Активен
+                </label>
+                <button className="ui-btn ui-btn--primary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+                  {mutation.isPending ? 'Сохраняем…' : 'Сохранить'}
+                </button>
+              </div>
+              {formError && <p className="ui-message ui-message--error">Ошибка: {formError}</p>}
             </>
           )}
         </div>

@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlparse
 
 
 CRITICAL_ROUTES = (
@@ -124,6 +125,94 @@ def _route_latency(metrics_path: Path) -> dict[str, dict[str, float]]:
         out.setdefault(route, {})
         out[route][("p95" if name.endswith("p95_seconds") else "p99")] = float(value)
     return out
+
+
+def _canonical_route(url_or_path: str) -> str:
+    """Normalize autocannon URL/path into known critical route labels."""
+
+    raw = (url_or_path or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    path = parsed.path if parsed.scheme else raw
+    return path
+
+
+def _estimate_p95_from_autocannon(latency: dict[str, Any]) -> float | None:
+    """Estimate p95 (seconds) from autocannon percentiles.
+
+    autocannon exposes p90 and p97_5, but not p95 directly.
+    Use linear interpolation between p90 and p97_5 as best-effort estimate.
+    """
+
+    p90_ms = _num(latency.get("p90"), 0.0)
+    p97_5_ms = _num(latency.get("p97_5"), 0.0)
+    p99_ms = _num(latency.get("p99"), 0.0)
+
+    if p90_ms > 0 and p97_5_ms > p90_ms:
+        # 95th percentile is 5/7.5 through [p90, p97.5].
+        p95_ms = p90_ms + (p97_5_ms - p90_ms) * (5.0 / 7.5)
+        return p95_ms / 1000.0
+    if p97_5_ms > 0:
+        return p97_5_ms / 1000.0
+    if p99_ms > 0:
+        return p99_ms / 1000.0
+    return None
+
+
+def _client_route_latency(out_dir: Path) -> dict[str, dict[str, float]]:
+    """Build per-route latency from autocannon JSON outputs.
+
+    This complements `/metrics`-based histograms and remains valid with multiple
+    server workers because client observations include all responses.
+    """
+
+    out: dict[str, dict[str, float]] = {}
+    for path in out_dir.glob("*.json"):
+        data = _load_json(path)
+        if not data:
+            continue
+        route = _canonical_route(str(data.get("url", "")))
+        if route not in CRITICAL_ROUTES:
+            continue
+        latency = data.get("latency", {})
+        if not isinstance(latency, dict):
+            continue
+        p95 = _estimate_p95_from_autocannon(latency)
+        p99_ms = _num(latency.get("p99"), 0.0)
+        p99 = (p99_ms / 1000.0) if p99_ms > 0 else None
+        if p95 is None and p99 is None:
+            continue
+        current = out.setdefault(route, {})
+        if p95 is not None:
+            current["p95"] = max(float(current.get("p95", 0.0)), float(p95))
+        if p99 is not None:
+            current["p99"] = max(float(current.get("p99", 0.0)), float(p99))
+    return out
+
+
+def _merge_route_latency(
+    primary: dict[str, dict[str, float]],
+    secondary: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    """Merge two route latency maps using worst-case values per quantile."""
+
+    merged: dict[str, dict[str, float]] = {}
+    for route in set(primary.keys()) | set(secondary.keys()):
+        payload: dict[str, float] = {}
+        for quantile in ("p95", "p99"):
+            candidates: list[float] = []
+            first = primary.get(route, {}).get(quantile)
+            second = secondary.get(route, {}).get(quantile)
+            if first is not None:
+                candidates.append(float(first))
+            if second is not None:
+                candidates.append(float(second))
+            if candidates:
+                payload[quantile] = max(candidates)
+        if payload:
+            merged[route] = payload
+    return merged
 
 
 def _delta_http_latency(before_path: Path, after_path: Path) -> dict[str, dict[str, float]]:
@@ -424,6 +513,9 @@ def main(argv: list[str]) -> int:
         db_queries_by_route, db_queries_total = {}, {}
         db_time_by_route, db_time_total = {}, {}
 
+    client_latency_by_route = _client_route_latency(out_dir)
+    latency_by_route = _merge_route_latency(latency_by_route, client_latency_by_route)
+
     max_p95 = max((v.get("p95", 0.0) for v in latency_by_route.values()), default=0.0)
     max_p99 = max((v.get("p99", 0.0) for v in latency_by_route.values()), default=0.0)
     pool_min_samples = int(_env_float("KNEE_POOL_MIN_SAMPLES", 50))
@@ -467,6 +559,7 @@ def main(argv: list[str]) -> int:
         "is_knee": is_knee,
         "reasons": reasons,
         "routes": latency_by_route,
+        "client_routes": client_latency_by_route,
         "pool_acquire_p95": pool_p95_by_route,
         "pool_acquire_total": pool_total_by_route,
         "db_queries_per_request": db_queries_by_route,

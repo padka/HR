@@ -25,6 +25,32 @@ type CityDetail = {
   recruiter_ids?: number[]
 }
 
+type CityHhVacancyItem = {
+  vacancy_id: number
+  vacancy_title: string
+  vacancy_slug: string
+  vacancy_is_active: boolean
+  hh_linked: boolean
+  local_vacancy_linked?: boolean
+  external_vacancy_id?: string | null
+  hh_title?: string | null
+  hh_url?: string | null
+  status: string
+  status_label: string
+  status_source: 'live_api' | 'snapshot' | 'local'
+  published: boolean
+  last_checked_at?: string | null
+  last_hh_sync_at?: string | null
+}
+
+type CityHhVacanciesResponse = {
+  ok: boolean
+  city_id: number
+  city_name: string
+  api_error?: string | null
+  items: CityHhVacancyItem[]
+}
+
 type TemplateItem = {
   id: number
   key: string
@@ -141,10 +167,10 @@ function ReminderPolicySection({ cityId }: { cityId: number }) {
   })
 
   return (
-    <div className="glass page-section" style={{ marginTop: 16 }}>
-      <h3 style={{ marginBottom: 12, fontWeight: 600 }}>Напоминания</h3>
+    <div className="glass page-section city-reminder__section">
+      <h3 className="city-reminder__title">Напоминания</h3>
 
-      <label style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16, cursor: 'pointer' }}>
+      <label className="city-reminder__toggle">
         <input
           type="checkbox"
           checked={useCustom}
@@ -155,7 +181,7 @@ function ReminderPolicySection({ cityId }: { cityId: number }) {
 
       {useCustom && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+          <div className="city-reminder__hours">
             <label className="form-group">
               <span className="form-group__label">Тихие часы: начало (0–23)</span>
               <input
@@ -180,25 +206,25 @@ function ReminderPolicySection({ cityId }: { cityId: number }) {
             </label>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+          <div className="city-reminder__flags">
             {([
               ['confirm_6h_enabled', 'Подтверждение за 6 часов'],
               ['confirm_3h_enabled', 'Подтверждение за 3 часа'],
               ['confirm_2h_enabled', 'Подтверждение за 2 часа'],
               ['intro_remind_3h_enabled', 'Напоминание интро-день за 3 часа'],
             ] as const).map(([key, label]) => (
-              <label key={key} style={{ display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer' }}>
+              <label key={key} className="city-reminder__flag">
                 <input
                   type="checkbox"
                   checked={form[key]}
                   onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
                 />
-                <span style={{ fontSize: 14 }}>{label}</span>
+                <span>{label}</span>
               </label>
             ))}
           </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="city-reminder__actions">
             <button
               type="button"
               className="ui-btn ui-btn--primary ui-btn--sm"
@@ -220,13 +246,13 @@ function ReminderPolicySection({ cityId }: { cityId: number }) {
           </div>
 
           {saveMutation.isSuccess && (
-            <div style={{ color: 'var(--success)', fontSize: 13, marginTop: 8 }}>✓ Настройки сохранены</div>
+            <div className="city-reminder__success">✓ Настройки сохранены</div>
           )}
         </>
       )}
 
       {!useCustom && policyData && (
-        <div style={{ color: 'var(--fg-muted)', fontSize: 13 }}>
+        <div className="city-reminder__global-note">
           Используются глобальные настройки напоминаний.{' '}
           <button
             type="button"
@@ -257,6 +283,10 @@ export function CityEditPage() {
   const templatesQuery = useQuery<{ custom_templates: TemplateItem[] }>({
     queryKey: ['templates-list'],
     queryFn: () => apiFetch('/templates/list'),
+  })
+  const hhVacanciesQuery = useQuery<CityHhVacanciesResponse>({
+    queryKey: ['city-hh-vacancies', cityId],
+    queryFn: () => apiFetch(`/cities/${cityId}/hh-vacancies`),
   })
 
   const detailQuery = useQuery<CityDetail>({
@@ -477,6 +507,7 @@ export function CityEditPage() {
   const tzValid = isValidTimezone(form.tz)
   const tzNow = tzValid ? formatTimeInTz(form.tz) : ''
   const selectedRecruiterCount = form.recruiter_ids.length
+  const hhVacancies = hhVacanciesQuery.data?.items || []
 
   // Get selected recruiters for preview
   const selectedRecruiters = useMemo(() => {
@@ -546,6 +577,78 @@ export function CityEditPage() {
                 <Link to="/app/templates" search={{ city_id: cityId }} className="ui-btn ui-btn--ghost">
                   Шаблоны города →
                 </Link>
+              </div>
+
+              <div className="glass city-hh-panel">
+                <div className="ui-section-header">
+                  <div>
+                    <h3 className="city-hh-panel__title">HH вакансии города</h3>
+                    <p className="subtitle city-hh-panel__subtitle">
+                      Статус берётся через HH API для привязанных вакансий и для импортированных HH-вакансий города, даже если они ещё не связаны с внутренней вакансией CRM.
+                    </p>
+                  </div>
+                </div>
+
+                {hhVacanciesQuery.isLoading && <p className="subtitle">Проверяю HH статусы…</p>}
+                {hhVacanciesQuery.isError && (
+                  <ApiErrorBanner error={hhVacanciesQuery.error} title="Не удалось загрузить HH статусы вакансий" />
+                )}
+
+                {!hhVacanciesQuery.isLoading && !hhVacanciesQuery.isError && hhVacancies.length === 0 && (
+                  <div className="ui-state ui-state--empty">
+                    <p className="ui-state__text">У города пока нет внутренних вакансий с HH привязкой.</p>
+                  </div>
+                )}
+
+                {!hhVacanciesQuery.isLoading && !hhVacanciesQuery.isError && hhVacancies.length > 0 && (
+                  <div className="city-hh-panel__list">
+                    {hhVacancies.map((item) => (
+                      <div key={item.vacancy_id} className="city-hh-card">
+                        <div className="city-hh-card__main">
+                          <div className="city-hh-card__title">{item.vacancy_title}</div>
+                          {item.local_vacancy_linked === false ? (
+                            <div className="subtitle">Импортирована из HH, но ещё не привязана к внутренней вакансии CRM.</div>
+                          ) : null}
+                          <div className="city-hh-card__meta">
+                            <span className="cd-chip">{item.vacancy_slug}</span>
+                            {item.external_vacancy_id ? <span className="cd-chip">HH #{item.external_vacancy_id}</span> : null}
+                            <span
+                              className={`cd-chip ${
+                                item.status === 'published'
+                                  ? 'cd-chip--success'
+                                  : item.status === 'archived' || item.status === 'unpublished'
+                                    ? 'cd-chip--danger'
+                                    : item.status === 'not_found_in_active_feed'
+                                      ? 'cd-chip--warning'
+                                      : ''
+                              }`}
+                            >
+                              {item.status_label}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="city-hh-card__side">
+                          {item.hh_url ? (
+                            <a href={item.hh_url} target="_blank" rel="noopener" className="ui-btn ui-btn--ghost ui-btn--sm">
+                              Открыть в HH
+                            </a>
+                          ) : null}
+                        </div>
+                        <div className="city-hh-card__footer">
+                          <span className="subtitle">Источник: {item.status_source === 'live_api' ? 'HH API' : item.status_source === 'snapshot' ? 'snapshot' : 'локально'}</span>
+                          {item.last_checked_at ? <span className="subtitle">Проверено: {new Date(item.last_checked_at).toLocaleString('ru-RU')}</span> : null}
+                          {item.last_hh_sync_at ? <span className="subtitle">Sync: {new Date(item.last_hh_sync_at).toLocaleString('ru-RU')}</span> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {hhVacanciesQuery.data?.api_error ? (
+                  <div className="ui-state ui-state--error">
+                    <p className="ui-state__text">HH API недоступен: {hhVacanciesQuery.data.api_error}</p>
+                  </div>
+                ) : null}
               </div>
 
               {/* City message templates */}

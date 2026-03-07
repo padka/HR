@@ -43,20 +43,33 @@ version = "0.1.0"
 description = "Liquid Glass admin preview tooling"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi==0.112.0",
-  "starlette==0.37.2",
+  "aiofiles==23.2.1",
+  "aiohttp==3.13.3",
+  "aiogram==3.24.0",
+  "APScheduler==3.11.2",
+  "asyncpg==0.31.0",
+  "fastapi==0.134.0",
+  "starlette==0.52.1",
   "uvicorn[standard]==0.30.6",
   "itsdangerous==2.2.0",
-  "Jinja2==3.1.4",
-  "python-multipart==0.0.9",
-  "aiofiles==23.2.1",
-  "aiosqlite==0.20.0",
-  "SQLAlchemy[asyncio]==2.0.32",
-  "greenlet==3.2.2",
+  "Jinja2==3.1.6",
+  "python-multipart==0.0.22",
+  "passlib[bcrypt]==1.7.4",
+  "PyJWT[crypto]==2.10.1",
+  "psycopg[binary]==3.2.3",
+  "redis==7.1.0",
+  "slowapi==0.1.9",
+  "sqladmin==0.22.0",
+  "SQLAlchemy[asyncio]==2.0.45",
+  "greenlet==3.2.4",
+  "starlette-wtf==0.4.5",
+  "pypdf==6.7.4",
+  "prometheus-client==0.21.0",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "aiosqlite==0.20.0",
   "aiohttp==3.13.3",
   "aiogram==3.24.0",
   "redis==7.1.0",
@@ -74,6 +87,9 @@ dev = [
   "APScheduler==3.11.2",
   "sqladmin==0.22.0",
   "sentry-sdk[fastapi]==2.19.2",
+  "pypdf==6.7.4",
+  "python-multipart==0.0.22",
+  "Jinja2==3.1.6",
 ]
 
 [tool.setuptools]

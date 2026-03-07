@@ -75,6 +75,26 @@ def _ensure_version_storage(conn: Connection) -> None:
     )
 
 
+def _assert_schema_create_privilege(conn: Connection, *, schema: str = "public") -> None:
+    """Ensure current role can create objects in the target schema."""
+    if conn.dialect.name != "postgresql":
+        return
+
+    can_create = conn.execute(
+        text("SELECT has_schema_privilege(current_user, :schema, 'CREATE')"),
+        {"schema": schema},
+    ).scalar()
+    if can_create:
+        return
+
+    current_user = conn.execute(text("SELECT current_user")).scalar() or "unknown"
+    raise RuntimeError(
+        "Migration role contract violation: current role does not have DDL rights "
+        f"on schema '{schema}' (current_user={current_user}). "
+        "Set MIGRATIONS_DATABASE_URL to a dedicated migration role with CREATE privileges."
+    )
+
+
 def _get_current_revision(conn: Connection) -> Optional[str]:
     result = conn.execute(text(f"SELECT {VERSION_COLUMN} FROM {VERSION_TABLE} LIMIT 1"))
     row = result.first()
@@ -154,6 +174,7 @@ def upgrade_to_head(engine_or_url: Engine | str | None = None) -> None:
 
     try:
         with engine.begin() as conn:
+            _assert_schema_create_privilege(conn)
             _ensure_version_storage(conn)
             current = _get_current_revision(conn)
             target = migrations[-1].revision

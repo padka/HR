@@ -14,6 +14,7 @@ from backend.apps.admin_ui.security import (
     SESSION_KEY,
     Principal,
     PrincipalType,
+    admin_principal,
     get_client_ip,
     limiter,
 )
@@ -217,6 +218,7 @@ async def login(
         and username == settings.admin_username
         and password == settings.admin_password
     ):
+        admin = admin_principal()
         if brute_force_enabled:
             _register_success(login_key)
         await log_audit_action(
@@ -226,7 +228,7 @@ async def login(
             ctx=audit_ctx,
             changes={"method": "form", "role": "admin"},
         )
-        request.session[SESSION_KEY] = {"type": "admin", "id": -1}
+        request.session[SESSION_KEY] = {"type": admin.type, "id": admin.id}
         target = redirect_to or "/"
         if not target.startswith("/") or target.startswith("//"):
             target = "/"

@@ -35,44 +35,18 @@ export class ErrorBoundary extends Component<Props, State> {
       }
 
       return (
-        <div style={{
-          padding: '24px',
-          margin: '24px',
-          background: 'rgba(240, 115, 115, 0.1)',
-          border: '1px solid rgba(240, 115, 115, 0.3)',
-          borderRadius: '14px',
-        }}>
-          <h2 style={{ margin: '0 0 12px', color: '#f07373', fontSize: '18px' }}>
+        <div className="ui-error-boundary ui-surface ui-surface--base" data-testid="error-boundary-fallback">
+          <h2 className="ui-error-boundary__title">
             Что-то пошло не так
           </h2>
-          <p style={{ margin: '0 0 16px', color: 'var(--muted)', fontSize: '14px' }}>
+          <p className="ui-error-boundary__text">
             {this.state.error?.message || 'Произошла непредвиденная ошибка'}
           </p>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button
-              onClick={this.handleReset}
-              style={{
-                padding: '8px 16px',
-                background: 'rgba(255, 255, 255, 0.1)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '8px',
-                color: 'var(--fg)',
-                cursor: 'pointer',
-              }}
-            >
+          <div className="ui-error-boundary__actions">
+            <button onClick={this.handleReset} className="ui-btn ui-btn--ghost ui-btn--sm">
               Попробовать снова
             </button>
-            <button
-              onClick={() => window.location.reload()}
-              style={{
-                padding: '8px 16px',
-                background: 'transparent',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                borderRadius: '8px',
-                color: 'var(--muted)',
-                cursor: 'pointer',
-              }}
-            >
+            <button onClick={() => window.location.reload()} className="ui-btn ui-btn--ghost ui-btn--sm">
               Перезагрузить страницу
             </button>
           </div>

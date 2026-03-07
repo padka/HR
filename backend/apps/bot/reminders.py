@@ -656,13 +656,14 @@ class ReminderService:
         return {"scheduled": scheduled, "failed": failed}
 
     async def _cancel_jobs(self, slot_id: int) -> None:
+        job_ids: set[str] = set()
         async with async_session() as session:
             result = await session.execute(
                 SlotReminderJob.__table__.select().where(
                     SlotReminderJob.slot_id == slot_id
                 )
             )
-            job_ids = [row.job_id for row in result]
+            job_ids.update(str(row.job_id) for row in result if row.job_id)
             if job_ids:
                 await session.execute(
                     SlotReminderJob.__table__.delete().where(
@@ -670,11 +671,21 @@ class ReminderService:
                     )
                 )
                 await session.commit()
-            for job_id in job_ids:
-                try:
-                    self._scheduler.remove_job(job_id)
-                except JobLookupError:
-                    continue
+
+        slot_job_prefix = f"slot:{slot_id}:"
+        try:
+            for job in self._scheduler.get_jobs():
+                job_id = str(getattr(job, "id", "") or "")
+                if job_id.startswith(slot_job_prefix):
+                    job_ids.add(job_id)
+        except Exception:
+            pass
+
+        for job_id in job_ids:
+            try:
+                self._scheduler.remove_job(job_id)
+            except JobLookupError:
+                continue
 
     async def _execute_job(self, slot_id: int, kind: ReminderKind) -> None:
         async with async_session() as session:

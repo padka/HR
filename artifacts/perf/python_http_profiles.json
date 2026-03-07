@@ -1,0 +1,68 @@
+{
+  "generated_at": 1772353188.6186628,
+  "profiles": [
+    {
+      "profile": "read_heavy_dashboard_incoming",
+      "requests": 2200,
+      "success": 2200,
+      "errors": 0,
+      "non2xx": 0,
+      "error_rate_pct": 0.0,
+      "throughput_rps": 1215.77,
+      "latency_ms": {
+        "avg": 36.73,
+        "p50": 28.7,
+        "p90": 32.08,
+        "p95": 62.03,
+        "p99": 314.66,
+        "max": 317.92
+      },
+      "status_counts": {
+        "200": 2200
+      },
+      "duration_sec": 1.81
+    },
+    {
+      "profile": "write_heavy_auth_token",
+      "requests": 1600,
+      "success": 1600,
+      "errors": 0,
+      "non2xx": 0,
+      "error_rate_pct": 0.0,
+      "throughput_rps": 1015.53,
+      "latency_ms": {
+        "avg": 29.31,
+        "p50": 26.83,
+        "p90": 29.35,
+        "p95": 30.34,
+        "p99": 145.17,
+        "max": 146.59
+      },
+      "status_counts": {
+        "200": 1600
+      },
+      "duration_sec": 1.58
+    },
+    {
+      "profile": "mixed_dashboard_health",
+      "requests": 4200,
+      "success": 4200,
+      "errors": 0,
+      "non2xx": 0,
+      "error_rate_pct": 0.0,
+      "throughput_rps": 1350.68,
+      "latency_ms": {
+        "avg": 51.46,
+        "p50": 45.34,
+        "p90": 55.28,
+        "p95": 100.27,
+        "p99": 175.21,
+        "max": 261.8
+      },
+      "status_counts": {
+        "200": 4200
+      },
+      "duration_sec": 3.11
+    }
+  ]
+}

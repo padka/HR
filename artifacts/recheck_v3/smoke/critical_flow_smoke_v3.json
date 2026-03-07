@@ -1,0 +1,112 @@
+{
+  "base": "http://127.0.0.1:8000",
+  "steps": [
+    {
+      "name": "login",
+      "status": 303,
+      "ok": true,
+      "details": {
+        "location": "/"
+      }
+    },
+    {
+      "name": "csrf",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "name": "catalogs",
+      "status": 200,
+      "ok": true,
+      "details": {
+        "cities": 17,
+        "recruiters": 7,
+        "city_id": 18,
+        "recruiter_id": 6
+      }
+    },
+    {
+      "name": "list_default",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "name": "candidate_create",
+      "status": 201,
+      "ok": true,
+      "details": {
+        "ok": true,
+        "id": 23,
+        "fio": "Critical Flow Candidate v3 20260301144537",
+        "city": "Алматы",
+        "slot_scheduled": false
+      }
+    },
+    {
+      "name": "candidate_detail",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "name": "slots_bulk_create",
+      "status": 200,
+      "ok": true,
+      "details": {
+        "ok": true,
+        "created": 2
+      }
+    },
+    {
+      "name": "candidate_available_slots",
+      "status": 200,
+      "ok": true,
+      "details": {
+        "available_count": 2,
+        "slot_id": 168
+      }
+    },
+    {
+      "name": "candidate_schedule_slot_by_id",
+      "status": 201,
+      "ok": true,
+      "details": {
+        "ok": true,
+        "status": "pending_offer",
+        "message": "Предложение отправлено кандидату",
+        "slot_id": 168,
+        "slot_assignment_id": 21
+      }
+    },
+    {
+      "name": "slot_reschedule",
+      "status": 200,
+      "ok": true,
+      "details": {
+        "ok": true,
+        "message": "Слот перенесён",
+        "bot_notified": true
+      }
+    },
+    {
+      "name": "candidates_search_filter",
+      "status": 200,
+      "ok": true,
+      "details": {
+        "view_candidates": 1,
+        "found": true
+      }
+    },
+    {
+      "name": "candidate_kanban_move",
+      "status": 200,
+      "ok": true,
+      "details": {
+        "ok": true,
+        "message": "Статус обновлён",
+        "status": "slot_pending",
+        "candidate_id": 23
+      }
+    }
+  ],
+  "all_ok": true
+}

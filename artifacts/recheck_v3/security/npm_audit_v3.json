@@ -1,0 +1,25 @@
+2026-03-01T14:38:58+03:00
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {},
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    },
+    "dependencies": {
+      "prod": 105,
+      "dev": 483,
+      "optional": 53,
+      "peer": 16,
+      "peerOptional": 0,
+      "total": 587
+    }
+  }
+}
+NPM_AUDIT_RC=0
+2026-03-01T14:38:59+03:00

@@ -64,10 +64,10 @@ from backend.domain.repositories import (
     add_message_log,
     add_outbox_notification,
     claim_outbox_batch,
+    claim_outbox_item_by_id,
     get_active_recruiters_for_city,
     get_city,
     get_notification_log,
-    get_outbox_item,
     get_outbox_queue_depth,
     get_recruiter,
     get_recruiter_by_chat_id,
@@ -1259,7 +1259,7 @@ class NotificationService:
             await self._broker.ack(message.id)
             return
 
-        item = await get_outbox_item(outbox_id)
+        item = await claim_outbox_item_by_id(outbox_id)
         if item is None:
             await self._broker.ack(message.id)
             return
@@ -1325,11 +1325,13 @@ class NotificationService:
             )
             if success:
                 enqueued += 1
-            else:
-                await update_outbox_entry(
-                    item.id,
-                    attempts=item.attempts,
-                )
+            # Release claim lock after broker publish attempt.
+            # Broker delivery will claim by outbox_id before processing.
+            await update_outbox_entry(
+                item.id,
+                attempts=item.attempts,
+                last_error=None,
+            )
         return enqueued
 
     async def _poll_broker_queue(self) -> Tuple[int, str]:
@@ -1406,6 +1408,114 @@ class NotificationService:
             await set_outbox_queue_depth(0)
         return processed, "outbox"
 
+    async def _send_via_messenger_adapter(
+        self,
+        item: OutboxItem,
+        chat_id: int | str,
+        text: str,
+        *,
+        buttons: Optional[list] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
+        """Send a message using the messenger abstraction layer.
+
+        If the outbox item's messenger_channel is not 'telegram' (or when
+        called explicitly), this method routes through the adapter registry
+        instead of the aiogram Bot directly.
+
+        Returns True on success, False on failure (already schedules retry).
+        """
+        try:
+            from backend.core.messenger.registry import get_registry
+            from backend.core.messenger.protocol import MessengerPlatform, InlineButton
+
+            channel = getattr(item, "messenger_channel", "telegram") or "telegram"
+            platform = MessengerPlatform.from_str(channel)
+            registry = get_registry()
+            adapter = registry.get(platform)
+
+            if adapter is None:
+                logger.warning(
+                    "notification.messenger_adapter.not_found",
+                    extra={"channel": channel, "outbox_id": item.id},
+                )
+                return False
+
+            # Convert button format if provided
+            adapter_buttons = None
+            if buttons:
+                adapter_buttons = []
+                for row in buttons:
+                    adapter_row = []
+                    for btn in row:
+                        if hasattr(btn, "text") and hasattr(btn, "callback_data"):
+                            adapter_row.append(InlineButton(text=btn.text, callback_data=btn.callback_data))
+                    if adapter_row:
+                        adapter_buttons.append(adapter_row)
+
+            result = await adapter.send_message(
+                chat_id,
+                text,
+                buttons=adapter_buttons,
+                parse_mode=parse_mode,
+                correlation_id=f"outbox:{item.type}:{item.id}",
+            )
+            return result.success
+        except Exception:
+            logger.exception(
+                "notification.messenger_adapter.error",
+                extra={"outbox_id": item.id},
+            )
+            return False
+
+    def _is_non_telegram_channel(self, item: OutboxItem) -> bool:
+        """Check if the outbox item should be routed via a non-Telegram adapter."""
+        channel = getattr(item, "messenger_channel", "telegram") or "telegram"
+        return channel != "telegram"
+
+    async def _process_via_adapter(self, item: OutboxItem) -> None:
+        """Generic handler for non-telegram channels.
+
+        Renders the template for the notification type and sends the text
+        through the messenger adapter layer. Inline buttons that use Telegram
+        callback_data are converted to the adapter's button format.
+        """
+        candidate_id = item.candidate_tg_id
+        if not candidate_id:
+            await self._mark_failed(
+                item, item.attempts, item.type, item.type,
+                "candidate_missing", None, candidate_tg_id=None,
+            )
+            return
+
+        # Try to render a template for this notification type
+        payload = dict(item.payload or {})
+        context = dict(payload)  # pass payload vars as template context
+        rendered = await self._template_provider.render(item.type, context)
+        if rendered is None:
+            # Fallback: use raw text from payload if template is missing
+            text = payload.get("text") or payload.get("message")
+            if not text:
+                await self._mark_failed(
+                    item, item.attempts, item.type, item.type,
+                    "template_missing_and_no_fallback_text", None,
+                    candidate_tg_id=candidate_id,
+                )
+                return
+        else:
+            text = rendered.text
+
+        attempt = item.attempts + 1
+        success = await self._send_via_messenger_adapter(item, candidate_id, text)
+        if success:
+            await self._mark_sent(item, attempt, item.type, item.type, rendered, candidate_id)
+        else:
+            await self._schedule_retry(
+                item, attempt=attempt, log_type=item.type,
+                notification_type=item.type, error="adapter_send_failed",
+                rendered=rendered, candidate_tg_id=candidate_id,
+            )
+
     async def _process_item(self, item: OutboxItem, *, broker_message: Optional[BrokerMessage] = None) -> None:
         handlers = {
             "interview_confirmed_candidate": self._process_candidate_confirmation,
@@ -1430,6 +1540,13 @@ class NotificationService:
         previous_message = self._current_message
         self._current_message = broker_message
         try:
+            # Route non-telegram channels through the messenger adapter layer.
+            # This renders the template the same way but sends via the platform
+            # adapter instead of the aiogram Bot.
+            if self._is_non_telegram_channel(item):
+                await self._process_via_adapter(item)
+                return
+
             if handler is None:
                 await self._mark_failed(
                     item,

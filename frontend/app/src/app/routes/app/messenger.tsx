@@ -1,104 +1,31 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { apiFetch, queryClient } from '@/api/client'
+import { queryClient } from '@/api/client'
+import {
+  acceptStaffCandidateTask,
+  addStaffThreadMembers,
+  createStaffThread,
+  declineStaffCandidateTask,
+  fetchRecruiters,
+  fetchStaffThreadMessages,
+  fetchStaffThreads,
+  fetchStaffThreadUpdates,
+  markStaffThreadRead,
+  removeStaffThreadMember,
+  searchMessengerCandidates,
+  sendStaffThreadCandidate,
+  sendStaffThreadMessage,
+  type CandidateListPayload,
+  type MessageItem,
+  type MessagesPayload,
+  type RecruiterOption,
+  type ThreadItem,
+  type ThreadMember,
+  type ThreadsPayload,
+} from '@/api/services/messenger'
 import { useProfile } from '@/app/hooks/useProfile'
-
-type ThreadItem = {
-  id: number
-  type: 'direct' | 'group'
-  title: string
-  created_at: string
-  last_message?: {
-    text?: string | null
-    created_at?: string | null
-    sender_type?: string | null
-    sender_id?: number | null
-    type?: string | null
-  }
-  unread_count?: number
-}
-
-type ThreadsPayload = {
-  threads: ThreadItem[]
-  latest_event_at?: string | null
-}
-
-type MessageAttachment = {
-  id: number
-  filename: string
-  mime_type?: string | null
-  size?: number | null
-}
-
-type CandidateCard = {
-  id: number
-  name: string
-  city: string
-  status_label?: string | null
-  status_slug?: string | null
-  telegram_id?: number | null
-  profile_url?: string | null
-  recruiter?: { id?: number | null; name?: string | null } | null
-}
-
-type TaskInfo = {
-  candidate_id: number
-  status: 'pending' | 'accepted' | 'declined'
-  created_at?: string | null
-  decided_at?: string | null
-  decided_by_type?: string | null
-  decided_by_id?: number | null
-  decision_comment?: string | null
-}
-
-type MessageItem = {
-  id: number
-  thread_id: number
-  sender_type: string
-  sender_id: number
-  sender_label?: string | null
-  type?: string | null
-  text?: string | null
-  created_at: string
-  edited_at?: string | null
-  attachments: MessageAttachment[]
-  read_by_count?: number
-  read_by_total?: number
-  task?: TaskInfo
-  candidate?: CandidateCard
-}
-
-type ThreadMember = {
-  type: string
-  id: number
-  role?: string
-  name?: string
-  last_read_at?: string | null
-  is_placeholder?: boolean
-}
-
-type MessagesPayload = {
-  messages: MessageItem[]
-  has_more: boolean
-  latest_message_at?: string | null
-  latest_activity_at?: string | null
-  members?: ThreadMember[]
-}
-
-type RecruiterOption = {
-  id: number
-  name: string
-}
-
-type CandidateListPayload = {
-  items: Array<{
-    id: number
-    fio?: string | null
-    city?: string | null
-    status?: { label?: string | null; tone?: string | null }
-  }>
-}
+import { useIsMobile } from '@/app/hooks/useIsMobile'
 
 const formatBytes = (size?: number | null) => {
   if (!size) return ''
@@ -151,6 +78,7 @@ function ModalPortal({ children }: { children: ReactNode }) {
 
 export function MessengerPage() {
   const profile = useProfile()
+  const isMobile = useIsMobile()
   const principalType = profile.data?.principal.type
   const principalId = profile.data?.principal.id
   const isAdmin = principalType === 'admin'
@@ -180,12 +108,12 @@ export function MessengerPage() {
 
   const threadsQuery = useQuery<ThreadsPayload>({
     queryKey: ['staff-threads'],
-    queryFn: () => apiFetch('/staff/threads'),
+    queryFn: fetchStaffThreads,
   })
 
   const recruitersQuery = useQuery<RecruiterOption[]>({
     queryKey: ['recruiters'],
-    queryFn: () => apiFetch('/recruiters'),
+    queryFn: fetchRecruiters,
     enabled: Boolean(isAdmin),
     staleTime: 60_000,
   })
@@ -197,19 +125,19 @@ export function MessengerPage() {
 
   const messagesQuery = useQuery<MessagesPayload>({
     queryKey: ['staff-messages', activeThreadId],
-    queryFn: () => apiFetch(`/staff/threads/${activeThreadId}/messages?limit=80`),
+    queryFn: () => fetchStaffThreadMessages(activeThreadId as number, 80),
     enabled: Boolean(activeThreadId),
   })
 
   const candidateSearchQuery = useQuery<CandidateListPayload>({
     queryKey: ['candidate-search', candidateSearch],
-    queryFn: () => apiFetch(`/candidates?search=${encodeURIComponent(candidateSearch)}&per_page=8`),
+    queryFn: () => searchMessengerCandidates(candidateSearch, 8),
     enabled: showCandidateModal && candidateSearch.trim().length > 1,
     staleTime: 10_000,
   })
 
   const markReadMutation = useMutation({
-    mutationFn: async (threadId: number) => apiFetch(`/staff/threads/${threadId}/read`, { method: 'POST' }),
+    mutationFn: markStaffThreadRead,
   })
   const markThreadRead = markReadMutation.mutate
 
@@ -223,16 +151,10 @@ export function MessengerPage() {
         const form = new FormData()
         if (text) form.append('text', text)
         files.forEach((file) => form.append('files', file))
-        return apiFetch<MessageItem>(`/staff/threads/${activeThreadId}/messages`, {
-          method: 'POST',
-          body: form,
-        })
+        return sendStaffThreadMessage(activeThreadId, form)
       }
 
-      return apiFetch<MessageItem>(`/staff/threads/${activeThreadId}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ text }),
-      })
+      return sendStaffThreadMessage(activeThreadId, { text })
     },
     onSuccess: (data: MessageItem) => {
       setMessageText('')
@@ -266,8 +188,7 @@ export function MessengerPage() {
   })
 
   const createThreadMutation = useMutation({
-    mutationFn: async (payload: { type: 'direct' | 'group'; title?: string; members: Array<{ type: string; id: number }> }) =>
-      apiFetch('/staff/threads', { method: 'POST', body: JSON.stringify(payload) }),
+    mutationFn: createStaffThread,
     onSuccess: (data: any) => {
       threadsQuery.refetch()
       setActiveThreadId(data?.id || null)
@@ -280,10 +201,7 @@ export function MessengerPage() {
   const addMembersMutation = useMutation({
     mutationFn: async (memberIds: number[]) => {
       if (!activeThreadId) throw new Error('Чат не выбран')
-      return apiFetch<{ members: ThreadMember[] }>(`/staff/threads/${activeThreadId}/members`, {
-        method: 'POST',
-        body: JSON.stringify({ members: memberIds.map((id) => ({ type: 'recruiter', id })) }),
-      })
+      return addStaffThreadMembers(activeThreadId, memberIds)
     },
     onSuccess: (data: { members: ThreadMember[] }) => {
       queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) =>
@@ -298,7 +216,7 @@ export function MessengerPage() {
   const removeMemberMutation = useMutation({
     mutationFn: async (member: ThreadMember) => {
       if (!activeThreadId) throw new Error('Чат не выбран')
-      return apiFetch<{ members: ThreadMember[] }>(`/staff/threads/${activeThreadId}/members/${member.type}/${member.id}`, { method: 'DELETE' })
+      return removeStaffThreadMember(activeThreadId, member)
     },
     onSuccess: (data: { members: ThreadMember[] }) => {
       queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) =>
@@ -312,10 +230,7 @@ export function MessengerPage() {
   const sendCandidateMutation = useMutation({
     mutationFn: async (candidateId: number) => {
       if (!activeThreadId) throw new Error('Чат не выбран')
-      return apiFetch<MessageItem>(`/staff/threads/${activeThreadId}/candidate`, {
-        method: 'POST',
-        body: JSON.stringify({ candidate_id: candidateId, note: candidateNote.trim() || null }),
-      })
+      return sendStaffThreadCandidate(activeThreadId, candidateId, candidateNote.trim() || null)
     },
     onSuccess: (data: MessageItem) => {
       queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) => {
@@ -332,11 +247,7 @@ export function MessengerPage() {
   })
 
   const acceptTaskMutation = useMutation({
-    mutationFn: async (messageId: number) =>
-      apiFetch<MessageItem>(`/staff/messages/${messageId}/candidate/accept`, {
-        method: 'POST',
-        body: JSON.stringify({ comment: null }),
-      }),
+    mutationFn: acceptStaffCandidateTask,
     onSuccess: (data: MessageItem) => {
       queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) => {
         if (!prev) return prev
@@ -349,11 +260,8 @@ export function MessengerPage() {
   })
 
   const declineTaskMutation = useMutation({
-    mutationFn: async ({ messageId, comment }: { messageId: number; comment: string }) =>
-      apiFetch<MessageItem>(`/staff/messages/${messageId}/candidate/decline`, {
-        method: 'POST',
-        body: JSON.stringify({ comment }),
-      }),
+    mutationFn: ({ messageId, comment }: { messageId: number; comment: string }) =>
+      declineStaffCandidateTask(messageId, comment),
     onSuccess: (data: MessageItem) => {
       queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) => {
         if (!prev) return prev
@@ -390,10 +298,7 @@ export function MessengerPage() {
           const params = new URLSearchParams()
           if (since) params.set('since', since)
           params.set('timeout', '25')
-          const payload = await apiFetch<MessagesPayload & { updated?: boolean }>(
-            `/staff/threads/${activeThreadId}/updates?${params.toString()}`,
-            { signal: controller.signal },
-          )
+          const payload = await fetchStaffThreadUpdates(activeThreadId, params.toString(), controller.signal)
           if (payload.updated) {
             queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) => {
               if (!prev) return prev
@@ -484,8 +389,8 @@ export function MessengerPage() {
   )
 
   return (
-    <div className="page messenger-page">
-      <header className="glass panel messenger-header">
+    <div className={`page app-page app-page--ops messenger-page ${isMobile && activeThreadId ? 'is-mobile-chat-open' : ''}`}>
+      <header className="glass panel messenger-header app-page__hero">
         <div>
           <h1 className="title title--lg">Мессенджер RecruitSmart</h1>
           <p className="subtitle">Командные чаты и передача кандидатов внутри системы.</p>
@@ -498,8 +403,8 @@ export function MessengerPage() {
       </header>
 
       <div className="messenger-layout">
-        <aside className="glass panel messenger-sidebar">
-          <div className="messenger-sidebar__header">
+        <aside className="glass panel messenger-sidebar app-page__section" aria-label="Список чатов">
+          <div className="messenger-sidebar__header app-page__section-head">
             <div>
               <h2 className="section-title">Чаты</h2>
               <p className="subtitle">{threadsQuery.data?.threads.length || 0} активных</p>
@@ -594,12 +499,20 @@ export function MessengerPage() {
           )}
         </aside>
 
-        <section className="glass panel messenger-chat">
+        <section className="glass panel messenger-chat app-page__section" aria-label="Текущий чат">
           {!activeThread && <p className="subtitle">Выберите чат слева, чтобы начать переписку.</p>}
           {activeThread && (
             <>
-              <div className="messenger-chat__header">
+              <div className="messenger-chat__header app-page__section-head">
                 <div>
+                  {isMobile && (
+                    <button
+                      className="ui-btn ui-btn--ghost ui-btn--sm"
+                      onClick={() => setActiveThreadId(null)}
+                    >
+                      ← К чатам
+                    </button>
+                  )}
                   <h2 className="section-title">{activeThread.title}</h2>
                   <p className="subtitle">
                     {activeThread.type === 'group' ? 'Групповой чат' : 'Личный чат'} · {memberSummary}{memberSuffix}

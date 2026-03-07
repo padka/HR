@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from backend.apps.admin_ui.app import create_app
+from backend.apps.admin_ui.security import ADMIN_PRINCIPAL_ID
 from backend.core import settings as settings_module
 
 
@@ -51,5 +52,4 @@ def test_form_login_accepts_env_admin_credentials(admin_app):
         assert profile.status_code == 200
         payload = profile.json()
         assert payload["principal"]["type"] == "admin"
-        assert payload["principal"]["id"] == -1
-
+        assert payload["principal"]["id"] == ADMIN_PRINCIPAL_ID

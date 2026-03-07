@@ -1,6 +1,7 @@
 x-app-env: &app-env
   ENVIRONMENT: ${ENVIRONMENT:-production}
   DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://recruitsmart:recruitsmart@postgres:5432/recruitsmart}
+  MIGRATIONS_DATABASE_URL: ${MIGRATIONS_DATABASE_URL:-}
   REDIS_URL: ${REDIS_URL:-redis://redis_notifications:6379/0}
   NOTIFICATION_BROKER: redis
   ADMIN_USER: ${ADMIN_USER:-admin}
@@ -17,6 +18,8 @@ x-app-env: &app-env
   AI_MAX_REQUESTS_PER_PRINCIPAL_PER_DAY: ${AI_MAX_REQUESTS_PER_PRINCIPAL_PER_DAY:-50}
   AI_DAILY_BUDGET_USD: ${AI_DAILY_BUDGET_USD:-10}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  HTTP_REQUEST_LOG_ENABLED: ${HTTP_REQUEST_LOG_ENABLED:-false}
+  HTTP_SLOW_REQUEST_MS: ${HTTP_SLOW_REQUEST_MS:-500}
   DATA_DIR: ${DATA_DIR:-/var/lib/recruitsmart_admin}
 
 services:
@@ -79,6 +82,8 @@ services:
     command: ["python", "scripts/run_migrations.py"]
     environment:
       <<: *app-env
+      # In production, migration script requires this URL (dedicated DDL role recommended).
+      MIGRATIONS_DATABASE_URL: ${MIGRATIONS_DATABASE_URL:-postgresql+asyncpg://recruitsmart:recruitsmart@postgres:5432/recruitsmart}
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,7 +98,7 @@ services:
       context: .
       target: prod
     image: recruitsmart-admin:latest
-    command: ["uvicorn", "backend.apps.admin_ui.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "backend.apps.admin_ui.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${WEB_CONCURRENCY:-2}", "--no-access-log"]
     environment:
       <<: *app-env
       BOT_AUTOSTART: "false"
@@ -122,7 +127,7 @@ services:
 
   admin_api:
     image: recruitsmart-admin:latest
-    command: ["uvicorn", "backend.apps.admin_api.main:app", "--host", "0.0.0.0", "--port", "8100"]
+    command: ["uvicorn", "backend.apps.admin_api.main:app", "--host", "0.0.0.0", "--port", "8100", "--workers", "${WEB_CONCURRENCY:-2}", "--no-access-log"]
     environment:
       <<: *app-env
     depends_on:
@@ -177,6 +182,34 @@ services:
       - recruitsmart
     volumes:
       - recruitsmart_data:/var/lib/recruitsmart_admin
+
+  max_bot:
+    image: recruitsmart-admin:latest
+    command: ["python", "max_bot.py"]
+    environment:
+      <<: *app-env
+      MAX_BOT_ENABLED: ${MAX_BOT_ENABLED:-false}
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
+      MAX_WEBHOOK_URL: ${MAX_WEBHOOK_URL:-}
+      MAX_WEBHOOK_SECRET: ${MAX_WEBHOOK_SECRET:-}
+      MAX_BOT_PORT: "8200"
+    ports:
+      - "8200:8200"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8200/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - recruitsmart
+    profiles:
+      - max
 
 volumes:
   postgres_data:

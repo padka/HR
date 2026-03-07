@@ -8,6 +8,7 @@ import {
   type TaskExtendedProps,
 } from '../../components/Calendar/ScheduleCalendar'
 import { useCalendarWebSocket } from '../../hooks/useCalendarWebSocket'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { useProfile } from '../../hooks/useProfile'
 
 type City = {
@@ -74,6 +75,7 @@ function buildTaskDraft(start: Date, end: Date, recruiterId?: number): TaskDraft
 
 export function CalendarPage() {
   const profile = useProfile()
+  const isMobile = useIsMobile()
   const queryClient = useQueryClient()
 
   const isAdmin = profile.data?.principal.type === 'admin'
@@ -95,6 +97,7 @@ export function CalendarPage() {
   const [selectedCity, setSelectedCity] = useState<number | undefined>()
   const [selectedRecruiter, setSelectedRecruiter] = useState<number | undefined>()
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
+  const [mobileViewMode, setMobileViewMode] = useState<'timeGridDay' | 'timeGridThreeDay'>('timeGridDay')
 
   const [selectedSlot, setSelectedSlot] = useState<SlotExtendedProps | null>(null)
 
@@ -356,6 +359,25 @@ export function CalendarPage() {
         )}
       </div>
 
+      {isMobile && (
+        <div className="calendar-mobile-view-switch" role="group" aria-label="Режим календаря">
+          <button
+            type="button"
+            className={`ui-btn ui-btn--sm ${mobileViewMode === 'timeGridDay' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+            onClick={() => setMobileViewMode('timeGridDay')}
+          >
+            День
+          </button>
+          <button
+            type="button"
+            className={`ui-btn ui-btn--sm ${mobileViewMode === 'timeGridThreeDay' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+            onClick={() => setMobileViewMode('timeGridThreeDay')}
+          >
+            3 дня
+          </button>
+        </div>
+      )}
+
       {(taskError && !taskModal) && <div className="calendar-alert">{taskError}</div>}
 
       <ScheduleCalendar
@@ -367,6 +389,8 @@ export function CalendarPage() {
         onSlotCreate={handleSlotCreate}
         includeTasks={true}
         editable={true}
+        isMobile={isMobile}
+        viewMode={isMobile ? mobileViewMode : undefined}
       />
 
       {selectedSlot && (
@@ -627,6 +651,12 @@ export function CalendarPage() {
           background: rgba(255, 255, 255, 0.05);
           border: 1px solid rgba(255, 255, 255, 0.1);
           border-radius: 14px;
+        }
+
+        .calendar-mobile-view-switch {
+          display: inline-flex;
+          gap: 8px;
+          margin-bottom: 12px;
         }
 
         .filter-group {
@@ -900,6 +930,15 @@ export function CalendarPage() {
 
           .calendar-filters {
             flex-direction: column;
+          }
+
+          .calendar-mobile-view-switch {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .calendar-mobile-view-switch .ui-btn {
+            width: 100%;
           }
 
           .task-grid {

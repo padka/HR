@@ -1,0 +1,113 @@
+name: Migration Contract
+
+on:
+  pull_request:
+    paths:
+      - "backend/migrations/**"
+      - "backend/core/db.py"
+      - "backend/core/settings.py"
+      - "scripts/run_migrations.py"
+      - ".github/workflows/migration-contract.yml"
+  workflow_dispatch:
+
+jobs:
+  migration-contract:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: recruitsmart
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U postgres -d recruitsmart"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Prepare DB roles (migration-role vs app-role)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d recruitsmart <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
+              CREATE ROLE app_user LOGIN PASSWORD 'app_pass';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'migrator') THEN
+              CREATE ROLE migrator LOGIN PASSWORD 'migrator_pass';
+            END IF;
+          END
+          $$;
+
+          GRANT CONNECT ON DATABASE recruitsmart TO app_user, migrator;
+          GRANT USAGE ON SCHEMA public TO app_user, migrator;
+          GRANT CREATE ON SCHEMA public TO migrator;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user;
+          GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO app_user;
+
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO app_user;
+          SQL
+
+      - name: Migration succeeds with migration-role URL
+        env:
+          ENVIRONMENT: production
+          DATABASE_URL: postgresql+asyncpg://app_user:app_pass@localhost:5432/recruitsmart
+          MIGRATIONS_DATABASE_URL: postgresql+asyncpg://migrator:migrator_pass@localhost:5432/recruitsmart
+        run: python scripts/run_migrations.py
+
+      - name: Migration fails fast when MIGRATIONS_DATABASE_URL is missing in production
+        env:
+          ENVIRONMENT: production
+          DATABASE_URL: postgresql+asyncpg://app_user:app_pass@localhost:5432/recruitsmart
+        run: |
+          set +e
+          python scripts/run_migrations.py > /tmp/migration_negative.log 2>&1
+          rc=$?
+          set -e
+          if [ "${rc}" -eq 0 ]; then
+            echo "Expected migration command to fail without MIGRATIONS_DATABASE_URL"
+            cat /tmp/migration_negative.log
+            exit 1
+          fi
+          grep -q "MIGRATIONS_DATABASE_URL" /tmp/migration_negative.log
+
+      - name: App runtime starts with app-role (no DDL required)
+        env:
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql+asyncpg://app_user:app_pass@localhost:5432/recruitsmart
+          REDIS_URL: ""
+          NOTIFICATION_BROKER: memory
+          BOT_ENABLED: "0"
+          BOT_INTEGRATION_ENABLED: "0"
+          ADMIN_USER: admin
+          ADMIN_PASSWORD: admin
+          SESSION_SECRET: test-session-secret-0123456789abcdef0123456789abcd
+        run: |
+          python -m uvicorn backend.apps.admin_ui.app:app --host 127.0.0.1 --port 8000 --log-level warning &
+          app_pid=$!
+          trap 'kill ${app_pid} 2>/dev/null || true' EXIT
+          sleep 5
+          curl --fail --show-error http://127.0.0.1:8000/health

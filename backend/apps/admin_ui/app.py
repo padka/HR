@@ -26,9 +26,11 @@ from starlette.responses import Response, PlainTextResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from backend.apps.admin_ui.background_tasks import (
+    periodic_hh_sync_job_worker,
     periodic_stalled_candidate_checker,
     periodic_past_free_slot_cleanup,
 )
+from backend.apps.hh_integration_webhooks import router as hh_integration_webhook_router
 from backend.apps.admin_ui.config import STATIC_DIR, register_template_globals
 from backend.domain.tests.bootstrap import bootstrap_test_questions
 from pathlib import Path
@@ -52,6 +54,7 @@ from backend.apps.admin_ui.routers import (
     reschedule_requests,
     slot_assignments_api,
     ai,
+    hh_integration,
     knowledge_base,
     simulator,
 )
@@ -121,6 +124,22 @@ def _is_truthy_env(name: str, default: bool = False) -> bool:
 
 def _legacy_assignments_enabled() -> bool:
     return _is_truthy_env("ENABLE_LEGACY_ASSIGNMENTS_API", default=False)
+
+
+def _request_log_enabled_default() -> bool:
+    # Per-request access logging is costly under load; keep it opt-in.
+    return _is_truthy_env("HTTP_REQUEST_LOG_ENABLED", default=False)
+
+
+def _slow_request_threshold_ms_default() -> float:
+    raw = os.getenv("HTTP_SLOW_REQUEST_MS")
+    if raw is None:
+        return 500.0
+    try:
+        threshold = float(raw)
+    except ValueError:
+        return 500.0
+    return max(0.0, threshold)
 
 
 async def _recruiter_city_scope(recruiter_id: int) -> set[int]:
@@ -529,6 +548,21 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Test mode: skipping past free slot cleanup")
 
+    hh_sync_worker_task = None
+    if not is_test_mode:
+        try:
+            hh_sync_worker_task = asyncio.create_task(
+                periodic_hh_sync_job_worker(app=app),
+                name="hh_sync_job_worker",
+            )
+            app.state.hh_sync_worker_task = hh_sync_worker_task
+            shutdown_manager.add_task(hh_sync_worker_task)
+            logger.info("HH sync job worker started")
+        except Exception as exc:
+            logger.error("Failed to start HH sync job worker: %s", exc, exc_info=True)
+    else:
+        logger.info("Test mode: skipping HH sync job worker")
+
     # Initialize templates and bot integration
     try:
         register_template_globals()
@@ -593,6 +627,8 @@ def create_app() -> FastAPI:
         redoc_url=redoc_url,
         openapi_url=openapi_url,
     )
+    app.state.request_log_enabled = _request_log_enabled_default()
+    app.state.request_log_slow_ms = _slow_request_threshold_ms_default()
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_exception_handler(OperationalError, _db_exception_handler)
@@ -654,6 +690,8 @@ def create_app() -> FastAPI:
     app.include_router(system.router)
     app.include_router(metrics_router.router)
     app.include_router(auth_router.router)
+    app.include_router(hh_integration_webhook_router)
+    app.include_router(hh_integration.callback_router)
     app.include_router(dashboard.router, dependencies=[Depends(require_principal)])
     app.include_router(slots.router, dependencies=[Depends(require_principal)])
     app.include_router(slot_assignments.router, dependencies=[Depends(require_principal)])
@@ -665,6 +703,7 @@ def create_app() -> FastAPI:
     app.include_router(message_templates.router, dependencies=[Depends(require_admin)])
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
     app.include_router(ai.router, dependencies=[Depends(require_principal)])
+    app.include_router(hh_integration.router, dependencies=[Depends(require_admin)])
     app.include_router(knowledge_base.router, dependencies=[Depends(require_principal)])
     app.include_router(simulator.router, dependencies=[Depends(require_admin)])
     app.include_router(detailization.router, dependencies=[Depends(require_principal)])
@@ -757,15 +796,23 @@ def create_app() -> FastAPI:
                 return FileResponse(index_file)
             return PlainTextResponse("SPA build not found", status_code=404)
 
-        @app.get("/app/{path:path}", include_in_schema=False)
-        async def spa_assets(path: str) -> Response:
-            target = (SPA_DIST_DIR / path).resolve()
-            if target.exists() and target.is_file():
-                return FileResponse(target)
-            index_file = SPA_DIST_DIR / "index.html"
-            if index_file.exists():
-                return FileResponse(index_file)
-            return PlainTextResponse("SPA build not found", status_code=404)
+    @app.get("/apple-touch-icon.png", include_in_schema=False)
+    async def apple_touch_icon() -> Response:
+        return Response(status_code=204)
+
+    @app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+    async def apple_touch_icon_precomposed() -> Response:
+        return Response(status_code=204)
+
+    @app.get("/app/{path:path}", include_in_schema=False)
+    async def spa_assets(path: str) -> Response:
+        target = (SPA_DIST_DIR / path).resolve()
+        if target.exists() and target.is_file():
+            return FileResponse(target)
+        index_file = SPA_DIST_DIR / "index.html"
+        if index_file.exists():
+            return FileResponse(index_file)
+        return PlainTextResponse("SPA build not found", status_code=404)
 
     @app.exception_handler(HTTPException)
     async def http_exc_handler(request: Request, exc: HTTPException):
@@ -790,6 +837,8 @@ def create_app() -> FastAPI:
     async def log_requests(request: Request, call_next):
         start = time.perf_counter()
         request_id = getattr(request.state, "request_id", None)
+        request_log_enabled = bool(getattr(request.app.state, "request_log_enabled", False))
+        slow_threshold_ms = float(getattr(request.app.state, "request_log_slow_ms", 500.0))
         try:
             response = await call_next(request)
         except Exception as exc:
@@ -811,21 +860,49 @@ def create_app() -> FastAPI:
             )
             return PlainTextResponse("Internal Server Error", status_code=500)
         duration = (time.perf_counter() - start) * 1000
-        request_logger.info(
-            "HTTP %s %s -> %s (%.1f ms) [%s]",
-            request.method,
-            request.url.path,
-            response.status_code,
-            duration,
-            request_id,
-            extra={
-                "path": request.url.path,
-                "method": request.method,
-                "status_code": response.status_code,
-                "duration_ms": duration,
-                "request_id": request_id,
-            },
-        )
+        if request_log_enabled:
+            request_logger.info(
+                "HTTP %s %s -> %s (%.1f ms) [%s]",
+                request.method,
+                request.url.path,
+                response.status_code,
+                duration,
+                request_id,
+                extra={
+                    "path": request.url.path,
+                    "method": request.method,
+                    "status_code": response.status_code,
+                    "duration_ms": duration,
+                    "request_id": request_id,
+                },
+            )
+        elif response.status_code >= 500 or duration >= slow_threshold_ms:
+            request_logger.warning(
+                "HTTP %s %s -> %s (%.1f ms) [%s]",
+                request.method,
+                request.url.path,
+                response.status_code,
+                duration,
+                request_id,
+                extra={
+                    "path": request.url.path,
+                    "method": request.method,
+                    "status_code": response.status_code,
+                    "duration_ms": duration,
+                    "request_id": request_id,
+                },
+            )
+        if response.status_code == 404 and request.url.path.startswith("/api/"):
+            logger.warning(
+                "api.contract_404",
+                extra={
+                    "path": request.url.path,
+                    "method": request.method,
+                    "status_code": response.status_code,
+                    "duration_ms": duration,
+                    "request_id": request_id,
+                },
+            )
         return response
 
     return app

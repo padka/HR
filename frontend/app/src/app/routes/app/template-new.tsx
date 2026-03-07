@@ -163,8 +163,8 @@ export function TemplateNewPage() {
   return (
     <RoleGuard allow={['admin']}>
       <div className="page">
-        <div className="glass panel" style={{ display: 'grid', gap: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <div className="glass panel ui-form-shell">
+          <div className="ui-form-header">
             <div>
               <h1 className="title">Новый шаблон</h1>
               <p className="subtitle">Создайте шаблон для рассылок и уведомлений.</p>
@@ -172,8 +172,8 @@ export function TemplateNewPage() {
             <Link to="/app/templates" className="glass action-link">← Назад</Link>
           </div>
 
-          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-            <label style={{ display: 'grid', gap: 6 }}>
+          <div className="ui-form-grid ui-form-grid--md">
+            <label className="ui-field">
               Город
               <select value={form.city_id} onChange={(e) => setForm({ ...form, city_id: e.target.value })}>
                 {cityOptions.map((c) => (
@@ -182,7 +182,7 @@ export function TemplateNewPage() {
               </select>
             </label>
 
-            <label style={{ display: 'grid', gap: 6 }}>
+            <label className="ui-field">
               Тип сообщения
               <select value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })}>
                 <option value="">— выберите тип —</option>
@@ -199,11 +199,15 @@ export function TemplateNewPage() {
                   </optgroup>
                 )}
               </select>
-              {selectedMeta && <span className="subtitle">{selectedMeta.desc}</span>}
+              {selectedMeta && (
+                <span className="ui-field__support">
+                  <span className="ui-field__note">{selectedMeta.desc}</span>
+                </span>
+              )}
             </label>
           </div>
 
-          <label style={{ display: 'grid', gap: 6 }}>
+          <label className="ui-field">
             Текст шаблона
             <textarea
               ref={textareaRef}
@@ -211,38 +215,40 @@ export function TemplateNewPage() {
               value={form.text}
               onChange={(e) => setForm({ ...form, text: e.target.value })}
             />
-            <div className="action-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <div className="action-row ui-toolbar ui-toolbar--compact">
               {PLACEHOLDERS.map((token) => (
                 <button key={token} type="button" className="ui-btn ui-btn--ghost" onClick={() => insertToken(token)}>
                   {token}
                 </button>
               ))}
             </div>
-            <div className="action-row" style={{ justifyContent: 'space-between' }}>
-              <span className="subtitle">Символы: {charCount} / 4096</span>
-              {charCount > 4096 && <span style={{ color: '#f07373' }}>Превышен лимит Telegram</span>}
+            <div className="ui-field__status-row">
+              <span className="ui-field__status-item">Символы: {charCount} / 4096</span>
+              {charCount > 4096 && (
+                <span className="ui-field__status-item ui-message ui-message--error">Превышен лимит Telegram</span>
+              )}
             </div>
           </label>
 
           <details className="glass panel--tight">
             <summary>Предпросмотр</summary>
-            <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
+            <div className="ui-form-grid template-new__preview-panel">
+              <div className="ui-form-grid template-new__preview-vars">
                 {Object.entries(preview).map(([key, value]) => (
-                  <label key={key} style={{ display: 'grid', gap: 4 }}>
+                  <label key={key} className="ui-field">
                     {key}
                     <input value={value} onChange={(e) => setPreview((prev) => ({ ...prev, [key]: e.target.value }))} />
                   </label>
                 ))}
               </div>
-              <div className="glass" style={{ padding: 12, whiteSpace: 'pre-wrap' }}>
+              <div className="glass template-new__preview-text">
                 {previewText || '—'}
               </div>
             </div>
           </details>
 
-          <div className="action-row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div className="ui-form-actions ui-form-actions--between">
+            <label className="ui-inline-checkbox">
               <input
                 type="checkbox"
                 checked={form.is_active}
@@ -254,7 +260,7 @@ export function TemplateNewPage() {
               {mutation.isPending ? 'Сохраняем…' : 'Создать'}
             </button>
           </div>
-          {formError && <p style={{ color: '#f07373' }}>Ошибка: {formError}</p>}
+          {formError && <p className="ui-message ui-message--error">Ошибка: {formError}</p>}
         </div>
       </div>
     </RoleGuard>

@@ -1,0 +1,783 @@
+# HELP python_gc_objects_collected_total Objects collected during gc
+# TYPE python_gc_objects_collected_total counter
+python_gc_objects_collected_total{generation="0"} 65760.0
+python_gc_objects_collected_total{generation="1"} 69622.0
+python_gc_objects_collected_total{generation="2"} 29260.0
+# HELP python_gc_objects_uncollectable_total Uncollectable objects found during GC
+# TYPE python_gc_objects_uncollectable_total counter
+python_gc_objects_uncollectable_total{generation="0"} 0.0
+python_gc_objects_uncollectable_total{generation="1"} 0.0
+python_gc_objects_uncollectable_total{generation="2"} 0.0
+# HELP python_gc_collections_total Number of times this generation was collected
+# TYPE python_gc_collections_total counter
+python_gc_collections_total{generation="0"} 521.0
+python_gc_collections_total{generation="1"} 47.0
+python_gc_collections_total{generation="2"} 4.0
+# HELP python_info Python platform information
+# TYPE python_info gauge
+python_info{implementation="CPython",major="3",minor="13",patchlevel="7",version="3.13.7"} 1.0
+# HELP http_inflight_requests Number of in-flight HTTP requests (global).
+# TYPE http_inflight_requests gauge
+http_inflight_requests 1.0
+# HELP http_requests_total Total HTTP requests by route/method/status/outcome.
+# TYPE http_requests_total counter
+http_requests_total{method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_requests_total{method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_requests_total{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_requests_total{method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_requests_total{method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_requests_total{method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_requests_total{method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+# HELP http_requests_created Total HTTP requests by route/method/status/outcome.
+# TYPE http_requests_created gauge
+http_requests_created{method="POST",outcome="success",route="/auth/token",status="200"} 1.7723572003179772e+09
+http_requests_created{method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 1.772357200341513e+09
+http_requests_created{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.772357200365341e+09
+http_requests_created{method="GET",outcome="success",route="/api/profile",status="200"} 1.7723572003946729e+09
+http_requests_created{method="GET",outcome="success",route="/api/calendar/events",status="200"} 1.772357200408106e+09
+http_requests_created{method="GET",outcome="success",route="/api/candidates",status="200"} 1.772357200469578e+09
+http_requests_created{method="GET",outcome="success",route="/api/notifications/feed",status="200"} 1.772357200517339e+09
+# HELP http_request_duration_seconds HTTP request latency in seconds by route/method/status/outcome.
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{le="0.001",method="POST",outcome="success",route="/auth/token",status="200"} 0.0
+http_request_duration_seconds_bucket{le="0.0025",method="POST",outcome="success",route="/auth/token",status="200"} 0.0
+http_request_duration_seconds_bucket{le="0.005",method="POST",outcome="success",route="/auth/token",status="200"} 0.0
+http_request_duration_seconds_bucket{le="0.01",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.025",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.05",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.1",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.25",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="0.5",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="1.0",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="2.5",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="5.0",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="10.0",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_bucket{le="+Inf",method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_count{method="POST",outcome="success",route="/auth/token",status="200"} 1.0
+http_request_duration_seconds_sum{method="POST",outcome="success",route="/auth/token",status="200"} 0.0063107919995673
+http_request_duration_seconds_bucket{le="0.001",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 11.0
+http_request_duration_seconds_bucket{le="0.0025",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 11.0
+http_request_duration_seconds_bucket{le="0.005",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 11.0
+http_request_duration_seconds_bucket{le="0.01",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 11.0
+http_request_duration_seconds_bucket{le="0.025",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.05",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.1",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.25",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.5",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_bucket{le="1.0",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_bucket{le="2.5",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_bucket{le="5.0",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_bucket{le="10.0",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_bucket{le="+Inf",method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_count{method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 12.0
+http_request_duration_seconds_sum{method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 0.017049165908247232
+http_request_duration_seconds_bucket{le="0.001",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 22.0
+http_request_duration_seconds_bucket{le="0.0025",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 22.0
+http_request_duration_seconds_bucket{le="0.005",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 23.0
+http_request_duration_seconds_bucket{le="0.01",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 23.0
+http_request_duration_seconds_bucket{le="0.025",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.05",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.1",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.25",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.5",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_bucket{le="1.0",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_bucket{le="2.5",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_bucket{le="5.0",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_bucket{le="10.0",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_bucket{le="+Inf",method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_count{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 24.0
+http_request_duration_seconds_sum{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 0.032091124914586544
+http_request_duration_seconds_bucket{le="0.001",method="GET",outcome="success",route="/api/profile",status="200"} 11.0
+http_request_duration_seconds_bucket{le="0.0025",method="GET",outcome="success",route="/api/profile",status="200"} 11.0
+http_request_duration_seconds_bucket{le="0.005",method="GET",outcome="success",route="/api/profile",status="200"} 11.0
+http_request_duration_seconds_bucket{le="0.01",method="GET",outcome="success",route="/api/profile",status="200"} 11.0
+http_request_duration_seconds_bucket{le="0.025",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.05",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.1",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.25",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.5",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_bucket{le="1.0",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_bucket{le="2.5",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_bucket{le="5.0",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_bucket{le="10.0",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_bucket{le="+Inf",method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_count{method="GET",outcome="success",route="/api/profile",status="200"} 12.0
+http_request_duration_seconds_sum{method="GET",outcome="success",route="/api/profile",status="200"} 0.018970374891068786
+http_request_duration_seconds_bucket{le="0.001",method="GET",outcome="success",route="/api/calendar/events",status="200"} 22.0
+http_request_duration_seconds_bucket{le="0.0025",method="GET",outcome="success",route="/api/calendar/events",status="200"} 22.0
+http_request_duration_seconds_bucket{le="0.005",method="GET",outcome="success",route="/api/calendar/events",status="200"} 22.0
+http_request_duration_seconds_bucket{le="0.01",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.025",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.05",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.1",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.25",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.5",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="1.0",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="2.5",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="5.0",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="10.0",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_bucket{le="+Inf",method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_count{method="GET",outcome="success",route="/api/calendar/events",status="200"} 24.0
+http_request_duration_seconds_sum{method="GET",outcome="success",route="/api/calendar/events",status="200"} 0.02535674982937053
+http_request_duration_seconds_bucket{le="0.001",method="GET",outcome="success",route="/api/candidates",status="200"} 19.0
+http_request_duration_seconds_bucket{le="0.0025",method="GET",outcome="success",route="/api/candidates",status="200"} 22.0
+http_request_duration_seconds_bucket{le="0.005",method="GET",outcome="success",route="/api/candidates",status="200"} 22.0
+http_request_duration_seconds_bucket{le="0.01",method="GET",outcome="success",route="/api/candidates",status="200"} 22.0
+http_request_duration_seconds_bucket{le="0.025",method="GET",outcome="success",route="/api/candidates",status="200"} 23.0
+http_request_duration_seconds_bucket{le="0.05",method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.1",method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.25",method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_bucket{le="0.5",method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_bucket{le="1.0",method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_bucket{le="2.5",method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_bucket{le="5.0",method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_bucket{le="10.0",method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_bucket{le="+Inf",method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_count{method="GET",outcome="success",route="/api/candidates",status="200"} 24.0
+http_request_duration_seconds_sum{method="GET",outcome="success",route="/api/candidates",status="200"} 0.08038020791718736
+http_request_duration_seconds_bucket{le="0.001",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 0.0
+http_request_duration_seconds_bucket{le="0.0025",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 10.0
+http_request_duration_seconds_bucket{le="0.005",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 11.0
+http_request_duration_seconds_bucket{le="0.01",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.025",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.05",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.1",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.25",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="0.5",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="1.0",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="2.5",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="5.0",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="10.0",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_bucket{le="+Inf",method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_count{method="GET",outcome="success",route="/api/notifications/feed",status="200"} 12.0
+http_request_duration_seconds_sum{method="GET",outcome="success",route="/api/notifications/feed",status="200"} 0.02861370804021135
+# HELP http_request_duration_seconds_created HTTP request latency in seconds by route/method/status/outcome.
+# TYPE http_request_duration_seconds_created gauge
+http_request_duration_seconds_created{method="POST",outcome="success",route="/auth/token",status="200"} 1.7723572003179882e+09
+http_request_duration_seconds_created{method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 1.772357200341522e+09
+http_request_duration_seconds_created{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 1.772357200365349e+09
+http_request_duration_seconds_created{method="GET",outcome="success",route="/api/profile",status="200"} 1.772357200394681e+09
+http_request_duration_seconds_created{method="GET",outcome="success",route="/api/calendar/events",status="200"} 1.772357200408114e+09
+http_request_duration_seconds_created{method="GET",outcome="success",route="/api/candidates",status="200"} 1.77235720046959e+09
+http_request_duration_seconds_created{method="GET",outcome="success",route="/api/notifications/feed",status="200"} 1.7723572005173461e+09
+# HELP http_errors_total HTTP errors by route/method/status/outcome (only outcome!=success).
+# TYPE http_errors_total counter
+# HELP served_from_cache_total Responses served from cache by route and backend.
+# TYPE served_from_cache_total counter
+served_from_cache_total{backend="microcache",route="/api/profile"} 12.0
+served_from_cache_total{backend="microcache",route="/api/dashboard/summary"} 11.0
+served_from_cache_total{backend="microcache",route="/api/dashboard/incoming"} 22.0
+served_from_cache_total{backend="microcache",route="/api/calendar/events"} 22.0
+served_from_cache_total{backend="microcache",route="/api/candidates"} 22.0
+# HELP served_from_cache_created Responses served from cache by route and backend.
+# TYPE served_from_cache_created gauge
+served_from_cache_created{backend="microcache",route="/api/profile"} 1.7723572003947039e+09
+served_from_cache_created{backend="microcache",route="/api/dashboard/summary"} 1.772357200524652e+09
+served_from_cache_created{backend="microcache",route="/api/dashboard/incoming"} 1.772357200531042e+09
+served_from_cache_created{backend="microcache",route="/api/calendar/events"} 1.772357200551573e+09
+served_from_cache_created{backend="microcache",route="/api/candidates"} 1.772357200565191e+09
+# HELP served_stale_total Responses served stale (degraded mode) by route and backend.
+# TYPE served_stale_total counter
+# HELP cache_refresh_inflight Number of in-flight cache background refresh tasks (process-wide).
+# TYPE cache_refresh_inflight gauge
+cache_refresh_inflight 0.0
+# HELP cache_refresh_total Background cache refresh tasks started, labeled by triggering route.
+# TYPE cache_refresh_total counter
+# HELP cache_refresh_errors_total Background cache refresh task errors, labeled by triggering route.
+# TYPE cache_refresh_errors_total counter
+# HELP slot_propose_404_total 404 responses for slot propose flow by reason.
+# TYPE slot_propose_404_total counter
+# HELP http_db_queries_per_request Number of DB queries executed during a single HTTP request (best-effort).
+# TYPE http_db_queries_per_request histogram
+http_db_queries_per_request_bucket{le="0.0",outcome="success",route="/auth/token"} 0.0
+http_db_queries_per_request_bucket{le="1.0",outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_bucket{le="2.0",outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_bucket{le="5.0",outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_bucket{le="10.0",outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_bucket{le="20.0",outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_bucket{le="50.0",outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_bucket{le="100.0",outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_bucket{le="200.0",outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_bucket{le="+Inf",outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_count{outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_sum{outcome="success",route="/auth/token"} 1.0
+http_db_queries_per_request_bucket{le="0.0",outcome="success",route="/api/dashboard/summary"} 11.0
+http_db_queries_per_request_bucket{le="1.0",outcome="success",route="/api/dashboard/summary"} 11.0
+http_db_queries_per_request_bucket{le="2.0",outcome="success",route="/api/dashboard/summary"} 11.0
+http_db_queries_per_request_bucket{le="5.0",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_queries_per_request_bucket{le="10.0",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_queries_per_request_bucket{le="20.0",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_queries_per_request_bucket{le="50.0",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_queries_per_request_bucket{le="100.0",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_queries_per_request_bucket{le="200.0",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_queries_per_request_bucket{le="+Inf",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_queries_per_request_count{outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_queries_per_request_sum{outcome="success",route="/api/dashboard/summary"} 4.0
+http_db_queries_per_request_bucket{le="0.0",outcome="success",route="/api/dashboard/incoming"} 22.0
+http_db_queries_per_request_bucket{le="1.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_bucket{le="2.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_bucket{le="5.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_bucket{le="10.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_bucket{le="20.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_bucket{le="50.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_bucket{le="100.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_bucket{le="200.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_bucket{le="+Inf",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_count{outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_queries_per_request_sum{outcome="success",route="/api/dashboard/incoming"} 2.0
+http_db_queries_per_request_bucket{le="0.0",outcome="success",route="/api/profile"} 11.0
+http_db_queries_per_request_bucket{le="1.0",outcome="success",route="/api/profile"} 11.0
+http_db_queries_per_request_bucket{le="2.0",outcome="success",route="/api/profile"} 11.0
+http_db_queries_per_request_bucket{le="5.0",outcome="success",route="/api/profile"} 11.0
+http_db_queries_per_request_bucket{le="10.0",outcome="success",route="/api/profile"} 12.0
+http_db_queries_per_request_bucket{le="20.0",outcome="success",route="/api/profile"} 12.0
+http_db_queries_per_request_bucket{le="50.0",outcome="success",route="/api/profile"} 12.0
+http_db_queries_per_request_bucket{le="100.0",outcome="success",route="/api/profile"} 12.0
+http_db_queries_per_request_bucket{le="200.0",outcome="success",route="/api/profile"} 12.0
+http_db_queries_per_request_bucket{le="+Inf",outcome="success",route="/api/profile"} 12.0
+http_db_queries_per_request_count{outcome="success",route="/api/profile"} 12.0
+http_db_queries_per_request_sum{outcome="success",route="/api/profile"} 6.0
+http_db_queries_per_request_bucket{le="0.0",outcome="success",route="/api/calendar/events"} 22.0
+http_db_queries_per_request_bucket{le="1.0",outcome="success",route="/api/calendar/events"} 22.0
+http_db_queries_per_request_bucket{le="2.0",outcome="success",route="/api/calendar/events"} 23.0
+http_db_queries_per_request_bucket{le="5.0",outcome="success",route="/api/calendar/events"} 24.0
+http_db_queries_per_request_bucket{le="10.0",outcome="success",route="/api/calendar/events"} 24.0
+http_db_queries_per_request_bucket{le="20.0",outcome="success",route="/api/calendar/events"} 24.0
+http_db_queries_per_request_bucket{le="50.0",outcome="success",route="/api/calendar/events"} 24.0
+http_db_queries_per_request_bucket{le="100.0",outcome="success",route="/api/calendar/events"} 24.0
+http_db_queries_per_request_bucket{le="200.0",outcome="success",route="/api/calendar/events"} 24.0
+http_db_queries_per_request_bucket{le="+Inf",outcome="success",route="/api/calendar/events"} 24.0
+http_db_queries_per_request_count{outcome="success",route="/api/calendar/events"} 24.0
+http_db_queries_per_request_sum{outcome="success",route="/api/calendar/events"} 5.0
+http_db_queries_per_request_bucket{le="0.0",outcome="success",route="/api/candidates"} 22.0
+http_db_queries_per_request_bucket{le="1.0",outcome="success",route="/api/candidates"} 22.0
+http_db_queries_per_request_bucket{le="2.0",outcome="success",route="/api/candidates"} 22.0
+http_db_queries_per_request_bucket{le="5.0",outcome="success",route="/api/candidates"} 22.0
+http_db_queries_per_request_bucket{le="10.0",outcome="success",route="/api/candidates"} 22.0
+http_db_queries_per_request_bucket{le="20.0",outcome="success",route="/api/candidates"} 23.0
+http_db_queries_per_request_bucket{le="50.0",outcome="success",route="/api/candidates"} 24.0
+http_db_queries_per_request_bucket{le="100.0",outcome="success",route="/api/candidates"} 24.0
+http_db_queries_per_request_bucket{le="200.0",outcome="success",route="/api/candidates"} 24.0
+http_db_queries_per_request_bucket{le="+Inf",outcome="success",route="/api/candidates"} 24.0
+http_db_queries_per_request_count{outcome="success",route="/api/candidates"} 24.0
+http_db_queries_per_request_sum{outcome="success",route="/api/candidates"} 34.0
+http_db_queries_per_request_bucket{le="0.0",outcome="success",route="/api/notifications/feed"} 0.0
+http_db_queries_per_request_bucket{le="1.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_bucket{le="2.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_bucket{le="5.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_bucket{le="10.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_bucket{le="20.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_bucket{le="50.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_bucket{le="100.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_bucket{le="200.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_bucket{le="+Inf",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_count{outcome="success",route="/api/notifications/feed"} 12.0
+http_db_queries_per_request_sum{outcome="success",route="/api/notifications/feed"} 12.0
+# HELP http_db_queries_per_request_created Number of DB queries executed during a single HTTP request (best-effort).
+# TYPE http_db_queries_per_request_created gauge
+http_db_queries_per_request_created{outcome="success",route="/auth/token"} 1.772357200318035e+09
+http_db_queries_per_request_created{outcome="success",route="/api/dashboard/summary"} 1.772357200341544e+09
+http_db_queries_per_request_created{outcome="success",route="/api/dashboard/incoming"} 1.7723572003653681e+09
+http_db_queries_per_request_created{outcome="success",route="/api/profile"} 1.77235720039471e+09
+http_db_queries_per_request_created{outcome="success",route="/api/calendar/events"} 1.7723572004081311e+09
+http_db_queries_per_request_created{outcome="success",route="/api/candidates"} 1.772357200469614e+09
+http_db_queries_per_request_created{outcome="success",route="/api/notifications/feed"} 1.772357200517365e+09
+# HELP http_db_query_time_seconds Total DB time spent during a single HTTP request in seconds (best-effort).
+# TYPE http_db_query_time_seconds histogram
+http_db_query_time_seconds_bucket{le="0.0005",outcome="success",route="/auth/token"} 0.0
+http_db_query_time_seconds_bucket{le="0.001",outcome="success",route="/auth/token"} 0.0
+http_db_query_time_seconds_bucket{le="0.0025",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="0.005",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="0.01",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="0.025",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="0.05",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="0.1",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="0.25",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="0.5",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="1.0",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="2.5",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="5.0",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="10.0",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_bucket{le="+Inf",outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_count{outcome="success",route="/auth/token"} 1.0
+http_db_query_time_seconds_sum{outcome="success",route="/auth/token"} 0.0017743749776855111
+http_db_query_time_seconds_bucket{le="0.0005",outcome="success",route="/api/dashboard/summary"} 11.0
+http_db_query_time_seconds_bucket{le="0.001",outcome="success",route="/api/dashboard/summary"} 11.0
+http_db_query_time_seconds_bucket{le="0.0025",outcome="success",route="/api/dashboard/summary"} 11.0
+http_db_query_time_seconds_bucket{le="0.005",outcome="success",route="/api/dashboard/summary"} 11.0
+http_db_query_time_seconds_bucket{le="0.01",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="0.025",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="0.05",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="0.1",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="0.25",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="0.5",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="1.0",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="2.5",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="5.0",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="10.0",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_bucket{le="+Inf",outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_count{outcome="success",route="/api/dashboard/summary"} 12.0
+http_db_query_time_seconds_sum{outcome="success",route="/api/dashboard/summary"} 0.005303751036990434
+http_db_query_time_seconds_bucket{le="0.0005",outcome="success",route="/api/dashboard/incoming"} 22.0
+http_db_query_time_seconds_bucket{le="0.001",outcome="success",route="/api/dashboard/incoming"} 22.0
+http_db_query_time_seconds_bucket{le="0.0025",outcome="success",route="/api/dashboard/incoming"} 23.0
+http_db_query_time_seconds_bucket{le="0.005",outcome="success",route="/api/dashboard/incoming"} 23.0
+http_db_query_time_seconds_bucket{le="0.01",outcome="success",route="/api/dashboard/incoming"} 23.0
+http_db_query_time_seconds_bucket{le="0.025",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_bucket{le="0.05",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_bucket{le="0.1",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_bucket{le="0.25",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_bucket{le="0.5",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_bucket{le="1.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_bucket{le="2.5",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_bucket{le="5.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_bucket{le="10.0",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_bucket{le="+Inf",outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_count{outcome="success",route="/api/dashboard/incoming"} 24.0
+http_db_query_time_seconds_sum{outcome="success",route="/api/dashboard/incoming"} 0.013921290985308588
+http_db_query_time_seconds_bucket{le="0.0005",outcome="success",route="/api/profile"} 11.0
+http_db_query_time_seconds_bucket{le="0.001",outcome="success",route="/api/profile"} 11.0
+http_db_query_time_seconds_bucket{le="0.0025",outcome="success",route="/api/profile"} 11.0
+http_db_query_time_seconds_bucket{le="0.005",outcome="success",route="/api/profile"} 11.0
+http_db_query_time_seconds_bucket{le="0.01",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="0.025",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="0.05",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="0.1",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="0.25",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="0.5",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="1.0",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="2.5",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="5.0",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="10.0",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_bucket{le="+Inf",outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_count{outcome="success",route="/api/profile"} 12.0
+http_db_query_time_seconds_sum{outcome="success",route="/api/profile"} 0.005639251030515879
+http_db_query_time_seconds_bucket{le="0.0005",outcome="success",route="/api/calendar/events"} 22.0
+http_db_query_time_seconds_bucket{le="0.001",outcome="success",route="/api/calendar/events"} 22.0
+http_db_query_time_seconds_bucket{le="0.0025",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="0.005",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="0.01",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="0.025",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="0.05",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="0.1",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="0.25",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="0.5",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="1.0",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="2.5",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="5.0",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="10.0",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_bucket{le="+Inf",outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_count{outcome="success",route="/api/calendar/events"} 24.0
+http_db_query_time_seconds_sum{outcome="success",route="/api/calendar/events"} 0.003854376031085849
+http_db_query_time_seconds_bucket{le="0.0005",outcome="success",route="/api/candidates"} 22.0
+http_db_query_time_seconds_bucket{le="0.001",outcome="success",route="/api/candidates"} 22.0
+http_db_query_time_seconds_bucket{le="0.0025",outcome="success",route="/api/candidates"} 22.0
+http_db_query_time_seconds_bucket{le="0.005",outcome="success",route="/api/candidates"} 22.0
+http_db_query_time_seconds_bucket{le="0.01",outcome="success",route="/api/candidates"} 22.0
+http_db_query_time_seconds_bucket{le="0.025",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_bucket{le="0.05",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_bucket{le="0.1",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_bucket{le="0.25",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_bucket{le="0.5",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_bucket{le="1.0",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_bucket{le="2.5",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_bucket{le="5.0",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_bucket{le="10.0",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_bucket{le="+Inf",outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_count{outcome="success",route="/api/candidates"} 24.0
+http_db_query_time_seconds_sum{outcome="success",route="/api/candidates"} 0.03366804192773998
+http_db_query_time_seconds_bucket{le="0.0005",outcome="success",route="/api/notifications/feed"} 10.0
+http_db_query_time_seconds_bucket{le="0.001",outcome="success",route="/api/notifications/feed"} 10.0
+http_db_query_time_seconds_bucket{le="0.0025",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="0.005",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="0.01",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="0.025",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="0.05",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="0.1",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="0.25",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="0.5",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="1.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="2.5",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="5.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="10.0",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_bucket{le="+Inf",outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_count{outcome="success",route="/api/notifications/feed"} 12.0
+http_db_query_time_seconds_sum{outcome="success",route="/api/notifications/feed"} 0.007569416018668562
+# HELP http_db_query_time_seconds_created Total DB time spent during a single HTTP request in seconds (best-effort).
+# TYPE http_db_query_time_seconds_created gauge
+http_db_query_time_seconds_created{outcome="success",route="/auth/token"} 1.772357200318051e+09
+http_db_query_time_seconds_created{outcome="success",route="/api/dashboard/summary"} 1.772357200341563e+09
+http_db_query_time_seconds_created{outcome="success",route="/api/dashboard/incoming"} 1.772357200365379e+09
+http_db_query_time_seconds_created{outcome="success",route="/api/profile"} 1.77235720039472e+09
+http_db_query_time_seconds_created{outcome="success",route="/api/calendar/events"} 1.77235720040814e+09
+http_db_query_time_seconds_created{outcome="success",route="/api/candidates"} 1.772357200469627e+09
+http_db_query_time_seconds_created{outcome="success",route="/api/notifications/feed"} 1.772357200517375e+09
+# HELP db_queries_total Total number of DB queries executed, labeled by route and operation.
+# TYPE db_queries_total counter
+db_queries_total{operation="select",route="unknown"} 5.0
+db_queries_total{operation="insert",route="/auth/token"} 1.0
+db_queries_total{operation="select",route="/api/dashboard/summary"} 4.0
+db_queries_total{operation="select",route="/api/dashboard/incoming"} 2.0
+db_queries_total{operation="select",route="/api/profile"} 6.0
+db_queries_total{operation="select",route="/api/calendar/events"} 5.0
+db_queries_total{operation="select",route="/api/candidates"} 34.0
+db_queries_total{operation="select",route="/api/notifications/feed"} 12.0
+# HELP db_queries_created Total number of DB queries executed, labeled by route and operation.
+# TYPE db_queries_created gauge
+db_queries_created{operation="select",route="unknown"} 1.7723571957512162e+09
+db_queries_created{operation="insert",route="/auth/token"} 1.772357200316752e+09
+db_queries_created{operation="select",route="/api/dashboard/summary"} 1.772357200335233e+09
+db_queries_created{operation="select",route="/api/dashboard/incoming"} 1.772357200364341e+09
+db_queries_created{operation="select",route="/api/profile"} 1.772357200387241e+09
+db_queries_created{operation="select",route="/api/calendar/events"} 1.772357200406661e+09
+db_queries_created{operation="select",route="/api/candidates"} 1.77235720043379e+09
+db_queries_created{operation="select",route="/api/notifications/feed"} 1.772357200516653e+09
+# HELP db_query_duration_seconds DB query latency in seconds, labeled by route and operation.
+# TYPE db_query_duration_seconds histogram
+db_query_duration_seconds_bucket{le="0.0005",operation="select",route="unknown"} 2.0
+db_query_duration_seconds_bucket{le="0.001",operation="select",route="unknown"} 2.0
+db_query_duration_seconds_bucket{le="0.0025",operation="select",route="unknown"} 3.0
+db_query_duration_seconds_bucket{le="0.005",operation="select",route="unknown"} 4.0
+db_query_duration_seconds_bucket{le="0.01",operation="select",route="unknown"} 4.0
+db_query_duration_seconds_bucket{le="0.025",operation="select",route="unknown"} 5.0
+db_query_duration_seconds_bucket{le="0.05",operation="select",route="unknown"} 5.0
+db_query_duration_seconds_bucket{le="0.1",operation="select",route="unknown"} 5.0
+db_query_duration_seconds_bucket{le="0.25",operation="select",route="unknown"} 5.0
+db_query_duration_seconds_bucket{le="0.5",operation="select",route="unknown"} 5.0
+db_query_duration_seconds_bucket{le="1.0",operation="select",route="unknown"} 5.0
+db_query_duration_seconds_bucket{le="2.5",operation="select",route="unknown"} 5.0
+db_query_duration_seconds_bucket{le="5.0",operation="select",route="unknown"} 5.0
+db_query_duration_seconds_bucket{le="+Inf",operation="select",route="unknown"} 5.0
+db_query_duration_seconds_count{operation="select",route="unknown"} 5.0
+db_query_duration_seconds_sum{operation="select",route="unknown"} 0.01836737507255748
+db_query_duration_seconds_bucket{le="0.0005",operation="insert",route="/auth/token"} 0.0
+db_query_duration_seconds_bucket{le="0.001",operation="insert",route="/auth/token"} 0.0
+db_query_duration_seconds_bucket{le="0.0025",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="0.005",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="0.01",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="0.025",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="0.05",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="0.1",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="0.25",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="0.5",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="1.0",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="2.5",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="5.0",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_bucket{le="+Inf",operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_count{operation="insert",route="/auth/token"} 1.0
+db_query_duration_seconds_sum{operation="insert",route="/auth/token"} 0.0017743749776855111
+db_query_duration_seconds_bucket{le="0.0005",operation="select",route="/api/dashboard/summary"} 0.0
+db_query_duration_seconds_bucket{le="0.001",operation="select",route="/api/dashboard/summary"} 2.0
+db_query_duration_seconds_bucket{le="0.0025",operation="select",route="/api/dashboard/summary"} 3.0
+db_query_duration_seconds_bucket{le="0.005",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="0.01",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="0.025",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="0.05",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="0.1",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="0.25",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="0.5",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="1.0",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="2.5",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="5.0",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_bucket{le="+Inf",operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_count{operation="select",route="/api/dashboard/summary"} 4.0
+db_query_duration_seconds_sum{operation="select",route="/api/dashboard/summary"} 0.005303751036990434
+db_query_duration_seconds_bucket{le="0.0005",operation="select",route="/api/dashboard/incoming"} 0.0
+db_query_duration_seconds_bucket{le="0.001",operation="select",route="/api/dashboard/incoming"} 0.0
+db_query_duration_seconds_bucket{le="0.0025",operation="select",route="/api/dashboard/incoming"} 1.0
+db_query_duration_seconds_bucket{le="0.005",operation="select",route="/api/dashboard/incoming"} 1.0
+db_query_duration_seconds_bucket{le="0.01",operation="select",route="/api/dashboard/incoming"} 1.0
+db_query_duration_seconds_bucket{le="0.025",operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_bucket{le="0.05",operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_bucket{le="0.1",operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_bucket{le="0.25",operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_bucket{le="0.5",operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_bucket{le="1.0",operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_bucket{le="2.5",operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_bucket{le="5.0",operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_bucket{le="+Inf",operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_count{operation="select",route="/api/dashboard/incoming"} 2.0
+db_query_duration_seconds_sum{operation="select",route="/api/dashboard/incoming"} 0.013921290985308588
+db_query_duration_seconds_bucket{le="0.0005",operation="select",route="/api/profile"} 0.0
+db_query_duration_seconds_bucket{le="0.001",operation="select",route="/api/profile"} 5.0
+db_query_duration_seconds_bucket{le="0.0025",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="0.005",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="0.01",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="0.025",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="0.05",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="0.1",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="0.25",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="0.5",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="1.0",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="2.5",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="5.0",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_bucket{le="+Inf",operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_count{operation="select",route="/api/profile"} 6.0
+db_query_duration_seconds_sum{operation="select",route="/api/profile"} 0.005639251030515879
+db_query_duration_seconds_bucket{le="0.0005",operation="select",route="/api/calendar/events"} 3.0
+db_query_duration_seconds_bucket{le="0.001",operation="select",route="/api/calendar/events"} 3.0
+db_query_duration_seconds_bucket{le="0.0025",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="0.005",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="0.01",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="0.025",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="0.05",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="0.1",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="0.25",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="0.5",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="1.0",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="2.5",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="5.0",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_bucket{le="+Inf",operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_count{operation="select",route="/api/calendar/events"} 5.0
+db_query_duration_seconds_sum{operation="select",route="/api/calendar/events"} 0.003854376031085849
+db_query_duration_seconds_bucket{le="0.0005",operation="select",route="/api/candidates"} 8.0
+db_query_duration_seconds_bucket{le="0.001",operation="select",route="/api/candidates"} 22.0
+db_query_duration_seconds_bucket{le="0.0025",operation="select",route="/api/candidates"} 32.0
+db_query_duration_seconds_bucket{le="0.005",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="0.01",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="0.025",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="0.05",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="0.1",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="0.25",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="0.5",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="1.0",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="2.5",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="5.0",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_bucket{le="+Inf",operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_count{operation="select",route="/api/candidates"} 34.0
+db_query_duration_seconds_sum{operation="select",route="/api/candidates"} 0.03366804192773998
+db_query_duration_seconds_bucket{le="0.0005",operation="select",route="/api/notifications/feed"} 10.0
+db_query_duration_seconds_bucket{le="0.001",operation="select",route="/api/notifications/feed"} 10.0
+db_query_duration_seconds_bucket{le="0.0025",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="0.005",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="0.01",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="0.025",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="0.05",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="0.1",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="0.25",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="0.5",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="1.0",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="2.5",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="5.0",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_bucket{le="+Inf",operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_count{operation="select",route="/api/notifications/feed"} 12.0
+db_query_duration_seconds_sum{operation="select",route="/api/notifications/feed"} 0.007569416018668562
+# HELP db_query_duration_seconds_created DB query latency in seconds, labeled by route and operation.
+# TYPE db_query_duration_seconds_created gauge
+db_query_duration_seconds_created{operation="select",route="unknown"} 1.7723571957512262e+09
+db_query_duration_seconds_created{operation="insert",route="/auth/token"} 1.77235720031676e+09
+db_query_duration_seconds_created{operation="select",route="/api/dashboard/summary"} 1.7723572003352408e+09
+db_query_duration_seconds_created{operation="select",route="/api/dashboard/incoming"} 1.7723572003643498e+09
+db_query_duration_seconds_created{operation="select",route="/api/profile"} 1.7723572003872519e+09
+db_query_duration_seconds_created{operation="select",route="/api/calendar/events"} 1.7723572004066691e+09
+db_query_duration_seconds_created{operation="select",route="/api/candidates"} 1.7723572004337971e+09
+db_query_duration_seconds_created{operation="select",route="/api/notifications/feed"} 1.7723572005166621e+09
+# HELP db_slow_queries_total Slow DB queries (above threshold), labeled by route and operation.
+# TYPE db_slow_queries_total counter
+# HELP db_pool_checked_out SQLAlchemy pool checked-out connections (best-effort).
+# TYPE db_pool_checked_out gauge
+db_pool_checked_out 0.0
+# HELP db_pool_size SQLAlchemy pool size (best-effort).
+# TYPE db_pool_size gauge
+db_pool_size 20.0
+# HELP db_pool_overflow SQLAlchemy pool overflow (best-effort).
+# TYPE db_pool_overflow gauge
+db_pool_overflow -18.0
+# HELP db_pool_timeouts_total Total pool timeout errors observed (best-effort).
+# TYPE db_pool_timeouts_total counter
+db_pool_timeouts_total 0.0
+# HELP db_pool_timeouts_created Total pool timeout errors observed (best-effort).
+# TYPE db_pool_timeouts_created gauge
+db_pool_timeouts_created 1.772357193894604e+09
+# HELP db_too_many_connections_total Total asyncpg TooManyConnectionsError observed (best-effort).
+# TYPE db_too_many_connections_total counter
+db_too_many_connections_total 0.0
+# HELP db_too_many_connections_created Total asyncpg TooManyConnectionsError observed (best-effort).
+# TYPE db_too_many_connections_created gauge
+db_too_many_connections_created 1.772357193894609e+09
+# HELP db_pool_acquire_seconds Time spent acquiring a DB connection from the SQLAlchemy pool (best-effort), labeled by route.
+# TYPE db_pool_acquire_seconds histogram
+db_pool_acquire_seconds_bucket{le="0.0005",route="unknown"} 2.0
+db_pool_acquire_seconds_bucket{le="0.001",route="unknown"} 2.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="unknown"} 2.0
+db_pool_acquire_seconds_bucket{le="0.005",route="unknown"} 3.0
+db_pool_acquire_seconds_bucket{le="0.01",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="0.025",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="0.05",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="0.1",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="0.25",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="0.5",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="1.0",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="2.5",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="5.0",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="10.0",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="30.0",route="unknown"} 4.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="unknown"} 4.0
+db_pool_acquire_seconds_count{route="unknown"} 4.0
+db_pool_acquire_seconds_sum{route="unknown"} 0.011525542940944433
+db_pool_acquire_seconds_bucket{le="0.0005",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="0.001",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="0.005",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="0.01",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="0.025",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="0.05",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="0.1",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="0.25",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="0.5",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="1.0",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="2.5",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="5.0",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="10.0",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="30.0",route="/auth/token"} 1.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="/auth/token"} 1.0
+db_pool_acquire_seconds_count{route="/auth/token"} 1.0
+db_pool_acquire_seconds_sum{route="/auth/token"} 6.165995728224516e-06
+db_pool_acquire_seconds_bucket{le="0.0005",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="0.001",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="0.005",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="0.01",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="0.025",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="0.05",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="0.1",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="0.25",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="0.5",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="1.0",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="2.5",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="5.0",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="10.0",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="30.0",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_count{route="/api/dashboard/summary"} 1.0
+db_pool_acquire_seconds_sum{route="/api/dashboard/summary"} 5.499983672052622e-06
+db_pool_acquire_seconds_bucket{le="0.0005",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="0.001",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="0.005",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="0.01",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="0.025",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="0.05",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="0.1",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="0.25",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="0.5",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="1.0",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="2.5",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="5.0",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="10.0",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="30.0",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_count{route="/api/dashboard/incoming"} 2.0
+db_pool_acquire_seconds_sum{route="/api/dashboard/incoming"} 1.1958007235080004e-05
+db_pool_acquire_seconds_bucket{le="0.0005",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="0.001",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="0.005",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="0.01",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="0.025",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="0.05",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="0.1",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="0.25",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="0.5",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="1.0",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="2.5",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="5.0",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="10.0",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="30.0",route="/api/profile"} 1.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="/api/profile"} 1.0
+db_pool_acquire_seconds_count{route="/api/profile"} 1.0
+db_pool_acquire_seconds_sum{route="/api/profile"} 4.750036168843508e-06
+db_pool_acquire_seconds_bucket{le="0.0005",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="0.001",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="0.005",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="0.01",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="0.025",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="0.05",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="0.1",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="0.25",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="0.5",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="1.0",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="2.5",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="5.0",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="10.0",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="30.0",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_count{route="/api/calendar/events"} 2.0
+db_pool_acquire_seconds_sum{route="/api/calendar/events"} 1.0541989468038082e-05
+db_pool_acquire_seconds_bucket{le="0.0005",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="0.001",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="0.005",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="0.01",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="0.025",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="0.05",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="0.1",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="0.25",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="0.5",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="1.0",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="2.5",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="5.0",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="10.0",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="30.0",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="/api/candidates"} 2.0
+db_pool_acquire_seconds_count{route="/api/candidates"} 2.0
+db_pool_acquire_seconds_sum{route="/api/candidates"} 1.0082963854074478e-05
+db_pool_acquire_seconds_bucket{le="0.0005",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="0.001",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="0.0025",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="0.005",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="0.01",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="0.025",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="0.05",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="0.1",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="0.25",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="0.5",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="1.0",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="2.5",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="5.0",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="10.0",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="30.0",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_bucket{le="+Inf",route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_count{route="/api/notifications/feed"} 12.0
+db_pool_acquire_seconds_sum{route="/api/notifications/feed"} 5.5375974625349045e-05
+# HELP db_pool_acquire_seconds_created Time spent acquiring a DB connection from the SQLAlchemy pool (best-effort), labeled by route.
+# TYPE db_pool_acquire_seconds_created gauge
+db_pool_acquire_seconds_created{route="unknown"} 1.772357193894623e+09
+db_pool_acquire_seconds_created{route="/auth/token"} 1.772357200313511e+09
+db_pool_acquire_seconds_created{route="/api/dashboard/summary"} 1.772357200332736e+09
+db_pool_acquire_seconds_created{route="/api/dashboard/incoming"} 1.772357200350364e+09
+db_pool_acquire_seconds_created{route="/api/profile"} 1.772357200384398e+09
+db_pool_acquire_seconds_created{route="/api/calendar/events"} 1.7723572004040031e+09
+db_pool_acquire_seconds_created{route="/api/candidates"} 1.772357200430411e+09
+db_pool_acquire_seconds_created{route="/api/notifications/feed"} 1.77235720051381e+09
+# HELP db_active_connections Active DB connections (pg_stat_activity, best-effort; -1 when unknown).
+# TYPE db_active_connections gauge
+db_active_connections -1.0
+# HELP latency_p50_seconds Approx rolling-window p50 latency in seconds.
+# TYPE latency_p50_seconds gauge
+latency_p50_seconds{method="POST",outcome="success",route="/auth/token",status="200"} 0.0063107919995673
+latency_p50_seconds{method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 0.0005260420148260891
+latency_p50_seconds{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 0.0005489590112119913
+latency_p50_seconds{method="GET",outcome="success",route="/api/profile",status="200"} 0.0006477079587057233
+latency_p50_seconds{method="GET",outcome="success",route="/api/calendar/events",status="200"} 0.0005978749832138419
+latency_p50_seconds{method="GET",outcome="success",route="/api/candidates",status="200"} 0.0008217919967137277
+latency_p50_seconds{method="GET",outcome="success",route="/api/notifications/feed",status="200"} 0.001971833989955485
+# HELP latency_p95_seconds Approx rolling-window p95 latency in seconds.
+# TYPE latency_p95_seconds gauge
+latency_p95_seconds{method="POST",outcome="success",route="/auth/token",status="200"} 0.0063107919995673
+latency_p95_seconds{method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 0.011246416950598359
+latency_p95_seconds{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 0.003357499954290688
+latency_p95_seconds{method="GET",outcome="success",route="/api/profile",status="200"} 0.0113626669626683
+latency_p95_seconds{method="GET",outcome="success",route="/api/calendar/events",status="200"} 0.005318749987054616
+latency_p95_seconds{method="GET",outcome="success",route="/api/candidates",status="200"} 0.019921707978937775
+latency_p95_seconds{method="GET",outcome="success",route="/api/notifications/feed",status="200"} 0.005334249988663942
+# HELP latency_p99_seconds Approx rolling-window p99 latency in seconds.
+# TYPE latency_p99_seconds gauge
+latency_p99_seconds{method="POST",outcome="success",route="/auth/token",status="200"} 0.0063107919995673
+latency_p99_seconds{method="GET",outcome="success",route="/api/dashboard/summary",status="200"} 0.011246416950598359
+latency_p99_seconds{method="GET",outcome="success",route="/api/dashboard/incoming",status="200"} 0.016351541969925165
+latency_p99_seconds{method="GET",outcome="success",route="/api/profile",status="200"} 0.0113626669626683
+latency_p99_seconds{method="GET",outcome="success",route="/api/calendar/events",status="200"} 0.005931959021836519
+latency_p99_seconds{method="GET",outcome="success",route="/api/candidates",status="200"} 0.041594917012844235
+latency_p99_seconds{method="GET",outcome="success",route="/api/notifications/feed",status="200"} 0.005334249988663942

@@ -1,29 +1,49 @@
-from datetime import date as date_type, datetime, time, timezone, timedelta
-from pathlib import Path
-from typing import Optional, List
-from urllib.parse import urlparse
-from zoneinfo import ZoneInfo
 import logging
 import secrets
+from datetime import date as date_type, datetime, time, timezone, timedelta
+from pathlib import Path
+from typing import List, Optional
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File, Form
-from starlette.datastructures import UploadFile as StarletteUploadFile
 from fastapi.encoders import jsonable_encoder
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
+from starlette.datastructures import UploadFile as StarletteUploadFile
+from starlette.responses import FileResponse
 
-from backend.apps.admin_ui.services.cities import (
-    api_city_owners_payload,
-    list_cities,
-    get_city,
-    create_city,
-    update_city_settings,
-    city_experts_items,
-    delete_city,
+from backend.apps.admin_ui.perf.cache import keys as cache_keys
+from backend.apps.admin_ui.perf.cache.readthrough import get_cached, get_or_compute
+from backend.apps.admin_ui.perf.metrics import prometheus as perf_prometheus
+from backend.apps.admin_ui.routers import content_api
+from backend.apps.admin_ui.routers.directory import router as directory_router
+from backend.apps.admin_ui.routers.profile_api import router as profile_api_router
+from backend.apps.admin_ui.security import Principal, require_admin, require_csrf_token, require_principal
+from backend.apps.admin_ui.services.cities import api_city_owners_payload
+from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
+from backend.apps.admin_ui.services.calendar_events import (
+    get_calendar_events,
+)
+from backend.apps.admin_ui.services.calendar_tasks import (
+    create_calendar_task,
+    delete_calendar_task,
+    update_calendar_task,
+)
+from backend.apps.admin_ui.services.candidates import (
+    api_candidate_detail_payload,
+    assign_candidate_recruiter,
+    delete_candidate,
+    get_candidate_detail,
+    list_candidates,
+    update_candidate_status,
+)
+from backend.apps.admin_ui.services.chat import (
+    list_chat_history,
+    retry_chat_message,
+    send_chat_message,
 )
 from backend.apps.admin_ui.services.dashboard import (
     WAITING_CANDIDATES_DEFAULT_LIMIT,
@@ -36,42 +56,21 @@ from backend.apps.admin_ui.services.dashboard import (
 from backend.apps.admin_ui.services.dashboard_calendar import (
     dashboard_calendar_snapshot,
 )
-from backend.apps.admin_ui.services.calendar_events import (
-    get_calendar_events,
+from backend.apps.admin_ui.services.kpis import (
+    get_weekly_kpis,
+    list_weekly_history,
 )
-from backend.apps.admin_ui.services.calendar_tasks import (
-    create_calendar_task,
-    delete_calendar_task,
-    update_calendar_task,
+from backend.apps.admin_ui.services.recruiter_plan import (
+    add_recruiter_plan_entry,
+    delete_recruiter_plan_entry,
+    get_recruiter_plan,
 )
-from backend.apps.admin_ui.services.candidates import (
-    get_candidate_detail,
-    api_candidate_detail_payload,
-    assign_candidate_recruiter,
-    update_candidate_status,
-    list_candidates,
-)
-from backend.apps.admin_ui.services.chat import (
-    list_chat_history,
-    retry_chat_message,
-    send_chat_message,
-)
-from backend.apps.admin_ui.services.slots import execute_bot_dispatch
 from backend.apps.admin_ui.services.slots import (
     approve_slot_booking,
-    reject_slot_booking,
-    reschedule_slot_booking,
-    set_slot_outcome,
     delete_slot,
-)
-from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
-from backend.apps.admin_ui.services.recruiters import (
-    api_recruiters_payload,
-    api_get_recruiter,
-    create_recruiter,
-    delete_recruiter,
-    update_recruiter,
-    reset_recruiter_password,
+    execute_bot_dispatch,
+    reject_slot_booking,
+    set_slot_outcome,
 )
 from backend.apps.admin_ui.services.slots.core import (
     api_slots_payload,
@@ -79,83 +78,68 @@ from backend.apps.admin_ui.services.slots.core import (
     bulk_delete_slots,
     bulk_schedule_reminders,
 )
-from backend.apps.admin_ui.services.message_templates_presets import (
-    list_known_template_keys,
-    known_template_presets,
+from backend.apps.admin_ui.services.staff_chat import (
+    add_thread_members as staff_add_thread_members,
+    create_group_thread,
+    create_or_get_direct_thread,
+    decide_candidate_task as staff_decide_candidate_task,
+    get_attachment as staff_get_attachment,
+    list_messages as staff_list_messages,
+    list_thread_members as staff_list_thread_members,
+    list_threads as staff_list_threads,
+    mark_read as staff_mark_read,
+    remove_thread_member as staff_remove_thread_member,
+    send_candidate_task as staff_send_candidate_task,
+    send_message as staff_send_message,
+    wait_for_message_updates as staff_wait_message_updates,
+    wait_for_thread_updates as staff_wait_thread_updates,
 )
-from backend.apps.admin_ui.services.kpis import (
-    get_weekly_kpis,
-    list_weekly_history,
-)
+from backend.apps.admin_ui.timezones import timezone_options
+from backend.apps.admin_ui.utils import norm_status, parse_optional_int, recruiter_time_to_utc, status_filter
 from backend.core.audit import log_audit_action
 from backend.core.content_updates import KIND_REMINDERS_CHANGED, publish_content_update
-from backend.apps.admin_ui.perf.cache import keys as cache_keys
-from backend.apps.admin_ui.perf.cache.readthrough import get_cached, get_or_compute
-from backend.apps.admin_ui.services.message_templates import (
-    list_message_templates,
-    create_message_template,
-    update_message_template,
-    delete_message_template,
-    get_template_history,
-)
-from backend.apps.admin_ui.services.staff_chat import (
-    list_threads as staff_list_threads,
-    create_or_get_direct_thread,
-    create_group_thread,
-    list_messages as staff_list_messages,
-    send_message as staff_send_message,
-    mark_read as staff_mark_read,
-    get_attachment as staff_get_attachment,
-    list_thread_members as staff_list_thread_members,
-    add_thread_members as staff_add_thread_members,
-    remove_thread_member as staff_remove_thread_member,
-    wait_for_thread_updates as staff_wait_thread_updates,
-    wait_for_message_updates as staff_wait_message_updates,
-    send_candidate_task as staff_send_candidate_task,
-    decide_candidate_task as staff_decide_candidate_task,
-)
-from backend.apps.admin_ui.services.recruiter_plan import (
-    get_recruiter_plan,
-    add_recruiter_plan_entry,
-    delete_recruiter_plan_entry,
-)
-from backend.apps.admin_ui.services.questions import (
-    list_test_questions,
-    get_test_question_detail,
-    update_test_question,
-    create_test_question,
-    clone_test_question,
-    reorder_test_questions,
-)
-from backend.apps.admin_ui.services.builder_graph import (
-    apply_test_builder_graph,
-    get_test_builder_graph,
-)
-from backend.apps.admin_ui.services.test_builder_preview import (
-    preview_test_builder_graph,
-)
 from backend.core.db import async_session
-from backend.domain.models import Recruiter, Slot, City, SlotStatus, SlotAssignment, ActionToken, MessageTemplate, recruiter_city_association, validate_timezone_name
-from backend.domain.auth_account import AuthAccount
-from backend.domain.candidates.models import User
-from backend.apps.admin_ui.utils import parse_optional_int, status_filter, recruiter_time_to_utc, norm_status
 from backend.core.guards import ensure_slot_scope
-from backend.apps.admin_ui.security import require_csrf_token, require_principal, require_admin, Principal
-from starlette_wtf import csrf_token
-from backend.domain.errors import CityAlreadyExistsError
-from backend.core.settings import get_settings
 from backend.core.sanitizers import sanitize_plain_text
-from backend.core.auth import verify_password as verify_auth_password
-from backend.core.passwords import hash_password
-from backend.apps.bot.reminders import get_reminder_service
+from backend.core.settings import get_settings
+from backend.domain.candidates.models import User
+from backend.domain.hh_integration.summary import build_candidate_hh_summary
+from backend.domain.models import ActionToken, City, Recruiter, Slot, SlotAssignment, SlotStatus, recruiter_city_association
+from backend.domain.slot_service import (
+    approve_slot as approve_domain_slot,
+    reserve_slot as reserve_domain_slot,
+)
 from backend.apps.bot.runtime_config import (
     get_reminder_policy_config,
     save_reminder_policy_config,
 )
-from backend.apps.admin_ui.timezones import timezone_options
+from starlette_wtf import csrf_token
 
 router = APIRouter(prefix="/api", tags=["api"])
+router.include_router(directory_router)
+router.include_router(profile_api_router)
+router.include_router(content_api.router)
 logger = logging.getLogger(__name__)
+
+# Backward-compatible re-exports for tests that import handlers directly.
+list_known_template_keys = content_api.list_known_template_keys
+known_template_presets = content_api.known_template_presets
+
+
+async def api_template_keys():
+    return JSONResponse(list_known_template_keys())
+
+
+async def api_template_presets():
+    presets_list = known_template_presets()
+
+    def _sanitize(value: str) -> str:
+        return value.encode("utf-8", "ignore").decode("utf-8") if value else value
+
+    result = {}
+    for item in presets_list:
+        result[item["key"]] = _sanitize(item["text"])
+    return JSONResponse(result)
 
 
 def _empty_weekly_kpis(timezone_label: Optional[str]) -> dict[str, object]:
@@ -179,31 +163,8 @@ def _empty_weekly_kpis(timezone_label: Optional[str]) -> dict[str, object]:
         "is_placeholder": True,
     }
 
-
-def _normalize_profile_http_url(raw: Optional[str]) -> Optional[str]:
-    value = (raw or "").strip()
-    if not value:
-        return None
-    candidate = value if "://" in value else f"https://{value}"
-    parsed = urlparse(candidate)
-    scheme = (parsed.scheme or "").lower()
-    if scheme not in {"http", "https"} or not parsed.netloc:
-        raise HTTPException(
-            status_code=400,
-            detail={"message": "Ссылка на конференцию должна быть валидным URL (http/https)."},
-        )
-    return candidate
-
-
-class ProfileSettingsUpdatePayload(BaseModel):
-    name: str
-    tz: Optional[str] = None
-    telemost_url: Optional[str] = None
-
-
-class ProfilePasswordChangePayload(BaseModel):
-    current_password: str
-    new_password: str
+class CandidateKanbanMovePayload(BaseModel):
+    target_status: str
 
 
 @router.get("/csrf")
@@ -229,28 +190,6 @@ def _parse_bool(value: Optional[str]) -> Optional[bool]:
     if value in {"0", "false", "no", "off"}:
         return False
     return None
-
-
-def _avatar_dir() -> Path:
-    settings = get_settings()
-    base_dir = Path(settings.data_dir).resolve()
-    avatar_dir = base_dir / "avatars"
-    avatar_dir.mkdir(parents=True, exist_ok=True)
-    return avatar_dir
-
-
-def _avatar_prefix(principal: Principal) -> str:
-    return f"{principal.type}_{principal.id}"
-
-
-def _find_avatar_file(prefix: str) -> Optional[Path]:
-    avatar_dir = _avatar_dir()
-    for ext in ("png", "jpg", "jpeg", "webp"):
-        candidate = avatar_dir / f"{prefix}.{ext}"
-        if candidate.exists():
-            return candidate
-    matches = list(avatar_dir.glob(f"{prefix}.*"))
-    return matches[0] if matches else None
 
 
 def _parse_date_param(value: Optional[str], *, end: bool = False) -> Optional[datetime]:
@@ -344,459 +283,6 @@ async def api_dashboard_recruiter_performance(
         city=city,
     )
     return JSONResponse(payload)
-
-
-async def _profile_snapshot(principal: Principal, request: Request) -> tuple[dict, Optional[dict]]:
-    recruiter = None
-    city_names: list[str] = []
-    candidate_count = 0
-    slot_count = 0
-    city_count = 0
-    recruiter_count = 0
-    slots_by_status: dict[str, int] = {}
-    upcoming_global: list[dict] = []
-    health: dict[str, Optional[str | bool]] = {}
-    today_meetings: list[dict] = []
-    upcoming_meetings: list[dict] = []
-    active_candidates: list[dict] = []
-    reminders: list[dict] = []
-    tzinfo: Optional[ZoneInfo] = None
-    planner_days: list[dict] = []
-    city_options: list[dict] = []
-
-    pending_count = 0
-    booked_count = 0
-    nearest_minutes: Optional[int] = None
-    avg_lead_hours: Optional[float] = None
-    recruiter_payload: Optional[dict] = None
-    now_utc = datetime.now(timezone.utc)
-
-    async with async_session() as session:
-        if principal.type == "recruiter":
-            recruiter = await session.get(Recruiter, principal.id)
-            if recruiter and recruiter.tz:
-                try:
-                    tzinfo = ZoneInfo(recruiter.tz)
-                except Exception:
-                    tzinfo = ZoneInfo("UTC")
-            else:
-                tzinfo = ZoneInfo("UTC")
-
-            candidate_count = await session.scalar(
-                select(func.count()).select_from(User).where(User.responsible_recruiter_id == principal.id)
-            ) or 0
-            slot_count = await session.scalar(
-                select(func.count()).select_from(Slot).where(Slot.recruiter_id == principal.id)
-            ) or 0
-            city_rows = await session.execute(
-                select(City.id, City.name, City.tz)
-                .join(recruiter_city_association, recruiter_city_association.c.city_id == City.id)
-                .where(recruiter_city_association.c.recruiter_id == principal.id)
-                .order_by(City.name.asc())
-            )
-            for cid, cname, ctz in city_rows:
-                city_names.append(cname)
-                city_options.append({"id": cid, "name": cname, "tz": ctz})
-
-            slot_rows = await session.execute(
-                select(Slot.id, Slot.status, Slot.start_utc, Slot.city_id)
-                .where(Slot.recruiter_id == principal.id)
-                .order_by(Slot.start_utc.asc(), Slot.id.asc())
-                .limit(10)
-            )
-            slots = slot_rows.all()
-            for slot_id, slot_status, slot_start_utc, slot_city_id in slots:
-                start_utc = slot_start_utc
-                if start_utc and start_utc.tzinfo is None:
-                    start_utc = start_utc.replace(tzinfo=timezone.utc)
-                status_value = slot_status.name if hasattr(slot_status, "name") else slot_status
-                item = {
-                    "id": slot_id,
-                    "status": status_value,
-                    "start_utc": start_utc.isoformat() if start_utc else None,
-                    "city_id": slot_city_id,
-                }
-                if start_utc:
-                    minutes = int((start_utc - now_utc).total_seconds() / 60)
-                    if minutes > 0:
-                        nearest_minutes = minutes if nearest_minutes is None else min(nearest_minutes, minutes)
-                start_local_date = start_utc.astimezone(tzinfo).date() if start_utc else None
-                if start_local_date and start_local_date == now_utc.astimezone(tzinfo).date():
-                    today_meetings.append(item)
-                else:
-                    upcoming_meetings.append(item)
-
-            # planner for 7 days
-            planner_rows = await session.execute(
-                select(Slot.id, Slot.status, Slot.start_utc, Slot.city_id)
-                .where(
-                    Slot.recruiter_id == principal.id,
-                    Slot.start_utc >= now_utc,
-                    Slot.start_utc <= now_utc + timedelta(days=7),
-                )
-                .order_by(Slot.start_utc.asc(), Slot.id.asc())
-            )
-            planner_items = planner_rows.all()
-            day_map: dict[str, list[dict]] = {}
-            for slot_id, slot_status, slot_start_utc, slot_city_id in planner_items:
-                start_utc = slot_start_utc
-                if start_utc and start_utc.tzinfo is None:
-                    start_utc = start_utc.replace(tzinfo=timezone.utc)
-                local = start_utc.astimezone(tzinfo) if start_utc else None
-                day_key = local.strftime("%Y-%m-%d") if local else "unknown"
-                payload = {
-                    "id": slot_id,
-                    "time": local.strftime("%H:%M") if local else "",
-                    "status": slot_status.name if hasattr(slot_status, "name") else slot_status,
-                    "city": slot_city_id,
-                }
-                day_map.setdefault(day_key, []).append(payload)
-            for day, items in sorted(day_map.items()):
-                planner_days.append({"date": day, "entries": items})
-
-            if planner_items:
-                deltas: list[float] = []
-                for _, _, slot_start_utc, _ in planner_items:
-                    start_utc = slot_start_utc
-                    if start_utc and start_utc.tzinfo is None:
-                        start_utc = start_utc.replace(tzinfo=timezone.utc)
-                    if start_utc and start_utc > now_utc:
-                        deltas.append((start_utc - now_utc).total_seconds() / 3600)
-                if deltas:
-                    avg_lead_hours = round(sum(deltas) / len(deltas), 1)
-
-            cand_rows = await session.execute(
-                select(User)
-                .where(User.responsible_recruiter_id == principal.id)
-                .order_by(User.id.desc())
-                .limit(6)
-            )
-            for u in cand_rows.scalars().all():
-                active_candidates.append(
-                    {
-                        "id": u.id,
-                        "name": u.fio or u.telegram_username or f"Кандидат {u.id}",
-                        "city": u.city,
-                        "status": getattr(u, "status", None) or getattr(u, "candidate_status", None),
-                    }
-                )
-        else:
-            candidate_count = await session.scalar(select(func.count()).select_from(User)) or 0
-            slot_count = await session.scalar(select(func.count()).select_from(Slot)) or 0
-            recruiter_count = await session.scalar(select(func.count()).select_from(Recruiter)) or 0
-            city_count = await session.scalar(select(func.count()).select_from(City)) or 0
-
-            status_rows = await session.execute(
-                select(Slot.status, func.count()).group_by(Slot.status)
-            )
-            for status, cnt in status_rows:
-                slots_by_status[str(status).lower()] = cnt
-
-            global_slots = await session.execute(
-                select(Slot.id, Slot.status, Slot.start_utc, Slot.city_id, Slot.recruiter_id)
-                .where(Slot.start_utc >= now_utc)
-                .order_by(Slot.start_utc.asc(), Slot.id.asc())
-                .limit(8)
-            )
-            for slot_id, slot_status, slot_start_utc, slot_city_id, slot_recruiter_id in global_slots:
-                upcoming_global.append(
-                    {
-                        "id": slot_id,
-                        "status": slot_status.name if hasattr(slot_status, "name") else slot_status,
-                        "start_utc": slot_start_utc.isoformat() if slot_start_utc else None,
-                        "city_id": slot_city_id,
-                        "recruiter_id": slot_recruiter_id,
-                    }
-                )
-
-            app_state = getattr(request, "app", None) and getattr(request.app, "state", None)
-            if app_state:
-                health = {
-                    "db": getattr(app_state, "db_available", None),
-                    "redis": getattr(app_state, "redis_available", None),
-                    "cache": getattr(app_state, "cache_status", None),
-                    "bot": getattr(app_state, "bot_enabled", None),
-                    "notifications": getattr(app_state, "notification_broker_available", None),
-                }
-
-        if principal.type == "recruiter" and recruiter is not None:
-            recruiter_payload = {
-                "id": recruiter.id,
-                "name": recruiter.name,
-                "tz": recruiter.tz,
-                "tg_chat_id": recruiter.tg_chat_id,
-                "telemost_url": recruiter.telemost_url,
-                "active": recruiter.active,
-                "cities": [{"id": c.get("id"), "name": c.get("name")} for c in city_options],
-            }
-
-    pending_count = len([m for m in today_meetings + upcoming_meetings if str(m.get("status")).upper() in {"PENDING"}])
-    booked_count = len([m for m in today_meetings + upcoming_meetings if str(m.get("status")).upper() in {"BOOKED"}])
-    if pending_count:
-        reminders.append({"title": f"Подтвердите {pending_count} бронирований", "when": "как можно скорее"})
-    if booked_count:
-        reminders.append({"title": f"Проверьте {booked_count} слота со статусом BOOKED", "when": "до ближайшего времени"})
-
-    try:
-        reminder_service = get_reminder_service()
-    except Exception:
-        reminder_service = None
-    if reminder_service:
-        try:
-            snapshot = reminder_service.stats()
-            if snapshot.get("reminders", 0):
-                reminders.append({"title": f"Активных напоминаний: {snapshot.get('reminders')}", "when": "в очереди"})
-            if snapshot.get("confirm_prompts", 0):
-                reminders.append({"title": f"Запросов подтверждения: {snapshot.get('confirm_prompts')}", "when": "в очереди"})
-        except Exception:
-            pass
-
-    total_slots = len(today_meetings) + len(upcoming_meetings)
-    conversion = 0
-    if total_slots:
-        conversion = round(
-            (len([m for m in today_meetings + upcoming_meetings if str(m.get("status")).upper() in {"BOOKED", "CONFIRMED_BY_CANDIDATE"}]) / total_slots)
-            * 100
-        )
-
-    return {
-        "candidate_count": candidate_count,
-        "slot_count": slot_count,
-        "city_count": city_count,
-        "recruiter_count": recruiter_count,
-        "city_names": city_names,
-        "today_meetings": today_meetings,
-        "upcoming_meetings": upcoming_meetings,
-        "active_candidates": active_candidates,
-        "reminders": reminders,
-        "planner_days": planner_days,
-        "city_options": city_options,
-        "admin_stats": {
-            "slots_by_status": slots_by_status,
-            "upcoming_global": upcoming_global,
-            "health": health,
-        },
-        "kpi": {
-            "today": len(today_meetings),
-            "upcoming": len(upcoming_meetings),
-            "pending": pending_count,
-            "conversion": conversion,
-            "nearest_minutes": nearest_minutes,
-            "avg_lead_hours": avg_lead_hours,
-        },
-    }, recruiter_payload
-
-
-@router.get("/profile")
-async def api_profile(request: Request, principal: Principal = Depends(require_principal)):
-    cache_key = cache_keys.profile_payload(principal=principal).value
-    if not getattr(request.app.state, "db_available", True):
-        snapshot = await get_cached(
-            cache_key,
-            expected_type=dict,
-            ttl_seconds=2.0,
-            stale_seconds=10.0,
-        )
-        if snapshot is None:
-            return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
-        snapshot = snapshot[0]
-    else:
-        async def _compute() -> dict:
-            stats = await dashboard_counts(principal=principal)
-            profile_payload, recruiter_payload = await _profile_snapshot(principal, request)
-            return {
-                "recruiter": recruiter_payload,
-                "stats": stats,
-                "profile": profile_payload,
-            }
-
-        snapshot = await get_or_compute(
-            cache_key,
-            expected_type=dict,
-            ttl_seconds=2.0,
-            stale_seconds=10.0,
-            compute=_compute,
-        )
-
-    avatar_file = _find_avatar_file(_avatar_prefix(principal))
-    avatar_url = None
-    if avatar_file is not None:
-        avatar_url = f"/api/profile/avatar?v={int(avatar_file.stat().st_mtime)}"
-    return JSONResponse(
-        {
-            "principal": {"type": principal.type, "id": principal.id},
-            **snapshot,
-            "avatar_url": avatar_url,
-        }
-    )
-
-
-@router.patch("/profile/settings")
-async def api_profile_settings_update(
-    payload: ProfileSettingsUpdatePayload,
-    request: Request,
-    principal: Principal = Depends(require_principal),
-) -> JSONResponse:
-    _ = await require_csrf_token(request)
-    if principal.type != "recruiter":
-        raise HTTPException(status_code=403, detail={"message": "Настройки профиля доступны только рекрутёру"})
-
-    cleaned_name = sanitize_plain_text(payload.name)
-    if not cleaned_name:
-        raise HTTPException(status_code=400, detail={"message": "Имя не может быть пустым"})
-    if len(cleaned_name) > 100:
-        raise HTTPException(status_code=400, detail={"message": "Имя не должно превышать 100 символов"})
-
-    raw_tz = (payload.tz or "").strip() or "Europe/Moscow"
-    try:
-        normalized_tz = validate_timezone_name(raw_tz)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
-
-    telemost_url = _normalize_profile_http_url(payload.telemost_url)
-
-    async with async_session() as session:
-        recruiter = await session.scalar(
-            select(Recruiter)
-            .options(selectinload(Recruiter.cities))
-            .where(Recruiter.id == principal.id)
-        )
-        if recruiter is None:
-            raise HTTPException(status_code=404, detail={"message": "Рекрутёр не найден"})
-
-        recruiter.name = cleaned_name
-        recruiter.tz = normalized_tz
-        recruiter.telemost_url = telemost_url
-        await session.commit()
-        await session.refresh(recruiter)
-
-        city_payload = [{"id": city.id, "name": city.name_plain} for city in recruiter.cities]
-
-    await log_audit_action(
-        "profile_settings_updated",
-        "recruiter",
-        principal.id,
-        changes={
-            "tz": normalized_tz,
-            "telemost_url_updated": bool(telemost_url),
-        },
-    )
-
-    return JSONResponse(
-        {
-            "ok": True,
-            "recruiter": {
-                "id": principal.id,
-                "name": cleaned_name,
-                "tz": normalized_tz,
-                "telemost_url": telemost_url,
-                "cities": city_payload,
-            },
-        }
-    )
-
-
-@router.post("/profile/change-password")
-async def api_profile_change_password(
-    payload: ProfilePasswordChangePayload,
-    request: Request,
-    principal: Principal = Depends(require_principal),
-) -> JSONResponse:
-    _ = await require_csrf_token(request)
-    if principal.type != "recruiter":
-        raise HTTPException(status_code=403, detail={"message": "Смена пароля доступна только рекрутёру"})
-
-    current_password = payload.current_password or ""
-    new_password = payload.new_password or ""
-    if len(new_password) < 8:
-        raise HTTPException(status_code=400, detail={"message": "Новый пароль должен быть не короче 8 символов"})
-    if len(new_password) > 128:
-        raise HTTPException(status_code=400, detail={"message": "Новый пароль слишком длинный"})
-    if secrets.compare_digest(current_password, new_password):
-        raise HTTPException(status_code=400, detail={"message": "Новый пароль должен отличаться от текущего"})
-
-    async with async_session() as session:
-        account = await session.scalar(
-            select(AuthAccount).where(
-                AuthAccount.principal_type == "recruiter",
-                AuthAccount.principal_id == principal.id,
-                AuthAccount.is_active.is_(True),
-            )
-        )
-        if account is None:
-            raise HTTPException(status_code=404, detail={"message": "Учётная запись рекрутёра не найдена"})
-        if not verify_auth_password(current_password, account.password_hash):
-            raise HTTPException(status_code=400, detail={"message": "Текущий пароль указан неверно"})
-
-        account.password_hash = hash_password(new_password)
-        await session.commit()
-
-    await log_audit_action(
-        "profile_password_changed",
-        "recruiter",
-        principal.id,
-        changes=None,
-    )
-    return JSONResponse({"ok": True})
-
-
-@router.get("/profile/avatar")
-async def api_profile_avatar(principal: Principal = Depends(require_principal)) -> FileResponse:
-    avatar_file = _find_avatar_file(_avatar_prefix(principal))
-    if avatar_file is None:
-        raise HTTPException(status_code=404, detail={"message": "Аватар не найден"})
-    return FileResponse(avatar_file)
-
-
-@router.post("/profile/avatar")
-async def api_profile_avatar_upload(
-    request: Request,
-    file: UploadFile = File(...),
-    principal: Principal = Depends(require_principal),
-) -> JSONResponse:
-    _ = await require_csrf_token(request)
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail={"message": "Можно загрузить только изображение"})
-    content = await file.read()
-    if len(content) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail={"message": "Файл слишком большой (до 5 МБ)"})
-
-    ext = "png"
-    if file.filename and "." in file.filename:
-        ext = file.filename.rsplit(".", 1)[-1].lower()
-    elif file.content_type and "/" in file.content_type:
-        ext = file.content_type.split("/", 1)[-1].lower()
-    if ext not in {"png", "jpg", "jpeg", "webp"}:
-        ext = "png"
-
-    avatar_dir = _avatar_dir()
-    prefix = _avatar_prefix(principal)
-    for existing in avatar_dir.glob(f"{prefix}.*"):
-        try:
-            existing.unlink()
-        except Exception:
-            pass
-    file_path = avatar_dir / f"{prefix}.{ext}"
-    file_path.write_bytes(content)
-    return JSONResponse({"ok": True, "url": f"/api/profile/avatar?v={int(file_path.stat().st_mtime)}"})
-
-
-@router.delete("/profile/avatar")
-async def api_profile_avatar_delete(
-    request: Request,
-    principal: Principal = Depends(require_principal),
-) -> JSONResponse:
-    _ = await require_csrf_token(request)
-    avatar_dir = _avatar_dir()
-    prefix = _avatar_prefix(principal)
-    removed = False
-    for existing in avatar_dir.glob(f"{prefix}.*"):
-        try:
-            existing.unlink()
-            removed = True
-        except Exception:
-            pass
-    return JSONResponse({"ok": True, "removed": removed})
 
 
 class StaffMemberPayload(BaseModel):
@@ -1225,290 +711,6 @@ async def api_dashboard_funnel(
     return JSONResponse(payload)
 
 
-@router.get("/recruiters")
-async def api_recruiters(principal: Principal = Depends(require_principal)):
-    if principal.type == "recruiter":
-        payload = await api_get_recruiter(principal.id)
-        return JSONResponse([payload] if payload else [])
-    return JSONResponse(await api_recruiters_payload())
-
-
-@router.get("/recruiters/{recruiter_id}")
-async def api_recruiter_detail(
-    recruiter_id: int,
-    _: Principal = Depends(require_admin),
-):
-    payload = await api_get_recruiter(recruiter_id)
-    if payload is None:
-        raise HTTPException(status_code=404, detail="Recruiter not found")
-    return JSONResponse(payload)
-
-
-@router.post("/recruiters", status_code=201)
-async def api_create_recruiter(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-
-    payload = {
-        "name": sanitize_plain_text(str(data.get("name") or "")),
-        "tz": data.get("tz") or "Europe/Moscow",
-        "telemost_url": data.get("telemost") or data.get("telemost_url") or "",
-        "tg_chat_id": data.get("tg_chat_id"),
-        "active": bool(data.get("active", True)),
-    }
-    city_ids = data.get("city_ids") or []
-    if not isinstance(city_ids, list):
-        city_ids = []
-
-    result = await create_recruiter(payload, cities=[str(cid) for cid in city_ids])
-    if not result.get("ok"):
-        return JSONResponse(result, status_code=400)
-
-    result["city_ids"] = [int(cid) for cid in city_ids]
-    recruiter_id = result.get("recruiter_id")
-    result["id"] = recruiter_id
-    result["name"] = payload["name"]
-    result["tz"] = payload["tz"]
-    result["tg_chat_id"] = payload["tg_chat_id"]
-    result["active"] = payload["active"]
-    headers = {}
-    if recruiter_id:
-        headers["Location"] = f"/api/recruiters/{recruiter_id}"
-    return JSONResponse(result, status_code=201, headers=headers)
-
-
-@router.put("/recruiters/{recruiter_id}")
-async def api_update_recruiter(
-    recruiter_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-
-    payload = {
-        "name": sanitize_plain_text(str(data.get("name") or "")),
-        "tz": data.get("tz") or "Europe/Moscow",
-        "telemost_url": data.get("telemost") or data.get("telemost_url") or "",
-        "tg_chat_id": data.get("tg_chat_id"),
-        "active": bool(data.get("active", True)),
-    }
-    city_ids = data.get("city_ids") or []
-    if not isinstance(city_ids, list):
-        city_ids = []
-
-    result = await update_recruiter(recruiter_id, payload, cities=[str(cid) for cid in city_ids])
-    if not result.get("ok"):
-        status_code = 404 if result.get("error", {}).get("type") == "not_found" else 400
-        return JSONResponse(result, status_code=status_code)
-
-    result["city_ids"] = [int(cid) for cid in city_ids]
-    result["id"] = recruiter_id
-    result["name"] = payload["name"]
-    result["tz"] = payload["tz"]
-    result["tg_chat_id"] = payload["tg_chat_id"]
-    result["active"] = payload["active"]
-    return JSONResponse(result, status_code=200)
-
-
-@router.post("/recruiters/{recruiter_id}/reset-password")
-async def api_reset_recruiter_password(
-    recruiter_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    result = await reset_recruiter_password(recruiter_id)
-    if not result.get("ok"):
-        status_code = 404 if result.get("error", {}).get("type") == "not_found" else 400
-        return JSONResponse(result, status_code=status_code)
-    return JSONResponse(result, status_code=200)
-
-
-@router.get("/cities")
-async def api_cities(principal: Principal = Depends(require_principal)):
-    cities = await list_cities(principal=principal)
-    payload = []
-    for city in cities:
-        primary = city.recruiters[0] if getattr(city, "recruiters", None) else None
-        payload.append(
-            {
-                "id": city.id,
-                "name": getattr(city, "name_plain", city.name),
-                "tz": getattr(city, "tz", None),
-                "active": getattr(city, "active", True),
-                "owner_recruiter_id": primary.id if primary else None,
-                "criteria": getattr(city, "criteria", None),
-                "experts": getattr(city, "experts", None),
-                "experts_items": city_experts_items(city, include_inactive=False),
-                "plan_week": getattr(city, "plan_week", None),
-                "plan_month": getattr(city, "plan_month", None),
-                "intro_address": getattr(city, "intro_address", None),
-                "contact_name": getattr(city, "contact_name", None),
-                "contact_phone": getattr(city, "contact_phone", None),
-                "recruiter_ids": [rec.id for rec in getattr(city, "recruiters", [])],
-                "recruiters": [
-                    {"id": rec.id, "name": getattr(rec, "name", None) or f"Рекрутер {rec.id}"}
-                    for rec in getattr(city, "recruiters", [])
-                ],
-            }
-        )
-    return JSONResponse(payload)
-
-
-@router.get("/cities/{city_id}")
-async def api_city_detail(
-    city_id: int,
-    _: Principal = Depends(require_admin),
-):
-    city = await get_city(city_id)
-    if city is None:
-        raise HTTPException(status_code=404, detail="City not found")
-    primary = city.recruiters[0] if getattr(city, "recruiters", None) else None
-    payload = {
-        "id": city.id,
-        "name": getattr(city, "name_plain", city.name),
-        "tz": getattr(city, "tz", None),
-        "active": getattr(city, "active", True),
-        "owner_recruiter_id": primary.id if primary else None,
-        "criteria": getattr(city, "criteria", None),
-        "experts": getattr(city, "experts", None),
-        "experts_items": city_experts_items(city, include_inactive=True),
-        "plan_week": getattr(city, "plan_week", None),
-        "plan_month": getattr(city, "plan_month", None),
-        "intro_address": getattr(city, "intro_address", None),
-        "contact_name": getattr(city, "contact_name", None),
-        "contact_phone": getattr(city, "contact_phone", None),
-        "recruiter_ids": [rec.id for rec in getattr(city, "recruiters", [])],
-    }
-    return JSONResponse(payload)
-
-
-@router.post("/cities", status_code=201)
-async def api_create_city(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    try:
-        recruiter_ids_raw = data.get("recruiter_ids")
-        recruiter_ids: Optional[List[int]] = None
-        if recruiter_ids_raw is not None:
-            recruiter_ids = []
-            if isinstance(recruiter_ids_raw, list):
-                for raw in recruiter_ids_raw:
-                    try:
-                        recruiter_ids.append(int(raw))
-                    except (TypeError, ValueError):
-                        continue
-
-        city = await create_city(
-            name=str(data.get("name") or ""),
-            tz=str(data.get("tz") or "Europe/Moscow"),
-            recruiter_ids=recruiter_ids,
-        )
-        if city is not None:
-            # Persist the rest of the city settings (frontend sends full payload on create).
-            error, _, _ = await update_city_settings(
-                city.id,
-                name=data.get("name"),
-                recruiter_ids=recruiter_ids,
-                responsible_id=None,
-                criteria=data.get("criteria"),
-                experts=data.get("experts"),
-                experts_items=data.get("experts_items"),
-                plan_week=data.get("plan_week"),
-                plan_month=data.get("plan_month"),
-                tz=data.get("tz"),
-                active=data.get("active"),
-                intro_address=data.get("intro_address"),
-                contact_name=data.get("contact_name"),
-                contact_phone=data.get("contact_phone"),
-            )
-            if error:
-                return JSONResponse({"ok": False, "error": error}, status_code=400)
-    except CityAlreadyExistsError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    return JSONResponse({"ok": True}, status_code=201)
-
-
-@router.put("/cities/{city_id}")
-async def api_update_city(
-    city_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    recruiter_ids = data.get("recruiter_ids")
-    if recruiter_ids is not None and not isinstance(recruiter_ids, list):
-        recruiter_ids = []
-    error, city, recruiter = await update_city_settings(
-        city_id,
-        name=data.get("name"),
-        recruiter_ids=recruiter_ids,
-        responsible_id=None,
-        criteria=data.get("criteria"),
-        experts=data.get("experts"),
-        experts_items=data.get("experts_items"),
-        plan_week=data.get("plan_week"),
-        plan_month=data.get("plan_month"),
-        tz=data.get("tz"),
-        active=data.get("active"),
-        intro_address=data.get("intro_address"),
-        contact_name=data.get("contact_name"),
-        contact_phone=data.get("contact_phone"),
-    )
-    if error:
-        return JSONResponse({"ok": False, "error": error}, status_code=400)
-    return JSONResponse(
-        {
-            "ok": True,
-            "id": city.id if city else None,
-            "owner_recruiter_id": recruiter.id if recruiter else None,
-        }
-    )
-
-
-@router.delete("/cities/{city_id}")
-async def api_delete_city(
-    city_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    ok = await delete_city(city_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="City not found")
-    return JSONResponse({"ok": True})
-
-
-@router.delete("/recruiters/{recruiter_id}")
-async def api_delete_recruiter(
-    recruiter_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    payload = await api_get_recruiter(recruiter_id)
-    if payload is None:
-        raise HTTPException(status_code=404, detail="Recruiter not found")
-    await delete_recruiter(recruiter_id)
-    return JSONResponse({"ok": True})
 
 
 @router.get("/slots")
@@ -1583,6 +785,10 @@ class SlotBookPayload(BaseModel):
     candidate_fio: Optional[str] = None
 
 
+class SlotProposePayload(BaseModel):
+    candidate_id: str
+
+
 class SlotReschedulePayload(BaseModel):
     date: str
     time: str
@@ -1605,6 +811,132 @@ def _format_time_for_message(dt: datetime, tz_label: str) -> str:
     except Exception:
         zone = ZoneInfo("Europe/Moscow")
     return dt.astimezone(zone).strftime("%d.%m %H:%M")
+
+
+async def _assign_existing_slot_for_candidate(
+    *,
+    slot_id: int,
+    candidate: User,
+    principal: Principal,
+    route_label: str,
+    created_by: str,
+) -> JSONResponse:
+    from backend.domain.candidates.status_service import set_status_slot_pending
+    from backend.domain.slot_assignment_service import create_slot_assignment
+
+    async with async_session() as session:
+        selected_slot = await session.scalar(
+            select(Slot)
+            .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+            .where(Slot.id == slot_id)
+        )
+        if selected_slot is None:
+            perf_prometheus.slot_propose_404(reason="slot_not_found")
+            logger.warning(
+                "slot_assignment_route.failed",
+                extra={
+                    "route": route_label,
+                    "slot_id": slot_id,
+                    "candidate_id": candidate.id,
+                    "error_code": "slot_not_found",
+                    "status_code": 404,
+                },
+            )
+            return JSONResponse({"ok": False, "error": "slot_not_found"}, status_code=404)
+        ensure_slot_scope(selected_slot, principal)
+        if (getattr(selected_slot, "purpose", None) or "interview") != "interview":
+            return JSONResponse({"ok": False, "error": "slot_not_interview"}, status_code=409)
+        if norm_status(selected_slot.status) != "FREE":
+            return JSONResponse({"ok": False, "error": "slot_not_free"}, status_code=409)
+        slot_tz = (
+            getattr(selected_slot, "tz_name", None)
+            or (getattr(selected_slot.city, "tz", None) if selected_slot.city else None)
+            or (getattr(selected_slot.recruiter, "tz", None) if selected_slot.recruiter else None)
+            or "Europe/Moscow"
+        )
+
+    candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id
+    if candidate_tg_id is None:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "candidate_telegram_missing",
+                "message": "У кандидата не привязан Telegram.",
+            },
+            status_code=400,
+        )
+    if not candidate.candidate_id:
+        return JSONResponse({"ok": False, "error": "missing_candidate_id"}, status_code=409)
+
+    assignment_result = await create_slot_assignment(
+        slot_id=slot_id,
+        candidate_id=candidate.candidate_id,
+        candidate_tg_id=candidate_tg_id,
+        candidate_tz=slot_tz,
+        created_by=created_by,
+        allow_replace_active_assignment=True,
+    )
+    if not assignment_result.ok:
+        status_code = assignment_result.status_code or 409
+        logger.warning(
+            "slot_assignment_route.failed",
+            extra={
+                "route": route_label,
+                "slot_id": slot_id,
+                "candidate_id": candidate.id,
+                "error_code": assignment_result.status,
+                "status_code": status_code,
+            },
+        )
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": assignment_result.status,
+                "message": assignment_result.message or "Не удалось назначить слот.",
+            },
+            status_code=status_code,
+        )
+
+    try:
+        await set_status_slot_pending(candidate_tg_id)
+    except Exception:
+        logger.exception(
+            "Failed to set SLOT_PENDING after assigning existing slot",
+            extra={"candidate_id": candidate.id, "slot_id": slot_id},
+        )
+
+    try:
+        async with async_session() as session:
+            db_user = await session.get(User, candidate.id)
+            if db_user and db_user.responsible_recruiter_id != selected_slot.recruiter_id:
+                db_user.responsible_recruiter_id = selected_slot.recruiter_id
+                await session.commit()
+    except Exception:
+        logger.exception(
+            "Failed to assign responsible recruiter after existing slot assignment",
+            extra={"candidate_id": candidate.id},
+        )
+
+    logger.info(
+        "slot_assignment_route.succeeded",
+        extra={
+            "route": route_label,
+            "slot_id": slot_id,
+            "candidate_id": candidate.id,
+            "error_code": None,
+            "status_code": 201,
+        },
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "status": "pending_offer",
+            "message": "Предложение отправлено кандидату",
+            "slot_id": slot_id,
+            "slot_assignment_id": int(assignment_result.payload.get("slot_assignment_id") or 0),
+        },
+        status_code=201,
+    )
 
 
 @router.post("/slots/{slot_id}/approve_booking")
@@ -1779,6 +1111,53 @@ async def api_slot_reschedule(
     return JSONResponse({"ok": True, "message": "Слот перенесён", "bot_notified": notified})
 
 
+@router.post("/slots/{slot_id}/propose")
+async def api_slot_propose(
+    slot_id: int,
+    payload: SlotProposePayload,
+    request: Request,
+    _: None = Depends(require_csrf_token),
+    principal: Principal = Depends(require_principal),
+):
+    async with async_session() as session:
+        candidate = await session.scalar(
+            select(User).where(User.candidate_id == payload.candidate_id)
+        )
+        if candidate is None:
+            perf_prometheus.slot_propose_404(reason="candidate_not_found")
+            logger.warning(
+                "slot_assignment_route.failed",
+                extra={
+                    "route": "/api/slots/{slot_id}/propose",
+                    "slot_id": slot_id,
+                    "candidate_id": payload.candidate_id,
+                    "error_code": "candidate_not_found",
+                    "status_code": 404,
+                },
+            )
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "candidate_not_found",
+                    "message": "Кандидат не найден",
+                },
+                status_code=404,
+            )
+
+    created_by = (
+        request.session.get("username")
+        if getattr(request, "session", None) is not None
+        else None
+    ) or f"{principal.type}:{principal.id}"
+    return await _assign_existing_slot_for_candidate(
+        slot_id=slot_id,
+        candidate=candidate,
+        principal=principal,
+        route_label="/api/slots/{slot_id}/propose",
+        created_by=created_by,
+    )
+
+
 @router.post("/slots/{slot_id}/outcome")
 async def api_slot_outcome(
     slot_id: int,
@@ -1814,28 +1193,115 @@ async def api_slot_book(
     principal: Principal = Depends(require_principal),
 ):
     _ = await require_csrf_token(request)
+    slot_recruiter_id: int | None = None
+    slot_city_id: int | None = None
+    slot_tz_name = "Europe/Moscow"
+    candidate: User | None = None
+
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if slot is None:
             raise HTTPException(status_code=404, detail="Slot not found")
         ensure_slot_scope(slot, principal)
-
         if norm_status(slot.status) != "FREE":
             return JSONResponse({"ok": False, "error": "slot_not_free", "message": "Слот уже занят"}, status_code=400)
-
+        slot_recruiter_id = int(slot.recruiter_id) if slot.recruiter_id is not None else None
+        slot_city_id = int(slot.city_id) if slot.city_id is not None else None
+        slot_tz_name = slot.tz_name or slot_tz_name
         candidate = await session.scalar(select(User).where(User.telegram_id == payload.candidate_tg_id))
         if candidate is None:
             return JSONResponse({"ok": False, "error": "candidate_not_found", "message": "Кандидат не найден"}, status_code=404)
 
-        slot.candidate_tg_id = payload.candidate_tg_id
-        slot.candidate_fio = payload.candidate_fio or candidate.fio or ""
-        slot.candidate_tz = slot.tz_name
-        slot.status = SlotStatus.BOOKED
-        await session.commit()
+    try:
+        reservation = await reserve_domain_slot(
+            slot_id,
+            candidate_tg_id=payload.candidate_tg_id,
+            candidate_fio=(payload.candidate_fio or candidate.fio or "").strip(),
+            candidate_tz=slot_tz_name,
+            candidate_id=candidate.candidate_id,
+            candidate_city_id=slot_city_id,
+            candidate_username=candidate.username,
+            expected_recruiter_id=slot_recruiter_id,
+            expected_city_id=slot_city_id,
+        )
+    except IntegrityError:
+        existing_slot_id: int | None = None
+        if payload.candidate_tg_id is not None:
+            try:
+                async with async_session() as session:
+                    existing_slot_id = await session.scalar(
+                        select(Slot.id)
+                        .where(
+                            Slot.candidate_tg_id == payload.candidate_tg_id,
+                            func.lower(Slot.status).in_(
+                                [
+                                    SlotStatus.PENDING,
+                                    SlotStatus.BOOKED,
+                                    SlotStatus.CONFIRMED,
+                                    SlotStatus.CONFIRMED_BY_CANDIDATE,
+                                ]
+                            ),
+                        )
+                        .order_by(Slot.start_utc.asc())
+                    )
+            except Exception:
+                logger.exception(
+                    "slot_book.conflict_lookup_failed",
+                    extra={
+                        "slot_id": slot_id,
+                        "candidate_tg_id": payload.candidate_tg_id,
+                        "recruiter_id": slot_recruiter_id,
+                    },
+                )
+        logger.warning(
+            "slot_book.conflict_integrity",
+            extra={
+                "slot_id": slot_id,
+                "candidate_tg_id": payload.candidate_tg_id,
+                "recruiter_id": slot_recruiter_id,
+            },
+        )
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "candidate_already_booked",
+                "message": "У кандидата уже есть активная встреча",
+                "existing_slot_id": existing_slot_id,
+            },
+            status_code=409,
+        )
+    except Exception:
+        logger.exception(
+            "slot_book.unexpected_reservation_error",
+            extra={"slot_id": slot_id, "candidate_tg_id": payload.candidate_tg_id},
+        )
+        return JSONResponse(
+            {"ok": False, "error": "slot_booking_failed", "message": "Не удалось забронировать слот"},
+            status_code=400,
+        )
+
+    if reservation.status in {"duplicate_candidate", "already_reserved"}:
+        existing_slot_id = reservation.slot.id if reservation.slot is not None else None
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "candidate_already_booked",
+                "message": "У кандидата уже есть активная встреча",
+                "existing_slot_id": existing_slot_id,
+            },
+            status_code=409,
+        )
+
+    if reservation.status != "reserved":
+        return JSONResponse({"ok": False, "error": "slot_not_free", "message": "Слот уже занят"}, status_code=400)
+
+    approved_slot = await approve_domain_slot(slot_id)
+    if approved_slot is None:
+        return JSONResponse({"ok": False, "error": "slot_not_free", "message": "Слот уже занят"}, status_code=400)
 
     return JSONResponse({
         "ok": True,
-        "message": "Кандидат забронирован на слот",
+        "message": "Слот согласован с кандидатом",
         "slot_id": slot_id,
         "candidate_tg_id": payload.candidate_tg_id,
     })
@@ -1927,279 +1393,6 @@ async def api_recruiter_plan_delete(
     return JSONResponse({"ok": True})
 
 
-
-
-
-@router.get("/message-templates")
-async def api_message_templates(
-    city: Optional[str] = Query(default=None),
-    key: Optional[str] = Query(default=None),
-    channel: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    _: Principal = Depends(require_admin),
-):
-    payload = await list_message_templates(city=city, key_query=key, channel=channel, status=status)
-    return JSONResponse(jsonable_encoder(payload))
-
-
-@router.post("/message-templates", status_code=201)
-async def api_create_message_template(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    ok, errors, tmpl = await create_message_template(
-        key=str(data.get("key") or ""),
-        locale=str(data.get("locale") or "ru"),
-        channel=str(data.get("channel") or "tg"),
-        body=str(data.get("body") or ""),
-        is_active=bool(data.get("is_active", True)),
-        city_id=data.get("city_id"),
-        updated_by=str(data.get("updated_by") or "admin"),
-        version=data.get("version"),
-    )
-    if not ok:
-        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
-    await log_audit_action("template_create", "message_template", tmpl.id if tmpl else None, changes={"key": data.get("key"), "city_id": data.get("city_id")})
-    return JSONResponse({"ok": True, "id": tmpl.id if tmpl else None}, status_code=201)
-
-
-@router.put("/message-templates/{template_id}")
-async def api_update_message_template(
-    template_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    ok, errors, tmpl = await update_message_template(
-        template_id=template_id,
-        key=str(data.get("key") or ""),
-        locale=str(data.get("locale") or "ru"),
-        channel=str(data.get("channel") or "tg"),
-        body=str(data.get("body") or ""),
-        is_active=bool(data.get("is_active", True)),
-        city_id=data.get("city_id"),
-        updated_by=str(data.get("updated_by") or "admin"),
-        expected_version=data.get("version"),
-    )
-    if not ok:
-        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
-    await log_audit_action("template_update", "message_template", template_id, changes={"key": data.get("key"), "city_id": data.get("city_id")})
-    return JSONResponse({"ok": True, "id": tmpl.id if tmpl else None})
-
-
-@router.delete("/message-templates/{template_id}")
-async def api_delete_message_template(
-    template_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    await delete_message_template(template_id)
-    await log_audit_action("template_delete", "message_template", template_id)
-    return JSONResponse({"ok": True})
-
-
-@router.get("/message-templates/{template_id}/history")
-async def api_message_template_history(
-    template_id: int,
-    _: Principal = Depends(require_admin),
-):
-    history = await get_template_history(template_id)
-    payload = [
-        {
-            "id": item.id,
-            "version": item.version,
-            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-            "updated_by": item.updated_by,
-            "body": item.body_md,
-        }
-        for item in history
-    ]
-    return JSONResponse({"items": payload})
-
-
-@router.get("/questions")
-async def api_questions(_: Principal = Depends(require_admin)):
-    return JSONResponse(await list_test_questions())
-
-
-@router.post("/questions", status_code=201)
-async def api_question_create(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    ok, question_id, error = await create_test_question(
-        title=str(data.get("title") or ""),
-        test_id=str(data.get("test_id") or ""),
-        question_index=int(data.get("question_index")) if data.get("question_index") is not None else None,
-        payload=str(data.get("payload") or ""),
-        is_active=bool(data.get("is_active", True)),
-    )
-    if not ok:
-        return JSONResponse({"ok": False, "error": error}, status_code=400)
-    return JSONResponse({"ok": True, "id": question_id}, status_code=201)
-
-
-@router.get("/questions/{question_id}")
-async def api_question_detail(
-    question_id: int,
-    _: Principal = Depends(require_admin),
-):
-    detail = await get_test_question_detail(question_id)
-    if detail is None:
-        raise HTTPException(status_code=404, detail="Question not found")
-    question = detail.get("question")
-    return JSONResponse(
-        {
-            "id": question.id,
-            "title": question.title,
-            "test_id": question.test_id,
-            "question_index": question.question_index,
-            "payload": detail.get("payload_json"),
-            "is_active": question.is_active,
-            "test_choices": detail.get("test_choices"),
-        }
-    )
-
-
-@router.put("/questions/{question_id}")
-async def api_question_update(
-    question_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    ok, error = await update_test_question(
-        question_id,
-        title=str(data.get("title") or ""),
-        test_id=str(data.get("test_id") or ""),
-        question_index=int(data.get("question_index") or 0),
-        payload=str(data.get("payload") or ""),
-        is_active=bool(data.get("is_active", True)),
-    )
-    if not ok:
-        return JSONResponse({"ok": False, "error": error}, status_code=400)
-    return JSONResponse({"ok": True})
-
-
-@router.post("/questions/{question_id}/clone")
-async def api_question_clone(
-    question_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    ok, new_id, error = await clone_test_question(question_id)
-    if not ok:
-        status_code = 404 if error == "not_found" else 400
-        return JSONResponse({"ok": False, "error": error}, status_code=status_code)
-    return JSONResponse({"ok": True, "id": new_id})
-
-
-@router.post("/questions/reorder")
-async def api_questions_reorder(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    test_id = str(data.get("test_id") or "")
-    order = data.get("order")
-    if not isinstance(order, list):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    ok, error = await reorder_test_questions(
-        test_id=test_id,
-        order=order,  # type: ignore[arg-type]
-    )
-    if not ok:
-        return JSONResponse({"ok": False, "error": error}, status_code=400)
-    return JSONResponse({"ok": True})
-
-
-@router.get("/test-builder/graph")
-async def api_test_builder_graph(
-    test_id: str = Query(...),
-    _: Principal = Depends(require_admin),
-):
-    clean = str(test_id or "").strip()
-    if not clean:
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    graph, updated_at = await get_test_builder_graph(test_id=clean)
-    return JSONResponse(
-        {
-            "ok": True,
-            "test_id": clean,
-            "graph": graph,
-            "updated_at": updated_at.isoformat() if updated_at else None,
-        }
-    )
-
-
-@router.post("/test-builder/graph/apply")
-async def api_test_builder_graph_apply(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    test_id = str(data.get("test_id") or "")
-    graph = data.get("graph")
-    if not isinstance(graph, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    ok, error = await apply_test_builder_graph(test_id=test_id, graph=graph)
-    if not ok:
-        return JSONResponse({"ok": False, "error": error}, status_code=400)
-    return JSONResponse({"ok": True})
-
-
-@router.post("/test-builder/graph/preview")
-async def api_test_builder_graph_preview(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-
-    test_id = str(data.get("test_id") or "").strip()
-    graph = data.get("graph")
-    answers_raw = data.get("answers") or []
-
-    if not isinstance(graph, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-    if not isinstance(answers_raw, list):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-
-    answers = [str(item or "") for item in answers_raw]
-    ok, payload, error = await preview_test_builder_graph(
-        test_id=test_id,
-        graph=graph,
-        answers=answers,
-    )
-    if not ok:
-        return JSONResponse({"ok": False, "error": error}, status_code=400)
-    return JSONResponse(payload)
-
-
 @router.get("/kpis/current")
 async def api_weekly_kpis(
     company_tz: Optional[str] = Query(default=None),
@@ -2225,258 +1418,6 @@ async def api_weekly_history(
     offset: int = Query(default=0, ge=0),
 ):
     return JSONResponse(await list_weekly_history(limit=limit, offset=offset))
-
-
-@router.get("/templates/list")
-async def api_templates_list(
-    _: Principal = Depends(require_admin),
-):
-    """Return all MessageTemplate rows in the shape the legacy CRM UI expects."""
-    async with async_session() as session:
-        rows = await session.execute(
-            select(MessageTemplate)
-            .options(selectinload(MessageTemplate.city))
-            .order_by(MessageTemplate.key, MessageTemplate.id)
-        )
-        templates = list(rows.scalars())
-
-    custom_templates = []
-    for t in templates:
-        city_name = None
-        is_global = t.city_id is None
-        if t.city and hasattr(t.city, "name"):
-            city_name = getattr(t.city, "name_plain", t.city.name) or t.city.name
-        custom_templates.append({
-            "id": t.id,
-            "key": t.key,
-            "city_id": t.city_id,
-            "city_name": city_name,
-            "city_name_plain": city_name,
-            "is_global": is_global,
-            "preview": (t.body_md or "")[:120],
-            "length": len(t.body_md or ""),
-        })
-    return JSONResponse({"custom_templates": custom_templates, "overview": None})
-
-
-@router.get("/templates/{template_id:int}")
-async def api_template_detail(
-    template_id: int,
-    _: Principal = Depends(require_admin),
-):
-    """Return a single template by numeric ID for the edit page."""
-    async with async_session() as session:
-        tmpl = await session.get(MessageTemplate, template_id)
-    if not tmpl:
-        raise HTTPException(status_code=404, detail="Template not found")
-    return JSONResponse({
-        "id": tmpl.id,
-        "key": tmpl.key,
-        "text": tmpl.body_md or "",
-        "city_id": tmpl.city_id,
-        "is_global": tmpl.city_id is None,
-        "is_active": tmpl.is_active,
-    })
-
-
-@router.put("/templates/{template_id:int}")
-async def api_template_update(
-    template_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-
-    async with async_session() as session:
-        tmpl = await session.get(MessageTemplate, template_id)
-        if not tmpl:
-            raise HTTPException(status_code=404, detail="Template not found")
-        if "key" in data and data["key"]:
-            tmpl.key = str(data["key"]).strip()
-        if "text" in data:
-            tmpl.body_md = str(data["text"] or "")
-        if "city_id" in data:
-            tmpl.city_id = int(data["city_id"]) if data["city_id"] else None
-        if "is_active" in data:
-            tmpl.is_active = bool(data["is_active"])
-        tmpl.updated_by = "admin"
-        tmpl.updated_at = datetime.now(timezone.utc)
-        try:
-            await session.commit()
-        except IntegrityError:
-            await session.rollback()
-            return JSONResponse(
-                {"ok": False, "error": "Шаблон для выбранного города и типа уже существует."},
-                status_code=400,
-            )
-    await log_audit_action("template_update", "message_template", template_id, changes={"key": data.get("key"), "city_id": data.get("city_id")})
-    return JSONResponse({"ok": True, "id": tmpl.id})
-
-
-@router.delete("/templates/{template_id:int}")
-async def api_template_delete(
-    template_id: int,
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    async with async_session() as session:
-        tmpl = await session.get(MessageTemplate, template_id)
-        if not tmpl:
-            raise HTTPException(status_code=404, detail="Template not found")
-        template_key = tmpl.key
-        await session.delete(tmpl)
-        await session.commit()
-    await log_audit_action("template_delete", "message_template", template_id, changes={"key": template_key})
-    return JSONResponse({"ok": True})
-
-
-@router.post("/templates", status_code=201)
-async def api_template_create(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
-
-    key_value = str(data.get("key") or "").strip()
-    body_value = str(data.get("text") or "").strip()
-    locale_value = str(data.get("locale") or "ru").strip() or "ru"
-    channel_value = str(data.get("channel") or "tg").strip() or "tg"
-    version_value = data.get("version")
-    try:
-        version_value = int(version_value) if version_value is not None else 1
-    except (TypeError, ValueError):
-        version_value = 1
-    is_active_value = bool(data.get("is_active", True))
-
-    if not body_value:
-        return JSONResponse({"ok": False, "error": "Введите текст шаблона."}, status_code=400)
-
-    city_id = data.get("city_id")
-    if city_id is not None:
-        try:
-            city_id = int(city_id)
-        except (TypeError, ValueError):
-            city_id = None
-
-    if not key_value:
-        key_value = f"custom_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-
-    revived_id: Optional[int] = None
-    created_id: Optional[int] = None
-
-    async with async_session() as session:
-        existing = await session.scalar(
-            select(MessageTemplate).where(
-                MessageTemplate.key == key_value,
-                MessageTemplate.locale == locale_value,
-                MessageTemplate.channel == channel_value,
-                MessageTemplate.city_id == city_id,
-                MessageTemplate.version == version_value,
-            )
-        )
-        if existing:
-            # Back-compat: legacy UI uses this endpoint to create templates.
-            # If a matching template exists but is inactive, "revive" it instead of failing.
-            if not existing.is_active:
-                existing.body_md = body_value
-                existing.is_active = is_active_value
-                existing.updated_by = "admin"
-                existing.updated_at = datetime.now(timezone.utc)
-                await session.commit()
-                revived_id = existing.id
-            else:
-                return JSONResponse(
-                    {"ok": False, "error": "Шаблон для выбранного города и типа уже существует."},
-                    status_code=400,
-                )
-        else:
-            tmpl = MessageTemplate(
-                key=key_value,
-                locale=locale_value,
-                channel=channel_value,
-                body_md=body_value,
-                version=version_value,
-                is_active=is_active_value,
-                city_id=city_id,
-                updated_by="admin",
-            )
-            session.add(tmpl)
-            try:
-                await session.commit()
-            except IntegrityError:
-                await session.rollback()
-                return JSONResponse(
-                    {"ok": False, "error": "Шаблон для выбранного города и типа уже существует."},
-                    status_code=400,
-                )
-            await session.refresh(tmpl)
-            created_id = tmpl.id
-    if revived_id is not None:
-        await log_audit_action("template_revive", "message_template", revived_id, changes={"key": key_value, "city_id": city_id})
-        return JSONResponse({"ok": True, "id": revived_id, "revived": True}, status_code=201)
-
-    assert created_id is not None
-    await log_audit_action("template_create", "message_template", created_id, changes={"key": key_value, "city_id": city_id})
-    return JSONResponse({"ok": True, "id": created_id}, status_code=201)
-
-
-@router.get("/template_keys")
-async def api_template_keys():
-    return JSONResponse(list_known_template_keys())
-
-
-@router.get("/template_presets")
-async def api_template_presets():
-    presets_list = known_template_presets()
-
-    def _sanitize(s: str) -> str:
-        return s.encode("utf-8", "ignore").decode("utf-8") if s else s
-
-    result = {}
-    for item in presets_list:
-        result[item["key"]] = _sanitize(item["text"])
-    return JSONResponse(result)
-
-
-@router.get("/message-templates/context-keys")
-async def api_message_template_context_keys(
-    _: Principal = Depends(require_admin),
-):
-    from backend.domain.template_contexts import TEMPLATE_CONTEXTS
-    return JSONResponse(TEMPLATE_CONTEXTS)
-
-
-@router.post("/message-templates/preview")
-async def api_message_template_preview(
-    request: Request,
-    _: Principal = Depends(require_admin),
-):
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    text = str(data.get("text") or "")
-    key = str(data.get("key") or "")
-    city_id_raw = data.get("city_id")
-    city_id = None
-    if city_id_raw not in (None, "", "null"):
-        try:
-            city_id = int(city_id_raw)
-        except (TypeError, ValueError):
-            city_id = None
-
-    from backend.apps.admin_ui.services.message_templates import render_message_template_preview
-    
-    try:
-        rendered = await render_message_template_preview(text=text, key=key, city_id=city_id)
-        return JSONResponse({"ok": True, "html": rendered})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
 @router.get("/timezones")
@@ -2805,12 +1746,50 @@ def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
         )
 
 
+async def _get_accessible_candidate(candidate_id: int, principal: Principal) -> User:
+    from backend.domain.repositories import find_city_by_plain_name
+
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Кандидат не найден"},
+            )
+        if principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
+            if not user.city:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"message": "Кандидат не найден"},
+                )
+            city_record = await find_city_by_plain_name(user.city)
+            if city_record is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"message": "Кандидат не найден"},
+                )
+            rows = await session.execute(
+                select(recruiter_city_association.c.city_id)
+                .where(recruiter_city_association.c.recruiter_id == principal.id)
+            )
+            allowed_city_ids = {int(row[0]) for row in rows if row[0] is not None}
+            if int(city_record.id) not in allowed_city_ids:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"message": "Кандидат не найден"},
+                )
+        session.expunge(user)
+        return user
+
+
 @router.get("/candidates/{candidate_id}/chat")
 async def api_chat_history(
     candidate_id: int,
     limit: int = Query(default=50, ge=1, le=200),
     before: Optional[str] = Query(default=None),
+    principal: Principal = Depends(require_principal),
 ) -> JSONResponse:
+    await _get_accessible_candidate(candidate_id, principal)
     before_dt = _parse_iso_datetime(before)
     payload = await list_chat_history(candidate_id, limit=limit, before=before_dt)
     return JSONResponse(payload)
@@ -2821,8 +1800,10 @@ async def api_chat_send(
     request: Request,
     candidate_id: int,
     bot_service: BotService = Depends(provide_bot_service),
+    principal: Principal = Depends(require_principal),
     _: None = Depends(require_csrf_token),
 ) -> JSONResponse:
+    await _get_accessible_candidate(candidate_id, principal)
     data = await request.json()
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail={"message": "Ожидался JSON"})
@@ -2852,18 +1833,47 @@ async def api_chat_retry(
     candidate_id: int,
     message_id: int,
     bot_service: BotService = Depends(provide_bot_service),
+    principal: Principal = Depends(require_principal),
     _: None = Depends(require_csrf_token),
 ) -> JSONResponse:
+    await _get_accessible_candidate(candidate_id, principal)
     result = await retry_chat_message(candidate_id, message_id, bot_service=bot_service)
     return JSONResponse(result)
 
 
 @router.get("/candidates/{candidate_id}")
-async def api_candidate(candidate_id: int):
+async def api_candidate(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+):
+    await _get_accessible_candidate(candidate_id, principal)
     detail = await api_candidate_detail_payload(candidate_id)
     if detail is None:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+        raise HTTPException(status_code=404, detail={"message": "Кандидат не найден"})
     return JSONResponse(jsonable_encoder(detail))
+
+
+@router.get("/candidates/{candidate_id}/hh")
+async def api_candidate_hh_summary(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+):
+    await _get_accessible_candidate(candidate_id, principal)
+    async with async_session() as session:
+        summary = await build_candidate_hh_summary(session, candidate_id=candidate_id)
+    return JSONResponse(jsonable_encoder(summary))
+
+
+@router.delete("/candidates/{candidate_id}")
+async def api_candidate_delete(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+    _: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    ok = await delete_candidate(candidate_id, principal=principal)
+    if not ok:
+        raise HTTPException(status_code=404, detail={"message": "Кандидат не найден"})
+    return JSONResponse({"ok": True, "id": candidate_id})
 
 
 @router.get("/candidates")
@@ -2880,38 +1890,73 @@ async def api_candidates_list(
     calendar_mode: Optional[str] = Query(None),
     principal: Principal = Depends(require_principal),
 ):
+    status_values = tuple(sorted({str(item).strip().lower() for item in (status or []) if str(item).strip()}))
     range_start = _parse_date_param(date_from)
     range_end = _parse_date_param(date_to, end=True)
-    data = await list_candidates(
-        page=page,
-        per_page=per_page,
-        search=search,
-        city=None,
-        is_active=_parse_bool(active),
-        rating=None,
-        has_tests=None,
-        has_messages=None,
-        stage=None,
-        statuses=status,
-        recruiter_id=parse_optional_int(recruiter_id),
-        city_ids=None,
-        date_from=range_start,
-        date_to=range_end,
-        test1_status=None,
-        test2_status=None,
-        sort=None,
-        sort_dir=None,
-        calendar_mode=calendar_mode,
-        pipeline=pipeline or "interview",
-        principal=principal,
+    parsed_recruiter_id = parse_optional_int(recruiter_id)
+    parsed_active = _parse_bool(active)
+    pipeline_slug = pipeline or "interview"
+
+    async def _compute_payload() -> dict[str, object]:
+        data = await list_candidates(
+            page=page,
+            per_page=per_page,
+            search=search,
+            city=None,
+            is_active=parsed_active,
+            rating=None,
+            has_tests=None,
+            has_messages=None,
+            stage=None,
+            statuses=list(status_values) if status_values else None,
+            recruiter_id=parsed_recruiter_id,
+            city_ids=None,
+            date_from=range_start,
+            date_to=range_end,
+            test1_status=None,
+            test2_status=None,
+            sort=None,
+            sort_dir=None,
+            calendar_mode=calendar_mode,
+            pipeline=pipeline_slug,
+            principal=principal,
+        )
+        return {
+            "items": data.get("views", {}).get("candidates", []),
+            "total": data.get("total", 0),
+            "page": data.get("page", page),
+            "pages_total": data.get("pages_total", 1),
+            "filters": data.get("filters", {}),
+            "pipeline": data.get("pipeline", pipeline_slug),
+            "pipeline_options": data.get("pipeline_options", []),
+            "views": data.get("views", {}),
+        }
+
+    # Cache only non-search first-page list to avoid caching PII from free-text queries.
+    can_cache = (
+        page == 1
+        and (search is None or not str(search).strip())
+        and (calendar_mode is None or not str(calendar_mode).strip())
     )
-    payload = {
-        "items": data.get("views", {}).get("candidates", []),
-        "total": data.get("total", 0),
-        "page": data.get("page", page),
-        "pages_total": data.get("pages_total", 1),
-        "filters": data.get("filters", {}),
-    }
+    if can_cache:
+        key = (
+            "candidates:list:v1:"
+            f"{principal.type}:{principal.id}:pp{per_page}:"
+            f"pipe:{pipeline_slug}:status:{','.join(status_values) or 'all'}:"
+            f"rid:{parsed_recruiter_id or 'all'}:active:{parsed_active if parsed_active is not None else 'all'}:"
+            f"from:{range_start.isoformat() if range_start else 'none'}:"
+            f"to:{range_end.isoformat() if range_end else 'none'}"
+        )
+        payload = await get_or_compute(
+            key,
+            expected_type=dict,
+            ttl_seconds=8.0,
+            stale_seconds=12.0,
+            compute=_compute_payload,
+        )
+        return JSONResponse(jsonable_encoder(payload))
+
+    payload = await _compute_payload()
     return JSONResponse(jsonable_encoder(payload))
 
 
@@ -2960,7 +2005,6 @@ async def api_candidate_action(
     if action_key == "approve_upcoming_slot":
         user = detail["user"]
         from sqlalchemy import select as sql_select
-        from sqlalchemy.orm import selectinload as sl_load
         async with async_session() as session:
             pending_slot = await session.scalar(
                 sql_select(Slot)
@@ -3010,6 +2054,67 @@ async def api_candidate_action(
     })
 
 
+KANBAN_ALLOWED_TARGET_STATUSES = {
+    "waiting_slot",
+    "slot_pending",
+    "interview_scheduled",
+    "interview_confirmed",
+    "test2_sent",
+    "test2_completed",
+    "intro_day_scheduled",
+    "intro_day_confirmed_preliminary",
+    "intro_day_confirmed_day_of",
+}
+
+
+@router.post("/candidates/{candidate_id}/kanban-status")
+async def api_candidate_kanban_status(
+    candidate_id: int,
+    payload: CandidateKanbanMovePayload,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    bot_service: BotService = Depends(provide_bot_service),
+    principal: Principal = Depends(require_principal),
+):
+    _ = await require_csrf_token(request)
+
+    target_status = (payload.target_status or "").strip().lower()
+    if target_status == "incoming":
+        target_status = "waiting_slot"
+    if target_status not in KANBAN_ALLOWED_TARGET_STATUSES:
+        return JSONResponse(
+            {"ok": False, "message": "Недопустимый статус для канбана"},
+            status_code=400,
+        )
+
+    ok, message, stored_status, dispatch = await update_candidate_status(
+        candidate_id,
+        target_status,
+        bot_service=bot_service,
+        principal=principal,
+    )
+    if not ok:
+        status_code = 404 if message == "Кандидат не найден" else 400
+        return JSONResponse({"ok": False, "message": message}, status_code=status_code)
+
+    if dispatch and dispatch.plan:
+        background_tasks.add_task(
+            execute_bot_dispatch,
+            dispatch.plan,
+            stored_status or "",
+            bot_service,
+        )
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": message,
+            "status": stored_status,
+            "candidate_id": candidate_id,
+        }
+    )
+
+
 @router.post("/candidates/{candidate_id}/assign-recruiter")
 async def api_assign_candidate_recruiter(
     candidate_id: int,
@@ -3042,17 +2147,8 @@ async def api_create_candidate(
     _: None = Depends(require_csrf_token),
     principal: Principal = Depends(require_principal),
 ):
-    """Create a new candidate with optional slot scheduling (JSON API)."""
-    from datetime import timedelta
-    from sqlalchemy.exc import IntegrityError
+    """Create a new candidate (JSON API). Slot scheduling is a separate action."""
     from backend.apps.admin_ui.services.candidates import upsert_candidate
-    from backend.apps.admin_ui.services.slots import (
-        schedule_manual_candidate_slot_silent,
-        ManualSlotError,
-    )
-    from backend.apps.admin_ui.services.candidates import delete_candidate
-    from backend.core.time_utils import parse_form_datetime
-    from backend.apps.admin_ui.timezones import DEFAULT_TZ
 
     data = await request.json()
     if not isinstance(data, dict):
@@ -3062,8 +2158,7 @@ async def api_create_candidate(
     phone = sanitize_plain_text(str(data.get("phone") or "")).strip() or None
     city_id = data.get("city_id")
     recruiter_id = data.get("recruiter_id")
-    interview_date = data.get("interview_date")
-    interview_time = data.get("interview_time")
+    telegram_id_raw = data.get("telegram_id")
 
     if not fio:
         return JSONResponse({"ok": False, "error": "fio_required"}, status_code=400)
@@ -3100,23 +2195,16 @@ async def api_create_candidate(
     if not city_value or not recruiter_id_value:
         return JSONResponse({"ok": False, "error": "city_and_recruiter_required"}, status_code=400)
 
-    # Parse interview datetime
-    interview_dt = None
-    interview_tz = None
-    if interview_date and interview_time:
-        settings = get_settings()
-        app_timezone = settings.timezone or DEFAULT_TZ
-        interview_tz = (
-            getattr(interview_city, "tz", None)
-            or getattr(interview_recruiter, "tz", None)
-            or app_timezone
-        )
+    telegram_id_value: Optional[int] = None
+    if telegram_id_raw not in (None, "", "null"):
         try:
-            interview_dt = parse_form_datetime(f"{interview_date}T{interview_time}", interview_tz)
-        except ValueError:
-            return JSONResponse({"ok": False, "error": "invalid_datetime"}, status_code=400)
-    else:
-        return JSONResponse({"ok": False, "error": "interview_datetime_required"}, status_code=400)
+            telegram_id_value = int(telegram_id_raw)
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "error": "invalid_telegram_id"}, status_code=400)
+        async with async_session() as session:
+            existing = await session.scalar(select(User).where(User.telegram_id == telegram_id_value))
+            if existing is not None:
+                return JSONResponse({"ok": False, "error": "duplicate_candidate"}, status_code=409)
 
     # Get city name for candidate
     candidate_city = None
@@ -3126,40 +2214,20 @@ async def api_create_candidate(
     # Create candidate
     try:
         user = await upsert_candidate(
-            telegram_id=None,
+            telegram_id=telegram_id_value,
             fio=fio,
             city=candidate_city,
             phone=phone,
             is_active=True,
             responsible_recruiter_id=recruiter_id_value,
-            manual_slot_from=interview_dt,
-            manual_slot_to=interview_dt + timedelta(minutes=60) if interview_dt else None,
-            manual_slot_timezone=interview_tz,
+            manual_slot_from=None,
+            manual_slot_to=None,
+            manual_slot_timezone=None,
         )
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": "validation_error", "message": str(exc)}, status_code=400)
     except IntegrityError:
         return JSONResponse({"ok": False, "error": "duplicate_candidate"}, status_code=409)
-
-    # Schedule slot
-    admin_username = request.session.get("username", "admin")
-    ip_address = request.client.host if request.client else None
-    user_agent = request.headers.get("user-agent", None)
-
-    try:
-        await schedule_manual_candidate_slot_silent(
-            candidate=user,
-            recruiter=interview_recruiter,
-            city=interview_city,
-            dt_utc=interview_dt,
-            slot_tz=interview_tz or DEFAULT_TZ,
-            admin_username=admin_username,
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-    except ManualSlotError as exc:
-        await delete_candidate(user.id)
-        return JSONResponse({"ok": False, "error": "slot_conflict", "message": str(exc)}, status_code=409)
 
     return JSONResponse(
         {
@@ -3167,9 +2235,92 @@ async def api_create_candidate(
             "id": user.id,
             "fio": user.fio,
             "city": user.city,
-            "slot_scheduled": True,
+            "slot_scheduled": False,
         },
         status_code=201,
+    )
+
+
+@router.get("/candidates/{candidate_id}/available-slots")
+async def api_candidate_available_slots(
+    candidate_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_principal),
+):
+    """Return nearest FREE interview slots that can be proposed to a candidate."""
+    from backend.apps.admin_ui.timezones import DEFAULT_TZ
+    from backend.domain.repositories import find_city_by_plain_name
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        user = await session.get(User, candidate_id)
+        if not user:
+            raise HTTPException(status_code=404, detail={"message": "Кандидат не найден"})
+
+        candidate_city_id: Optional[int] = None
+        if user.city:
+            city_record = await find_city_by_plain_name(user.city)
+            candidate_city_id = getattr(city_record, "id", None)
+
+        if principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
+            rows = await session.execute(
+                select(recruiter_city_association.c.city_id)
+                .where(recruiter_city_association.c.recruiter_id == principal.id)
+            )
+            allowed_city_ids = {row[0] for row in rows}
+            if candidate_city_id is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"message": "У кандидата не указан город — назначение недоступно."},
+                )
+            if candidate_city_id not in allowed_city_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"message": "Кандидат из другого города — назначение недоступно."},
+                )
+
+        slots_stmt = (
+            select(Slot, Recruiter, City)
+            .join(Recruiter, Slot.recruiter_id == Recruiter.id)
+            .outerjoin(City, Slot.city_id == City.id)
+            .where(
+                func.lower(Slot.status) == SlotStatus.FREE,
+                func.coalesce(Slot.purpose, "interview") == "interview",
+                Slot.start_utc >= now,
+            )
+            .order_by(Slot.start_utc.asc(), Slot.id.asc())
+            .limit(limit)
+        )
+        if principal.type == "recruiter":
+            slots_stmt = slots_stmt.where(Slot.recruiter_id == principal.id)
+        if candidate_city_id is not None:
+            slots_stmt = slots_stmt.where(Slot.city_id == candidate_city_id)
+
+        rows = (await session.execute(slots_stmt)).all()
+
+    items: list[dict[str, object]] = []
+    for slot, recruiter, city in rows:
+        slot_tz = getattr(slot, "tz_name", None) or getattr(city, "tz", None) or getattr(recruiter, "tz", None) or DEFAULT_TZ
+        recruiter_tz = getattr(recruiter, "tz", None) or slot_tz
+        items.append(
+            {
+                "slot_id": int(slot.id),
+                "start_utc": slot.start_utc.isoformat() if slot.start_utc else None,
+                "city_id": slot.city_id,
+                "city_name": city.name if city else None,
+                "recruiter_id": recruiter.id if recruiter else None,
+                "recruiter_name": recruiter.name if recruiter else None,
+                "slot_tz": slot_tz,
+                "recruiter_tz": recruiter_tz,
+            }
+        )
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "items": items,
+            "candidate_city_id": candidate_city_id,
+        }
     )
 
 
@@ -3185,30 +2336,47 @@ async def api_schedule_slot(
         schedule_manual_candidate_slot,
         ManualSlotError,
     )
-    from backend.core.time_utils import parse_form_datetime
     from backend.apps.admin_ui.timezones import DEFAULT_TZ
+    from backend.core.time_utils import ensure_aware_utc, parse_form_datetime
+    from backend.domain.candidates.status_service import set_status_slot_pending
     from backend.domain.repositories import find_city_by_plain_name
+    from backend.domain.slot_assignment_service import propose_alternative
 
     data = await request.json()
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
 
+    slot_id: Optional[int] = None
+    slot_raw = data.get("slot_id")
+    if slot_raw not in (None, "", "null"):
+        try:
+            slot_id = int(slot_raw)
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "error": "invalid_slot_id"}, status_code=400)
+
     async with async_session() as session:
         user = await session.get(User, candidate_id)
         if not user:
             raise HTTPException(status_code=404, detail={"message": "Кандидат не найден"})
+
         if principal.type == "recruiter" and user.responsible_recruiter_id != principal.id:
             rows = await session.execute(
                 select(recruiter_city_association.c.city_id)
                 .where(recruiter_city_association.c.recruiter_id == principal.id)
             )
             allowed_city_ids = {row[0] for row in rows}
-            candidate_city_id = data.get("city_id")
-            if candidate_city_id is not None:
-                try:
-                    candidate_city_id = int(candidate_city_id)
-                except (TypeError, ValueError):
-                    candidate_city_id = None
+
+            candidate_city_id = None
+            if slot_id is not None:
+                slot_city = await session.scalar(select(Slot.city_id).where(Slot.id == slot_id))
+                candidate_city_id = int(slot_city) if slot_city is not None else None
+            if candidate_city_id is None:
+                candidate_city_raw = data.get("city_id")
+                if candidate_city_raw is not None:
+                    try:
+                        candidate_city_id = int(candidate_city_raw)
+                    except (TypeError, ValueError):
+                        candidate_city_id = None
             if candidate_city_id is None and user.city:
                 city_record = await find_city_by_plain_name(user.city)
                 candidate_city_id = getattr(city_record, "id", None)
@@ -3223,82 +2391,108 @@ async def api_schedule_slot(
                     detail={"message": "Кандидат из другого города — назначение недоступно."},
                 )
 
-    if not user.telegram_id:
-        return JSONResponse({"ok": False, "error": "missing_telegram"}, status_code=400)
+    candidate_tg_id = user.telegram_user_id or user.telegram_id
+    if not candidate_tg_id:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "candidate_telegram_missing",
+                "message": "У кандидата не привязан Telegram.",
+            },
+            status_code=400,
+        )
+    if not user.candidate_id:
+        return JSONResponse({"ok": False, "error": "missing_candidate_id"}, status_code=409)
+
+    selected_slot: Optional[Slot] = None
+    recruiter = None
+    city = None
+    slot_tz = DEFAULT_TZ
+    dt_utc: Optional[datetime] = None
 
     recruiter_id = data.get("recruiter_id")
     city_id = data.get("city_id")
     date_str = data.get("date")
     time_str = data.get("time")
-    recruiter = None
-    requested_recruiter_id: Optional[int] = None
-    recruiter_raw = data.get("recruiter_id")
-    if recruiter_raw not in (None, "", "null"):
-        try:
-            requested_recruiter_id = int(recruiter_raw)
-        except (TypeError, ValueError):
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "error": "invalid_recruiter",
-                    "message": "Некорректный рекрутёр.",
-                },
-                status_code=400,
-            )
     custom_message = data.get("custom_message")
+    custom_message_text = custom_message.strip() if isinstance(custom_message, str) and custom_message.strip() else None
 
-    # Auto-resolve recruiter from principal when not explicitly provided
-    if not recruiter_id and principal.type == "recruiter":
-        recruiter_id = principal.id
+    if slot_id is not None:
+        async with async_session() as session:
+            selected_slot = await session.scalar(
+                select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                .where(Slot.id == slot_id)
+            )
+            if selected_slot is None:
+                return JSONResponse({"ok": False, "error": "slot_not_found"}, status_code=404)
+            ensure_slot_scope(selected_slot, principal)
+            if (getattr(selected_slot, "purpose", None) or "interview") != "interview":
+                return JSONResponse({"ok": False, "error": "slot_not_interview"}, status_code=409)
+            if norm_status(selected_slot.status) != "FREE":
+                return JSONResponse({"ok": False, "error": "slot_not_free"}, status_code=409)
 
-    if not recruiter_id or not city_id or not date_str or not time_str:
-        return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=400)
+            recruiter = selected_slot.recruiter or await session.get(Recruiter, selected_slot.recruiter_id)
+            city = selected_slot.city or (await session.get(City, selected_slot.city_id) if selected_slot.city_id else None)
+            if recruiter is None:
+                return JSONResponse({"ok": False, "error": "recruiter_not_found"}, status_code=404)
+            if city is None:
+                return JSONResponse({"ok": False, "error": "city_not_found"}, status_code=404)
+            slot_tz = (
+                getattr(selected_slot, "candidate_tz", None)
+                or getattr(selected_slot, "tz_name", None)
+                or getattr(city, "tz", None)
+                or getattr(recruiter, "tz", None)
+                or DEFAULT_TZ
+            )
+            dt_utc = ensure_aware_utc(selected_slot.start_utc)
+    else:
+        if not recruiter_id and principal.type == "recruiter":
+            recruiter_id = principal.id
+        if not recruiter_id or not city_id or not date_str or not time_str:
+            return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=400)
 
-    # Validate recruiter
-    async with async_session() as session:
-        recruiter = await session.get(Recruiter, int(recruiter_id))
-        city = await session.get(City, int(city_id))
+        async with async_session() as session:
+            recruiter = await session.get(Recruiter, int(recruiter_id))
+            city = await session.get(City, int(city_id))
+        if recruiter is None:
+            return JSONResponse({"ok": False, "error": "recruiter_not_found"}, status_code=404)
+        if city is None:
+            return JSONResponse({"ok": False, "error": "city_not_found"}, status_code=404)
 
-    if recruiter is None:
-        return JSONResponse({"ok": False, "error": "recruiter_not_found"}, status_code=404)
-    if city is None:
-        return JSONResponse({"ok": False, "error": "city_not_found"}, status_code=404)
+        if principal.type == "recruiter" and recruiter.id != principal.id:
+            return JSONResponse({"ok": False, "error": "permission_denied"}, status_code=403)
 
-    # Recruiter scoping
-    if principal.type == "recruiter" and recruiter.id != principal.id:
-        return JSONResponse({"ok": False, "error": "permission_denied"}, status_code=403)
+        settings = get_settings()
+        recruiter_tz = getattr(recruiter, "tz", None) or settings.timezone or DEFAULT_TZ
+        slot_tz = getattr(city, "tz", None) or recruiter_tz
+        try:
+            # Manual input is interpreted in recruiter local timezone.
+            # Candidate timezone is stored separately on the slot/assignment.
+            dt_utc = parse_form_datetime(f"{date_str}T{time_str}", recruiter_tz)
+        except ValueError:
+            return JSONResponse({"ok": False, "error": "invalid_datetime"}, status_code=400)
 
-    settings = get_settings()
-    slot_tz = getattr(city, "tz", None) or getattr(recruiter, "tz", None) or settings.timezone or DEFAULT_TZ
-
-    try:
-        dt_utc = parse_form_datetime(f"{date_str}T{time_str}", slot_tz)
-    except ValueError:
+    if dt_utc is None:
         return JSONResponse({"ok": False, "error": "invalid_datetime"}, status_code=400)
 
     admin_username = request.session.get("username", "admin")
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent", None)
-    custom_message_sent = bool(custom_message)
-    custom_message_text = custom_message.strip() if custom_message else None
+    custom_message_sent = bool(custom_message_text)
 
     # If the candidate has an active reschedule request, reuse the existing slot assignment
     # instead of creating a new one (otherwise we block on "candidate_has_active_assignment").
     try:
-        candidate_key = getattr(user, "candidate_id", None)
+        candidate_key = user.candidate_id
         assignment = None
-        slot = None
+        source_slot = None
         if candidate_key:
             from backend.domain.models import (
                 RescheduleRequest,
                 RescheduleRequestStatus,
-                Slot,
-                SlotAssignment,
                 SlotAssignmentStatus,
             )
-            from backend.domain.slot_assignment_service import propose_alternative
-            from backend.domain.candidates.status_service import set_status_slot_pending
-            from backend.core.time_utils import ensure_aware_utc
 
             async with async_session() as session:
                 assignment = await session.scalar(
@@ -3315,11 +2509,11 @@ async def api_schedule_slot(
                     .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
                 )
                 if assignment is not None:
-                    slot = await session.get(Slot, assignment.slot_id)
-                    if slot is None:
+                    source_slot = await session.get(Slot, assignment.slot_id)
+                    if source_slot is None:
                         assignment = None
 
-            if assignment is not None and slot is not None:
+            if assignment is not None and source_slot is not None:
                 if int(recruiter.id) != int(assignment.recruiter_id):
                     return JSONResponse(
                         {
@@ -3329,7 +2523,7 @@ async def api_schedule_slot(
                         },
                         status_code=409,
                     )
-                if getattr(slot, "city_id", None) is not None and int(city.id) != int(slot.city_id):
+                if getattr(source_slot, "city_id", None) is not None and int(city.id) != int(source_slot.city_id):
                     return JSONResponse(
                         {
                             "ok": False,
@@ -3347,6 +2541,18 @@ async def api_schedule_slot(
                     comment=custom_message_text,
                 )
                 if not result.ok:
+                    logger.warning(
+                        "slot_assignment_route.failed",
+                        extra={
+                            "route": "/api/candidates/{candidate_id}/schedule-slot",
+                            "slot_id": int(result.payload.get("slot_id") or 0)
+                            if isinstance(result.payload, dict)
+                            else None,
+                            "candidate_id": candidate_id,
+                            "error_code": result.status,
+                            "status_code": result.status_code or 409,
+                        },
+                    )
                     return JSONResponse(
                         {
                             "ok": False,
@@ -3356,7 +2562,7 @@ async def api_schedule_slot(
                         status_code=result.status_code or 409,
                     )
                 try:
-                    await set_status_slot_pending(user.telegram_id)
+                    await set_status_slot_pending(candidate_tg_id)
                 except Exception:
                     logger.exception(
                         "Failed to set SLOT_PENDING after reschedule propose",
@@ -3376,6 +2582,15 @@ async def api_schedule_slot(
         logger.exception("schedule-slot: reschedule probe failed", extra={"candidate_id": candidate_id})
         return JSONResponse({"ok": False, "error": "reschedule_probe_failed"}, status_code=500)
 
+    if selected_slot is not None:
+        return await _assign_existing_slot_for_candidate(
+            slot_id=selected_slot.id,
+            candidate=user,
+            principal=principal,
+            route_label="/api/candidates/{candidate_id}/schedule-slot",
+            created_by=admin_username,
+        )
+
     try:
         result = await schedule_manual_candidate_slot(
             candidate=user,
@@ -3391,6 +2606,16 @@ async def api_schedule_slot(
             principal=principal,
         )
     except ManualSlotError as exc:
+        logger.warning(
+            "slot_assignment_route.failed",
+            extra={
+                "route": "/api/candidates/{candidate_id}/schedule-slot",
+                "slot_id": None,
+                "candidate_id": candidate_id,
+                "error_code": "slot_conflict",
+                "status_code": 409,
+            },
+        )
         return JSONResponse({"ok": False, "error": "slot_conflict", "message": str(exc)}, status_code=409)
     except Exception:
         logger.exception("schedule-slot: unexpected error", extra={"candidate_id": candidate_id})
@@ -3406,11 +2631,24 @@ async def api_schedule_slot(
     except Exception:
         logger.exception("Failed to assign responsible recruiter after scheduling slot", extra={"candidate_id": candidate_id})
 
-    return JSONResponse({
-        "ok": True,
-        "status": result.status,
-        "message": result.message or "Slot scheduled",
-    })
+    logger.info(
+        "slot_assignment_route.succeeded",
+        extra={
+            "route": "/api/candidates/{candidate_id}/schedule-slot",
+            "slot_id": None,
+            "candidate_id": candidate_id,
+            "error_code": None,
+            "status_code": 201,
+        },
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "status": result.status,
+            "message": result.message or "Slot scheduled",
+        },
+        status_code=201,
+    )
 
 
 @router.post("/candidates/{candidate_id}/schedule-intro-day")
@@ -3421,11 +2659,14 @@ async def api_schedule_intro_day(
     principal: Principal = Depends(require_principal),
 ):
     """Schedule intro day for a candidate (JSON API)."""
-    from datetime import timezone as tz_utc
     from backend.apps.admin_ui.services.candidates import (
         get_candidate_detail,
         DEFAULT_INTRO_DAY_INVITATION_TEMPLATE,
         render_intro_day_invitation,
+    )
+    from backend.apps.admin_ui.services.max_sales_handoff import (
+        IntroDayHandoffContext,
+        dispatch_intro_day_handoff_to_max,
     )
     from backend.apps.admin_ui.services.slots import recruiter_time_to_utc
     from backend.apps.admin_ui.timezones import DEFAULT_TZ
@@ -3622,6 +2863,38 @@ async def api_schedule_intro_day(
             time_str=str(time_str),
         )
 
+    candidate_telegram_ids = {
+        value
+        for value in (user.telegram_id, user.telegram_user_id, candidate_tg_id)
+        if value is not None
+    }
+    old_interview_slot_ids: List[int] = []
+    try:
+        from backend.domain.slot_assignment_service import cancel_active_interview_slots_for_candidate
+
+        cleanup_result = await cancel_active_interview_slots_for_candidate(
+            candidate_id=user.candidate_id,
+            candidate_tg_ids=candidate_telegram_ids,
+            cancelled_by="superseded_by_intro_day",
+        )
+        old_interview_slot_ids = [int(slot_id) for slot_id in cleanup_result.get("slot_ids", [])]
+    except Exception:
+        logger.exception(
+            "Failed to cancel active interview slots before intro day scheduling",
+            extra={
+                "candidate_id": candidate_id,
+                "candidate_tg_id": candidate_tg_id,
+            },
+        )
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "active_slot_cleanup_failed",
+                "message": "Не удалось перенести кандидата в ознакомительный день. Повторите попытку.",
+            },
+            status_code=409,
+        )
+
     async with async_session() as session:
         # Create slot
         slot = Slot(
@@ -3641,6 +2914,18 @@ async def api_schedule_intro_day(
         session.add(slot)
         await session.commit()
         await session.refresh(slot)
+
+        if old_interview_slot_ids:
+            from backend.apps.bot.services import cancel_slot_reminders
+
+            for old_slot_id in old_interview_slot_ids:
+                try:
+                    await cancel_slot_reminders(old_slot_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to cancel interview reminders when intro day is scheduled: %s",
+                        old_slot_id,
+                    )
 
         # Update candidate status
         try:
@@ -3672,10 +2957,43 @@ async def api_schedule_intro_day(
         except Exception as exc:
             logger.warning("Failed to schedule reminders for intro day: %s", exc)
 
+    hh_profile_url = None
+    hh_resume_id = (getattr(user, "hh_resume_id", None) or "").strip()
+    if hh_resume_id:
+        hh_profile_url = f"https://hh.ru/resume/{hh_resume_id}"
+
+    base_url = str(request.base_url).rstrip("/")
+    candidate_card_url = f"{base_url}/app/candidates/{candidate_id}" if base_url else None
+    max_handoff: dict[str, object]
+    try:
+        max_handoff = await dispatch_intro_day_handoff_to_max(
+            IntroDayHandoffContext(
+                candidate_id=user.id,
+                candidate_fio=user.fio or f"Кандидат #{user.id}",
+                slot_id=slot.id,
+                slot_start_utc=slot.start_utc,
+                slot_tz=slot_tz,
+                recruiter_id=getattr(recruiter, "id", None),
+                recruiter_name=getattr(recruiter, "name", None),
+                city_id=getattr(city_record, "id", None),
+                city_name=getattr(city_record, "name", None),
+                candidate_card_url=candidate_card_url,
+                hh_profile_url=hh_profile_url,
+            ),
+            bot=getattr(request.app.state, "bot", None),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to dispatch intro day handoff to Max",
+            extra={"candidate_id": candidate_id, "slot_id": slot.id},
+        )
+        max_handoff = {"ok": False, "status": "error"}
+
     return JSONResponse({
         "ok": True,
         "slot_id": slot.id,
         "message": "Intro day scheduled",
+        "max_handoff": max_handoff,
     })
 
 
@@ -3809,86 +3127,3 @@ async def api_get_vacancy_questions(
             for q in questions
         ],
     })
-
-
-# ---------------------------------------------------------------------------
-# City Reminder Policy API
-# ---------------------------------------------------------------------------
-
-@router.get("/cities/{city_id}/reminder-policy")
-async def api_get_city_reminder_policy(
-    request: Request, city_id: int
-) -> JSONResponse:
-    _ = await require_principal(request)
-    from backend.apps.admin_ui.services.city_reminder_policy import get_city_reminder_policy
-
-    policy = await get_city_reminder_policy(city_id)
-    return JSONResponse({
-        "ok": True,
-        "policy": {
-            "city_id": city_id,
-            "is_custom": policy.is_custom,
-            "confirm_6h_enabled": policy.confirm_6h_enabled,
-            "confirm_3h_enabled": policy.confirm_3h_enabled,
-            "confirm_2h_enabled": policy.confirm_2h_enabled,
-            "intro_remind_3h_enabled": policy.intro_remind_3h_enabled,
-            "quiet_hours_start": policy.quiet_hours_start,
-            "quiet_hours_end": policy.quiet_hours_end,
-        },
-    })
-
-
-@router.put("/cities/{city_id}/reminder-policy")
-async def api_upsert_city_reminder_policy(
-    request: Request, city_id: int
-) -> JSONResponse:
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    from backend.apps.admin_ui.services.city_reminder_policy import upsert_city_reminder_policy
-
-    def _bool(key: str, default: bool) -> bool:
-        v = data.get(key)
-        if v is None:
-            return default
-        return bool(v)
-
-    def _int(key: str, default: int) -> int:
-        v = data.get(key)
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return default
-
-    policy = await upsert_city_reminder_policy(
-        city_id,
-        confirm_6h_enabled=_bool("confirm_6h_enabled", True),
-        confirm_3h_enabled=_bool("confirm_3h_enabled", True),
-        confirm_2h_enabled=_bool("confirm_2h_enabled", True),
-        intro_remind_3h_enabled=_bool("intro_remind_3h_enabled", True),
-        quiet_hours_start=_int("quiet_hours_start", 22),
-        quiet_hours_end=_int("quiet_hours_end", 8),
-    )
-    return JSONResponse({
-        "ok": True,
-        "policy": {
-            "city_id": policy.city_id,
-            "is_custom": policy.is_custom,
-            "confirm_6h_enabled": policy.confirm_6h_enabled,
-            "confirm_3h_enabled": policy.confirm_3h_enabled,
-            "confirm_2h_enabled": policy.confirm_2h_enabled,
-            "intro_remind_3h_enabled": policy.intro_remind_3h_enabled,
-            "quiet_hours_start": policy.quiet_hours_start,
-            "quiet_hours_end": policy.quiet_hours_end,
-        },
-    })
-
-
-@router.delete("/cities/{city_id}/reminder-policy")
-async def api_delete_city_reminder_policy(
-    request: Request, city_id: int
-) -> JSONResponse:
-    _ = await require_csrf_token(request)
-    from backend.apps.admin_ui.services.city_reminder_policy import delete_city_reminder_policy
-
-    deleted = await delete_city_reminder_policy(city_id)
-    return JSONResponse({"ok": True, "was_custom": deleted})

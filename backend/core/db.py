@@ -133,17 +133,20 @@ async def init_models() -> None:
     backend = url.get_backend_name()
     if backend and backend.startswith("sqlite"):
         # SQLite doesn't support several ALTER/DROP patterns used in migrations.
-        # For local dev/test we create the schema directly from ORM metadata.
+        # For local dev/test we create the schema directly from ORM metadata and
+        # best-effort repair legacy sqlite databases with missing columns.
         # Ensure all models are imported so metadata is fully populated.
         from backend.domain import auth_account as _auth_account  # noqa: F401
         from backend.domain import analytics_models as _analytics_models  # noqa: F401
         from backend.domain import models as _models  # noqa: F401
         from backend.domain.candidates import models as _candidate_models  # noqa: F401
         from backend.domain.ai import models as _ai_models  # noqa: F401
+        from backend.domain.hh_integration import models as _hh_integration_models  # noqa: F401
         from backend.domain.tests import models as _test_models  # noqa: F401
         from backend.domain.base import Base
+        from backend.core.sqlite_dev_schema import repair_sqlite_schema
 
-        await asyncio.to_thread(Base.metadata.create_all, sync_engine)
+        await asyncio.to_thread(repair_sqlite_schema, engine=sync_engine, metadata=Base.metadata)
         return
 
     await asyncio.to_thread(upgrade_to_head, sync_engine)

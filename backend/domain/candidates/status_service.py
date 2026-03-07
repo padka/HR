@@ -61,9 +61,12 @@ async def update_candidate_status(
         StatusTransitionError: If transition is invalid and force=False
     """
     async def _update(sess: AsyncSession) -> bool:
-        user = await sess.scalar(
-            select(User).where(User.telegram_id == telegram_id)
-        )
+        user = await sess.scalar(select(User).where(User.telegram_id == telegram_id))
+        if not user:
+            # Some flows persist external Telegram ID in telegram_user_id.
+            user = await sess.scalar(
+                select(User).where(User.telegram_user_id == telegram_id)
+            )
 
         if not user:
             logger.warning(f"Candidate not found: telegram_id={telegram_id}")
@@ -113,10 +116,15 @@ async def update_candidate_status(
 
         funnel_event = FUNNEL_STATUS_EVENTS.get(new_status)
         if funnel_event:
+            analytics_user_id = int(
+                getattr(user, "telegram_id", None)
+                or getattr(user, "telegram_user_id", None)
+                or telegram_id
+            )
             try:
                 await analytics.log_funnel_event(
                     funnel_event,
-                    user_id=telegram_id,
+                    user_id=analytics_user_id,
                     candidate_id=user.id,
                     metadata={"status": new_status.value},
                     session=sess,
@@ -152,9 +160,11 @@ async def get_candidate_status(telegram_id: int) -> Optional[CandidateStatus]:
         Current status or None if candidate not found
     """
     async with async_session() as session:
-        user = await session.scalar(
-            select(User).where(User.telegram_id == telegram_id)
-        )
+        user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
+        if not user:
+            user = await session.scalar(
+                select(User).where(User.telegram_user_id == telegram_id)
+            )
         return user.candidate_status if user else None
 
 

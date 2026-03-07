@@ -196,8 +196,8 @@ export function CopilotPage() {
           <div className="glass page-section copilot-chat">
             <div className="copilot-chat__header">
               <div>
-                <h2 className="section-title" style={{ margin: 0 }}>AI чат</h2>
-                <p className="subtitle" style={{ margin: '6px 0 0' }}>
+                <h2 className="section-title copilot-section-title">AI чат</h2>
+                <p className="subtitle copilot-section-subtitle">
                   AI опирается на базу знаний и контекст системы.
                 </p>
               </div>
@@ -213,7 +213,7 @@ export function CopilotPage() {
 
             <div className="copilot-chat__body">
               {chatQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-              {chatQuery.isError && <p className="subtitle" style={{ color: '#f07373' }}>Ошибка: {(chatQuery.error as Error).message}</p>}
+              {chatQuery.isError && <p className="ui-message ui-message--error">Ошибка: {(chatQuery.error as Error).message}</p>}
               {!chatQuery.isLoading && messages.length === 0 && (
                 <div className="subtitle">Задайте вопрос: например, “Какие объективные причины отказа допустимы после интервью?”</div>
               )}
@@ -228,7 +228,7 @@ export function CopilotPage() {
               {sendMutation.isPending && (
                 <div className="copilot-msg copilot-msg--assistant">
                   <div className="copilot-msg__bubble copilot-msg__bubble--typing">
-                    <div className="copilot-msg__text" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
+                    <div className="copilot-msg__text copilot-msg__typing">
                       AI думает…
                     </div>
                   </div>
@@ -266,14 +266,14 @@ export function CopilotPage() {
 
           <div className="glass page-section copilot-kb">
             <div className="copilot-kb__header">
-              <h2 className="section-title" style={{ margin: 0 }}>База знаний</h2>
-              <p className="subtitle" style={{ margin: '6px 0 0' }}>
+              <h2 className="section-title copilot-section-title">База знаний</h2>
+              <p className="subtitle copilot-section-subtitle">
                 Документы используются для оценок кандидатов и ответов в AI чате.
               </p>
             </div>
 
             {docsQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-            {docsQuery.isError && <p className="subtitle" style={{ color: '#f07373' }}>Ошибка: {(docsQuery.error as Error).message}</p>}
+            {docsQuery.isError && <p className="ui-message ui-message--error">Ошибка: {(docsQuery.error as Error).message}</p>}
 
             {docsQuery.data && (
               <div className="copilot-kb__list">
@@ -333,7 +333,7 @@ export function CopilotPage() {
 
             {isAdmin && (
               <div className="copilot-kb__admin">
-                <h3 className="section-title" style={{ marginTop: 0 }}>Добавить документ</h3>
+                <h3 className="section-title copilot-section-title">Добавить документ</h3>
                 <label className="form-group">
                   <span className="form-group__label">Заголовок</span>
                   <input value={kbTitle} onChange={(e) => setKbTitle(e.target.value)} placeholder="Например: Регламенты рекрутинга" />
@@ -344,10 +344,9 @@ export function CopilotPage() {
                     <textarea rows={8} value={kbText} onChange={(e) => setKbText(e.target.value)} placeholder="Вставьте текст документа сюда…" />
                     <button
                       type="button"
-                      className="ui-btn ui-btn--primary ui-btn--sm"
+                      className="ui-btn ui-btn--primary ui-btn--sm copilot-kb__submit"
                       onClick={() => createDocMutation.mutate()}
                       disabled={!kbTitle.trim() || !kbText.trim() || createDocMutation.isPending}
-                      style={{ marginTop: 8 }}
                     >
                       {createDocMutation.isPending ? 'Сохраняем…' : 'Сохранить'}
                     </button>
@@ -362,14 +361,13 @@ export function CopilotPage() {
                     />
                     <button
                       type="button"
-                      className="ui-btn ui-btn--ghost ui-btn--sm"
+                      className="ui-btn ui-btn--ghost ui-btn--sm copilot-kb__upload"
                       onClick={() => uploadDocMutation.mutate()}
                       disabled={!kbFile || uploadDocMutation.isPending}
-                      style={{ marginTop: 8 }}
                     >
                       {uploadDocMutation.isPending ? 'Загрузка…' : 'Загрузить'}
                     </button>
-                    <div className="subtitle" style={{ marginTop: 8 }}>
+                    <div className="subtitle copilot-kb__hint">
                       После загрузки документ автоматически индексируется на фрагменты.
                     </div>
                   </label>
@@ -377,7 +375,7 @@ export function CopilotPage() {
               </div>
             )}
             {!isAdmin && (
-              <div className="subtitle" style={{ marginTop: 12 }}>
+              <div className="subtitle copilot-kb__readonly-note">
                 Добавлять и отключать документы может только администратор.
               </div>
             )}
@@ -396,7 +394,7 @@ export function CopilotPage() {
                       {docQuery.data?.document?.chunks_total != null ? ` · ${docQuery.data.document.chunks_total} фрагм.` : ''}
                     </p>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <div className="copilot-modal-actions">
                     {isAdmin && (
                       <button
                         className="ui-btn ui-btn--ghost"
@@ -412,7 +410,7 @@ export function CopilotPage() {
                 </div>
                 <div className="modal__body">
                   {docQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-                  {docQuery.isError && <p className="subtitle" style={{ color: '#f07373' }}>Ошибка: {(docQuery.error as Error).message}</p>}
+                  {docQuery.isError && <p className="ui-message ui-message--error">Ошибка: {(docQuery.error as Error).message}</p>}
                   {docQuery.data && (
                     <pre className="copilot-doc-preview">{docQuery.data.document.content_text || ''}</pre>
                   )}
@@ -423,9 +421,9 @@ export function CopilotPage() {
         )}
 
         {toast && (
-          <div className="toast" data-tone="success" style={{ top: 20, right: 20, bottom: 'auto' }}>
-            <strong style={{ fontSize: 13 }}>Copilot</strong>
-            <span style={{ color: 'var(--muted)', fontSize: 12, lineHeight: 1.2 }}>{toast}</span>
+          <div className="toast copilot-toast" data-tone="success">
+            <strong className="copilot-toast__title">Copilot</strong>
+            <span className="copilot-toast__text">{toast}</span>
           </div>
         )}
       </div>

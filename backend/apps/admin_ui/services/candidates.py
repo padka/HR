@@ -6,24 +6,22 @@ import re
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urlparse
 
-from sqlalchemy import String, cast, delete, exists, func, literal, literal_column, or_, select, false, and_
+from sqlalchemy import String, and_, cast, delete, exists, false, func, literal, or_, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Select, case
 
 from backend.apps.admin_ui.utils import paginate
-from backend.apps.admin_ui.services.bot_service import get_bot_service
-from backend.apps.admin_ui.services.chat import get_chat_templates
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.bot.config import PASS_THRESHOLD, TEST2_QUESTIONS
 from backend.apps.bot.services import approve_slot_and_notify, cancel_slot_reminders
 from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
-from backend.apps.admin_ui.security import principal_ctx, Principal
+from backend.apps.admin_ui.security import admin_principal, principal_ctx, Principal
 from backend.domain import analytics
 from backend.domain.candidates.models import (
     AutoMessage,
@@ -37,7 +35,6 @@ from backend.domain.candidates.status import (
     CandidateStatus,
     STATUS_TRANSITIONS,
     STATUS_CATEGORIES,
-    STATUS_COLORS,
     StatusCategory,
     get_next_statuses,
     get_status_color,
@@ -184,9 +181,9 @@ STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
         ("test1_completed", {"label": "Прошел тестирование", "icon": "📝", "tone": "info"}),
         ("waiting_slot", {"label": "Ждет назначения слота", "icon": "⏳", "tone": "warning"}),
         ("stalled_waiting_slot", {"label": "Долго ждет слота (>24ч)", "icon": "⚠️", "tone": "danger"}),
-        ("slot_pending", {"label": "Ожидает подтверждения времени", "icon": "🕐", "tone": "info"}),
+        ("slot_pending", {"label": "На согласовании", "icon": "🕐", "tone": "info"}),
         ("interview_scheduled", {"label": "Назначено собеседование", "icon": "📅", "tone": "primary"}),
-        ("interview_confirmed", {"label": "Подтвердился (собес)", "icon": "✅", "tone": "success"}),
+        ("interview_confirmed", {"label": "Подтвердил собеседование", "icon": "✅", "tone": "success"}),
         ("test2_sent", {"label": "Прошел собес (Тест 2)", "icon": "📨", "tone": "primary"}),
         ("test2_completed", {"label": "Прошел Тест 2 (ожидает ОД)", "icon": "✅", "tone": "info"}),
         ("intro_day_scheduled", {"label": "Назначен ознакомительный день", "icon": "📆", "tone": "primary"}),
@@ -481,6 +478,39 @@ INTRO_DAY_PIPELINE_STATUSES = [
     "not_hired",
 ]
 
+KANBAN_MAIN_PIPELINE_STATUSES = [
+    "new",
+    "lead",
+    "contacted",
+    "invited",
+    "test1_completed",
+    "waiting_slot",
+    "stalled_waiting_slot",
+    "slot_pending",
+    "interview_scheduled",
+    "interview_confirmed",
+    "test2_sent",
+    "test2_completed",
+    "intro_day_scheduled",
+    "intro_day_confirmed_preliminary",
+    "intro_day_confirmed_day_of",
+]
+
+# Candidate with later-stage status (e.g. intro_day_*) must not be shown in
+# interview pipeline only because an interview slot record still exists.
+INTERVIEW_SLOT_FALLBACK_STATUSES = {
+    "new",
+    "lead",
+    "contacted",
+    "invited",
+    "test1_completed",
+    "waiting_slot",
+    "stalled_waiting_slot",
+    "slot_pending",
+    "interview_scheduled",
+    "interview_confirmed",
+}
+
 
 def get_candidate_actions_for_status(status_slug: Optional[str]) -> List[Dict[str, Any]]:
     """Return UI actions allowed for the given status, filtered by valid transitions."""
@@ -511,6 +541,25 @@ def get_candidate_actions_for_status(status_slug: Optional[str]) -> List[Dict[st
 
 PIPELINE_DEFINITIONS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict(
     [
+        (
+            "main",
+            {
+                "label": "Основной канбан",
+                "statuses": KANBAN_MAIN_PIPELINE_STATUSES,
+                "stages": FUNNEL_STAGES,
+                "droppable_statuses": {
+                    "waiting_slot",
+                    "slot_pending",
+                    "interview_scheduled",
+                    "interview_confirmed",
+                    "test2_sent",
+                    "test2_completed",
+                    "intro_day_scheduled",
+                    "intro_day_confirmed_preliminary",
+                    "intro_day_confirmed_day_of",
+                },
+            },
+        ),
         (
             "interview",
             {
@@ -586,7 +635,7 @@ LEGACY_TO_WORKFLOW: Dict[str, WorkflowStatus] = {
     CandidateStatus.TEST2_SENT.value: WorkflowStatus.TEST_SENT,
     CandidateStatus.TEST2_COMPLETED.value: WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
     CandidateStatus.TEST2_FAILED.value: WorkflowStatus.REJECTED,
-    CandidateStatus.INTRO_DAY_SCHEDULED.value: WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+    CandidateStatus.INTRO_DAY_SCHEDULED.value: WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
     CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY.value: WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
     CandidateStatus.INTRO_DAY_DECLINED_INVITATION.value: WorkflowStatus.REJECTED,
     CandidateStatus.INTRO_DAY_DECLINED_DAY_OF.value: WorkflowStatus.REJECTED,
@@ -918,16 +967,7 @@ def _build_pipeline_stages(
 
 
 def _map_to_workflow_status(user: User) -> WorkflowStatus:
-    """Derive workflow status from explicit workflow_status or legacy candidate_status."""
-    raw_workflow = getattr(user, "workflow_status", None)
-    if raw_workflow:
-        try:
-            return WorkflowStatus(raw_workflow)
-        except Exception:
-            logging.warning(
-                "candidates.invalid_workflow_status",
-                extra={"user_id": getattr(user, "id", None), "raw_value": raw_workflow},
-            )
+    """Derive workflow status with legacy candidate_status as source of truth when present."""
     legacy = getattr(user, "candidate_status", None)
     if isinstance(legacy, CandidateStatus):
         mapped = LEGACY_TO_WORKFLOW.get(legacy.value)
@@ -937,6 +977,15 @@ def _map_to_workflow_status(user: User) -> WorkflowStatus:
         mapped = LEGACY_TO_WORKFLOW.get(legacy.lower())
         if mapped:
             return mapped
+    raw_workflow = getattr(user, "workflow_status", None)
+    if raw_workflow:
+        try:
+            return WorkflowStatus(raw_workflow)
+        except Exception:
+            logging.warning(
+                "candidates.invalid_workflow_status",
+                extra={"user_id": getattr(user, "id", None), "raw_value": raw_workflow},
+            )
     return WorkflowStatus.WAITING_FOR_SLOT
 
 
@@ -1166,7 +1215,7 @@ async def list_candidates(
         from backend.core.settings import get_settings
         settings = get_settings()
         if settings.environment != "production":
-            principal = Principal(type="admin", id=-1)
+            principal = admin_principal()
         else:
             raise RuntimeError("principal is required for list_candidates")
 
@@ -1467,7 +1516,10 @@ async def list_candidates(
         conditions.append(
             or_(
                 status_case.in_(status_filter_values),
-                upcoming_slot_expr,
+                and_(
+                    upcoming_slot_expr,
+                    status_case.in_(list(INTERVIEW_SLOT_FALLBACK_STATUSES)),
+                ),
                 and_(status_case == literal('new'), has_slot_expr),
             )
         )
@@ -1673,17 +1725,54 @@ async def list_candidates(
                 if rating_key in {'TEST1', 'TEST2'} and test_results_map[result.user_id][rating_key] is None:
                     test_results_map[result.user_id][rating_key] = result
 
-        messages_map: Dict[int, List[AutoMessage]] = defaultdict(list)
+        messages_total_map: Dict[int, int] = {}
+        latest_message_map: Dict[int, AutoMessage] = {}
         if telegram_ids:
-            message_rows = await session.execute(
-                select(AutoMessage)
-                .where(AutoMessage.target_chat_id.in_(telegram_ids))
-                .order_by(AutoMessage.target_chat_id, AutoMessage.created_at.desc())
+            message_counts = await session.execute(
+                select(
+                    AutoMessage.target_chat_id,
+                    func.count(AutoMessage.id),
+                )
+                .where(
+                    AutoMessage.target_chat_id.in_(telegram_ids),
+                    AutoMessage.target_chat_id.is_not(None),
+                )
+                .group_by(AutoMessage.target_chat_id)
             )
-            for message in message_rows.scalars():
+            for target_chat_id, total_messages in message_counts:
+                if target_chat_id is None:
+                    continue
+                messages_total_map[int(target_chat_id)] = int(total_messages or 0)
+
+            latest_message_ranked = (
+                select(
+                    AutoMessage.id.label("message_id"),
+                    AutoMessage.target_chat_id.label("target_chat_id"),
+                    func.row_number()
+                    .over(
+                        partition_by=AutoMessage.target_chat_id,
+                        order_by=(AutoMessage.created_at.desc(), AutoMessage.id.desc()),
+                    )
+                    .label("row_num"),
+                )
+                .where(
+                    AutoMessage.target_chat_id.in_(telegram_ids),
+                    AutoMessage.target_chat_id.is_not(None),
+                )
+                .subquery()
+            )
+            latest_messages = await session.execute(
+                select(AutoMessage)
+                .join(
+                    latest_message_ranked,
+                    AutoMessage.id == latest_message_ranked.c.message_id,
+                )
+                .where(latest_message_ranked.c.row_num == 1)
+            )
+            for message in latest_messages.scalars():
                 if message.target_chat_id is None:
                     continue
-                messages_map.setdefault(message.target_chat_id, []).append(message)
+                latest_message_map[int(message.target_chat_id)] = message
 
         slots_by_candidate: Dict[str, List[Slot]] = defaultdict(list)
         upcoming_slot_map: Dict[str, Optional[Slot]] = {}
@@ -1743,12 +1832,17 @@ async def list_candidates(
 
     for user in users:
         tests_total, avg_score = stats_map.get(user.id, (0, None))
-        candidate_messages = messages_map.get(user.telegram_id, [])
+        messages_total = int(messages_total_map.get(user.telegram_id or 0, 0))
+        latest_message = latest_message_map.get(user.telegram_id or 0)
         latest_slot = latest_slot_map.get(user.candidate_id)
         upcoming_slot = upcoming_slot_map.get(user.candidate_id)
         status_slug = status_by_user.get(user.id, 'new')
-        # Если статус вне воронки, но у кандидата есть будущий слот — отображаем как interview_scheduled.
-        if status_slug not in allowed_with_terminal and upcoming_by_user.get(user.id):
+        # Фолбэк в interview_scheduled применяем только к ранним/interview-статусам.
+        if (
+            status_slug not in allowed_with_terminal
+            and status_slug in INTERVIEW_SLOT_FALLBACK_STATUSES
+            and upcoming_by_user.get(user.id)
+        ):
             status_slug = 'interview_scheduled'
         status_label = _status_label(status_slug)
         stage_value = stage_map.get(user.candidate_id, 'Без интервью')
@@ -1761,8 +1855,8 @@ async def list_candidates(
                 tests_total=tests_total,
                 average_score=avg_score,
                 latest_result=latest_result_map.get(user.id),
-                messages_total=len(candidate_messages),
-                latest_message=candidate_messages[0] if candidate_messages else None,
+                messages_total=messages_total,
+                latest_message=latest_message,
                 stage=stage_value,
                 latest_slot=latest_slot,
                 upcoming_slot=upcoming_slot,
@@ -1863,7 +1957,7 @@ async def list_candidates(
                     user.candidate_id or telegram_to_candidate.get(user.telegram_id),
                     [],
                 ),
-                'messages_total': len(candidate_messages),
+                'messages_total': messages_total,
                 'primary_event_at': primary_dt,
                 'group': {
                     'key': group_key,
@@ -2557,6 +2651,17 @@ async def update_candidate_status(
                 user.is_active = False
             elif target_status in STATUSES_ARCHIVE_ON_DECLINE:
                 user.is_active = False
+
+            # hh.ru sync: dispatch status change to n8n if enabled
+            if get_settings().hh_sync_enabled and target_status is not None:
+                try:
+                    from backend.domain.hh_sync.dispatcher import dispatch_hh_status_sync
+                    await dispatch_hh_status_sync(user, target_status, session=session)
+                except Exception:
+                    logger.exception(
+                        "hh_sync: failed to dispatch status sync",
+                        extra={"candidate_id": user.id, "status": normalized},
+                    )
 
             await session.commit()
             stored_rejection_reason = (getattr(user, "rejection_reason", None) or "").strip()
@@ -3421,6 +3526,13 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "phone": user.phone,
         "is_active": user.is_active,
         "hh_profile_url": hh_profile_url,
+        "hh_resume_id": getattr(user, "hh_resume_id", None),
+        "hh_negotiation_id": getattr(user, "hh_negotiation_id", None),
+        "hh_vacancy_id": getattr(user, "hh_vacancy_id", None),
+        "hh_sync_status": getattr(user, "hh_sync_status", None),
+        "hh_sync_error": getattr(user, "hh_sync_error", None),
+        "messenger_platform": getattr(user, "messenger_platform", "telegram"),
+        "max_user_id": getattr(user, "max_user_id", None),
         "test1_report_url": f"/candidates/{user.id}/reports/test1"
         if getattr(user, "test1_report_url", None)
         else None,

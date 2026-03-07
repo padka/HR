@@ -95,6 +95,12 @@ HTTP_CACHE_REFRESH_ERRORS_TOTAL = Counter(
     labelnames=("route",),
 )
 
+SLOT_PROPOSE_404_TOTAL = Counter(
+    "slot_propose_404_total",
+    "404 responses for slot propose flow by reason.",
+    labelnames=("reason",),
+)
+
 HTTP_DB_QUERIES_PER_REQUEST = Histogram(
     "http_db_queries_per_request",
     "Number of DB queries executed during a single HTTP request (best-effort).",
@@ -363,3 +369,9 @@ def current_route_label() -> str:
     if ctx is None:
         return "unknown"
     return ctx.route or "unknown"
+
+
+def slot_propose_404(*, reason: str) -> None:
+    """Record 404 outcomes in propose flow."""
+
+    SLOT_PROPOSE_404_TOTAL.labels(reason=(reason or "unknown")).inc()

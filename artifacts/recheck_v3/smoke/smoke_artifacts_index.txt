@@ -1,0 +1,6 @@
+total 1104
+drwxr-xr-x@ 5 mikhail  staff     160 Mar  1 14:47 .
+drwxr-xr-x@ 9 mikhail  staff     288 Mar  1 14:45 ..
+-rw-r--r--@ 1 mikhail  staff    2201 Mar  1 14:45 critical_flow_smoke_v3.json
+-rw-r--r--@ 1 mikhail  staff  297716 Mar  1 14:47 ui_candidates_kanban_v3.png
+-rw-r--r--@ 1 mikhail  staff  261157 Mar  1 14:47 ui_candidates_list_v3.png

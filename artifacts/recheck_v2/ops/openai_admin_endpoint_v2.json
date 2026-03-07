@@ -1,0 +1,17 @@
+{
+  "candidate_id": 12,
+  "status": 200,
+  "duration_s": 26.826,
+  "ok": true,
+  "cached": false,
+  "model": "gpt-5-mini",
+  "has_script": true,
+  "script_keys": [
+    "checks",
+    "cta_templates",
+    "highlights",
+    "objections",
+    "risk_flags",
+    "script_blocks"
+  ]
+}

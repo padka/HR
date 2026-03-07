@@ -56,6 +56,81 @@ async def test_waiting_candidates_list_is_capped_to_hundred(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_waiting_candidates_marks_requested_another_time(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City 2", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Incoming Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        candidate = User(
+            fio="Requested Candidate",
+            city="Incoming City 2",
+            telegram_id=920001,
+            candidate_id="requested-candidate",
+            candidate_status=CandidateStatus.WAITING_SLOT,
+            status_changed_at=now - timedelta(hours=5),
+            last_activity=now - timedelta(hours=5),
+            is_active=True,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=now + timedelta(days=1),
+            duration_min=60,
+            status=models.SlotStatus.PENDING,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz="Europe/Moscow",
+            status=models.SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+            offered_at=now - timedelta(hours=4),
+            reschedule_requested_at=now - timedelta(hours=2),
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+
+        session.add(
+            models.RescheduleRequest(
+                slot_assignment_id=assignment.id,
+                requested_start_utc=now + timedelta(days=1, hours=2),
+                requested_tz="Europe/Moscow",
+                candidate_comment="Подходит только вечер",
+                status=models.RescheduleRequestStatus.PENDING,
+            )
+        )
+        await session.commit()
+
+    items = await get_waiting_candidates(limit=20)
+    row = next(item for item in items if item["id"] == candidate.id)
+    assert row["requested_another_time"] is True
+    assert row["incoming_substatus"] == "requested_other_time"
+    assert row["requested_another_time_comment"] == "Подходит только вечер"
+
+
+@pytest.mark.asyncio
 async def test_dashboard_and_slot_listing():
     await reset_test1_metrics()
     async with async_session() as session:

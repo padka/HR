@@ -43,6 +43,13 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+_ACTIVE_SLOT_STATUSES = (
+    SlotStatus.PENDING,
+    SlotStatus.BOOKED,
+    SlotStatus.CONFIRMED,
+    SlotStatus.CONFIRMED_BY_CANDIDATE,
+)
+
 
 def slot_status_free_clause(slot: Slot):
     """Return a SQLAlchemy expression matching free slots (shared across UI/API)."""
@@ -513,6 +520,7 @@ class OutboxItem:
     attempts: int
     created_at: datetime
     next_retry_at: Optional[datetime] = None
+    messenger_channel: str = "telegram"
 
 
 @dataclass
@@ -791,6 +799,7 @@ async def add_outbox_notification(
     candidate_tg_id: Optional[int] = None,
     recruiter_tg_id: Optional[int] = None,
     correlation_id: Optional[str] = None,
+    messenger_channel: str = "telegram",
     session=None,
 ) -> OutboxNotification:
     payload = payload or {}
@@ -840,6 +849,7 @@ async def add_outbox_notification(
             locked_at=None,
             next_retry_at=None,
             correlation_id=correlation_id,
+            messenger_channel=messenger_channel,
         )
         sess.add(entry)
         return entry
@@ -906,9 +916,56 @@ async def claim_outbox_batch(
                         attempts=row.attempts,
                         created_at=row.created_at,
                         next_retry_at=row.next_retry_at,
+                        messenger_channel=getattr(row, "messenger_channel", None) or "telegram",
                     )
                 )
         return items
+
+
+async def claim_outbox_item_by_id(
+    outbox_id: int,
+    *,
+    lock_timeout: timedelta = timedelta(seconds=30),
+) -> Optional[OutboxItem]:
+    """Claim a single outbox entry by id with the same lock semantics as batch claims."""
+
+    now = datetime.now(timezone.utc)
+    stale_before = now - lock_timeout
+    async with async_session() as session:
+        async with session.begin():
+            row = await session.scalar(
+                select(OutboxNotification)
+                .where(
+                    OutboxNotification.id == outbox_id,
+                    OutboxNotification.status == "pending",
+                    or_(
+                        OutboxNotification.next_retry_at.is_(None),
+                        OutboxNotification.next_retry_at <= now,
+                    ),
+                    or_(
+                        OutboxNotification.locked_at.is_(None),
+                        OutboxNotification.locked_at <= stale_before,
+                    ),
+                )
+                .with_for_update(skip_locked=True)
+            )
+            if row is None:
+                return None
+
+            row.locked_at = now
+            await session.flush()
+            return OutboxItem(
+                id=row.id,
+                booking_id=row.booking_id,
+                type=row.type,
+                payload=dict(row.payload_json or {}),
+                candidate_tg_id=row.candidate_tg_id,
+                recruiter_tg_id=row.recruiter_tg_id,
+                attempts=row.attempts,
+                created_at=row.created_at,
+                next_retry_at=row.next_retry_at,
+                messenger_channel=getattr(row, "messenger_channel", None) or "telegram",
+            )
 
 
 async def update_outbox_entry(
@@ -1192,8 +1249,26 @@ async def reserve_slot(
                 if expected_city_id is not None and slot.city_id != expected_city_id:
                     return ReservationResult(status="slot_taken")
 
-                # P0: do not allow the same candidate to hold multiple active slots WITH THE SAME RECRUITER.
-                # Candidate can book different recruiters (e.g., reschedule to another recruiter).
+                # Cross-purpose guard: candidate cannot hold active interview + intro_day at the same time.
+                candidate_match = [Slot.candidate_id == candidate_uuid]
+                if candidate_tg_id is not None:
+                    candidate_match.append(Slot.candidate_tg_id == candidate_tg_id)
+                cross_purpose_active = await session.scalar(
+                    select(Slot)
+                    .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                    .where(
+                        Slot.id != slot.id,
+                        or_(*candidate_match),
+                        func.lower(Slot.purpose) != slot_purpose,
+                        func.lower(Slot.status).in_(list(_ACTIVE_SLOT_STATUSES)),
+                    )
+                    .order_by(Slot.start_utc.asc())
+                )
+                if cross_purpose_active:
+                    cross_purpose_active.start_utc = _to_aware_utc(cross_purpose_active.start_utc)
+                    return ReservationResult(status="duplicate_candidate", slot=cross_purpose_active)
+
+                # Keep legacy interview duplicate rule: same candidate + same recruiter + same purpose.
                 # If allow_candidate_replace=True, free the existing slot and continue booking.
                 existing_active = await session.scalar(
                     select(Slot)
@@ -1203,13 +1278,7 @@ async def reserve_slot(
                         Slot.recruiter_id == slot.recruiter_id,  # Same recruiter only
                         func.lower(Slot.purpose) == slot_purpose,
                         Slot.id != slot.id,
-                        func.lower(Slot.status).in_(
-                            [
-                                SlotStatus.PENDING,
-                                SlotStatus.BOOKED,
-                                SlotStatus.CONFIRMED_BY_CANDIDATE,
-                            ]
-                        ),
+                        func.lower(Slot.status).in_(list(_ACTIVE_SLOT_STATUSES)),
                     )
                 )
                 if existing_active:
@@ -1284,7 +1353,7 @@ async def reserve_slot(
                         city_name = city.name_plain
         except IntegrityError:
             await session.rollback()
-            if candidate_tg_id is None or slot_recruiter_id is None:
+            if candidate_tg_id is None:
                 return ReservationResult(status="slot_taken")
             async with async_session() as check_session:
                 existing_active = await check_session.scalar(
@@ -1292,15 +1361,7 @@ async def reserve_slot(
                     .options(selectinload(Slot.recruiter), selectinload(Slot.city))
                     .where(
                         Slot.candidate_tg_id == candidate_tg_id,
-                        Slot.recruiter_id == slot_recruiter_id,
-                        Slot.purpose == slot_purpose,
-                        func.lower(Slot.status).in_(
-                            [
-                                SlotStatus.PENDING,
-                                SlotStatus.BOOKED,
-                                SlotStatus.CONFIRMED_BY_CANDIDATE,
-                            ]
-                        ),
+                        func.lower(Slot.status).in_(list(_ACTIVE_SLOT_STATUSES)),
                     )
                     .order_by(Slot.start_utc.asc())
                 )

@@ -210,6 +210,31 @@ async def test_quiet_hours_adjustment_and_metrics():
 
 
 @pytest.mark.asyncio
+async def test_cancel_for_slot_removes_scheduler_jobs_after_slot_deleted():
+    scheduler = create_scheduler(redis_url=None)
+    service = ReminderService(scheduler=scheduler)
+    service.start()
+
+    slot = await _create_booked_slot(candidate_id=9090)
+    slot_id = int(slot.id)
+
+    try:
+        await service.schedule_for_slot(slot_id)
+        assert any(job.id.startswith(f"slot:{slot_id}:") for job in scheduler.get_jobs())
+
+        async with async_session() as session:
+            slot_row = await session.get(models.Slot, slot_id)
+            assert slot_row is not None
+            await session.delete(slot_row)
+            await session.commit()
+
+        await service.cancel_for_slot(slot_id)
+        assert not any(job.id.startswith(f"slot:{slot_id}:") for job in scheduler.get_jobs())
+    finally:
+        await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_schedule_uses_candidate_city_tz_when_slot_tz_missing():
     scheduler = create_scheduler(redis_url=None)
     service = ReminderService(scheduler=scheduler)

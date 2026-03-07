@@ -1,0 +1,39 @@
+{
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-5-mini",
+  "requests_total": 20,
+  "json_valid_total": 20,
+  "errors_total": 0,
+  "success_rate": 100.0,
+  "latency_avg_s": 1.251,
+  "latency_p95_s": 1.509,
+  "latency_max_s": 1.999,
+  "samples": [
+    {
+      "idx": 1,
+      "latency_s": 1.501,
+      "text_preview": "{\"ok\": true, \"n\": 1}"
+    },
+    {
+      "idx": 2,
+      "latency_s": 1.499,
+      "text_preview": "{\"ok\": true, \"n\": 2}"
+    },
+    {
+      "idx": 3,
+      "latency_s": 1.509,
+      "text_preview": "{\"ok\": true, \"n\": 3}"
+    },
+    {
+      "idx": 4,
+      "latency_s": 1.13,
+      "text_preview": "{\"ok\": true, \"n\": 4}"
+    },
+    {
+      "idx": 5,
+      "latency_s": 1.139,
+      "text_preview": "{\"ok\": true, \"n\": 5}"
+    }
+  ],
+  "errors": []
+}

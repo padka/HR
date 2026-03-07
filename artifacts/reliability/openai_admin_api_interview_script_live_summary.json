@@ -1,0 +1,18 @@
+{
+  "candidate_id": 9,
+  "status": 200,
+  "duration_s": 25.331,
+  "ok": true,
+  "cached": false,
+  "model": "gpt-5-mini",
+  "generated_at": "2026-03-01T09:38:34.083053+00:00",
+  "has_script": true,
+  "script_keys": [
+    "checks",
+    "cta_templates",
+    "highlights",
+    "objections",
+    "risk_flags",
+    "script_blocks"
+  ]
+}

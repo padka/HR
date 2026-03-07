@@ -1,0 +1,6 @@
+{
+  "pip_audit_no_known_vulns": true,
+  "npm_high": 0,
+  "npm_critical": 0,
+  "secret_scan_ok": true
+}

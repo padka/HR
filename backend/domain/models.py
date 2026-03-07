@@ -1039,6 +1039,9 @@ class OutboxNotification(Base):
     )
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    messenger_channel: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="telegram"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<OutboxNotification {self.type} booking={self.booking_id} status={self.status}>"

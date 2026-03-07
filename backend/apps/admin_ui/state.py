@@ -435,6 +435,19 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     )
     configure_bot_service(bot_service)
 
+    # Register messenger adapters in admin_ui runtime as well, so operational
+    # flows (e.g. intro-day handoff to Max groups) can publish directly.
+    try:
+        from backend.core.messenger.bootstrap import bootstrap_messenger_adapters
+
+        await bootstrap_messenger_adapters(
+            bot=bot if configured else None,
+            max_bot_enabled=getattr(settings, "max_bot_enabled", False),
+            max_bot_token=getattr(settings, "max_bot_token", ""),
+        )
+    except Exception:
+        logger.exception("Failed to bootstrap messenger adapters in admin_ui runtime")
+
     ready = bot_service.is_ready()
     if not ready:
         if not settings.bot_enabled:

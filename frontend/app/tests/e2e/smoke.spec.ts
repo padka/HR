@@ -2,12 +2,12 @@ import { test, expect } from '@playwright/test';
 
 type SmokeRoute = {
   path: string;
-  heading: string;
+  heading: string | RegExp;
 };
 
 // SPA routes are now at /app/*
 const routes: SmokeRoute[] = [
-  { path: '/app/dashboard', heading: 'Дашборд' },
+  { path: '/app/dashboard', heading: /Дашборд|Входящие/ },
   { path: '/app/slots', heading: 'Слоты' },
   { path: '/app/candidates', heading: 'Кандидаты' },
   { path: '/app/recruiters', heading: 'Рекрутёры' },
