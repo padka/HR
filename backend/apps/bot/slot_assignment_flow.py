@@ -11,12 +11,26 @@ from zoneinfo import ZoneInfo
 
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 
 from backend.apps.bot.backend_client import BackendClient, BackendClientError
 from backend.apps.bot.config import DEFAULT_TZ, TIME_FMT
-from backend.apps.bot.services import get_bot, get_state_manager
+from backend.apps.bot.keyboards import kb_slot_assignment_reschedule_options
+from backend.apps.bot.security import verify_callback_data
+from backend.apps.bot.services import (
+    _format_manual_window_label,
+    _parse_manual_availability_window,
+    get_bot,
+    get_state_manager,
+)
+from backend.core.db import async_session
+from backend.domain.models import Slot, SlotAssignment
+from backend.domain.repositories import get_free_slots_by_recruiter
+from backend.domain.slot_assignment_service import begin_reschedule_request
 
 STATE_WAITING_DATETIME = "waiting_candidate_datetime_input"
+RESCHEDULE_PICK_PREFIX = "slotres:pick:"
+RESCHEDULE_MANUAL_PREFIX = "slotres:manual:"
 
 WORKDAY_START = time(9, 0)
 WORKDAY_END = time(20, 0)
@@ -58,6 +72,67 @@ def _parse_payload(raw: Optional[str]) -> Optional[Dict[str, Any]]:
         "slot_assignment_id": assignment_id_int,
         "action_token": str(token),
     }
+
+
+def _normalize_purpose(value: Optional[str]) -> str:
+    return (value or "interview").strip().lower() or "interview"
+
+
+def _manual_prompt_text() -> str:
+    return (
+        "Напишите желаемую дату и время. Можно указать точный слот или диапазон.\n"
+        "Примеры: «12.03 14:00», «12.03 14:00-18:00», «завтра 10:00-13:00».\n"
+        "Если точное время неизвестно, просто напишите удобный вариант в свободной форме."
+    )
+
+
+async def _get_assignment_context(assignment_id: int) -> tuple[Optional[SlotAssignment], Optional[Slot], list[Slot]]:
+    async with async_session() as session:
+        assignment = await session.scalar(select(SlotAssignment).where(SlotAssignment.id == assignment_id))
+        if assignment is None:
+            return None, None, []
+        slot = await session.scalar(select(Slot).where(Slot.id == assignment.slot_id))
+        if slot is None:
+            return assignment, None, []
+
+    slots = await get_free_slots_by_recruiter(assignment.recruiter_id, city_id=slot.city_id)
+    source_purpose = _normalize_purpose(slot.purpose)
+    alternatives = [
+        item
+        for item in slots
+        if item.id != slot.id and _normalize_purpose(getattr(item, "purpose", None)) == source_purpose
+    ]
+    return assignment, slot, alternatives
+
+
+async def _prompt_manual_entry(
+    *,
+    candidate_id: int,
+    assignment_id: int,
+    action_token: str,
+    candidate_tz: str,
+) -> None:
+    state_manager = get_state_manager()
+    await state_manager.update(
+        candidate_id,
+        {
+            "slot_assignment_state": STATE_WAITING_DATETIME,
+            "slot_assignment_id": assignment_id,
+            "slot_assignment_action_token": action_token,
+            "slot_assignment_candidate_tz": candidate_tz,
+        },
+    )
+    bot = get_bot()
+    await bot.send_message(candidate_id, _manual_prompt_text())
+
+
+async def handle_reschedule_choice_callback(callback: CallbackQuery) -> bool:
+    raw = callback.data or ""
+    if raw.startswith(RESCHEDULE_PICK_PREFIX):
+        return await _handle_reschedule_slot_pick(callback)
+    if raw.startswith(RESCHEDULE_MANUAL_PREFIX):
+        return await _handle_reschedule_manual(callback)
+    return False
 
 
 async def handle_slot_assignment_callback(callback: CallbackQuery) -> bool:
@@ -151,21 +226,65 @@ async def _handle_reschedule_prompt(
     action_token: str,
     candidate_id: int,
 ) -> None:
+    result = await begin_reschedule_request(
+        assignment_id=assignment_id,
+        action_token=action_token,
+        candidate_tg_id=candidate_id,
+    )
+    if not result.ok:
+        await callback.answer(result.message or "Не удалось запросить другое время.", show_alert=True)
+        return
+
+    await callback.answer()
+    try:
+        if callback.message:
+            await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
     state_manager = get_state_manager()
+    state = await state_manager.get(candidate_id) or {}
+    assignment, slot, alternatives = await _get_assignment_context(assignment_id)
+    candidate_tz = (
+        state.get("slot_assignment_candidate_tz")
+        or state.get("candidate_tz")
+        or (assignment.candidate_tz if assignment else None)
+        or (slot.candidate_tz if slot else None)
+        or DEFAULT_TZ
+    )
+
     await state_manager.update(
         candidate_id,
         {
             "slot_assignment_state": STATE_WAITING_DATETIME,
             "slot_assignment_id": assignment_id,
             "slot_assignment_action_token": action_token,
+            "slot_assignment_candidate_tz": candidate_tz,
         },
     )
-    await callback.answer()
+
     bot = get_bot()
+    if alternatives:
+        await bot.send_message(
+            candidate_id,
+            "Могу предложить ближайшие свободные варианты. Если ничего не подходит, нажмите «Написать вручную».",
+            reply_markup=kb_slot_assignment_reschedule_options(
+                assignment_id,
+                candidate_tz=candidate_tz,
+                slots=alternatives,
+            ),
+        )
+        return
+
     await bot.send_message(
         candidate_id,
-        "Введите желаемые дату и время. Можно так: «дд.мм чч:мм», «дд.мм.гггг чч:мм» или просто «чч:мм».\n"
-        f"Например: {datetime.now().strftime(TIME_FMT)}",
+        "Свободных слотов на сейчас не вижу.",
+    )
+    await _prompt_manual_entry(
+        candidate_id=candidate_id,
+        assignment_id=assignment_id,
+        action_token=action_token,
+        candidate_tz=candidate_tz,
     )
 
 
@@ -226,6 +345,136 @@ async def _handle_decline(
     bot = get_bot()
     message_text = data.get("message") if isinstance(data, dict) else None
     await bot.send_message(candidate_id, message_text or "Мы зафиксировали отказ. Спасибо за ответ.")
+
+
+async def _handle_reschedule_manual(callback: CallbackQuery) -> bool:
+    payload = verify_callback_data(callback.data or "", expected_prefix=RESCHEDULE_MANUAL_PREFIX)
+    if not payload:
+        await callback.answer("Ссылка устарела. Нажмите «Другое время» ещё раз.", show_alert=True)
+        return True
+
+    try:
+        assignment_id = int(payload.split(":", 2)[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный запрос.", show_alert=True)
+        return True
+
+    user = callback.from_user
+    if user is None:
+        await callback.answer()
+        return True
+
+    state = await get_state_manager().get(user.id) or {}
+    action_token = state.get("slot_assignment_action_token")
+    if not action_token or int(state.get("slot_assignment_id") or 0) != assignment_id:
+        await callback.answer("Сессия устарела. Запросите перенос ещё раз.", show_alert=True)
+        return True
+
+    await callback.answer()
+    try:
+        if callback.message:
+            await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+    candidate_tz = state.get("slot_assignment_candidate_tz") or state.get("candidate_tz") or DEFAULT_TZ
+    await _prompt_manual_entry(
+        candidate_id=user.id,
+        assignment_id=assignment_id,
+        action_token=action_token,
+        candidate_tz=candidate_tz,
+    )
+    return True
+
+
+async def _handle_reschedule_slot_pick(callback: CallbackQuery) -> bool:
+    payload = verify_callback_data(callback.data or "", expected_prefix=RESCHEDULE_PICK_PREFIX)
+    if not payload:
+        await callback.answer("Ссылка устарела. Нажмите «Другое время» ещё раз.", show_alert=True)
+        return True
+
+    parts = payload.split(":", 3)
+    if len(parts) != 4:
+        await callback.answer("Некорректный запрос.", show_alert=True)
+        return True
+    try:
+        assignment_id = int(parts[2])
+        slot_id = int(parts[3])
+    except ValueError:
+        await callback.answer("Некорректный слот.", show_alert=True)
+        return True
+
+    user = callback.from_user
+    if user is None:
+        await callback.answer()
+        return True
+
+    state_manager = get_state_manager()
+    state = await state_manager.get(user.id) or {}
+    action_token = state.get("slot_assignment_action_token")
+    if not action_token or int(state.get("slot_assignment_id") or 0) != assignment_id:
+        await callback.answer("Сессия устарела. Запросите перенос ещё раз.", show_alert=True)
+        return True
+
+    async with async_session() as session:
+        target_slot = await session.scalar(select(Slot).where(Slot.id == slot_id))
+    if target_slot is None or target_slot.start_utc is None:
+        await callback.answer("Слот не найден. Попробуйте ещё раз.", show_alert=True)
+        return True
+
+    candidate_tz = state.get("slot_assignment_candidate_tz") or state.get("candidate_tz") or DEFAULT_TZ
+    client = BackendClient()
+    if not client.configured:
+        await callback.answer("Сервис временно недоступен", show_alert=True)
+        return True
+
+    try:
+        status, data = await client.post_json(
+            f"/api/slot-assignments/{assignment_id}/request-reschedule",
+            {
+                "action_token": action_token,
+                "candidate_tg_id": user.id,
+                "requested_start_utc": target_slot.start_utc.astimezone(timezone.utc).isoformat(),
+                "requested_tz": candidate_tz,
+                "comment": None,
+            },
+        )
+    except BackendClientError as exc:
+        logger.warning(
+            "slot_assignment.request_reschedule.slot_pick.backend_unavailable assignment_id=%s candidate_tg_id=%s error=%s",
+            assignment_id,
+            user.id,
+            exc,
+        )
+        await callback.answer("Сервис недоступен. Попробуйте позже.", show_alert=True)
+        return True
+
+    if status >= 400:
+        detail = data.get("detail") if isinstance(data, dict) else None
+        await callback.answer(detail or "Не удалось отправить запрос.", show_alert=True)
+        return True
+
+    await state_manager.update(
+        user.id,
+        {
+            "slot_assignment_state": "reschedule_pending",
+            "slot_assignment_id": assignment_id,
+            "slot_assignment_action_token": None,
+        },
+    )
+
+    await callback.answer("Запрос отправлен")
+    try:
+        if callback.message:
+            await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+    await get_bot().send_message(
+        user.id,
+        f"Запросили новое время: {target_slot.start_utc.astimezone(_safe_zone(candidate_tz)).strftime(TIME_FMT)}. Мы сообщим ответ рекрутёра.",
+    )
+    return True
 
 
 def _parse_datetime_input(text: str, tz_name: Optional[str]) -> Optional[datetime]:
@@ -319,21 +568,35 @@ async def handle_datetime_input(message: Message, state: Dict[str, Any]) -> bool
     candidate_id = user.id
     text = (message.text or message.caption or "").strip()
     candidate_tz = state.get("slot_assignment_candidate_tz") or state.get("candidate_tz") or DEFAULT_TZ
-
-    local_dt = _parse_datetime_input(text, candidate_tz)
-    if local_dt is None:
-        await message.answer(
-            "Не удалось распознать дату и время. Пример: «02.02 14:00», "
-            "«02.02.2026 14:00» или просто «14:00»."
-        )
-        return True
-
-    requested_utc = local_dt.astimezone(timezone.utc)
     assignment_id = state.get("slot_assignment_id")
     action_token = state.get("slot_assignment_action_token")
     if not assignment_id or not action_token:
         await message.answer("Сессия устарела. Запросите новое время через кнопку.")
         return True
+
+    local_dt = _parse_datetime_input(text, candidate_tz)
+    window_start_local = None
+    window_end_local = None
+    requested_start_utc = None
+    requested_end_utc = None
+    comment = None
+    requested_summary = None
+
+    if local_dt is not None:
+        requested_start_utc = local_dt.astimezone(timezone.utc)
+        requested_summary = local_dt.strftime(TIME_FMT)
+    else:
+        window_start_local, window_end_local = _parse_manual_availability_window(text, candidate_tz)
+        if window_start_local and window_end_local:
+            requested_start_utc = window_start_local.astimezone(timezone.utc)
+            requested_end_utc = window_end_local.astimezone(timezone.utc)
+            requested_summary = _format_manual_window_label(
+                window_start_local,
+                window_end_local,
+                candidate_tz,
+            )
+        else:
+            comment = text or None
 
     client = BackendClient()
     if not client.configured:
@@ -346,9 +609,10 @@ async def handle_datetime_input(message: Message, state: Dict[str, Any]) -> bool
             {
                 "action_token": action_token,
                 "candidate_tg_id": candidate_id,
-                "requested_start_utc": requested_utc.isoformat(),
+                "requested_start_utc": requested_start_utc.isoformat() if requested_start_utc else None,
+                "requested_end_utc": requested_end_utc.isoformat() if requested_end_utc else None,
                 "requested_tz": candidate_tz,
-                "comment": None,
+                "comment": comment,
             },
         )
     except BackendClientError as exc:
@@ -398,5 +662,8 @@ async def handle_datetime_input(message: Message, state: Dict[str, Any]) -> bool
         },
     )
 
-    await message.answer("Запрос отправлен рекрутёру. Мы сообщим ответ.")
+    if requested_summary:
+        await message.answer(f"Запрос отправлен рекрутёру: {requested_summary}. Мы сообщим ответ.")
+    else:
+        await message.answer("Запрос отправлен рекрутёру. Мы передали ваше пожелание и сообщим ответ.")
     return True

@@ -23,8 +23,9 @@ class ActionPayload(BaseModel):
     candidate_tg_id: int
 
 class ReschedulePayload(ActionPayload):
-    requested_start_utc: datetime
-    requested_tz: str
+    requested_start_utc: datetime | None = None
+    requested_end_utc: datetime | None = None
+    requested_tz: str | None = None
     comment: str | None = None
 
 async def _validate_token(session, token: str, actions: set[str], entity_id: int) -> bool:
@@ -169,12 +170,22 @@ async def confirm_assignment(assignment_id: int, payload: ActionPayload):
 
 @router.post("/{assignment_id}/request-reschedule")
 async def request_reschedule(assignment_id: int, payload: ReschedulePayload):
-    requested_start = ensure_aware_utc(payload.requested_start_utc)
+    requested_start = (
+        ensure_aware_utc(payload.requested_start_utc)
+        if payload.requested_start_utc is not None
+        else None
+    )
+    requested_end = (
+        ensure_aware_utc(payload.requested_end_utc)
+        if payload.requested_end_utc is not None
+        else None
+    )
     result = await request_reschedule_service(
         assignment_id=assignment_id,
         action_token=payload.action_token,
         candidate_tg_id=payload.candidate_tg_id,
         requested_start_utc=requested_start,
+        requested_end_utc=requested_end,
         requested_tz=payload.requested_tz,
         comment=payload.comment,
     )
@@ -188,11 +199,13 @@ async def request_reschedule(assignment_id: int, payload: ReschedulePayload):
         assignment = await session.get(SlotAssignment, assignment_id)
         slot = await session.get(Slot, assignment.slot_id) if assignment else None
     if assignment and slot and payload.candidate_tg_id:
-        duration = slot.duration_min or 30
+        window_end = requested_end
+        if window_end is None and requested_start is not None:
+            window_end = requested_start + timedelta(minutes=slot.duration_min or 30)
         await save_manual_slot_response(
             payload.candidate_tg_id,
             window_start=requested_start,
-            window_end=requested_start + timedelta(minutes=duration),
+            window_end=window_end,
             note=payload.comment,
             timezone_label=payload.requested_tz,
         )

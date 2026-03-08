@@ -169,6 +169,14 @@ async def free_text(message: Message) -> None:
         logger.warning("free text received without user", extra={"has_user": True})
         return
 
+    # Check if recruiter is in messaging mode (before candidate state checks)
+    from .. import recruiter_service
+    try:
+        if message.text and await recruiter_service.handle_recruiter_free_text(user_id, message.text):
+            return
+    except Exception:
+        logger.debug("recruiter free text check failed", exc_info=True)
+
     state_manager = services.get_state_manager()
 
     try:

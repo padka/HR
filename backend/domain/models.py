@@ -653,8 +653,11 @@ class RescheduleRequest(Base):
     slot_assignment_id: Mapped[int] = mapped_column(
         ForeignKey("slot_assignments.id", ondelete="CASCADE"), nullable=False
     )
-    requested_start_utc: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+    requested_start_utc: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    requested_end_utc: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     requested_tz: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     candidate_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

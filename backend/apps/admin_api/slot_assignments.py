@@ -26,7 +26,8 @@ class SlotAssignmentConfirmRequest(BaseModel):
 class SlotAssignmentRescheduleRequest(BaseModel):
     action_token: str = Field(..., min_length=6, max_length=128)
     candidate_tg_id: Optional[int] = None
-    requested_start_utc: datetime
+    requested_start_utc: Optional[datetime] = None
+    requested_end_utc: Optional[datetime] = None
     requested_tz: Optional[str] = None
     comment: Optional[str] = None
 
@@ -59,12 +60,14 @@ async def api_request_reschedule(
     assignment_id: int,
     payload: SlotAssignmentRescheduleRequest,
 ):
-    requested_start = ensure_aware_utc(payload.requested_start_utc)
+    requested_start = ensure_aware_utc(payload.requested_start_utc) if payload.requested_start_utc else None
+    requested_end = ensure_aware_utc(payload.requested_end_utc) if payload.requested_end_utc else None
     result = await request_reschedule(
         assignment_id=assignment_id,
         action_token=payload.action_token,
         candidate_tg_id=payload.candidate_tg_id,
         requested_start_utc=requested_start,
+        requested_end_utc=requested_end,
         requested_tz=payload.requested_tz,
         comment=payload.comment,
     )

@@ -41,7 +41,7 @@ test('mobile shell navigation and layout smoke', async ({ page }) => {
   await expect(candidateCards.or(candidatesEmpty)).toBeVisible()
 
   await page.getByRole('link', { name: 'Чаты' }).click()
-  await expect(page.getByRole('heading', { name: 'Мессенджер RecruitSmart' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Чаты с кандидатами' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Ещё' }).click()
   await expect(page.getByRole('dialog', { name: 'Ещё разделы' })).toBeVisible()

@@ -85,6 +85,8 @@ export type IncomingCandidate = {
   requested_another_time?: boolean
   requested_another_time_at?: string | null
   requested_another_time_comment?: string | null
+  requested_another_time_from?: string | null
+  requested_another_time_to?: string | null
   incoming_substatus?: string | null
 }
 

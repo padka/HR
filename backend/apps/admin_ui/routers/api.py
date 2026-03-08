@@ -45,6 +45,11 @@ from backend.apps.admin_ui.services.chat import (
     retry_chat_message,
     send_chat_message,
 )
+from backend.apps.admin_ui.services.candidate_chat_threads import (
+    list_threads as list_candidate_chat_threads,
+    mark_read as mark_candidate_chat_read,
+    wait_for_thread_updates as wait_candidate_chat_updates,
+)
 from backend.apps.admin_ui.services.dashboard import (
     WAITING_CANDIDATES_DEFAULT_LIMIT,
     dashboard_counts,
@@ -330,6 +335,48 @@ class CalendarTaskUpdatePayload(BaseModel):
 @router.get("/staff/threads")
 async def api_staff_threads(principal: Principal = Depends(require_principal)) -> JSONResponse:
     return JSONResponse(await staff_list_threads(principal))
+
+
+@router.get("/candidate-chat/threads")
+async def api_candidate_chat_threads(
+    search: Optional[str] = Query(default=None),
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=200),
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    payload = await list_candidate_chat_threads(
+        principal,
+        search=search,
+        unread_only=unread_only,
+        limit=limit,
+    )
+    return JSONResponse(jsonable_encoder(payload))
+
+
+@router.get("/candidate-chat/threads/updates")
+async def api_candidate_chat_threads_updates(
+    since: Optional[str] = Query(default=None),
+    timeout: int = Query(default=25, ge=5, le=60),
+    limit: int = Query(default=100, ge=1, le=200),
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    since_dt = _parse_datetime_param(since)
+    payload = await wait_candidate_chat_updates(
+        principal,
+        since=since_dt,
+        timeout=timeout,
+        limit=limit,
+    )
+    return JSONResponse(jsonable_encoder(payload))
+
+
+@router.post("/candidate-chat/threads/{candidate_id}/read")
+async def api_candidate_chat_mark_read(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    await mark_candidate_chat_read(candidate_id, principal)
+    return JSONResponse({"ok": True})
 
 
 @router.post("/staff/threads")
@@ -990,9 +1037,6 @@ async def api_slot_reschedule(
         if not dt_utc:
             return JSONResponse({"ok": False, "error": "invalid_datetime", "message": "Некорректная дата/время"}, status_code=400)
 
-        slot.start_utc = dt_utc
-        slot.status = SlotStatus.PENDING
-
         candidate = None
         if getattr(slot, "candidate_id", None):
             candidate = await session.scalar(select(User).where(User.candidate_id == slot.candidate_id))
@@ -1014,6 +1058,61 @@ async def api_slot_reschedule(
 
         now = datetime.now(timezone.utc)
         active_statuses = ("offered", "confirmed", "reschedule_requested", "reschedule_confirmed")
+        target_slot = slot
+        purpose_key = (getattr(slot, "purpose", None) or "interview").strip().lower()
+        existing_target_slot = await session.scalar(
+            select(Slot)
+            .where(
+                Slot.recruiter_id == slot.recruiter_id,
+                Slot.id != slot.id,
+                Slot.start_utc == dt_utc,
+                func.lower(func.coalesce(Slot.purpose, "interview")) == purpose_key,
+                Slot.status != SlotStatus.CANCELED,
+            )
+        )
+        if existing_target_slot is not None:
+            existing_target_assignment = await session.scalar(
+                select(SlotAssignment)
+                .where(
+                    SlotAssignment.slot_id == existing_target_slot.id,
+                    SlotAssignment.status.in_(active_statuses),
+                )
+            )
+            candidate_conflict = (
+                existing_target_slot.candidate_id not in (None, candidate_id)
+                or existing_target_slot.candidate_tg_id not in (None, candidate_tg_id)
+            )
+            assignment_conflict = existing_target_assignment is not None and (
+                existing_target_assignment.candidate_id not in (None, candidate_id)
+                or existing_target_assignment.candidate_tg_id not in (None, candidate_tg_id)
+            )
+            if candidate_conflict or assignment_conflict:
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": "target_slot_conflict",
+                        "message": "На выбранное время уже есть другой слот рекрутёра.",
+                    },
+                    status_code=409,
+                )
+            target_slot = existing_target_slot
+            target_slot.status = SlotStatus.PENDING
+            target_slot.candidate_id = candidate_id
+            target_slot.candidate_tg_id = candidate_tg_id
+            target_slot.candidate_fio = candidate.fio
+            target_slot.candidate_tz = getattr(slot, "candidate_tz", None) or slot_tz
+            target_slot.candidate_city_id = getattr(slot, "candidate_city_id", None)
+
+            slot.status = SlotStatus.FREE
+            slot.candidate_id = None
+            slot.candidate_tg_id = None
+            slot.candidate_fio = None
+            slot.candidate_tz = None
+            slot.candidate_city_id = None
+        else:
+            slot.start_utc = dt_utc
+            slot.status = SlotStatus.PENDING
+
         assignment = await session.scalar(
             select(SlotAssignment)
             .where(SlotAssignment.candidate_id == candidate_id)
@@ -1021,19 +1120,19 @@ async def api_slot_reschedule(
         )
         if assignment is None:
             assignment = SlotAssignment(
-                slot_id=slot.id,
-                recruiter_id=slot.recruiter_id,
+                slot_id=target_slot.id,
+                recruiter_id=target_slot.recruiter_id,
                 candidate_id=candidate_id,
                 candidate_tg_id=candidate_tg_id,
-                candidate_tz=getattr(slot, "candidate_tz", None) or slot_tz,
+                candidate_tz=getattr(target_slot, "candidate_tz", None) or slot_tz,
                 status="offered",
                 offered_at=now,
             )
             session.add(assignment)
             await session.flush()
         else:
-            assignment.slot_id = slot.id
-            assignment.recruiter_id = slot.recruiter_id
+            assignment.slot_id = target_slot.id
+            assignment.recruiter_id = target_slot.recruiter_id
             assignment.status = "offered"
             assignment.offered_at = now
             assignment.confirmed_at = None
@@ -1060,14 +1159,25 @@ async def api_slot_reschedule(
             expires_at=expires_at,
         )
         session.add_all([confirm_token, reschedule_token, decline_token])
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "slot_overlap",
+                    "message": "На выбранное время уже есть пересекающийся слот рекрутёра.",
+                },
+                status_code=409,
+            )
         assignment_id = assignment.id
         confirm_token_value = confirm_token.token
         reschedule_token_value = reschedule_token.token
         decline_token_value = decline_token.token
 
     reason = sanitize_plain_text(payload.reason or "", max_length=400)
-    candidate_tz = getattr(slot, "candidate_tz", None) or slot_tz
+    candidate_tz = getattr(target_slot, "candidate_tz", None) or slot_tz
     recruiter_time = _format_time_for_message(dt_utc, slot_tz)
     candidate_time = _format_time_for_message(dt_utc, candidate_tz)
     lines = [
@@ -1816,7 +1926,9 @@ async def api_chat_send(
         )
     text = sanitize_plain_text(raw_text, max_length=2000)
     client_request_id = data.get("client_request_id") or None
-    author_label = getattr(request.state, "admin_username", None) or "admin"
+    author_label = getattr(request.state, "admin_username", None)
+    if not author_label:
+        author_label = "Администратор" if principal.type == "admin" else "Рекрутер"
 
     result = await send_chat_message(
         candidate_id,

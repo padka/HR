@@ -101,6 +101,14 @@ export type CandidateDetail = {
   telemost_url?: string | null
   telemost_source?: string | null
   responsible_recruiter?: { id?: number | null; name?: string | null } | null
+  reschedule_request?: {
+    requested_at?: string | null
+    requested_start_utc?: string | null
+    requested_end_utc?: string | null
+    requested_tz?: string | null
+    candidate_comment?: string | null
+    source?: string | null
+  } | null
   candidate_actions?: CandidateAction[]
   allowed_next_statuses?: Array<{ slug: string; label: string; color?: string; is_terminal?: boolean }>
   pipeline_stages?: Array<{ key: string; label: string; state?: string }>
@@ -361,6 +369,12 @@ export function sendCandidateChatMessage(candidateId: number, text: string, clie
   return apiFetch(`/candidates/${candidateId}/chat`, {
     method: 'POST',
     body: JSON.stringify({ text, client_request_id: clientRequestId }),
+  })
+}
+
+export function markCandidateChatRead(candidateId: number) {
+  return apiFetch(`/candidate-chat/threads/${candidateId}/read`, {
+    method: 'POST',
   })
 }
 

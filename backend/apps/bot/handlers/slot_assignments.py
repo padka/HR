@@ -15,3 +15,10 @@ async def handle_slot_assignment_callback(callback: CallbackQuery) -> None:
     handled = await slot_assignment_flow.handle_slot_assignment_callback(callback)
     if not handled:
         await callback.answer()
+
+
+@router.callback_query(F.data.startswith("slotres:"))
+async def handle_slot_assignment_reschedule_choice(callback: CallbackQuery) -> None:
+    handled = await slot_assignment_flow.handle_reschedule_choice_callback(callback)
+    if not handled:
+        await callback.answer()

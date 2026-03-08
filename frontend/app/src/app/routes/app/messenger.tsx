@@ -1,48 +1,17 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { queryClient } from '@/api/client'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+
 import {
-  acceptStaffCandidateTask,
-  addStaffThreadMembers,
-  createStaffThread,
-  declineStaffCandidateTask,
-  fetchRecruiters,
-  fetchStaffThreadMessages,
-  fetchStaffThreads,
-  fetchStaffThreadUpdates,
-  markStaffThreadRead,
-  removeStaffThreadMember,
-  searchMessengerCandidates,
-  sendStaffThreadCandidate,
-  sendStaffThreadMessage,
-  type CandidateListPayload,
-  type MessageItem,
-  type MessagesPayload,
-  type RecruiterOption,
-  type ThreadItem,
-  type ThreadMember,
-  type ThreadsPayload,
+  fetchCandidateChatMessages,
+  fetchCandidateChatThreads,
+  markCandidateChatThreadRead,
+  sendCandidateThreadMessage,
+  type CandidateChatMessage,
+  type CandidateChatPayload,
+  type CandidateChatThread,
+  type CandidateChatThreadsPayload,
 } from '@/api/services/messenger'
-import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
-
-const formatBytes = (size?: number | null) => {
-  if (!size) return ''
-  const units = ['Б', 'КБ', 'МБ', 'ГБ']
-  let value = size
-  let idx = 0
-  while (value >= 1024 && idx < units.length - 1) {
-    value /= 1024
-    idx += 1
-  }
-  return `${value.toFixed(value >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`
-}
-
-const formatTime = (value?: string | null) => {
-  if (!value) return ''
-  return new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-}
 
 const formatThreadTime = (value?: string | null) => {
   if (!value) return ''
@@ -54,581 +23,275 @@ const formatThreadTime = (value?: string | null) => {
     : dt.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
 }
 
-const previewText = (thread?: ThreadItem) => {
+const formatMessageTime = (value?: string | null) => {
+  if (!value) return ''
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+const previewText = (thread?: CandidateChatThread) => {
   const last = thread?.last_message
   if (!last) return 'Нет сообщений'
-  if (last.type === 'candidate_task') return 'Передан кандидат'
-  if (last.type === 'system') return last.text || 'Системное сообщение'
-  return last.text || 'Сообщение'
+  return (last.text || '').trim() || 'Сообщение'
 }
 
-const messageStatusLabel = (msg: MessageItem) => {
-  const total = msg.read_by_total || 0
-  const read = msg.read_by_count || 0
-  if (total === 0) return ''
-  if (read >= total) return 'Прочитано'
-  if (read > 0) return `Прочитано ${read}/${total}`
-  return 'Не прочитано'
+const messageAuthorLabel = (message: CandidateChatMessage) => {
+  if (message.direction === 'inbound') return message.author || 'Кандидат'
+  if ((message.author || '').trim().toLowerCase() === 'bot') return 'Бот'
+  return 'Вы'
 }
 
-function ModalPortal({ children }: { children: ReactNode }) {
-  if (typeof document === 'undefined') return null
-  return createPortal(children, document.body)
+const readThreadCache = (
+  payload: CandidateChatThreadsPayload | undefined,
+  candidateId: number,
+): CandidateChatThreadsPayload | undefined => {
+  if (!payload) return payload
+  return {
+    ...payload,
+    threads: (payload.threads || []).map((thread) =>
+      thread.candidate_id === candidateId ? { ...thread, unread_count: 0 } : thread,
+    ),
+  }
 }
 
 export function MessengerPage() {
-  const profile = useProfile()
   const isMobile = useIsMobile()
-  const principalType = profile.data?.principal.type
-  const principalId = profile.data?.principal.id
-  const isAdmin = principalType === 'admin'
-
-  const [activeThreadId, setActiveThreadId] = useState<number | null>(null)
-  const [messageText, setMessageText] = useState('')
-  const [files, setFiles] = useState<File[]>([])
-  const [sendError, setSendError] = useState<string | null>(null)
-  const [newChatTarget, setNewChatTarget] = useState('')
-  const [groupTitle, setGroupTitle] = useState('')
-  const [groupMembers, setGroupMembers] = useState<number[]>([])
-  const [memberSelection, setMemberSelection] = useState<number[]>([])
+  const queryClient = useQueryClient()
+  const [activeCandidateId, setActiveCandidateId] = useState<number | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [toast, setToast] = useState<{ tone: 'success' | 'error' | 'warning'; message: string } | null>(null)
-  const [showMembersModal, setShowMembersModal] = useState(false)
-  const [showCandidateModal, setShowCandidateModal] = useState(false)
-  const [candidateSearch, setCandidateSearch] = useState('')
-  const [candidateNote, setCandidateNote] = useState('')
-  const [taskDeclineTarget, setTaskDeclineTarget] = useState<MessageItem | null>(null)
-  const [taskDeclineComment, setTaskDeclineComment] = useState('')
+  const [messageText, setMessageText] = useState('')
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>(() => {
+    if (typeof Notification === 'undefined') return 'unsupported'
+    return Notification.permission
+  })
+  const messagesRef = useRef<HTMLDivElement | null>(null)
 
-  const showToast = (message: string, tone: 'success' | 'error' | 'warning' = 'success') => {
+  const showToast = (message: string, tone: 'success' | 'error' = 'success') => {
     setToast({ message, tone })
-    window.clearTimeout((showToast as any)._t)
-    ;(showToast as any)._t = window.setTimeout(() => setToast(null), 2400)
+    window.clearTimeout((showToast as { _timer?: number })._timer)
+    ;(showToast as { _timer?: number })._timer = window.setTimeout(() => setToast(null), 2200)
   }
 
-  const threadsQuery = useQuery<ThreadsPayload>({
-    queryKey: ['staff-threads'],
-    queryFn: fetchStaffThreads,
+  const threadsQuery = useQuery<CandidateChatThreadsPayload>({
+    queryKey: ['candidate-chat-threads'],
+    queryFn: fetchCandidateChatThreads,
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
   })
-
-  const recruitersQuery = useQuery<RecruiterOption[]>({
-    queryKey: ['recruiters'],
-    queryFn: fetchRecruiters,
-    enabled: Boolean(isAdmin),
-    staleTime: 60_000,
-  })
-
-  const activeThread = useMemo(
-    () => threadsQuery.data?.threads.find((t) => t.id === activeThreadId) || null,
-    [threadsQuery.data, activeThreadId],
-  )
-
-  const messagesQuery = useQuery<MessagesPayload>({
-    queryKey: ['staff-messages', activeThreadId],
-    queryFn: () => fetchStaffThreadMessages(activeThreadId as number, 80),
-    enabled: Boolean(activeThreadId),
-  })
-
-  const candidateSearchQuery = useQuery<CandidateListPayload>({
-    queryKey: ['candidate-search', candidateSearch],
-    queryFn: () => searchMessengerCandidates(candidateSearch, 8),
-    enabled: showCandidateModal && candidateSearch.trim().length > 1,
-    staleTime: 10_000,
-  })
-
-  const markReadMutation = useMutation({
-    mutationFn: markStaffThreadRead,
-  })
-  const markThreadRead = markReadMutation.mutate
-
-  const sendMutation = useMutation({
-    mutationFn: async () => {
-      if (!activeThreadId) throw new Error('Выберите чат')
-      const text = messageText.trim()
-      if (!text && files.length === 0) throw new Error('Сообщение пустое')
-
-      if (files.length > 0) {
-        const form = new FormData()
-        if (text) form.append('text', text)
-        files.forEach((file) => form.append('files', file))
-        return sendStaffThreadMessage(activeThreadId, form)
-      }
-
-      return sendStaffThreadMessage(activeThreadId, { text })
-    },
-    onSuccess: (data: MessageItem) => {
-      setMessageText('')
-      setFiles([])
-      setSendError(null)
-      queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) => {
-        if (!prev) return prev
-        const existing = prev.messages.find((msg) => msg.id === data.id)
-        const messages = existing ? prev.messages : [...prev.messages, data]
-        return { ...prev, messages }
-      })
-      threadsQuery.refetch()
-    },
-    onError: (err) => {
-      const raw = (err as Error).message || 'Ошибка отправки'
-      try {
-        const parsed = JSON.parse(raw)
-        if (parsed?.detail?.message) {
-          setSendError(parsed.detail.message)
-          return
-        }
-        if (parsed?.detail) {
-          setSendError(typeof parsed.detail === 'string' ? parsed.detail : raw)
-          return
-        }
-      } catch {
-        // ignore JSON parse errors
-      }
-      setSendError(raw)
-    },
-  })
-
-  const createThreadMutation = useMutation({
-    mutationFn: createStaffThread,
-    onSuccess: (data: any) => {
-      threadsQuery.refetch()
-      setActiveThreadId(data?.id || null)
-      setNewChatTarget('')
-      setGroupTitle('')
-      setGroupMembers([])
-    },
-  })
-
-  const addMembersMutation = useMutation({
-    mutationFn: async (memberIds: number[]) => {
-      if (!activeThreadId) throw new Error('Чат не выбран')
-      return addStaffThreadMembers(activeThreadId, memberIds)
-    },
-    onSuccess: (data: { members: ThreadMember[] }) => {
-      queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) =>
-        prev ? { ...prev, members: data.members } : prev,
-      )
-      setMemberSelection([])
-      showToast('Участники добавлены', 'success')
-    },
-    onError: () => showToast('Не удалось обновить участников', 'error'),
-  })
-
-  const removeMemberMutation = useMutation({
-    mutationFn: async (member: ThreadMember) => {
-      if (!activeThreadId) throw new Error('Чат не выбран')
-      return removeStaffThreadMember(activeThreadId, member)
-    },
-    onSuccess: (data: { members: ThreadMember[] }) => {
-      queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) =>
-        prev ? { ...prev, members: data.members } : prev,
-      )
-      showToast('Участник удалён', 'warning')
-    },
-    onError: () => showToast('Не удалось удалить участника', 'error'),
-  })
-
-  const sendCandidateMutation = useMutation({
-    mutationFn: async (candidateId: number) => {
-      if (!activeThreadId) throw new Error('Чат не выбран')
-      return sendStaffThreadCandidate(activeThreadId, candidateId, candidateNote.trim() || null)
-    },
-    onSuccess: (data: MessageItem) => {
-      queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) => {
-        if (!prev) return prev
-        return { ...prev, messages: [...prev.messages, data] }
-      })
-      setCandidateNote('')
-      setCandidateSearch('')
-      setShowCandidateModal(false)
-      showToast('Кандидат передан', 'success')
-      threadsQuery.refetch()
-    },
-    onError: () => showToast('Не удалось отправить кандидата', 'error'),
-  })
-
-  const acceptTaskMutation = useMutation({
-    mutationFn: acceptStaffCandidateTask,
-    onSuccess: (data: MessageItem) => {
-      queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) => {
-        if (!prev) return prev
-        const messages = prev.messages.map((msg) => (msg.id === data.id ? data : msg))
-        return { ...prev, messages }
-      })
-      showToast('Кандидат принят', 'success')
-    },
-    onError: () => showToast('Не удалось принять кандидата', 'error'),
-  })
-
-  const declineTaskMutation = useMutation({
-    mutationFn: ({ messageId, comment }: { messageId: number; comment: string }) =>
-      declineStaffCandidateTask(messageId, comment),
-    onSuccess: (data: MessageItem) => {
-      queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) => {
-        if (!prev) return prev
-        const messages = prev.messages.map((msg) => (msg.id === data.id ? data : msg))
-        return { ...prev, messages }
-      })
-      setTaskDeclineTarget(null)
-      setTaskDeclineComment('')
-      showToast('Передача отклонена', 'warning')
-    },
-    onError: () => showToast('Не удалось отклонить задачу', 'error'),
-  })
-
-  useEffect(() => {
-    if (activeThreadId) {
-      markThreadRead(activeThreadId)
-    }
-  }, [activeThreadId, markThreadRead])
-
-  useEffect(() => {
-    setMemberSelection([])
-  }, [activeThreadId])
-
-  useEffect(() => {
-    if (!activeThreadId) return
-    let isActive = true
-    let since = messagesQuery.data?.latest_activity_at || messagesQuery.data?.latest_message_at || new Date().toISOString()
-    let controller: AbortController | null = null
-
-    const loop = async () => {
-      while (isActive) {
-        controller = new AbortController()
-        try {
-          const params = new URLSearchParams()
-          if (since) params.set('since', since)
-          params.set('timeout', '25')
-          const payload = await fetchStaffThreadUpdates(activeThreadId, params.toString(), controller.signal)
-          if (payload.updated) {
-            queryClient.setQueryData(['staff-messages', activeThreadId], (prev?: MessagesPayload) => {
-              if (!prev) return prev
-              const merged = [...prev.messages]
-              payload.messages?.forEach((incoming) => {
-                const idx = merged.findIndex((msg) => msg.id === incoming.id)
-                if (idx >= 0) merged[idx] = incoming
-                else merged.push(incoming)
-              })
-              merged.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-              return {
-                ...prev,
-                messages: merged,
-                members: payload.members || prev.members,
-                latest_activity_at: payload.latest_activity_at || prev.latest_activity_at,
-                latest_message_at: payload.latest_message_at || prev.latest_message_at,
-              }
-            })
-            if (payload.latest_activity_at) {
-              since = payload.latest_activity_at
-            }
-            const hasIncoming = payload.messages?.some((msg) => msg.sender_type !== principalType)
-            if (hasIncoming && activeThreadId) {
-              markThreadRead(activeThreadId)
-            }
-          }
-          if (payload.latest_activity_at) {
-            since = payload.latest_activity_at
-          }
-        } catch (err) {
-          if ((err as Error).name !== 'AbortError') {
-            await new Promise((resolve) => setTimeout(resolve, 1200))
-          }
-        }
-      }
-    }
-
-    loop()
-    return () => {
-      isActive = false
-      controller?.abort()
-    }
-  }, [activeThreadId, messagesQuery.data?.latest_activity_at, messagesQuery.data?.latest_message_at, markThreadRead, principalType])
-
-  const handleCreateDirect = () => {
-    if (!newChatTarget) return
-    createThreadMutation.mutate({
-      type: 'direct',
-      members: [{ type: 'recruiter', id: Number(newChatTarget) }],
-    })
-  }
-
-  const handleCreateGroup = () => {
-    if (!groupTitle.trim() || groupMembers.length === 0) return
-    createThreadMutation.mutate({
-      type: 'group',
-      title: groupTitle.trim(),
-      members: groupMembers.map((id) => ({ type: 'recruiter', id })),
-    })
-  }
-
-  const handleAdminChat = () => {
-    createThreadMutation.mutate({
-      type: 'direct',
-      members: [{ type: 'admin', id: -1 }],
-    })
-  }
 
   const filteredThreads = useMemo(() => {
     const term = searchQuery.trim().toLowerCase()
-    if (!term) return threadsQuery.data?.threads || []
-    return (threadsQuery.data?.threads || []).filter((thread) =>
-      [thread.title, previewText(thread)].some((val) => (val || '').toLowerCase().includes(term)),
+    const threads = threadsQuery.data?.threads || []
+    if (!term) return threads
+    return threads.filter((thread) =>
+      [thread.title, thread.city, thread.telegram_username, previewText(thread)]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term)),
     )
-  }, [threadsQuery.data?.threads, searchQuery])
+  }, [searchQuery, threadsQuery.data?.threads])
 
-  const members = messagesQuery.data?.members || []
-  const recruiterMembers = members.filter((m) => m.type === 'recruiter' && !m.is_placeholder)
-  const visibleMembers = members.filter(
-    (m) => !m.is_placeholder && !(m.type === principalType && m.id === principalId),
-  )
-  const memberNames = visibleMembers.map((m) => m.name || (m.type === 'admin' ? 'Администратор' : 'Участник'))
-  const memberSummary = memberNames.length > 0 ? memberNames.slice(0, 2).join(', ') : 'Администратор'
-  const memberSuffix = memberNames.length > 2 ? ` и ещё ${memberNames.length - 2}` : ''
+  useEffect(() => {
+    if (activeCandidateId || !filteredThreads.length) return
+    setActiveCandidateId(filteredThreads[0].candidate_id)
+  }, [activeCandidateId, filteredThreads])
 
-  const availableRecruiters = (recruitersQuery.data || []).filter(
-    (rec) => !recruiterMembers.some((m) => m.id === rec.id),
+  useEffect(() => {
+    if (!activeCandidateId) return
+    if (filteredThreads.some((thread) => thread.candidate_id === activeCandidateId)) return
+    setActiveCandidateId(filteredThreads[0]?.candidate_id ?? null)
+  }, [activeCandidateId, filteredThreads])
+
+  const activeThread = useMemo(
+    () => threadsQuery.data?.threads.find((thread) => thread.candidate_id === activeCandidateId) || null,
+    [activeCandidateId, threadsQuery.data?.threads],
   )
+
+  const messagesQuery = useQuery<CandidateChatPayload>({
+    queryKey: ['candidate-chat', activeCandidateId],
+    queryFn: () => fetchCandidateChatMessages(activeCandidateId as number, 80),
+    enabled: Boolean(activeCandidateId),
+    refetchInterval: activeCandidateId ? 3000 : false,
+    refetchOnWindowFocus: Boolean(activeCandidateId),
+  })
+
+  const chatMessages = useMemo(
+    () => ((messagesQuery.data?.messages || []).slice().reverse()),
+    [messagesQuery.data?.messages],
+  )
+
+  const markReadMutation = useMutation({
+    mutationFn: markCandidateChatThreadRead,
+    onSuccess: (_data, candidateId) => {
+      queryClient.setQueryData<CandidateChatThreadsPayload>(
+        ['candidate-chat-threads'],
+        (prev) => readThreadCache(prev, candidateId),
+      )
+    },
+  })
+  const markThreadRead = markReadMutation.mutate
+
+  useEffect(() => {
+    if (!activeCandidateId) return
+    if (!activeThread?.unread_count) return
+    markThreadRead(activeCandidateId)
+  }, [activeCandidateId, activeThread?.unread_count, markThreadRead])
+
+  useEffect(() => {
+    const container = messagesRef.current
+    if (!container) return
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight
+    })
+  }, [chatMessages.length, activeCandidateId])
+
+  const sendMutation = useMutation({
+    mutationFn: async (text: string) => {
+      if (!activeCandidateId) throw new Error('Выберите чат')
+      return sendCandidateThreadMessage(activeCandidateId, {
+        text,
+        client_request_id: String(Date.now()),
+      })
+    },
+    onSuccess: async () => {
+      setMessageText('')
+      setSendError(null)
+      await Promise.all([
+        messagesQuery.refetch(),
+        threadsQuery.refetch(),
+      ])
+    },
+    onError: (error: unknown) => {
+      setSendError((error as Error).message || 'Не удалось отправить сообщение')
+    },
+  })
+
+  const handleEnableNotifications = async () => {
+    if (typeof Notification === 'undefined') return
+    try {
+      const permission = await Notification.requestPermission()
+      setNotificationPermission(permission)
+      showToast(
+        permission === 'granted' ? 'Системные уведомления включены' : 'Системные уведомления недоступны',
+        permission === 'granted' ? 'success' : 'error',
+      )
+    } catch {
+      setNotificationPermission('denied')
+      showToast('Не удалось включить системные уведомления', 'error')
+    }
+  }
 
   return (
-    <div className={`page app-page app-page--ops messenger-page ${isMobile && activeThreadId ? 'is-mobile-chat-open' : ''}`}>
+    <div className={`page app-page app-page--ops messenger-page ${isMobile && activeCandidateId ? 'is-mobile-chat-open' : ''}`}>
       <header className="glass panel messenger-header app-page__hero">
         <div>
-          <h1 className="title title--lg">Мессенджер RecruitSmart</h1>
-          <p className="subtitle">Командные чаты и передача кандидатов внутри системы.</p>
+          <h1 className="title title--lg">Чаты с кандидатами</h1>
+          <p className="subtitle">Здесь отображаются ответы кандидатов и история переписки по Telegram.</p>
         </div>
-        {!isAdmin && (
-          <button className="ui-btn ui-btn--primary" onClick={handleAdminChat}>
-            Написать администратору
+        <div className="ui-section-header__actions">
+          {notificationPermission === 'default' && (
+            <button className="ui-btn ui-btn--ghost" onClick={handleEnableNotifications}>
+              Включить системные уведомления
+            </button>
+          )}
+          <button className="ui-btn ui-btn--primary" onClick={() => threadsQuery.refetch()}>
+            Обновить
           </button>
-        )}
+        </div>
       </header>
 
       <div className="messenger-layout">
-        <aside className="glass panel messenger-sidebar app-page__section" aria-label="Список чатов">
+        <aside className="glass panel messenger-sidebar app-page__section" aria-label="Чаты кандидатов">
           <div className="messenger-sidebar__header app-page__section-head">
             <div>
-              <h2 className="section-title">Чаты</h2>
-              <p className="subtitle">{threadsQuery.data?.threads.length || 0} активных</p>
+              <h2 className="section-title">Диалоги</h2>
+              <p className="subtitle">{threadsQuery.data?.threads.length || 0} кандидатов</p>
             </div>
-            <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => threadsQuery.refetch()}>
-              Обновить
-            </button>
           </div>
           <div className="messenger-sidebar__search">
             <input
-              placeholder="Поиск чатов"
+              placeholder="Поиск кандидата"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(event) => setSearchQuery(event.target.value)}
             />
           </div>
           {threadsQuery.isLoading && <p className="subtitle">Загрузка…</p>}
-          {threadsQuery.isError && <p className="text-danger">Ошибка загрузки</p>}
+          {threadsQuery.isError && <p className="text-danger">Не удалось загрузить список чатов</p>}
+          {!threadsQuery.isLoading && filteredThreads.length === 0 && (
+            <p className="subtitle">Сообщений от кандидатов пока нет.</p>
+          )}
           <div className="messenger-thread-list">
             {filteredThreads.map((thread) => (
               <button
-                key={thread.id}
-                className={`messenger-thread${thread.id === activeThreadId ? ' is-active' : ''}`}
-                onClick={() => setActiveThreadId(thread.id)}
+                key={thread.candidate_id}
+                className={`messenger-thread${thread.candidate_id === activeCandidateId ? ' is-active' : ''}`}
+                onClick={() => setActiveCandidateId(thread.candidate_id)}
               >
                 <div className="messenger-thread__avatar">
-                  {(thread.title || 'Чат').slice(0, 2).toUpperCase()}
+                  {(thread.title || 'К').slice(0, 2).toUpperCase()}
                 </div>
                 <div className="messenger-thread__info">
                   <div className="messenger-thread__row">
                     <span className="messenger-thread__title">{thread.title}</span>
                     <span className="messenger-thread__time">
-                      {formatThreadTime(thread.last_message?.created_at || thread.created_at)}
+                      {formatThreadTime(thread.last_message_at || thread.last_message?.created_at || thread.created_at)}
                     </span>
                   </div>
                   <div className="messenger-thread__row messenger-thread__preview">
-                    <span>{previewText(thread)}</span>
-                    {thread.unread_count ? (
-                      <span className="messenger-thread__badge">{thread.unread_count}</span>
-                    ) : null}
+                    <span>{thread.city || 'Город не указан'} · {previewText(thread)}</span>
+                    {thread.unread_count ? <span className="messenger-thread__badge">{thread.unread_count}</span> : null}
                   </div>
                 </div>
               </button>
             ))}
           </div>
-
-          {isAdmin && (
-            <div className="messenger-new-chat">
-              <h3 className="subtitle">Новый чат</h3>
-              <div className="form-grid">
-                <label>
-                  Личный чат с рекрутером
-                  <select value={newChatTarget} onChange={(e) => setNewChatTarget(e.target.value)}>
-                    <option value="">Выберите</option>
-                    {(recruitersQuery.data || []).map((rec) => (
-                      <option key={rec.id} value={rec.id}>
-                        {rec.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button className="ui-btn ui-btn--primary ui-btn--sm" onClick={handleCreateDirect}>
-                  Открыть
-                </button>
-              </div>
-
-              <div className="messenger-group">
-                <label>
-                  Название группы
-                  <input value={groupTitle} onChange={(e) => setGroupTitle(e.target.value)} />
-                </label>
-                <div className="messenger-group__members">
-                  {(recruitersQuery.data || []).map((rec) => (
-                    <label key={rec.id} className="messenger-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={groupMembers.includes(rec.id)}
-                        onChange={(e) => {
-                          setGroupMembers((prev) =>
-                            e.target.checked ? [...prev, rec.id] : prev.filter((id) => id !== rec.id),
-                          )
-                        }}
-                      />
-                      <span>{rec.name}</span>
-                    </label>
-                  ))}
-                </div>
-                <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={handleCreateGroup}>
-                  Создать группу
-                </button>
-              </div>
-            </div>
-          )}
         </aside>
 
-        <section className="glass panel messenger-chat app-page__section" aria-label="Текущий чат">
-          {!activeThread && <p className="subtitle">Выберите чат слева, чтобы начать переписку.</p>}
+        <section className="glass panel messenger-chat app-page__section" aria-label="Чат с кандидатом">
+          {!activeThread && <p className="subtitle">Выберите чат слева.</p>}
           {activeThread && (
             <>
               <div className="messenger-chat__header app-page__section-head">
                 <div>
                   {isMobile && (
-                    <button
-                      className="ui-btn ui-btn--ghost ui-btn--sm"
-                      onClick={() => setActiveThreadId(null)}
-                    >
+                    <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => setActiveCandidateId(null)}>
                       ← К чатам
                     </button>
                   )}
                   <h2 className="section-title">{activeThread.title}</h2>
                   <p className="subtitle">
-                    {activeThread.type === 'group' ? 'Групповой чат' : 'Личный чат'} · {memberSummary}{memberSuffix}
+                    {activeThread.city || 'Город не указан'}
+                    {activeThread.status_label ? ` · ${activeThread.status_label}` : ''}
+                    {activeThread.telegram_username ? ` · @${activeThread.telegram_username}` : ''}
                   </p>
                 </div>
-                <div className="messenger-chat__actions">
-                  {activeThread.type === 'group' && isAdmin && (
-                    <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => setShowMembersModal(true)}>
-                      Участники
-                    </button>
-                  )}
-                  <button
-                    className="ui-btn ui-btn--ghost ui-btn--sm"
-                    onClick={() => setShowCandidateModal(true)}
-                    disabled={!activeThreadId}
-                  >
-                    Передать кандидата
-                  </button>
-                </div>
+                {activeThread.profile_url ? (
+                  <a className="ui-btn ui-btn--ghost" href={activeThread.profile_url}>
+                    Открыть карточку
+                  </a>
+                ) : null}
               </div>
-              <div className="messenger-messages">
-                {messagesQuery.isLoading && <p className="subtitle">Загрузка сообщений…</p>}
-                {messagesQuery.isError && <p className="text-danger">Ошибка загрузки</p>}
-                {(messagesQuery.data?.messages || []).map((msg) => {
-                  if (msg.type === 'system') {
-                    return (
-                      <div key={msg.id} className="messenger-system">
-                        <span>{msg.text}</span>
-                      </div>
-                    )
-                  }
-                  const isOwn = msg.sender_type === principalType && msg.sender_id === principalId
-                  const readLabel = isOwn ? messageStatusLabel(msg) : ''
+
+              <div className="messenger-messages" ref={messagesRef}>
+                {messagesQuery.isLoading && <p className="subtitle">Загрузка переписки…</p>}
+                {messagesQuery.isError && <p className="text-danger">Не удалось загрузить сообщения</p>}
+                {!messagesQuery.isLoading && chatMessages.length === 0 && (
+                  <p className="subtitle">Сообщений пока нет.</p>
+                )}
+                {chatMessages.map((message) => {
+                  const isOwn = message.direction === 'outbound'
                   return (
-                    <div key={msg.id} className={`messenger-message ${isOwn ? 'is-own' : ''}`}>
+                    <div key={message.id} className={`messenger-message ${isOwn ? 'is-own' : ''}`}>
                       <div className="messenger-message__meta">
-                        <span>{msg.sender_label || (msg.sender_type === 'admin' ? 'Администратор' : 'Рекрутер')}</span>
-                        <span>{formatTime(msg.created_at)}</span>
-                        {readLabel && <span className="messenger-message__read">{readLabel}</span>}
+                        <span>{messageAuthorLabel(message)}</span>
+                        <span>{formatMessageTime(message.created_at)}</span>
                       </div>
-                      {msg.type === 'candidate_task' && msg.task && msg.candidate && (
-                        <div className="messenger-task">
-                          <div className="messenger-task__header">
-                            <div>
-                              <div className="messenger-task__title">{msg.candidate.name}</div>
-                              <div className="messenger-task__meta">
-                                {msg.candidate.city} · {msg.candidate.status_label}
-                              </div>
-                            </div>
-                            <span className={`messenger-task__status is-${msg.task.status}`}>
-                              {msg.task.status === 'pending'
-                                ? 'В ожидании'
-                                : msg.task.status === 'accepted'
-                                  ? 'Принято'
-                                  : 'Отклонено'}
-                            </span>
-                          </div>
-                          {msg.text && <div className="messenger-task__note">{msg.text}</div>}
-                          <div className="messenger-task__footer">
-                            {msg.candidate.profile_url && (
-                              <a href={msg.candidate.profile_url} className="messenger-task__link">
-                                Открыть профиль
-                              </a>
-                            )}
-                            {msg.task.status === 'declined' && msg.task.decision_comment && (
-                              <span className="messenger-task__comment">Причина: {msg.task.decision_comment}</span>
-                            )}
-                          </div>
-                          {principalType === 'recruiter' && msg.task.status === 'pending' && !isOwn && (
-                            <div className="messenger-task__actions">
-                              <button
-                                className="ui-btn ui-btn--primary ui-btn--sm"
-                                onClick={() => acceptTaskMutation.mutate(msg.id)}
-                              >
-                                Принять
-                              </button>
-                              <button
-                                className="ui-btn ui-btn--ghost ui-btn--sm"
-                                onClick={() => {
-                                  setTaskDeclineTarget(msg)
-                                  setTaskDeclineComment('')
-                                }}
-                              >
-                                Отклонить
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {msg.type !== 'candidate_task' && msg.text && (
-                        <div className="messenger-message__text">{msg.text}</div>
-                      )}
-                      {msg.attachments.length > 0 && (
-                        <div className="messenger-attachments">
-                          {msg.attachments.map((att) => {
-                            const isImage = (att.mime_type || '').startsWith('image/')
-                            return (
-                              <a key={att.id} href={`/api/staff/attachments/${att.id}`} className="messenger-attachment">
-                                {isImage ? (
-                                  <img
-                                    src={`/api/staff/attachments/${att.id}`}
-                                    alt={att.filename}
-                                    className="messenger-attachment__preview"
-                                  />
-                                ) : (
-                                  <span className="messenger-attachment__icon">📎</span>
-                                )}
-                                <span className="messenger-attachment__info">
-                                  <span className="messenger-attachment__name">{att.filename}</span>
-                                  <span className="messenger-attachment__size">{formatBytes(att.size)}</span>
-                                </span>
-                              </a>
-                            )
-                          })}
-                        </div>
-                      )}
+                      <div className="messenger-message__text">{message.text || '...'}</div>
                     </div>
                   )
                 })}
@@ -636,217 +299,39 @@ export function MessengerPage() {
 
               <div className="messenger-composer">
                 <textarea
-                  rows={2}
+                  rows={4}
                   value={messageText}
-                  onChange={(e) => setMessageText(e.target.value)}
+                  onChange={(event) => setMessageText(event.target.value)}
+                  placeholder="Написать кандидату…"
                   onKeyDown={(event) => {
-                    if (event.key !== 'Enter') return
-                    if (event.shiftKey) return // keep newline on Shift+Enter
-                    if ((event.nativeEvent as any)?.isComposing) return
-                    if (sendMutation.isPending) return
-
-                    const canSend = messageText.trim().length > 0 || files.length > 0
-                    if (!canSend) return
-
-                    event.preventDefault()
-                    sendMutation.mutate()
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      const payload = messageText.trim()
+                      if (payload) sendMutation.mutate(payload)
+                    }
                   }}
-                  placeholder="Написать сообщение…"
                 />
                 <div className="messenger-composer__actions">
-                  <label className="messenger-upload">
-                    <input
-                      type="file"
-                      multiple
-                      accept="image/*,.pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
-                      onChange={(e) => {
-                        const list = Array.from(e.target.files || [])
-                        const MAX_SIZE = 5 * 1024 * 1024 // 5MB
-                        const oversized = list.filter((f) => f.size > MAX_SIZE)
-                        if (oversized.length > 0) {
-                          setSendError(`Файл ${oversized[0].name} превышает 5MB`)
-                          e.target.value = ''
-                          return
-                        }
-                        setSendError(null)
-                        setFiles(list)
-                      }}
-                    />
-                    <span>Файлы</span>
-                  </label>
+                  {notificationPermission === 'denied' && (
+                    <span className="subtitle">Системные уведомления заблокированы браузером.</span>
+                  )}
+                  {sendError && <div className="messenger-error">{sendError}</div>}
                   <button
                     className="ui-btn ui-btn--primary"
-                    onClick={() => sendMutation.mutate()}
-                    disabled={sendMutation.isPending}
+                    onClick={() => {
+                      const payload = messageText.trim()
+                      if (payload) sendMutation.mutate(payload)
+                    }}
+                    disabled={sendMutation.isPending || !messageText.trim()}
                   >
                     {sendMutation.isPending ? 'Отправка…' : 'Отправить'}
                   </button>
                 </div>
-                {files.length > 0 && (
-                  <div className="messenger-files">
-                    {files.map((file) => (
-                      <span key={file.name} className="messenger-file">
-                        {file.name}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {sendError && <div className="messenger-error">{sendError}</div>}
               </div>
             </>
           )}
         </section>
       </div>
-
-      {showMembersModal && activeThread && (
-        <ModalPortal>
-          <div className="overlay" onClick={() => setShowMembersModal(false)}>
-            <div className="glass sheet" onClick={(e) => e.stopPropagation()}>
-              <div className="messenger-modal__header">
-                <h3 className="section-title">Участники чата</h3>
-                <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => setShowMembersModal(false)}>
-                  Закрыть
-                </button>
-              </div>
-              <div className="messenger-modal__body">
-                <div className="messenger-member-list">
-                  {members
-                    .filter((m) => !m.is_placeholder)
-                    .map((member) => (
-                      <div key={`${member.type}:${member.id}`} className="messenger-member">
-                        <span>{member.name}</span>
-                        {member.type === 'recruiter' && (
-                          <button
-                            className="ui-btn ui-btn--ghost ui-btn--sm"
-                            onClick={() => removeMemberMutation.mutate(member)}
-                          >
-                            Удалить
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                </div>
-                <div className="messenger-modal__section">
-                  <h4 className="subtitle">Добавить участников</h4>
-                  <div className="messenger-modal__grid">
-                    {availableRecruiters.map((rec) => (
-                      <label key={rec.id} className="messenger-checkbox">
-                        <input
-                          type="checkbox"
-                          checked={memberSelection.includes(rec.id)}
-                          onChange={(e) => {
-                            setMemberSelection((prev) =>
-                              e.target.checked ? [...prev, rec.id] : prev.filter((id) => id !== rec.id),
-                            )
-                          }}
-                        />
-                        <span>{rec.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <button
-                    className="ui-btn ui-btn--primary ui-btn--sm"
-                    onClick={() => addMembersMutation.mutate(memberSelection)}
-                    disabled={memberSelection.length === 0}
-                  >
-                    Добавить
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </ModalPortal>
-      )}
-
-      {showCandidateModal && activeThread && (
-        <ModalPortal>
-          <div className="overlay" onClick={() => setShowCandidateModal(false)}>
-            <div className="glass sheet" onClick={(e) => e.stopPropagation()}>
-              <div className="messenger-modal__header">
-                <h3 className="section-title">Передать кандидата</h3>
-                <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => setShowCandidateModal(false)}>
-                  Закрыть
-                </button>
-              </div>
-              <div className="messenger-modal__body">
-                <label>
-                  Поиск кандидата
-                  <input
-                    placeholder="ФИО, город, Telegram"
-                    value={candidateSearch}
-                    onChange={(e) => setCandidateSearch(e.target.value)}
-                  />
-                </label>
-                <div className="messenger-candidate-results">
-                  {candidateSearchQuery.isLoading && <p className="subtitle">Поиск…</p>}
-                  {candidateSearchQuery.data?.items?.map((candidate) => (
-                    <button
-                      key={candidate.id}
-                      className="messenger-candidate-card"
-                      onClick={() => sendCandidateMutation.mutate(candidate.id)}
-                    >
-                      <div>
-                        <div className="messenger-candidate-card__title">{candidate.fio || 'Без имени'}</div>
-                        <div className="messenger-candidate-card__meta">
-                          {candidate.city || 'Город не указан'} · {candidate.status?.label || 'Без статуса'}
-                        </div>
-                      </div>
-                      <span className="messenger-candidate-card__cta">Передать →</span>
-                    </button>
-                  ))}
-                  {candidateSearch.trim().length > 1 && !candidateSearchQuery.data?.items?.length && (
-                    <p className="subtitle">Ничего не найдено</p>
-                  )}
-                </div>
-                <label>
-                  Комментарий
-                  <textarea
-                    rows={3}
-                    value={candidateNote}
-                    onChange={(e) => setCandidateNote(e.target.value)}
-                    placeholder="Кратко опишите задачу"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-        </ModalPortal>
-      )}
-
-      {taskDeclineTarget && (
-        <ModalPortal>
-          <div className="overlay" onClick={() => setTaskDeclineTarget(null)}>
-            <div className="glass sheet" onClick={(e) => e.stopPropagation()}>
-              <div className="messenger-modal__header">
-                <h3 className="section-title">Отклонить задачу</h3>
-                <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => setTaskDeclineTarget(null)}>
-                  Закрыть
-                </button>
-              </div>
-              <div className="messenger-modal__body">
-                <label>
-                  Причина отказа
-                  <textarea
-                    rows={3}
-                    value={taskDeclineComment}
-                    onChange={(e) => setTaskDeclineComment(e.target.value)}
-                    placeholder="Укажите причину"
-                  />
-                </label>
-                <button
-                  className="ui-btn ui-btn--primary"
-                  onClick={() =>
-                    declineTaskMutation.mutate({ messageId: taskDeclineTarget.id, comment: taskDeclineComment })
-                  }
-                  disabled={!taskDeclineComment.trim()}
-                >
-                  Отправить
-                </button>
-              </div>
-            </div>
-          </div>
-        </ModalPortal>
-      )}
 
       {toast && (
         <div className="toast" data-tone={toast.tone}>

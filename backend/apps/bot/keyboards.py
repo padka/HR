@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, List, Optional
 from zoneinfo import ZoneInfo
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from backend.domain.repositories import (
     get_active_recruiters,
@@ -142,16 +142,21 @@ async def kb_slots_for_recruiter(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_approve(slot_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Согласовано", callback_data=f"approve:{slot_id}")],
-            [
-                InlineKeyboardButton(text="🔁 Перенести", callback_data=f"reschedule:{slot_id}"),
-                InlineKeyboardButton(text="⛔️ Отказать", callback_data=f"reject:{slot_id}"),
-            ],
-        ]
-    )
+def kb_approve(
+    slot_id: int,
+    *,
+    crm_url: Optional[str] = None,
+) -> InlineKeyboardMarkup:
+    rows: List[List[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="✅ Согласовано", callback_data=f"approve:{slot_id}")],
+        [
+            InlineKeyboardButton(text="🔁 Перенести", callback_data=f"reschedule:{slot_id}"),
+            InlineKeyboardButton(text="⛔️ Отказать", callback_data=f"reject:{slot_id}"),
+        ],
+    ]
+    if crm_url:
+        rows.append([InlineKeyboardButton(text="🔗 CRM ↗", url=crm_url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def kb_attendance_confirm(slot_id: int) -> InlineKeyboardMarkup:
@@ -200,7 +205,140 @@ def kb_slot_assignment_offer(
                     callback_data=_slot_assignment_payload("decline", assignment_id, decline_token),
                 )
             ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_slot_assignment_reschedule_options(
+    assignment_id: int,
+    *,
+    candidate_tz: str,
+    slots: List[Any],
+) -> InlineKeyboardMarkup:
+    rows: List[List[InlineKeyboardButton]] = []
+    for index in range(0, min(len(slots), 8), 2):
+        chunk = slots[index : index + 2]
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_slot_button_label(slot.start_utc, slot.duration_min, candidate_tz),
+                    callback_data=sign_callback_data(f"slotres:pick:{assignment_id}:{slot.id}"),
+                )
+                for slot in chunk
+            ]
         )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="✍️ Написать вручную",
+                callback_data=sign_callback_data(f"slotres:manual:{assignment_id}"),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _webapp_candidate_url(crm_url: str, candidate_id: int) -> Optional[str]:
+    """Build Mini App URL for candidate profile, deriving base from CRM URL."""
+    if not crm_url:
+        return None
+    # crm_url is like https://crm.example.com/app/candidates/123
+    # base is https://crm.example.com
+    try:
+        # Find the /app/ part and take everything before it
+        idx = crm_url.find("/app/")
+        if idx > 0:
+            base = crm_url[:idx]
+        else:
+            base = crm_url.rstrip("/")
+        return f"{base}/tg-app/candidates/{candidate_id}"
+    except Exception:
+        return None
+
+
+def kb_candidate_notification(
+    candidate_id: int,
+    crm_url: str,
+) -> InlineKeyboardMarkup:
+    """Action buttons for recruiter notification about a candidate."""
+    rows: List[List[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="📝 Статус",
+                callback_data=sign_callback_data(f"rc:st:{candidate_id}"),
+            ),
+            InlineKeyboardButton(
+                text="💬 Написать",
+                callback_data=sign_callback_data(f"rc:mg:{candidate_id}"),
+            ),
+        ],
+    ]
+    webapp_url = _webapp_candidate_url(crm_url, candidate_id)
+    bottom_row: List[InlineKeyboardButton] = []
+    if webapp_url:
+        bottom_row.append(
+            InlineKeyboardButton(text="👤 Профиль", web_app=WebAppInfo(url=webapp_url))
+        )
+    if crm_url:
+        bottom_row.append(InlineKeyboardButton(text="🔗 CRM ↗", url=crm_url))
+    if bottom_row:
+        rows.append(bottom_row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_candidate_actions(
+    candidate_id: int,
+    crm_url: str,
+) -> InlineKeyboardMarkup:
+    """Compact per-candidate action row for inbox/search results."""
+    buttons: List[InlineKeyboardButton] = [
+        InlineKeyboardButton(
+            text="📝 Статус",
+            callback_data=sign_callback_data(f"rc:st:{candidate_id}"),
+        ),
+        InlineKeyboardButton(
+            text="💬 Написать",
+            callback_data=sign_callback_data(f"rc:mg:{candidate_id}"),
+        ),
+    ]
+    rows: List[List[InlineKeyboardButton]] = [buttons]
+    webapp_url = _webapp_candidate_url(crm_url, candidate_id)
+    bottom_row: List[InlineKeyboardButton] = []
+    if webapp_url:
+        bottom_row.append(
+            InlineKeyboardButton(text="👤 Профиль", web_app=WebAppInfo(url=webapp_url))
+        )
+    if crm_url:
+        bottom_row.append(InlineKeyboardButton(text="🔗 CRM ↗", url=crm_url))
+    if bottom_row:
+        rows.append(bottom_row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_recruiter_dashboard(
+    waiting_count: int,
+    crm_url: str,
+) -> InlineKeyboardMarkup:
+    """Action buttons for the /admin recruiter dashboard."""
+    rows: List[List[InlineKeyboardButton]] = []
+    inbox_text = f"📥 Входящие ({waiting_count})" if waiting_count else "📥 Входящие"
+    rows.append([
+        InlineKeyboardButton(
+            text=inbox_text,
+            callback_data=sign_callback_data("rc:inbox:0"),
+        ),
+    ])
+    bottom_row: List[InlineKeyboardButton] = []
+    if crm_url:
+        webapp_url = f"{crm_url}/tg-app/incoming"
+        bottom_row.append(
+            InlineKeyboardButton(text="📱 Приложение", web_app=WebAppInfo(url=webapp_url))
+        )
+        bottom_row.append(
+            InlineKeyboardButton(text="📊 Панель ↗", url=f"{crm_url}/app/dashboard"),
+        )
+    if bottom_row:
+        rows.append(bottom_row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -209,8 +347,12 @@ __all__ = [
     "fmt_dt_local",
     "kb_approve",
     "kb_attendance_confirm",
+    "kb_candidate_actions",
+    "kb_candidate_notification",
+    "kb_recruiter_dashboard",
     "kb_recruiters",
     "kb_slots_for_recruiter",
     "kb_slot_assignment_offer",
+    "kb_slot_assignment_reschedule_options",
     "kb_start",
 ]

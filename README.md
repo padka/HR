@@ -93,35 +93,16 @@ Detailed command guidance, caveats, and validation scope live in [VERIFICATION_C
 Start here in this order:
 
 1. [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md)
-2. [PROJECT_CONTEXT_INDEX.md](/Users/mikhail/Projects/recruitsmart_admin/PROJECT_CONTEXT_INDEX.md)
-3. [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
-4. [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md)
-5. [REPOSITORY_WORKFLOW_GUIDE.md](/Users/mikhail/Projects/recruitsmart_admin/REPOSITORY_WORKFLOW_GUIDE.md)
+2. [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
+3. [PROJECT_CONTEXT_INDEX.md](/Users/mikhail/Projects/recruitsmart_admin/PROJECT_CONTEXT_INDEX.md)
+4. [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
+5. [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md)
+6. [REPOSITORY_WORKFLOW_GUIDE.md](/Users/mikhail/Projects/recruitsmart_admin/REPOSITORY_WORKFLOW_GUIDE.md)
 
-Canonical redesign planning package:
-- [DESIGN_REDESIGN_PRD.md](/Users/mikhail/Projects/recruitsmart_admin/DESIGN_REDESIGN_PRD.md)
-- [DESIGN_AUDIT_REPORT.md](/Users/mikhail/Projects/recruitsmart_admin/DESIGN_AUDIT_REPORT.md)
-- [UI_PRINCIPLES_AND_LAYOUT_PATTERNS.md](/Users/mikhail/Projects/recruitsmart_admin/UI_PRINCIPLES_AND_LAYOUT_PATTERNS.md)
-- [RESPONSIVE_AND_MOBILE_AUDIT.md](/Users/mikhail/Projects/recruitsmart_admin/RESPONSIVE_AND_MOBILE_AUDIT.md)
-- [SCREEN_ARCHITECTURE_MAP.md](/Users/mikhail/Projects/recruitsmart_admin/SCREEN_ARCHITECTURE_MAP.md)
-- [DESIGN_SYSTEM_PLAN.md](/Users/mikhail/Projects/recruitsmart_admin/DESIGN_SYSTEM_PLAN.md)
-- [MOTION_AND_INTERACTION_GUIDELINES.md](/Users/mikhail/Projects/recruitsmart_admin/MOTION_AND_INTERACTION_GUIDELINES.md)
-- [IMPLEMENTATION_ROADMAP_FOR_CODEX.md](/Users/mikhail/Projects/recruitsmart_admin/IMPLEMENTATION_ROADMAP_FOR_CODEX.md)
-- [ACCEPTANCE_CRITERIA.md](/Users/mikhail/Projects/recruitsmart_admin/ACCEPTANCE_CRITERIA.md)
-- [DESIGN_QA_CHECKLIST.md](/Users/mikhail/Projects/recruitsmart_admin/DESIGN_QA_CHECKLIST.md)
-- [EXECUTIVE_SUMMARY.md](/Users/mikhail/Projects/recruitsmart_admin/EXECUTIVE_SUMMARY.md)
-
-Canonical Codex execution handoff package:
-- [DESIGN_DECISIONS_LOG.md](/Users/mikhail/Projects/recruitsmart_admin/DESIGN_DECISIONS_LOG.md)
-- [CODEX_EXECUTION_PLAN.md](/Users/mikhail/Projects/recruitsmart_admin/CODEX_EXECUTION_PLAN.md)
-- [EPIC_BREAKDOWN_FOR_CODEX.md](/Users/mikhail/Projects/recruitsmart_admin/EPIC_BREAKDOWN_FOR_CODEX.md)
-- [TASK_GRAPH_FOR_CODEX.md](/Users/mikhail/Projects/recruitsmart_admin/TASK_GRAPH_FOR_CODEX.md)
-- [COMPONENT_IMPLEMENTATION_SPECS.md](/Users/mikhail/Projects/recruitsmart_admin/COMPONENT_IMPLEMENTATION_SPECS.md)
-- [SCREEN_IMPLEMENTATION_SPECS.md](/Users/mikhail/Projects/recruitsmart_admin/SCREEN_IMPLEMENTATION_SPECS.md)
-- [CODEX_FIRST_WAVE_RECOMMENDATION.md](/Users/mikhail/Projects/recruitsmart_admin/CODEX_FIRST_WAVE_RECOMMENDATION.md)
-- [ROLLOUT_AND_REGRESSION_STRATEGY.md](/Users/mikhail/Projects/recruitsmart_admin/ROLLOUT_AND_REGRESSION_STRATEGY.md)
-
-If these files disagree with older material under [codex](/Users/mikhail/Projects/recruitsmart_admin/codex), [docs/project](/Users/mikhail/Projects/recruitsmart_admin/docs/project), or [docs/archive](/Users/mikhail/Projects/recruitsmart_admin/docs/archive), prefer the root canonical files above.
+Root policy changed on 2026-03-08:
+- closed task-specific markdown packages were removed from repo root
+- temporary task/spec/checklist docs must now be deleted after completion
+- if you need old closed-task material, use git history or historical docs in [docs/archive](/Users/mikhail/Projects/recruitsmart_admin/docs/archive) and [codex](/Users/mikhail/Projects/recruitsmart_admin/codex)
 
 ## Current Active Scope
 
@@ -143,7 +124,7 @@ Local dev helpers load `.env.local` if present, otherwise they fall back to `.en
 - Inspect before editing. Do not assume older docs are current.
 - Work in small verified batches.
 - Keep business logic changes out of repo-setup tasks.
-- Do not delete planning artifacts; use indexes and precedence notes instead.
+- Temporary markdown files for prompts/TODO/specs must be deleted after the task is closed.
 - After changing code or canonical workflow docs, update the relevant root context files.
 
 Project-specific working rules live in [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md).

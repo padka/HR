@@ -77,6 +77,11 @@ def create_app() -> FastAPI:
     app.include_router(webapp_router, prefix="/api/webapp", tags=["webapp"])
     logger.info("WebApp API router mounted at /api/webapp")
 
+    # Mount Recruiter WebApp API endpoints for Telegram Mini App
+    from backend.apps.admin_api.webapp.recruiter_routers import router as recruiter_webapp_router
+    app.include_router(recruiter_webapp_router, prefix="/api/webapp/recruiter", tags=["webapp-recruiter"])
+    logger.info("Recruiter WebApp API router mounted at /api/webapp/recruiter")
+
     # Bot-facing slot assignment endpoints
     app.include_router(slot_assignments_router)
 

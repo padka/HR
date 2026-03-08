@@ -14,6 +14,7 @@ import {
   fetchCandidateInterviewScript,
   fetchCities,
   fetchTemplateByKey,
+  markCandidateChatRead,
   refreshCandidateAiCoach,
   refreshCandidateAiSummary,
   refreshCandidateInterviewScript,
@@ -131,9 +132,18 @@ type CandidateDetail = {
   workflow_status_color?: string | null
   candidate_status_slug?: string | null
   candidate_status_color?: string | null
+  candidate_status_display?: string | null
   telemost_url?: string | null
   telemost_source?: string | null
   responsible_recruiter?: { id?: number | null; name?: string | null } | null
+  reschedule_request?: {
+    requested_at?: string | null
+    requested_start_utc?: string | null
+    requested_end_utc?: string | null
+    requested_tz?: string | null
+    candidate_comment?: string | null
+    source?: string | null
+  } | null
   candidate_actions?: CandidateAction[]
   allowed_next_statuses?: Array<{ slug: string; label: string; color?: string; is_terminal?: boolean }>
   pipeline_stages?: Array<{ key: string; label: string; state?: string }>
@@ -203,6 +213,45 @@ function formatDateTime(value?: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function formatRescheduleRequest(
+  request?: CandidateDetail['reschedule_request'],
+): { summary: string; comment?: string | null } | null {
+  if (!request) return null
+  if (request.requested_start_utc && request.requested_end_utc) {
+    const start = new Date(request.requested_start_utc)
+    const end = new Date(request.requested_end_utc)
+    const sameDay = start.toDateString() === end.toDateString()
+    const startLabel = new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(start)
+    const endLabel = new Intl.DateTimeFormat('ru-RU', {
+      ...(sameDay ? {} : { day: '2-digit', month: '2-digit' }),
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(end)
+    return {
+      summary: `Окно: ${startLabel}–${endLabel}`,
+      comment: request.candidate_comment,
+    }
+  }
+  if (request.requested_start_utc) {
+    return {
+      summary: `Хочет время: ${formatDateTime(request.requested_start_utc)}`,
+      comment: request.candidate_comment,
+    }
+  }
+  if (request.candidate_comment) {
+    return {
+      summary: `Пожелание: ${request.candidate_comment}`,
+      comment: null,
+    }
+  }
+  return null
 }
 
 function getHhSyncBadge(status?: string | null) {
@@ -1544,6 +1593,7 @@ export function CandidateDetailPage() {
   const pipelineActionsRef = useRef<HTMLDivElement | null>(null)
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const testsSectionRef = useRef<HTMLDivElement | null>(null)
   const [aiDraftsOpen, setAiDraftsOpen] = useState(false)
   const [aiDraftMode, setAiDraftMode] = useState<'short' | 'neutral' | 'supportive'>('neutral')
   const [aiCoachDrafts, setAiCoachDrafts] = useState<AIDraftItem[] | null>(null)
@@ -1568,6 +1618,25 @@ export function CandidateDetailPage() {
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: isChatOpen,
   })
+
+  const markChatReadMutation = useMutation({
+    mutationFn: markCandidateChatRead,
+    onSuccess: (_data, readCandidateId) => {
+      queryClient.setQueryData<{ threads?: Array<{ candidate_id: number; unread_count?: number }> }>(
+        ['candidate-chat-threads'],
+        (prev) => {
+          if (!prev?.threads) return prev
+          return {
+            ...prev,
+            threads: prev.threads.map((thread) =>
+              thread.candidate_id === readCandidateId ? { ...thread, unread_count: 0 } : thread,
+            ),
+          }
+        },
+      )
+    },
+  })
+  const markChatRead = markChatReadMutation.mutate
 
   const sendMutation = useMutation({
     mutationFn: async (text: string) => {
@@ -1651,6 +1720,7 @@ export function CandidateDetailPage() {
   const test1Section = testSections.find((section) => section.key === 'test1')
   const test2Section = testSections.find((section) => section.key === 'test2')
   const chatMessages = (chatQuery.data?.messages || []).slice().reverse()
+  const rescheduleRequest = formatRescheduleRequest(detail?.reschedule_request)
   const pipelineStages = detail?.pipeline_stages || []
   const refetchChat = chatQuery.refetch
 
@@ -1674,6 +1744,16 @@ export function CandidateDetailPage() {
     if (!isChatOpen) return
     refetchChat()
   }, [isChatOpen, refetchChat])
+
+  useEffect(() => {
+    if (!isChatOpen) return
+    markChatRead(candidateId)
+  }, [candidateId, isChatOpen, markChatRead])
+
+  useEffect(() => {
+    if (!isChatOpen || chatMessages.length === 0) return
+    markChatRead(candidateId)
+  }, [candidateId, chatMessages.length, isChatOpen, markChatRead])
 
   useEffect(() => {
     setAiCoachDrafts(null)
@@ -1727,6 +1807,8 @@ export function CandidateDetailPage() {
 
   const statusSlug = detail?.candidate_status_slug || null
   const statusDisplay = detail ? getStatusDisplay(statusSlug) : null
+  const statusTone = detail?.candidate_status_color || statusDisplay?.tone || 'muted'
+  const statusLabel = detail?.candidate_status_display || statusDisplay?.label || 'Нет статуса'
   const hasUpcomingSlot = slots.some((s) => {
     const status = String(s.status || '').toUpperCase()
     return ['BOOKED', 'PENDING', 'CONFIRMED', 'CONFIRMED_BY_CANDIDATE'].includes(status)
@@ -1801,6 +1883,26 @@ export function CandidateDetailPage() {
     if (!isChatOpen && mobileTab === 'chat') setMobileTab('profile')
   }, [isMobile, isChatOpen, mobileTab])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (window.location.hash !== '#tests') return
+    if (isMobile && mobileTab !== 'tests') {
+      setMobileTab('tests')
+    }
+  }, [candidateId, isMobile, mobileTab])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (window.location.hash !== '#tests') return
+    const frame = window.requestAnimationFrame(() => {
+      const testsSection = testsSectionRef.current
+      if (testsSection && typeof testsSection.scrollIntoView === 'function') {
+        testsSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [candidateId, detail?.id, mobileTab, testSections.length])
+
   const showProfileSection = !isMobile || mobileTab === 'profile'
   const showTimelineSection = !isMobile || mobileTab === 'timeline'
   const showTestsSection = !isMobile || mobileTab === 'tests'
@@ -1861,9 +1963,9 @@ export function CandidateDetailPage() {
               <div className="cd-header__name-row">
                 <h1 className="cd-header__name">{detail.fio || `Кандидат #${candidateId}`}</h1>
                 {statusDisplay && (
-                  <span className={`status-pill status-pill--${statusDisplay.tone}`}>
-                    <span className={`cd-status-dot cd-status-dot--${statusDisplay.tone}`} />
-                    {statusDisplay.label}
+                  <span className={`status-pill status-pill--${statusTone}`}>
+                    <span className={`cd-status-dot cd-status-dot--${statusTone}`} />
+                    {statusLabel}
                   </span>
                 )}
                 {detail.status_is_terminal && (
@@ -2206,6 +2308,26 @@ export function CandidateDetailPage() {
 
             {actionMessage && <p className="subtitle subtitle--center cd-action-message">{actionMessage}</p>}
           </div>
+
+          {detail.reschedule_request && rescheduleRequest && (
+            <div className="cd-slot-card glass">
+              <div className="cd-slot-card__type">Перенос</div>
+              <div className="cd-slot-card__main">
+                <div className="cd-slot-card__time">{rescheduleRequest.summary}</div>
+                <div className="cd-slot-card__details">
+                  <span>Запрос от {formatDateTime(detail.reschedule_request.requested_at)}</span>
+                  {rescheduleRequest.comment ? <span>{rescheduleRequest.comment}</span> : null}
+                </div>
+              </div>
+              <button
+                className="ui-btn ui-btn--ghost ui-btn--sm"
+                onClick={() => setShowScheduleSlotModal(true)}
+                disabled={!canScheduleInterview}
+              >
+                Предложить другое время
+              </button>
+            </div>
+          )}
         </div>
 
         {/* ── AI Copilot ── */}
@@ -2611,7 +2733,12 @@ export function CandidateDetailPage() {
 
         {/* ── Tests ── */}
         {showTestsSection && (
-        <div className="glass panel app-page__section">
+        <div
+          id="tests"
+          ref={testsSectionRef}
+          className="glass panel app-page__section"
+          data-testid="candidate-tests-section"
+        >
           <div className="cd-section-header app-page__section-head">
             <h2 className="cd-section-title">Тесты</h2>
           </div>

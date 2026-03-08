@@ -25,6 +25,7 @@ class Settings:
     bot_token: str
     bot_api_base: str
     bot_backend_url: str
+    crm_public_url: str
     bot_callback_secret: str
     redis_url: str
     notification_broker: str
@@ -292,6 +293,12 @@ def _validate_production_settings(settings: Settings) -> None:
             "BOT_BACKEND_URL must start with http:// or https://. "
             "Example: BOT_BACKEND_URL=http://127.0.0.1:8000"
         )
+    crm_public_url = (settings.crm_public_url or "").strip()
+    if crm_public_url and not crm_public_url.startswith(("http://", "https://")):
+        errors.append(
+            "CRM_PUBLIC_URL must start with http:// or https://. "
+            "Example: CRM_PUBLIC_URL=https://admin.example.com"
+        )
 
     # 4.2 AI settings (optional, but strict when enabled)
     if settings.ai_enabled:
@@ -510,6 +517,9 @@ def get_settings() -> Settings:
     bot_backend_url = os.getenv("BOT_BACKEND_URL", "").strip()
     if not bot_backend_url and environment in {"development", "local"}:
         bot_backend_url = "http://localhost:8000"
+    crm_public_url = os.getenv("CRM_PUBLIC_URL", "").strip()
+    if not crm_public_url:
+        crm_public_url = bot_backend_url
     redis_url = os.getenv("REDIS_URL", "").strip()
     if (
         redis_url.startswith("redis://redis_notifications")
@@ -724,6 +734,7 @@ def get_settings() -> Settings:
         bot_token=bot_token,
         bot_api_base=bot_api_base,
         bot_backend_url=bot_backend_url,
+        crm_public_url=crm_public_url,
         bot_callback_secret=bot_callback_secret,
         redis_url=redis_url,
         notification_broker=notification_broker,

@@ -14,10 +14,16 @@ except ModuleNotFoundError:  # pragma: no cover - fallback stub
     fake_client_bot = types.ModuleType("aiogram.client.bot")
     fake_enums = types.ModuleType("aiogram.enums")
 
+    class _FakeWebAppInfo:
+        def __init__(self, *, url: str = ""):
+            self.url = url
+
     class _FakeInlineKeyboardButton:
-        def __init__(self, *, text: str, callback_data: str):
+        def __init__(self, *, text: str, callback_data: str = "", url: str = "", web_app: object = None):
             self.text = text
             self.callback_data = callback_data
+            self.url = url
+            self.web_app = web_app
 
     class _FakeInlineKeyboardMarkup:
         def __init__(self, *, inline_keyboard):
@@ -30,6 +36,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback stub
     class _FakeParseMode:
         HTML = "HTML"
 
+    fake_types.WebAppInfo = _FakeWebAppInfo
     fake_types.InlineKeyboardButton = _FakeInlineKeyboardButton
     fake_types.InlineKeyboardMarkup = _FakeInlineKeyboardMarkup
     fake_client_bot.DefaultBotProperties = _FakeDefaultBotProperties
@@ -45,7 +52,14 @@ except ModuleNotFoundError:  # pragma: no cover - fallback stub
     sys.modules["aiogram.enums"] = fake_enums
 
 from backend.apps.bot import keyboards
-from backend.apps.bot.keyboards import kb_recruiters
+from backend.apps.bot.keyboards import (
+    kb_approve,
+    kb_candidate_actions,
+    kb_candidate_notification,
+    kb_recruiter_dashboard,
+    kb_recruiters,
+    kb_slot_assignment_reschedule_options,
+)
 from backend.apps.bot.config import DEFAULT_TZ
 from backend.core.db import async_session
 from backend.domain import models
@@ -211,3 +225,155 @@ async def test_kb_recruiters_no_slots_has_contact_button():
     ]
 
     assert contact_buttons, "expected contact button when no recruiters are available"
+
+
+# ---------------------------------------------------------------------------
+# Tests for new recruiter keyboard builders (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def _all_buttons(kb):
+    """Flatten inline keyboard into a list of buttons."""
+    return [btn for row in kb.inline_keyboard for btn in row]
+
+
+def _buttons_with_text(kb, text_substr):
+    return [btn for btn in _all_buttons(kb) if text_substr in btn.text]
+
+
+def test_kb_approve_without_crm_url():
+    kb = kb_approve(42)
+    buttons = _all_buttons(kb)
+    assert any("Согласовано" in btn.text for btn in buttons)
+    assert not any(getattr(btn, "url", None) for btn in buttons), "no URL buttons expected"
+
+
+def test_kb_approve_with_crm_url():
+    kb = kb_approve(42, crm_url="https://example.com/app/candidates/7")
+    buttons = _all_buttons(kb)
+    url_buttons = [btn for btn in buttons if getattr(btn, "url", None)]
+    assert url_buttons, "expected a CRM URL button"
+    assert url_buttons[0].url == "https://example.com/app/candidates/7"
+    assert "CRM" in url_buttons[0].text
+
+
+def test_kb_candidate_notification_has_action_buttons():
+    kb = kb_candidate_notification(99, "https://crm.test/app/candidates/99")
+    buttons = _all_buttons(kb)
+    texts = [btn.text for btn in buttons]
+    assert any("Статус" in t for t in texts)
+    assert any("Написать" in t for t in texts)
+    url_buttons = [btn for btn in buttons if getattr(btn, "url", None)]
+    assert url_buttons
+    assert "candidates/99" in url_buttons[0].url
+
+
+def test_kb_candidate_notification_no_crm_url():
+    kb = kb_candidate_notification(99, "")
+    url_buttons = [btn for btn in _all_buttons(kb) if getattr(btn, "url", None)]
+    assert not url_buttons, "no URL button when crm_url is empty"
+
+
+def test_kb_candidate_actions_has_action_buttons():
+    kb = kb_candidate_actions(55, "https://crm.test/app/candidates/55")
+    buttons = _all_buttons(kb)
+    texts = [btn.text for btn in buttons]
+    assert any("Статус" in t for t in texts)
+    assert any("Написать" in t for t in texts)
+    url_buttons = [btn for btn in buttons if getattr(btn, "url", None)]
+    assert url_buttons
+    assert "candidates/55" in url_buttons[0].url
+
+
+def test_kb_recruiter_dashboard_with_waiting():
+    kb = kb_recruiter_dashboard(3, "https://crm.test")
+    buttons = _all_buttons(kb)
+    inbox_btns = _buttons_with_text(kb, "Входящие")
+    assert inbox_btns
+    assert "(3)" in inbox_btns[0].text
+    url_buttons = [btn for btn in buttons if getattr(btn, "url", None)]
+    assert url_buttons
+    assert "dashboard" in url_buttons[0].url
+
+
+def test_kb_recruiter_dashboard_no_waiting():
+    kb = kb_recruiter_dashboard(0, "https://crm.test")
+    inbox_btns = _buttons_with_text(kb, "Входящие")
+    assert inbox_btns
+    assert "(0)" not in inbox_btns[0].text
+
+
+def test_kb_recruiter_dashboard_no_crm_url():
+    kb = kb_recruiter_dashboard(2, "")
+    url_buttons = [btn for btn in _all_buttons(kb) if getattr(btn, "url", None)]
+    assert not url_buttons, "no URL button when crm_url is empty"
+
+
+def test_kb_slot_assignment_reschedule_options_has_manual_fallback():
+    slots = [
+        types.SimpleNamespace(
+            id=101,
+            start_utc=datetime(2031, 7, 1, 10, 0, tzinfo=timezone.utc),
+            duration_min=30,
+        ),
+        types.SimpleNamespace(
+            id=102,
+            start_utc=datetime(2031, 7, 1, 11, 0, tzinfo=timezone.utc),
+            duration_min=30,
+        ),
+    ]
+
+    kb = kb_slot_assignment_reschedule_options(
+        55,
+        candidate_tz=DEFAULT_TZ,
+        slots=slots,
+    )
+    callbacks = [getattr(btn, "callback_data", "") for btn in _all_buttons(kb)]
+
+    assert any(value.startswith("slotres:pick:55:101") for value in callbacks)
+    assert any(value.startswith("slotres:manual:55") for value in callbacks)
+
+
+# ---------------------------------------------------------------------------
+# Tests for WebAppInfo (Mini App) buttons
+# ---------------------------------------------------------------------------
+
+
+def _webapp_buttons(kb):
+    """Get all buttons that have a web_app attribute set."""
+    return [btn for btn in _all_buttons(kb) if getattr(btn, "web_app", None)]
+
+
+def test_kb_candidate_notification_has_webapp_button():
+    kb = kb_candidate_notification(99, "https://crm.test/app/candidates/99")
+    wa_btns = _webapp_buttons(kb)
+    assert wa_btns, "expected a WebApp profile button"
+    assert "tg-app/candidates/99" in wa_btns[0].web_app.url
+    assert "Профиль" in wa_btns[0].text
+
+
+def test_kb_candidate_notification_no_webapp_without_crm():
+    kb = kb_candidate_notification(99, "")
+    wa_btns = _webapp_buttons(kb)
+    assert not wa_btns, "no WebApp button when crm_url is empty"
+
+
+def test_kb_candidate_actions_has_webapp_button():
+    kb = kb_candidate_actions(55, "https://crm.test/app/candidates/55")
+    wa_btns = _webapp_buttons(kb)
+    assert wa_btns, "expected a WebApp profile button"
+    assert "tg-app/candidates/55" in wa_btns[0].web_app.url
+
+
+def test_kb_recruiter_dashboard_has_webapp_button():
+    kb = kb_recruiter_dashboard(3, "https://crm.test")
+    wa_btns = _webapp_buttons(kb)
+    assert wa_btns, "expected a WebApp button on dashboard"
+    assert "tg-app/incoming" in wa_btns[0].web_app.url
+    assert "Приложение" in wa_btns[0].text
+
+
+def test_kb_recruiter_dashboard_no_webapp_without_crm():
+    kb = kb_recruiter_dashboard(3, "")
+    wa_btns = _webapp_buttons(kb)
+    assert not wa_btns, "no WebApp button when crm_url is empty"

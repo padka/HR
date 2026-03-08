@@ -22,6 +22,7 @@ from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.apps.admin_ui.security import admin_principal, principal_ctx, Principal
+from backend.apps.admin_ui.services.reschedule_intents import get_candidate_reschedule_intent
 from backend.domain import analytics
 from backend.domain.candidates.models import (
     AutoMessage,
@@ -2991,6 +2992,26 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         # Для отображения статуса в UI используем workflow (единственный источник правды)
         stage = workflow_status_label
 
+        reschedule_intent = await get_candidate_reschedule_intent(
+            session,
+            candidate_id=user.candidate_id,
+            candidate_tg_id=user.telegram_user_id or user.telegram_id,
+        )
+        candidate_status_display = None
+        candidate_status_color = get_status_color(candidate_status) if candidate_status else "muted"
+        if (
+            reschedule_intent is not None
+            and reschedule_intent.requested
+            and candidate_status_slug == CandidateStatus.SLOT_PENDING.value
+        ):
+            candidate_status_display = "Запросил другое время"
+            candidate_status_color = "warning"
+            stage = candidate_status_display
+        else:
+            candidate_status_display = (
+                _status_label(candidate_status_slug) if candidate_status_slug else None
+            )
+
     # Prepare pipeline stages and allowed next statuses for Status Center UI
     pipeline_stages = _build_pipeline_stages(candidate_status)
     allowed_next = get_next_statuses(candidate_status) if candidate_status else []
@@ -3030,7 +3051,9 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         "has_intro_day_slot": has_intro_day_slot,
         "can_schedule_intro_day": needs_intro_day,
         "candidate_status_slug": candidate_status_slug,
-        "candidate_status_color": get_status_color(candidate_status) if candidate_status else "muted",
+        "candidate_status_color": candidate_status_color,
+        "candidate_status_display": candidate_status_display,
+        "reschedule_intent": reschedule_intent,
         "candidate_actions": candidate_actions,
         "workflow_state": workflow_state,
         "workflow_actions": workflow_actions,
@@ -3516,6 +3539,17 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         }
 
     hh_profile_url = _extract_hh_profile_url_from_tests(tests)
+    reschedule_intent = detail.get("reschedule_intent")
+    reschedule_payload = None
+    if reschedule_intent is not None and getattr(reschedule_intent, "requested", False):
+        reschedule_payload = {
+            "requested_at": getattr(reschedule_intent, "created_at", None),
+            "requested_start_utc": getattr(reschedule_intent, "requested_start_utc", None),
+            "requested_end_utc": getattr(reschedule_intent, "requested_end_utc", None),
+            "requested_tz": getattr(reschedule_intent, "requested_tz", None),
+            "candidate_comment": getattr(reschedule_intent, "candidate_comment", None),
+            "source": getattr(reschedule_intent, "source", None),
+        }
 
     return {
         "id": user.id,
@@ -3546,7 +3580,9 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "workflow_status_label": detail.get("workflow_status_label"),
         "workflow_status_color": detail.get("workflow_status_color"),
         "candidate_status_slug": detail.get("candidate_status_slug"),
+        "candidate_status_display": detail.get("candidate_status_display"),
         "candidate_status_color": detail.get("candidate_status_color"),
+        "reschedule_request": reschedule_payload,
         "stats": detail.get("stats", {}),
         "telemost_url": detail.get("telemost_url"),
         "telemost_source": detail.get("telemost_source"),

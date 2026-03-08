@@ -3,6 +3,7 @@ import { useMemo, useState, useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
+import { fetchCandidateDetail, type CandidateDetail, type TestQuestionAnswer, type TestSection } from '@/api/services/candidates'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 import { RoleGuard } from '@/app/components/RoleGuard'
@@ -41,6 +42,8 @@ type IncomingCandidate = {
   requested_another_time?: boolean
   requested_another_time_at?: string | null
   requested_another_time_comment?: string | null
+  requested_another_time_from?: string | null
+  requested_another_time_to?: string | null
   incoming_substatus?: string | null
 }
 
@@ -107,6 +110,230 @@ function formatInTz(utcIso: string, tz: string): string {
   }).format(new Date(utcIso))
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
+
+function formatRequestedAnotherTime(candidate: IncomingCandidate): string | null {
+  const from = candidate.requested_another_time_from
+  const to = candidate.requested_another_time_to
+  if (from && to) {
+    const start = new Date(from)
+    const end = new Date(to)
+    const sameDay = start.toDateString() === end.toDateString()
+    const startLabel = new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(start)
+    const endLabel = new Intl.DateTimeFormat('ru-RU', {
+      ...(sameDay ? {} : { day: '2-digit', month: '2-digit' }),
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(end)
+    return `Хочет окно: ${startLabel}–${endLabel}`
+  }
+  if (from) {
+    return `Хочет время: ${formatDateTime(from)}`
+  }
+  if (candidate.requested_another_time_comment) {
+    return `Пожелание: ${candidate.requested_another_time_comment}`
+  }
+  return null
+}
+
+function formatDuration(totalSeconds?: number | null) {
+  const total = Math.max(0, Math.round(totalSeconds || 0))
+  if (total === 0) return '0 мин'
+  const minutes = Math.round(total / 60)
+  if (minutes < 60) return `${minutes} мин`
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return restMinutes > 0 ? `${hours} ч ${restMinutes} мин` : `${hours} ч`
+}
+
+function resolveTestTone(status?: string | null) {
+  switch (status) {
+    case 'passed':
+    case 'completed':
+      return 'success'
+    case 'failed':
+      return 'danger'
+    case 'in_progress':
+    case 'pending':
+      return 'warning'
+    default:
+      return 'info'
+  }
+}
+
+function TestScoreBar({ correct, total, score }: { correct: number; total: number; score?: number | null }) {
+  const pct = total > 0 ? Math.round((correct / total) * 100) : 0
+  const barColor = pct >= 70 ? 'var(--success, #5BE1A5)' : pct >= 40 ? 'var(--warning, #F6C16B)' : 'var(--danger, #F07373)'
+  return (
+    <div className="cd-score">
+      <div className="cd-score__bar">
+        <div className="cd-score__fill" style={{ width: `${pct}%`, background: barColor }} />
+      </div>
+      <div className="cd-score__text">
+        {correct}/{total}
+        {typeof score === 'number' && <span className="cd-score__final"> ({score.toFixed(1)})</span>}
+      </div>
+    </div>
+  )
+}
+
+function resolveTest1Section(detail?: CandidateDetail | null): TestSection | null {
+  if (!detail) return null
+  const fromSections = detail.test_sections?.find((section) => section.key === 'test1')
+  if (fromSections) return fromSections
+  return detail.test_results?.test1 || null
+}
+
+type IncomingTestPreviewModalProps = {
+  candidate: IncomingCandidate
+  detail?: CandidateDetail
+  isLoading: boolean
+  isError: boolean
+  error: Error | null
+  isMobile: boolean
+  canSchedule: boolean
+  onClose: () => void
+  onSchedule: () => void
+}
+
+function IncomingTestPreviewModal({
+  candidate,
+  detail,
+  isLoading,
+  isError,
+  error,
+  isMobile,
+  canSchedule,
+  onClose,
+  onSchedule,
+}: IncomingTestPreviewModalProps) {
+  const test1Section = resolveTest1Section(detail)
+  const stats = test1Section?.details?.stats
+  const questions = test1Section?.details?.questions || []
+  const correctAnswers = stats?.correct_answers ?? questions.filter((question) => question.is_correct).length
+  const totalQuestions = stats?.total_questions ?? questions.length
+  const showQuestions = questions.length > 0
+
+  return (
+    <ModalPortal>
+      <div
+        className="modal-overlay"
+        onClick={(e) => e.target === e.currentTarget && onClose()}
+        role="dialog"
+        aria-modal="true"
+        data-testid="incoming-test-preview-modal"
+      >
+        <div className={`glass glass--elevated modal modal--md ${isMobile ? 'modal--sheet' : ''}`} onClick={(e) => e.stopPropagation()}>
+          <div className="modal__header">
+            <div>
+              <h2 className="modal__title">Результат Теста 1</h2>
+              <p className="modal__subtitle">{candidate.name || 'Кандидат'}</p>
+            </div>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>
+              Закрыть
+            </button>
+          </div>
+          <div className="modal__body">
+            {isLoading && <p className="subtitle">Загружаем результаты теста…</p>}
+            {isError && <div className="ui-alert ui-alert--error">{error?.message || 'Не удалось загрузить тест'}</div>}
+            {!isLoading && !isError && !test1Section && (
+              <div className="ui-alert ui-alert--warning">Результат Теста 1 пока недоступен.</div>
+            )}
+            {!isLoading && !isError && test1Section && (
+              <div className="ui-stack-16">
+                <div className="glass glass--subtle page-section ui-stack-12">
+                  <div className="toolbar toolbar--compact">
+                    <strong>Тест 1</strong>
+                    <span className={`status-pill status-pill--${resolveTestTone(test1Section.status)}`}>
+                      {test1Section.status_label || 'Без статуса'}
+                    </span>
+                  </div>
+                  <p className="subtitle">{test1Section.summary || 'Результат теста доступен.'}</p>
+                  <TestScoreBar
+                    correct={correctAnswers}
+                    total={totalQuestions}
+                    score={stats?.final_score}
+                  />
+                  <div className="cd-test-card__extra">
+                    <span>Сырые: {typeof stats?.raw_score === 'number' ? stats.raw_score : '—'}</span>
+                    <span>Время: {formatDuration(stats?.total_time)}</span>
+                    <span>Завершён: {formatDateTime(test1Section.completed_at)}</span>
+                  </div>
+                </div>
+
+                {showQuestions && (
+                  <div className="ui-stack-12">
+                    {questions.map((question: TestQuestionAnswer, index) => (
+                      <div key={`${candidate.id}-test1-${question.question_index ?? index}`} className="glass cd-test-attempt-question">
+                        <div className="cd-test-attempt-question__header">
+                          <span>Вопрос {question.question_index ?? index + 1}</span>
+                          <span className={`cd-chip cd-chip--small ${question.is_correct ? 'cd-chip--success' : 'cd-chip--danger'}`}>
+                            {question.is_correct ? 'Верно' : 'Неверно'}
+                          </span>
+                        </div>
+                        <div className="cd-test-attempt-question__text">{question.question_text || '—'}</div>
+                        <div className="cd-test-attempt-question__answer">
+                          <strong>Ответ кандидата:</strong> {question.user_answer || '—'}
+                        </div>
+                        {question.correct_answer && (
+                          <div className="cd-test-attempt-question__answer">
+                            <strong>Эталон:</strong> {question.correct_answer}
+                          </div>
+                        )}
+                        <div className="cd-test-attempt-question__meta">
+                          <span>Попыток: {question.attempts_count ?? 1}</span>
+                          <span>Время: {formatDuration(question.time_spent)}</span>
+                          {question.overtime ? <span>Просрочено</span> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="modal__footer">
+            {canSchedule && (
+              <button
+                className="ui-btn ui-btn--primary"
+                type="button"
+                data-testid="incoming-test-preview-schedule"
+                onClick={onSchedule}
+              >
+                Предложить время
+              </button>
+            )}
+            <Link
+              className="ui-btn ui-btn--ghost"
+              to="/app/candidates/$candidateId"
+              params={{ candidateId: String(candidate.id) }}
+            >
+              Профиль
+            </Link>
+            <button className="ui-btn ui-btn--ghost" type="button" onClick={onClose}>
+              Закрыть
+            </button>
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
+  )
+}
+
 export function IncomingPage() {
   const profile = useProfile()
   const isMobile = useIsMobile()
@@ -127,6 +354,7 @@ export function IncomingPage() {
   }, [])
   const [toast, setToast] = useState<string | null>(null)
   const [incomingTarget, setIncomingTarget] = useState<IncomingCandidate | null>(null)
+  const [testPreviewTarget, setTestPreviewTarget] = useState<IncomingCandidate | null>(null)
   const [incomingDate, setIncomingDate] = useState(toIsoDate(new Date()))
   const [incomingTime, setIncomingTime] = useState('10:00')
   const [incomingMessage, setIncomingMessage] = useState('')
@@ -169,6 +397,13 @@ export function IncomingPage() {
     queryFn: () => apiFetch('/recruiters'),
     enabled: Boolean(isAdmin),
     staleTime: 60_000,
+  })
+
+  const testPreviewQuery = useQuery<CandidateDetail>({
+    queryKey: ['candidate-detail', testPreviewTarget?.id],
+    queryFn: () => fetchCandidateDetail(Number(testPreviewTarget?.id)),
+    enabled: Boolean(testPreviewTarget?.id),
+    staleTime: 30_000,
   })
 
   const [assignTargets, setAssignTargets] = useState<Record<number, string>>({})
@@ -246,6 +481,17 @@ export function IncomingPage() {
     setIncomingMessage(candidate.requested_another_time_comment || candidate.availability_note || '')
     setIncomingMode('manual')
     setSelectedSlotId('')
+  }
+
+  const openTestPreview = (candidate: IncomingCandidate) => {
+    setTestPreviewTarget(candidate)
+  }
+
+  const openScheduleFromTestPreview = () => {
+    if (!testPreviewTarget) return
+    const candidate = testPreviewTarget
+    setTestPreviewTarget(null)
+    openIncomingSchedule(candidate)
   }
 
   useEffect(() => {
@@ -501,12 +747,6 @@ export function IncomingPage() {
                 const isNew = candidate.last_message_at
                   ? Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
                   : false
-                const telegramUsername = candidate.telegram_username?.replace(/^@/, '')
-                const telegramLink = telegramUsername
-                  ? `https://t.me/${telegramUsername}`
-                  : candidate.telegram_id
-                    ? `tg://user?id=${candidate.telegram_id}`
-                    : null
                 const selectedRecruiter =
                   assignTargets[candidate.id] ??
                   (candidate.responsible_recruiter_id ? String(candidate.responsible_recruiter_id) : '')
@@ -517,6 +757,7 @@ export function IncomingPage() {
                       ? 'info'
                       : 'warning'
                 const isExpanded = Boolean(expandedCards[candidate.id])
+                const requestedAnotherTimeLabel = formatRequestedAnotherTime(candidate)
                 return (
                   <div key={candidate.id} className="glass glass--subtle incoming-card incoming-card--compact ui-reveal" data-testid="incoming-card">
                     <div className="incoming-card__main">
@@ -570,7 +811,12 @@ export function IncomingPage() {
                         )}
                       </div>
                     )}
-                    {candidate.requested_another_time_comment && isExpanded && (
+                    {requestedAnotherTimeLabel && (
+                      <div className="incoming-card__note incoming-card__note--highlight">
+                        🗓 {requestedAnotherTimeLabel}
+                      </div>
+                    )}
+                    {candidate.requested_another_time_comment && isExpanded && requestedAnotherTimeLabel !== `Пожелание: ${candidate.requested_another_time_comment}` && (
                       <div className="incoming-card__note incoming-card__note--highlight">
                         💬 {candidate.requested_another_time_comment}
                       </div>
@@ -639,6 +885,14 @@ export function IncomingPage() {
                           Предложить время
                         </button>
                       )}
+                      <button
+                        className="ui-btn ui-btn--ghost ui-btn--sm"
+                        type="button"
+                        data-testid="incoming-card-test-preview"
+                        onClick={() => openTestPreview(candidate)}
+                      >
+                        Тест
+                      </button>
                       <Link
                         className="ui-btn ui-btn--ghost ui-btn--sm"
                         to="/app/candidates/$candidateId"
@@ -646,11 +900,6 @@ export function IncomingPage() {
                       >
                         Профиль
                       </Link>
-                      {telegramLink && (
-                        <a className="ui-btn ui-btn--ghost ui-btn--sm" href={telegramLink} target="_blank" rel="noopener">
-                          Telegram
-                        </a>
-                      )}
                       <button
                         className="ui-btn ui-btn--danger ui-btn--sm"
                         type="button"
@@ -826,6 +1075,20 @@ export function IncomingPage() {
             </div>
           </div>
         </ModalPortal>
+      )}
+
+      {testPreviewTarget && (
+        <IncomingTestPreviewModal
+          candidate={testPreviewTarget}
+          detail={testPreviewQuery.data}
+          isLoading={testPreviewQuery.isLoading}
+          isError={testPreviewQuery.isError}
+          error={testPreviewQuery.error as Error | null}
+          isMobile={isMobile}
+          canSchedule={!isAdmin}
+          onClose={() => setTestPreviewTarget(null)}
+          onSchedule={openScheduleFromTestPreview}
+        />
       )}
 
       {toast && <div className="toast">{toast}</div>}

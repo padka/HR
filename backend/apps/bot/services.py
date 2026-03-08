@@ -4591,13 +4591,28 @@ async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city
         f"📍 {escape_html(city_name)}\n"
         f"TG: <code>{user_id}</code>\n\n"
         "⚠️ <b>Нет доступных автоматических слотов</b>\n"
-        "Требуется ручное назначение времени собеседования через админ-панель."
+        "Требуется ручное назначение времени собеседования."
     )
+
+    # Build action keyboard with CRM deep link
+    reply_markup = None
+    try:
+        candidate_record = await candidate_services.get_user_by_telegram_id(user_id)
+        if candidate_record is not None:
+            settings = get_settings()
+            crm_base = ((settings.crm_public_url or settings.bot_backend_url) or "").rstrip("/")
+            crm_url = f"{crm_base}/app/candidates/{candidate_record.id}" if crm_base else ""
+            from .keyboards import kb_candidate_notification
+            reply_markup = kb_candidate_notification(candidate_record.id, crm_url)
+    except Exception:
+        logger.debug("Could not build candidate notification keyboard", exc_info=True)
 
     delivered = False
     for recruiter in recipients:
         try:
-            await bot.send_message(recruiter.tg_chat_id, message, parse_mode="HTML")
+            await bot.send_message(
+                recruiter.tg_chat_id, message, parse_mode="HTML", reply_markup=reply_markup,
+            )
             delivered = True
             logger.info(
                 "Sent waiting_slot notification to recruiter %s (chat_id=%s) for candidate %s",
@@ -4700,7 +4715,7 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
 
 
 async def show_recruiter_dashboard(user_id: int, recruiter: Optional[Recruiter] = None, horizon_hours: int = 48) -> None:
-    """Send recruiter a compact dashboard of upcoming slots."""
+    """Send recruiter a compact dashboard of upcoming slots with KPI header."""
     bot = get_bot()
     if recruiter is None:
         recruiter = await get_recruiter_by_chat_id(user_id)
@@ -4710,6 +4725,18 @@ async def show_recruiter_dashboard(user_id: int, recruiter: Optional[Recruiter] 
             "Ваш чат не привязан к рекрутёру. Используйте /iam <Имя из админки>, затем /start.",
         )
         return
+
+    # Fetch KPI counts for the dashboard header
+    waiting_count = 0
+    try:
+        from backend.apps.admin_ui.services.dashboard import dashboard_counts as _dashboard_counts
+        from backend.apps.admin_ui.security import Principal
+
+        principal = Principal(type="recruiter", id=recruiter.id)
+        counts = await _dashboard_counts(principal=principal)
+        waiting_count = int(counts.get("waiting_candidates_total", 0))
+    except Exception:
+        logger.debug("Could not load dashboard KPIs for recruiter %s", recruiter.id, exc_info=True)
 
     now = datetime.now(timezone.utc)
     end = now + timedelta(hours=horizon_hours)
@@ -4722,26 +4749,41 @@ async def show_recruiter_dashboard(user_id: int, recruiter: Optional[Recruiter] 
         await bot.send_message(user_id, "Не удалось загрузить расписание. Попробуйте позже.")
         return
 
+    # Build KPI header
+    scheduled = sum(1 for s in (slots or []) if (s.status or "").lower() not in (SlotStatus.FREE, "free"))
+    free = sum(1 for s in (slots or []) if (s.status or "").lower() in (SlotStatus.FREE, "free"))
+    kpi_lines = [
+        "📊 <b>Ваша панель</b>\n",
+        f"• Встреч запланировано: {scheduled}",
+        f"• Ожидают назначения: {waiting_count}",
+        f"• Слотов свободно: {free}",
+    ]
+
     if not slots:
-        await bot.send_message(
-            user_id,
-            f"Ближайшие {horizon_hours} часов у вас нет встреч.\n"
-            "Уведомления о бронированиях и подтверждениях будут приходить сюда. "
-            "Подробные действия — в админке.",
-        )
-        return
+        kpi_lines.append(f"\nБлижайшие {horizon_hours}ч — нет встреч.")
+    else:
+        kpi_lines.append(f"\n<b>Ближайшее:</b>")
+        for slot in slots[:8]:
+            status = (slot.status or "").lower()
+            if status in (SlotStatus.FREE, "free"):
+                continue
+            purpose = "Ознакомительный день" if (slot.purpose or "").lower() == "intro_day" else "Собеседование"
+            candidate_label = slot.candidate_fio or "—"
+            tz = slot.tz_name or recruiter.tz or DEFAULT_TZ
+            dt_local = fmt_dt_local(slot.start_utc, tz)
+            kpi_lines.append(f"• {dt_local} · {purpose} · {candidate_label}")
 
-    lines: List[str] = []
-    for slot in slots:
-        status = (slot.status or "").lower()
-        purpose = "Ознакомительный день" if (slot.purpose or "").lower() == "intro_day" else "Собеседование"
-        candidate = slot.candidate_fio or ("Свободно" if status == SlotStatus.FREE else "—")
-        tz = slot.tz_name or recruiter.tz or DEFAULT_TZ
-        dt_local = fmt_dt_local(slot.start_utc, tz)
-        lines.append(f"• {dt_local} ({tz}) · {purpose} · {candidate} · {status}")
+    settings = get_settings()
+    crm_base = ((settings.crm_public_url or settings.bot_backend_url) or "").rstrip("/")
+    from .keyboards import kb_recruiter_dashboard
+    reply_markup = kb_recruiter_dashboard(waiting_count, crm_base) if crm_base else None
 
-    header = f"Ваши ближайшие встречи (до {horizon_hours}ч):"
-    await bot.send_message(user_id, "\n".join([header, *lines]))
+    await bot.send_message(
+        user_id,
+        "\n".join(kpi_lines),
+        parse_mode="HTML",
+        reply_markup=reply_markup,
+    )
 
 
 async def send_welcome(user_id: int) -> None:
@@ -4773,6 +4815,13 @@ async def handle_recruiter_identity_command(message: Message) -> None:
     await message.answer(
         "Готово! Уведомления о брони и подтверждениях будут приходить в этот чат."
     )
+
+    # Register bot commands for the recruiter chat
+    try:
+        from .recruiter_service import set_recruiter_commands
+        await set_recruiter_commands(message.chat.id)
+    except Exception:
+        logger.debug("Could not set recruiter commands after /iam", exc_info=True)
 
 
 async def start_introday_flow(message: Message) -> None:
@@ -6291,8 +6340,9 @@ async def notify_recruiters_manual_availability(
     crm_link = None
     try:
         settings = get_settings()
-        if candidate_db_id and settings.bot_backend_url:
-            crm_link = f"{settings.bot_backend_url.rstrip('/')}/app/candidates/{int(candidate_db_id)}"
+        public_base = (settings.crm_public_url or settings.bot_backend_url or "").rstrip("/")
+        if candidate_db_id and public_base:
+            crm_link = f"{public_base}/app/candidates/{int(candidate_db_id)}"
     except Exception:
         crm_link = None
 
@@ -6307,9 +6357,16 @@ async def notify_recruiters_manual_availability(
     if availability_note:
         lines.append(f"💬 {escape_html(str(availability_note))}")
     lines.append(f"TG: <code>{candidate_tg_id}</code>")
-    if crm_link:
-        lines.append(f"CRM: {escape_html(crm_link)}")
     message = "\n".join(lines)
+
+    # Build inline keyboard with action buttons and CRM deep link
+    reply_markup = None
+    if candidate_db_id:
+        try:
+            from .keyboards import kb_candidate_notification
+            reply_markup = kb_candidate_notification(int(candidate_db_id), crm_link or "")
+        except Exception:
+            logger.debug("Could not build manual availability keyboard", exc_info=True)
 
     delivered = False
     bot = get_bot()
@@ -6330,7 +6387,7 @@ async def notify_recruiters_manual_availability(
         if report_paths and hasattr(bot, "send_document"):
             for path in report_paths[:1]:  # send the most useful one (Test 1) to avoid spam
                 try:
-                    await bot.send_document(chat_id, FSInputFile(str(path)), caption=message, parse_mode="HTML")
+                    await bot.send_document(chat_id, FSInputFile(str(path)), caption=message, parse_mode="HTML", reply_markup=reply_markup)
                     sent = True
                     delivered = True
                     break
@@ -6344,7 +6401,7 @@ async def notify_recruiters_manual_availability(
             continue
 
         try:
-            await bot.send_message(chat_id, message, parse_mode="HTML")
+            await bot.send_message(chat_id, message, parse_mode="HTML", reply_markup=reply_markup)
             delivered = True
         except Exception:
             logger.exception(
@@ -6567,6 +6624,18 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
         purpose=purpose,
     )
 
+    # Build CRM deep link for the approve keyboard
+    _crm_url: Optional[str] = None
+    try:
+        _candidate_rec = await candidate_services.get_user_by_telegram_id(user_id)
+        if _candidate_rec is not None:
+            settings = get_settings()
+            _crm_base = ((settings.crm_public_url or settings.bot_backend_url) or "").rstrip("/")
+            if _crm_base:
+                _crm_url = f"{_crm_base}/app/candidates/{_candidate_rec.id}"
+    except Exception:
+        logger.debug("Could not build CRM URL for kb_approve", exc_info=True)
+
     attached = False
     for path in [
         TEST1_DIR / f"test1_{state.get('fio') or user_id}.txt",
@@ -6579,7 +6648,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
                         rec.tg_chat_id,
                         FSInputFile(str(path)),
                         caption=caption,
-                        reply_markup=kb_approve(slot.id),
+                        reply_markup=kb_approve(slot.id, crm_url=_crm_url),
                     )
                     attached = True
 
@@ -6599,7 +6668,7 @@ async def handle_pick_slot(callback: CallbackQuery) -> None:
     if rec and rec.tg_chat_id and not attached:
         try:
             await bot.send_message(
-                rec.tg_chat_id, caption, reply_markup=kb_approve(slot.id)
+                rec.tg_chat_id, caption, reply_markup=kb_approve(slot.id, crm_url=_crm_url)
             )
         except Exception:
             logger.warning(

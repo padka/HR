@@ -13,6 +13,7 @@ from backend.apps.admin_ui.services.candidates import (
     update_candidate_status,
     upsert_candidate,
 )
+from backend.apps.admin_ui.services.reschedule_intents import RescheduleIntent
 from backend.apps.admin_ui.security import Principal
 from backend.core.db import async_session
 from backend.domain.candidates import (
@@ -332,6 +333,49 @@ async def test_candidate_detail_test_history_contains_attempt_details():
     assert len(history[0]["details"]["questions"]) == 1
     assert history[1]["details"]["stats"]["total_questions"] == 2
     assert len(history[1]["details"]["questions"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_candidate_detail_overrides_display_when_reschedule_requested(monkeypatch):
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999103,
+        fio="Reschedule Detail Candidate",
+        city="Екатеринбург",
+        initial_status=CandidateStatus.SLOT_PENDING,
+    )
+
+    async def fake_reschedule_intent(*_args, **_kwargs):
+        return RescheduleIntent(
+            requested=True,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            requested_start_utc=datetime(2031, 7, 16, 9, 0, tzinfo=timezone.utc).isoformat(),
+            requested_end_utc=datetime(2031, 7, 16, 12, 0, tzinfo=timezone.utc).isoformat(),
+            requested_tz="Europe/Moscow",
+            candidate_comment="Лучше утром",
+            source="bot_state",
+        )
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.get_candidate_reschedule_intent",
+        fake_reschedule_intent,
+    )
+
+    detail = await get_candidate_detail(candidate.id)
+    assert detail is not None
+    assert detail["candidate_status_slug"] == CandidateStatus.SLOT_PENDING.value
+    assert detail["candidate_status_display"] == "Запросил другое время"
+    assert detail["candidate_status_color"] == "warning"
+    assert detail["stage"] == "Запросил другое время"
+
+    payload = await api_candidate_detail_payload(candidate.id)
+    assert payload is not None
+    assert payload["candidate_status_display"] == "Запросил другое время"
+    assert payload["candidate_status_color"] == "warning"
+    assert payload["stage"] == "Запросил другое время"
+    assert payload["reschedule_request"]["requested_start_utc"] == "2031-07-16T09:00:00+00:00"
+    assert payload["reschedule_request"]["requested_end_utc"] == "2031-07-16T12:00:00+00:00"
+    assert payload["reschedule_request"]["requested_tz"] == "Europe/Moscow"
+    assert payload["reschedule_request"]["candidate_comment"] == "Лучше утром"
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ from backend.apps.admin_ui.services.dashboard import (
     get_recruiter_leaderboard,
     get_waiting_candidates,
 )
+from backend.apps.admin_ui.services.reschedule_intents import RescheduleIntent
 from backend.apps.admin_ui.services.slots import api_slots_payload, create_slot, list_slots
 from backend.core.db import async_session
 from backend.domain import models
@@ -116,6 +117,7 @@ async def test_waiting_candidates_marks_requested_another_time(monkeypatch):
             models.RescheduleRequest(
                 slot_assignment_id=assignment.id,
                 requested_start_utc=now + timedelta(days=1, hours=2),
+                requested_end_utc=now + timedelta(days=1, hours=4),
                 requested_tz="Europe/Moscow",
                 candidate_comment="Подходит только вечер",
                 status=models.RescheduleRequestStatus.PENDING,
@@ -127,7 +129,90 @@ async def test_waiting_candidates_marks_requested_another_time(monkeypatch):
     row = next(item for item in items if item["id"] == candidate.id)
     assert row["requested_another_time"] is True
     assert row["incoming_substatus"] == "requested_other_time"
+    assert row["status_display"] == "Запросил другое время"
+    assert row["status_color"] == "warning"
     assert row["requested_another_time_comment"] == "Подходит только вечер"
+    assert row["requested_another_time_from"] is not None
+    assert row["requested_another_time_to"] is not None
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_uses_bot_state_for_reschedule_intent(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City 3", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Incoming Recruiter 3", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        candidate = User(
+            fio="Bot State Candidate",
+            city="Incoming City 3",
+            telegram_id=920002,
+            telegram_user_id=920002,
+            candidate_id="bot-state-candidate",
+            candidate_status=CandidateStatus.SLOT_PENDING,
+            status_changed_at=now - timedelta(hours=3),
+            last_activity=now - timedelta(hours=3),
+            is_active=True,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=now + timedelta(days=1),
+            duration_min=60,
+            status=models.SlotStatus.PENDING,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz="Europe/Moscow",
+            status=models.SlotAssignmentStatus.OFFERED,
+            offered_at=now - timedelta(hours=2),
+        )
+        session.add(assignment)
+        await session.commit()
+
+    async def fake_bot_state_intent(*_args, **_kwargs):
+        return RescheduleIntent(
+            requested=True,
+            created_at=(now - timedelta(hours=1)).isoformat(),
+            candidate_comment=None,
+            source="bot_state",
+        )
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.dashboard.get_bot_state_reschedule_intent",
+        fake_bot_state_intent,
+    )
+
+    items = await get_waiting_candidates(limit=20)
+    row = next(item for item in items if item["id"] == candidate.id)
+    assert row["requested_another_time"] is True
+    assert row["incoming_substatus"] == "requested_other_time"
+    assert row["status_display"] == "Запросил другое время"
+    assert row["status_color"] == "warning"
+    assert row["requested_another_time_from"] is None
+    assert row["requested_another_time_to"] is None
 
 
 @pytest.mark.asyncio

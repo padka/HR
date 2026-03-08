@@ -47,6 +47,11 @@ from backend.apps.admin_ui.security import Principal
 from backend.core.cache import CacheTTL, get_cache
 from backend.apps.admin_ui.perf.cache import keys as cache_keys
 from backend.apps.admin_ui.perf.cache.readthrough import get_or_compute
+from backend.apps.admin_ui.services.reschedule_intents import (
+    RescheduleIntent,
+    get_bot_state_reschedule_intent,
+    get_reschedule_intent_map,
+)
 
 __all__ = [
     "dashboard_counts",
@@ -287,7 +292,7 @@ async def get_waiting_candidates(
     async def _compute() -> List[Dict[str, object]]:
         last_message_map: Dict[int, dict] = {}
         recruiter_map: Dict[int, str] = {}
-        reschedule_request_map: Dict[str, Dict[str, Optional[object]]] = {}
+        reschedule_intent_map: Dict[str, RescheduleIntent] = {}
         ai_fit_map: Dict[int, Dict[str, Optional[object]]] = {}
         async with async_session() as session:
             recruiter_city_ids: set[int] = set()
@@ -413,42 +418,10 @@ async def get_waiting_candidates(
                     }
 
             if candidate_ids:
-                pending_reschedule_sq = (
-                    select(
-                        SlotAssignment.candidate_id.label("candidate_id"),
-                        RescheduleRequest.created_at.label("created_at"),
-                        RescheduleRequest.candidate_comment.label("candidate_comment"),
-                        func.row_number()
-                        .over(
-                            partition_by=SlotAssignment.candidate_id,
-                            order_by=RescheduleRequest.created_at.desc(),
-                        )
-                        .label("rn"),
-                    )
-                    .join(
-                        RescheduleRequest,
-                        RescheduleRequest.slot_assignment_id == SlotAssignment.id,
-                    )
-                    .where(
-                        SlotAssignment.candidate_id.in_(candidate_ids),
-                        SlotAssignment.status == SlotAssignmentStatus.RESCHEDULE_REQUESTED,
-                        RescheduleRequest.status == RescheduleRequestStatus.PENDING,
-                    )
-                ).subquery()
-                pending_rows = await session.execute(
-                    select(
-                        pending_reschedule_sq.c.candidate_id,
-                        pending_reschedule_sq.c.created_at,
-                        pending_reschedule_sq.c.candidate_comment,
-                    ).where(pending_reschedule_sq.c.rn == 1)
+                reschedule_intent_map = await get_reschedule_intent_map(
+                    session,
+                    candidate_ids=candidate_ids,
                 )
-                for candidate_id, created_at, candidate_comment in pending_rows:
-                    if not candidate_id:
-                        continue
-                    reschedule_request_map[str(candidate_id)] = {
-                        "created_at": created_at.isoformat() if created_at else None,
-                        "candidate_comment": candidate_comment,
-                    }
 
             recruiter_ids = {row.responsible_recruiter_id for row in users if row.responsible_recruiter_id}
             if recruiter_ids:
@@ -511,12 +484,22 @@ async def get_waiting_candidates(
             last_msg = last_message_map.get(int(user_id))
             last_msg_at = last_msg.get("created_at") if last_msg else None
             status_slug = user_candidate_status.value if user_candidate_status else None
-            reschedule_request = (
-                reschedule_request_map.get(str(user_candidate_id))
+            reschedule_intent = (
+                reschedule_intent_map.get(str(user_candidate_id))
                 if user_candidate_id
                 else None
             )
-            requested_another_time = bool(reschedule_request)
+            if (
+                reschedule_intent is None
+                and status_slug == CandidateStatus.SLOT_PENDING.value
+                and (user_telegram_user_id or user_telegram_id)
+            ):
+                reschedule_intent = await get_bot_state_reschedule_intent(
+                    session,
+                    candidate_id=str(user_candidate_id) if user_candidate_id else None,
+                    candidate_tg_id=user_telegram_user_id or user_telegram_id,
+                )
+            requested_another_time = bool(reschedule_intent and reschedule_intent.requested)
             if requested_another_time:
                 incoming_substatus = "requested_other_time"
             elif status_slug == CandidateStatus.SLOT_PENDING.value:
@@ -525,11 +508,16 @@ async def get_waiting_candidates(
                 incoming_substatus = "stalled_waiting_slot"
             else:
                 incoming_substatus = "waiting_slot"
-            status_display = (
-                "На согласовании"
-                if status_slug == CandidateStatus.SLOT_PENDING.value
-                else get_status_label(user_candidate_status)
-            )
+            status_color = get_status_color(user_candidate_status)
+            if requested_another_time:
+                status_display = "Запросил другое время"
+                status_color = "warning"
+            else:
+                status_display = (
+                    "На согласовании"
+                    if status_slug == CandidateStatus.SLOT_PENDING.value
+                    else get_status_label(user_candidate_status)
+                )
             waiting_rows.append(
                 {
                     "id": int(user_id),
@@ -537,7 +525,7 @@ async def get_waiting_candidates(
                     "city": user_city or "Не указан",
                     "city_id": city_id,
                     "status_display": status_display,
-                    "status_color": get_status_color(user_candidate_status),
+                    "status_color": status_color,
                     "status_slug": status_slug,
                     "waiting_since": waiting_since_iso,
                     "waiting_since_dt": normalized_waiting_since,
@@ -552,13 +540,23 @@ async def get_waiting_candidates(
                     "last_message_at": last_msg_at.isoformat() if last_msg_at else None,
                     "requested_another_time": requested_another_time,
                     "requested_another_time_at": (
-                        reschedule_request.get("created_at")
-                        if isinstance(reschedule_request, dict)
+                        reschedule_intent.created_at
+                        if requested_another_time and reschedule_intent is not None
                         else None
                     ),
                     "requested_another_time_comment": (
-                        reschedule_request.get("candidate_comment")
-                        if isinstance(reschedule_request, dict)
+                        reschedule_intent.candidate_comment
+                        if requested_another_time and reschedule_intent is not None
+                        else None
+                    ),
+                    "requested_another_time_from": (
+                        reschedule_intent.requested_start_utc
+                        if requested_another_time and reschedule_intent is not None
+                        else None
+                    ),
+                    "requested_another_time_to": (
+                        reschedule_intent.requested_end_utc
+                        if requested_another_time and reschedule_intent is not None
                         else None
                     ),
                     "incoming_substatus": incoming_substatus,

@@ -56,6 +56,12 @@ const CopilotPage = lazy(() => import('./routes/app/copilot').then(m => ({ defau
 const SimulatorPage = lazy(() => import('./routes/app/simulator').then(m => ({ default: m.SimulatorPage })))
 const DetailizationPage = lazy(() => import('./routes/app/detailization').then(m => ({ default: m.DetailizationPage })))
 
+// Telegram Mini App pages (lazy)
+const TgAppLayout = lazy(() => import('./routes/tg-app/layout').then(m => ({ default: m.TgAppLayout })))
+const TgDashboardPage = lazy(() => import('./routes/tg-app/index').then(m => ({ default: m.TgDashboardPage })))
+const TgIncomingPage = lazy(() => import('./routes/tg-app/incoming').then(m => ({ default: m.TgIncomingPage })))
+const TgCandidatePage = lazy(() => import('./routes/tg-app/candidate').then(m => ({ default: m.TgCandidatePage })))
+
 // Loading fallback
 function PageLoader() {
   return (
@@ -280,6 +286,31 @@ const candidateDetailRoute = createRoute({
   component: withSuspense(CandidateDetailPage),
 })
 
+// Telegram Mini App routes
+const tgAppLayoutRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  id: 'tg-app-layout',
+  component: withSuspense(TgAppLayout),
+})
+
+const tgDashboardRoute = createRoute({
+  getParentRoute: () => tgAppLayoutRoute,
+  path: '/tg-app',
+  component: withSuspense(TgDashboardPage),
+})
+
+const tgIncomingRoute = createRoute({
+  getParentRoute: () => tgAppLayoutRoute,
+  path: '/tg-app/incoming',
+  component: withSuspense(TgIncomingPage),
+})
+
+const tgCandidateRoute = createRoute({
+  getParentRoute: () => tgAppLayoutRoute,
+  path: '/tg-app/candidates/$candidateId',
+  component: withSuspense(TgCandidatePage),
+})
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   dashboardRoute,
@@ -312,6 +343,11 @@ const routeTree = rootRoute.addChildren([
   candidatesRoute,
   candidateNewRoute,
   candidateDetailRoute,
+  tgAppLayoutRoute.addChildren([
+    tgDashboardRoute,
+    tgIncomingRoute,
+    tgCandidateRoute,
+  ]),
 ])
 const router = createRouter({ routeTree })
 

@@ -14,7 +14,12 @@ from backend.domain import models
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
-from backend.domain.slot_assignment_service import create_slot_assignment, request_reschedule
+from backend.domain.slot_assignment_service import (
+    approve_reschedule,
+    begin_reschedule_request,
+    create_slot_assignment,
+    request_reschedule,
+)
 
 
 class _DummyIntegration:
@@ -72,6 +77,62 @@ async def _async_request_with_principal(
             app.dependency_overrides.pop(require_principal, None)
 
     return await asyncio.to_thread(_call)
+
+
+async def _create_reschedule_assignment(
+    *,
+    telegram_id: int,
+    fio: str,
+    city_name: str,
+    recruiter_name: str,
+    start_utc: datetime,
+) -> tuple[User, int, str]:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=telegram_id,
+        fio=fio,
+        city=city_name,
+        initial_status=CandidateStatus.SLOT_PENDING,
+    )
+
+    async with async_session() as session:
+        city = models.City(name=city_name, tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name=recruiter_name, tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=start_utc,
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    offer = await create_slot_assignment(
+        slot_id=slot_id,
+        candidate_id=candidate.candidate_id,
+        candidate_tg_id=candidate.telegram_id,
+        candidate_tz="Europe/Moscow",
+        created_by="admin",
+    )
+    assert offer.ok is True
+    return candidate, int(offer.payload["slot_assignment_id"]), str(offer.payload["reschedule_token"])
+
+
+def _to_aware_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @pytest.mark.asyncio
@@ -385,6 +446,198 @@ async def test_schedule_slot_reuses_active_reschedule_assignment(admin_app) -> N
     assert payload["ok"] is True
     assert payload["status"] == "pending_offer"
     assert int(payload.get("slot_assignment_id") or 0) == assignment_id
+
+
+@pytest.mark.asyncio
+async def test_begin_reschedule_request_marks_assignment_before_datetime_submission() -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=777004,
+        fio="API Кандидат 4",
+        city="Москва",
+        username="api_candidate4",
+        initial_status=CandidateStatus.SLOT_PENDING,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="API Recruiter 4", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime(2031, 7, 8, 9, 0, tzinfo=timezone.utc),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    offer = await create_slot_assignment(
+        slot_id=slot_id,
+        candidate_id=candidate.candidate_id,
+        candidate_tg_id=candidate.telegram_id,
+        candidate_tz="Europe/Moscow",
+        created_by="admin",
+    )
+    assert offer.ok is True
+    assignment_id = int(offer.payload["slot_assignment_id"])
+    reschedule_token = str(offer.payload["reschedule_token"])
+
+    begin = await begin_reschedule_request(
+        assignment_id=assignment_id,
+        action_token=reschedule_token,
+        candidate_tg_id=candidate.telegram_id,
+    )
+    assert begin.ok is True
+    assert begin.status == "reschedule_pending_input"
+
+    async with async_session() as session:
+        assignment = await session.get(models.SlotAssignment, assignment_id)
+        assert assignment is not None
+        assert assignment.status == models.SlotAssignmentStatus.RESCHEDULE_REQUESTED
+        assert assignment.reschedule_requested_at is not None
+
+    res = await request_reschedule(
+        assignment_id=assignment_id,
+        action_token=reschedule_token,
+        candidate_tg_id=candidate.telegram_id,
+        requested_start_utc=datetime(2031, 7, 9, 12, 0, tzinfo=timezone.utc),
+        requested_tz="Europe/Moscow",
+        comment="Удобнее позже",
+    )
+    assert res.ok is True
+
+    async with async_session() as session:
+        assignment = await session.get(models.SlotAssignment, assignment_id)
+        assert assignment is not None
+        assert assignment.status == models.SlotAssignmentStatus.RESCHEDULE_REQUESTED
+        request = await session.scalar(
+            select(models.RescheduleRequest).where(
+                models.RescheduleRequest.slot_assignment_id == assignment_id,
+                models.RescheduleRequest.status == models.RescheduleRequestStatus.PENDING,
+            )
+        )
+        assert request is not None
+        assert request.candidate_comment == "Удобнее позже"
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_accepts_exact_slot_choice() -> None:
+    candidate, assignment_id, reschedule_token = await _create_reschedule_assignment(
+        telegram_id=777005,
+        fio="API Кандидат 5",
+        city_name="Казань",
+        recruiter_name="API Recruiter 5",
+        start_utc=datetime(2031, 7, 10, 9, 0, tzinfo=timezone.utc),
+    )
+
+    result = await request_reschedule(
+        assignment_id=assignment_id,
+        action_token=reschedule_token,
+        candidate_tg_id=candidate.telegram_id,
+        requested_start_utc=datetime(2031, 7, 11, 11, 0, tzinfo=timezone.utc),
+        requested_tz="Europe/Moscow",
+        comment=None,
+    )
+
+    assert result.ok is True
+
+    async with async_session() as session:
+        request = await session.scalar(
+            select(models.RescheduleRequest).where(
+                models.RescheduleRequest.slot_assignment_id == assignment_id,
+                models.RescheduleRequest.status == models.RescheduleRequestStatus.PENDING,
+            )
+        )
+        assert request is not None
+        assert _to_aware_utc(request.requested_start_utc) == datetime(2031, 7, 11, 11, 0, tzinfo=timezone.utc)
+        assert request.requested_end_utc is None
+        assert request.candidate_comment is None
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_accepts_availability_window_and_blocks_direct_approve() -> None:
+    candidate, assignment_id, reschedule_token = await _create_reschedule_assignment(
+        telegram_id=777006,
+        fio="API Кандидат 6",
+        city_name="Самара",
+        recruiter_name="API Recruiter 6",
+        start_utc=datetime(2031, 7, 12, 9, 0, tzinfo=timezone.utc),
+    )
+
+    result = await request_reschedule(
+        assignment_id=assignment_id,
+        action_token=reschedule_token,
+        candidate_tg_id=candidate.telegram_id,
+        requested_start_utc=datetime(2031, 7, 13, 9, 0, tzinfo=timezone.utc),
+        requested_end_utc=datetime(2031, 7, 13, 12, 0, tzinfo=timezone.utc),
+        requested_tz="Europe/Moscow",
+        comment=None,
+    )
+
+    assert result.ok is True
+
+    async with async_session() as session:
+        request = await session.scalar(
+            select(models.RescheduleRequest).where(
+                models.RescheduleRequest.slot_assignment_id == assignment_id,
+                models.RescheduleRequest.status == models.RescheduleRequestStatus.PENDING,
+            )
+        )
+        assert request is not None
+        assert _to_aware_utc(request.requested_start_utc) == datetime(2031, 7, 13, 9, 0, tzinfo=timezone.utc)
+        assert _to_aware_utc(request.requested_end_utc) == datetime(2031, 7, 13, 12, 0, tzinfo=timezone.utc)
+
+    approve = await approve_reschedule(
+        assignment_id=assignment_id,
+        decided_by_id=1,
+        decided_by_type="admin",
+    )
+    assert approve.ok is False
+    assert approve.status_code == 409
+    assert "точного времени" in (approve.message or "")
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_accepts_free_text_without_datetime() -> None:
+    candidate, assignment_id, reschedule_token = await _create_reschedule_assignment(
+        telegram_id=777007,
+        fio="API Кандидат 7",
+        city_name="Уфа",
+        recruiter_name="API Recruiter 7",
+        start_utc=datetime(2031, 7, 14, 9, 0, tzinfo=timezone.utc),
+    )
+
+    result = await request_reschedule(
+        assignment_id=assignment_id,
+        action_token=reschedule_token,
+        candidate_tg_id=candidate.telegram_id,
+        requested_start_utc=None,
+        requested_tz="Europe/Moscow",
+        comment="Мне удобно после 18:00 в любой день на следующей неделе",
+    )
+
+    assert result.ok is True
+
+    async with async_session() as session:
+        request = await session.scalar(
+            select(models.RescheduleRequest).where(
+                models.RescheduleRequest.slot_assignment_id == assignment_id,
+                models.RescheduleRequest.status == models.RescheduleRequestStatus.PENDING,
+            )
+        )
+        assert request is not None
+        assert request.requested_start_utc is None
+        assert request.requested_end_utc is None
+        assert request.candidate_comment == "Мне удобно после 18:00 в любой день на следующей неделе"
 
 
 @pytest.mark.asyncio

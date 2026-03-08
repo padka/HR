@@ -383,15 +383,18 @@ function createBubblePopFx(container: HTMLElement): BubblePopFx {
 
 type ThreadItem = {
   id: number
-  type: 'direct' | 'group'
+  candidate_id: number
+  type: 'candidate'
   title: string
+  city?: string | null
+  status_label?: string | null
+  profile_url?: string | null
   created_at: string
+  last_message_at?: string | null
   last_message?: {
     text?: string | null
     created_at?: string | null
-    sender_type?: string | null
-    sender_id?: number | null
-    type?: string | null
+    direction?: string | null
   }
   unread_count?: number
 }
@@ -532,7 +535,7 @@ export function RootLayout() {
   const isMobile = useIsMobile()
   const [liquidGlassV2Enabled, setLiquidGlassV2Enabled] = useState<boolean>(resolveLiquidGlassV2Enabled)
   const [motionMode, setMotionMode] = useState<MotionMode>(resolveMotionMode)
-  const hideNav = location.pathname.startsWith('/app/login')
+  const hideNav = location.pathname.startsWith('/app/login') || location.pathname.startsWith('/tg-app')
   const profileQuery = useProfile(!hideNav)
   const principalType = profileQuery.data?.principal.type
   const authError = profileQuery.error as (Error & { status?: number }) | undefined
@@ -979,10 +982,8 @@ export function RootLayout() {
     const previewFor = (thread: ThreadItem) => {
       const last = thread.last_message
       if (!last) return 'Нет сообщений'
-      if (last.type === 'candidate_task') return 'Передан кандидат'
-      if (last.type === 'system') return last.text || 'Системное сообщение'
       if (last.text && last.text.trim()) return last.text.trim()
-      return 'Файл'
+      return 'Сообщение'
     }
 
     const unreadTotal = (threads: ThreadItem[] = []) =>
@@ -991,13 +992,13 @@ export function RootLayout() {
     const loop = async () => {
       // Baseline: load once without notifications to avoid beeping on existing unread.
       try {
-        const initial = await apiFetch<ThreadsPayload>('/staff/threads')
-        queryClient.setQueryData(['staff-threads'], initial)
+        const initial = await apiFetch<ThreadsPayload>('/candidate-chat/threads')
+        queryClient.setQueryData(['candidate-chat-threads'], initial)
         setChatUnreadCount(unreadTotal(initial.threads || []))
         since = initial.latest_event_at || since
         const seen: Record<number, string> = {}
         ;(initial.threads || []).forEach((t) => {
-          const lastAt = t.last_message?.created_at || t.created_at
+          const lastAt = t.last_message_at || t.last_message?.created_at
           if (lastAt) seen[t.id] = lastAt
         })
         chatLastSeenRef.current = seen
@@ -1012,14 +1013,14 @@ export function RootLayout() {
           const params = new URLSearchParams()
           if (since) params.set('since', since)
           params.set('timeout', '25')
-          const payload = await apiFetch<ThreadsPayload>(`/staff/threads/updates?${params.toString()}`, {
+          const payload = await apiFetch<ThreadsPayload>(`/candidate-chat/threads/updates?${params.toString()}`, {
             signal: controller.signal,
           })
 
           if (payload.latest_event_at) since = payload.latest_event_at
 
           if (payload.updated && payload.threads?.length) {
-            queryClient.setQueryData(['staff-threads'], payload)
+            queryClient.setQueryData(['candidate-chat-threads'], payload)
             setChatUnreadCount(unreadTotal(payload.threads))
 
             const prevSeen = chatLastSeenRef.current || {}
@@ -1027,7 +1028,7 @@ export function RootLayout() {
             const newIncoming: Array<{ thread: ThreadItem; at: string }> = []
 
             for (const thread of payload.threads) {
-              const lastAt = thread.last_message?.created_at || thread.created_at
+              const lastAt = thread.last_message_at || thread.last_message?.created_at
               if (!lastAt) continue
               const prevAt = prevSeen[thread.id]
               nextSeen[thread.id] = lastAt
@@ -1036,10 +1037,9 @@ export function RootLayout() {
               if (!chatInitializedRef.current) continue
               if (prevAt && lastAt <= prevAt) continue
 
-              const senderType = thread.last_message?.sender_type
-              const senderId = thread.last_message?.sender_id
-              const isSelf = senderType === principalType && senderId === principalId
-              if (!isSelf) newIncoming.push({ thread, at: lastAt })
+              if (thread.last_message?.direction === 'inbound') {
+                newIncoming.push({ thread, at: lastAt })
+              }
             }
 
             chatLastSeenRef.current = nextSeen

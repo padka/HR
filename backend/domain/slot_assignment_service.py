@@ -229,6 +229,24 @@ async def _consume_action_token(
     return True, "ok"
 
 
+async def _peek_action_token(
+    session, *, token: str, action: str, entity_id: int
+) -> tuple[bool, str]:
+    row = await session.get(ActionToken, token, with_for_update=True)
+    if row is None:
+        return False, "not_found"
+    if row.action != action or row.entity_id != str(entity_id):
+        return False, "mismatch"
+    if row.used_at is not None:
+        return False, "used"
+    expires_at = row.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= _now():
+        return False, "expired"
+    return True, "ok"
+
+
 async def create_slot_assignment(
     *,
     slot_id: int,
@@ -550,10 +568,13 @@ async def request_reschedule(
     assignment_id: int,
     action_token: str,
     candidate_tg_id: Optional[int],
-    requested_start_utc: datetime,
-    requested_tz: Optional[str],
+    requested_start_utc: Optional[datetime],
+    requested_end_utc: Optional[datetime] = None,
+    requested_tz: Optional[str] = None,
     comment: Optional[str] = None,
 ) -> ServiceResult:
+    normalized_comment = (comment or "").strip() or None
+
     async with async_session() as session:
         async with session.begin():
             assignment = await session.scalar(
@@ -569,16 +590,9 @@ async def request_reschedule(
                 SlotAssignmentStatus.OFFERED,
                 SlotAssignmentStatus.CONFIRMED,
                 SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+                SlotAssignmentStatus.RESCHEDULE_REQUESTED,
             }:
                 return ServiceResult(False, "invalid_status", 409, "Запрос переноса недоступен.")
-
-            token_ok, token_status = await _consume_action_token(
-                session, token=action_token, action=ACTION_RESCHEDULE, entity_id=assignment_id
-            )
-            if not token_ok:
-                if assignment.status == SlotAssignmentStatus.RESCHEDULE_REQUESTED:
-                    return ServiceResult(True, "already_requested", 200)
-                return ServiceResult(False, f"token_{token_status}", 409, "Ссылка устарела.")
 
             existing = await session.scalar(
                 select(RescheduleRequest)
@@ -591,25 +605,62 @@ async def request_reschedule(
             if existing:
                 return ServiceResult(True, "already_requested", 200)
 
-            try:
-                ensure_slot_not_in_past(requested_start_utc, allow_past=False)
-            except SlotValidationError:
-                return ServiceResult(False, "requested_time_in_past", 409, "Нельзя выбрать время в прошлом.")
+            token_ok, token_status = await _consume_action_token(
+                session, token=action_token, action=ACTION_RESCHEDULE, entity_id=assignment_id
+            )
+            if not token_ok:
+                return ServiceResult(False, f"token_{token_status}", 409, "Ссылка устарела.")
+
+            if requested_start_utc is None and normalized_comment is None:
+                return ServiceResult(
+                    False,
+                    "requested_time_missing",
+                    409,
+                    "Укажите желаемое время или комментарий.",
+                )
+
+            if requested_start_utc is not None:
+                try:
+                    ensure_slot_not_in_past(requested_start_utc, allow_past=False)
+                except SlotValidationError:
+                    return ServiceResult(
+                        False,
+                        "requested_time_in_past",
+                        409,
+                        "Нельзя выбрать время в прошлом.",
+                    )
+            if requested_end_utc is not None:
+                if requested_start_utc is None:
+                    return ServiceResult(
+                        False,
+                        "requested_window_missing_start",
+                        409,
+                        "Для диапазона нужно указать начало окна.",
+                    )
+                if requested_end_utc <= requested_start_utc:
+                    return ServiceResult(
+                        False,
+                        "requested_window_invalid",
+                        409,
+                        "Конец диапазона должен быть позже начала.",
+                    )
 
             request = RescheduleRequest(
                 slot_assignment_id=assignment.id,
                 requested_start_utc=requested_start_utc,
+                requested_end_utc=requested_end_utc,
                 requested_tz=requested_tz,
-                candidate_comment=comment,
+                candidate_comment=normalized_comment,
                 status=RescheduleRequestStatus.PENDING,
                 created_at=_now(),
             )
             session.add(request)
             await session.flush()
 
-            assignment.status_before_reschedule = assignment.status
+            if assignment.status != SlotAssignmentStatus.RESCHEDULE_REQUESTED:
+                assignment.status_before_reschedule = assignment.status
             assignment.status = SlotAssignmentStatus.RESCHEDULE_REQUESTED
-            assignment.reschedule_requested_at = _now()
+            assignment.reschedule_requested_at = assignment.reschedule_requested_at or _now()
 
             recruiter = await session.get(Recruiter, assignment.recruiter_id)
             candidate = await session.scalar(
@@ -633,11 +684,29 @@ async def request_reschedule(
                     "candidate_name": candidate.fio if candidate else None,
                     "candidate_tg_id": assignment.candidate_tg_id,
                     "candidate_tz": assignment.candidate_tz,
-                    "requested_start_utc": requested_start_utc.isoformat(),
-                    "comment": comment,
+                    "requested_start_utc": (
+                        requested_start_utc.isoformat()
+                        if requested_start_utc is not None
+                        else None
+                    ),
+                    "requested_end_utc": (
+                        requested_end_utc.isoformat()
+                        if requested_end_utc is not None
+                        else None
+                    ),
+                    "requested_tz": requested_tz,
+                    "comment": normalized_comment,
                 },
                 session=session,
             )
+
+            audit_changes: Dict[str, Any] = {}
+            if requested_start_utc is not None:
+                audit_changes["requested_start_utc"] = requested_start_utc.isoformat()
+            if requested_end_utc is not None:
+                audit_changes["requested_end_utc"] = requested_end_utc.isoformat()
+            if normalized_comment is not None:
+                audit_changes["comment"] = normalized_comment
 
             session.add(
                 AuditLog(
@@ -645,7 +714,7 @@ async def request_reschedule(
                     entity_type="slot_assignment",
                     entity_id=str(assignment.id),
                     created_at=_now(),
-                    changes={"requested_start_utc": requested_start_utc.isoformat()},
+                    changes=audit_changes,
                 )
             )
 
@@ -655,6 +724,64 @@ async def request_reschedule(
                 200,
                 payload={"reschedule_request_id": request.id},
             )
+
+
+async def begin_reschedule_request(
+    *,
+    assignment_id: int,
+    action_token: str,
+    candidate_tg_id: Optional[int],
+) -> ServiceResult:
+    async with async_session() as session:
+        async with session.begin():
+            assignment = await session.scalar(
+                select(SlotAssignment).where(SlotAssignment.id == assignment_id).with_for_update()
+            )
+            if assignment is None:
+                return ServiceResult(False, "not_found", 404, "Назначение не найдено.")
+
+            if candidate_tg_id is not None and assignment.candidate_tg_id not in (None, candidate_tg_id):
+                return ServiceResult(False, "forbidden", 403, "Доступ запрещён.")
+
+            if assignment.status == SlotAssignmentStatus.RESCHEDULE_REQUESTED:
+                return ServiceResult(True, "reschedule_pending_input", 200)
+
+            if assignment.status not in {
+                SlotAssignmentStatus.OFFERED,
+                SlotAssignmentStatus.CONFIRMED,
+                SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+            }:
+                return ServiceResult(False, "invalid_status", 409, "Запрос переноса недоступен.")
+
+            token_ok, token_status = await _peek_action_token(
+                session,
+                token=action_token,
+                action=ACTION_RESCHEDULE,
+                entity_id=assignment_id,
+            )
+            if not token_ok:
+                return ServiceResult(False, f"token_{token_status}", 409, "Ссылка устарела.")
+
+            assignment.status_before_reschedule = assignment.status
+            assignment.status = SlotAssignmentStatus.RESCHEDULE_REQUESTED
+            assignment.reschedule_requested_at = assignment.reschedule_requested_at or _now()
+
+            candidate = await session.scalar(
+                select(User).where(User.candidate_id == assignment.candidate_id)
+            )
+            if candidate is not None and candidate.responsible_recruiter_id is None:
+                candidate.responsible_recruiter_id = assignment.recruiter_id
+
+            session.add(
+                AuditLog(
+                    action="slot_assignment.reschedule_prompted",
+                    entity_type="slot_assignment",
+                    entity_id=str(assignment.id),
+                    created_at=_now(),
+                )
+            )
+
+            return ServiceResult(True, "reschedule_pending_input", 200)
 
 
 async def approve_reschedule(
@@ -684,6 +811,13 @@ async def approve_reschedule(
             )
             if request is None:
                 return ServiceResult(False, "request_not_found", 404, "Запрос переноса не найден.")
+            if request.requested_start_utc is None or request.requested_end_utc is not None:
+                return ServiceResult(
+                    False,
+                    "request_requires_recruiter_offer",
+                    409,
+                    "Запрос без точного времени нельзя подтвердить напрямую. Предложите кандидату новый слот.",
+                )
 
             slot = await session.scalar(
                 select(Slot)

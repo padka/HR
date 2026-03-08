@@ -347,6 +347,113 @@ async def test_reschedule_without_telegram_id_releases_slot(admin_slots_app):
 
 
 @pytest.mark.asyncio
+async def test_reschedule_reuses_existing_free_target_slot(admin_slots_app):
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=991001,
+        fio="Reschedule Existing Slot",
+        city="Москва",
+    )
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Reschedule Recruiter", tz="Europe/Moscow", active=True)
+        city = models.City(name="Reschedule City", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        old_start = datetime(2031, 6, 1, 7, 20, tzinfo=timezone.utc)
+        target_start = datetime(2031, 6, 1, 10, 0, tzinfo=timezone.utc)
+
+        current_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=old_start,
+            duration_min=20,
+            status=models.SlotStatus.PENDING,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+        )
+        reusable_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=target_start,
+            duration_min=20,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add_all([current_slot, reusable_slot])
+        await session.commit()
+        await session.refresh(current_slot)
+        await session.refresh(reusable_slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=current_slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz="Europe/Moscow",
+            status=models.SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+            offered_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            reschedule_requested_at=datetime.now(timezone.utc) - timedelta(minutes=30),
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+
+        session.add(
+            models.RescheduleRequest(
+                slot_assignment_id=assignment.id,
+                requested_start_utc=target_start,
+                requested_tz="Europe/Moscow",
+                status=models.RescheduleRequestStatus.PENDING,
+            )
+        )
+        await session.commit()
+        current_slot_id = current_slot.id
+        reusable_slot_id = reusable_slot.id
+        assignment_id = assignment.id
+
+    response = await _async_request_with_csrf(
+        admin_slots_app,
+        "post",
+        f"/api/slots/{current_slot_id}/reschedule",
+        json={"date": "2031-06-01", "time": "13:00"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "Слот перенесён" in payload["message"]
+
+    async with async_session() as session:
+        old_slot = await session.get(models.Slot, current_slot_id)
+        target_slot = await session.get(models.Slot, reusable_slot_id)
+        assignment = await session.get(models.SlotAssignment, assignment_id)
+
+        assert old_slot is not None
+        assert old_slot.status == models.SlotStatus.FREE
+        assert old_slot.candidate_id is None
+        assert old_slot.candidate_tg_id is None
+
+        assert target_slot is not None
+        assert target_slot.status == models.SlotStatus.PENDING
+        assert target_slot.candidate_id == candidate.candidate_id
+        assert target_slot.candidate_tg_id == candidate.telegram_id
+
+        assert assignment is not None
+        assert assignment.slot_id == reusable_slot_id
+        assert assignment.status == models.SlotAssignmentStatus.OFFERED
+        assert assignment.reschedule_requested_at is None
+
+
+@pytest.mark.asyncio
 async def test_reject_booking_handles_notification_errors(monkeypatch, admin_slots_app):
     slot_id, _ = await _create_booked_slot()
 

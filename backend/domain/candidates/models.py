@@ -126,6 +126,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    chat_read_states: Mapped[List["CandidateChatRead"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<User {self.id} cid={self.candidate_id} tg={self.telegram_id} status={self.candidate_status}>"
@@ -313,6 +317,56 @@ class ChatMessage(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<ChatMessage {self.id} user={self.candidate_id} dir={self.direction} status={self.status}>"
+
+
+class CandidateChatRead(Base):
+    __tablename__ = "candidate_chat_reads"
+    __table_args__ = (
+        UniqueConstraint(
+            "candidate_id",
+            "principal_type",
+            "principal_id",
+            name="uq_candidate_chat_reads_principal",
+        ),
+        Index(
+            "ix_candidate_chat_reads_principal",
+            "principal_type",
+            "principal_id",
+            "last_read_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    principal_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    principal_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_read_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    user: Mapped["User"] = relationship(back_populates="chat_read_states")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<CandidateChatRead candidate={self.candidate_id} "
+            f"principal={self.principal_type}:{self.principal_id}>"
+        )
 
 
 class CandidateInviteToken(Base):
