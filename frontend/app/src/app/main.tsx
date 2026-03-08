@@ -55,6 +55,8 @@ const IncomingPage = lazy(() => import('./routes/app/incoming').then(m => ({ def
 const CopilotPage = lazy(() => import('./routes/app/copilot').then(m => ({ default: m.CopilotPage })))
 const SimulatorPage = lazy(() => import('./routes/app/simulator').then(m => ({ default: m.SimulatorPage })))
 const DetailizationPage = lazy(() => import('./routes/app/detailization').then(m => ({ default: m.DetailizationPage })))
+const CandidateStartPage = lazy(() => import('./routes/candidate/start').then(m => ({ default: m.CandidateStartPage })))
+const CandidateJourneyPage = lazy(() => import('./routes/candidate/journey').then(m => ({ default: m.CandidateJourneyPage })))
 
 // Telegram Mini App pages (lazy)
 const TgAppLayout = lazy(() => import('./routes/tg-app/layout').then(m => ({ default: m.TgAppLayout })))
@@ -311,6 +313,18 @@ const tgCandidateRoute = createRoute({
   component: withSuspense(TgCandidatePage),
 })
 
+const candidateStartRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/candidate/start/$token',
+  component: withSuspense(CandidateStartPage),
+})
+
+const candidateJourneyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/candidate/journey',
+  component: withSuspense(CandidateJourneyPage),
+})
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   dashboardRoute,
@@ -343,6 +357,8 @@ const routeTree = rootRoute.addChildren([
   candidatesRoute,
   candidateNewRoute,
   candidateDetailRoute,
+  candidateStartRoute,
+  candidateJourneyRoute,
   tgAppLayoutRoute.addChildren([
     tgDashboardRoute,
     tgIncomingRoute,

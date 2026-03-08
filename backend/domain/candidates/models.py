@@ -387,3 +387,100 @@ class CandidateInviteToken(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<CandidateInviteToken {self.id} candidate={self.candidate_id} used={bool(self.used_at)}>"
+
+
+class CandidateJourneySessionStatus(str, Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    ABANDONED = "abandoned"
+    BLOCKED = "blocked"
+
+
+class CandidateJourneyStepStatus(str, Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    SKIPPED = "skipped"
+
+
+class CandidateJourneySession(Base):
+    __tablename__ = "candidate_journey_sessions"
+    __table_args__ = (
+        Index("ix_candidate_journey_sessions_candidate_status", "candidate_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    journey_key: Mapped[str] = mapped_column(String(64), nullable=False, default="candidate_portal")
+    journey_version: Mapped[str] = mapped_column(String(32), nullable=False, default="v1")
+    entry_channel: Mapped[str] = mapped_column(String(32), nullable=False, default="web")
+    current_step_key: Mapped[str] = mapped_column(String(64), nullable=False, default="profile")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=CandidateJourneySessionStatus.ACTIVE.value)
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship("User")
+    step_states: Mapped[List["CandidateJourneyStepState"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<CandidateJourneySession {self.id} candidate={self.candidate_id} "
+            f"step={self.current_step_key} status={self.status}>"
+        )
+
+
+class CandidateJourneyStepState(Base):
+    __tablename__ = "candidate_journey_step_states"
+    __table_args__ = (
+        UniqueConstraint("session_id", "step_key", name="uq_candidate_journey_step_session_key"),
+        Index("ix_candidate_journey_step_states_session_status", "session_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("candidate_journey_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    step_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    step_type: Mapped[str] = mapped_column(String(32), nullable=False, default="form")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=CandidateJourneyStepStatus.PENDING.value)
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    session: Mapped["CandidateJourneySession"] = relationship(back_populates="step_states")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<CandidateJourneyStepState {self.id} session={self.session_id} "
+            f"step={self.step_key} status={self.status}>"
+        )

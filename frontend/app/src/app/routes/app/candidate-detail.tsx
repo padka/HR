@@ -117,6 +117,7 @@ type CandidateDetail = {
   city?: string | null
   telegram_id?: number | null
   telegram_username?: string | null
+  candidate_portal_url?: string | null
   hh_profile_url?: string | null
   hh_resume_id?: string | null
   hh_negotiation_id?: string | null
@@ -2022,6 +2023,12 @@ export function CandidateDetailPage() {
                 <span>Профиль</span>
               </span>
             )}
+            {detail.candidate_portal_url ? (
+              <a href={detail.candidate_portal_url} className="cd-contact-btn" target="_blank" rel="noopener">
+                <span className="cd-contact-btn__icon">WB</span>
+                <span>Portal</span>
+              </a>
+            ) : null}
             {hhBadge && (
               <span
                 className={`cd-chip ${

@@ -535,7 +535,9 @@ export function RootLayout() {
   const isMobile = useIsMobile()
   const [liquidGlassV2Enabled, setLiquidGlassV2Enabled] = useState<boolean>(resolveLiquidGlassV2Enabled)
   const [motionMode, setMotionMode] = useState<MotionMode>(resolveMotionMode)
-  const hideNav = location.pathname.startsWith('/app/login') || location.pathname.startsWith('/tg-app')
+  const hideNav = location.pathname.startsWith('/app/login')
+    || location.pathname.startsWith('/tg-app')
+    || location.pathname.startsWith('/candidate')
   const profileQuery = useProfile(!hideNav)
   const principalType = profileQuery.data?.principal.type
   const authError = profileQuery.error as (Error & { status?: number }) | undefined

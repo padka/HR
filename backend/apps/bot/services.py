@@ -47,6 +47,7 @@ from backend.core.settings import get_settings
 from backend.domain import analytics
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.status import CandidateStatus
+from backend.domain.candidates.portal_service import build_candidate_portal_url
 from backend.domain.candidates.status_service import (
     set_status_waiting_slot,
     set_status_interview_scheduled,
@@ -4710,6 +4711,15 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
     if not (intro or "").strip():
         from backend.apps.bot.defaults import DEFAULT_TEMPLATES
         intro = DEFAULT_TEMPLATES.get("t1_intro", "").strip() or "Начнём анкету."
+    portal_url = build_candidate_portal_url(
+        telegram_id=user_id,
+        entry_channel="telegram",
+        source_channel="telegram",
+    )
+    intro = (
+        f"{intro}\n\n"
+        f"🌐 Если Telegram работает нестабильно, продолжите анкету в браузере:\n{portal_url}"
+    )
     await bot.send_message(user_id, intro)
     await send_test1_question(user_id)
 

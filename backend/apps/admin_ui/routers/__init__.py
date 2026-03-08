@@ -2,6 +2,7 @@
 
 from . import (
     api,
+    candidate_portal,
     candidates,
     cities,
     content_api,
@@ -21,6 +22,7 @@ from . import (
 
 __all__ = [
     "api",
+    "candidate_portal",
     "candidates",
     "cities",
     "content_api",

@@ -31,6 +31,7 @@ from backend.domain.candidates.models import (
     TestResult,
     User,
 )
+from backend.domain.candidates.portal_service import build_candidate_portal_url
 from backend.domain.candidates.workflow import WorkflowStatus
 from backend.domain.candidates.status import (
     CandidateStatus,
@@ -3567,6 +3568,11 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "hh_sync_error": getattr(user, "hh_sync_error", None),
         "messenger_platform": getattr(user, "messenger_platform", "telegram"),
         "max_user_id": getattr(user, "max_user_id", None),
+        "candidate_portal_url": build_candidate_portal_url(
+            candidate_uuid=user.candidate_id,
+            entry_channel="admin",
+            source_channel="admin",
+        ),
         "test1_report_url": f"/candidates/{user.id}/reports/test1"
         if getattr(user, "test1_report_url", None)
         else None,

@@ -36,6 +36,7 @@ from backend.domain.tests.bootstrap import bootstrap_test_questions
 from pathlib import Path
 from backend.apps.admin_ui.routers import (
     api,
+    candidate_portal,
     metrics as metrics_router,
     candidates,
     cities,
@@ -690,6 +691,7 @@ def create_app() -> FastAPI:
     app.include_router(system.router)
     app.include_router(metrics_router.router)
     app.include_router(auth_router.router)
+    app.include_router(candidate_portal.router)
     app.include_router(hh_integration_webhook_router)
     app.include_router(hh_integration.callback_router)
     app.include_router(dashboard.router, dependencies=[Depends(require_principal)])
@@ -796,6 +798,13 @@ def create_app() -> FastAPI:
                 return FileResponse(index_file)
             return PlainTextResponse("SPA build not found", status_code=404)
 
+        @app.get("/candidate", include_in_schema=False)
+        async def candidate_spa_index() -> Response:
+            index_file = SPA_DIST_DIR / "index.html"
+            if index_file.exists():
+                return FileResponse(index_file)
+            return PlainTextResponse("SPA build not found", status_code=404)
+
     @app.get("/apple-touch-icon.png", include_in_schema=False)
     async def apple_touch_icon() -> Response:
         return Response(status_code=204)
@@ -814,11 +823,27 @@ def create_app() -> FastAPI:
             return FileResponse(index_file)
         return PlainTextResponse("SPA build not found", status_code=404)
 
+    @app.get("/candidate/{path:path}", include_in_schema=False)
+    async def candidate_spa_assets(path: str) -> Response:
+        target = (SPA_DIST_DIR / path).resolve()
+        if target.exists() and target.is_file():
+            return FileResponse(target)
+        index_file = SPA_DIST_DIR / "index.html"
+        if index_file.exists():
+            return FileResponse(index_file)
+        return PlainTextResponse("SPA build not found", status_code=404)
+
     @app.exception_handler(HTTPException)
     async def http_exc_handler(request: Request, exc: HTTPException):
         if exc.status_code == status.HTTP_404_NOT_FOUND:
             path = request.url.path
             if path.startswith("/app") and SPA_DIST_DIR.exists():
+                # Serve SPA index for client-side routes, but not for asset files.
+                if "." not in Path(path).name:
+                    index_file = SPA_DIST_DIR / "index.html"
+                    if index_file.exists():
+                        return FileResponse(index_file)
+            if path.startswith("/candidate") and SPA_DIST_DIR.exists():
                 # Serve SPA index for client-side routes, but not for asset files.
                 if "." not in Path(path).name:
                     index_file = SPA_DIST_DIR / "index.html"

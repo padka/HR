@@ -108,6 +108,9 @@ class Settings:
     max_bot_token: str
     max_webhook_url: str
     max_webhook_secret: str
+    candidate_portal_public_url: str
+    candidate_portal_token_ttl_seconds: int
+    candidate_portal_session_ttl_seconds: int
 
 
 def _get_int(name: str, default: int, *, minimum: int | None = None) -> int:
@@ -722,6 +725,19 @@ def get_settings() -> Settings:
     max_bot_token = os.getenv("MAX_BOT_TOKEN", "").strip()
     max_webhook_url = os.getenv("MAX_WEBHOOK_URL", "").strip()
     max_webhook_secret = os.getenv("MAX_WEBHOOK_SECRET", "").strip()
+    candidate_portal_public_url = os.getenv("CANDIDATE_PORTAL_PUBLIC_URL", "").strip()
+    if not candidate_portal_public_url:
+        candidate_portal_public_url = crm_public_url or bot_backend_url
+    candidate_portal_token_ttl_seconds = _get_int(
+        "CANDIDATE_PORTAL_TOKEN_TTL_SECONDS",
+        7 * 24 * 3600,
+        minimum=300,
+    )
+    candidate_portal_session_ttl_seconds = _get_int(
+        "CANDIDATE_PORTAL_SESSION_TTL_SECONDS",
+        7 * 24 * 3600,
+        minimum=1800,
+    )
 
     settings = Settings(
         environment=environment,
@@ -815,6 +831,9 @@ def get_settings() -> Settings:
         max_bot_token=max_bot_token,
         max_webhook_url=max_webhook_url,
         max_webhook_secret=max_webhook_secret,
+        candidate_portal_public_url=candidate_portal_public_url,
+        candidate_portal_token_ttl_seconds=candidate_portal_token_ttl_seconds,
+        candidate_portal_session_ttl_seconds=candidate_portal_session_ttl_seconds,
     )
 
     # Validate production configuration (fails fast with clear error messages)

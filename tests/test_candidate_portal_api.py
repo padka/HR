@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+import asyncio
+import tempfile
+from pathlib import Path
+from datetime import timedelta
+
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from backend.core import settings as settings_module
+from backend.core.db import async_session
+from backend.domain.candidates.models import ChatMessage, User
+from backend.domain.candidates.portal_service import (
+    get_candidate_portal_questions,
+    sign_candidate_portal_token,
+)
+from backend.domain.candidates.status import CandidateStatus
+from backend.domain.models import City, Recruiter, Slot, SlotStatus
+
+
+def _configure_env(monkeypatch) -> None:
+    tmp_dir = Path(tempfile.mkdtemp(prefix="candidate-portal-"))
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("SESSION_SECRET", "candidate-portal-secret-0123456789abcdef012345")
+    monkeypatch.setenv("ADMIN_USER", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_dir/'app.db'}")
+    monkeypatch.setenv("REDIS_URL", "")
+    monkeypatch.setenv("RATE_LIMIT_REDIS_URL", "")
+    monkeypatch.setenv("NOTIFICATION_BROKER", "memory")
+    monkeypatch.setenv("BOT_ENABLED", "0")
+    monkeypatch.setenv("BOT_AUTOSTART", "0")
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "0")
+    monkeypatch.setenv("CRM_PUBLIC_URL", "https://crm.example.test")
+    monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
+
+
+class _DummyIntegration:
+    async def shutdown(self) -> None:
+        return None
+
+
+async def _fake_setup_bot_state(app):
+    app.state.bot = None
+    app.state.state_manager = None
+    app.state.bot_service = None
+    app.state.bot_integration_switch = None
+    app.state.reminder_service = None
+    app.state.notification_service = None
+    app.state.notification_broker_available = False
+    return _DummyIntegration()
+
+
+async def _seed_candidate_portal_flow() -> dict[str, int | str]:
+    async with async_session() as session:
+        city = City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Portal Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.flush()
+
+        candidate = User(
+            fio="TG 700101",
+            telegram_id=700101,
+            telegram_user_id=700101,
+            city=None,
+            phone=None,
+            source="telegram",
+        )
+        session.add(candidate)
+        await session.flush()
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=candidate.last_activity + timedelta(days=1, hours=2),
+            duration_min=60,
+            status=SlotStatus.FREE,
+            purpose="interview",
+            tz_name="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        return {
+            "candidate_id": candidate.id,
+            "candidate_uuid": candidate.candidate_id,
+            "city_id": city.id,
+            "slot_id": slot.id,
+        }
+
+
+async def _load_candidate(candidate_id: int) -> User | None:
+    async with async_session() as session:
+        return await session.get(User, candidate_id)
+
+
+async def _load_slot(slot_id: int) -> Slot | None:
+    async with async_session() as session:
+        return await session.get(Slot, slot_id)
+
+
+async def _load_messages(candidate_id: int) -> list[ChatMessage]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(ChatMessage).where(ChatMessage.candidate_id == candidate_id)
+        )
+        return list(result.scalars().all())
+
+
+def _build_answers() -> dict[str, str]:
+    answers = {
+        "age": "27",
+        "status": "Работаю",
+        "salary": "90 000 – 120 000 ›",
+        "format": "Да, готов",
+        "sales_exp": "Два года работал с клиентами и проводил переговоры.",
+        "about": "Хочу расти и отвечать за результат.",
+        "skills": "Коммуникация, настойчивость, дисциплина.",
+        "expectations": "Прозрачный доход и сильная команда.",
+    }
+    for question in get_candidate_portal_questions():
+        if question["id"] not in answers:
+            answers[question["id"]] = question.get("options", ["Да"])[0] if question.get("options") else "Тестовый ответ"
+    return answers
+
+
+def test_candidate_portal_exchange_creates_session_from_telegram_token(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+
+    with TestClient(app) as client:
+        token = sign_candidate_portal_token(
+            telegram_id=79990001122,
+            entry_channel="telegram",
+            source_channel="telegram",
+        )
+        response = client.post("/api/candidate/session/exchange", json={"token": token})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["journey"]["current_step"] == "profile"
+    assert payload["candidate"]["fio"] == "TG 79990001122"
+    assert payload["journey"]["entry_channel"] == "telegram"
+
+
+def test_candidate_portal_end_to_end_flow(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+    seeded: dict[str, int | str] = {}
+
+    with TestClient(app) as client:
+        seeded = asyncio.run(_seed_candidate_portal_flow())
+        token = sign_candidate_portal_token(
+            candidate_uuid=str(seeded["candidate_uuid"]),
+            entry_channel="admin",
+            source_channel="admin",
+        )
+        exchange = client.post("/api/candidate/session/exchange", json={"token": token})
+        assert exchange.status_code == 200
+        assert exchange.json()["journey"]["current_step"] == "profile"
+
+        profile = client.post(
+            "/api/candidate/profile",
+            json={
+                "fio": "Иванов Иван Иванович",
+                "phone": "+7 999 111-22-33",
+                "city_id": seeded["city_id"],
+            },
+        )
+        assert profile.status_code == 200
+        assert profile.json()["journey"]["current_step"] == "screening"
+
+        screening = client.post(
+            "/api/candidate/screening/complete",
+            json={"answers": _build_answers()},
+        )
+        assert screening.status_code == 200
+        assert screening.json()["journey"]["current_step"] in {"slot_selection", "status"}
+
+        reserve = client.post(
+            "/api/candidate/slots/reserve",
+            json={"slot_id": seeded["slot_id"]},
+        )
+        assert reserve.status_code == 200
+        assert reserve.json()["journey"]["slots"]["active"]["status"] == SlotStatus.PENDING
+
+        confirm = client.post("/api/candidate/slots/confirm")
+        assert confirm.status_code == 200
+        assert confirm.json()["journey"]["slots"]["active"]["status"] == SlotStatus.CONFIRMED_BY_CANDIDATE
+
+        message = client.post(
+            "/api/candidate/messages",
+            json={"text": "Нужен пропуск на проходной."},
+        )
+        assert message.status_code == 200
+        assert any(item["text"] == "Нужен пропуск на проходной." for item in message.json()["journey"]["messages"])
+
+    candidate = asyncio.run(_load_candidate(int(seeded["candidate_id"])))
+    assert candidate is not None
+    assert candidate.fio == "Иванов Иван Иванович"
+    assert candidate.phone == "+79991112233"
+    assert candidate.candidate_status == CandidateStatus.INTERVIEW_CONFIRMED
+
+    slot = asyncio.run(_load_slot(int(seeded["slot_id"])))
+    assert slot is not None
+    assert slot.status == SlotStatus.CONFIRMED_BY_CANDIDATE
+    assert slot.candidate_id == candidate.candidate_id
+
+    messages = asyncio.run(_load_messages(int(seeded["candidate_id"])))
+    assert any(row.text == "Нужен пропуск на проходной." for row in messages)

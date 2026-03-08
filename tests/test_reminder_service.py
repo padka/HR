@@ -78,7 +78,9 @@ async def _create_booked_slot(*, candidate_id: int = 4321) -> models.Slot:
         slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime.now(timezone.utc) + timedelta(hours=6),
+            # Keep the helper comfortably outside the "send immediately" threshold
+            # so reminder scheduling tests remain deterministic across wall-clock time.
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1, hours=2),
             status=models.SlotStatus.BOOKED,
             candidate_tg_id=candidate_id,
             candidate_tz="Europe/Moscow",
