@@ -7,8 +7,8 @@ from sqlalchemy.engine import Connection
 
 from backend.migrations.utils import index_exists, table_exists
 
-revision = "0094_add_candidate_portal_journey"
-down_revision = "0093_reschedule_windows_and_candidate_chat_reads"
+revision = "0095_add_candidate_portal_journey"
+down_revision = "0094_add_candidate_chat_archive_state"
 branch_labels = None
 depends_on = None
 
