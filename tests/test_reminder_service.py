@@ -13,7 +13,11 @@ from backend.apps.bot.metrics import (
     get_reminder_metrics_snapshot,
     reset_reminder_metrics,
 )
+from backend.apps.admin_ui.services.city_reminder_policy import (
+    upsert_city_reminder_policy,
+)
 from backend.apps.bot.reminders import ReminderKind, ReminderService, create_scheduler
+from backend.apps.bot.runtime_config import DEFAULT_REMINDER_POLICY
 from backend.apps.bot.services import NotificationService
 from backend.apps.bot.state_store import build_state_manager
 from backend.core.db import async_session
@@ -337,6 +341,14 @@ async def test_reminders_sent_immediately_for_past_targets(monkeypatch):
     service = ReminderService(scheduler=scheduler)
     service.start()
 
+    async def _default_policy():
+        return DEFAULT_REMINDER_POLICY, None
+
+    monkeypatch.setattr(
+        "backend.apps.bot.reminders.get_reminder_policy_config",
+        _default_policy,
+    )
+
     async with async_session() as session:
         recruiter = models.Recruiter(name="Immediate", tz="Europe/Moscow", active=True)
         city = models.City(name="Immediate City", tz="Europe/Moscow", active=True)
@@ -357,6 +369,11 @@ async def test_reminders_sent_immediately_for_past_targets(monkeypatch):
         await session.commit()
         await session.refresh(slot)
         slot_id = slot.id
+        await upsert_city_reminder_policy(
+            city.id,
+            quiet_hours_start=0,
+            quiet_hours_end=0,
+        )
 
     triggered: list[tuple[int, ReminderKind]] = []
 

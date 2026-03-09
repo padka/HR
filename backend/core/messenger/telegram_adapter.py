@@ -69,7 +69,12 @@ class TelegramAdapter(MessengerProtocol):
             keyboard_rows = []
             for row in buttons:
                 keyboard_rows.append(
-                    [TgButton(text=btn.text, callback_data=btn.callback_data) for btn in row]
+                    [
+                        TgButton(text=btn.text, url=btn.url)
+                        if btn.url
+                        else TgButton(text=btn.text, callback_data=btn.callback_data or "")
+                        for btn in row
+                    ]
                 )
             reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 

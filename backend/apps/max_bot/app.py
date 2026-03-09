@@ -20,6 +20,15 @@ from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
 from backend.core.settings import get_settings
+from .candidate_flow import (
+    extract_callback_user,
+    extract_message_text,
+    extract_message_user,
+    process_bot_started,
+    process_callback,
+    process_text_message,
+    send_outbound,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -182,11 +191,6 @@ async def webhook_handler(
 
 
 async def _handle_bot_started(event: Dict[str, Any]) -> None:
-    """Handle bot_started event — user opened the bot for the first time.
-
-    This is the entry point for linking a Max user to a candidate in RS.
-    We store the max_user_id and optionally set messenger_platform='max'.
-    """
     user_info = event.get("user", {})
     chat_id = event.get("chat_id")
     max_user_id = user_info.get("user_id") or chat_id
@@ -202,33 +206,18 @@ async def _handle_bot_started(event: Dict[str, Any]) -> None:
         extra={"max_user_id": max_user_id, "user_name": user_name},
     )
 
-    # Send welcome message
-    try:
-        from backend.core.messenger.registry import get_registry
-        from backend.core.messenger.protocol import MessengerPlatform
-
-        adapter = get_registry().get(MessengerPlatform.MAX)
-        if adapter:
-            await adapter.send_message(
-                max_user_id,
-                "Здравствуйте! Это бот компании для связи с кандидатами. "
-                "Уведомления о статусе вашей заявки будут приходить сюда.",
-            )
-    except Exception:
-        logger.exception("max_bot.bot_started: failed to send welcome")
+    messages = await process_bot_started(
+        max_user_id=str(max_user_id),
+        display_name=user_name,
+        start_payload=event.get("start_payload"),
+    )
+    await send_outbound(max_user_id=max_user_id, messages=messages)
 
 
 async def _handle_message_created(event: Dict[str, Any]) -> None:
-    """Handle incoming text message from a candidate via Max.
-
-    Logs the message to the candidate's chat history so recruiters
-    can see it in the admin UI.
-    """
-    message = event.get("message", {})
-    body_data = message.get("body", {})
-    text = body_data.get("text", "")
-    sender = message.get("sender", {})
-    max_user_id = sender.get("user_id")
+    """Handle candidate message or answer inside the MAX screening flow."""
+    text = extract_message_text(event)
+    max_user_id, user_name = extract_message_user(event)
 
     if not max_user_id or not text:
         return
@@ -238,47 +227,20 @@ async def _handle_message_created(event: Dict[str, Any]) -> None:
         extra={"max_user_id": max_user_id, "text_len": len(text)},
     )
 
-    # Log to candidate chat (find candidate by max_user_id)
-    try:
-        from backend.core.db import async_session
-        from backend.domain.candidates.models import User
-        from sqlalchemy import select
-
-        async with async_session() as session:
-            candidate = await session.scalar(
-                select(User).where(User.max_user_id == str(max_user_id))
-            )
-            if candidate:
-                from backend.domain.candidates import services as candidate_services
-
-                await candidate_services.log_inbound_chat_message(
-                    candidate_tg_id=candidate.telegram_user_id or candidate.telegram_id or 0,
-                    text=text,
-                    payload={"source": "max", "max_user_id": str(max_user_id)},
-                    author_label="candidate_max",
-                )
-            else:
-                logger.debug(
-                    "max_bot.message_created.no_candidate",
-                    extra={"max_user_id": max_user_id},
-                )
-    except Exception:
-        logger.exception(
-            "max_bot.message_created.log_failed",
-            extra={"max_user_id": max_user_id},
-        )
+    messages = await process_text_message(
+        max_user_id=str(max_user_id),
+        text=text,
+        display_name=user_name,
+        start_payload=event.get("start_payload"),
+        raw_event=event,
+    )
+    await send_outbound(max_user_id=str(max_user_id), messages=messages)
 
 
 async def _handle_message_callback(event: Dict[str, Any]) -> None:
-    """Handle inline button press (callback) from Max.
-
-    The callback payload matches the format used in Telegram callbacks
-    (e.g., 'confirm_assignment:123') so we can reuse existing logic.
-    """
     callback = event.get("callback", {})
     payload = callback.get("payload", "")
-    user_info = callback.get("user", {})
-    max_user_id = user_info.get("user_id")
+    max_user_id, _ = extract_callback_user(event)
 
     if not max_user_id or not payload:
         return
@@ -288,22 +250,11 @@ async def _handle_message_callback(event: Dict[str, Any]) -> None:
         extra={"max_user_id": max_user_id, "payload": payload},
     )
 
-    # TODO: Route callback actions (confirm_assignment, reschedule, etc.)
-    # For Phase 3, we log the callback. Full action routing will be added
-    # when we connect Max callbacks to the same handlers as Telegram callbacks.
-
-    try:
-        from backend.core.messenger.registry import get_registry
-        from backend.core.messenger.protocol import MessengerPlatform
-
-        adapter = get_registry().get(MessengerPlatform.MAX)
-        if adapter:
-            await adapter.send_message(
-                max_user_id,
-                "Принято! Ваш запрос обрабатывается.",
-            )
-    except Exception:
-        logger.exception("max_bot.message_callback: failed to respond")
+    messages = await process_callback(
+        max_user_id=str(max_user_id),
+        payload=str(payload),
+    )
+    await send_outbound(max_user_id=str(max_user_id), messages=messages)
 
 
 async def health_check() -> JSONResponse:

@@ -36,7 +36,8 @@ class InlineButton:
     """A button attached to a message (inline keyboard)."""
 
     text: str
-    callback_data: str
+    callback_data: Optional[str] = None
+    url: Optional[str] = None
 
 
 @dataclass(frozen=True)

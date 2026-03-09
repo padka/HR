@@ -13,6 +13,8 @@
 - shared theme/token system lives in [frontend/app/src/theme](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme)
 - recruiter/incoming/test-preview/light-theme work has already been implemented in code
 - backend reschedule/status fixes have already been implemented in code
+- candidate portal web flow is available as a Telegram-independent fallback path
+- MAX webhook bot can now collect candidate profile + screening answers and hand off scheduling to the candidate portal
 
 ## What Was Cleaned Up
 

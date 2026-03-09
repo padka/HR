@@ -46,6 +46,17 @@ Validates:
 - local bot startup with env file loading
 - bot token/config presence for polling mode
 
+### MAX bot webhook service
+
+```bash
+make dev-max-bot
+```
+
+Validates:
+- local MAX webhook app startup
+- env loading for `MAX_BOT_TOKEN` / `MAX_WEBHOOK_URL`
+- webhook endpoint availability on port `8010` by default
+
 ### Frontend-only dev server
 
 ```bash

@@ -774,9 +774,11 @@ async def complete_screening(
     journey: CandidateJourneySession,
     *,
     answers: dict[str, Any],
+    source_channel: str = "candidate_portal",
 ) -> TestResult:
     normalized = validate_screening_answers(answers)
     now = _utcnow()
+    normalized_source = (source_channel or "candidate_portal").strip() or "candidate_portal"
 
     question_data = []
     for index, question in enumerate(get_candidate_portal_questions(), start=1):
@@ -800,7 +802,7 @@ async def complete_screening(
         raw_score=len(question_data),
         final_score=float(len(question_data)),
         rating="TEST1",
-        source="candidate_portal",
+        source=normalized_source,
         total_time=0,
         created_at=now,
     )
@@ -844,7 +846,7 @@ async def complete_screening(
         analytics.FunnelEvent.TEST1_COMPLETED,
         user_id=candidate.telegram_id or candidate.telegram_user_id,
         candidate_id=candidate.id,
-        metadata={"result": "passed", "channel": "candidate_portal"},
+        metadata={"result": "passed", "channel": normalized_source},
         session=session,
     )
     return test_result

@@ -90,6 +90,11 @@ class TestInlineButton:
         assert btn.text == "OK"
         assert btn.callback_data == "confirm:1"
 
+    def test_creation_with_url(self):
+        btn = InlineButton(text="Open", url="https://example.com")
+        assert btn.text == "Open"
+        assert btn.url == "https://example.com"
+
 
 # ── MessengerRegistry ────────────────────────────────────────────────────
 
@@ -355,6 +360,30 @@ class TestMaxAdapter:
         payload = call_args[1]["json"]
         assert "attachments" in payload
         assert payload["attachments"][0]["type"] == "inline_keyboard"
+
+    @pytest.mark.asyncio
+    async def test_send_with_link_button(self):
+        from backend.core.messenger.max_adapter import MaxAdapter
+
+        adapter = MaxAdapter()
+        adapter._token = "test_token"
+
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {"mid": "msg_link"}}
+        mock_client.post.return_value = mock_resp
+        adapter._client = mock_client
+
+        buttons = [[InlineButton(text="Open portal", url="https://example.com/portal")]]
+        result = await adapter.send_message("user_123", "Open:", buttons=buttons, parse_mode="HTML")
+        assert result.success is True
+
+        payload = mock_client.post.call_args[1]["json"]
+        assert payload["format"] == "html"
+        button = payload["attachments"][0]["payload"]["buttons"][0][0]
+        assert button["type"] == "link"
+        assert button["url"] == "https://example.com/portal"
 
     @pytest.mark.asyncio
     async def test_send_api_error_400(self):

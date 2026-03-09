@@ -103,6 +103,10 @@ class MaxAdapter(MessengerProtocol):
             "chat_id": int(chat_id) if isinstance(chat_id, str) and chat_id.isdigit() else chat_id,
             "text": text,
         }
+        if parse_mode:
+            normalized_mode = str(parse_mode).strip().lower()
+            if normalized_mode in {"html", "markdown", "markdownv2"}:
+                payload["format"] = "html" if normalized_mode == "html" else "markdown"
 
         # Max uses "inline_keyboard" attachments for buttons
         if buttons:
@@ -110,13 +114,22 @@ class MaxAdapter(MessengerProtocol):
             for row in buttons:
                 keyboard_row = []
                 for btn in row:
-                    keyboard_row.append(
-                        {
-                            "type": "callback",
-                            "text": btn.text,
-                            "payload": btn.callback_data,
-                        }
-                    )
+                    if btn.url:
+                        keyboard_row.append(
+                            {
+                                "type": "link",
+                                "text": btn.text,
+                                "url": btn.url,
+                            }
+                        )
+                    else:
+                        keyboard_row.append(
+                            {
+                                "type": "callback",
+                                "text": btn.text,
+                                "payload": btn.callback_data or "",
+                            }
+                        )
                 keyboard_buttons.append(keyboard_row)
 
             payload["attachments"] = [
@@ -136,13 +149,32 @@ class MaxAdapter(MessengerProtocol):
                     "/messages",
                     json=payload,
                 )
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"raw_text": getattr(resp, "text", "")}
 
-                if resp.status_code == 200 and data.get("success", data.get("ok", False)):
-                    msg = data.get("message", {})
+                msg = data.get("message", {}) if isinstance(data, dict) else {}
+                message_id = str(
+                    msg.get("mid")
+                    or msg.get("message_id")
+                    or data.get("mid")
+                    or data.get("message_id")
+                    or ""
+                )
+                success = (
+                    resp.status_code == 200
+                    and (
+                        bool(message_id)
+                        or bool(data.get("success"))
+                        or bool(data.get("ok"))
+                    )
+                )
+
+                if success:
                     return SendResult(
                         success=True,
-                        message_id=str(msg.get("mid", msg.get("message_id", ""))),
+                        message_id=message_id or None,
                         raw_response=data,
                     )
 

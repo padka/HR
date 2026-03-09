@@ -63,6 +63,15 @@ The Vite server runs on `http://localhost:5173` and proxies `/api`, `/slots`, `/
 make dev-bot
 ```
 
+### Optional MAX bot webhook service
+
+```bash
+make dev-max-bot
+```
+
+This starts the standalone MAX webhook app on `http://localhost:8010` by default.
+For real MAX delivery the webhook URL must be public HTTPS and point to `/webhook`.
+
 ## Common Commands
 
 ### Backend
