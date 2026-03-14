@@ -6,7 +6,7 @@ import PipelineStage from './PipelineStage'
 import StageDetailPanel from './StageDetailPanel'
 import './candidate-pipeline.css'
 import type { PipelineStage as PipelineStageRecord } from './pipeline.types'
-import { getConnectorFill, getCurrentStageIndex, translateSystemMessage } from './pipeline.utils'
+import { getConnectorFill, getConnectorState, getCurrentStageIndex, translateSystemMessage } from './pipeline.utils'
 
 type CandidatePipelineProps = {
   title?: string
@@ -111,7 +111,7 @@ export default function CandidatePipeline({
                 {index < stages.length - 1 ? (
                   <PipelineConnector
                     fill={getConnectorFill(currentStageIndex, index, stages[currentStageIndex]?.status)}
-                    currentEdge={index === Math.max(0, currentStageIndex - 1)}
+                    state={getConnectorState(currentStageIndex, index, stages[currentStageIndex]?.status)}
                     vertical={isMobile}
                     reducedMotion={Boolean(reducedMotion)}
                   />

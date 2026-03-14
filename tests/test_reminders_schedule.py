@@ -12,17 +12,22 @@ def _service() -> ReminderService:
     return ReminderService(scheduler=scheduler)
 
 
-def test_interview_schedule_contains_2h_3h_6h():
+def test_interview_schedule_contains_10m_2h_3h_6h():
     svc = _service()
     start = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
     plans = svc._build_schedule(start, "Europe/Moscow", "interview")
     kinds = {plan.kind for plan in plans}
     assert kinds == {
+        ReminderKind.REMIND_10M,
         ReminderKind.CONFIRM_6H,
         ReminderKind.CONFIRM_3H,
         ReminderKind.CONFIRM_2H,
     }
     assert any(plan.run_at_utc == start - timedelta(hours=2) for plan in plans)
+    assert any(
+        abs((plan.run_at_utc - (start - timedelta(minutes=10))).total_seconds()) < 1e-6
+        for plan in plans
+    )
 
 
 def test_quiet_hours_adjustment_moves_to_previous_evening():

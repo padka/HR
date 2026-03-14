@@ -4,13 +4,14 @@
  * ============================================ */
 
 .ui-btn {
-  border: 1px solid var(--glass-border);
-  background: var(--glass-gradient);
-  color: var(--fg);
-  padding: 10px 16px;
-  border-radius: var(--radius);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
   font-size: var(--text-sm);
-  font-weight: 500;
+  line-height: var(--leading-snug);
+  font-weight: var(--font-medium);
   font-family: inherit;
   cursor: pointer;
   display: inline-flex;
@@ -18,76 +19,96 @@
   justify-content: center;
   gap: var(--space-sm);
   white-space: nowrap;
-  transition: transform var(--transition-fast), box-shadow var(--transition-hover), border-color var(--transition-hover), background var(--transition-hover);
+  box-shadow: var(--shadow-xs);
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .ui-btn:hover {
-  border-color: var(--glass-border-strong);
-  box-shadow: 0 10px 24px rgba(0,0,0,0.2);
+  border-color: var(--border-default);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
 }
 
 .ui-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-medium), 0 8px 20px rgba(0,0,0,0.22);
+  box-shadow: var(--focus-ring), var(--shadow-sm);
 }
 
 .ui-btn:active {
-  transform: translateY(0);
+  transform: scale(var(--press-scale));
 }
 
 .ui-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.48;
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
 }
 
 .ui-btn--primary {
-  background: linear-gradient(135deg, rgba(123,177,255,0.95), rgba(120,210,255,0.9));
-  color: #081224;
-  border-color: rgba(123,177,255,0.6);
-  font-weight: 600;
-  box-shadow: 0 10px 22px rgba(123,177,255,0.22), inset 0 1px 0 rgba(255,255,255,0.35);
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+  font-weight: var(--font-medium);
+  box-shadow: var(--shadow-sm), var(--glow-accent);
 }
 
 .ui-btn--primary:hover {
-  background: linear-gradient(135deg, rgba(136,190,255,0.98), rgba(126,218,255,0.94));
-  border-color: rgba(123,177,255,0.75);
-  box-shadow: 0 14px 30px rgba(123,177,255,0.3), inset 0 1px 0 rgba(255,255,255,0.4);
+  background: var(--accent-hover);
+  box-shadow: var(--shadow-md), var(--glow-accent);
 }
 
 .ui-btn--ghost {
-  background: rgba(255,255,255,0.04);
-  border-color: rgba(255,255,255,0.08);
+  background: transparent;
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
 }
 
 .ui-btn--ghost:hover {
-  background: rgba(255,255,255,0.08);
-  border-color: var(--glass-border);
+  background: var(--bg-elevated);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.ui-btn--secondary {
+  background: var(--bg-elevated);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.ui-btn--secondary:hover {
+  background: var(--bg-spotlight);
 }
 
 .ui-btn--danger {
-  background: var(--danger-soft);
-  border-color: rgba(240,115,115,0.35);
-  color: #ffdcdc;
+  background: var(--danger-muted);
+  border-color: var(--border-subtle);
+  color: #ffe5e5;
 }
 
 .ui-btn--danger:hover {
-  background: rgba(240,115,115,0.25);
-  border-color: rgba(240,115,115,0.5);
+  background: var(--danger);
+  border-color: transparent;
 }
 
 .ui-btn--sm {
-  padding: var(--space-xs) var(--space-sm);
-  font-size: var(--text-sm);
-  border-radius: var(--radius-xs);
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  border-radius: var(--radius-sm);
 }
 
 .ui-btn--lg {
-  padding: var(--space-md) var(--space-xl);
-  font-size: var(--text-md);
-  border-radius: var(--radius);
+  min-height: 44px;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-base);
+  border-radius: var(--radius-md);
 }
 
 .slot-table {
@@ -259,4 +280,3 @@
       0 0 14px rgba(255, 122, 91, 0.28);
   }
 }
-

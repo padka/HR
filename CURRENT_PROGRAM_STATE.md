@@ -13,8 +13,8 @@
 - shared theme/token system lives in [frontend/app/src/theme](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme)
 - recruiter/incoming/test-preview/light-theme work has already been implemented in code
 - backend reschedule/status fixes have already been implemented in code
-- candidate messenger now runs on candidate threads with archive state, wider 2-column chat workspace, on-demand right details drawer, pinned agreement/timeline block, sticky composer, intro-day scheduling from messenger using city templates, local recruiter notes, quick templates/status actions, and local unread/read notifications
-- candidate messenger second-pass redesign is landed locally: hero block removed, left rail simplified for faster triage, chat header/status summary/composer rebuilt for operational clarity, and the right drawer now acts as a decision rail focused on status, next step, risk, progress, and recruiter notes
+- candidate messenger now runs as a focused two-pane recruiter workspace: compact inbox rail on the left, chat workspace on the right, sticky composer, quick templates, local unread/read notifications, and direct link-out to the candidate card without inline candidate-details rail
+- candidate messenger second-pass redesign is landed locally: hero block removed, left rail simplified for faster triage, chat header/composer rebuilt for operational clarity, and the previous inline candidate-details drawer has been removed from the route
 - local auth resolution now prefers an active recruiter browser session over conflicting stale bearer auth on localhost, preventing recruiter sessions from snapping back to admin locally
 - intro day preview/send now resolves from the city-aware `intro_day_invitation` message template, with city profile spotlight for that override in the city editor
 - interview script generation now uses a v2 AI pipeline: stage-aware context, regulation-first prompt, recruiter-readable `conversation_script`, and a reading-first modal in candidate detail while preserving internal script blocks for QA/feedback

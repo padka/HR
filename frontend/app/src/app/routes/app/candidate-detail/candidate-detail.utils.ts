@@ -1,4 +1,5 @@
 import type { CandidateArchive, CandidateDetail, CandidateHHSummary, CandidatePendingSlotRequest, CandidateSlot, TestSection } from '@/api/services/candidates'
+import { translateSystemMessage } from '@/app/components/CandidatePipeline/pipeline.utils'
 import { formatDateTime, formatSlotTime } from '@/shared/utils/formatters'
 import type {
   CandidateDrawerTimelineEvent,
@@ -103,22 +104,39 @@ export function getIntroDaySlot(slots?: CandidateSlot[] | null): CandidateSlot |
   return (slots || []).find((slot) => slot.purpose === 'intro_day') || null
 }
 
+function formatTimelineTime(value?: string | null): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+}
+
+function joinTimelineMeta(values: Array<string | null | undefined>): string | undefined {
+  const normalized = Array.from(new Set(
+    values
+      .map((value) => translateSystemMessage(value))
+      .map((value) => value.trim())
+      .filter(Boolean),
+  ))
+
+  return normalized.length > 0 ? normalized.join(' · ') : undefined
+}
+
 export function buildCandidateTimeline(
   items: CandidateDetail['timeline'] | undefined,
   hhSummary?: CandidateHHSummary | null,
 ): CandidateDrawerTimelineEvent[] {
   const events: Array<CandidateDrawerTimelineEvent & { sortValue: number }> = (items || []).map((item, index) => {
-    const timestamp = formatDateTime(item.dt)
+    const timestamp = formatTimelineTime(item.dt)
     const sortValue = item.dt ? new Date(item.dt).getTime() : 0
     if (item.kind === 'test') {
       const score = typeof item.score === 'number' ? `${item.score.toFixed(1)}%` : 'без оценки'
       return {
         id: `timeline-test-${index}-${item.dt || ''}`,
         timestamp,
-        title: `${item.rating || 'Тест'}: ${score}`,
-        description: 'Результат тестирования зафиксирован в карточке кандидата.',
-        badge: 'Тест',
-        tone: typeof item.score === 'number' && item.score >= 60 ? 'success' : 'danger',
+        title: `${translateSystemMessage(item.rating || 'Тест')}: ${score}`,
+        meta: 'Автоматически',
+        tone: 'test',
         sortValue,
       }
     }
@@ -126,10 +144,9 @@ export function buildCandidateTimeline(
       return {
         id: `timeline-message-${index}-${item.dt || ''}`,
         timestamp,
-        title: 'Сообщение отправлено кандидату',
-        description: item.text ? String(item.text).slice(0, 120) : 'Коммуникация с кандидатом зафиксирована системой.',
-        badge: 'Коммуникация',
-        tone: 'muted',
+        title: 'Сообщение отправлено',
+        meta: item.text ? String(item.text).slice(0, 120) : 'Система',
+        tone: 'system',
         sortValue,
       }
     }
@@ -137,10 +154,12 @@ export function buildCandidateTimeline(
       return {
         id: `timeline-slot-${index}-${item.dt || ''}`,
         timestamp,
-        title: item.city ? `Слот · ${item.city}` : 'Слот в расписании',
-        description: [item.recruiter, item.status].filter(Boolean).join(' · ') || 'Собеседование или ОД отражены в расписании.',
-        badge: 'Смена статуса',
-        tone: 'accent',
+        title: item.status === 'confirmed' ? 'Собеседование подтверждено' : 'Собеседование назначено',
+        meta: joinTimelineMeta([
+          item.recruiter ? `Рекрутер: ${item.recruiter}` : 'Система',
+          item.city,
+        ]),
+        tone: 'status',
         sortValue,
       }
     }
@@ -156,31 +175,37 @@ export function buildCandidateTimeline(
       return {
         id: `timeline-interview-${index}-${item.dt || ''}`,
         timestamp,
-        title: item.summary || 'Интервью проведено',
-        description: [averageRating ? `Средняя оценка: ${averageRating}` : null, item.outcome_reason || null].filter(Boolean).join(' · ') || 'Рекрутер сохранил результат интервью.',
-        badge: 'Интервью',
-        tone: 'warning',
+        title: translateSystemMessage(item.summary || 'Интервью проведено'),
+        meta: joinTimelineMeta([
+          averageRating ? `Оценка ${averageRating}` : null,
+          item.outcome_reason || 'Система',
+        ]),
+        tone: 'status',
         sortValue,
       }
     }
     if (item.kind === 'journey') {
+      const payload = item.payload && typeof item.payload === 'object' ? item.payload : null
+      const payloadReason = payload && typeof payload.reason === 'string' ? payload.reason : null
       return {
         id: `timeline-journey-${index}-${item.dt || ''}`,
         timestamp,
-        title: normalizeJourneyCopy(item.summary) || 'Обновление воронки',
-        description: item.status ? getStatusDisplay(item.status).label : 'Система зафиксировала изменение пути кандидата.',
-        badge: item.event_key?.includes('slot') ? 'Смена статуса' : 'Система',
-        tone: item.event_key?.includes('declined') ? 'danger' : item.event_key?.includes('confirm') ? 'success' : 'accent',
+        title: translateSystemMessage(normalizeJourneyCopy(item.summary) || (item.status ? getStatusDisplay(item.status).label : 'Обновление воронки')),
+        meta: joinTimelineMeta([
+          'Система',
+          payloadReason,
+          !payloadReason && item.status ? getStatusDisplay(item.status).label : null,
+        ]),
+        tone: 'status',
         sortValue,
       }
     }
     return {
       id: `timeline-${index}-${item.dt || ''}`,
       timestamp,
-      title: item.summary || 'Событие',
-      description: item.status ? getStatusDisplay(item.status).label : 'История кандидата обновлена.',
-      badge: 'Система',
-      tone: 'muted',
+      title: translateSystemMessage(item.summary || 'Событие'),
+      meta: joinTimelineMeta([item.status ? getStatusDisplay(item.status).label : 'Система']),
+      tone: 'system',
       sortValue,
     }
   })
@@ -188,11 +213,13 @@ export function buildCandidateTimeline(
   for (const job of hhSummary?.recent_jobs || []) {
     events.push({
       id: `timeline-hh-job-${job.id}`,
-      timestamp: formatDateTime(job.finished_at || job.created_at),
-      title: job.job_type || 'HH задача',
-      description: job.last_error || 'Синхронизация HH обновила данные по кандидату.',
-      badge: 'HH',
-      tone: job.status === 'done' ? 'warning' : job.status === 'dead' ? 'danger' : 'muted',
+      timestamp: formatTimelineTime(job.finished_at || job.created_at),
+      title: translateSystemMessage(job.job_type || 'HH задача'),
+      meta: joinTimelineMeta([
+        job.status ? `HH · ${job.status}` : 'HH',
+        job.last_error || 'Синхронизация обновила данные',
+      ]),
+      tone: 'system',
       sortValue: new Date(job.finished_at || job.created_at || '').getTime() || 0,
     })
   }

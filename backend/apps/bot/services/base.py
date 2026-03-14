@@ -613,7 +613,14 @@ async def _begin_test2_flow(
     }
 
     await state_manager.set(candidate_id, new_state)
-    await start_test2(candidate_id)
+    starter = globals().get("start_test2")
+    if starter is None:
+        from . import test2_flow as _test2_flow
+
+        starter = getattr(_test2_flow, "start_test2", None)
+    if starter is None:
+        raise RuntimeError("start_test2 is not configured")
+    await starter(candidate_id)
 
 
 async def launch_test2(candidate_id: int) -> None:

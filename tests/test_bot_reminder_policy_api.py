@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.apps.admin_ui.app import create_app
@@ -40,6 +41,7 @@ def test_bot_reminder_policy_api_roundtrip(monkeypatch) -> None:
         initial = get_resp.json()
         assert "policy" in initial
         assert initial["policy"]["interview"]["confirm_6h"]["offset_hours"] == 6.0
+        assert initial["policy"]["interview"]["remind_10m"]["offset_hours"] == pytest.approx(10 / 60, abs=1e-4)
 
         update_resp = client.put(
             "/api/bot/reminder-policy",
@@ -62,6 +64,7 @@ def test_bot_reminder_policy_api_roundtrip(monkeypatch) -> None:
         assert updated["ok"] is True
         assert updated["policy"]["interview"]["confirm_6h"]["enabled"] is False
         assert updated["policy"]["interview"]["confirm_3h"]["offset_hours"] == 2.5
+        assert updated["policy"]["interview"]["remind_10m"]["offset_hours"] == pytest.approx(10 / 60, abs=1e-4)
         assert updated["policy"]["min_time_before_immediate_hours"] == 1.0
         assert any(kind == KIND_REMINDERS_CHANGED for kind, _payload in published)
 
@@ -70,3 +73,4 @@ def test_bot_reminder_policy_api_roundtrip(monkeypatch) -> None:
         verified = verify_resp.json()
         assert verified["policy"]["interview"]["confirm_6h"]["enabled"] is False
         assert verified["policy"]["interview"]["confirm_2h"]["offset_hours"] == 1.5
+        assert verified["policy"]["interview"]["remind_10m"]["offset_hours"] == pytest.approx(10 / 60, abs=1e-4)

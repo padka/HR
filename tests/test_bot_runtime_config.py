@@ -4,6 +4,7 @@ import pytest
 
 from backend.apps.bot.runtime_config import (
     DEFAULT_REMINDER_POLICY,
+    MIN_REMINDER_OFFSET_HOURS,
     get_reminder_policy_config,
     normalize_reminder_policy,
     save_reminder_policy_config,
@@ -25,7 +26,9 @@ def test_normalize_reminder_policy_sanitizes_payload() -> None:
     assert normalized["interview"]["confirm_6h"]["enabled"] is True
     assert normalized["interview"]["confirm_6h"]["offset_hours"] == 5.5
     assert normalized["interview"]["confirm_3h"]["enabled"] is False
-    assert normalized["interview"]["confirm_3h"]["offset_hours"] == 0.25
+    assert normalized["interview"]["confirm_3h"]["offset_hours"] == MIN_REMINDER_OFFSET_HOURS
+    assert normalized["interview"]["remind_10m"]["enabled"] is True
+    assert normalized["interview"]["remind_10m"]["offset_hours"] == MIN_REMINDER_OFFSET_HOURS
     assert normalized["intro_day"]["intro_remind_3h"]["offset_hours"] == 72.0
     assert normalized["min_time_before_immediate_hours"] == 2.0
 
@@ -52,6 +55,7 @@ async def test_get_and_save_reminder_policy_roundtrip() -> None:
     assert saved["interview"]["confirm_6h"]["enabled"] is False
     assert saved["interview"]["confirm_3h"]["offset_hours"] == 2.5
     assert saved["interview"]["confirm_2h"]["offset_hours"] == 1.5
+    assert saved["interview"]["remind_10m"]["offset_hours"] == MIN_REMINDER_OFFSET_HOURS
     assert saved["intro_day"]["intro_remind_3h"]["offset_hours"] == 2.0
     assert saved["min_time_before_immediate_hours"] == 1.25
     assert saved_at is not None

@@ -1,10 +1,9 @@
-export type TimelineTone = 'accent' | 'success' | 'warning' | 'danger' | 'muted'
+export type TimelineTone = 'status' | 'test' | 'system'
 
 export type TimelineEvent = {
   id: string
   timestamp: string
   title: string
-  description: string
-  badge: string
+  meta?: string
   tone: TimelineTone
 }

@@ -7,6 +7,18 @@ const AI_LEVEL_LABELS: Record<'high' | 'medium' | 'low' | 'unknown', string> = {
   unknown: 'Не определена',
 }
 
+export function dashboardTrendTone(display?: string | null): 'positive' | 'negative' | 'neutral' {
+  if (!display) return 'neutral'
+  const normalized = display.trim()
+  if (normalized.startsWith('+')) return 'positive'
+  if (normalized.startsWith('-')) return 'negative'
+  return 'neutral'
+}
+
+export function leaderboardRankClass(rank: number) {
+  return rank >= 1 && rank <= 3 ? `leaderboard-rank--${rank}` : ''
+}
+
 export function formatAiRelevance(candidate: IncomingCandidate): string {
   if (typeof candidate.ai_relevance_score === 'number') {
     const score = Math.min(100, Math.max(0, Math.round(candidate.ai_relevance_score)))

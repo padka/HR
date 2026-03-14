@@ -56,14 +56,6 @@ export type CandidateChatMessage = {
   can_retry?: boolean
 }
 
-export type CandidateChatWorkspaceState = {
-  shared_note: string
-  agreements: string[]
-  follow_up_due_at?: string | null
-  updated_by?: string | null
-  updated_at?: string | null
-}
-
 export type CandidateChatPayload = {
   messages: CandidateChatMessage[]
   has_more: boolean
@@ -138,38 +130,8 @@ export function markCandidateChatThreadRead(candidateId: number) {
   })
 }
 
-export function archiveCandidateChatThread(candidateId: number) {
-  return apiFetch<{ ok: boolean; archived: boolean }>(`/candidate-chat/threads/${candidateId}/archive`, {
-    method: 'POST',
-  })
-}
-
-export function unarchiveCandidateChatThread(candidateId: number) {
-  return apiFetch<{ ok: boolean; archived: boolean }>(`/candidate-chat/threads/${candidateId}/unarchive`, {
-    method: 'POST',
-  })
-}
-
 export function fetchCandidateChatTemplates() {
   return apiFetch<{ items: CandidateChatTemplate[] }>('/candidate-chat/templates')
-}
-
-export function fetchCandidateChatWorkspace(candidateId: number) {
-  return apiFetch<CandidateChatWorkspaceState>(`/candidate-chat/threads/${candidateId}/workspace`)
-}
-
-export function updateCandidateChatWorkspace(
-  candidateId: number,
-  payload: {
-    shared_note: string
-    agreements: string[]
-    follow_up_due_at?: string | null
-  },
-) {
-  return apiFetch<CandidateChatWorkspaceState>(`/candidate-chat/threads/${candidateId}/workspace`, {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  })
 }
 
 export function sendCandidateThreadMessage(candidateId: number, payload: { text: string; client_request_id?: string }) {

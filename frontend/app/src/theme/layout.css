@@ -169,6 +169,22 @@
   color: var(--muted);
 }
 
+.filter-bar__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.filter-bar__label {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.filter-bar__search {
+  min-width: 200px;
+}
+
 /* Data Card - consistent card for data items */
 .data-card {
   padding: var(--space-xl);
@@ -306,6 +322,42 @@
 
 .data-table tbody tr:last-child td:last-child {
   border-radius: 0 0 var(--radius-sm) 0;
+}
+
+.data-table__th--checkbox {
+  width: 40px;
+  text-align: center;
+}
+
+.data-table__row--selected {
+  background: rgba(106, 165, 255, 0.1);
+}
+
+.data-table__row--selected td {
+  background: transparent;
+}
+
+.data-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 calc(-1 * var(--space-md));
+  padding: 0 var(--space-md);
+}
+
+.list-item--block,
+.glass.list-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-sm);
+}
+
+.list-item__meta {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.page-section__content > * + * {
+  margin-top: var(--space-md);
 }
 
 .slot-candidate {
@@ -836,4 +888,3 @@
     white-space: nowrap;
   }
 }
-

@@ -107,9 +107,12 @@ test.describe("ui cosmetics smoke (desktop)", () => {
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
-    await expect(page.getByRole("heading", { name: "Мессенджер RecruitSmart" })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("complementary", { name: "Чаты кандидатов" })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("searchbox", { name: "Поиск по чатам" })).toBeVisible({ timeout: 10000 });
     await expect(page.locator(".messenger-sidebar")).toBeVisible({ timeout: 10000 });
     await expect(page.locator(".messenger-chat")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "Отправить сообщение" })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "Детали" })).toHaveCount(0);
     await expect(page.locator(".background-scene")).toHaveCount(0);
   });
 
@@ -119,6 +122,40 @@ test.describe("ui cosmetics smoke (desktop)", () => {
 
     await page.getByRole("button", { name: "Скрипт интервью" }).click();
     await expect(page.getByTestId("interview-script-modal")).toBeVisible({ timeout: 10000 });
+  });
+
+  test("candidate detail drawer stays scrollable and pipeline cards keep compact states", async ({ page }) => {
+    await openFirstCandidateDetail(page);
+
+    await page.getByTestId("candidate-insights-trigger").click();
+    const drawer = page.getByTestId("candidate-insights-drawer");
+    await expect(drawer).toBeVisible({ timeout: 10000 });
+
+    const drawerBody = drawer.locator(".candidate-drawer__body");
+    const drawerScroll = await drawerBody.evaluate((node) => {
+      const element = node as HTMLElement;
+      const overflowY = window.getComputedStyle(element).overflowY;
+      return {
+        overflowY,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+      };
+    });
+
+    expect(["auto", "scroll"]).toContain(drawerScroll.overflowY);
+    expect(drawerScroll.clientHeight).toBeGreaterThan(0);
+    expect(drawerScroll.scrollHeight).toBeGreaterThanOrEqual(drawerScroll.clientHeight);
+    await expect(page.getByText("Краткий операционный контекст для рекрутера.")).toHaveCount(0);
+    await expect(page.getByText("Единая лента значимых событий по кандидату.")).toHaveCount(0);
+    await expect(page.getByText("Локальные заметки рекрутера по кандидату.")).toHaveCount(0);
+    await expect(drawer.getByText("Телефон")).toBeVisible();
+
+    const pipeline = page.getByTestId("candidate-pipeline");
+    await expect(pipeline.locator(".candidate-pipeline-stage")).toHaveCount(6);
+    await expect(pipeline.locator(".candidate-pipeline-stage--current")).toBeVisible();
+    await expect(pipeline.locator(".candidate-pipeline-stage--upcoming").first()).toBeVisible();
+    await expect(pipeline.locator(".candidate-pipeline-stage__preview")).toHaveCount(0);
+    await expect(pipeline.locator(".candidate-pipeline-stage__subtitle").first()).toBeVisible();
   });
 });
 
@@ -165,6 +202,33 @@ test.describe("ui cosmetics smoke (mobile 390)", () => {
   test("candidate detail main blocks are visible", async ({ page }) => {
     await openFirstCandidateDetail(page);
     await expect(page.getByTestId("candidate-actions")).toBeVisible({ timeout: 10000 });
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("candidate detail drawer uses full-width sheet on mobile", async ({ page }) => {
+    await openFirstCandidateDetail(page);
+    await page.getByTestId("candidate-insights-trigger").click();
+
+    const drawer = page.getByTestId("candidate-insights-drawer");
+    await expect(drawer).toBeVisible({ timeout: 10000 });
+
+    const box = await drawer.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box?.width ?? 0).toBeGreaterThan(360);
+    expect(box?.height ?? 0).toBeGreaterThan(700);
+
+    const scrollState = await drawer.locator(".candidate-drawer__body").evaluate((node) => {
+      const element = node as HTMLElement;
+      return {
+        overflowY: window.getComputedStyle(element).overflowY,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+      };
+    });
+
+    expect(["auto", "scroll"]).toContain(scrollState.overflowY);
+    expect(scrollState.clientHeight).toBeGreaterThan(0);
+    expect(scrollState.scrollHeight).toBeGreaterThanOrEqual(scrollState.clientHeight);
     await expectNoHorizontalOverflow(page);
   });
 });

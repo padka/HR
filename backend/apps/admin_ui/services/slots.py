@@ -1145,6 +1145,24 @@ async def _finalize_manual_silent_booking(
         ),
     )
 
+    reminder_service = None
+    if candidate_tg_id and callable(get_reminder_service):
+        try:
+            reminder_service = get_reminder_service()
+        except RuntimeError:
+            reminder_service = None
+    if reminder_service is not None:
+        try:
+            await reminder_service.schedule_for_slot(
+                slot_id,
+                skip_confirmation_prompts=False,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to schedule reminders for manual silent slot booking",
+                extra={"slot_id": slot_id, "candidate_tg_id": candidate_tg_id},
+            )
+
     return SlotApprovalResult(
         status="approved",
         message="Слот согласован без уведомления кандидата.",

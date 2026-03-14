@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import {
   fetchCurrentKpis,
   fetchDashboardIncoming,
@@ -21,10 +22,19 @@ import { useIsMobile } from '@/app/hooks/useIsMobile'
 import { browserTimeZone, buildSlotTimePreview, formatTzOffset } from '@/app/lib/timezonePreview'
 import { ModalPortal } from '@/shared/components/ModalPortal'
 import { Link } from '@tanstack/react-router'
+import '@/theme/pages/dashboard.css'
+import { fadeIn, listItem, stagger } from '@/shared/motion'
 import { resolveIncomingDemoCount, withDemoIncomingCandidates } from './incoming-demo'
 import { IncomingPage } from './incoming'
 import { DashboardMetric } from './DashboardMetric'
-import { formatAiRecommendation, formatAiRelevance, getDefaultRange, toIsoDate } from './dashboard.utils'
+import {
+  dashboardTrendTone,
+  formatAiRecommendation,
+  formatAiRelevance,
+  getDefaultRange,
+  leaderboardRankClass,
+  toIsoDate,
+} from './dashboard.utils'
 
 type IncomingFilter = 'all' | 'new' | 'stalled' | 'pending' | 'requested_other_time'
 
@@ -35,6 +45,7 @@ const INCOMING_PAGE_SIZE_OPTIONS = [25, 50, 100] as const
 export function DashboardPage() {
   const profile = useProfile()
   const isMobile = useIsMobile()
+  const prefersReducedMotion = useReducedMotion()
   const profileReady = profile.isSuccess || Boolean(profile.data)
   const isAdmin = profile.data?.principal.type === 'admin'
   const initialRange = useMemo(() => getDefaultRange(), [])
@@ -54,6 +65,7 @@ export function DashboardPage() {
   const [incomingPageSize, setIncomingPageSize] = useState<number>(50)
   const [showIncomingAdvancedFilters, setShowIncomingAdvancedFilters] = useState(false)
   const [expandedIncomingCards, setExpandedIncomingCards] = useState<Record<number, boolean>>({})
+  const [hasAnimatedLists, setHasAnimatedLists] = useState(false)
   const recruiterTz = profile.data?.recruiter?.tz || browserTimeZone()
   const toastTimeoutRef = useRef<number | null>(null)
 
@@ -378,6 +390,13 @@ export function DashboardPage() {
     () => incomingItems.slice(incomingPageStart, incomingPageEnd),
     [incomingItems, incomingPageEnd, incomingPageStart],
   )
+  const firstRenderAnimation = !hasAnimatedLists && !prefersReducedMotion
+  const leaderboardAnimationKey = [leaderboardParams, recruiterId].join('|')
+  const kpiAnimationKey = [kpiParams, kpiQuery.data?.current.label || ''].join('|')
+
+  useEffect(() => {
+    setHasAnimatedLists(true)
+  }, [])
 
   if (!profileReady) {
     return (
@@ -462,11 +481,20 @@ export function DashboardPage() {
           {summaryQuery.isError && <ApiErrorBanner error={summaryQuery.error} title="Ошибка загрузки сводки" onRetry={() => summaryQuery.refetch()} />}
           
           {summaryCards.length > 0 && (
-            <div className="grid-cards">
+            <motion.div
+              key={summaryCards.map((card) => `${card.label}:${card.value}`).join('|')}
+              className="grid-cards dashboard-summary-grid"
+              initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
+              animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
+              variants={firstRenderAnimation ? stagger(0.03) : undefined}
+              transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
+            >
               {summaryCards.map((card) => (
-                <DashboardMetric key={card.label} title={card.label} value={card.value} />
+                <motion.div key={card.label} variants={firstRenderAnimation ? listItem : undefined}>
+                  <DashboardMetric title={card.label} value={card.value} />
+                </motion.div>
               ))}
-            </div>
+            </motion.div>
           )}
         </section>
       )}
@@ -491,22 +519,31 @@ export function DashboardPage() {
             {leaderboardQuery.isLoading && <p className="subtitle">Загрузка…</p>}
             {leaderboardQuery.isError && <ApiErrorBanner error={leaderboardQuery.error} title="Ошибка загрузки лидерборда" />}
             {leaderboardQuery.data?.items?.length ? (
-              isMobile ? (
-                <div className="mobile-card-list dashboard-leaderboard-mobile-list" data-testid="dashboard-leaderboard-mobile">
-                  {leaderboardQuery.data.items.map((item) => {
-                    const isSelected = recruiterId && Number(recruiterId) === item.recruiter_id
-                    const isTop = item.rank <= 3
-                    return (
-                      <article
-                        key={item.recruiter_id}
-                        className={`mobile-card dashboard-leaderboard-card ${isSelected ? 'is-selected' : ''} ${isTop ? 'is-top' : ''}`}
-                      >
-                        <div className="dashboard-leaderboard-card__head">
-                          <span className="dashboard-leaderboard-card__rank">#{item.rank}</span>
-                          <strong>{item.name}</strong>
+              <motion.div
+                key={leaderboardAnimationKey}
+                className={`leaderboard-list ${isMobile ? 'leaderboard-list--mobile' : ''}`}
+                data-testid={isMobile ? 'dashboard-leaderboard-mobile' : 'dashboard-leaderboard-list'}
+                initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
+                animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
+                variants={firstRenderAnimation ? stagger(0.03) : undefined}
+                transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
+              >
+                {leaderboardQuery.data.items.map((item) => {
+                  const isSelected = recruiterId && Number(recruiterId) === item.recruiter_id
+                  const rankClass = leaderboardRankClass(item.rank)
+                  return (
+                    <motion.article
+                      key={item.recruiter_id}
+                      className={`leaderboard-item ${isSelected ? 'is-selected' : ''}`}
+                      variants={firstRenderAnimation ? listItem : undefined}
+                    >
+                      <span className={`leaderboard-rank ${rankClass}`}>{item.rank}</span>
+                      <div className="leaderboard-item__content">
+                        <div className="leaderboard-item__main">
+                          <strong className="leaderboard-item__name">{item.name}</strong>
                           <span className="leaderboard-score">{item.score}</span>
                         </div>
-                        <div className="dashboard-leaderboard-card__stats">
+                        <div className="leaderboard-item__stats">
                           <span>Конверсия: {item.conversion_interview}%</span>
                           <span>Подтв.: {item.confirmation_rate}%</span>
                           <span>Заполн.: {item.fill_rate}%</span>
@@ -514,54 +551,11 @@ export function DashboardPage() {
                           <span>Нанято: {item.hired_total}</span>
                           <span>Отказ: {item.declined_total}</span>
                         </div>
-                      </article>
-                    )
-                  })}
-                </div>
-              ) : (
-                <div className="leaderboard-table-wrap">
-                  <table className="leaderboard-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Рекрутёр</th>
-                        <th>Score</th>
-                        <th>Конверсия</th>
-                        <th>Подтв.</th>
-                        <th>Заполн.</th>
-                        <th>Кандидаты</th>
-                        <th>Нанято</th>
-                        <th>Отказ</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leaderboardQuery.data.items.map((item) => {
-                        const isSelected =
-                          recruiterId && Number(recruiterId) === item.recruiter_id
-                        const isTop = item.rank <= 3
-                        return (
-                          <tr
-                            key={item.recruiter_id}
-                            className={`${isSelected ? 'is-selected' : ''} ${isTop ? 'is-top' : ''}`}
-                          >
-                            <td>{item.rank}</td>
-                            <td>{item.name}</td>
-                            <td>
-                              <span className="leaderboard-score">{item.score}</span>
-                            </td>
-                            <td>{item.conversion_interview}%</td>
-                            <td>{item.confirmation_rate}%</td>
-                            <td>{item.fill_rate}%</td>
-                            <td>{item.throughput}</td>
-                            <td>{item.hired_total}</td>
-                            <td>{item.declined_total}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )
+                      </div>
+                    </motion.article>
+                  )
+                })}
+              </motion.div>
             ) : (
               <p className="subtitle">Нет данных за выбранный период.</p>
             )}
@@ -994,18 +988,27 @@ export function DashboardPage() {
           {kpiQuery.isLoading && <p className="subtitle">Загрузка…</p>}
           {kpiQuery.isError && <ApiErrorBanner error={kpiQuery.error} title="Ошибка загрузки KPI" />}
           {kpiQuery.data?.current?.metrics && (
-            <div className="kpi-grid">
+            <motion.div
+              key={kpiAnimationKey}
+              className="kpi-grid"
+              initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
+              animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
+              variants={firstRenderAnimation ? stagger(0.03) : undefined}
+              transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
+            >
               {kpiQuery.data.current.metrics.map((metric) => (
-                <div key={metric.key} className="glass stat-card kpi-card">
+                <motion.article key={metric.key} className="kpi-card" variants={firstRenderAnimation ? listItem : undefined}>
                   <div className="kpi-card__header">
                     <span className="kpi-card__icon">{metric.icon}</span>
-                    <span className="kpi-card__label">{metric.label}</span>
+                    <span className="kpi-label">{metric.label}</span>
                   </div>
-                  <div className="kpi-card__value">{metric.value}</div>
-                  <div className="kpi-card__trend">{metric.trend?.display || '—'}</div>
-                </div>
+                  <div className="kpi-value">{metric.value}</div>
+                  <div className={`kpi-delta kpi-delta--${dashboardTrendTone(metric.trend?.display)}`}>
+                    {metric.trend?.display || '—'}
+                  </div>
+                </motion.article>
               ))}
-            </div>
+            </motion.div>
           )}
         </div>
       )}

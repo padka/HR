@@ -9,6 +9,7 @@ def test_candidate_templates_have_full_text_copy() -> None:
     keys = (
         "interview_confirmed_candidate",
         "confirm_2h",
+        "reminder_10m",
         "att_confirmed_link",
         "att_declined_reason_prompt",
         "intro_day_invitation",

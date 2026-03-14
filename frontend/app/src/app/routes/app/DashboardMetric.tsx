@@ -5,9 +5,9 @@ type DashboardMetricProps = {
 
 export function DashboardMetric({ title, value }: DashboardMetricProps) {
   return (
-    <article className="glass stat-card dashboard-metric">
-      <span className="stat-label">{title}</span>
-      <span className="stat-value">{value ?? '—'}</span>
+    <article className="dashboard-metric kpi-card">
+      <span className="kpi-label">{title}</span>
+      <strong className="kpi-value">{value ?? '—'}</strong>
     </article>
   )
 }

@@ -33,6 +33,14 @@ async def notify_rejection(snapshot: SlotSnapshot) -> bool:
 
     return await _send_final_rejection_notice(snapshot)
 
+
+def _recruiter_header(name: str, tz_label: str) -> str:
+    return (
+        f"👤 <b>{name}</b>\n"
+        f"🕒 Время отображается в вашем поясе: <b>{tz_label}</b>.\n"
+        "Выберите удобное окно:"
+    )
+
 def _clamp(value: int, *, low: int, high: int) -> int:
     return max(low, min(value, high))
 

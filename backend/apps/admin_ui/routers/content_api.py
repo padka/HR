@@ -51,6 +51,7 @@ RECRUITER_EDITABLE_TEMPLATE_KEYS = {
     "interview_confirmed_candidate",
     "interview_invite_details",
     "interview_remind_confirm_2h",
+    "reminder_10m",
     "intro_day_invitation",
     "intro_day_invite",
     "intro_day_invite_city",

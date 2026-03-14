@@ -1,46 +1,43 @@
+import { listItem, motionDurations, motionEaseOut, motionEaseSpring, slideInRight, slideUp } from '@/shared/motion'
+
 export const scriptMotion = {
   panelSpring: { type: 'spring' as const, stiffness: 260, damping: 28 },
-  easing: [0.25, 0.1, 0.25, 1] as const,
-  duration: 0.3,
+  easing: motionEaseOut,
+  duration: motionDurations.base,
 }
 
 export const scriptPanelVariants = {
-  hidden: { opacity: 0, x: 24 },
+  hidden: slideInRight.initial,
   visible: {
-    opacity: 1,
-    x: 0,
-    transition: { ...scriptMotion.panelSpring },
+    ...slideInRight.animate,
+    transition: { duration: motionDurations.slow, ease: motionEaseSpring },
   },
   exit: {
-    opacity: 0,
-    x: 18,
-    transition: { duration: scriptMotion.duration, ease: scriptMotion.easing },
+    ...slideInRight.exit,
+    transition: { duration: motionDurations.slow, ease: motionEaseSpring },
   },
 }
 
 export const scriptStepVariants = {
-  hidden: { opacity: 0, x: 18 },
+  hidden: slideUp.initial,
   visible: {
-    opacity: 1,
-    x: 0,
-    transition: { duration: scriptMotion.duration, ease: scriptMotion.easing },
+    ...slideUp.animate,
+    transition: { duration: 0.3, ease: motionEaseSpring },
   },
   exit: {
-    opacity: 0,
-    x: -18,
-    transition: { duration: scriptMotion.duration, ease: scriptMotion.easing },
+    ...slideUp.exit,
+    transition: { duration: motionDurations.base, ease: motionEaseOut },
   },
 }
 
 export const scriptScorecardItemVariants = {
-  hidden: { opacity: 0, y: 8 },
+  hidden: listItem.initial,
   visible: (index: number) => ({
-    opacity: 1,
-    y: 0,
+    ...listItem.animate,
     transition: {
       delay: index * 0.05,
       duration: 0.24,
-      ease: scriptMotion.easing,
+      ease: motionEaseSpring,
     },
   }),
 }

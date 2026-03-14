@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import CandidateTimeline from '@/app/components/CandidateTimeline/CandidateTimeline'
 import CohortComparison from '@/app/components/CohortComparison/CohortComparison'
 import QuickNotes from '@/app/components/QuickNotes/QuickNotes'
 import { ModalPortal } from '@/shared/components/ModalPortal'
+import { fadeIn, slideInRight } from '@/shared/motion'
 import { formatDateTime } from '@/shared/utils/formatters'
 import { scorecardRecommendationLabel } from '@/shared/utils/labels'
 import { normalizeTelegramUsername } from '@/shared/utils/normalizers'
@@ -39,6 +41,7 @@ export function CandidateDrawer({
   onInsertChatDraft,
 }: CandidateDrawerProps) {
   const queryClient = useQueryClient()
+  const reduceMotion = useReducedMotion()
   const hhSummaryQuery = useCandidateHh(candidateId, isOpen)
   const cohortComparisonQuery = useCandidateCohort(candidateId, isOpen)
   const ai = useCandidateAi(candidateId)
@@ -65,7 +68,6 @@ export function CandidateDrawer({
   const candidateJourney = candidate.journey || null
   const archiveInfo = candidate.archive || candidateJourney?.archive || null
   const finalOutcomeDisplay = candidateJourney?.final_outcome_label || finalOutcomeLabel(candidate.final_outcome) || null
-  const finalOutcomeReason = candidate.final_outcome_reason || candidateJourney?.final_outcome_reason || null
   const telegramUsername = normalizeTelegramUsername(candidate.telegram_username)
   const hhSummary = hhSummaryQuery.data
   const hhBadge = getHhSyncBadge(hhSummary?.sync_status ?? candidate.hh_sync_status)
@@ -107,94 +109,107 @@ export function CandidateDrawer({
     () => buildCandidateTimeline(candidate.timeline || [], hhSummary),
     [candidate.timeline, hhSummary],
   )
+  const drawerInfoRows = useMemo<Array<{ label: string; value: string; href?: string | null }>>(() => {
+    const rows = [
+      { label: 'ID', value: `#${candidateId}` },
+      {
+        label: 'Телефон',
+        value: candidate.phone || '—',
+        href: candidate.phone ? `tel:${candidate.phone.replace(/[^\d+]/g, '')}` : null,
+      },
+      {
+        label: 'Telegram',
+        value: telegramUsername ? `@${telegramUsername}` : candidate.telegram_id ? `ID ${candidate.telegram_id}` : 'Не привязан',
+      },
+      { label: 'Город', value: candidate.city || '—' },
+      { label: 'Рекрутер', value: candidate.responsible_recruiter?.name || '—' },
+      { label: 'Состояние', value: statusLabel },
+    ]
 
-  if (!isOpen) return null
+    if (finalOutcomeDisplay || archiveInfo?.label) {
+      rows.push({ label: 'Итог', value: finalOutcomeDisplay || archiveInfo?.label || '—' })
+    }
+
+    return rows
+  }, [
+    archiveInfo?.label,
+    candidate.city,
+    candidate.phone,
+    candidate.responsible_recruiter?.name,
+    candidate.telegram_id,
+    candidateId,
+    finalOutcomeDisplay,
+    statusLabel,
+    telegramUsername,
+  ])
 
   return (
     <ModalPortal>
-      <div className="drawer-overlay" onClick={(event) => event.target === event.currentTarget && onClose()}>
-        <aside
-          className="candidate-chat-drawer candidate-insights-drawer glass"
-          onClick={(event) => event.stopPropagation()}
-          data-testid="candidate-insights-drawer"
-        >
-          <header className="candidate-chat-drawer__header">
-            <div>
-              <h3 className="candidate-chat-drawer__title">Детали кандидата</h3>
-              <p className="subtitle">Карточка, хронология, заметки, HH и AI-контекст для рекрутера.</p>
-            </div>
-            <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
-          </header>
+      <AnimatePresence>
+        {isOpen ? (
+          <motion.div
+            className="drawer-overlay candidate-drawer-overlay candidate-drawer-overlay--insights"
+            onClick={(event) => event.target === event.currentTarget && onClose()}
+            initial={reduceMotion ? false : fadeIn.initial}
+            animate={reduceMotion ? undefined : fadeIn.animate}
+            exit={reduceMotion ? undefined : fadeIn.exit}
+            transition={reduceMotion ? { duration: 0 } : fadeIn.transition}
+          >
+            <motion.aside
+              className="candidate-chat-drawer candidate-drawer candidate-insights-drawer glass"
+              onClick={(event) => event.stopPropagation()}
+              data-testid="candidate-insights-drawer"
+              initial={reduceMotion ? false : slideInRight.initial}
+              animate={reduceMotion ? undefined : slideInRight.animate}
+              exit={reduceMotion ? undefined : slideInRight.exit}
+              transition={reduceMotion ? { duration: 0 } : slideInRight.transition}
+            >
+              <header className="candidate-chat-drawer__header candidate-drawer__header">
+                <h3 className="candidate-chat-drawer__title">Детали кандидата</h3>
+                <button type="button" className="ui-btn ui-btn--ghost" onClick={onClose}>
+                  Закрыть
+                </button>
+              </header>
 
-          <div className="candidate-chat-drawer__body candidate-insights-drawer__body">
-            <section className="glass panel candidate-insights-drawer__section">
-              <div className="cd-section-header">
-                <div>
-                  <h2 className="cd-section-title">Карточка кандидата</h2>
-                  <p className="subtitle">Краткий операционный контекст для рекрутера.</p>
-                </div>
-              </div>
-              <div className="candidate-insights-drawer__summary-grid">
-                <div className="candidate-insights-drawer__summary-card">
-                  <span className="candidate-insights-drawer__summary-label">ID кандидата</span>
-                  <span className="candidate-insights-drawer__summary-value">#{candidateId}</span>
-                </div>
-                <div className="candidate-insights-drawer__summary-card">
-                  <span className="candidate-insights-drawer__summary-label">Телефон</span>
-                  <span className="candidate-insights-drawer__summary-value">{candidate.phone || '—'}</span>
-                  <span className="candidate-insights-drawer__summary-meta">
-                    {telegramUsername ? `Telegram: @${telegramUsername}` : candidate.telegram_id ? `Telegram ID: ${candidate.telegram_id}` : 'Telegram не привязан'}
-                  </span>
-                </div>
-                <div className="candidate-insights-drawer__summary-card">
-                  <span className="candidate-insights-drawer__summary-label">Город</span>
-                  <span className="candidate-insights-drawer__summary-value">{candidate.city || '—'}</span>
-                  <span className="candidate-insights-drawer__summary-meta">
-                    {candidate.manual_mode ? 'Ручное назначение' : 'Бот-сценарий'}
-                  </span>
-                </div>
-                <div className="candidate-insights-drawer__summary-card">
-                  <span className="candidate-insights-drawer__summary-label">Рекрутер</span>
-                  <span className="candidate-insights-drawer__summary-value">{candidate.responsible_recruiter?.name || '—'}</span>
-                  <span className="candidate-insights-drawer__summary-meta">
-                    {candidate.is_active === false ? 'Кандидат неактивен' : 'Кандидат активен'}
-                  </span>
-                </div>
-                <div className="candidate-insights-drawer__summary-card">
-                  <span className="candidate-insights-drawer__summary-label">Текущее состояние</span>
-                  <span className="candidate-insights-drawer__summary-value">{statusLabel}</span>
-                  <span className="candidate-insights-drawer__summary-meta">
-                    {candidateJourney?.state_label || 'Статус из карточки кандидата'}
-                  </span>
-                </div>
-                <div className="candidate-insights-drawer__summary-card">
-                  <span className="candidate-insights-drawer__summary-label">Итог</span>
-                  <span className="candidate-insights-drawer__summary-value">{finalOutcomeDisplay || archiveInfo?.label || '—'}</span>
-                  <span className="candidate-insights-drawer__summary-meta">
-                    {finalOutcomeReason || archiveInfo?.reason || 'Решение ещё не зафиксировано'}
-                  </span>
-                </div>
-              </div>
-            </section>
-
-            <CandidateTimeline events={detailTimelineEvents} />
-            <QuickNotes storageKey={quickNotesStorageKey} />
-
-            {shouldShowHhPanel && (
-              <section className="glass panel cd-hh-panel candidate-insights-drawer__section">
-                <div className="cd-section-header">
-                  <div>
-                    <h2 className="cd-section-title">HH.ru</h2>
-                    <p className="subtitle">Связка резюме, вакансии и истории переговоров.</p>
+              <div className="candidate-chat-drawer__body candidate-drawer__body candidate-insights-drawer__body">
+                <section className="glass panel candidate-insights-drawer__section">
+                  <div className="cd-section-header">
+                    <h2 className="cd-section-title">Карточка кандидата</h2>
                   </div>
-                  <div className="ui-section-header__actions">
-                    {hhSummary?.resume?.url ? (
-                      <a href={hhSummary.resume.url} className="ui-btn ui-btn--ghost ui-btn--sm" target="_blank" rel="noopener">
-                        Открыть в HH
-                      </a>
-                    ) : null}
+                  <div className="candidate-drawer__info-grid">
+                    {drawerInfoRows.map((item) => (
+                      item.href ? (
+                        <Fragment key={item.label}>
+                          <span className="candidate-drawer__info-label">{item.label}</span>
+                          <a href={item.href} className="candidate-drawer__info-value candidate-drawer__info-value--phone">
+                            {item.value}
+                          </a>
+                        </Fragment>
+                      ) : (
+                        <Fragment key={item.label}>
+                          <span className="candidate-drawer__info-label">{item.label}</span>
+                          <span className="candidate-drawer__info-value">{item.value}</span>
+                        </Fragment>
+                      )
+                    ))}
                   </div>
-                </div>
+                </section>
+
+                <CandidateTimeline events={detailTimelineEvents} />
+                <QuickNotes storageKey={quickNotesStorageKey} />
+
+                {shouldShowHhPanel && (
+                  <section className="glass panel cd-hh-panel candidate-insights-drawer__section">
+                    <div className="cd-section-header">
+                      <h2 className="cd-section-title">HH.ru</h2>
+                      <div className="ui-section-header__actions">
+                        {hhSummary?.resume?.url ? (
+                          <a href={hhSummary.resume.url} className="ui-btn ui-btn--ghost ui-btn--sm" target="_blank" rel="noopener">
+                            Открыть в HH
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
 
                 {hhSummaryQuery.isPending ? (
                   <div className="ui-state ui-state--loading">
@@ -301,44 +316,54 @@ export function CandidateDrawer({
             <section className="glass panel cd-ai candidate-insights-drawer__section">
               <div className="cd-section-header">
                 <h2 className="cd-section-title">AI-помощник</h2>
-                <div className="cd-ai__actions">
-                  {ai.summaryQuery.data && (
-                    <span className={`cd-chip cd-chip--small ${ai.summaryQuery.data.cached ? '' : 'cd-chip--accent'}`}>
+                <div className="cd-ai__actions candidate-drawer__ai-actions">
+                  {ai.summaryQuery.data ? (
+                    <span
+                      className={`candidate-drawer__ai-action candidate-drawer__ai-action--ghost ${ai.summaryQuery.data.cached ? '' : 'candidate-drawer__ai-action--fresh'}`}
+                    >
                       {ai.summaryQuery.data.cached ? 'Кэш' : 'Новый'}
                     </span>
-                  )}
-                  {!ai.summaryQuery.data ? (
-                    <button className="ui-btn ui-btn--ghost" onClick={() => ai.summaryQuery.refetch()} disabled={ai.summaryQuery.isFetching}>
-                      {ai.summaryQuery.isFetching ? 'Генерация…' : 'Сгенерировать'}
-                    </button>
                   ) : (
                     <button
-                      className="ui-btn ui-btn--ghost"
-                      onClick={() => ai.refreshSummaryMutation.mutate()}
-                      disabled={ai.refreshSummaryMutation.isPending}
-                      title="Форс-обновление сводки"
+                      type="button"
+                      className="candidate-drawer__ai-action candidate-drawer__ai-action--ghost"
+                      onClick={() => ai.summaryQuery.refetch()}
+                      disabled={ai.summaryQuery.isFetching}
                     >
-                      {ai.refreshSummaryMutation.isPending ? 'Обновление…' : 'Обновить'}
+                      {ai.summaryQuery.isFetching ? 'Генерация…' : 'Новый'}
                     </button>
                   )}
-                  <button className="ui-btn ui-btn--ghost" onClick={onOpenInterviewScript}>Скрипт интервью</button>
+                  <button
+                    type="button"
+                    className="candidate-drawer__ai-action candidate-drawer__ai-action--secondary"
+                    onClick={() => ai.refreshSummaryMutation.mutate()}
+                    disabled={!ai.summaryQuery.data || ai.refreshSummaryMutation.isPending}
+                    title="Форс-обновление сводки"
+                  >
+                    {ai.refreshSummaryMutation.isPending ? 'Обновление…' : 'Обновить'}
+                  </button>
+                  <button
+                    type="button"
+                    className="candidate-drawer__ai-action candidate-drawer__ai-action--primary"
+                    onClick={onOpenInterviewScript}
+                  >
+                    Скрипт интервью
+                  </button>
                 </div>
               </div>
 
-              <label className="form-group form-group--mt">
-                <span className="form-group__label">Резюме для AI</span>
-                <textarea
-                  rows={6}
-                  value={aiResumeText}
-                  onChange={(event) => {
-                    setAiResumeText(event.target.value)
-                    if (aiResumeStatus) setAiResumeStatus(null)
-                  }}
-                  placeholder="Вставьте текст резюме, если хотите усилить AI-оценку и скрипт."
-                  className="ui-input ui-input--multiline"
-                />
-              </label>
-              <div className="toolbar toolbar--compact">
+              <textarea
+                rows={6}
+                value={aiResumeText}
+                onChange={(event) => {
+                  setAiResumeText(event.target.value)
+                  if (aiResumeStatus) setAiResumeStatus(null)
+                }}
+                placeholder="Вставьте текст резюме для усиления AI-анализа..."
+                aria-label="Резюме для AI"
+                className="candidate-drawer__resume-input"
+              />
+              <div className="candidate-drawer__resume-actions">
                 <button
                   className="ui-btn ui-btn--ghost"
                   type="button"
@@ -725,8 +750,10 @@ export function CandidateDrawer({
               isLoading={cohortComparisonQuery.isPending}
             />
           </div>
-        </aside>
-      </div>
+            </motion.aside>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </ModalPortal>
   )
 }

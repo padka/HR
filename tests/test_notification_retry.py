@@ -384,6 +384,105 @@ async def test_candidate_rejection_uses_message_template(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.notifications
+async def test_candidate_rejection_falls_back_from_legacy_status_template(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    configure(dummy_bot, manager)
+
+    legacy_body = "Ваш статус обновлён: {status} по брони #{booking_id}."
+
+    async with async_session() as session:
+        await session.execute(
+            delete(MessageTemplate).where(
+                MessageTemplate.key == "candidate_rejection",
+                MessageTemplate.locale == "ru",
+                MessageTemplate.channel == "tg",
+            )
+        )
+        session.add(
+            MessageTemplate(
+                key="candidate_rejection",
+                locale="ru",
+                channel="tg",
+                body_md=legacy_body,
+                version=1,
+                is_active=True,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+
+    reset_template_provider()
+
+    broker = InMemoryNotificationBroker()
+    await broker.start()
+
+    service = NotificationService(poll_interval=0.05, rate_limit_per_sec=10, broker=broker)
+    configure_notification_service(service)
+
+    send_calls: List[SendMessage] = []
+
+    async def capturing_send(bot, method, correlation_id):
+        send_calls.append(method)
+        return SimpleNamespace(message_id=102)
+
+    monkeypatch.setattr("backend.apps.bot.services._send_with_retry", capturing_send)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Мария",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example",
+            active=True,
+        )
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=3),
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=9090,
+            candidate_fio="Кандидат Отказ",
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    slot_obj = await get_slot(slot_id)
+    snapshot = await capture_slot_snapshot(slot_obj)
+
+    result = await service.on_booking_status_changed(
+        slot_id,
+        BookingNotificationStatus.CANCELLED,
+        snapshot=snapshot,
+    )
+    assert result.status == "queued"
+
+    await service._poll_once()
+
+    assert send_calls, "Expected outgoing rejection message"
+    message = send_calls[0]
+    assert isinstance(message, SendMessage)
+    assert "Спасибо за время" in message.text
+    assert "{status}" not in message.text
+    assert "{booking_id}" not in message.text
+
+    await service.shutdown()
+    await manager.clear()
+    await manager.close()
+    import backend.apps.bot.services as cleanup_services
+
+    cleanup_services._notification_service = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.notifications
 async def test_fatal_error_marks_outbox_failed(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)

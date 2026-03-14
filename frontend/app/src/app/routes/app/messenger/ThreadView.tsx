@@ -1,8 +1,17 @@
-import type { MutableRefObject } from 'react'
+import { useEffect, useState, type MutableRefObject } from 'react'
 
 import { normalizeTextLinks, splitMessageText, messageAuthorLabel, formatFullDateTime, threadAvatar } from './messenger.utils'
 import { URL_RE } from './messenger.constants'
 import type { CandidateChatTemplate, CandidateChatThread, GroupedMessageRow } from './messenger.types'
+
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.25 10h9.5" />
+      <path d="m10.75 3.75 5.5 6.25-5.5 6.25" />
+    </svg>
+  )
+}
 
 function renderMessageText(text?: string | null) {
   const value = splitMessageText(text)
@@ -31,7 +40,6 @@ function renderMessageText(text?: string | null) {
 
 type ThreadViewProps = {
   activeThread: CandidateChatThread | null
-  cityLabel?: string | null
   isMobile: boolean
   isLoading: boolean
   isError: boolean
@@ -39,7 +47,6 @@ type ThreadViewProps = {
   messagesRef: MutableRefObject<HTMLDivElement | null>
   onMessagesScroll: (gap: number) => void
   onBack: () => void
-  onOpenDetails: () => void
   showTemplateTray: boolean
   selectedTemplateKey: string
   templates: CandidateChatTemplate[]
@@ -54,7 +61,6 @@ type ThreadViewProps = {
 
 export function ThreadView({
   activeThread,
-  cityLabel,
   isMobile,
   isLoading,
   isError,
@@ -62,7 +68,6 @@ export function ThreadView({
   messagesRef,
   onMessagesScroll,
   onBack,
-  onOpenDetails,
   showTemplateTray,
   selectedTemplateKey,
   templates,
@@ -74,12 +79,18 @@ export function ThreadView({
   sendPending,
   sendError,
 }: ThreadViewProps) {
+  const [hasHistoryAbove, setHasHistoryAbove] = useState(false)
+
+  useEffect(() => {
+    setHasHistoryAbove(false)
+  }, [activeThread?.candidate_id])
+
   return (
-    <section className="glass panel messenger-chat-pane app-page__section" aria-label="Чат с кандидатом">
+    <section className="messenger-chat messenger-chat-pane" aria-label="Чат с кандидатом">
       {!activeThread && (
         <div className="messenger-empty-state messenger-empty-state--hero">
           <strong>Выберите диалог слева</strong>
-          <span>Откроются переписка, score кандидата и рабочий контекст для следующего действия.</span>
+          <span>Откроется переписка с кандидатом и рабочие шаблоны для быстрого ответа.</span>
         </div>
       )}
 
@@ -88,12 +99,13 @@ export function ThreadView({
           <header className="messenger-chat-pane__header app-page__section-head">
             <div className="messenger-chat-pane__identity">
               {isMobile && (
-                <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={onBack}>
+                <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={onBack} type="button">
                   ← К чатам
                 </button>
               )}
               <div className="messenger-thread-card__avatar messenger-chat-pane__avatar">{threadAvatar(activeThread)}</div>
               <div className="messenger-chat-pane__identity-main">
+                <div className="messenger-card__eyebrow messenger-chat-pane__eyebrow">Активный диалог</div>
                 <div className="messenger-chat-pane__title-row">
                   <h2 className="section-title">
                     {activeThread.profile_url ? (
@@ -105,13 +117,16 @@ export function ThreadView({
                     )}
                   </h2>
                 </div>
-                {cityLabel ? <div className="messenger-chat-pane__subtitle">{cityLabel}</div> : null}
+                {activeThread.city || activeThread.status_label ? (
+                  <div className="messenger-chat-pane__subtitle">
+                    {activeThread.city ? <span>{activeThread.city}</span> : null}
+                    {activeThread.city && activeThread.status_label ? <span className="messenger-chat-pane__subtitle-divider" aria-hidden="true" /> : null}
+                    {activeThread.status_label ? <span>{activeThread.status_label}</span> : null}
+                  </div>
+                ) : null}
               </div>
             </div>
             <div className="messenger-chat-pane__actions">
-              <button className="ui-btn ui-btn--primary ui-btn--sm" onClick={onOpenDetails}>
-                Детали
-              </button>
               {activeThread.profile_url ? (
                 <a className="ui-btn ui-btn--ghost ui-btn--sm" href={activeThread.profile_url}>
                   Карточка
@@ -122,11 +137,12 @@ export function ThreadView({
 
           <div className="messenger-conversation">
             <div
-              className="messenger-messages"
+              className={`messenger-messages ${hasHistoryAbove ? 'is-scrolled' : ''}`}
               ref={messagesRef}
               onScroll={(event) => {
                 const node = event.currentTarget
                 const gap = node.scrollHeight - node.scrollTop - node.clientHeight
+                setHasHistoryAbove(node.scrollTop > 12)
                 onMessagesScroll(gap)
               }}
             >
@@ -151,16 +167,19 @@ export function ThreadView({
                     data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
                   >
                     {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
-                    <div className="messenger-event-card__meta">
-                      <span>{messageAuthorLabel(row.message)}</span>
-                      <span>{formatFullDateTime(row.message.created_at)}</span>
+                    <div className="messenger-event-card__top">
+                      <div className="messenger-event-card__meta">
+                        <span>{messageAuthorLabel(row.message)}</span>
+                        <span>{formatFullDateTime(row.message.created_at)}</span>
+                      </div>
+                      {row.message.kind === 'bot' ? <span className="messenger-ai-badge">AI</span> : null}
                     </div>
                     <div className="messenger-event-card__text">{renderMessageText(row.message.text)}</div>
                   </div>
                 ) : (
                   <div
                     key={row.message.id}
-                    className={`messenger-bubble ${row.message.direction === 'outbound' ? 'is-own' : 'is-peer'}`}
+                    className={`messenger-bubble message-bubble ${row.message.direction === 'outbound' ? 'is-own message-bubble--outgoing' : 'is-peer message-bubble--incoming'}`}
                     data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
                   >
                     {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
@@ -184,9 +203,12 @@ export function ThreadView({
               )}
             </div>
 
-            <div className="messenger-composer" data-testid="messenger-composer">
+            <div
+              className={`messenger-composer message-input-area ${messageText.trim() ? 'is-typing' : ''}`}
+              data-testid="messenger-composer"
+            >
               <div className="messenger-composer__tools">
-                <button className={`messenger-template-chip ${showTemplateTray ? 'is-active' : ''}`} onClick={onToggleTemplateTray}>
+                <button className={`messenger-template-chip ${showTemplateTray ? 'is-active' : ''}`} onClick={onToggleTemplateTray} type="button">
                   Шаблоны
                 </button>
               </div>
@@ -198,6 +220,7 @@ export function ThreadView({
                       key={item.key}
                       className={`messenger-template-chip ${selectedTemplateKey === item.key ? 'is-active' : ''}`}
                       onClick={() => onApplyTemplate(item)}
+                      type="button"
                     >
                       {item.label}
                     </button>
@@ -207,7 +230,8 @@ export function ThreadView({
 
               <div className="messenger-composer__input-row">
                 <textarea
-                  rows={2}
+                  className="message-input"
+                  rows={1}
                   value={messageText}
                   onChange={(event) => onMessageTextChange(event.target.value)}
                   placeholder="Написать кандидату…"
@@ -222,8 +246,12 @@ export function ThreadView({
                   className="ui-btn ui-btn--primary messenger-composer__send"
                   onClick={onSend}
                   disabled={sendPending || !messageText.trim()}
+                  aria-label={sendPending ? 'Отправка сообщения' : 'Отправить сообщение'}
+                  title={sendPending ? 'Отправка...' : 'Отправить'}
+                  data-state={sendPending ? 'pending' : 'idle'}
+                  type="button"
                 >
-                  {sendPending ? 'Отправка…' : 'Отправить'}
+                  <SendIcon />
                 </button>
               </div>
               {sendError ? <div className="messenger-error">{sendError}</div> : null}

@@ -11,15 +11,23 @@ type CandidateTestsProps = {
 
 export function TestScoreBar({ correct, total, score }: { correct: number; total: number; score?: number | null }) {
   const pct = total > 0 ? Math.round((correct / total) * 100) : 0
-  const barColor = pct >= 70 ? 'var(--success, #5BE1A5)' : pct >= 40 ? 'var(--warning, #F6C16B)' : 'var(--danger, #F07373)'
+  const tone = pct >= 70 ? 'success' : pct >= 40 ? 'warning' : 'danger'
+  const scoreValue = typeof score === 'number' ? Math.round(score) : pct
+
   return (
     <div className="cd-score">
-      <div className="cd-score__bar">
-        <div className="cd-score__fill" style={{ width: `${pct}%`, background: barColor }} />
+      <div className="cd-score__header">
+        <div className="cd-score__value">
+          {scoreValue}
+          <span>%</span>
+        </div>
+        <div className="cd-score__text">
+          Верных ответов {correct}/{total}
+          {typeof score === 'number' && <span className="cd-score__final">Итоговый балл {score.toFixed(1)}</span>}
+        </div>
       </div>
-      <div className="cd-score__text">
-        {correct}/{total}
-        {typeof score === 'number' && <span className="cd-score__final"> ({score.toFixed(1)})</span>}
+      <div className="cd-score__bar">
+        <div className={`cd-score__fill cd-score__fill--${tone}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   )
@@ -47,12 +55,14 @@ export function CandidateTests({
           {testSections.map((section) => (
             <div key={section.key} className="cd-test-card glass">
               <div className="cd-test-card__header">
-                <span className="cd-test-card__title">{section.title}</span>
+                <div className="cd-test-card__heading">
+                  <span className="cd-test-card__title">{section.title}</span>
+                  {section.summary && <div className="cd-test-card__summary">{section.summary}</div>}
+                </div>
                 <span className={`cd-test-status cd-test-status--${section.status || 'unknown'}`}>
                   {section.status_label || section.status || '—'}
                 </span>
               </div>
-              {section.summary && <div className="cd-test-card__summary">{section.summary}</div>}
               {section.details?.stats && (
                 <TestScoreBar
                   correct={section.details.stats.correct_answers ?? 0}

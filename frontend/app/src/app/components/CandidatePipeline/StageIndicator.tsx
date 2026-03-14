@@ -22,19 +22,10 @@ export default function StageIndicator({ status, reducedMotion }: StageIndicator
     return (
       <span className="candidate-pipeline-indicator candidate-pipeline-indicator--current" aria-hidden="true">
         <motion.span
-          className="candidate-pipeline-indicator__ring candidate-pipeline-indicator__ring--outer"
-          animate={reducedMotion ? undefined : { scale: [1, 1.18, 1], opacity: [0.44, 0.82, 0.44] }}
+          className="candidate-pipeline-indicator__pulse"
+          animate={reducedMotion ? undefined : { scale: [1, 1.2, 1], opacity: [0.24, 0.55, 0.24] }}
           transition={reducedMotion ? undefined : {
             duration: pipelineMotion.pulseDuration,
-            repeat: Number.POSITIVE_INFINITY,
-            ease: 'easeInOut',
-          }}
-        />
-        <motion.span
-          className="candidate-pipeline-indicator__ring candidate-pipeline-indicator__ring--inner"
-          animate={reducedMotion ? undefined : { opacity: [0.7, 1, 0.7] }}
-          transition={reducedMotion ? undefined : {
-            duration: pipelineMotion.glowDuration,
             repeat: Number.POSITIVE_INFINITY,
             ease: 'easeInOut',
           }}
