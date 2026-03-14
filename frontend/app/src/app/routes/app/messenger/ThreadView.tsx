@@ -1,4 +1,4 @@
-import { useEffect, useState, type MutableRefObject } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 
 import { normalizeTextLinks, splitMessageText, messageAuthorLabel, formatFullDateTime, threadAvatar } from './messenger.utils'
 import { URL_RE } from './messenger.constants'
@@ -45,6 +45,7 @@ type ThreadViewProps = {
   isError: boolean
   groupedMessages: GroupedMessageRow[]
   messagesRef: MutableRefObject<HTMLDivElement | null>
+  shouldStickToBottomRef: MutableRefObject<boolean>
   onMessagesScroll: (gap: number) => void
   onBack: () => void
   showTemplateTray: boolean
@@ -66,6 +67,7 @@ export function ThreadView({
   isError,
   groupedMessages,
   messagesRef,
+  shouldStickToBottomRef,
   onMessagesScroll,
   onBack,
   showTemplateTray,
@@ -80,13 +82,36 @@ export function ThreadView({
   sendError,
 }: ThreadViewProps) {
   const [hasHistoryAbove, setHasHistoryAbove] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const activeCandidateId = activeThread?.candidate_id ?? null
 
   useEffect(() => {
     setHasHistoryAbove(false)
-  }, [activeThread?.candidate_id])
+  }, [activeCandidateId])
+
+  useEffect(() => {
+    const container = messagesRef.current
+    if (!container || !activeCandidateId) return
+
+    const frame = requestAnimationFrame(() => {
+      const unreadAnchor = container.querySelector('[data-unread-anchor="true"]')
+      if (unreadAnchor instanceof HTMLElement && typeof unreadAnchor.scrollIntoView === 'function') {
+        unreadAnchor.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        return
+      }
+
+      if (shouldStickToBottomRef.current && typeof messagesEndRef.current?.scrollIntoView === 'function') {
+        messagesEndRef.current.scrollIntoView({ block: 'end', behavior: 'smooth' })
+      }
+    })
+
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [activeCandidateId, groupedMessages.length, messagesRef, shouldStickToBottomRef])
 
   return (
-    <section className="messenger-chat messenger-chat-pane" aria-label="Чат с кандидатом">
+    <section className="messenger-thread-view messenger-chat messenger-chat-pane" aria-label="Чат с кандидатом">
       {!activeThread && (
         <div className="messenger-empty-state messenger-empty-state--hero">
           <strong>Выберите диалог слева</strong>
@@ -96,7 +121,7 @@ export function ThreadView({
 
       {activeThread && (
         <>
-          <header className="messenger-chat-pane__header app-page__section-head">
+          <header className="messenger-thread-header messenger-chat-pane__header app-page__section-head">
             <div className="messenger-chat-pane__identity">
               {isMobile && (
                 <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={onBack} type="button">
@@ -147,65 +172,68 @@ export function ThreadView({
                 onMessagesScroll(gap)
               }}
             >
-              {isLoading && <p className="subtitle">Загрузка переписки…</p>}
-              {isError && <p className="text-danger">Не удалось загрузить сообщения</p>}
-              {!isLoading && groupedMessages.length === 0 && (
-                <div className="messenger-empty-state messenger-empty-state--compact">
-                  <strong>История пока пуста</strong>
-                  <span>Отправьте первое сообщение или дождитесь ответа кандидата.</span>
-                </div>
-              )}
-
-              {groupedMessages.map((row) =>
-                row.type === 'divider' ? (
-                  <div key={row.key} className="messenger-day-divider">
-                    <span>{row.label}</span>
+              <div className="messenger-messages-inner">
+                {isLoading && <p className="subtitle">Загрузка переписки…</p>}
+                {isError && <p className="text-danger">Не удалось загрузить сообщения</p>}
+                {!isLoading && groupedMessages.length === 0 && (
+                  <div className="messenger-empty-state messenger-empty-state--compact">
+                    <strong>История пока пуста</strong>
+                    <span>Отправьте первое сообщение или дождитесь ответа кандидата.</span>
                   </div>
-                ) : row.message.kind === 'bot' || row.message.kind === 'system' ? (
-                  <div
-                    key={row.message.id}
-                    className={`messenger-event-card is-${row.message.kind || 'system'}`}
-                    data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
-                  >
-                    {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
-                    <div className="messenger-event-card__top">
-                      <div className="messenger-event-card__meta">
+                )}
+
+                {groupedMessages.map((row) =>
+                  row.type === 'divider' ? (
+                    <div key={row.key} className="messenger-day-divider">
+                      <span>{row.label}</span>
+                    </div>
+                  ) : row.message.kind === 'bot' || row.message.kind === 'system' ? (
+                    <div
+                      key={row.message.id}
+                      className={`messenger-event-card is-${row.message.kind || 'system'}`}
+                      data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
+                    >
+                      {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
+                      <div className="messenger-event-card__top">
+                        <div className="messenger-event-card__meta">
+                          <span>{messageAuthorLabel(row.message)}</span>
+                          <span>{formatFullDateTime(row.message.created_at)}</span>
+                        </div>
+                        {row.message.kind === 'bot' ? <span className="messenger-ai-badge">AI</span> : null}
+                      </div>
+                      <div className="messenger-event-card__text">{renderMessageText(row.message.text)}</div>
+                    </div>
+                  ) : (
+                    <div
+                      key={row.message.id}
+                      className={`messenger-bubble message-bubble ${row.message.direction === 'outbound' ? 'is-own message-bubble--outgoing' : 'is-peer message-bubble--incoming'}`}
+                      data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
+                    >
+                      {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
+                      <div className="messenger-bubble__meta">
                         <span>{messageAuthorLabel(row.message)}</span>
                         <span>{formatFullDateTime(row.message.created_at)}</span>
                       </div>
-                      {row.message.kind === 'bot' ? <span className="messenger-ai-badge">AI</span> : null}
+                      <div className="messenger-bubble__text">{renderMessageText(row.message.text)}</div>
+                      {normalizeTextLinks(row.message.text).length > 0 && (
+                        <div className="messenger-message__links">
+                          {normalizeTextLinks(row.message.text).map((link) => (
+                            <a key={link} href={link} target="_blank" rel="noreferrer" className="messenger-attachment-card">
+                              <strong>{link.replace(/^https?:\/\//, '')}</strong>
+                              <span>Открыть ссылку</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="messenger-event-card__text">{renderMessageText(row.message.text)}</div>
-                  </div>
-                ) : (
-                  <div
-                    key={row.message.id}
-                    className={`messenger-bubble message-bubble ${row.message.direction === 'outbound' ? 'is-own message-bubble--outgoing' : 'is-peer message-bubble--incoming'}`}
-                    data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
-                  >
-                    {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
-                    <div className="messenger-bubble__meta">
-                      <span>{messageAuthorLabel(row.message)}</span>
-                      <span>{formatFullDateTime(row.message.created_at)}</span>
-                    </div>
-                    <div className="messenger-bubble__text">{renderMessageText(row.message.text)}</div>
-                    {normalizeTextLinks(row.message.text).length > 0 && (
-                      <div className="messenger-message__links">
-                        {normalizeTextLinks(row.message.text).map((link) => (
-                          <a key={link} href={link} target="_blank" rel="noreferrer" className="messenger-attachment-card">
-                            <strong>{link.replace(/^https?:\/\//, '')}</strong>
-                            <span>Открыть ссылку</span>
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ),
-              )}
+                  ),
+                )}
+                <div ref={messagesEndRef} className="messenger-messages-anchor" aria-hidden="true" />
+              </div>
             </div>
 
             <div
-              className={`messenger-composer message-input-area ${messageText.trim() ? 'is-typing' : ''}`}
+              className={`messenger-input-area messenger-composer message-input-area ${messageText.trim() ? 'is-typing' : ''}`}
               data-testid="messenger-composer"
             >
               <div className="messenger-composer__tools">

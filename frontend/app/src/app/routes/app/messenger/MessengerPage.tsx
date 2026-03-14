@@ -90,23 +90,8 @@ export function MessengerPage() {
   }, [activeCandidateId, activeThread?.unread_count, markReadMutation])
 
   useEffect(() => {
-    const container = messagesRef.current
-    if (!container) return
-    requestAnimationFrame(() => {
-      const unreadAnchor = container.querySelector('[data-unread-anchor="true"]')
-      if (unreadAnchor instanceof HTMLElement && typeof unreadAnchor.scrollIntoView === 'function') {
-        unreadAnchor.scrollIntoView({ block: 'center', behavior: 'smooth' })
-        return
-      }
-      if (shouldStickToBottomRef.current) {
-        if (typeof container.scrollTo === 'function') {
-          container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
-        } else {
-          container.scrollTop = container.scrollHeight
-        }
-      }
-    })
-  }, [activeCandidateId, groupedMessages.length])
+    shouldStickToBottomRef.current = true
+  }, [activeCandidateId])
 
   const sendMutation = useMessengerSendMessage({
     activeCandidateId,
@@ -145,6 +130,7 @@ export function MessengerPage() {
           isError={messagesQuery.isError}
           groupedMessages={groupedMessages}
           messagesRef={messagesRef}
+          shouldStickToBottomRef={shouldStickToBottomRef}
           onMessagesScroll={(gap) => {
             shouldStickToBottomRef.current = gap < 80
           }}
