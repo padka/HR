@@ -32,20 +32,24 @@ def test_interview_schedule_contains_10m_2h_3h_6h():
 
 def test_quiet_hours_adjustment_moves_to_previous_evening():
     svc = _service()
-    # 06:00 local -> All reminders (6h→0:00, 3h→3:00, 2h→4:00) fall into quiet hours (22-08)
-    # All get adjusted to 21:30 previous day, but duplicate prevention keeps only 6h
+    # 06:00 local -> confirm reminders (6h→0:00, 3h→3:00, 2h→4:00) fall into quiet hours (22-08)
+    # and collapse to 21:30 previous day, but the readiness ping stays at the real 10-minute mark.
     start_local = datetime(2025, 1, 2, 6, 0, tzinfo=timezone(timedelta(hours=3)))
     start_utc = start_local.astimezone(timezone.utc)
     plans = svc._build_schedule(start_utc, "Europe/Moscow", "interview")
 
-    # Duplicate prevention: only 6h reminder survives when all collide at 21:30
-    assert len(plans) == 1
-    six_hour_plan = plans[0]
+    assert len(plans) == 2
+    by_kind = {plan.kind: plan for plan in plans}
+    six_hour_plan = by_kind[ReminderKind.CONFIRM_6H]
     assert six_hour_plan.kind == ReminderKind.CONFIRM_6H
     # Quiet hours push to 21:30 previous day (22:00 - 30min grace)
     expected_local = start_local.replace(day=1, hour=21, minute=30)  # previous day
     assert six_hour_plan.run_at_local == expected_local
     assert six_hour_plan.adjusted_reason == "quiet_hours"
+
+    ready_plan = by_kind[ReminderKind.REMIND_10M]
+    assert ready_plan.run_at_local == start_local - timedelta(minutes=10)
+    assert ready_plan.adjusted_reason is None
 
 
 def test_policy_can_disable_interview_reminders():

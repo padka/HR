@@ -806,6 +806,7 @@ describe('UI cosmetics smoke', () => {
       expect(screen.getAllByText('Иван Петров').length).toBeGreaterThan(0)
       expect(screen.getAllByText(/Можете предложить утро/).length).toBeGreaterThan(0)
       expect(screen.getByLabelText('Поиск по чатам')).toBeInTheDocument()
+      expect(screen.getByTestId('messenger-messages')).toBeInTheDocument()
       expect(screen.getByTestId('messenger-composer')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Отправить сообщение' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Детали' })).not.toBeInTheDocument()

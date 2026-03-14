@@ -356,7 +356,7 @@ html[data-ui='liquid-glass-v2'][data-theme='light'] .app-shell--ambient {
 }
 
 html[data-ui='liquid-glass-v2'][data-theme='light'] .app-header {
-  box-shadow: var(--ui-shadow-1);
+  box-shadow: none;
 }
 
 html[data-ui='liquid-glass-v2'][data-theme='light'] .vision-nav-pill {

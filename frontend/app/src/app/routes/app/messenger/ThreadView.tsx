@@ -138,6 +138,7 @@ export function ThreadView({
           <div className="messenger-conversation">
             <div
               className={`messenger-messages ${hasHistoryAbove ? 'is-scrolled' : ''}`}
+              data-testid="messenger-messages"
               ref={messagesRef}
               onScroll={(event) => {
                 const node = event.currentTarget

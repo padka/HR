@@ -112,6 +112,13 @@ test.describe("ui cosmetics smoke (desktop)", () => {
     await expect(page.locator(".messenger-sidebar")).toBeVisible({ timeout: 10000 });
     await expect(page.locator(".messenger-chat")).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole("button", { name: "Отправить сообщение" })).toBeVisible({ timeout: 10000 });
+    const messages = page.getByTestId("messenger-messages");
+    await expect(messages).toBeVisible({ timeout: 10000 });
+    await messages.evaluate((node) => {
+      const element = node as HTMLElement;
+      element.scrollTop = 0;
+    });
+    await expect(page.getByTestId("messenger-composer")).toBeInViewport();
     await expect(page.getByRole("button", { name: "Детали" })).toHaveCount(0);
     await expect(page.locator(".background-scene")).toHaveCount(0);
   });

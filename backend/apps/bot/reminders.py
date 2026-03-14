@@ -893,14 +893,17 @@ class ReminderService:
                 continue
             seen.add(kind)
             local_time = start_local - delta
-            _eff_quiet_start = city_quiet_start if city_quiet_start is not None else _QUIET_HOURS_START
-            _eff_quiet_end = city_quiet_end if city_quiet_end is not None else _QUIET_HOURS_END
-            adjusted_local, reason = _apply_quiet_hours(
-                local_time,
-                meeting_local=start_local,
-                quiet_start=_eff_quiet_start,
-                quiet_end=_eff_quiet_end,
-            )
+            if kind is ReminderKind.REMIND_10M:
+                adjusted_local, reason = local_time, None
+            else:
+                _eff_quiet_start = city_quiet_start if city_quiet_start is not None else _QUIET_HOURS_START
+                _eff_quiet_end = city_quiet_end if city_quiet_end is not None else _QUIET_HOURS_END
+                adjusted_local, reason = _apply_quiet_hours(
+                    local_time,
+                    meeting_local=start_local,
+                    quiet_start=_eff_quiet_start,
+                    quiet_end=_eff_quiet_end,
+                )
             rounded_local = adjusted_local.replace(second=0, microsecond=0)
             if dedupe_by_time:
                 # Avoid sending multiple reminders at the same timestamp after quiet-hours adjustment.
