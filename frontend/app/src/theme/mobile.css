@@ -411,11 +411,11 @@
   }
 
   .messenger-page.is-mobile-chat-open .messenger-chat {
-    min-height: calc(100vh - var(--mobile-header-h) - var(--mobile-tab-h) - var(--mobile-safe-bottom) - 16px);
+    min-height: 0;
     border-radius: 0;
     border-left: 0;
     border-right: 0;
-    padding: 10px 12px 14px;
+    padding: 0;
   }
 
   .messenger-page:not(.is-mobile-chat-open) .messenger-chat {
@@ -960,7 +960,7 @@
 @media (max-width: 1024px) {
   .messenger-layout--workspace {
     grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
+    gap: 0;
   }
 
   .messenger-page.is-mobile-chat-open .messenger-inbox-rail {
@@ -973,8 +973,8 @@
 
   .messenger-chat-pane,
   .messenger-inbox-rail {
-    height: calc(100dvh - var(--mobile-header-h) - var(--mobile-tab-h) - var(--mobile-safe-bottom) - 16px);
-    min-height: calc(100dvh - var(--mobile-header-h) - var(--mobile-tab-h) - var(--mobile-safe-bottom) - 16px);
+    height: 100%;
+    min-height: 0;
   }
 
   .messenger-chat-pane__header {

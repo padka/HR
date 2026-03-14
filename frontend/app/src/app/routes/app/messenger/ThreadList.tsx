@@ -131,8 +131,8 @@ export function ThreadList({
   const firstRenderAnimation = !hasAnimatedOnce && !prefersReducedMotion
 
   return (
-    <aside className="messenger-sidebar messenger-inbox-rail" aria-label="Чаты кандидатов">
-      <div className="messenger-sidebar__toolbar">
+    <aside className="messenger-thread-list-panel messenger-sidebar messenger-inbox-rail" aria-label="Чаты кандидатов">
+      <div className="messenger-thread-list-header messenger-sidebar__toolbar">
         <div className="messenger-sidebar__search-slot">
           <input
             className="thread-search"
@@ -153,38 +153,40 @@ export function ThreadList({
         </button>
       </div>
 
-      {isLoading && <p className="subtitle">Загрузка диалогов…</p>}
-      {isError && <p className="text-danger">Не удалось загрузить список чатов</p>}
-      {!isLoading && visibleThreads.length === 0 && (
-        <div className="messenger-empty-state messenger-empty-state--compact">
-          <strong>{threads.length === 0 ? 'Ничего не найдено' : 'Поиск не дал совпадений'}</strong>
-          <span>
-            {threads.length === 0
-              ? 'Когда появятся кандидаты или новые сообщения, они появятся здесь.'
-              : 'Попробуйте другое имя, город или статус.'}
-          </span>
-        </div>
-      )}
+      <div className="messenger-thread-list-body">
+        {isLoading && <p className="subtitle">Загрузка диалогов…</p>}
+        {isError && <p className="text-danger">Не удалось загрузить список чатов</p>}
+        {!isLoading && visibleThreads.length === 0 && (
+          <div className="messenger-empty-state messenger-empty-state--compact">
+            <strong>{threads.length === 0 ? 'Ничего не найдено' : 'Поиск не дал совпадений'}</strong>
+            <span>
+              {threads.length === 0
+                ? 'Когда появятся кандидаты или новые сообщения, они появятся здесь.'
+                : 'Попробуйте другое имя, город или статус.'}
+            </span>
+          </div>
+        )}
 
-      <div className="messenger-thread-list" data-testid="messenger-thread-list">
-        <motion.div
-          key={animationKey}
-          className="messenger-thread-list__content"
-          variants={firstRenderAnimation ? stagger(0.03) : undefined}
-          initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
-          animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
-          transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
-        >
-          {visibleThreads.map((thread) => (
-            <motion.div key={thread.candidate_id} variants={firstRenderAnimation ? listItem : undefined}>
-              <InboxThreadCard
-                thread={thread}
-                isActive={thread.candidate_id === activeCandidateId}
-                onSelect={() => onSelect(thread.candidate_id)}
-              />
-            </motion.div>
-          ))}
-        </motion.div>
+        <div className="messenger-thread-list" data-testid="messenger-thread-list">
+          <motion.div
+            key={animationKey}
+            className="messenger-thread-list__content"
+            variants={firstRenderAnimation ? stagger(0.03) : undefined}
+            initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
+            animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
+            transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
+          >
+            {visibleThreads.map((thread) => (
+              <motion.div key={thread.candidate_id} variants={firstRenderAnimation ? listItem : undefined}>
+                <InboxThreadCard
+                  thread={thread}
+                  isActive={thread.candidate_id === activeCandidateId}
+                  onSelect={() => onSelect(thread.candidate_id)}
+                />
+              </motion.div>
+            ))}
+          </motion.div>
+        </div>
       </div>
     </aside>
   )
