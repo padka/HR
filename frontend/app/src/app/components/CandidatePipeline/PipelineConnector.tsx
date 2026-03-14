@@ -1,17 +1,18 @@
 import { motion } from 'framer-motion'
 
 import { pipelineRailVariants } from './pipeline.variants'
+import type { PipelineConnectorState } from './pipeline.utils'
 
 type PipelineConnectorProps = {
   fill: number
-  currentEdge: boolean
+  state: PipelineConnectorState
   vertical?: boolean
   reducedMotion: boolean
 }
 
 export default function PipelineConnector({
   fill,
-  currentEdge,
+  state,
   vertical = false,
   reducedMotion,
 }: PipelineConnectorProps) {
@@ -20,7 +21,7 @@ export default function PipelineConnector({
 
   return (
     <div
-      className={`candidate-pipeline-connector ${vertical ? 'candidate-pipeline-connector--vertical' : ''}`}
+      className={`candidate-pipeline-connector candidate-pipeline-connector--${state} ${vertical ? 'candidate-pipeline-connector--vertical' : ''}`}
       aria-hidden="true"
     >
       <span className="candidate-pipeline-connector__rail" />
@@ -30,7 +31,7 @@ export default function PipelineConnector({
         animate={reducedMotion ? fillStyle : { ...pipelineRailVariants.visible(axis), ...fillStyle }}
         style={{ originX: 0, originY: 0 }}
       />
-      {currentEdge ? <span className="candidate-pipeline-connector__edge" /> : null}
+      {state === 'active' ? <span className="candidate-pipeline-connector__edge" /> : null}
     </div>
   )
 }

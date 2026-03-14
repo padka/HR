@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from backend.apps.admin_ui.app import create_app
+from backend.apps.admin_ui.services.slots import core as slot_core
+from backend.apps.bot.reminders import ReminderService, create_scheduler
 from backend.core.db import async_session
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
@@ -172,3 +174,94 @@ async def test_manual_booking_can_bind_existing_free_slot_without_telegram(admin
         assert assignment.origin == "manual_silent"
         assert outbox_count == 0
         assert reminder_count == 0
+
+
+@pytest.mark.asyncio
+async def test_manual_booking_with_telegram_schedules_confirmation_reminders(
+    admin_app,
+    monkeypatch,
+) -> None:
+    city_id, recruiter_id = await _seed_recruiter_city(
+        city_name="Silent Tg City",
+        recruiter_name="Silent Tg Recruiter",
+    )
+
+    scheduler = create_scheduler(redis_url=None)
+    reminder_service = ReminderService(scheduler=scheduler)
+    reminder_service.start()
+    monkeypatch.setattr(
+        slot_core.__legacy__["module"],
+        "get_reminder_service",
+        lambda: reminder_service,
+    )
+
+    try:
+        async with async_session() as session:
+            user = User(
+                fio="Existing Tg Candidate",
+                city="Silent Tg City",
+                source="manual_silent",
+                telegram_id=55112233,
+                candidate_status=CandidateStatus.TEST1_COMPLETED,
+            )
+            slot = Slot(
+                recruiter_id=recruiter_id,
+                city_id=city_id,
+                candidate_city_id=city_id,
+                purpose="interview",
+                tz_name="Europe/Moscow",
+                start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+                duration_min=60,
+                capacity=1,
+                status=SlotStatus.FREE,
+            )
+            session.add_all([user, slot])
+            await session.commit()
+            await session.refresh(user)
+            await session.refresh(slot)
+            candidate_id = int(user.id)
+            slot_id = int(slot.id)
+
+        response = await asyncio.to_thread(
+            _request,
+            admin_app,
+            "post",
+            "/api/slots/manual-bookings",
+            json={
+                "candidate_id": candidate_id,
+                "slot_id": slot_id,
+                "city_id": city_id,
+                "recruiter_id": recruiter_id,
+                "date": "2031-05-21",
+                "time": "16:00",
+                "comment": "Ручное подтверждение времени с Telegram-кандидатом",
+            },
+        )
+        assert response.status_code == 201
+        payload = response.json()
+        assert payload["ok"] is True
+        assert int(payload["slot_id"]) == slot_id
+
+        async with async_session() as session:
+            reminder_jobs = list(
+                await session.scalars(
+                    select(SlotReminderJob)
+                    .where(SlotReminderJob.slot_id == slot_id)
+                    .order_by(SlotReminderJob.kind.asc())
+                )
+            )
+            outbox_types = list(
+                await session.scalars(
+                    select(OutboxNotification.type).order_by(OutboxNotification.id.asc())
+                )
+            )
+
+        assert {job.kind for job in reminder_jobs} == {
+            "confirm_6h",
+            "confirm_3h",
+            "confirm_2h",
+            "remind_10m",
+        }
+        assert outbox_types == ["interview_confirmed_candidate"]
+    finally:
+        await reminder_service.shutdown()

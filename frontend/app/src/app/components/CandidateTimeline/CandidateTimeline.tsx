@@ -16,10 +16,7 @@ export default function CandidateTimeline({ events }: CandidateTimelineProps) {
   return (
     <section className="glass panel candidate-insights-drawer__section">
       <div className="cd-section-header">
-        <div>
-          <h2 className="cd-section-title">Хронология</h2>
-          <p className="subtitle">Единая лента значимых событий по кандидату.</p>
-        </div>
+        <h2 className="cd-section-title">Хронология</h2>
         {events.length > 20 && (
           <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => setExpanded((prev) => !prev)}>
             {expanded ? 'Свернуть' : 'Показать все'}
@@ -28,7 +25,7 @@ export default function CandidateTimeline({ events }: CandidateTimelineProps) {
       </div>
 
       {events.length === 0 ? (
-        <p className="subtitle">Событий пока нет.</p>
+        <p className="candidate-timeline__empty">Событий пока нет.</p>
       ) : (
         <div className="candidate-timeline" data-testid="candidate-details-timeline">
           {visibleEvents.map((event) => (

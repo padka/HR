@@ -23,6 +23,7 @@ PRESET_LABELS = {
     "choose_recruiter": "Выбор рекрутера",
     "reminder_2h": "Напоминание за 2ч",
     "reminder_30m": "Напоминание за 30мин",
+    "reminder_10m": "Напоминание за 10мин",
     "confirm_6h": "Запрос подтверждения (за 6ч)",
     "confirm_2h": "Запрос подтверждения (за 2ч)",
     "att_declined_reason_prompt": "Запрос причины отказа",

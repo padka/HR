@@ -2,10 +2,13 @@ import { Link } from '@tanstack/react-router'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type DragEvent } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { apiFetch } from '@/api/client'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
+import '@/theme/pages/candidates.css'
+import { fadeIn, listItem, stagger } from '@/shared/motion'
 
 type CityOption = {
   id: number
@@ -40,6 +43,12 @@ type Candidate = {
   recruiter_id?: number | null
   recruiter_name?: string | null
   recruiter?: { id?: number | null; name?: string | null } | null
+  average_score?: number | null
+  tests_total?: number | null
+  primary_event_at?: string | null
+  latest_message?: { created_at?: string | null } | null
+  latest_slot?: { start_utc?: string | null } | null
+  upcoming_slot?: { start_utc?: string | null } | null
 }
 
 type CandidateCard = {
@@ -51,6 +60,9 @@ type CandidateCard = {
   stage?: string | null
   primary_event_at?: string | null
   recruiter?: { id?: number | null; name?: string | null } | null
+  average_score?: number | null
+  latest_slot?: { start_utc?: string | null } | null
+  upcoming_slot?: { start_utc?: string | null } | null
 }
 
 type KanbanWorkflowColumn = {
@@ -188,9 +200,43 @@ const KANBAN_WORKFLOW_COLUMNS: KanbanWorkflowColumn[] = [
   },
 ]
 
+function candidateScoreTone(score?: number | null) {
+  if (typeof score !== 'number') return 'neutral'
+  if (score >= 70) return 'success'
+  if (score >= 40) return 'warning'
+  return 'danger'
+}
+
+function formatCandidateDate(value?: string | null) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+}
+
+function resolveCandidateDate(candidate: {
+  primary_event_at?: string | null
+  upcoming_slot?: { start_utc?: string | null } | null
+  latest_slot?: { start_utc?: string | null } | null
+  latest_message?: { created_at?: string | null } | null
+}) {
+  return (
+    candidate.primary_event_at
+    || candidate.upcoming_slot?.start_utc
+    || candidate.latest_slot?.start_utc
+    || candidate.latest_message?.created_at
+    || null
+  )
+}
+
 export function CandidatesPage() {
   const profile = useProfile()
   const isMobile = useIsMobile()
+  const prefersReducedMotion = useReducedMotion()
   const queryClient = useQueryClient()
   const principalType = profile.data?.principal.type
   const isAdmin = principalType === 'admin'
@@ -218,6 +264,7 @@ export function CandidatesPage() {
   const [draggingCardId, setDraggingCardId] = useState<number | null>(null)
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null)
   const [movingCandidateId, setMovingCandidateId] = useState<number | null>(null)
+  const [hasAnimatedLists, setHasAnimatedLists] = useState(false)
   const [calendarFrom, setCalendarFrom] = useState(() => {
     const d = new Date()
     return d.toISOString().slice(0, 10)
@@ -351,6 +398,21 @@ export function CandidatesPage() {
     { slug: 'intro_day', label: 'Ознакомительный день' },
   ]
   const hasActiveFilters = Boolean(search.trim() || status || (view !== 'kanban' && pipeline !== 'interview'))
+  const firstRenderAnimation = !hasAnimatedLists && !prefersReducedMotion
+  const listAnimationKey = [search, status, pipeline, view, page, perPage].join('|')
+  const kanbanAnimationKey = [
+    search,
+    status,
+    pipeline,
+    kanbanColumns.map((column) => `${column.slug}:${column.candidates.length}`).join(','),
+  ].join('|')
+  const activeFilterBadges = [
+    search.trim() ? `Поиск: ${search.trim()}` : null,
+    status ? `Статус: ${STATUS_OPTIONS.find((option) => option.value === status)?.label || status}` : null,
+    view !== 'kanban' && pipeline !== 'interview'
+      ? `Воронка: ${pipelineOptions.find((option) => option.slug === pipeline)?.label || pipeline}`
+      : null,
+  ].filter(Boolean) as string[]
 
   const resetFilters = () => {
     setSearch('')
@@ -358,6 +420,10 @@ export function CandidatesPage() {
     setPipeline('interview')
     setPage(1)
   }
+
+  useEffect(() => {
+    setHasAnimatedLists(true)
+  }, [])
 
   useEffect(() => {
     if (!isMobile) return
@@ -421,7 +487,7 @@ export function CandidatesPage() {
 
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
-      <div className="page app-page app-page--ops">
+      <div className="page app-page app-page--ops candidates-page">
         <header className="glass glass--elevated page-header page-header--row app-page__hero">
           <div className="page-header__content">
             <h1 className="title">Кандидаты</h1>
@@ -431,12 +497,12 @@ export function CandidatesPage() {
         </header>
 
         <section className="glass page-section app-page__section">
-          <div className="filter-bar ui-filter" data-testid="candidates-filter-bar">
+          <div className="filter-bar ui-filter candidates-filter-bar" data-testid="candidates-filter-bar">
             <input
               placeholder="Поиск по ФИО, городу, TG..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-              className="filter-bar__search"
+              className="filter-bar__search candidates-filter-bar__search"
             />
             <select
               aria-label="Статус кандидата"
@@ -458,19 +524,32 @@ export function CandidatesPage() {
               ))}
             </select>
             <div className="view-toggle" data-testid="candidates-view-switcher">
-              <button className={`ui-btn ui-btn--sm ${view === 'list' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => { setView('list'); setPage(1) }}>
+              <button className={`ui-btn ui-btn--sm candidates-view-pill ${view === 'list' ? 'ui-btn--primary is-active' : 'ui-btn--ghost'}`} onClick={() => { setView('list'); setPage(1) }} type="button">
                 Список
               </button>
-              <button className={`ui-btn ui-btn--sm ${view === 'kanban' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => { setView('kanban'); setPipeline('main'); setPage(1) }}>
+              <button className={`ui-btn ui-btn--sm candidates-view-pill ${view === 'kanban' ? 'ui-btn--primary is-active' : 'ui-btn--ghost'}`} onClick={() => { setView('kanban'); setPipeline('main'); setPage(1) }} type="button">
                 Канбан
               </button>
               {!isMobile && (
-                <button className={`ui-btn ui-btn--sm ${view === 'calendar' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => { setView('calendar'); setPage(1) }}>
+                <button className={`ui-btn ui-btn--sm candidates-view-pill ${view === 'calendar' ? 'ui-btn--primary is-active' : 'ui-btn--ghost'}`} onClick={() => { setView('calendar'); setPage(1) }} type="button">
                   Календарь
                 </button>
               )}
             </div>
           </div>
+
+          {activeFilterBadges.length > 0 && (
+            <div className="candidates-filter-pills" aria-label="Активные фильтры">
+              {activeFilterBadges.map((label) => (
+                <span key={label} className="candidates-filter-pill candidates-filter-pill--active">
+                  {label}
+                </span>
+              ))}
+              <button type="button" className="candidates-filter-pill" onClick={resetFilters}>
+                Сбросить
+              </button>
+            </div>
+          )}
 
           <div className="glass ai-reco">
             <div className="ai-reco__header">
@@ -639,13 +718,22 @@ export function CandidatesPage() {
               </p>
               <div className="kanban">
                 {kanbanColumns.map((col) => (
-                  <article key={col.slug} className="glass kanban__column" data-kanban-column={col.slug}>
-                    <div className="kanban__header">
+                  <article
+                    key={col.slug}
+                    className={`glass kanban__column kanban-column ${dragOverColumn === col.slug ? 'kanban-column--drag-over' : ''}`}
+                    data-kanban-column={col.slug}
+                  >
+                    <div className="kanban__header kanban-column-header">
                       <span className="kanban__title">{col.icon} {col.label}</span>
-                      <span className="kanban__count">{col.total ?? col.candidates.length}</span>
+                      <span className="kanban__count kanban-column-count">{col.total ?? col.candidates.length}</span>
                     </div>
-                    <div
+                    <motion.div
+                      key={`${kanbanAnimationKey}-${col.slug}`}
                       className={`kanban__cards ${dragOverColumn === col.slug ? 'kanban__cards--drag-over' : ''}`}
+                      initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
+                      animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
+                      variants={firstRenderAnimation ? stagger(0.03) : undefined}
+                      transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
                       onDragEnter={(event) => {
                         event.preventDefault()
                         setDragOverColumn(col.slug)
@@ -669,19 +757,32 @@ export function CandidatesPage() {
                         const isDeletingCard = deletingCandidateId === card.id && deleteCandidateMutation.isPending
                         const isDraggingCard = draggingCardId === card.id
                         const isMovingCard = movingCandidateId === card.id && moveKanbanCandidateMutation.isPending
+                        const scoreTone = candidateScoreTone(card.average_score)
+                        const cardDate = formatCandidateDate(resolveCandidateDate(card))
                         return (
-                          <div
+                          <motion.div
                             key={card.id}
-                            className={`glass glass--interactive kanban__card ${isDraggingCard ? 'kanban__card--dragging' : ''} ${isMovingCard ? 'kanban__card--moving' : ''}`}
+                            className={`glass glass--interactive kanban__card kanban-card ${isDraggingCard ? 'kanban__card--dragging kanban-card--dragging' : ''} ${isMovingCard ? 'kanban__card--moving' : ''}`}
                             draggable={!isMovingCard}
-                            onDragStart={(event) => handleKanbanDragStart(event, card.id)}
-                            onDragEnd={handleKanbanDragEnd}
+                            onDragStartCapture={(event) => handleKanbanDragStart(event, card.id)}
+                            onDragEndCapture={handleKanbanDragEnd}
                             data-candidate-id={card.id}
+                            variants={firstRenderAnimation ? listItem : undefined}
                           >
-                            <div className="font-semibold">{card.fio || '—'}</div>
-                            <div className="text-muted text-sm">{card.city || '—'}</div>
+                            <div className="kanban-card__header">
+                              <div className="kanban-card__identity">
+                                <div className="kanban-card__name">{card.fio || '—'}</div>
+                                <div className="kanban-card__meta">{card.city || '—'}</div>
+                              </div>
+                              {typeof card.average_score === 'number' ? (
+                                <span className={`candidate-score candidate-score--${scoreTone}`}>{Math.round(card.average_score)}%</span>
+                              ) : null}
+                            </div>
+                            <div className="kanban-card__footer">
+                              <span>{card.recruiter?.name || '—'}</span>
+                              <span>{cardDate}</span>
+                            </div>
                             <div className="kanban__card-footer">
-                              <span className="text-muted text-sm">{card.recruiter?.name || '—'}</span>
                               <div className="toolbar">
                                 {canDeleteCard && (
                                   <button
@@ -698,10 +799,10 @@ export function CandidatesPage() {
                                 </Link>
                               </div>
                             </div>
-                          </div>
+                          </motion.div>
                         )
                       })}
-                    </div>
+                    </motion.div>
                   </article>
                 ))}
               </div>
@@ -722,7 +823,7 @@ export function CandidatesPage() {
                     return (
                       <article key={`mobile-candidate-${c.id}`} className="candidate-mobile-card glass glass--subtle">
                         <div className="list-item__header">
-                          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="font-semibold">
+                          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="candidate-row__name">
                             {c.fio || '—'}
                           </Link>
                           <span className={`status-badge status-badge--${tone || 'muted'}`}>
@@ -731,6 +832,12 @@ export function CandidatesPage() {
                         </div>
                         <div className="text-muted text-sm">
                           {c.city || '—'}{isAdmin ? ` · ${recruiterName}` : ''}
+                        </div>
+                        <div className="candidate-mobile-card__meta">
+                          <span className={`candidate-score candidate-score--${candidateScoreTone(c.average_score)}`}>
+                            {typeof c.average_score === 'number' ? `${Math.round(c.average_score)}%` : '—'}
+                          </span>
+                          <span className="candidate-row__date">{formatCandidateDate(resolveCandidateDate(c))}</span>
                         </div>
                         <div className="toolbar toolbar--compact">
                           <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
@@ -762,18 +869,24 @@ export function CandidatesPage() {
                 </div>
               )}
               <div className="data-table-wrapper candidates-table-wrapper">
-                <table className="data-table" data-testid="candidates-table">
-                  <thead>
+                <table className="data-table candidates-table" data-testid="candidates-table">
+                  <thead className="candidates-thead">
                     <tr>
-                      <th>ФИО</th>
-                      <th>Город</th>
+                      <th>Кандидат</th>
                       <th>Статус</th>
+                      <th>Score</th>
                       {isAdmin && <th>Рекрутёр</th>}
-                      <th>Telegram</th>
+                      <th>Дата</th>
                       <th>Действия</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <motion.tbody
+                    key={listAnimationKey}
+                    initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
+                    animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
+                    variants={firstRenderAnimation ? stagger(0.03) : undefined}
+                    transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
+                  >
                     {data.items.map((c) => {
                       const tone = c.status?.tone
                       const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
@@ -781,45 +894,63 @@ export function CandidatesPage() {
                         isAdmin ||
                         (principalType === 'recruiter' && c.recruiter_id === profile.data?.principal.id)
                       const isDeleting = deletingCandidateId === c.id && deleteCandidateMutation.isPending
+                      const scoreTone = candidateScoreTone(c.average_score)
+                      const candidateDate = formatCandidateDate(resolveCandidateDate(c))
                       return (
-                        <tr key={c.id}>
-                          <td>
-                            <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="font-semibold">
-                              {c.fio || '—'}
-                            </Link>
+                        <motion.tr key={c.id} className="candidate-row" variants={firstRenderAnimation ? listItem : undefined}>
+                          <td className="candidate-row__cell candidate-row__cell--identity">
+                            <div className="candidate-row__identity">
+                              <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="candidate-row__name">
+                                {c.fio || '—'}
+                              </Link>
+                              <div className="candidate-row__secondary">
+                                {c.city || '—'}
+                                {c.telegram_id ? (
+                                  <>
+                                    {' · '}
+                                    <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="candidate-row__link">
+                                      @{String(c.telegram_id).replace(/^@/, '')}
+                                    </a>
+                                  </>
+                                ) : null}
+                              </div>
+                            </div>
                           </td>
-                          <td>{c.city || '—'}</td>
-                          <td>
-                            <span className={`status-badge status-badge--${tone || 'muted'}`}>
+                          <td className="candidate-row__cell">
+                            <span className={`status-badge status-badge--${tone || 'muted'} candidates-status-pill`}>
                               {c.status?.label || c.status?.slug || '—'}
                             </span>
                           </td>
-                          {isAdmin && <td>{recruiterName}</td>}
-                          <td>
-                            {c.telegram_id ? (
-                              <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="text-accent">
-                                {c.telegram_id}
-                              </a>
-                            ) : '—'}
+                          <td className="candidate-row__cell">
+                            <span className={`candidate-score candidate-score--${scoreTone}`}>
+                              {typeof c.average_score === 'number' ? `${Math.round(c.average_score)}%` : '—'}
+                            </span>
                           </td>
-                          <td>
-                            {canDelete ? (
-                              <button
-                                type="button"
-                                className="ui-btn ui-btn--danger ui-btn--sm"
-                                onClick={() => deleteCandidate(c)}
-                                disabled={isDeleting}
-                              >
-                                {isDeleting ? 'Удаление…' : 'Удалить'}
-                              </button>
-                            ) : (
-                              '—'
-                            )}
+                          {isAdmin && <td className="candidate-row__cell candidate-row__secondary">{recruiterName}</td>}
+                          <td className="candidate-row__cell candidate-row__date">{candidateDate}</td>
+                          <td className="candidate-row__cell">
+                            <div className="candidate-row__actions">
+                              <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
+                                Открыть
+                              </Link>
+                              {canDelete ? (
+                                <button
+                                  type="button"
+                                  className="ui-btn ui-btn--danger ui-btn--sm"
+                                  onClick={() => deleteCandidate(c)}
+                                  disabled={isDeleting}
+                                >
+                                  {isDeleting ? 'Удаление…' : 'Удалить'}
+                                </button>
+                              ) : (
+                                <span className="candidate-row__secondary">—</span>
+                              )}
+                            </div>
                           </td>
-                        </tr>
+                        </motion.tr>
                       )
                     })}
-                  </tbody>
+                  </motion.tbody>
                 </table>
               </div>
             </>

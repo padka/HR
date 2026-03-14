@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import '@/theme/pages/candidate-detail.css'
 import type { CandidateAction } from '@/api/services/candidates'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import CandidatePipeline from '@/app/components/CandidatePipeline/CandidatePipeline'

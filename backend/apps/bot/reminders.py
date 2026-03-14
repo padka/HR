@@ -125,6 +125,7 @@ _MIN_TIME_BEFORE_IMMEDIATE = timedelta(hours=2)  # Не отправлять imm
 class ReminderKind(str, Enum):
     REMIND_24H = "remind_24h"  # legacy reminder, kept for backward compatibility
     REMIND_2H = "remind_2h"
+    REMIND_10M = "remind_10m"
     CONFIRM_6H = "confirm_6h"
     CONFIRM_3H = "confirm_3h"
     CONFIRM_2H = "confirm_2h"
@@ -864,6 +865,7 @@ class ReminderService:
                 ReminderKind.CONFIRM_6H,
                 ReminderKind.CONFIRM_3H,
                 ReminderKind.CONFIRM_2H,
+                ReminderKind.REMIND_10M,
             ):
                 _city_override = _city_kind_overrides.get(kind)
                 if _city_override is not None:
@@ -1184,6 +1186,8 @@ def _immediate_group(kind: ReminderKind) -> str:
         ReminderKind.REMIND_2H,
     }:
         return "confirm"
+    if kind is ReminderKind.REMIND_10M:
+        return "ready"
     if kind in {
         ReminderKind.REMIND_24H,
     }:

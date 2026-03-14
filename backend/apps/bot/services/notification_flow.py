@@ -7,6 +7,17 @@ for _name in dir(_base):
         continue
     globals()[_name] = getattr(_base, _name)
 
+
+def _uses_legacy_status_update_text(text: str) -> bool:
+    rendered = (text or "").strip()
+    if not rendered:
+        return False
+    return (
+        rendered.startswith("Ваш статус обновлён:")
+        or "{status}" in rendered
+        or "{booking_id}" in rendered
+    )
+
 class NotificationService:
     """Minimal outbox worker for interview confirmation notifications."""
 
@@ -1865,6 +1876,8 @@ class NotificationService:
             ),
             "tz_name": snapshot.candidate_tz,
             "join_link": "",
+            "status": "отклонена",
+            "booking_id": snapshot.slot_id or item.booking_id or "",
         }
         rendered = await self._template_provider.render(
             "candidate_rejection",
@@ -1882,6 +1895,16 @@ class NotificationService:
                 candidate_tg_id=candidate_id,
             )
             return
+        if _uses_legacy_status_update_text(rendered.text):
+            from backend.apps.bot.defaults import DEFAULT_TEMPLATES
+            from backend.utils.jinja_renderer import render_template
+
+            rendered = RenderedTemplate(
+                key="candidate_rejection",
+                version=0,
+                city_id=snapshot.candidate_city_id,
+                text=render_template(DEFAULT_TEMPLATES["candidate_rejection"], context),
+            )
 
         attempt = item.attempts + 1
         await self._ensure_log(
@@ -2206,6 +2229,9 @@ class NotificationService:
         if reminder_kind is ReminderKind.INTRO_REMIND_3H:
             template_key = "intro_day_reminder"
             reply_markup = kb_attendance_confirm(slot.id)
+        elif reminder_kind is ReminderKind.REMIND_10M:
+            template_key = "reminder_10m"
+            reply_markup = None
         elif reminder_kind in confirm_map:
             template_key = confirm_map[reminder_kind]
             reply_markup = kb_attendance_confirm(slot.id)

@@ -5,7 +5,7 @@ import StageBadge from './StageBadge'
 import StageIndicator from './StageIndicator'
 import { pipelineCardVariants, pipelineMotion } from './pipeline.variants'
 import type { PipelineStage as PipelineStageRecord } from './pipeline.types'
-import { getStageAriaLabel, translateSystemMessage, translateSystemMessageList } from './pipeline.utils'
+import { getStageAriaLabel, translateSystemMessage } from './pipeline.utils'
 
 type PipelineStageProps = {
   stage: PipelineStageRecord
@@ -26,10 +26,7 @@ export default function PipelineStage({
   controlsId,
   onToggle,
 }: PipelineStageProps) {
-  const previewLines = Array.from(
-    new Set(translateSystemMessageList([stage.helper, ...(stage.detail?.meta || [])])),
-  ).slice(0, 2)
-  const subtitle = translateSystemMessage(stage.subtitle) || 'Без деталей'
+  const subtitle = translateSystemMessage(stage.subtitle || stage.helper) || 'Без деталей'
 
   return (
     <motion.button
@@ -60,16 +57,6 @@ export default function PipelineStage({
         <div className="candidate-pipeline-stage__title">{stage.title}</div>
         <div className="candidate-pipeline-stage__subtitle">{subtitle}</div>
       </div>
-
-      {previewLines.length > 0 ? (
-        <div className="candidate-pipeline-stage__preview">
-          {previewLines.map((line) => (
-            <span key={`${stage.id}-${line}`} className="candidate-pipeline-stage__preview-line">
-              {line}
-            </span>
-          ))}
-        </div>
-      ) : null}
     </motion.button>
   )
 }

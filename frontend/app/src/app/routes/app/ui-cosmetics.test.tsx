@@ -82,6 +82,7 @@ const candidateDetailData = {
   created_at: '2031-06-30T08:00:00Z',
   fio: 'Тест Кандидат',
   city: 'Москва',
+  phone: '8 929 001 8227',
   telegram_id: 79990001122,
   is_active: true,
   workflow_status: 'intro_day_ready',
@@ -431,14 +432,6 @@ const candidateChatTemplatesData = {
   ],
 }
 
-const candidateChatWorkspaceData = {
-  shared_note: 'Созвониться после 16:00',
-  agreements: ['Любит утренние слоты'],
-  follow_up_due_at: '2031-07-02T10:00:00Z',
-  updated_by: 'Рекрутер',
-  updated_at: '2031-07-01T08:36:00Z',
-}
-
 describe('UI cosmetics smoke', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'scrollTo', {
@@ -536,9 +529,6 @@ describe('UI cosmetics smoke', () => {
             latest_message_at: '2031-07-01T08:35:00Z',
           },
         }
-      }
-      if (key === 'candidate-chat-workspace') {
-        return { ...baseQueryResult, data: candidateChatWorkspaceData }
       }
       if (key === 'candidate-hh-summary') {
         return {
@@ -678,6 +668,14 @@ describe('UI cosmetics smoke', () => {
       expect(screen.getAllByText(/Готовность к полевому формату/).length).toBeGreaterThan(0)
     })
 
+    expect(screen.queryByText('Карточка, хронология, заметки, HH и AI-контекст для рекрутера.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Краткий операционный контекст для рекрутера.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Единая лента значимых событий по кандидату.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Локальные заметки рекрутера по кандидату.')).not.toBeInTheDocument()
+    expect(screen.getByText('Телефон')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '8 929 001 8227' })).toHaveAttribute('href', 'tel:89290018227')
+    expect(screen.queryByText('Коммуникация')).not.toBeInTheDocument()
+
     fireEvent.click(screen.getByTestId('candidate-script-trigger'))
 
     await waitFor(() => {
@@ -710,6 +708,10 @@ describe('UI cosmetics smoke', () => {
     expect(screen.getByText('Текущее состояние')).toBeInTheDocument()
     expect(screen.getByTestId('candidate-funnel-detail')).toBeInTheDocument()
     expect(within(screen.getByTestId('candidate-funnel-detail')).getAllByText('Предварительно подтвердился').length).toBeGreaterThan(0)
+    expect(pipeline.querySelector('.candidate-pipeline-stage__preview')).toBeNull()
+    expect(pipeline.querySelector('.candidate-pipeline-stage--current')).toBeTruthy()
+    expect(pipeline.querySelector('.candidate-pipeline-stage--upcoming')).toBeTruthy()
+    expect(pipeline.querySelector('.candidate-pipeline-badge--upcoming')?.textContent).toContain('Ожидает')
 
     const stageButtons = Array.from(
       pipeline.querySelectorAll<HTMLButtonElement>('.candidate-pipeline-stage'),
@@ -796,36 +798,18 @@ describe('UI cosmetics smoke', () => {
     })
   })
 
-  it('renders messenger as recruiter workspace with compact inbox, sticky composer and details drawer', async () => {
+  it('renders messenger as recruiter workspace with compact inbox and sticky composer', async () => {
     render(<MessengerPage />)
 
     await waitFor(() => {
-      expect(screen.getByText('Чаты кандидатов')).toBeInTheDocument()
+      expect(screen.getByRole('complementary', { name: 'Чаты кандидатов' })).toBeInTheDocument()
       expect(screen.getAllByText('Иван Петров').length).toBeGreaterThan(0)
       expect(screen.getAllByText(/Можете предложить утро/).length).toBeGreaterThan(0)
-      expect(screen.getByText(/кандидатов в общем списке/i)).toBeInTheDocument()
+      expect(screen.getByLabelText('Поиск по чатам')).toBeInTheDocument()
       expect(screen.getByTestId('messenger-composer')).toBeInTheDocument()
-      expect(screen.queryByTestId('messenger-details-drawer')).not.toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Детали' }))
-
-    await waitFor(() => {
-      expect(screen.getByTestId('messenger-details-drawer')).toBeInTheDocument()
-      expect(screen.getByText('Что делать дальше')).toBeInTheDocument()
-      expect(screen.getByTestId('messenger-candidate-journey')).toBeInTheDocument()
-      expect(screen.getByTestId('messenger-candidate-analytics')).toBeInTheDocument()
-      expect(screen.getByText('Записать на ознакомительный день')).toBeInTheDocument()
-      expect(screen.getByText(/Полевой формат/i)).toBeInTheDocument()
-      expect(screen.getByText(/Подтверждён/i)).toBeInTheDocument()
-      expect(screen.queryByText('Заметка рекрутера')).not.toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Назначить ОД' }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Назначить ознакомительный день' })).toBeInTheDocument()
-      expect(screen.getByDisplayValue(/Приглашаем вас на ознакомительный день/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Отправить сообщение' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Детали' })).not.toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Карточка' })).toBeInTheDocument()
     })
   })
 })

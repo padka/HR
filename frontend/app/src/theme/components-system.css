@@ -64,6 +64,11 @@
   margin: 0 0 var(--space-lg);
 }
 
+.empty-state__text {
+  color: var(--muted);
+  font-size: var(--text-base);
+}
+
 /* Loading State */
 .loading-skeleton {
   background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 100%);

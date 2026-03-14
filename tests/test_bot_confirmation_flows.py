@@ -153,6 +153,46 @@ async def test_dispatch_interview_success_logs_and_raises_on_failure():
 
 
 @pytest.mark.asyncio
+async def test_launch_test2_starts_flow_without_pending_context():
+    store = InMemoryStateStore(ttl_seconds=120)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    dummy_bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=777))
+    configure(dummy_bot, manager)
+
+    candidate_id = 55119944
+    async with async_session() as session:
+        user = User(
+            telegram_id=candidate_id,
+            fio="Кандидат Тест 2",
+            city="Москва",
+            candidate_status=CandidateStatus.INTERVIEW_CONFIRMED,
+            is_active=True,
+        )
+        session.add(user)
+        await session.commit()
+
+    await services.launch_test2(candidate_id)
+
+    assert dummy_bot.send_message.await_count == 2
+    intro_args, _intro_kwargs = dummy_bot.send_message.await_args_list[0]
+    question_args, question_kwargs = dummy_bot.send_message.await_args_list[1]
+    assert intro_args[0] == candidate_id
+    assert "тест" in intro_args[1].lower()
+    assert question_args[0] == candidate_id
+    assert "Вопрос 1/" in question_args[1]
+    assert question_kwargs.get("reply_markup") is not None
+
+    state = await manager.get(candidate_id)
+    assert state is not None
+    assert state.get("flow") == "intro"
+    assert "t2_attempts" in state
+
+    await manager.clear()
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_candidate_confirmation_idempotent(monkeypatch):
     store = InMemoryStateStore(ttl_seconds=60)
     manager = StateManager(store)
@@ -765,6 +805,84 @@ async def test_no_duplicate_confirm_messages(monkeypatch):
     import backend.apps.bot.services as bot_services
 
     bot_services._notification_service = None
+
+
+@pytest.mark.asyncio
+async def test_handle_pick_recruiter_renders_slot_choices(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+
+    monkeypatch.setattr(services, "_state_manager", manager)
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Анна Рекрутер",
+            tz="Europe/Moscow",
+            active=True,
+        )
+        city = models.City(name="Новосибирск", tz="Asia/Novosibirsk", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime(2030, 1, 1, 6, 0, tzinfo=timezone.utc),
+            duration_min=20,
+            status=models.SlotStatus.FREE,
+            tz_name=city.tz,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    candidate_id = 987124
+    await manager.set(
+        candidate_id,
+        {
+            "flow": "interview",
+            "city_id": city.id,
+            "city_name": city.name_plain,
+            "candidate_tz": "Europe/Moscow",
+            "fio": "Иван Тест",
+        },
+    )
+
+    responses: list[Tuple[Optional[str], bool]] = []
+    message = DummyMessage()
+
+    class RecruiterCallback:
+        def __init__(self) -> None:
+            self.data = f"pick_rec:{recruiter.id}"
+            self.from_user = SimpleNamespace(id=candidate_id)
+            self.message = message
+
+        async def answer(self, text: Optional[str] = None, show_alert: bool = False) -> None:
+            responses.append((text, show_alert))
+
+    await services.handle_pick_recruiter(RecruiterCallback())
+
+    assert responses == [(None, False)]
+    message.edit_text.assert_awaited_once()
+
+    args, kwargs = message.edit_text.await_args
+    assert "Анна Рекрутер" in args[0]
+    assert "Europe/Moscow" in args[0]
+    markup = kwargs.get("reply_markup")
+    assert markup is not None
+    callbacks = [
+        button.callback_data
+        for row in markup.inline_keyboard
+        for button in row
+        if getattr(button, "callback_data", None)
+    ]
+    assert any(value.startswith(f"pick_slot:{recruiter.id}:{slot.id}") for value in callbacks)
+
+    await manager.clear()
+    await manager.close()
 
 
 @pytest.mark.asyncio

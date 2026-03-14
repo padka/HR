@@ -1,12 +1,19 @@
 import type { PipelineStage, PipelineStageStatus } from './pipeline.types'
 
+export type PipelineConnectorState = 'done' | 'active' | 'pending'
+
 const systemMessageTranslations: Record<string, string> = {
   'Initial backfill from current candidate status': 'Начальный статус при добавлении в воронку',
   'admin manual status update': 'Ручное обновление статуса',
   'manual status update': 'Ручное обновление статуса',
+  'manual slot assignment': 'ручное назначение',
+  'slot assignment': 'назначение слота',
   backfill: 'Перенос данных',
   'status update': 'Обновление статуса',
   system: 'система',
+  running: 'В работе',
+  done: 'Завершено',
+  dead: 'Ошибка',
   Passed: 'Пройден',
   Failed: 'Не пройден',
   Pending: 'Ожидание',
@@ -71,8 +78,18 @@ export function getConnectorFill(
   currentStatus: PipelineStageStatus | undefined,
 ): number {
   if (connectorIndex < currentIndex) return 1
-  if (connectorIndex === currentIndex && currentStatus === 'current') return 0.18
+  if (connectorIndex === currentIndex && currentStatus === 'current') return 0.5
   return 0
+}
+
+export function getConnectorState(
+  currentIndex: number,
+  connectorIndex: number,
+  currentStatus: PipelineStageStatus | undefined,
+): PipelineConnectorState {
+  if (connectorIndex < currentIndex) return 'done'
+  if (connectorIndex === currentIndex && currentStatus === 'current') return 'active'
+  return 'pending'
 }
 
 export function getCurrentStageIndex(stages: PipelineStage[]): number {

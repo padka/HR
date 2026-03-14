@@ -27,6 +27,9 @@ function readStoredNote(key: string): StoredQuickNote {
 export default function QuickNotes({ storageKey }: QuickNotesProps) {
   const [text, setText] = useState('')
   const [savedAt, setSavedAt] = useState<string | null>(null)
+  const savedAtLabel = savedAt
+    ? `Сохранено ${new Date(savedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
+    : 'Автосохранение'
 
   useEffect(() => {
     const stored = readStoredNote(storageKey)
@@ -50,25 +53,22 @@ export default function QuickNotes({ storageKey }: QuickNotesProps) {
   return (
     <section className="glass panel candidate-insights-drawer__section">
       <div className="cd-section-header">
-        <div>
-          <h2 className="cd-section-title">Быстрые заметки</h2>
-          <p className="subtitle">Локальные заметки рекрутера по кандидату.</p>
-        </div>
-        <span className="subtitle">{savedAt ? `Сохранено ${new Date(savedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : 'Автосохранение'}</span>
+        <h2 className="cd-section-title">Быстрые заметки</h2>
       </div>
 
       <textarea
         rows={6}
         maxLength={2000}
-        className="ui-input ui-input--multiline"
+        className="quick-notes-textarea"
         placeholder="Заметки по кандидату..."
         value={text}
         onChange={(event) => setText(event.target.value)}
         data-testid="candidate-quick-notes"
       />
 
-      <div className="toolbar toolbar--compact">
-        <span className="subtitle">{text.length}/2000</span>
+      <div className="quick-notes-meta">
+        <span>{savedAtLabel}</span>
+        <span>{text.length}/2000</span>
       </div>
     </section>
   )

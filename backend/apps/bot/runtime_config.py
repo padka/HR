@@ -12,12 +12,14 @@ from backend.core.db import async_session
 from backend.domain.models import BotRuntimeConfig
 
 REMINDER_POLICY_KEY = "reminder_policy"
+MIN_REMINDER_OFFSET_HOURS = 10 / 60
 
 DEFAULT_REMINDER_POLICY: Dict[str, Any] = {
     "interview": {
         "confirm_6h": {"enabled": True, "offset_hours": 6.0},
         "confirm_3h": {"enabled": True, "offset_hours": 3.0},
         "confirm_2h": {"enabled": True, "offset_hours": 2.0},
+        "remind_10m": {"enabled": True, "offset_hours": MIN_REMINDER_OFFSET_HOURS},
     },
     "intro_day": {
         "intro_remind_3h": {"enabled": True, "offset_hours": 3.0},
@@ -25,7 +27,7 @@ DEFAULT_REMINDER_POLICY: Dict[str, Any] = {
     "min_time_before_immediate_hours": 2.0,
 }
 
-_INTERVIEW_KINDS = ("confirm_6h", "confirm_3h", "confirm_2h")
+_INTERVIEW_KINDS = ("confirm_6h", "confirm_3h", "confirm_2h", "remind_10m")
 _INTRO_KINDS = ("intro_remind_3h",)
 
 
@@ -39,8 +41,8 @@ def _normalize_kind_config(raw: Any, *, default_enabled: bool, default_offset: f
     except (TypeError, ValueError):
         offset = float(default_offset)
     # Keep offsets sane to avoid pathological schedules.
-    offset = min(max(offset, 0.25), 72.0)
-    return {"enabled": enabled, "offset_hours": round(offset, 2)}
+    offset = min(max(offset, MIN_REMINDER_OFFSET_HOURS), 72.0)
+    return {"enabled": enabled, "offset_hours": offset}
 
 
 def normalize_reminder_policy(raw: Any) -> Dict[str, Any]:

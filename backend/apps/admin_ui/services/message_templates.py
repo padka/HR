@@ -37,6 +37,7 @@ REQUIRED_TG_TEMPLATE_KEYS: Sequence[str] = (
     "recruiter_candidate_confirmed_notice",
     "confirm_6h",
     "confirm_2h",
+    "reminder_10m",
 )
 
 
@@ -47,6 +48,7 @@ KNOWN_TEMPLATE_HINTS: Dict[str, str] = {
     "recruiter_candidate_confirmed_notice": "Уведомление рекрутёру, когда кандидат подтвердил участие.",
     "confirm_6h": "Напоминание кандидату за 6 часов до встречи с кнопками подтверждения.",
     "confirm_2h": "Напоминание/подтверждение за 2 часа до встречи.",
+    "reminder_10m": "Короткое напоминание за 10 минут до собеседования, чтобы кандидат подготовился к подключению.",
     "interview_invite_details": "Приглашение на собеседование с деталями встречи и подготовкой.",
     "interview_remind_confirm_2h": "Напоминание за 2 часа до интервью с подтверждением/переносом и ссылкой.",
     "intro_day_invite_city": "Приглашение на ознакомительный день с адресом офиса для выбранного города.",

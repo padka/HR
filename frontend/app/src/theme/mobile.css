@@ -422,47 +422,6 @@
     display: none;
   }
 
-  .messenger-details-drawer {
-    width: 100%;
-    height: min(92vh, 100%);
-    margin-top: auto;
-    border-radius: 24px 24px 0 0;
-  }
-
-  .messenger-details-drawer__body {
-    padding: 12px;
-  }
-
-  .messenger-detail-hero__top {
-    grid-template-columns: 1fr;
-    display: grid;
-  }
-
-  .messenger-detail-hero__score {
-    justify-items: start;
-    text-align: left;
-  }
-
-  .messenger-detail-hero__stats,
-  .messenger-analytics-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .messenger-journey__step {
-    grid-template-columns: 20px minmax(0, 1fr);
-    gap: 10px;
-  }
-
-  .messenger-journey__content {
-    padding: 12px;
-  }
-
-  .messenger-journey__head {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-  }
-
   .messenger-composer {
     background: linear-gradient(180deg, rgba(11, 16, 28, 0.4), rgba(11, 16, 28, 0.95));
     padding-bottom: calc(var(--mobile-safe-bottom) + 6px);
@@ -564,11 +523,6 @@
     max-width: none;
     height: 100vh;
     border-radius: 0;
-    padding: 12px;
-  }
-
-  .candidate-insights-drawer__summary-grid {
-    grid-template-columns: 1fr;
   }
 
   .candidate-chat-drawer__body {
@@ -579,7 +533,7 @@
   .candidate-chat-drawer__footer {
     position: sticky;
     bottom: 0;
-    background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+    background: var(--bg-elevated);
     padding-bottom: calc(10px + var(--mobile-safe-bottom));
   }
 

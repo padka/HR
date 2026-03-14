@@ -9,7 +9,7 @@ export default function StageBadge({ stage }: StageBadgeProps) {
   const label = getStageBadgeLabel(stage)
 
   if (stage.status === 'upcoming') {
-    return <span className="candidate-pipeline-badge candidate-pipeline-badge--ghost">Ожидает</span>
+    return <span className="candidate-pipeline-badge candidate-pipeline-badge--upcoming">Ожидает</span>
   }
 
   if (!label) return null

@@ -1,49 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import '@/theme/pages/messenger.css'
 
-import { ModalPortal } from '@/shared/components/ModalPortal'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 
 import {
-  useMessengerAiSummary,
-  useMessengerArchiveThread,
-  useMessengerDetail,
   useMessengerMarkRead,
   useMessengerMessages,
   useMessengerSendMessage,
   useMessengerTemplates,
   useMessengerThreads,
-  useMessengerWorkspace,
 } from './messenger.api'
 import { groupedMessagesWithUnread } from './messenger.utils'
 import { ThreadList } from './ThreadList'
 import { ThreadView } from './ThreadView'
-import { ThreadDetail } from './ThreadDetail'
-import { ScheduleIntroDayModal } from './ScheduleIntroDayModal'
 import { useMessageDraft } from './useMessageDraft'
-import type { ToastState } from './messenger.types'
 
 export function MessengerPage() {
   const isMobile = useIsMobile()
-  const toastTimeoutRef = useRef<number | null>(null)
   const messagesRef = useRef<HTMLDivElement | null>(null)
   const shouldStickToBottomRef = useRef(true)
 
   const [activeCandidateId, setActiveCandidateId] = useState<number | null>(null)
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false)
-  const [isIntroDayModalOpen, setIsIntroDayModalOpen] = useState(false)
   const [showTemplateTray, setShowTemplateTray] = useState(false)
   const [selectedTemplateKey, setSelectedTemplateKey] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
-  const [toast, setToast] = useState<ToastState | null>(null)
   const { draft: messageText, setDraft: setMessageText } = useMessageDraft(activeCandidateId)
-
-  const showToast = (message: string, tone: 'success' | 'error' = 'success') => {
-    setToast({ tone, message })
-    if (toastTimeoutRef.current != null) {
-      window.clearTimeout(toastTimeoutRef.current)
-    }
-    toastTimeoutRef.current = window.setTimeout(() => setToast(null), 2600)
-  }
 
   const { query: threadsQuery, threadQueryKey } = useMessengerThreads()
   const allThreads = useMemo(
@@ -59,6 +40,14 @@ export function MessengerPage() {
   )
 
   useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.body.classList.add('messenger-route-active')
+    return () => {
+      document.body.classList.remove('messenger-route-active')
+    }
+  }, [])
+
+  useEffect(() => {
     if (activeCandidateId || !allThreads.length || isMobile) return
     setActiveCandidateId(allThreads[0].candidate_id)
   }, [activeCandidateId, allThreads, isMobile])
@@ -70,7 +59,6 @@ export function MessengerPage() {
   }, [activeCandidateId, allThreads, isMobile])
 
   useEffect(() => {
-    setIsDetailsOpen(false)
     setSelectedTemplateKey('')
     setShowTemplateTray(false)
     setSendError(null)
@@ -84,10 +72,7 @@ export function MessengerPage() {
   const messagesQuery = useMessengerMessages(activeCandidateId, async () => {
     await threadsQuery.refetch()
   })
-  const detailQuery = useMessengerDetail(activeCandidateId)
-  const aiSummaryQuery = useMessengerAiSummary(activeCandidateId, isDetailsOpen)
   const templatesQuery = useMessengerTemplates()
-  const workspaceQuery = useMessengerWorkspace(activeCandidateId)
   const markReadMutation = useMessengerMarkRead(threadQueryKey)
 
   const chatMessages = useMemo(
@@ -110,11 +95,15 @@ export function MessengerPage() {
     requestAnimationFrame(() => {
       const unreadAnchor = container.querySelector('[data-unread-anchor="true"]')
       if (unreadAnchor instanceof HTMLElement && typeof unreadAnchor.scrollIntoView === 'function') {
-        unreadAnchor.scrollIntoView({ block: 'center' })
+        unreadAnchor.scrollIntoView({ block: 'center', behavior: 'smooth' })
         return
       }
       if (shouldStickToBottomRef.current) {
-        container.scrollTop = container.scrollHeight
+        if (typeof container.scrollTo === 'function') {
+          container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
+        } else {
+          container.scrollTop = container.scrollHeight
+        }
       }
     })
   }, [activeCandidateId, groupedMessages.length])
@@ -128,18 +117,6 @@ export function MessengerPage() {
       await Promise.all([messagesQuery.refetch(), threadsQuery.refetch()])
     },
     onError: (message) => setSendError(message),
-  })
-
-  const archiveMutation = useMessengerArchiveThread({
-    activeCandidateId,
-    isArchived: Boolean(activeThread?.is_archived),
-    onSuccess: async (archived) => {
-      showToast(archived ? 'Чат отправлен в архив' : 'Чат возвращён из архива')
-      await threadsQuery.refetch()
-    },
-    onError: (message) => {
-      showToast(message, 'error')
-    },
   })
 
   const applyTemplateToDraft = (templateKey: string, templateText: string) => {
@@ -163,7 +140,6 @@ export function MessengerPage() {
 
         <ThreadView
           activeThread={activeThread}
-          cityLabel={detailQuery.data?.city || activeThread?.city}
           isMobile={isMobile}
           isLoading={messagesQuery.isLoading}
           isError={messagesQuery.isError}
@@ -173,7 +149,6 @@ export function MessengerPage() {
             shouldStickToBottomRef.current = gap < 80
           }}
           onBack={() => setActiveCandidateId(null)}
-          onOpenDetails={() => setIsDetailsOpen(true)}
           showTemplateTray={showTemplateTray}
           selectedTemplateKey={selectedTemplateKey}
           templates={templatesQuery.data?.items || []}
@@ -189,46 +164,6 @@ export function MessengerPage() {
           sendError={sendError}
         />
       </div>
-
-      {activeThread && isDetailsOpen ? (
-        <ModalPortal>
-          <ThreadDetail
-            activeThread={activeThread}
-            detail={detailQuery.data}
-            aiSummary={aiSummaryQuery.data?.summary}
-            workspace={workspaceQuery.data}
-            onScheduleIntroDay={() => {
-              setIsDetailsOpen(false)
-              setIsIntroDayModalOpen(true)
-            }}
-            onArchiveToggle={() => archiveMutation.mutate()}
-            archivePending={archiveMutation.isPending}
-            onClose={() => setIsDetailsOpen(false)}
-          />
-        </ModalPortal>
-      ) : null}
-
-      {activeCandidateId && isIntroDayModalOpen && detailQuery.data ? (
-        <ScheduleIntroDayModal
-          candidateId={activeCandidateId}
-          candidateFio={detailQuery.data.fio || activeThread?.title || 'Кандидат'}
-          candidateCity={detailQuery.data.city || activeThread?.city}
-          introDayTemplate={detailQuery.data.intro_day_template}
-          introDayTemplateContext={detailQuery.data.intro_day_template_context}
-          onClose={() => setIsIntroDayModalOpen(false)}
-          onSuccess={() => {
-            setIsIntroDayModalOpen(false)
-            showToast('Ознакомительный день назначен')
-            void Promise.all([detailQuery.refetch(), messagesQuery.refetch(), threadsQuery.refetch()])
-          }}
-        />
-      ) : null}
-
-      {toast ? (
-        <div className="toast" data-tone={toast.tone}>
-          {toast.message}
-        </div>
-      ) : null}
     </div>
   )
 }

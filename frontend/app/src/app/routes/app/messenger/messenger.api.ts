@@ -2,26 +2,16 @@ import { useEffect, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
-  fetchCandidateAiSummary,
-  fetchCandidateDetail,
-  type AISummaryResponse,
-  type CandidateDetail,
-} from '@/api/services/candidates'
-import {
-  archiveCandidateChatThread,
   fetchCandidateChatMessages,
   fetchCandidateChatTemplates,
   fetchCandidateChatThreads,
-  fetchCandidateChatWorkspace,
   markCandidateChatThreadRead,
   sendCandidateThreadMessage,
-  unarchiveCandidateChatThread,
   waitForCandidateChatMessages,
   waitForCandidateChatThreads,
   type CandidateChatPayload,
   type CandidateChatTemplate,
   type CandidateChatThreadsPayload,
-  type CandidateChatWorkspaceState,
 } from '@/api/services/messenger'
 
 import { MESSAGE_LIMIT, THREAD_LIMIT } from './messenger.constants'
@@ -120,34 +110,10 @@ export function useMessengerMessages(activeCandidateId: number | null, onThreads
   return query
 }
 
-export function useMessengerDetail(activeCandidateId: number | null) {
-  return useQuery<CandidateDetail>({
-    queryKey: ['candidate-detail', activeCandidateId],
-    queryFn: () => fetchCandidateDetail(activeCandidateId as number),
-    enabled: Boolean(activeCandidateId),
-  })
-}
-
-export function useMessengerAiSummary(activeCandidateId: number | null, enabled: boolean) {
-  return useQuery<AISummaryResponse>({
-    queryKey: ['ai-summary', activeCandidateId],
-    queryFn: () => fetchCandidateAiSummary(activeCandidateId as number),
-    enabled: Boolean(activeCandidateId && enabled),
-  })
-}
-
 export function useMessengerTemplates() {
   return useQuery<{ items: CandidateChatTemplate[] }>({
     queryKey: ['candidate-chat-templates'],
     queryFn: fetchCandidateChatTemplates,
-  })
-}
-
-export function useMessengerWorkspace(activeCandidateId: number | null) {
-  return useQuery<CandidateChatWorkspaceState>({
-    queryKey: ['candidate-chat-workspace', activeCandidateId],
-    queryFn: () => fetchCandidateChatWorkspace(activeCandidateId as number),
-    enabled: Boolean(activeCandidateId),
   })
 }
 
@@ -179,28 +145,6 @@ export function useMessengerSendMessage(args: {
     },
     onError: (error: unknown) => {
       args.onError((error as Error).message || 'Не удалось отправить сообщение')
-    },
-  })
-}
-
-export function useMessengerArchiveThread(args: {
-  activeCandidateId: number | null
-  isArchived: boolean
-  onSuccess: (archived: boolean) => Promise<unknown>
-  onError: (message: string) => void
-}) {
-  return useMutation({
-    mutationFn: async () => {
-      if (!args.activeCandidateId) throw new Error('Выберите чат')
-      return args.isArchived
-        ? unarchiveCandidateChatThread(args.activeCandidateId)
-        : archiveCandidateChatThread(args.activeCandidateId)
-    },
-    onSuccess: async (payload) => {
-      await args.onSuccess(Boolean(payload.archived))
-    },
-    onError: (error: unknown) => {
-      args.onError((error as Error).message || 'Не удалось обновить состояние чата')
     },
   })
 }
