@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from backend.apps.admin_ui.security import Principal, require_admin
+from backend.core.ai.service import schedule_warm_candidates_ai_outputs
 from backend.core.dependencies import AsyncSessionDep
 from backend.core.settings import get_settings
 from backend.domain.hh_integration import (
@@ -374,6 +375,7 @@ async def import_hh_vacancies_route(
         ) from exc
 
     await session.commit()
+    schedule_warm_candidates_ai_outputs(getattr(result, "candidate_ids_touched", []), principal=principal, refresh=True)
     return {"ok": True, "result": serialize_import_result(result)}
 
 
@@ -405,6 +407,7 @@ async def import_hh_negotiations_route(
         ) from exc
 
     await session.commit()
+    schedule_warm_candidates_ai_outputs(getattr(result, "candidate_ids_touched", []), principal=principal, refresh=True)
     return {"ok": True, "result": serialize_import_result(result)}
 
 
@@ -550,6 +553,7 @@ async def execute_hh_candidate_action(
         ) from exc
 
     await session.commit()
+    schedule_warm_candidates_ai_outputs(getattr(refresh_result, "candidate_ids_touched", []), principal=principal, refresh=True)
     return {
         "ok": True,
         "action_id": action_id,

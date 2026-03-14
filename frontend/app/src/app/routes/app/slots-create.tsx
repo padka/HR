@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import { z } from 'zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
@@ -31,6 +31,8 @@ const formSchema = z.object({
 })
 
 type FormValues = z.infer<typeof formSchema>
+type BulkFormInput = z.input<typeof bulkSchema>
+type BulkFormValues = z.output<typeof bulkSchema>
 
 const bulkSchema = z.object({
   recruiter_id: z.string().min(1),
@@ -73,6 +75,7 @@ export function SlotsCreateForm() {
   const qc = useQueryClient()
   const [serverError, setServerError] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; tone?: 'success' | 'warning' | 'error' } | null>(null)
+  const toastTimeoutRef = useRef<number | null>(null)
   const profile = useProfile()
   const canUse = profile.data?.principal.type === 'recruiter'
   const [mode, setMode] = useState<'single' | 'bulk'>('single')
@@ -120,8 +123,10 @@ export function SlotsCreateForm() {
 
   const showToast = (message: string, tone?: 'success' | 'warning' | 'error') => {
     setToast({ message, tone })
-    window.clearTimeout((showToast as any)._t)
-    ;(showToast as any)._t = window.setTimeout(() => setToast(null), 2800)
+    if (toastTimeoutRef.current != null) {
+      window.clearTimeout(toastTimeoutRef.current)
+    }
+    toastTimeoutRef.current = window.setTimeout(() => setToast(null), 2800)
   }
 
   const mutation = useMutation({
@@ -299,9 +304,10 @@ function BulkCreateForm({
   const [serverError, setServerError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; tone?: 'success' | 'warning' | 'error' } | null>(null)
+  const toastTimeoutRef = useRef<number | null>(null)
 
-  const { register, handleSubmit, watch, formState: { errors }, setValue } = useForm<z.infer<typeof bulkSchema>>({
-    resolver: zodResolver(bulkSchema) as any,
+  const { register, handleSubmit, watch, formState: { errors }, setValue } = useForm<BulkFormInput, unknown, BulkFormValues>({
+    resolver: zodResolver(bulkSchema),
     defaultValues: {
       recruiter_id: recruiterId,
       include_weekends: false,
@@ -336,12 +342,14 @@ function BulkCreateForm({
 
   const showToast = (message: string, tone?: 'success' | 'warning' | 'error') => {
     setToast({ message, tone })
-    window.clearTimeout((showToast as any)._t)
-    ;(showToast as any)._t = window.setTimeout(() => setToast(null), 2800)
+    if (toastTimeoutRef.current != null) {
+      window.clearTimeout(toastTimeoutRef.current)
+    }
+    toastTimeoutRef.current = window.setTimeout(() => setToast(null), 2800)
   }
 
   const mutation = useMutation({
-    mutationFn: async (data: z.infer<typeof bulkSchema>) => {
+    mutationFn: async (data: BulkFormValues) => {
       setServerError(null)
       setSuccessMessage(null)
       return apiFetch<{ ok: boolean; created: number; error?: string }>('/slots/bulk_create', {

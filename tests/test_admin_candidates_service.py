@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
@@ -8,6 +9,7 @@ from backend.apps.admin_ui.services.candidates import (
     _map_to_workflow_status,
     delete_all_candidates,
     get_candidate_detail,
+    get_candidate_cohort_comparison,
     list_candidates,
     api_candidate_detail_payload,
     update_candidate_status,
@@ -22,7 +24,7 @@ from backend.domain.candidates import (
 )
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.workflow import WorkflowStatus
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import City, MessageTemplate, Recruiter, Slot, SlotStatus
 
 
 @pytest.mark.asyncio
@@ -230,6 +232,134 @@ async def test_candidate_detail_includes_test_sections_and_telemost():
 
     assert detail["telemost_url"] == telemost_url
     assert detail["telemost_source"] == "upcoming"
+
+
+@pytest.mark.asyncio
+async def test_candidate_cohort_comparison_groups_similar_candidates():
+    lead = await candidate_services.create_or_update_user(
+        telegram_id=999201,
+        fio="Lead Candidate",
+        city="Москва",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+    interview = await candidate_services.create_or_update_user(
+        telegram_id=999202,
+        fio="Interview Candidate",
+        city="Москва",
+        initial_status=CandidateStatus.INTERVIEW_CONFIRMED,
+    )
+    intro_day = await candidate_services.create_or_update_user(
+        telegram_id=999203,
+        fio="Intro Candidate",
+        city="Москва",
+        initial_status=CandidateStatus.INTRO_DAY_SCHEDULED,
+    )
+
+    await candidate_services.save_test_result(
+        user_id=lead.id,
+        raw_score=4,
+        final_score=4.0,
+        rating="TEST1",
+        total_time=900,
+        question_data=[],
+    )
+    await candidate_services.save_test_result(
+        user_id=interview.id,
+        raw_score=6,
+        final_score=6.0,
+        rating="TEST1",
+        total_time=780,
+        question_data=[],
+    )
+    await candidate_services.save_test_result(
+        user_id=intro_day.id,
+        raw_score=8,
+        final_score=8.0,
+        rating="TEST1",
+        total_time=600,
+        question_data=[],
+    )
+
+    async with async_session() as session:
+        for user_id in (lead.id, interview.id, intro_day.id):
+            user = await session.get(candidate_models.User, user_id)
+            assert user is not None
+            user.desired_position = "Оператор склада"
+            user.hh_vacancy_id = "vacancy-cohort-1"
+        await session.commit()
+
+    payload = await get_candidate_cohort_comparison(int(intro_day.id), principal=Principal(type="admin", id=-1))
+
+    assert payload is not None
+    assert payload["cohort_label"] == "Оператор склада"
+    assert payload["total_candidates"] == 3
+    assert payload["rank"] == 1
+    assert payload["test1"]["candidate"] == 8.0
+    assert round(payload["test1"]["average"], 2) == 6.0
+    assert payload["completion_time_sec"]["candidate"] == 600
+    assert round(payload["completion_time_sec"]["average"], 2) == 760.0
+    distribution = {item["key"]: item["count"] for item in payload["stage_distribution"]}
+    assert distribution["lead"] == 1
+    assert distribution["interview"] == 1
+    assert distribution["intro_day"] == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_detail_prefers_city_intro_day_template():
+    city_name = f"Город шаблона {uuid4().hex[:8]}"
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999102,
+        fio="Иванов Михаил Сергеевич",
+        city=city_name,
+        initial_status=CandidateStatus.TEST2_COMPLETED,
+    )
+
+    async with async_session() as session:
+        city = City(
+            name=city_name,
+            tz="Europe/Moscow",
+            active=True,
+            intro_address="Волгоград, пр. Ленина, 1",
+            contact_name="Ольга",
+            contact_phone="+79990000000",
+        )
+        session.add(city)
+        await session.flush()
+        now = datetime.now(timezone.utc)
+        session.add(
+            MessageTemplate(
+                key="intro_day_invitation",
+                locale="ru",
+                channel="tg",
+                city_id=None,
+                body_md="Общий шаблон intro day",
+                version=1,
+                is_active=True,
+                updated_at=now,
+                created_at=now,
+            )
+        )
+        session.add(
+            MessageTemplate(
+                key="intro_day_invitation",
+                locale="ru",
+                channel="tg",
+                city_id=city.id,
+                body_md="Городской шаблон [Имя] {intro_address}",
+                version=1,
+                is_active=True,
+                updated_at=now,
+                created_at=now,
+            )
+        )
+        await session.commit()
+
+    detail = await get_candidate_detail(candidate.id)
+
+    assert detail is not None
+    assert detail["intro_day_template"] == "Городской шаблон [Имя] {intro_address}"
+    assert detail["intro_day_template_context"]["intro_address"] == "Волгоград, пр. Ленина, 1"
+    assert detail["intro_day_template_context"]["intro_contact"] == "Ольга, +79990000000"
 
 
 @pytest.mark.asyncio

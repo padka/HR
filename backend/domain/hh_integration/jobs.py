@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from backend.core.db import async_session
+from backend.core.ai.service import schedule_warm_candidates_ai_outputs
 from backend.domain.hh_integration.client import HHApiClient, HHApiError
 from backend.domain.hh_integration.contracts import HHSyncDirection, HHSyncJobStatus
 from backend.domain.hh_integration.importer import (
@@ -215,6 +216,8 @@ async def _execute_hh_sync_job(job_id: int) -> None:
                 raise RuntimeError(f"Unsupported HH sync job type: {job.job_type}")
             connection.last_error = None
             await session.commit()
+            if getattr(result, "candidate_ids_touched", None):
+                schedule_warm_candidates_ai_outputs(result.candidate_ids_touched, refresh=True)
         except HHApiError as exc:
             async with session.begin():
                 connection.last_error = str(exc)

@@ -46,6 +46,21 @@ export function normalizeSlotStatus(status?: string | null): SlotUiStatus {
   return 'UNKNOWN'
 }
 
+export function statusLabel(status?: string) {
+  switch (normalizeSlotStatus(status)) {
+    case 'FREE':
+      return 'Свободен'
+    case 'PENDING':
+      return 'Ожидает'
+    case 'BOOKED':
+      return 'Согласован слот'
+    case 'CONFIRMED_BY_CANDIDATE':
+      return 'Подтверждён'
+    default:
+      return status || '—'
+  }
+}
+
 export function slotPurpose(row: SlotApiItem): string {
   return row.purpose || 'interview'
 }
@@ -90,6 +105,28 @@ function formatDateOnlyInZone(value: string, tz: string): string {
     return `${pick('year')}-${pick('month')}-${pick('day')}`
   } catch {
     return ''
+  }
+}
+
+export function getDateTimeParts(iso: string, tz?: string | null) {
+  try {
+    const d = new Date(iso)
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz || 'Europe/Moscow',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+    const parts = fmt.formatToParts(d)
+    const pick = (type: string) => parts.find((p) => p.type === type)?.value || ''
+    const date = `${pick('year')}-${pick('month')}-${pick('day')}`
+    const time = `${pick('hour')}:${pick('minute')}`
+    return { date, time }
+  } catch {
+    return { date: '', time: '' }
   }
 }
 

@@ -29,6 +29,8 @@ from backend.domain.models import (
     MessageTemplate,
     BotMessageLog,
 )
+from backend.domain.candidates.models import User
+from backend.domain.candidates.status import CandidateStatus
 from backend.domain.repositories import add_notification_log, add_outbox_notification
 
 
@@ -307,6 +309,136 @@ async def test_intro_day_confirmation_keeps_details_message_and_sends_ack(monkey
     message.edit_reply_markup.assert_awaited()
     dummy_bot.send_message.assert_awaited()
     assert responses[-1] == ("Подтверждено", False)
+
+    await manager.clear()
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_intro_day_confirmation_before_event_day_keeps_preliminary_status(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    dummy_bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=11))
+    configure(dummy_bot, manager)
+
+    candidate_id = 54322
+    intro_day_start = datetime(2026, 3, 15, 7, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        services,
+        "now_utc",
+        lambda: datetime(2026, 3, 14, 9, 0, tzinfo=timezone.utc),
+    )
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Интро",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example",
+            active=True,
+        )
+        user = User(
+            telegram_id=candidate_id,
+            fio="Интро Кандидат",
+            city="Волгоград",
+            candidate_status=CandidateStatus.INTRO_DAY_SCHEDULED,
+            is_active=True,
+        )
+        session.add_all([recruiter, user])
+        await session.commit()
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            start_utc=intro_day_start,
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=candidate_id,
+            candidate_fio="Интро Кандидат",
+            candidate_tz="Europe/Moscow",
+            purpose="intro_day",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    responses = []
+    message = DummyMessage()
+    callback = DummyCallback("cb-intro-preconfirm", slot_id, message, responses)
+    callback.from_user.id = candidate_id
+
+    await handle_attendance_yes(callback)
+
+    async with async_session() as session:
+        candidate = await session.scalar(select(User).where(User.telegram_id == candidate_id))
+        assert candidate is not None
+        assert candidate.candidate_status == CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY
+
+    await manager.clear()
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_intro_day_confirmation_on_event_day_sets_day_of_status(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    dummy_bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=11))
+    configure(dummy_bot, manager)
+
+    candidate_id = 54323
+    intro_day_start = datetime(2026, 3, 15, 7, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        services,
+        "now_utc",
+        lambda: datetime(2026, 3, 15, 5, 0, tzinfo=timezone.utc),
+    )
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="Интро",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example",
+            active=True,
+        )
+        user = User(
+            telegram_id=candidate_id,
+            fio="Интро Кандидат",
+            city="Волгоград",
+            candidate_status=CandidateStatus.INTRO_DAY_SCHEDULED,
+            is_active=True,
+        )
+        session.add_all([recruiter, user])
+        await session.commit()
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            start_utc=intro_day_start,
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=candidate_id,
+            candidate_fio="Интро Кандидат",
+            candidate_tz="Europe/Moscow",
+            purpose="intro_day",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    responses = []
+    message = DummyMessage()
+    callback = DummyCallback("cb-intro-day-of", slot_id, message, responses)
+    callback.from_user.id = candidate_id
+
+    await handle_attendance_yes(callback)
+
+    async with async_session() as session:
+        candidate = await session.scalar(select(User).where(User.telegram_id == candidate_id))
+        assert candidate is not None
+        assert candidate.candidate_status == CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF
 
     await manager.clear()
     await manager.close()

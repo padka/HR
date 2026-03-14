@@ -5,6 +5,7 @@ import asyncio
 import pytest
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.security import Principal
+from backend.core.ai.candidate_scorecard import build_candidate_scorecard
 from backend.core.ai.context import build_candidate_ai_context
 from backend.core.ai.redaction import redact_text
 from backend.core.db import async_session
@@ -52,6 +53,14 @@ def _run(coro):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(coro)
+
+
+def _csrf(client: TestClient) -> str:
+    resp = client.get("/api/csrf", auth=("admin", "admin"))
+    assert resp.status_code == 200
+    token = resp.json().get("token")
+    assert token
+    return str(token)
 
 
 def test_ai_redaction_masks_phone_email_urls_and_known_names():
@@ -289,6 +298,53 @@ async def test_ai_context_derives_customer_facing_signals_from_experience():
 
 
 @pytest.mark.asyncio
+async def test_ai_context_extracts_field_format_answer_from_test1():
+    async with async_session() as session:
+        user = User(
+            fio="Field Format Candidate",
+            phone=None,
+            telegram_id=555126,
+            city="E2E City",
+            source="bot",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        tr = TestResult(
+            user_id=user.id,
+            raw_score=10,
+            final_score=10.0,
+            rating="TEST1",
+            total_time=20,
+            source="bot",
+        )
+        session.add(tr)
+        await session.commit()
+        await session.refresh(tr)
+
+        session.add(
+            QuestionAnswer(
+                test_result_id=tr.id,
+                question_index=4,
+                question_text="Готовы ли вы к полевому формату работы и выездам по городу?",
+                correct_answer=None,
+                user_answer="Да, без проблем",
+                attempts_count=1,
+                time_spent=1,
+                is_correct=True,
+                overtime=False,
+            )
+        )
+        await session.commit()
+        candidate_id = int(user.id)
+
+    ctx = await build_candidate_ai_context(candidate_id, principal=Principal(type="admin", id=-1))
+    profile = ctx.get("candidate_profile") or {}
+    assert profile.get("field_format_readiness") == "Да, без проблем"
+
+
+@pytest.mark.asyncio
 async def test_ai_context_scoping_blocks_other_recruiter():
     from fastapi import HTTPException
 
@@ -326,6 +382,106 @@ async def test_ai_context_scoping_blocks_other_recruiter():
     with pytest.raises(HTTPException) as exc:
         await build_candidate_ai_context(candidate_id, principal=Principal(type="recruiter", id=r1.id))
     assert exc.value.status_code == 404
+
+
+def test_candidate_scorecard_caps_final_score_on_hard_blocker():
+    state = build_candidate_scorecard(
+        context={
+            "candidate_profile": {
+                "work_experience": "3 года в продажах и переговорах, много встреч с клиентами",
+                "motivation": "Интересен доход, развитие и общение с предпринимателями",
+                "skills": "переговоры, продажи",
+                "expectations": "Хочу зарабатывать и расти",
+                "signals": {
+                    "people_interaction": {"level": "high"},
+                    "communication": {"level": "high"},
+                },
+            },
+            "tests": {"latest": {"TEST1": {"final_score": 3.0}}},
+            "interview_notes": {"fields": {}},
+        },
+        resume_context={
+            "headline": "Менеджер по продажам",
+            "summary": "Работал с клиентами и выездными встречами",
+            "skills": ["CRM", "переговоры"],
+            "employment_items": [{"company": "A", "title": "Sales manager"}],
+            "relevant_experience": True,
+        },
+        llm_scorecard={
+            "metrics": [
+                {"key": "resume_substance", "score": 30, "status": "met", "evidence": "ok"},
+                {"key": "answer_substance", "score": 25, "status": "met", "evidence": "ok"},
+                {"key": "client_communication_inference", "score": 25, "status": "met", "evidence": "ok"},
+                {"key": "interest_for_role", "score": 20, "status": "met", "evidence": "ok"},
+            ]
+        },
+    )
+    assert state.objective_score == 80
+    assert state.semantic_score == 100
+    assert state.final_score == 49
+    assert state.recommendation == "not_recommended"
+    assert any(item["key"] == "test_gate_failed" for item in state.blockers)
+
+
+def test_candidate_scorecard_marks_positive_field_format_answer_as_met():
+    state = build_candidate_scorecard(
+        context={
+            "candidate_profile": {
+                "field_format_readiness": "Да, подходит",
+                "work_experience": "Есть опыт общения с клиентами",
+                "motivation": "Интересен доход и развитие",
+                "signals": {
+                    "people_interaction": {"level": "high"},
+                    "communication": {"level": "high"},
+                },
+            },
+            "tests": {"latest": {"TEST1": {"final_score": 4.7}}},
+            "interview_notes": {"fields": {}},
+        },
+        resume_context={
+            "headline": "Менеджер",
+            "summary": "Работал с клиентами",
+            "skills": ["переговоры"],
+            "employment_items": [],
+            "relevant_experience": True,
+        },
+        llm_scorecard=None,
+    )
+    metric = next(item for item in state.metrics if item["key"] == "field_format_readiness")
+    assert metric["status"] == "met"
+    assert metric["score"] == 20
+    assert not any(item["key"] == "field_format_readiness" for item in state.missing_data)
+    assert not any(item["key"] == "field_format_refusal" for item in state.blockers)
+
+
+def test_candidate_scorecard_marks_conditional_field_format_answer_as_unknown_not_risk():
+    state = build_candidate_scorecard(
+        context={
+            "candidate_profile": {
+                "field_format_readiness": "Готов, если условия устраивают",
+                "work_experience": "Есть опыт общения с клиентами",
+                "motivation": "Интересен доход",
+                "signals": {
+                    "people_interaction": {"level": "high"},
+                    "communication": {"level": "high"},
+                },
+            },
+            "tests": {"latest": {"TEST1": {"final_score": 4.5}}},
+            "interview_notes": {"fields": {}},
+        },
+        resume_context={
+            "headline": "Менеджер",
+            "summary": "Работал с клиентами",
+            "skills": ["переговоры"],
+            "employment_items": [],
+            "relevant_experience": True,
+        },
+        llm_scorecard=None,
+    )
+    metric = next(item for item in state.metrics if item["key"] == "field_format_readiness")
+    assert metric["status"] == "unknown"
+    assert any(item["key"] == "field_format_readiness" for item in state.missing_data)
+    assert not any(item["key"] == "field_format_refusal" for item in state.blockers)
 
 
 def test_ai_summary_cache_reuse_by_input_hash(ai_app):
@@ -367,6 +523,133 @@ def test_ai_summary_cache_reuse_by_input_hash(ai_app):
         assert p2["ok"] is True
         assert p2["cached"] is True
         assert p2["input_hash"] == p1["input_hash"]
+
+
+def test_ai_summary_and_coach_share_canonical_score(ai_app):
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="Score Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=888101,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+
+            tr = TestResult(
+                user_id=user.id,
+                raw_score=7,
+                final_score=4.5,
+                rating="TEST1",
+                total_time=120,
+                source="bot",
+            )
+            session.add(tr)
+            await session.commit()
+            await session.refresh(tr)
+
+            session.add(
+                QuestionAnswer(
+                    test_result_id=tr.id,
+                    question_index=7,
+                    question_text="Опишите ваш опыт",
+                    correct_answer=None,
+                    user_answer="2 года работал в продажах и много общался с клиентами",
+                    attempts_count=1,
+                    time_spent=30,
+                    is_correct=True,
+                    overtime=False,
+                )
+            )
+            await session.commit()
+            return int(user.id)
+
+    candidate_id = _run(_seed())
+
+    with TestClient(ai_app) as client:
+        summary_resp = client.get(f"/api/ai/candidates/{candidate_id}/summary", auth=("admin", "admin"))
+        coach_resp = client.get(f"/api/ai/candidates/{candidate_id}/coach", auth=("admin", "admin"))
+
+    assert summary_resp.status_code == 200
+    assert coach_resp.status_code == 200
+    summary_payload = summary_resp.json()["summary"]
+    coach_payload = coach_resp.json()["coach"]
+    scorecard = summary_payload["scorecard"]
+    assert scorecard["final_score"] == summary_payload["fit"]["score"]
+    assert summary_payload["fit"]["level"] == coach_payload["relevance_level"]
+    assert coach_payload["relevance_score"] == scorecard["final_score"]
+    assert len(scorecard["metrics"]) >= 5
+
+
+def test_ai_resume_upsert_changes_summary_input_hash(ai_app):
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="Resume Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=888102,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return int(user.id)
+
+    candidate_id = _run(_seed())
+
+    with TestClient(ai_app) as client:
+        initial = client.get(f"/api/ai/candidates/{candidate_id}/summary", auth=("admin", "admin"))
+        assert initial.status_code == 200
+        initial_hash = initial.json()["input_hash"]
+
+        upsert = client.put(
+            f"/api/ai/candidates/{candidate_id}/hh-resume",
+            auth=("admin", "admin"),
+            headers={"x-csrf-token": _csrf(client)},
+            json={
+                "format": "raw_text",
+                "resume_text": "3 года в продажах, переговоры с клиентами, выездные встречи, CRM",
+            },
+        )
+        assert upsert.status_code == 200
+
+        updated = client.get(f"/api/ai/candidates/{candidate_id}/summary", auth=("admin", "admin"))
+        assert updated.status_code == 200
+        assert updated.json()["input_hash"] != initial_hash
+
+
+def test_ai_summary_uses_local_fallback_when_provider_not_needed(ai_app, monkeypatch):
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="Fallback Summary Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=888103,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return int(user.id)
+
+    async def _fail_generate_json(*_args, **_kwargs):
+        raise AssertionError("provider must not be called on initial summary load")
+
+    monkeypatch.setattr("backend.core.ai.providers.fake.FakeProvider.generate_json", _fail_generate_json)
+
+    candidate_id = _run(_seed())
+    with TestClient(ai_app) as client:
+        response = client.get(f"/api/ai/candidates/{candidate_id}/summary", auth=("admin", "admin"))
+
+    assert response.status_code == 200
+    payload = response.json()["summary"]
+    assert payload["scorecard"]["final_score"] is not None
+    assert payload["fit"]["score"] == payload["scorecard"]["final_score"]
 
 
 def test_ai_disabled_returns_ai_disabled_error(monkeypatch):

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from backend.domain.repositories import confirm_slot_by_candidate
+from backend.domain.candidates.journey import build_candidate_journey
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import Slot, SlotStatus, Recruiter
@@ -50,3 +51,27 @@ async def test_intro_day_confirmation_updates_status():
         updated = await session.scalar(select(User).where(User.telegram_id == candidate_id))
         assert updated is not None
         assert updated.candidate_status == CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY
+
+
+def test_build_candidate_journey_downgrades_day_of_status_for_future_intro_day_slot():
+    candidate = User(
+        telegram_id=555002,
+        fio="Future Intro Candidate",
+        city="Тест",
+        candidate_status=CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF,
+        is_active=True,
+    )
+    upcoming_slot = Slot(
+        recruiter_id=1,
+        purpose="intro_day",
+        tz_name="Europe/Moscow",
+        candidate_tz="Europe/Moscow",
+        start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+        duration_min=60,
+        status=SlotStatus.CONFIRMED_BY_CANDIDATE,
+    )
+
+    journey = build_candidate_journey(candidate, upcoming_slot=upcoming_slot)
+
+    assert journey["state"] == "intro_preconfirmed"
+    assert journey["state_label"] == "Предварительно подтвердился"

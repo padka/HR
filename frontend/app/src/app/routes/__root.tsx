@@ -542,7 +542,7 @@ export function RootLayout() {
   const isUnauthed = authError?.status === 401
   const principalId = profileQuery.data?.principal.id
 
-  const [chatToast, setChatToast] = useState<{ title: string; preview: string } | null>(null)
+  const [chatToast, setChatToast] = useState<{ title: string; preview: string; unreadCount: number } | null>(null)
   const [chatUnreadCount, setChatUnreadCount] = useState(0)
   const [isMoreSheetOpen, setIsMoreSheetOpen] = useState(false)
   const [mobileTransition, setMobileTransition] = useState<'push' | 'pop' | 'fade'>('fade')
@@ -630,6 +630,14 @@ export function RootLayout() {
   useEffect(() => {
     document.documentElement.dataset.motion = motionMode
   }, [motionMode])
+
+  useEffect(() => {
+    const pageTitle = hideNav ? 'RecruitSmart' : `${getMobileTitle(location.pathname)} • RecruitSmart`
+    document.title =
+      !hideNav && chatUnreadCount > 0
+        ? `(${chatUnreadCount > 99 ? '99+' : chatUnreadCount}) ${pageTitle}`
+        : pageTitle
+  }, [chatUnreadCount, hideNav, location.pathname])
 
   useEffect(() => {
     if (!isMobile) {
@@ -754,6 +762,29 @@ export function RootLayout() {
       window.removeEventListener('touchcancel', onEnd)
     }
   }, [isMobile, location.pathname])
+
+  useEffect(() => {
+    if (hideNav || isUnauthed) return
+
+    const AudioCtor = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioCtor) return
+
+    const primeAudio = () => {
+      try {
+        if (!audioCtxRef.current) audioCtxRef.current = new AudioCtor()
+        if (audioCtxRef.current.state === 'suspended') void audioCtxRef.current.resume()
+      } catch {
+        // ignore autoplay / device restrictions
+      }
+    }
+
+    window.addEventListener('pointerdown', primeAudio, { passive: true })
+    window.addEventListener('keydown', primeAudio)
+    return () => {
+      window.removeEventListener('pointerdown', primeAudio)
+      window.removeEventListener('keydown', primeAudio)
+    }
+  }, [hideNav, isUnauthed])
 
   const showAmbientBackground =
     !isMobile && AMBIENT_BACKGROUND_ROUTES.includes(normalizePathname(location.pathname))
@@ -949,33 +980,60 @@ export function RootLayout() {
     let since = new Date().toISOString()
     let controller: AbortController | null = null
 
-    const toast = (title: string, preview: string) => {
-      setChatToast({ title, preview })
+    const toast = (title: string, preview: string, unreadCount: number) => {
+      setChatToast({ title, preview, unreadCount })
       if (chatToastTimerRef.current != null) window.clearTimeout(chatToastTimerRef.current)
-      chatToastTimerRef.current = window.setTimeout(() => setChatToast(null), 4200)
+      chatToastTimerRef.current = window.setTimeout(() => setChatToast(null), 5600)
     }
 
-    const playBeep = () => {
+    const playAlert = () => {
       try {
-        const AudioCtor = window.AudioContext || (window as any).webkitAudioContext
+        const AudioCtor = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
         if (!AudioCtor) return
         if (!audioCtxRef.current) audioCtxRef.current = new AudioCtor()
         const ctx = audioCtxRef.current
         if (ctx.state === 'suspended') void ctx.resume()
 
-        const osc = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.type = 'sine'
-        osc.frequency.value = 880
-        gain.gain.setValueAtTime(0.0001, ctx.currentTime)
-        gain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.01)
-        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18)
-        osc.connect(gain)
-        gain.connect(ctx.destination)
-        osc.start()
-        osc.stop(ctx.currentTime + 0.2)
+        const master = ctx.createGain()
+        master.gain.setValueAtTime(0.0001, ctx.currentTime)
+        master.gain.linearRampToValueAtTime(0.16, ctx.currentTime + 0.02)
+        master.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.86)
+        master.connect(ctx.destination)
+
+        const scheduleTone = (
+          frequency: number,
+          startOffset: number,
+          duration: number,
+          type: OscillatorType,
+          volume: number,
+        ) => {
+          const osc = ctx.createOscillator()
+          const gain = ctx.createGain()
+          const startAt = ctx.currentTime + startOffset
+          osc.type = type
+          osc.frequency.setValueAtTime(frequency, startAt)
+          gain.gain.setValueAtTime(0.0001, startAt)
+          gain.gain.linearRampToValueAtTime(volume, startAt + 0.025)
+          gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration)
+          osc.connect(gain)
+          gain.connect(master)
+          osc.start(startAt)
+          osc.stop(startAt + duration + 0.03)
+        }
+
+        scheduleTone(740, 0, 0.18, 'triangle', 0.22)
+        scheduleTone(1110, 0.02, 0.16, 'sine', 0.12)
+        scheduleTone(988, 0.24, 0.22, 'triangle', 0.2)
+        scheduleTone(1480, 0.28, 0.18, 'sine', 0.1)
+        scheduleTone(1244, 0.52, 0.28, 'triangle', 0.18)
       } catch {
         // ignore autoplay / device restrictions
+      }
+
+      try {
+        navigator.vibrate?.([120, 70, 180])
+      } catch {
+        // ignore unsupported devices
       }
     }
 
@@ -1019,9 +1077,10 @@ export function RootLayout() {
 
           if (payload.latest_event_at) since = payload.latest_event_at
 
-          if (payload.updated && payload.threads?.length) {
+          if (payload.updated) {
             queryClient.setQueryData(['candidate-chat-threads'], payload)
-            setChatUnreadCount(unreadTotal(payload.threads))
+            const nextUnreadCount = unreadTotal(payload.threads)
+            setChatUnreadCount(nextUnreadCount)
 
             const prevSeen = chatLastSeenRef.current || {}
             const nextSeen: Record<number, string> = { ...prevSeen }
@@ -1048,8 +1107,8 @@ export function RootLayout() {
             if (newIncoming.length) {
               newIncoming.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
               const top = newIncoming[0].thread
-              toast(top.title || 'Чат', previewFor(top))
-              playBeep()
+              toast(top.title || 'Чат', previewFor(top), nextUnreadCount)
+              playAlert()
 
               // Optional OS notification if already granted (no permission prompts).
               if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -1181,19 +1240,29 @@ export function RootLayout() {
           <div className="app-header-left" />
 
           <nav className="vision-nav-pill ui-surface ui-surface--raised" aria-label="Основная навигация">
-            {desktopNavItems.map((item) => (
-              <Link
-                key={item.to}
-                to={item.to}
-                className="vision-nav__item"
-                activeProps={{ className: 'vision-nav__item is-active' }}
-                data-tone={item.tone}
-                title={item.label}
-              >
-                <span className="vision-nav__icon">{item.icon}</span>
-                <span className="vision-nav__label">{item.label}</span>
-              </Link>
-            ))}
+            {desktopNavItems.map((item) => {
+              const isChatTab = item.to === '/app/messenger'
+              const hasUnread = isChatTab && chatUnreadCount > 0
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={`vision-nav__item${hasUnread ? ' has-alert' : ''}`}
+                  activeProps={{ className: `vision-nav__item is-active${hasUnread ? ' has-alert' : ''}` }}
+                  data-tone={item.tone}
+                  title={item.label}
+                >
+                  <span className="vision-nav__icon">{item.icon}</span>
+                  <span className="vision-nav__label">{item.label}</span>
+                  {hasUnread && <span className="vision-nav__alert-dot" aria-hidden="true" />}
+                  {hasUnread && (
+                    <span className="vision-nav__badge" aria-label={`${chatUnreadCount} непрочитанных сообщений`}>
+                      {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+                    </span>
+                  )}
+                </Link>
+              )
+            })}
           </nav>
 
           <div className="app-header-right">
@@ -1214,18 +1283,22 @@ export function RootLayout() {
             {mobilePrimaryTabs.map((item) => {
               const active = isPathActive(location.pathname, item.to)
               const isChatTab = item.to === '/app/messenger'
+              const hasUnread = isChatTab && chatUnreadCount > 0
               return (
                 <Link
                   key={item.to}
                   to={item.to}
-                  className={`mobile-tab-item ${active ? 'is-active' : ''}`}
+                  className={`mobile-tab-item ${active ? 'is-active' : ''}${hasUnread ? ' has-alert' : ''}`}
                   data-tone={item.tone}
                   title={item.label}
                 >
                   <span className="mobile-tab-item__icon">{item.icon}</span>
                   <span className="mobile-tab-item__label">{item.label}</span>
                   {isChatTab && chatUnreadCount > 0 && (
-                    <span className="mobile-tab-item__badge">{chatUnreadCount > 99 ? '99+' : chatUnreadCount}</span>
+                    <>
+                      <span className="mobile-tab-item__signal" aria-hidden="true" />
+                      <span className="mobile-tab-item__badge is-alert">{chatUnreadCount > 99 ? '99+' : chatUnreadCount}</span>
+                    </>
                   )}
                   <span className="mobile-tab-item__dot" />
                 </Link>
@@ -1276,9 +1349,17 @@ export function RootLayout() {
         </>
       )}
       {chatToast && (
-        <div className="toast chat-toast ui-surface ui-surface--floating" data-tone="success" role="status" aria-live="polite" aria-atomic="true">
-          <strong className="chat-toast__title">{chatToast.title}</strong>
-          <span className="chat-toast__preview">{chatToast.preview}</span>
+        <div className="toast chat-toast ui-surface ui-surface--floating" data-tone="warning" role="alert" aria-live="assertive" aria-atomic="true">
+          <span className="chat-toast__eyebrow">Новое сообщение</span>
+          <div className="chat-toast__header">
+            <span className="chat-toast__icon" aria-hidden="true">{ICONS.messenger}</span>
+            <div className="chat-toast__copy">
+              <strong className="chat-toast__title">{chatToast.title}</strong>
+              <span className="chat-toast__preview">{chatToast.preview}</span>
+            </div>
+            <span className="chat-toast__count">{chatToast.unreadCount > 99 ? '99+' : chatToast.unreadCount}</span>
+          </div>
+          <span className="chat-toast__hint">Откройте вкладку «Чаты», чтобы ответить кандидату</span>
         </div>
       )}
     </div>

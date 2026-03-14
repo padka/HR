@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from backend.apps.admin_ui.app import create_app
 from backend.core.ai.llm_script_generator import (
+    SMART_SERVICE_BLOCK_ORDER,
     build_base_risk_flags,
     generate_interview_script,
     merge_with_llm_flags,
@@ -162,6 +163,9 @@ async def test_generate_interview_script_retries_invalid_payload_then_succeeds()
                 return {"bad": "payload"}, Usage(tokens_in=1, tokens_out=1)
             return (
                 {
+                    "stage_label": "Первичный скрининг",
+                    "call_goal": "Понять базовую релевантность кандидата и перейти к следующему этапу.",
+                    "conversation_script": "- Вступление\n- Уточнить опыт\n- Закрыть на следующий шаг",
                     "risk_flags": [],
                     "highlights": ["A"],
                     "checks": ["B"],
@@ -199,9 +203,11 @@ async def test_generate_interview_script_retries_invalid_payload_then_succeeds()
 
     provider = FlakyProvider()
     result = await generate_interview_script(
+        candidate_state={"status": "test1_completed"},
         candidate_profile={"age_years": 17},
         hh_resume={"relevant_experience": False, "source_quality_ok": False},
         office_context={"min_age": 18, "address": None, "landmarks": None, "must_have_experience": True},
+        scorecard={"recommendation": "clarify_before_od"},
         rag_context=[],
         provider=provider,
         model="gpt-5-mini",
@@ -212,6 +218,113 @@ async def test_generate_interview_script_retries_invalid_payload_then_succeeds()
     assert provider.calls == 2
     risk_codes = {flag["code"] for flag in result.payload["risk_flags"]}
     assert "AGE_BELOW_MIN" in risk_codes
+    assert result.payload["conversation_script"]
+    assert not result.payload["conversation_script"].lstrip().startswith("-")
+    assert [block["id"] for block in result.payload["script_blocks"]] == SMART_SERVICE_BLOCK_ORDER
+
+
+@pytest.mark.asyncio
+async def test_generate_interview_script_suppresses_od_cta_for_not_recommended():
+    class Provider:
+        name = "fake"
+
+        async def generate_json(
+            self,
+            *,
+            model: str,
+            system_prompt: str,
+            user_prompt: str,
+            timeout_seconds: int,
+            max_tokens: int,
+        ):
+            return (
+                {
+                    "stage_label": "Финальная сверка",
+                    "call_goal": "Понять, можно ли двигаться дальше.",
+                    "conversation_script": "1. Поблагодарить\n2. Предложить ознакомительный день",
+                    "risk_flags": [],
+                    "highlights": ["A"],
+                    "checks": ["B"],
+                    "objections": [{"topic": "t", "candidate_says": "x", "recruiter_answer": "y"}],
+                    "script_blocks": [],
+                    "cta_templates": [{"type": "slot_confirm", "text": "Подтверждаю слот на ознакомительный день."}],
+                },
+                Usage(tokens_in=5, tokens_out=5),
+            )
+
+    result = await generate_interview_script(
+        candidate_state={"status": "not_hired"},
+        candidate_profile={},
+        hh_resume={},
+        office_context={},
+        scorecard={"recommendation": "not_recommended"},
+        rag_context=[],
+        provider=Provider(),
+        model="gpt-5-mini",
+        timeout_seconds=10,
+        max_tokens=900,
+        retries=0,
+    )
+    closing_block = next(block for block in result.payload["script_blocks"] if block["id"] == "od_closing_and_confirmation")
+    assert "ознаком" not in closing_block["recruiter_text"].lower()
+    assert not any("ознаком" in item["text"].lower() for item in result.payload["cta_templates"])
+    assert "ознаком" not in result.payload["conversation_script"].lower()
+
+
+@pytest.mark.asyncio
+async def test_generate_interview_script_uses_stage_aware_confirmation_flow():
+    class Provider:
+        name = "fake"
+
+        async def generate_json(
+            self,
+            *,
+            model: str,
+            system_prompt: str,
+            user_prompt: str,
+            timeout_seconds: int,
+            max_tokens: int,
+        ):
+            return (
+                {
+                    "stage_label": "Подтверждение собеседования",
+                    "call_goal": "Подтвердить участие во встрече.",
+                    "conversation_script": "",
+                    "risk_flags": [],
+                    "highlights": ["A"],
+                    "checks": ["B"],
+                    "objections": [],
+                    "script_blocks": [
+                        {
+                            "id": "greeting_and_frame",
+                            "title": "one",
+                            "goal": "one",
+                            "recruiter_text": "Здравствуйте. Проверяю, что время интервью вам подходит.",
+                            "candidate_questions": ["Сможете быть на связи в назначённое время?"],
+                            "if_answers": [],
+                        }
+                    ],
+                    "cta_templates": [{"type": "confirm", "text": "Подтверждаю встречу и отправляю детали."}],
+                },
+                Usage(tokens_in=5, tokens_out=5),
+            )
+
+    result = await generate_interview_script(
+        candidate_state={"status": "interview_confirmed", "upcoming_slot_purpose": "interview"},
+        candidate_profile={},
+        hh_resume={},
+        office_context={"city": "Москва"},
+        scorecard={"recommendation": "clarify_before_od"},
+        rag_context=[],
+        provider=Provider(),
+        model="gpt-5-mini",
+        timeout_seconds=10,
+        max_tokens=900,
+        retries=0,
+    )
+    assert result.payload["stage_label"] == "Подтверждение собеседования"
+    assert "назначённое время" in result.payload["conversation_script"].lower()
+    assert "ознакомительный день" not in result.payload["conversation_script"].lower()
 
 
 def test_interview_script_generate_cache_and_refresh(ai_interview_app):
@@ -237,9 +350,14 @@ def test_interview_script_generate_cache_and_refresh(ai_interview_app):
         p1 = first.json()
         assert p1["ok"] is True
         assert p1["cached"] is False
-        assert p1["prompt_version"] == "interview_script_v1"
+        assert p1["prompt_version"] == "interview_script_v2"
         assert isinstance(p1.get("script"), dict)
+        assert p1["script"]["conversation_script"]
         assert "script_blocks" in p1["script"]
+        assert p1["script"]["briefing"]["goal"]
+        assert p1["script"]["opening"]["greeting"]
+        assert p1["script"]["questions"]
+        assert p1["script"]["closing_checklist"]
 
         second = client.get(f"/api/ai/candidates/{candidate_id}/interview-script", auth=("admin", "admin"))
         assert second.status_code == 200
@@ -307,3 +425,34 @@ def test_interview_script_hh_resume_upsert(ai_interview_app):
         payload = json_resp.json()
         assert payload["ok"] is True
         assert payload["normalized_resume"]["source_format"] == "json"
+
+
+def test_interview_script_route_uses_local_fallback_on_initial_load(ai_interview_app, monkeypatch):
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="Fallback Script Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=913099,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return int(user.id)
+
+    async def _fail_generate_json(*_args, **_kwargs):
+        raise AssertionError("provider must not be called on initial script load")
+
+    monkeypatch.setattr("backend.core.ai.providers.fake.FakeProvider.generate_json", _fail_generate_json)
+    candidate_id = _run(_seed())
+
+    with TestClient(ai_interview_app) as client:
+        response = client.get(f"/api/ai/candidates/{candidate_id}/interview-script", auth=("admin", "admin"))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"] == "local-fallback"
+    assert payload["script"]["conversation_script"]
+    assert [block["id"] for block in payload["script"]["script_blocks"]] == SMART_SERVICE_BLOCK_ORDER

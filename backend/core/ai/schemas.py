@@ -22,6 +22,7 @@ Severity = Literal["low", "medium", "high"]
 FitLevel = Literal["high", "medium", "low", "unknown"]
 Confidence = Literal["high", "medium", "low"]
 CriterionStatus = Literal["met", "not_met", "unknown"]
+ScorecardRecommendation = Literal["od_recommended", "clarify_before_od", "not_recommended"]
 
 
 class RiskItem(BaseModel):
@@ -68,6 +69,31 @@ class CriterionChecklistItem(BaseModel):
     evidence: str = ""
 
 
+class ScorecardMetricItem(BaseModel):
+    key: str = ""
+    label: str = ""
+    score: int | None = Field(default=None, ge=0, le=100)
+    weight: int | None = Field(default=None, ge=0, le=100)
+    status: CriterionStatus = "unknown"
+    evidence: str = ""
+
+
+class ScorecardFlagItem(BaseModel):
+    key: str = ""
+    label: str = ""
+    evidence: str = ""
+
+
+class CandidateScorecard(BaseModel):
+    final_score: int | None = Field(default=None, ge=0, le=100)
+    objective_score: int | None = Field(default=None, ge=0, le=100)
+    semantic_score: int | None = Field(default=None, ge=0, le=100)
+    recommendation: ScorecardRecommendation = "clarify_before_od"
+    metrics: list[ScorecardMetricItem] = Field(default_factory=list)
+    blockers: list[ScorecardFlagItem] = Field(default_factory=list)
+    missing_data: list[ScorecardFlagItem] = Field(default_factory=list)
+
+
 VacancyFitAssessment = Literal["positive", "negative", "neutral", "unknown"]
 CriteriaSource = Literal["city_criteria", "kb_regulations", "both", "none"]
 
@@ -107,6 +133,7 @@ class CandidateSummaryV1(BaseModel):
     risks: list[RiskItem] = Field(default_factory=list)
     next_actions: list[NextActionItem] = Field(default_factory=list)
     notes: str | None = None
+    scorecard: CandidateScorecard | None = None
 
 
 class DraftItem(BaseModel):
@@ -234,15 +261,78 @@ class InterviewScriptCTA(BaseModel):
     text: str = Field(min_length=1, max_length=500)
 
 
+class InterviewScriptBriefing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    goal: str = Field(default="", max_length=240)
+    focus_areas: list[str] = Field(default_factory=list, max_length=6)
+    key_flags: list[str] = Field(default_factory=list, max_length=6)
+
+
+class InterviewScriptOpening(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    greeting: str = Field(default="", max_length=800)
+    icebreakers: list[str] = Field(default_factory=list, max_length=6)
+
+
+InterviewScriptQuestionType = Literal["personalized", "standard"]
+
+
+class InterviewScriptQuestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=64)
+    text: str = Field(min_length=1, max_length=500)
+    type: InterviewScriptQuestionType = "standard"
+    source: str | None = Field(default=None, max_length=80)
+    why: str = Field(min_length=1, max_length=500)
+    good_answer: str = Field(min_length=1, max_length=500)
+    red_flags: str = Field(min_length=1, max_length=500)
+    estimated_minutes: int = Field(default=3, ge=1, le=15)
+
+
+InterviewScriptOverallRecommendation = Literal["recommend", "doubt", "not_recommend"]
+
+
+class InterviewScriptScorecardItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: str = Field(min_length=1, max_length=64)
+    rating: int | None = Field(default=None, ge=1, le=5)
+    skipped: bool = False
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class InterviewScriptScorecardPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    completed_questions: int = Field(default=0, ge=0, le=30)
+    total_questions: int = Field(default=0, ge=0, le=30)
+    average_rating: float | None = Field(default=None, ge=1, le=5)
+    overall_recommendation: InterviewScriptOverallRecommendation = "doubt"
+    final_comment: str | None = Field(default=None, max_length=5000)
+    timer_elapsed_sec: int = Field(default=0, ge=0, le=86400)
+    items: list[InterviewScriptScorecardItem] = Field(default_factory=list, max_length=24)
+
+
 class InterviewScriptPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    stage_label: str = Field(default="", max_length=120)
+    call_goal: str = Field(default="", max_length=240)
+    conversation_script: str = Field(min_length=1, max_length=12000)
     risk_flags: list[InterviewScriptRiskFlag] = Field(default_factory=list, max_length=20)
     highlights: list[str] = Field(default_factory=list, max_length=12)
     checks: list[str] = Field(default_factory=list, max_length=20)
     objections: list[InterviewScriptObjection] = Field(default_factory=list, max_length=12)
     script_blocks: list[InterviewScriptBlock] = Field(min_length=3, max_length=12)
     cta_templates: list[InterviewScriptCTA] = Field(default_factory=list, max_length=10)
+    briefing: InterviewScriptBriefing | None = None
+    opening: InterviewScriptOpening | None = None
+    questions: list[InterviewScriptQuestion] = Field(default_factory=list, max_length=12)
+    closing_checklist: list[str] = Field(default_factory=list, max_length=12)
+    closing_phrase: str = Field(default="", max_length=800)
 
 
 InterviewScriptOutcome = Literal["od_assigned", "showed_up", "no_show", "decline", "unknown"]
@@ -257,4 +347,5 @@ class InterviewScriptFeedbackPayload(BaseModel):
     final_script: InterviewScriptPayload | None = None
     outcome: InterviewScriptOutcome = "unknown"
     outcome_reason: str | None = Field(default=None, max_length=500)
+    scorecard: InterviewScriptScorecardPayload | None = None
     idempotency_key: str = Field(min_length=8, max_length=64)

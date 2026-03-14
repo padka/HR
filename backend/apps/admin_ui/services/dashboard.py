@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 import math
 from typing import Dict, List, Optional, Tuple
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.admin_ui.utils import fmt_local, safe_zone
+from backend.core.ai.candidate_scorecard import fit_level_from_score
 from backend.core.db import async_session
 from backend.domain.models import (
     City,
@@ -52,6 +54,7 @@ from backend.apps.admin_ui.services.reschedule_intents import (
     get_bot_state_reschedule_intent,
     get_reschedule_intent_map,
 )
+from backend.core.ai.service import build_candidate_live_score_snapshot
 
 __all__ = [
     "dashboard_counts",
@@ -386,6 +389,7 @@ async def get_waiting_candidates(
                         AIOutput.scope_type == "candidate",
                         AIOutput.kind == "candidate_summary_v1",
                         AIOutput.scope_id.in_(user_ids),
+                        AIOutput.expires_at > datetime.now(timezone.utc),
                     )
                 ).subquery()
                 ai_rows = await session.execute(
@@ -395,19 +399,29 @@ async def get_waiting_candidates(
                 )
                 for candidate_id, payload_json, created_at in ai_rows:
                     candidate_id = int(candidate_id)
+                    scorecard = payload_json.get("scorecard") if isinstance(payload_json, dict) else None
                     fit = payload_json.get("fit") if isinstance(payload_json, dict) else None
-                    if not isinstance(fit, dict):
-                        ai_fit_map[candidate_id] = {
-                            "score": None,
-                            "level": None,
-                            "updated_at": created_at.isoformat() if created_at else None,
-                        }
-                        continue
-                    raw_score = fit.get("score")
+                    recommendation = None
+                    risk_hint = None
+                    if isinstance(scorecard, dict):
+                        raw_recommendation = scorecard.get("recommendation")
+                        if isinstance(raw_recommendation, str):
+                            recommendation = raw_recommendation.strip().lower() or None
+                        blockers = scorecard.get("blockers") or []
+                        missing_data = scorecard.get("missing_data") or []
+                        source_items = blockers if blockers else missing_data
+                        if source_items and isinstance(source_items[0], dict):
+                            risk_hint = str(
+                                source_items[0].get("label")
+                                or source_items[0].get("evidence")
+                                or ""
+                            ).strip() or None
+                    fit = fit if isinstance(fit, dict) else {}
+                    raw_score = scorecard.get("final_score") if isinstance(scorecard, dict) else fit.get("score")
                     score: Optional[int] = None
                     if isinstance(raw_score, (int, float)):
                         score = max(0, min(100, int(raw_score)))
-                    raw_level = fit.get("level")
+                    raw_level = fit_level_from_score(score) if score is not None else fit.get("level")
                     level = raw_level.lower().strip() if isinstance(raw_level, str) else None
                     if level not in {"high", "medium", "low", "unknown"}:
                         level = None
@@ -415,6 +429,8 @@ async def get_waiting_candidates(
                         "score": score,
                         "level": level,
                         "updated_at": created_at.isoformat() if created_at else None,
+                        "recommendation": recommendation,
+                        "risk_hint": risk_hint,
                     }
 
             if candidate_ids:
@@ -432,6 +448,30 @@ async def get_waiting_candidates(
 
         now = datetime.now(timezone.utc)
         tz_cache: Dict[str, str] = {}
+
+        missing_ai_candidate_ids = [
+            int(row.id)
+            for row in users
+            if int(row.id) not in ai_fit_map
+        ]
+        if missing_ai_candidate_ids:
+            live_snapshots = await asyncio.gather(
+                *[
+                    build_candidate_live_score_snapshot(int(candidate_id), principal=principal)
+                    for candidate_id in missing_ai_candidate_ids
+                ],
+                return_exceptions=True,
+            )
+            for candidate_id, snapshot in zip(missing_ai_candidate_ids, live_snapshots, strict=False):
+                if isinstance(snapshot, Exception):
+                    continue
+                ai_fit_map[int(candidate_id)] = {
+                    "score": snapshot.get("score"),
+                    "level": snapshot.get("level"),
+                    "updated_at": None,
+                    "recommendation": snapshot.get("recommendation"),
+                    "risk_hint": snapshot.get("risk_hint"),
+                }
 
         async def _resolve_city(city_label: Optional[str]) -> tuple[str, Optional[int]]:
             key = (city_label or "").strip().lower()
@@ -563,6 +603,8 @@ async def get_waiting_candidates(
                     "ai_relevance_score": ai_fit_map.get(int(user_id), {}).get("score"),
                     "ai_relevance_level": ai_fit_map.get(int(user_id), {}).get("level"),
                     "ai_relevance_updated_at": ai_fit_map.get(int(user_id), {}).get("updated_at"),
+                    "ai_recommendation": ai_fit_map.get(int(user_id), {}).get("recommendation"),
+                    "ai_risk_hint": ai_fit_map.get(int(user_id), {}).get("risk_hint"),
                     "responsible_recruiter_id": user_responsible_recruiter_id,
                     "responsible_recruiter_name": recruiter_map.get(user_responsible_recruiter_id) if user_responsible_recruiter_id else None,
                     "schedule_url": f"/candidates/{int(user_id)}/schedule-slot",

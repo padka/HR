@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { formatTimeInTz, isValidTimezone } from '@/shared/utils/timezone'
 
 type Recruiter = { id: number; name: string; tz?: string | null }
 type TimezoneOption = { value: string; label: string; region?: string; offset?: string }
@@ -28,30 +29,6 @@ const CITY_TZ_MAP: Record<string, string> = {
   'минск': 'Europe/Minsk',
   'алматы': 'Asia/Almaty',
   'алма-ата': 'Asia/Almaty',
-}
-
-function isValidTimezone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat('ru-RU', { timeZone: tz }).format()
-    return true
-  } catch {
-    return false
-  }
-}
-
-function formatTimeInTz(tz: string): string {
-  try {
-    return new Intl.DateTimeFormat('ru-RU', {
-      timeZone: tz,
-      hour: '2-digit',
-      minute: '2-digit',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    }).format(new Date())
-  } catch {
-    return ''
-  }
 }
 
 export function CityNewPage() {

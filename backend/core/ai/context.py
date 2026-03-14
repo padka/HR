@@ -304,6 +304,15 @@ async def build_candidate_ai_context(
                     if extracted.get("expectations") is None:
                         if "ожида" in q_lc:
                             extracted["expectations"] = u_for_extract[:800] if u_for_extract else None
+                    if extracted.get("field_format_readiness") is None:
+                        if (
+                            "полев" in q_lc
+                            or "выезд" in q_lc
+                            or "разъезд" in q_lc
+                            or "в движении" in q_lc
+                            or ("формат" in q_lc and ("работ" in q_lc or "дня" in q_lc))
+                        ):
+                            extracted["field_format_readiness"] = u_for_extract[:200] if u_for_extract else None
 
                 by_result.setdefault(int(ans.test_result_id), []).append(
                     {
@@ -509,6 +518,7 @@ async def build_candidate_ai_context(
     motivation = extracted_map.get("motivation") if isinstance(extracted_map, dict) else None
     skills = extracted_map.get("skills") if isinstance(extracted_map, dict) else None
     expectations = extracted_map.get("expectations") if isinstance(extracted_map, dict) else None
+    field_format_readiness = extracted_map.get("field_format_readiness") if isinstance(extracted_map, dict) else None
     # Fallback to recruiter interview notes if test answers are missing.
     if not desired_income and isinstance(interview.get("fields"), dict):
         v = interview["fields"].get("money_expectations")
@@ -571,6 +581,7 @@ async def build_candidate_ai_context(
             "motivation": motivation,
             "skills": skills,
             "expectations": expectations,
+            "field_format_readiness": field_format_readiness,
             "signals": _derive_candidate_signals(
                 {
                     "work_experience": work_experience,

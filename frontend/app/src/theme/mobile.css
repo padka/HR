@@ -250,6 +250,32 @@
     font-weight: 700;
   }
 
+  .mobile-tab-item.has-alert {
+    box-shadow:
+      0 10px 26px rgba(255, 91, 96, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  .mobile-tab-item__signal {
+    position: absolute;
+    top: 4px;
+    left: 10px;
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: radial-gradient(circle at 35% 35%, #fff0d5 0%, #ff8758 50%, #d93c36 100%);
+    box-shadow:
+      0 0 0 6px rgba(255, 110, 72, 0.12),
+      0 0 18px rgba(255, 122, 91, 0.4);
+    animation: chat-alert-pulse 1.4s ease-out infinite;
+  }
+
+  .mobile-tab-item__badge.is-alert {
+    box-shadow:
+      0 10px 22px rgba(255, 91, 96, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  }
+
   .mobile-sheet {
     position: fixed;
     inset: 0;
@@ -396,9 +422,48 @@
     display: none;
   }
 
+  .messenger-details-drawer {
+    width: 100%;
+    height: min(92vh, 100%);
+    margin-top: auto;
+    border-radius: 24px 24px 0 0;
+  }
+
+  .messenger-details-drawer__body {
+    padding: 12px;
+  }
+
+  .messenger-detail-hero__top {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .messenger-detail-hero__score {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .messenger-detail-hero__stats,
+  .messenger-analytics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .messenger-journey__step {
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .messenger-journey__content {
+    padding: 12px;
+  }
+
+  .messenger-journey__head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
   .messenger-composer {
-    position: sticky;
-    bottom: 0;
     background: linear-gradient(180deg, rgba(11, 16, 28, 0.4), rgba(11, 16, 28, 0.95));
     padding-bottom: calc(var(--mobile-safe-bottom) + 6px);
   }
@@ -414,6 +479,11 @@
     z-index: calc(var(--z-sticky) + 5);
   }
 
+  .candidate-detail-page .cd-header-score {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .candidate-detail-page .cd-mobile-actions {
     position: fixed;
     left: 10px;
@@ -421,7 +491,7 @@
     bottom: calc(var(--mobile-tab-h) + var(--mobile-safe-bottom) + 8px);
     z-index: var(--z-fab);
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
   }
 
@@ -430,7 +500,7 @@
     top: calc(var(--mobile-header-h) + 8px);
     z-index: calc(var(--z-sticky) + 6);
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     margin-bottom: 8px;
   }
@@ -495,6 +565,10 @@
     height: 100vh;
     border-radius: 0;
     padding: 12px;
+  }
+
+  .candidate-insights-drawer__summary-grid {
+    grid-template-columns: 1fr;
   }
 
   .candidate-chat-drawer__body {
@@ -927,6 +1001,113 @@
       padding-bottom: calc(12px + env(safe-area-inset-bottom));
     }
   }
+}
+
+@media (max-width: 1024px) {
+  .messenger-layout--workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .messenger-page.is-mobile-chat-open .messenger-inbox-rail {
+    display: none;
+  }
+
+  .messenger-page:not(.is-mobile-chat-open) .messenger-chat-pane {
+    display: none;
+  }
+
+  .messenger-chat-pane,
+  .messenger-inbox-rail {
+    height: calc(100dvh - var(--mobile-header-h) - var(--mobile-tab-h) - var(--mobile-safe-bottom) - 16px);
+    min-height: calc(100dvh - var(--mobile-header-h) - var(--mobile-tab-h) - var(--mobile-safe-bottom) - 16px);
+  }
+
+  .messenger-chat-pane__header {
+    position: static;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 10px;
+  }
+
+  .messenger-chat-pane__actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .messenger-chat-pane__identity {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+  }
+
+  .messenger-chat-pane__avatar {
+    width: 44px;
+    height: 44px;
+  }
+
+  .messenger-chat-pane__identity-main {
+    gap: 4px;
+  }
+
+  .messenger-chat-pane__title-row {
+    gap: 4px;
+  }
+
+  .messenger-chat-pane__subtitle {
+    font-size: 0.82rem;
+  }
+
+  .messenger-status-strip {
+    flex-wrap: wrap;
+  }
+
+  .messenger-thread-card {
+    grid-template-columns: 3px 40px minmax(0, 1fr);
+  }
+
+  .messenger-thread-card__avatar {
+    width: 40px;
+    height: 40px;
+  }
+
+  .messenger-thread-card__chips {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .messenger-thread-card__chip.is-status {
+    grid-column: 1 / -1;
+  }
+
+  .messenger-bubble,
+  .messenger-event-card {
+    max-width: 100%;
+  }
+
+  .messenger-composer {
+    gap: 8px;
+    padding-top: 10px;
+  }
+
+  .messenger-composer__input-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .messenger-composer textarea {
+    min-height: 56px;
+    max-height: 140px;
+  }
+
+  .messenger-composer__send {
+    min-width: 108px;
+    min-height: 56px;
+  }
+
 }
 
 @keyframes fabPulse {

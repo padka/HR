@@ -15,12 +15,24 @@ interface CandidateDetail {
   transitions: Array<{ status: string; label: string }>
 }
 
+type TelegramWebAppWindow = Window & {
+  Telegram?: {
+    WebApp?: {
+      initData?: string
+    }
+  }
+}
+
 function useTgInitData(): string {
   try {
-    return (window as any)?.Telegram?.WebApp?.initData || ''
+    return (window as TelegramWebAppWindow).Telegram?.WebApp?.initData || ''
   } catch {
     return ''
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Не удалось выполнить действие'
 }
 
 export function TgCandidatePage() {
@@ -72,8 +84,8 @@ export function TgCandidatePage() {
         headers: { 'X-Telegram-Init-Data': initData },
       }).then(r => r.json())
       setCandidate(updated)
-    } catch (e: any) {
-      setStatusMsg(`Ошибка: ${e.message}`)
+    } catch (error: unknown) {
+      setStatusMsg(`Ошибка: ${errorMessage(error)}`)
     }
   }
 

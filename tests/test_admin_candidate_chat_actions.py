@@ -1,9 +1,11 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from backend.apps.admin_ui.security import Principal
 from backend.apps.admin_ui.services.bot_service import BotSendResult
@@ -193,6 +195,7 @@ async def test_chat_history_and_send(admin_app) -> None:
     payload = send_response.json()
     assert payload["message"]["text"] == "Привет!"
     assert payload["message"]["direction"] == ChatMessageDirection.OUTBOUND.value
+    assert payload["message"]["kind"] == "recruiter"
 
 
 @pytest.mark.asyncio
@@ -228,6 +231,88 @@ async def test_chat_retry_marks_as_sent(admin_app) -> None:
     assert retry_response.status_code == 200
     result = retry_response.json()
     assert result["message"]["status"] == ChatMessageStatus.SENT.value
+
+
+@pytest.mark.asyncio
+async def test_chat_updates_endpoint_returns_latest_messages(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90120,
+        fio="Updates Tester",
+        city="Москва",
+        username="updates_tester",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    message_time = datetime.now(timezone.utc) - timedelta(seconds=2)
+    async with async_session() as session:
+        session.add(
+            ChatMessage(
+                candidate_id=candidate.id,
+                telegram_user_id=candidate.telegram_id,
+                direction=ChatMessageDirection.INBOUND.value,
+                channel="telegram",
+                text="Есть новости по слоту?",
+                status=ChatMessageStatus.RECEIVED.value,
+                created_at=message_time,
+            )
+        )
+        await session.commit()
+
+    response = await _async_request(
+        admin_app,
+        "get",
+        f"/api/candidates/{candidate.id}/chat/updates?since={quote((message_time - timedelta(minutes=1)).isoformat(), safe='')}&timeout=5",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["updated"] is True
+    assert payload["messages"][0]["text"] == "Есть новости по слоту?"
+
+
+@pytest.mark.asyncio
+async def test_chat_quick_action_updates_status_and_sends_template(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90121,
+        fio="Quick Action Tester",
+        city="Москва",
+        username="quick_action_tester",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    templates_response = await _async_request(admin_app, "get", "/api/candidate-chat/templates")
+    assert templates_response.status_code == 200
+    assert any(item["key"] == "thanks" for item in templates_response.json()["items"])
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/chat/quick-action",
+        json={
+            "status": CandidateStatus.INTERVIEW_DECLINED.value,
+            "send_message": True,
+            "template_key": "thanks",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == CandidateStatus.INTERVIEW_DECLINED.value
+    assert payload["chat_delivery_status"] == "sent"
+    assert "Спасибо" in payload["chat_message"]["text"]
+
+    async with async_session() as session:
+        refreshed = await session.get(User, candidate.id)
+        assert refreshed.candidate_status == CandidateStatus.INTERVIEW_DECLINED
+
+        stored_messages = (
+            await session.execute(
+                select(ChatMessage)
+                .where(ChatMessage.candidate_id == candidate.id)
+                .order_by(ChatMessage.id.desc())
+            )
+        ).scalars().all()
+        assert stored_messages
+        assert stored_messages[0].direction == ChatMessageDirection.OUTBOUND.value
 
 
 @pytest.mark.asyncio

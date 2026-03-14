@@ -598,6 +598,7 @@ class SlotAssignment(Base):
     )
     candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     candidate_tz: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    origin: Mapped[str] = mapped_column(String(24), nullable=False, default="bot")
     status: Mapped[str] = mapped_column(
         String(32), default=SlotAssignmentStatus.OFFERED, nullable=False
     )
@@ -660,6 +661,7 @@ class RescheduleRequest(Base):
         DateTime(timezone=True), nullable=True
     )
     requested_tz: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    origin: Mapped[str] = mapped_column(String(24), nullable=False, default="candidate")
     candidate_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
         String(16), default=RescheduleRequestStatus.PENDING, nullable=False

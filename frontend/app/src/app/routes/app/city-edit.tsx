@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { formatTimeInTz, isValidTimezone } from '@/shared/utils/timezone'
 import { STAGE_LABELS, TEMPLATE_META, templateStage, type TemplateStage } from './template_meta'
 
 type Recruiter = { id: number; name: string; tz?: string | null }
@@ -70,31 +71,6 @@ const ALL_STAGES: TemplateStage[] = [
   'results',
   'service',
 ]
-
-function isValidTimezone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat('ru-RU', { timeZone: tz }).format()
-    return true
-  } catch {
-    return false
-  }
-}
-
-function formatTimeInTz(tz: string): string {
-  try {
-    return new Intl.DateTimeFormat('ru-RU', {
-      timeZone: tz,
-      hour: '2-digit',
-      minute: '2-digit',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    }).format(new Date())
-  } catch {
-    return ''
-  }
-}
-
 
 type ReminderPolicy = {
   city_id: number
@@ -450,6 +426,10 @@ export function CityEditPage() {
     const items = templatesQuery.data?.custom_templates || []
     return items.filter((tmpl) => tmpl.city_id === cityId)
   }, [templatesQuery.data?.custom_templates, cityId])
+  const introDayTemplate = useMemo(
+    () => cityTemplates.find((tmpl) => tmpl.key === 'intro_day_invitation') || null,
+    [cityTemplates],
+  )
 
   const groupedCityTemplates = useMemo(() => {
     const groups: Record<TemplateStage, TemplateItem[]> = {
@@ -668,6 +648,51 @@ export function CityEditPage() {
                 {templatesQuery.isLoading && <p className="subtitle" style={{ marginTop: 12 }}>Загрузка шаблонов…</p>}
                 {templatesQuery.isError && (
                   <ApiErrorBanner error={templatesQuery.error} title="Не удалось загрузить шаблоны" />
+                )}
+
+                {!templatesQuery.isLoading && !templatesQuery.isError && (
+                  <div className="glass template-card" style={{ marginTop: 12 }}>
+                    <div className="template-card__header">
+                      <div>
+                        <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                          {TEMPLATE_META.intro_day_invitation?.title || 'Приглашение на ознакомительный день'}
+                        </div>
+                        <div className="text-muted" style={{ fontSize: 12, marginBottom: 4 }}>
+                          {introDayTemplate
+                            ? 'Городской override активен и будет использоваться при назначении ознакомительного дня.'
+                            : 'Сейчас используется общий шаблон. Здесь можно быстро создать городской override для ОД.'}
+                        </div>
+                        <div className="template-tags">
+                          <span className="chip">intro_day_invitation</span>
+                          <span className={`chip ${introDayTemplate ? 'chip--success' : 'chip--warning'}`}>
+                            {introDayTemplate ? 'Городской шаблон' : 'Общий шаблон'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="template-preview">
+                      {introDayTemplate?.preview || 'Городского override пока нет. При назначении ознакомительного дня будет использован общий шаблон.'}
+                    </div>
+                    <div className="template-actions">
+                      {introDayTemplate ? (
+                        <Link
+                          to="/app/templates/$templateId/edit"
+                          params={{ templateId: String(introDayTemplate.id) }}
+                          className="ui-btn ui-btn--ghost ui-btn--sm"
+                        >
+                          Редактировать шаблон ОД
+                        </Link>
+                      ) : (
+                        <Link
+                          to="/app/templates/new"
+                          search={{ city_id: cityId, key: 'intro_day_invitation' }}
+                          className="ui-btn ui-btn--ghost ui-btn--sm"
+                        >
+                          Создать шаблон ОД
+                        </Link>
+                      )}
+                    </div>
+                  </div>
                 )}
 
                 {!templatesQuery.isLoading && !templatesQuery.isError && cityTemplates.length === 0 && (

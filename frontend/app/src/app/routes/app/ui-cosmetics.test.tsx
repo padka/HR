@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import CandidatePipeline from '@/app/components/CandidatePipeline/CandidatePipeline'
 import { CandidateDetailPage } from './candidate-detail'
 import { DashboardPage } from './dashboard'
 import { IncomingPage } from './incoming'
@@ -11,6 +12,12 @@ import { SlotsPage } from './slots'
 const useProfileMock = vi.fn()
 const useQueryMock = vi.fn()
 const useMutationMock = vi.fn()
+const apiFetchMock = vi.fn()
+const navigateMock = vi.fn()
+
+type QueryOptionsLike = {
+  queryKey?: unknown
+}
 
 vi.mock('@/app/components/RoleGuard', () => ({
   RoleGuard: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -21,7 +28,7 @@ vi.mock('@/app/hooks/useProfile', () => ({
 }))
 
 vi.mock('@/api/client', () => ({
-  apiFetch: vi.fn(),
+  apiFetch: (...args: unknown[]) => apiFetchMock(...args),
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -49,6 +56,7 @@ vi.mock('@tanstack/react-router', () => ({
     return <a href={href} {...rest}>{children}</a>
   },
   useParams: () => ({ candidateId: '101' }),
+  useNavigate: () => navigateMock,
 }))
 
 vi.mock('@tanstack/react-query', () => ({
@@ -56,6 +64,7 @@ vi.mock('@tanstack/react-query', () => ({
   useMutation: (options: unknown) => useMutationMock(options),
   useQueryClient: () => ({
     invalidateQueries: vi.fn(),
+    setQueryData: vi.fn(),
   }),
 }))
 
@@ -70,22 +79,107 @@ const baseQueryResult = {
 
 const candidateDetailData = {
   id: 101,
+  created_at: '2031-06-30T08:00:00Z',
   fio: 'Тест Кандидат',
   city: 'Москва',
   telegram_id: 79990001122,
   is_active: true,
-  workflow_status_label: 'Лид',
+  workflow_status: 'intro_day_ready',
+  workflow_status_label: 'Готов к ознакомительному дню',
   candidate_status_slug: 'lead',
+  responsible_recruiter: { id: 7, name: 'Анна Смирнова' },
   status_is_terminal: false,
   candidate_actions: [],
-  pipeline_stages: [],
-  reschedule_request: {
-    requested_at: '2031-06-30T09:00:00Z',
-    requested_start_utc: '2031-07-02T09:00:00Z',
-    requested_end_utc: '2031-07-02T12:00:00Z',
-    requested_tz: 'Europe/Moscow',
-    candidate_comment: 'Лучше утром',
+  needs_intro_day: true,
+  can_schedule_intro_day: true,
+  journey: {
+    state: 'intro_preconfirmed',
+    state_label: 'Предварительно подтвердился',
+    manual_mode: false,
+    current_owner: { type: 'recruiter', id: 7, name: 'Анна Смирнова' },
+    next_slot_at: '2031-07-03T09:00:00Z',
+    events: [
+      {
+        id: 901,
+        event_key: 'test_completed',
+        stage: 'testing',
+        status_slug: 'test1_completed',
+        actor_type: 'candidate',
+        summary: 'Тест 1 завершён',
+        created_at: '2031-07-01T08:15:00Z',
+      },
+      {
+        id: 902,
+        event_key: 'slot_reschedule_requested',
+        stage: 'interview',
+        status_slug: 'slot_pending',
+        actor_type: 'candidate',
+        summary: 'Запросил другой слот',
+        payload: { reason: 'Может только утром' },
+        created_at: '2031-07-02T08:30:00Z',
+      },
+      {
+        id: 903,
+        event_key: 'slot_proposed',
+        stage: 'interview',
+        status_slug: 'slot_pending',
+        actor_type: 'recruiter',
+        summary: 'Предложено время, ожидаем ответа',
+        created_at: '2031-07-02T09:00:00Z',
+      },
+      {
+        id: 904,
+        event_key: 'intro_day_confirmed',
+        stage: 'intro_day',
+        status_slug: 'intro_day_confirmed_preliminary',
+        actor_type: 'candidate',
+        summary: 'Предварительно подтвердился',
+        created_at: '2031-07-03T07:45:00Z',
+      },
+    ],
   },
+  timeline: [
+    {
+      kind: 'journey',
+      dt: '2031-07-03T07:45:00Z',
+      event_key: 'intro_day_confirmed',
+      status: 'intro_day_confirmed_preliminary',
+      summary: 'Предварительно подтвердился',
+    },
+    {
+      kind: 'test',
+      dt: '2031-07-01T08:15:00Z',
+      rating: 'Тест 1',
+      score: 66.7,
+      test_key: 'test1',
+    },
+    {
+      kind: 'message',
+      dt: '2031-07-02T11:10:00Z',
+      text: 'Напоминание о собеседовании отправлено в Telegram',
+    },
+    {
+      kind: 'interview_feedback',
+      dt: '2031-07-02T12:30:00Z',
+      summary: 'Интервью проведено',
+      outcome_reason: 'Рекомендуем двигаться дальше',
+      scorecard: {
+        average_rating: 4.2,
+      },
+    },
+  ],
+  pipeline_stages: [
+    { key: 'lead', label: 'Лид', state: 'passed' },
+    { key: 'slot', label: 'Записан на слот', state: 'passed' },
+    { key: 'interview', label: 'Собеседование', state: 'passed' },
+    { key: 'test2', label: 'Тест 2', state: 'passed' },
+    { key: 'intro_day', label: 'Ознакомительный день', state: 'active' },
+    { key: 'outcome', label: 'Итог', state: 'pending' },
+  ],
+  allowed_next_statuses: [
+    { slug: 'interview_declined', label: 'Отказ', color: 'danger', is_terminal: true },
+  ],
+  reschedule_request: null,
   test_sections: [
     {
       key: 'test1',
@@ -115,8 +209,8 @@ const candidateDetailData = {
           },
           {
             question_index: 2,
-            question_text: 'Готовы к сменному графику?',
-            user_answer: 'Да',
+            question_text: 'Готовы к полевому формату работы?',
+            user_answer: 'Да, подходит',
             correct_answer: 'Да',
             attempts_count: 1,
             time_spent: 180,
@@ -138,10 +232,39 @@ const candidateDetailData = {
     },
   ],
   slots: [],
+  intro_day_template: 'Здравствуйте, [Имя]. Приглашаем вас на ознакомительный день [Дата] в [Время] по адресу {intro_address}.',
+  intro_day_template_context: {
+    city_name: 'Москва',
+    intro_address: 'ул. Тестовая, 1',
+    recruiter_contact: 'Михаил +7 999 000-00-00',
+  },
   stats: {
     tests_total: 1,
     average_score: 66.7,
   },
+}
+
+const cohortComparisonData = {
+  available: true,
+  cohort_label: 'Оператор склада',
+  total_candidates: 47,
+  rank: 15,
+  test1: {
+    candidate: 66.7,
+    average: 61.2,
+  },
+  completion_time_sec: {
+    candidate: 780,
+    average: 840,
+  },
+  stage_distribution: [
+    { key: 'lead', label: 'Лид', count: 10 },
+    { key: 'slot', label: 'Записан на слот', count: 8 },
+    { key: 'interview', label: 'Собеседование', count: 9 },
+    { key: 'test2', label: 'Тест 2', count: 6 },
+    { key: 'intro_day', label: 'Ознакомительный день', count: 9 },
+    { key: 'outcome', label: 'Итог', count: 5 },
+  ],
 }
 
 const interviewScriptData = {
@@ -149,12 +272,74 @@ const interviewScriptData = {
   cached: true,
   input_hash: 'hash-1',
   script: {
+    stage_label: 'Первичный скрининг',
+    call_goal: 'Понять базовую релевантность кандидата и перевести на следующий этап.',
+    conversation_script:
+      'Здравствуйте. Рад познакомиться. Коротко объясню, как пройдёт разговор, и если поймём, что подходим друг другу, предложу следующий этап.\n\nПодскажите, пожалуйста, вы успели посмотреть вакансию и что для вас сейчас важно при выборе работы?',
     risk_flags: [{ code: 'SCHEDULE_RISK', severity: 'medium', reason: 'risk', question: 'q', recommended_phrase: 'p' }],
     highlights: ['h1'],
     checks: ['c1'],
     objections: [{ topic: 'obj', candidate_says: 'cand', recruiter_answer: 'ans' }],
-    script_blocks: [{ id: 'b1', title: 'block', goal: 'goal', recruiter_text: 'text', candidate_questions: ['q1'], if_answers: [{ pattern: 'p', hint: 'h' }] }],
+    script_blocks: [
+      { id: 'greeting_and_frame', title: 'Вступление и рамка', goal: 'goal', recruiter_text: 'text', candidate_questions: ['q1'], if_answers: [{ pattern: 'p', hint: 'h' }] },
+      { id: 'vacancy_interest_and_candidate_filters', title: 'Интерес и фильтры', goal: 'goal', recruiter_text: 'text', candidate_questions: ['q1'], if_answers: [{ pattern: 'p', hint: 'h' }] },
+      { id: 'company_and_product_pitch', title: 'Компания и продукт', goal: 'goal', recruiter_text: 'text', candidate_questions: ['q1'], if_answers: [{ pattern: 'p', hint: 'h' }] },
+      { id: 'role_and_work_format', title: 'Роль и формат', goal: 'goal', recruiter_text: 'text', candidate_questions: ['q1'], if_answers: [{ pattern: 'p', hint: 'h' }] },
+      { id: 'resilience_to_rejection', title: 'Устойчивость к отказам', goal: 'goal', recruiter_text: 'text', candidate_questions: ['q1'], if_answers: [{ pattern: 'p', hint: 'h' }] },
+      { id: 'onboarding_and_support', title: 'Обучение и поддержка', goal: 'goal', recruiter_text: 'text', candidate_questions: ['q1'], if_answers: [{ pattern: 'p', hint: 'h' }] },
+      { id: 'compensation', title: 'Деньги', goal: 'goal', recruiter_text: 'text', candidate_questions: ['q1'], if_answers: [{ pattern: 'p', hint: 'h' }] },
+      { id: 'od_closing_and_confirmation', title: 'ОД и подтверждение', goal: 'goal', recruiter_text: 'text', candidate_questions: ['q1'], if_answers: [{ pattern: 'p', hint: 'h' }] },
+    ],
     cta_templates: [{ type: 'next', text: 'text' }],
+  },
+}
+
+const aiSummaryData = {
+  ok: true,
+  cached: true,
+  input_hash: 'summary-1',
+  summary: {
+    tldr: 'Кандидат релевантен, формат работы подтверждён, можно доводить до собеседования.',
+    fit: {
+      score: 82,
+      level: 'medium',
+      rationale: 'Кандидат подтвердил готовность к полевому формату и подходит по базовым критериям.',
+      criteria_used: true,
+    },
+    scorecard: {
+      final_score: 82,
+      objective_score: 78,
+      semantic_score: 88,
+      recommendation: 'od_recommended',
+      metrics: [
+        { key: 'experience_relevance', label: 'Релевантный опыт', score: 25, weight: 25, status: 'met', evidence: 'Есть клиентский опыт.' },
+        { key: 'field_format_readiness', label: 'Готовность к полевому формату', score: 20, weight: 20, status: 'met', evidence: 'Кандидат прямо подтвердил готовность к полевому формату.' },
+        { key: 'resume_substance', label: 'Содержательность резюме', score: 24, weight: 30, status: 'met', evidence: 'Резюме описывает релевантный опыт.' },
+      ],
+      blockers: [],
+      missing_data: [],
+    },
+    risks: [],
+    next_actions: [
+      { key: 'interview', label: 'Довести до интервью', rationale: 'Следующий реальный шаг по воронке уже назначен.' },
+    ],
+  },
+}
+
+const aiCoachData = {
+  ok: true,
+  cached: true,
+  input_hash: 'coach-1',
+  coach: {
+    relevance_score: 74,
+    relevance_level: 'medium',
+    rationale: 'Кандидат близок к ОД, но нужны уточнения.',
+    criteria_used: true,
+    strengths: [{ key: 'exp', label: 'Опыт общения', evidence: 'Есть опыт общения с клиентами.' }],
+    risks: [{ key: 'field', severity: 'medium', label: 'Формат работы', explanation: 'Нужно подтвердить готовность к полевому графику.' }],
+    interview_questions: ['Готовы ли вы к разъездному формату?'],
+    next_best_action: 'Подтвердить формат работы.',
+    message_drafts: [{ text: 'Подскажите, комфортен ли вам разъездной формат?', reason: 'Уточнить ключевой критерий.' }],
   },
 }
 
@@ -191,6 +376,10 @@ const incomingData = {
       requested_another_time_comment: 'Лучше утром',
       responsible_recruiter_id: 7,
       responsible_recruiter_name: 'Рекрутер',
+      ai_relevance_score: 74,
+      ai_relevance_level: 'medium',
+      ai_recommendation: 'clarify_before_od',
+      ai_risk_hint: 'Нужно отдельно подтвердить готовность к разъездному формату.',
     },
   ],
 }
@@ -208,10 +397,26 @@ const candidateChatThreadsData = {
       telegram_username: 'ivan_petrov',
       created_at: '2031-07-01T08:00:00Z',
       last_message_at: '2031-07-01T08:35:00Z',
+      archived_at: null,
+      is_archived: false,
+      last_message_preview: 'Можете предложить утро?',
+      last_message_kind: 'candidate',
+      priority_bucket: 'needs_reply',
+      priority_rank: 1,
+      requires_reply: true,
+      sla_state: 'needs_reply',
+      is_terminal: false,
+      vacancy_label: 'Оператор склада',
+      assignee_label: 'Рекрутер',
+      relevance_score: 82,
+      relevance_level: 'medium',
+      risk_hint: 'Критичных рисков не зафиксировано.',
       last_message: {
         text: 'Можете предложить утро?',
+        preview: 'Можете предложить утро?',
         created_at: '2031-07-01T08:35:00Z',
         direction: 'inbound',
+        kind: 'candidate',
       },
       unread_count: 1,
     },
@@ -219,11 +424,32 @@ const candidateChatThreadsData = {
   latest_event_at: '2031-07-01T08:35:00Z',
 }
 
+const candidateChatTemplatesData = {
+  items: [
+    { key: 'reminder', label: 'Напоминание', text: 'Напоминаем о собеседовании.' },
+    { key: 'reschedule', label: 'Перенос', text: 'Напишите удобное время, мы подберем слот.' },
+  ],
+}
+
+const candidateChatWorkspaceData = {
+  shared_note: 'Созвониться после 16:00',
+  agreements: ['Любит утренние слоты'],
+  follow_up_due_at: '2031-07-02T10:00:00Z',
+  updated_by: 'Рекрутер',
+  updated_at: '2031-07-01T08:36:00Z',
+}
+
 describe('UI cosmetics smoke', () => {
   beforeEach(() => {
+    Object.defineProperty(window, 'scrollTo', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    })
     useProfileMock.mockReset()
     useQueryMock.mockReset()
     useMutationMock.mockReset()
+    apiFetchMock.mockReset()
 
     useProfileMock.mockReturnValue({
       isLoading: false,
@@ -245,7 +471,21 @@ describe('UI cosmetics smoke', () => {
       data: undefined,
     }))
 
-    useQueryMock.mockImplementation((options: any) => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path.includes('/chat/updates')) {
+        const error = new Error('Aborted')
+        error.name = 'AbortError'
+        return Promise.reject(error)
+      }
+      if (path.includes('/candidate-chat/threads/updates')) {
+        const error = new Error('Aborted')
+        error.name = 'AbortError'
+        return Promise.reject(error)
+      }
+      return Promise.resolve({})
+    })
+
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
       const rawKey = options?.queryKey
       const key = Array.isArray(rawKey) ? rawKey[0] : rawKey
 
@@ -261,14 +501,80 @@ describe('UI cosmetics smoke', () => {
       if (key === 'slots') {
         return { ...baseQueryResult, data: slotsData }
       }
+      if (key === 'cities') {
+        return { ...baseQueryResult, data: [{ id: 1, name: 'Москва', tz: 'Europe/Moscow' }] }
+      }
       if (key === 'candidate-detail') {
+        if (Array.isArray(rawKey) && rawKey[1] === 11) {
+          return {
+            ...baseQueryResult,
+            data: {
+              ...candidateDetailData,
+              id: 11,
+              fio: 'Иван Петров',
+              city: 'Москва',
+            },
+          }
+        }
         return { ...baseQueryResult, data: candidateDetailData }
       }
       if (key === 'candidate-chat') {
-        return { ...baseQueryResult, data: { messages: [], has_more: false } }
+        return {
+          ...baseQueryResult,
+          data: {
+            messages: [
+              {
+                id: 301,
+                direction: 'inbound',
+                kind: 'candidate',
+                text: 'Можете предложить утро?',
+                created_at: '2031-07-01T08:35:00Z',
+                author: 'Иван Петров',
+              },
+            ],
+            has_more: false,
+            latest_message_at: '2031-07-01T08:35:00Z',
+          },
+        }
+      }
+      if (key === 'candidate-chat-workspace') {
+        return { ...baseQueryResult, data: candidateChatWorkspaceData }
+      }
+      if (key === 'candidate-hh-summary') {
+        return {
+          ...baseQueryResult,
+          data: {
+            linked: true,
+            source: 'hh',
+            vacancy: {
+              title: 'Оператор склада',
+              url: 'https://hh.ru/vacancy/1',
+              area_name: 'Москва',
+            },
+            resume: {
+              title: 'Резюме Ивана Петрова',
+              url: 'https://hh.ru/resume/1',
+            },
+          },
+        }
+      }
+      if (key === 'candidate-cohort-comparison') {
+        return { ...baseQueryResult, data: cohortComparisonData, isPending: false }
       }
       if (key === 'candidate-chat-threads') {
+        if (Array.isArray(rawKey) && rawKey[1] === 'archive') {
+          return { ...baseQueryResult, data: { threads: [], latest_event_at: null } }
+        }
         return { ...baseQueryResult, data: candidateChatThreadsData }
+      }
+      if (key === 'ai-summary') {
+        return { ...baseQueryResult, data: aiSummaryData }
+      }
+      if (key === 'ai-coach') {
+        return { ...baseQueryResult, data: aiCoachData }
+      }
+      if (key === 'candidate-chat-templates') {
+        return { ...baseQueryResult, data: candidateChatTemplatesData }
       }
       if (key === 'ai-interview-script') {
         return { ...baseQueryResult, data: interviewScriptData }
@@ -296,6 +602,7 @@ describe('UI cosmetics smoke', () => {
     fireEvent.click(moreToggle)
     expect(moreToggle).toHaveTextContent('Скрыть детали')
     expect(screen.getByText(/Хочет окно:/)).toBeInTheDocument()
+    expect(screen.getByText(/AI: Нужно отдельно подтвердить готовность к разъездному формату/)).toBeInTheDocument()
   })
 
   it('opens test preview modal from incoming card actions and removes telegram shortcut', () => {
@@ -331,6 +638,7 @@ describe('UI cosmetics smoke', () => {
 
     const incomingCard = screen.getByTestId('incoming-card')
     expect(incomingCard).toBeInTheDocument()
+    expect(screen.getAllByText(/Уточнить/).length).toBeGreaterThan(0)
   })
 
   it('renders slots filter/table test ids', () => {
@@ -345,18 +653,115 @@ describe('UI cosmetics smoke', () => {
     expect(document.querySelector('.status-badge')).toBeTruthy()
   })
 
-  it('renders candidate header/actions and opens interview script modal', () => {
+  it('renders candidate header, opens recruiter details drawer and shows interview script split panel', async () => {
     render(<CandidateDetailPage />)
-    expect(screen.getByTestId('candidate-header')).toBeInTheDocument()
+    const header = screen.getByTestId('candidate-header')
+    expect(header).toBeInTheDocument()
     expect(screen.getByTestId('candidate-actions')).toBeInTheDocument()
-    expect(screen.getByTestId('cd-ai-section-toggle-coach')).toBeInTheDocument()
-    expect(screen.getByText(/Окно:/)).toBeInTheDocument()
+    expect(screen.getByText('Релевантность')).toBeInTheDocument()
+    expect(within(header).getByText('82/100')).toBeInTheDocument()
+    expect(within(header).getByText(/Рекомендуем|Уточнить|Не рекомендуем/)).toBeInTheDocument()
+    expect(screen.queryByText('Слоты и интервью')).not.toBeInTheDocument()
+    expect(screen.queryByText('AI-помощник')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Скрипт интервью' }))
-    expect(screen.getByTestId('interview-script-modal')).toBeInTheDocument()
-    expect(screen.getByTestId('cd-ai-section-toggle-risks')).toBeInTheDocument()
-    expect(screen.getByTestId('cd-ai-section-toggle-objections')).toBeInTheDocument()
-    expect(screen.getByTestId('cd-ai-section-toggle-cta')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('candidate-insights-trigger'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('candidate-insights-drawer')).toBeInTheDocument()
+      expect(screen.getByText('Карточка кандидата')).toBeInTheDocument()
+      expect(screen.getByText('Хронология')).toBeInTheDocument()
+      expect(screen.getByTestId('candidate-details-timeline')).toBeInTheDocument()
+      expect(screen.getByTestId('candidate-quick-notes')).toBeInTheDocument()
+      expect(screen.getByText('Сравнение с когортой')).toBeInTheDocument()
+      expect(screen.getByText('AI-помощник')).toBeInTheDocument()
+      expect(screen.getByTestId('cd-ai-section-toggle-coach')).toBeInTheDocument()
+      expect(screen.getAllByText(/Готовность к полевому формату/).length).toBeGreaterThan(0)
+    })
+
+    fireEvent.click(screen.getByTestId('candidate-script-trigger'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('interview-script-panel')).toBeInTheDocument()
+      expect(screen.getByText('Скрипт интервью 2.0')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Подготовить скрипт интервью' })).toBeInTheDocument()
+    })
+
+    expect(screen.getByTestId('candidate-pipeline')).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-tests-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('interview-script-modal')).not.toBeInTheDocument()
+  })
+
+  it('keeps candidate journey inside funnel stages and removes standalone journey block', async () => {
+    render(<CandidateDetailPage />)
+    const pipeline = screen.getByTestId('candidate-pipeline')
+    const stageTitles = Array.from(
+      pipeline.querySelectorAll('.candidate-pipeline-stage__title'),
+    ).map((node) => node.textContent)
+
+    expect(screen.queryByText('Интерактивный путь кандидата')).not.toBeInTheDocument()
+    expect(stageTitles).toEqual([
+      'Лид',
+      'Записан на слот',
+      'Собеседование',
+      'Тест 2',
+      'Ознакомительный день',
+      'Итог',
+    ])
+    expect(screen.getByText('Текущее состояние')).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-funnel-detail')).toBeInTheDocument()
+    expect(within(screen.getByTestId('candidate-funnel-detail')).getAllByText('Предварительно подтвердился').length).toBeGreaterThan(0)
+
+    const stageButtons = Array.from(
+      pipeline.querySelectorAll<HTMLButtonElement>('.candidate-pipeline-stage'),
+    )
+    fireEvent.click(stageButtons[2])
+
+    await waitFor(() => {
+      const funnelDetail = screen.getByTestId('candidate-funnel-detail')
+      expect(within(funnelDetail).getByText('Этап воронки')).toBeInTheDocument()
+      expect(within(funnelDetail).getByText('Собеседование')).toBeInTheDocument()
+      expect(within(funnelDetail).getAllByText('Запросил другой слот').length).toBeGreaterThan(0)
+      expect(within(funnelDetail).getByText('Подтверждение, перенос или отказ по собеседованию.')).toBeInTheDocument()
+    })
+  })
+
+  it('translates english pipeline system copy to russian', () => {
+    render(
+      <CandidatePipeline
+        currentStateLabel="Approved"
+        stages={[
+          {
+            id: 'interview',
+            title: 'Собеседование',
+            subtitle: 'Initial backfill from current candidate status',
+            status: 'current',
+            helper: 'admin manual status update',
+            detail: {
+              description: 'Initial backfill from current candidate status',
+              meta: ['manual status update', 'system'],
+              events: [
+                {
+                  id: 'evt-1',
+                  title: 'admin manual status update',
+                  meta: 'system',
+                  lines: ['Status update', 'Completed'],
+                  timestamp: '14.03.2026, 12:00',
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getAllByText('Начальный статус при добавлении в воронку').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Ручное обновление статуса').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('система').length).toBeGreaterThan(0)
+    expect(screen.getByText('Обновление статуса')).toBeInTheDocument()
+    expect(screen.getByText('Завершено')).toBeInTheDocument()
+    expect(screen.getByText('Одобрено')).toBeInTheDocument()
+    expect(screen.queryByText('Initial backfill from current candidate status')).not.toBeInTheDocument()
+    expect(screen.queryByText('admin manual status update')).not.toBeInTheDocument()
   })
 
   it('opens candidate tests section from hash on mobile', async () => {
@@ -391,11 +796,36 @@ describe('UI cosmetics smoke', () => {
     })
   })
 
-  it('renders messenger with candidate threads instead of staff chats', () => {
+  it('renders messenger as recruiter workspace with compact inbox, sticky composer and details drawer', async () => {
     render(<MessengerPage />)
-    expect(screen.getByText('Чаты с кандидатами')).toBeInTheDocument()
-    expect(screen.getAllByText('Иван Петров').length).toBeGreaterThan(0)
-    expect(screen.getByText(/Можете предложить утро/)).toBeInTheDocument()
-    expect(screen.queryByText('Новый чат')).not.toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByText('Чаты кандидатов')).toBeInTheDocument()
+      expect(screen.getAllByText('Иван Петров').length).toBeGreaterThan(0)
+      expect(screen.getAllByText(/Можете предложить утро/).length).toBeGreaterThan(0)
+      expect(screen.getByText(/кандидатов в общем списке/i)).toBeInTheDocument()
+      expect(screen.getByTestId('messenger-composer')).toBeInTheDocument()
+      expect(screen.queryByTestId('messenger-details-drawer')).not.toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Детали' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('messenger-details-drawer')).toBeInTheDocument()
+      expect(screen.getByText('Что делать дальше')).toBeInTheDocument()
+      expect(screen.getByTestId('messenger-candidate-journey')).toBeInTheDocument()
+      expect(screen.getByTestId('messenger-candidate-analytics')).toBeInTheDocument()
+      expect(screen.getByText('Записать на ознакомительный день')).toBeInTheDocument()
+      expect(screen.getByText(/Полевой формат/i)).toBeInTheDocument()
+      expect(screen.getByText(/Подтверждён/i)).toBeInTheDocument()
+      expect(screen.queryByText('Заметка рекрутера')).not.toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Назначить ОД' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Назначить ознакомительный день' })).toBeInTheDocument()
+      expect(screen.getByDisplayValue(/Приглашаем вас на ознакомительный день/)).toBeInTheDocument()
+    })
   })
 })

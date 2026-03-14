@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Optional, Union
 
 from backend.domain.candidates.models import User
+from backend.domain.candidates.journey import append_journey_event, stage_for_status, sync_candidate_lifecycle
 from backend.domain.candidates.status import CandidateStatus, can_transition
 
 
@@ -39,6 +40,9 @@ class CandidateStatusService:
         new_status: StatusLike,
         *,
         force: bool = False,
+        reason: Optional[str] = None,
+        actor_type: Optional[str] = None,
+        actor_id: Optional[int] = None,
     ) -> bool:
         target = self._normalize(new_status)
         current = candidate.candidate_status
@@ -56,21 +60,87 @@ class CandidateStatusService:
 
         candidate.candidate_status = target
         candidate.status_changed_at = self._now()
+        sync_candidate_lifecycle(
+            candidate,
+            status=target,
+            archive_reason=reason,
+            final_outcome_reason=reason,
+        )
+        append_journey_event(
+            candidate,
+            event_key="status_changed",
+            stage=stage_for_status(target),
+            status=target,
+            actor_type=actor_type or ("system" if force else None),
+            actor_id=actor_id,
+            summary=reason or f"{current.value if current else 'none'} -> {target.value if target else 'none'}",
+            payload={
+                "from_status": current.value if current else None,
+                "to_status": target.value if target else None,
+                "force": force,
+                "reason": reason,
+            },
+        )
         return True
 
-    async def advance(self, candidate: User, new_status: StatusLike, *, reason: Optional[str] = None) -> bool:
+    async def advance(
+        self,
+        candidate: User,
+        new_status: StatusLike,
+        *,
+        reason: Optional[str] = None,
+        actor_type: Optional[str] = None,
+        actor_id: Optional[int] = None,
+    ) -> bool:
         """Advance to a permitted next status."""
-        return await self._apply(candidate, new_status, force=False)
+        return await self._apply(
+            candidate,
+            new_status,
+            force=False,
+            reason=reason,
+            actor_type=actor_type,
+            actor_id=actor_id,
+        )
 
-    async def rollback(self, candidate: User, new_status: StatusLike, *, reason: Optional[str] = None) -> bool:
+    async def rollback(
+        self,
+        candidate: User,
+        new_status: StatusLike,
+        *,
+        reason: Optional[str] = None,
+        actor_type: Optional[str] = None,
+        actor_id: Optional[int] = None,
+    ) -> bool:
         """Rollback using the same transition validation rules."""
-        return await self._apply(candidate, new_status, force=False)
+        return await self._apply(
+            candidate,
+            new_status,
+            force=False,
+            reason=reason,
+            actor_type=actor_type,
+            actor_id=actor_id,
+        )
 
-    async def force(self, candidate: User, new_status: StatusLike, *, reason: str) -> bool:
+    async def force(
+        self,
+        candidate: User,
+        new_status: StatusLike,
+        *,
+        reason: str,
+        actor_type: Optional[str] = None,
+        actor_id: Optional[int] = None,
+    ) -> bool:
         """Force status change regardless of the transition graph."""
         if not reason:
             raise CandidateStatusTransitionError("Force transition requires reason")
-        return await self._apply(candidate, new_status, force=True)
+        return await self._apply(
+            candidate,
+            new_status,
+            force=True,
+            reason=reason,
+            actor_type=actor_type,
+            actor_id=actor_id,
+        )
 
 
 __all__ = ["CandidateStatusService", "CandidateStatusTransitionError"]

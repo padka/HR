@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { type ComponentType, useEffect, useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { RoleGuard } from '@/app/components/RoleGuard'
@@ -46,7 +46,7 @@ type QuestionGroup = {
 type GraphPayload = {
   ok: boolean
   test_id: string
-  graph: { schema: string; nodes: any[]; edges: any[] }
+  graph: { schema: string; nodes: PersistedFlowNode[]; edges: PersistedFlowEdge[] }
   updated_at: string | null
 }
 
@@ -110,6 +110,26 @@ type BranchEdgeData = {
   priority: number
   label?: string
 }
+
+type FlowNodeData = {
+  label?: string
+  question_id?: number | string | null
+  key?: string | null
+  title?: string
+  prompt?: string
+  options?: string[]
+  is_active?: boolean
+  placeholder?: string | null
+}
+
+type FlowNode = Node<FlowNodeData>
+type FlowEdge = Edge<BranchEdgeData>
+
+type PersistedFlowNode = Pick<FlowNode, 'id' | 'type' | 'position' | 'data'>
+type PersistedFlowEdge = Pick<
+  FlowEdge,
+  'id' | 'source' | 'target' | 'sourceHandle' | 'targetHandle' | 'data' | 'label'
+>
 
 function readQuestionId(data: unknown): number | null {
   if (!data || typeof data !== 'object') return null
@@ -181,7 +201,7 @@ function edgeLabel(data: BranchEdgeData): string {
   return condition
 }
 
-function stripNode(node: Node): any {
+function stripNode(node: FlowNode): PersistedFlowNode {
   return {
     id: node.id,
     type: node.type,
@@ -190,7 +210,7 @@ function stripNode(node: Node): any {
   }
 }
 
-function stripEdge(edge: Edge): any {
+function stripEdge(edge: FlowEdge): PersistedFlowEdge {
   return {
     id: edge.id,
     source: edge.source,
@@ -202,6 +222,10 @@ function stripEdge(edge: Edge): any {
   }
 }
 
+function readNodeLabel(data: FlowNodeData | undefined, fallback: string): string {
+  return typeof data?.label === 'string' && data.label.trim() ? data.label : fallback
+}
+
 function formatPrompt(text: string) {
   const clean = String(text || '').trim()
   if (!clean) return '—'
@@ -209,8 +233,8 @@ function formatPrompt(text: string) {
   return `${clean.slice(0, 157)}...`
 }
 
-function StartNode(props: NodeProps) {
-  const label = typeof (props.data as any)?.label === 'string' ? (props.data as any).label : 'Start'
+function StartNode(props: NodeProps<FlowNode>) {
+  const label = readNodeLabel(props.data, 'Start')
   return (
     <div className={`rs-flow-node rs-flow-node--start${props.selected ? ' is-selected' : ''}`}>
       <div className="rs-flow-node__title">{label}</div>
@@ -219,8 +243,8 @@ function StartNode(props: NodeProps) {
   )
 }
 
-function EndNode(props: NodeProps) {
-  const label = typeof (props.data as any)?.label === 'string' ? (props.data as any).label : 'End'
+function EndNode(props: NodeProps<FlowNode>) {
+  const label = readNodeLabel(props.data, 'End')
   return (
     <div className={`rs-flow-node rs-flow-node--end${props.selected ? ' is-selected' : ''}`}>
       <Handle type="target" position={Position.Top} />
@@ -229,8 +253,8 @@ function EndNode(props: NodeProps) {
   )
 }
 
-function QuestionNode(props: NodeProps) {
-  const data = props.data as any
+function QuestionNode(props: NodeProps<FlowNode>) {
+  const data = props.data
   const qid = readQuestionId(data)
   const key = readQuestionKey(data)
   const title = typeof data?.title === 'string' && data.title.trim() ? data.title : 'Вопрос'
@@ -252,7 +276,7 @@ function QuestionNode(props: NodeProps) {
   )
 }
 
-const nodeTypes = {
+const nodeTypes: Record<string, ComponentType<NodeProps<FlowNode>>> = {
   start: StartNode,
   end: EndNode,
   question: QuestionNode,
@@ -262,7 +286,7 @@ function makeBranchEdge(
   source: string,
   target: string,
   dataPatch: Partial<BranchEdgeData>,
-): Edge {
+): FlowEdge {
   const data = normalizeEdgeData(dataPatch)
   const slug = `${data.when || data.match || 'edge'}-${data.action}-${Math.random().toString(36).slice(2, 7)}`
   return {
@@ -307,8 +331,8 @@ export function TestBuilderGraphPage() {
     },
   })
 
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+  const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
   const [message, setMessage] = useState('')
   const [selectedQuestionId, setSelectedQuestionId] = useState<number | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
@@ -320,7 +344,7 @@ export function TestBuilderGraphPage() {
     const rawNodes = Array.isArray(payload.graph.nodes) ? payload.graph.nodes : []
     const rawEdges = Array.isArray(payload.graph.edges) ? payload.graph.edges : []
 
-    const normalizedEdges = (rawEdges as Edge[]).map((edge) => {
+    const normalizedEdges = rawEdges.map((edge) => {
       const data = normalizeEdgeData(edge.data)
       return {
         ...edge,
@@ -329,8 +353,8 @@ export function TestBuilderGraphPage() {
       }
     })
 
-    setNodes(rawNodes as any)
-    setEdges(normalizedEdges as any)
+    setNodes(rawNodes)
+    setEdges(normalizedEdges)
     setSelectedQuestionId(null)
     setSelectedEdgeId(null)
     setMessage('')
@@ -347,10 +371,11 @@ export function TestBuilderGraphPage() {
         if (!meta) return node
 
         const prevData = (node.data || {}) as Record<string, unknown>
+        const existingKey = typeof prevData.key === 'string' ? prevData.key : undefined
         const nextData = {
           ...prevData,
           question_id: qid,
-          key: meta.key || prevData.key || `q_${qid}`,
+          key: meta.key || existingKey || `q_${qid}`,
           title: meta.title,
           prompt: meta.prompt,
           options: Array.isArray(meta.options) ? meta.options : [],
@@ -423,7 +448,7 @@ export function TestBuilderGraphPage() {
     )
   }
 
-  const onNodeClick = (_event: unknown, node: Node) => {
+  const onNodeClick = (_event: unknown, node: FlowNode) => {
     setSelectedEdgeId(null)
     if (node.type !== 'question') {
       setSelectedQuestionId(null)
@@ -438,7 +463,7 @@ export function TestBuilderGraphPage() {
     setSelectedQuestionId(qid)
   }
 
-  const onEdgeClick = (_event: unknown, edge: Edge) => {
+  const onEdgeClick = (_event: unknown, edge: FlowEdge) => {
     setSelectedQuestionId(null)
     setSelectedEdgeId(edge.id)
   }
@@ -454,10 +479,10 @@ export function TestBuilderGraphPage() {
   }, [edges, selectedEdgeId])
 
   const nodeLabelById = useMemo(() => {
-    const map = new Map<string, string>()
+      const map = new Map<string, string>()
     for (const node of nodes) {
       if (node.type === 'start' || node.type === 'end') {
-        map.set(node.id, String((node.data as any)?.label || node.type))
+        map.set(node.id, readNodeLabel(node.data, String(node.type || 'node')))
         continue
       }
 
@@ -599,7 +624,7 @@ export function TestBuilderGraphPage() {
 
     const statusPosition = statusNode.position || { x: 0, y: 0 }
 
-    const ensureNode = (current: Node[], node: Node): Node[] => {
+    const ensureNode = (current: FlowNode[], node: FlowNode): FlowNode[] => {
       const exists = current.find((item) => item.id === node.id)
       if (!exists) return [...current, node]
       return current.map((item) => (item.id === node.id ? { ...item, ...node, data: { ...item.data, ...node.data } } : item))
@@ -618,7 +643,7 @@ export function TestBuilderGraphPage() {
           options: ['Очно', 'Заочно'],
           is_active: true,
         },
-      } as Node)
+      } as FlowNode)
       next = ensureNode(next, {
         id: 'vq_study_schedule',
         type: 'question',
@@ -630,7 +655,7 @@ export function TestBuilderGraphPage() {
           options: ['Да, смогу', 'Нет, не смогу'],
           is_active: true,
         },
-      } as Node)
+      } as FlowNode)
       next = ensureNode(next, {
         id: 'vq_notice',
         type: 'question',
@@ -642,7 +667,7 @@ export function TestBuilderGraphPage() {
           placeholder: 'Например: 1-2 дня',
           is_active: true,
         },
-      } as Node)
+      } as FlowNode)
       return next
     })
 
@@ -659,7 +684,7 @@ export function TestBuilderGraphPage() {
       ])
 
       const kept = current.filter((edge) => !controlledSources.has(edge.source))
-      const templateEdges: Edge[] = [
+      const templateEdges: FlowEdge[] = [
         makeBranchEdge(startNode.id, statusNode.id, { match: 'always', fallback: true, action: 'next', label: 'start' }),
 
         makeBranchEdge(statusNode.id, 'vq_study_mode', { match: 'equals', when: 'Учусь', action: 'next' }),
@@ -797,7 +822,7 @@ export function TestBuilderGraphPage() {
                     setSelectedQuestionId(null)
                     setSelectedEdgeId(null)
                   }}
-                  nodeTypes={nodeTypes as any}
+                  nodeTypes={nodeTypes}
                   fitView
                   fitViewOptions={{ padding: 0.2 }}
                   proOptions={{ hideAttribution: true }}

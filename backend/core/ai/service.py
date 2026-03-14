@@ -12,6 +12,7 @@ All public methods follow the same pattern:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import hashlib
 import re
@@ -22,7 +23,8 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, select, update
 
 from backend.apps.admin_ui.security import Principal
 from backend.core.db import async_session
@@ -39,12 +41,14 @@ from backend.domain.ai.models import (
 from backend.domain.candidates.models import User
 from backend.domain.models import City, Recruiter, Vacancy
 
+from .candidate_scorecard import OBJECTIVE_WEIGHTS, SEMANTIC_WEIGHTS, build_candidate_scorecard, fit_level_from_score
 from .context import (
     build_candidate_ai_context,
     build_city_candidate_recommendations_context,
     compute_input_hash,
     get_last_inbound_message_text,
 )
+from .interview_script_builder import build_structured_interview_script
 from .prompts import (
     agent_chat_reply_prompts,
     candidate_coach_drafts_prompts,
@@ -57,6 +61,8 @@ from .prompts import (
 from .llm_script_generator import (
     KB_INTERVIEW_SCRIPT_CATEGORIES,
     PROMPT_VERSION_INTERVIEW_SCRIPT,
+    build_base_risk_flags,
+    build_interview_script_fallback,
     generate_interview_script,
     hash_resume_content,
     normalize_hh_resume,
@@ -75,6 +81,11 @@ from .schemas import (
 )
 
 logger = logging.getLogger(__name__)
+_CANDIDATE_AI_KINDS = (
+    "candidate_summary_v1",
+    "candidate_coach_v1",
+    "interview_script_v1",
+)
 
 
 class AIDisabledError(RuntimeError):
@@ -228,31 +239,652 @@ async def _store_output(
     now = datetime.now(UTC)
     expires_at = now + timedelta(hours=ttl_hours)
     async with async_session() as session:
-        existing = await session.scalar(
-            select(AIOutput).where(
-                AIOutput.scope_type == scope_type,
-                AIOutput.scope_id == scope_id,
-                AIOutput.kind == kind,
-                AIOutput.input_hash == input_hash,
-            )
-        )
-        if existing is not None:
-            existing.payload_json = payload
-            existing.expires_at = expires_at
-            existing.created_at = now
-        else:
-            session.add(
-                AIOutput(
-                    scope_type=scope_type,
-                    scope_id=scope_id,
-                    kind=kind,
-                    input_hash=input_hash,
-                    payload_json=payload,
-                    created_at=now,
-                    expires_at=expires_at,
+        try:
+            existing = await session.scalar(
+                select(AIOutput).where(
+                    AIOutput.scope_type == scope_type,
+                    AIOutput.scope_id == scope_id,
+                    AIOutput.kind == kind,
+                    AIOutput.input_hash == input_hash,
                 )
             )
+            if existing is not None:
+                existing.payload_json = payload
+                existing.expires_at = expires_at
+                existing.created_at = now
+            else:
+                session.add(
+                    AIOutput(
+                        scope_type=scope_type,
+                        scope_id=scope_id,
+                        kind=kind,
+                        input_hash=input_hash,
+                        payload_json=payload,
+                        created_at=now,
+                        expires_at=expires_at,
+                    )
+                )
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            existing = await session.scalar(
+                select(AIOutput).where(
+                    AIOutput.scope_type == scope_type,
+                    AIOutput.scope_id == scope_id,
+                    AIOutput.kind == kind,
+                    AIOutput.input_hash == input_hash,
+                )
+            )
+            if existing is not None:
+                existing.payload_json = payload
+                existing.expires_at = expires_at
+                existing.created_at = now
+                await session.commit()
+            else:
+                raise
+
+
+def _normalized_resume_context(value: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    employment_items = value.get("employment_items")
+    if not isinstance(employment_items, list):
+        employment_items = []
+    return {
+        "source_format": value.get("source_format"),
+        "source_quality_ok": bool(value.get("source_quality_ok")),
+        "headline": value.get("headline"),
+        "summary": value.get("summary"),
+        "skills": list(value.get("skills") or []),
+        "employment_items": employment_items[:10],
+        "relevant_experience": bool(value.get("relevant_experience")),
+    }
+
+
+def _scorecard_payload(scorecard_state: Any) -> dict[str, Any]:
+    return {
+        "final_score": scorecard_state.final_score,
+        "objective_score": scorecard_state.objective_score,
+        "semantic_score": scorecard_state.semantic_score,
+        "recommendation": scorecard_state.recommendation,
+        "metrics": list(scorecard_state.metrics),
+        "blockers": list(scorecard_state.blockers),
+        "missing_data": list(scorecard_state.missing_data),
+    }
+
+
+def _criteria_used_from_context(ctx: dict[str, Any]) -> bool:
+    city_profile = ctx.get("city_profile") or {}
+    kb = ctx.get("knowledge_base") or {}
+    return bool(city_profile.get("criteria") or (kb.get("excerpts") or []))
+
+
+def _scorecard_fit_rationale(scorecard: dict[str, Any] | None) -> str:
+    if not isinstance(scorecard, dict):
+        return ""
+    blockers = scorecard.get("blockers") or []
+    if blockers and isinstance(blockers[0], dict):
+        return str(blockers[0].get("evidence") or blockers[0].get("label") or "").strip()
+    missing = scorecard.get("missing_data") or []
+    if missing and isinstance(missing[0], dict):
+        return str(missing[0].get("evidence") or missing[0].get("label") or "").strip()
+    recommendation = str(scorecard.get("recommendation") or "").strip().lower()
+    if recommendation == "od_recommended":
+        return "Базовый профиль кандидата соответствует критериям и допускает приглашение на ознакомительный день."
+    if recommendation == "clarify_before_od":
+        return "Кандидат в целом релевантен, но перед приглашением на ознакомительный день нужны уточнения."
+    if recommendation == "not_recommended":
+        return "Есть объективные стоп-факторы или непрохождение ключевых регламентных требований."
+    return ""
+
+
+def _apply_candidate_summary_scorecard(
+    *,
+    context: dict[str, Any],
+    resume_context: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    summary = CandidateSummaryV1.model_validate(payload).model_dump()
+    scorecard_source = summary.get("scorecard") if isinstance(summary.get("scorecard"), dict) else None
+    llm_scorecard_input = scorecard_source
+    if isinstance(scorecard_source, dict):
+        raw_metrics = scorecard_source.get("metrics") or []
+        metric_keys = {
+            str(item.get("key") or "").strip()
+            for item in raw_metrics
+            if isinstance(item, dict)
+        }
+        if metric_keys & set(OBJECTIVE_WEIGHTS):
+            llm_scorecard_input = {
+                "metrics": [
+                    item
+                    for item in raw_metrics
+                    if isinstance(item, dict) and str(item.get("key") or "").strip() in set(SEMANTIC_WEIGHTS)
+                ],
+                "blockers": list(scorecard_source.get("blockers") or []),
+                "missing_data": list(scorecard_source.get("missing_data") or []),
+            }
+    scorecard_state = build_candidate_scorecard(
+        context=context,
+        resume_context=resume_context,
+        llm_scorecard=llm_scorecard_input,
+    )
+    scorecard = _scorecard_payload(scorecard_state)
+    fit = dict(summary.get("fit") or {})
+    fit["score"] = scorecard["final_score"]
+    fit["level"] = fit_level_from_score(scorecard["final_score"])
+    fit["criteria_used"] = bool(fit.get("criteria_used") or _criteria_used_from_context(context))
+    fit["rationale"] = str(fit.get("rationale") or "").strip() or _scorecard_fit_rationale(scorecard)
+    summary["fit"] = fit
+    summary["scorecard"] = scorecard
+    return CandidateSummaryV1.model_validate(summary).model_dump()
+
+
+def _apply_candidate_coach_score(
+    *,
+    payload: dict[str, Any],
+    scorecard: dict[str, Any] | None,
+    criteria_used: bool,
+) -> dict[str, Any]:
+    coach = CandidateCoachV1.model_validate(payload).model_dump()
+    if isinstance(scorecard, dict):
+        final_score = scorecard.get("final_score")
+        if isinstance(final_score, int):
+            coach["relevance_score"] = final_score
+            coach["relevance_level"] = fit_level_from_score(final_score)
+        if not str(coach.get("rationale") or "").strip():
+            coach["rationale"] = _scorecard_fit_rationale(scorecard)
+    coach["criteria_used"] = bool(coach.get("criteria_used") or criteria_used)
+    return CandidateCoachV1.model_validate(coach).model_dump()
+
+
+def _scorecard_risk_items(scorecard: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(scorecard, dict):
+        return []
+    items: list[dict[str, Any]] = []
+    for blocker in list(scorecard.get("blockers") or []):
+        if not isinstance(blocker, dict):
+            continue
+        items.append(
+            {
+                "key": str(blocker.get("key") or "blocker"),
+                "severity": "high",
+                "label": str(blocker.get("label") or blocker.get("key") or "Критичный риск"),
+                "explanation": str(blocker.get("evidence") or blocker.get("label") or "").strip(),
+            }
+        )
+    for item in list(scorecard.get("missing_data") or []):
+        if not isinstance(item, dict):
+            continue
+        items.append(
+            {
+                "key": str(item.get("key") or "missing_data"),
+                "severity": "medium",
+                "label": str(item.get("label") or item.get("key") or "Нужны уточнения"),
+                "explanation": str(item.get("evidence") or item.get("label") or "").strip(),
+            }
+        )
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        key = str(item.get("key") or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped[:6]
+
+
+def _summary_tldr_from_scorecard(scorecard: dict[str, Any], *, candidate_city: str | None) -> str:
+    final_score = scorecard.get("final_score")
+    recommendation = str(scorecard.get("recommendation") or "").strip().lower()
+    blockers = scorecard.get("blockers") or []
+    missing_data = scorecard.get("missing_data") or []
+    city_tail = f" по городу {candidate_city}" if candidate_city else ""
+    if blockers and isinstance(blockers[0], dict):
+        return (
+            f"Кандидат сейчас не проходит по ключевым критериям{city_tail}. "
+            f"Оценка {final_score}/100, основной стоп-фактор: {blockers[0].get('label') or blockers[0].get('evidence')}."
+        )
+    if recommendation == "od_recommended":
+        return f"Кандидат выглядит релевантным{city_tail} и может двигаться к следующему этапу. Оценка {final_score}/100."
+    if missing_data and isinstance(missing_data[0], dict):
+        return (
+            f"Кандидат потенциально подходит{city_tail}, но перед следующим этапом нужно снять несколько вопросов. "
+            f"Оценка {final_score}/100, в первую очередь: {missing_data[0].get('label') or missing_data[0].get('evidence')}."
+        )
+    return f"Кандидат оценён на {final_score}/100. Решение требует дополнительной проверки по контексту и регламентам."
+
+
+def _build_candidate_summary_fallback(
+    *,
+    context: dict[str, Any],
+    scorecard: dict[str, Any],
+) -> dict[str, Any]:
+    metrics = [item for item in list(scorecard.get("metrics") or []) if isinstance(item, dict)]
+    met_metrics = [item for item in metrics if str(item.get("status") or "").strip().lower() == "met"]
+    not_met_metrics = [item for item in metrics if str(item.get("status") or "").strip().lower() == "not_met"]
+    latest_tests = ((context.get("tests") or {}).get("latest") or {}) if isinstance(context.get("tests"), dict) else {}
+    candidate = context.get("candidate") or {}
+    candidate_profile = context.get("candidate_profile") or {}
+    candidate_city = candidate.get("city") if isinstance(candidate, dict) else None
+    recommendation = str(scorecard.get("recommendation") or "clarify_before_od").strip().lower()
+    final_score = scorecard.get("final_score")
+
+    strengths = [
+        {
+            "key": str(item.get("key") or ""),
+            "label": str(item.get("label") or ""),
+            "evidence": str(item.get("evidence") or item.get("label") or "").strip(),
+        }
+        for item in met_metrics[:4]
+    ]
+    weaknesses = [
+        {
+            "key": str(item.get("key") or ""),
+            "label": str(item.get("label") or ""),
+            "evidence": str(item.get("evidence") or item.get("label") or "").strip(),
+        }
+        for item in not_met_metrics[:4]
+    ]
+    checklist = [
+        {
+            "key": str(item.get("key") or ""),
+            "status": str(item.get("status") or "unknown"),
+            "label": str(item.get("label") or ""),
+            "evidence": str(item.get("evidence") or "").strip(),
+        }
+        for item in metrics[:8]
+    ]
+    risks = _scorecard_risk_items(scorecard)
+
+    test1 = latest_tests.get("TEST1") if isinstance(latest_tests, dict) else None
+    test2 = latest_tests.get("TEST2") if isinstance(latest_tests, dict) else None
+    test_insights_parts: list[str] = []
+    if isinstance(test1, dict) and test1.get("final_score") is not None:
+        test_insights_parts.append(f"Тест 1: {test1.get('final_score')} звезды")
+    if isinstance(test2, dict) and test2.get("final_score") is not None:
+        test_insights_parts.append(f"Тест 2: {test2.get('final_score')} звезды")
+    if candidate_profile.get("work_experience"):
+        test_insights_parts.append(f"Опыт: {str(candidate_profile.get('work_experience'))[:160]}")
+    test_insights = ". ".join(part for part in test_insights_parts if part) or None
+
+    if recommendation == "od_recommended":
+        next_actions = [
+            {
+                "key": "assign_intro_day",
+                "label": "Предложить следующий этап",
+                "rationale": "Профиль и базовые критерии выглядят достаточными для движения дальше.",
+                "cta": "Зафиксировать ознакомительный день и подтвердить явку.",
+            }
+        ]
+    elif recommendation == "not_recommended":
+        blocker = (scorecard.get("blockers") or [{}])[0]
+        next_actions = [
+            {
+                "key": "hold_and_escalate",
+                "label": "Не предлагать следующий этап",
+                "rationale": str(blocker.get("evidence") or blocker.get("label") or "Есть критичный стоп-фактор."),
+                "cta": "Мягко закрыть диалог или передать на внутреннюю проверку.",
+            }
+        ]
+    else:
+        missing = (scorecard.get("missing_data") or [{}])[0]
+        next_actions = [
+            {
+                "key": "clarify_critical_points",
+                "label": "Сначала уточнить риски",
+                "rationale": str(missing.get("evidence") or missing.get("label") or "Нужно снять ключевые вопросы перед следующим шагом."),
+                "cta": "Задать 2-3 уточняющих вопроса и только потом принимать решение по ОД.",
+            }
+        ]
+
+    fit_rationale = _scorecard_fit_rationale(scorecard)
+    summary = {
+        "tldr": _summary_tldr_from_scorecard(scorecard, candidate_city=candidate_city),
+        "fit": {
+            "score": final_score,
+            "level": fit_level_from_score(final_score),
+            "rationale": fit_rationale,
+            "criteria_used": _criteria_used_from_context(context),
+        },
+        "vacancy_fit": {
+            "score": final_score,
+            "level": fit_level_from_score(final_score),
+            "summary": fit_rationale or _summary_tldr_from_scorecard(scorecard, candidate_city=candidate_city),
+            "evidence": [
+                {
+                    "factor": str(item.get("label") or item.get("key") or ""),
+                    "assessment": (
+                        "positive"
+                        if str(item.get("status") or "").strip().lower() == "met"
+                        else "negative"
+                        if str(item.get("status") or "").strip().lower() == "not_met"
+                        else "neutral"
+                    ),
+                    "detail": str(item.get("evidence") or item.get("label") or "").strip(),
+                }
+                for item in metrics[:6]
+            ],
+            "criteria_source": "both" if _criteria_used_from_context(context) else "none",
+        },
+        "strengths": strengths,
+        "weaknesses": weaknesses,
+        "criteria_checklist": checklist,
+        "test_insights": test_insights,
+        "risks": risks,
+        "next_actions": next_actions,
+        "notes": "Сводка собрана из регламентов, тестов, резюме и карточки кандидата без ожидания внешней LLM-генерации.",
+        "scorecard": scorecard,
+    }
+    return CandidateSummaryV1.model_validate(summary).model_dump()
+
+
+def _questions_from_scorecard(scorecard: dict[str, Any]) -> list[str]:
+    questions: list[str] = []
+    for item in list(scorecard.get("missing_data") or []):
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or item.get("key") or "").strip().lower()
+        if "формат" in label or "разъезд" in label:
+            questions.append("Насколько вам реально подходит полевой и выездной формат работы в течение дня?")
+        elif "речь" in label or "коммуника" in label:
+            questions.append("Какой у вас реальный опыт живого общения с клиентами и как чувствуете себя в переговорах?")
+        elif "тест" in label:
+            questions.append("Готовы ли вы оперативно пройти или перепройти нужный этап тестирования без паузы?")
+        else:
+            questions.append(f"Уточните, пожалуйста: {str(item.get('label') or item.get('evidence') or '').strip()}?")
+    for item in list(scorecard.get("blockers") or []):
+        if not isinstance(item, dict):
+            continue
+        questions.append(f"Подтвердите корректно, пожалуйста: {str(item.get('label') or item.get('evidence') or '').strip()}?")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in questions:
+        clean = value.strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        deduped.append(clean)
+    if not deduped:
+        deduped = [
+            "Что для вас сейчас ключевое при выборе работы: доход, график или развитие?",
+            "Насколько вам комфортна работа с большим количеством живого общения?",
+            "Когда вы реально готовы выйти на следующий этап?",
+        ]
+    return deduped[:6]
+
+
+def _build_candidate_coach_fallback(
+    *,
+    context: dict[str, Any],
+    scorecard: dict[str, Any],
+) -> dict[str, Any]:
+    recommendation = str(scorecard.get("recommendation") or "clarify_before_od").strip().lower()
+    final_score = scorecard.get("final_score")
+    risks = _scorecard_risk_items(scorecard)
+    strengths = [
+        {
+            "key": str(item.get("key") or ""),
+            "label": str(item.get("label") or ""),
+            "evidence": str(item.get("evidence") or item.get("label") or "").strip(),
+        }
+        for item in list(scorecard.get("metrics") or [])
+        if isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "met"
+    ][:4]
+    if recommendation == "od_recommended":
+        next_best_action = "Переходить к закреплению следующего этапа и подтверждению явки без лишней теории."
+        message_drafts = [
+            {
+                "text": "По вашему профилю вижу хорошее совпадение. Предлагаю сразу закрепить следующий этап и отправлю все детали одним сообщением.",
+                "reason": "Быстро переводит релевантного кандидата к действию.",
+            }
+        ]
+    elif recommendation == "not_recommended":
+        next_best_action = "Не обещать следующий этап, мягко закрыть ожидания и при необходимости эскалировать кейс руководителю."
+        message_drafts = [
+            {
+                "text": "Спасибо за открытый разговор. Я корректно зафиксирую детали и вернусь с итогом после внутренней сверки по критериям.",
+                "reason": "Снимает напряжение и не обещает ОД при стоп-факторах.",
+            }
+        ]
+    else:
+        next_best_action = "Снять 1-2 критичных вопроса по формату/мотивации и только потом предлагать следующий этап."
+        message_drafts = [
+            {
+                "text": "Вижу потенциал по вашему профилю. Чтобы не тратить ваше время, хочу коротко уточнить пару моментов и после этого смогу предложить следующий шаг.",
+                "reason": "Сохраняет интерес кандидата и не ведёт к преждевременному обещанию ОД.",
+            }
+        ]
+
+    coach = {
+        "relevance_score": final_score,
+        "relevance_level": fit_level_from_score(final_score),
+        "rationale": _scorecard_fit_rationale(scorecard),
+        "criteria_used": _criteria_used_from_context(context),
+        "strengths": strengths,
+        "risks": risks,
+        "interview_questions": _questions_from_scorecard(scorecard),
+        "next_best_action": next_best_action,
+        "message_drafts": message_drafts,
+    }
+    return CandidateCoachV1.model_validate(coach).model_dump()
+
+
+async def build_candidate_live_score_snapshot(
+    candidate_id: int,
+    *,
+    principal: Principal | None = None,
+) -> dict[str, Any]:
+    from backend.apps.admin_ui.security import admin_principal
+
+    principal_value = principal or admin_principal()
+    ctx = await build_candidate_ai_context(candidate_id, principal=principal_value, include_pii=False)
+    service = AIService()
+    resume_context = _normalized_resume_context(await service._get_hh_resume_normalized(candidate_id))
+    scorecard = _scorecard_payload(
+        build_candidate_scorecard(
+            context=ctx,
+            resume_context=resume_context,
+            llm_scorecard=None,
+        )
+    )
+    risks = _scorecard_risk_items(scorecard)
+    return {
+        "score": scorecard.get("final_score"),
+        "level": fit_level_from_score(scorecard.get("final_score")),
+        "recommendation": scorecard.get("recommendation"),
+        "risk_hint": risks[0]["label"] if risks else None,
+        "scorecard": scorecard,
+    }
+
+
+async def invalidate_candidate_ai_outputs(
+    candidate_id: int,
+    *,
+    kinds: tuple[str, ...] = _CANDIDATE_AI_KINDS,
+) -> None:
+    await invalidate_candidates_ai_outputs([candidate_id], kinds=kinds)
+
+
+async def invalidate_candidates_ai_outputs(
+    candidate_ids: list[int] | tuple[int, ...] | set[int],
+    *,
+    kinds: tuple[str, ...] = _CANDIDATE_AI_KINDS,
+) -> None:
+    ids: list[int] = []
+    for candidate_id in candidate_ids:
+        try:
+            normalized = int(candidate_id)
+        except (TypeError, ValueError):
+            continue
+        if normalized > 0:
+            ids.append(normalized)
+    ids = sorted(set(ids))
+    if not ids:
+        return
+    async with async_session() as session:
+        await session.execute(
+            update(AIOutput)
+            .where(
+                AIOutput.scope_type == "candidate",
+                AIOutput.scope_id.in_(ids),
+                AIOutput.kind.in_(tuple(kinds)),
+            )
+            .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
         await session.commit()
+
+
+async def _warm_candidate_ai_outputs(
+    candidate_id: int,
+    *,
+    principal: Principal,
+    refresh: bool,
+) -> None:
+    service = AIService()
+    if not service._settings.ai_enabled:
+        return
+    try:
+        # Warm the cache through the normal code path. Callers usually invalidate first,
+        # so forcing refresh only adds external latency without changing the result shape.
+        summary = await service.get_candidate_summary(candidate_id, principal=principal, refresh=False)
+        await service.get_candidate_coach(
+            candidate_id,
+            principal=principal,
+            refresh=False,
+            summary_result=summary,
+        )
+        await service.get_candidate_interview_script(
+            candidate_id,
+            principal=principal,
+            refresh=False,
+            summary_result=summary,
+        )
+    except Exception:
+        logger.warning("ai.warm_candidate.failed", extra={"candidate_id": candidate_id}, exc_info=True)
+
+
+async def warm_candidate_ai_outputs(
+    candidate_id: int,
+    *,
+    principal: Principal | None = None,
+    refresh: bool = True,
+) -> None:
+    from backend.apps.admin_ui.security import admin_principal
+
+    await _warm_candidate_ai_outputs(
+        int(candidate_id),
+        principal=principal or admin_principal(),
+        refresh=refresh,
+    )
+
+
+async def warm_candidates_ai_outputs(
+    candidate_ids: list[int] | tuple[int, ...] | set[int],
+    *,
+    principal: Principal | None = None,
+    refresh: bool = True,
+) -> None:
+    ids = sorted({int(candidate_id) for candidate_id in candidate_ids if int(candidate_id) > 0})
+    if not ids:
+        return
+    from backend.apps.admin_ui.security import admin_principal
+
+    principal_value = principal or admin_principal()
+    for candidate_id in ids:
+        await _warm_candidate_ai_outputs(candidate_id, principal=principal_value, refresh=refresh)
+
+
+def schedule_warm_candidate_ai_outputs(
+    candidate_id: int,
+    *,
+    principal: Principal | None = None,
+    refresh: bool = True,
+) -> asyncio.Task[None] | None:
+    if (get_settings().environment or "").strip().lower() == "test":
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    return loop.create_task(
+        warm_candidate_ai_outputs(
+            candidate_id,
+            principal=principal,
+            refresh=refresh,
+        )
+    )
+
+
+def schedule_warm_candidates_ai_outputs(
+    candidate_ids: list[int] | tuple[int, ...] | set[int],
+    *,
+    principal: Principal | None = None,
+    refresh: bool = True,
+) -> asyncio.Task[None] | None:
+    if (get_settings().environment or "").strip().lower() == "test":
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    return loop.create_task(
+        warm_candidates_ai_outputs(
+            candidate_ids,
+            principal=principal,
+            refresh=refresh,
+        )
+    )
+
+
+async def refresh_active_city_candidates_ai_outputs(
+    city_id: int,
+    *,
+    principal: Principal | None = None,
+    refresh: bool = True,
+) -> None:
+    async with async_session() as session:
+        city = await session.get(City, city_id)
+        if city is None:
+            return
+        city_names = {
+            str(name).strip().lower()
+            for name in (getattr(city, "name_plain", None), getattr(city, "name", None))
+            if str(name or "").strip()
+        }
+        if not city_names:
+            return
+        rows = await session.execute(
+            select(User.id).where(
+                User.is_active.is_(True),
+                func.lower(func.coalesce(User.city, "")).in_(city_names),
+            )
+        )
+        candidate_ids = [int(candidate_id) for candidate_id in rows.scalars().all()]
+    await invalidate_candidates_ai_outputs(candidate_ids)
+    await warm_candidates_ai_outputs(candidate_ids, principal=principal, refresh=refresh)
+
+
+def schedule_refresh_active_city_candidates_ai_outputs(
+    city_id: int,
+    *,
+    principal: Principal | None = None,
+    refresh: bool = True,
+) -> asyncio.Task[None] | None:
+    if (get_settings().environment or "").strip().lower() == "test":
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    return loop.create_task(
+        refresh_active_city_candidates_ai_outputs(
+            city_id,
+            principal=principal,
+            refresh=refresh,
+        )
+    )
 
 
 class AIService:
@@ -310,6 +942,8 @@ class AIService:
         """
         self._ensure_enabled()
         ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
+        resume_context = _normalized_resume_context(await self._get_hh_resume_normalized(candidate_id))
+        ctx["resume_context"] = resume_context
         input_hash = compute_input_hash(ctx)
         kind = "candidate_summary_v1"
 
@@ -330,7 +964,35 @@ class AIService:
                     )
                 except Exception:  # pragma: no cover - analytics is non-critical
                     pass
-                return AIResult(payload=cached.payload_json, cached=True, input_hash=input_hash)
+                cached_payload = cached.payload_json if isinstance(cached.payload_json, dict) else {}
+                return AIResult(
+                    payload=_apply_candidate_summary_scorecard(
+                        context=ctx,
+                        resume_context=resume_context,
+                        payload=cached_payload,
+                    ),
+                    cached=True,
+                    input_hash=input_hash,
+                )
+
+            fallback_payload = _build_candidate_summary_fallback(
+                context=ctx,
+                scorecard=_scorecard_payload(
+                    build_candidate_scorecard(
+                        context=ctx,
+                        resume_context=resume_context,
+                        llm_scorecard=None,
+                    )
+                ),
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=fallback_payload,
+            )
+            return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
 
         await self._ensure_quota(principal)
 
@@ -350,7 +1012,11 @@ class AIService:
                 timeout_seconds=int(self._settings.ai_timeout_seconds),
                 max_tokens=max_tokens,
             )
-            validated = CandidateSummaryV1.model_validate(payload).model_dump()
+            validated = _apply_candidate_summary_scorecard(
+                context=ctx,
+                resume_context=resume_context,
+                payload=CandidateSummaryV1.model_validate(payload).model_dump(),
+            )
             latency_ms = int((time.monotonic() - started) * 1000)
             await _log_request(
                 principal=principal,
@@ -402,10 +1068,24 @@ class AIService:
                 error_code=exc.__class__.__name__,
             )
             logger.warning("ai.candidate_summary.failed", extra={"candidate_id": candidate_id}, exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"message": "AI provider error"},
-            ) from exc
+            fallback_payload = _build_candidate_summary_fallback(
+                context=ctx,
+                scorecard=_scorecard_payload(
+                    build_candidate_scorecard(
+                        context=ctx,
+                        resume_context=resume_context,
+                        llm_scorecard=None,
+                    )
+                ),
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=fallback_payload,
+            )
+            return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
 
     async def get_candidate_coach(
         self,
@@ -413,10 +1093,30 @@ class AIService:
         *,
         principal: Principal,
         refresh: bool = False,
+        summary_result: AIResult | None = None,
     ) -> AIResult:
         self._ensure_enabled()
+        if summary_result is None:
+            summary_result = await self.get_candidate_summary(
+                candidate_id,
+                principal=principal,
+                refresh=refresh,
+            )
+        summary_payload = summary_result.payload if isinstance(summary_result.payload, dict) else {}
         ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
-        input_hash = compute_input_hash(ctx)
+        resume_context = _normalized_resume_context(await self._get_hh_resume_normalized(candidate_id))
+        ctx["resume_context"] = resume_context
+        ctx["summary_scorecard"] = summary_payload.get("scorecard") if isinstance(summary_payload.get("scorecard"), dict) else None
+        ctx["summary_fit"] = summary_payload.get("fit") if isinstance(summary_payload.get("fit"), dict) else None
+        hash_ctx = dict(ctx)
+        hash_ctx.pop("summary_scorecard", None)
+        hash_ctx.pop("summary_fit", None)
+        input_hash = compute_input_hash(
+            {
+                "context": hash_ctx,
+                "summary_input_hash": summary_result.input_hash,
+            }
+        )
         kind = "candidate_coach_v1"
 
         if not refresh:
@@ -427,7 +1127,29 @@ class AIService:
                 input_hash=input_hash,
             )
             if cached is not None:
-                return AIResult(payload=cached.payload_json, cached=True, input_hash=input_hash)
+                cached_payload = cached.payload_json if isinstance(cached.payload_json, dict) else {}
+                return AIResult(
+                    payload=_apply_candidate_coach_score(
+                        payload=cached_payload,
+                        scorecard=ctx.get("summary_scorecard") if isinstance(ctx.get("summary_scorecard"), dict) else None,
+                        criteria_used=_criteria_used_from_context(ctx),
+                    ),
+                    cached=True,
+                    input_hash=input_hash,
+                )
+
+            fallback_payload = _build_candidate_coach_fallback(
+                context=ctx,
+                scorecard=ctx.get("summary_scorecard") if isinstance(ctx.get("summary_scorecard"), dict) else {},
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=fallback_payload,
+            )
+            return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
 
         await self._ensure_quota(principal)
         system_prompt, user_prompt = candidate_coach_prompts(context=ctx, allow_pii=self._allow_pii)
@@ -444,7 +1166,11 @@ class AIService:
                 timeout_seconds=int(self._settings.ai_timeout_seconds),
                 max_tokens=max_tokens,
             )
-            validated = CandidateCoachV1.model_validate(payload).model_dump()
+            validated = _apply_candidate_coach_score(
+                payload=CandidateCoachV1.model_validate(payload).model_dump(),
+                scorecard=ctx.get("summary_scorecard") if isinstance(ctx.get("summary_scorecard"), dict) else None,
+                criteria_used=_criteria_used_from_context(ctx),
+            )
             latency_ms = int((time.monotonic() - started) * 1000)
             await _log_request(
                 principal=principal,
@@ -483,10 +1209,18 @@ class AIService:
                 error_code=exc.__class__.__name__,
             )
             logger.warning("ai.candidate_coach.failed", extra={"candidate_id": candidate_id}, exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"message": "AI provider error"},
-            ) from exc
+            fallback_payload = _build_candidate_coach_fallback(
+                context=ctx,
+                scorecard=ctx.get("summary_scorecard") if isinstance(ctx.get("summary_scorecard"), dict) else {},
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=fallback_payload,
+            )
+            return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
 
     async def get_candidate_coach_drafts(
         self,
@@ -1106,6 +1840,9 @@ class AIService:
                 row.updated_at = now
             await session.commit()
 
+        await invalidate_candidate_ai_outputs(candidate_id)
+        schedule_warm_candidate_ai_outputs(candidate_id, principal=principal, refresh=True)
+
         return {
             "normalized_resume": normalized,
             "content_hash": content_hash,
@@ -1118,17 +1855,34 @@ class AIService:
         *,
         principal: Principal,
         refresh: bool = False,
+        summary_result: AIResult | None = None,
     ) -> AIResult:
         self._ensure_enabled()
         kind = "interview_script_v1"
         prompt_version = PROMPT_VERSION_INTERVIEW_SCRIPT
         model = self._interview_script_model_for_candidate(candidate_id)
+        if summary_result is None:
+            summary_result = await self.get_candidate_summary(
+                candidate_id,
+                principal=principal,
+                refresh=refresh,
+            )
+        summary_payload = summary_result.payload if isinstance(summary_result.payload, dict) else {}
+        scorecard = summary_payload.get("scorecard") if isinstance(summary_payload.get("scorecard"), dict) else None
 
         base_ctx = await build_candidate_ai_context(
             candidate_id,
             principal=principal,
             include_pii=False,
         )
+        candidate_state = {
+            "status": (base_ctx.get("candidate") or {}).get("status"),
+            "workflow_status": (base_ctx.get("candidate") or {}).get("workflow_status"),
+            "last_activity": (base_ctx.get("candidate") or {}).get("last_activity"),
+            "tests_completed": sorted((base_ctx.get("tests") or {}).get("latest", {}).keys()),
+            "upcoming_slot_purpose": ((base_ctx.get("slots") or {}).get("upcoming") or {}).get("purpose"),
+            "upcoming_slot_status": ((base_ctx.get("slots") or {}).get("upcoming") or {}).get("status"),
+        }
         candidate_profile = base_ctx.get("candidate_profile") or {}
         hh_resume_norm = await self._get_hh_resume_normalized(candidate_id)
         office_context = await self._build_office_context(ctx=base_ctx)
@@ -1138,6 +1892,7 @@ class AIService:
             str(office_context.get("vacancy") or ""),
             str(office_context.get("criteria") or ""),
             str(candidate_profile.get("work_experience") or ""),
+            str(candidate_state.get("status") or ""),
         ]
         rag_query = " ".join(part for part in rag_query_parts if part).strip()
         from .knowledge_base import search_excerpts
@@ -1147,16 +1902,21 @@ class AIService:
             limit=6,
             categories=list(KB_INTERVIEW_SCRIPT_CATEGORIES),
         )
+        rag_keys = sorted(
+            {
+                (int(item.get("document_id") or 0), int(item.get("chunk_index") or 0))
+                for item in rag_context
+                if isinstance(item, dict)
+            }
+        )
 
         input_envelope = {
+            "candidate_state": candidate_state,
             "candidate_profile": candidate_profile,
             "hh_resume_normalized": hh_resume_norm,
             "office_context": office_context,
-            "rag_keys": [
-                [int(item.get("document_id") or 0), int(item.get("chunk_index") or 0)]
-                for item in rag_context
-                if isinstance(item, dict)
-            ],
+            "scorecard": scorecard,
+            "rag_keys": [[document_id, chunk_index] for document_id, chunk_index in rag_keys],
             "model": model,
             "prompt_version": prompt_version,
         }
@@ -1180,6 +1940,37 @@ class AIService:
                     }
                 return AIResult(payload=payload, cached=True, input_hash=input_hash)
 
+            fallback_script = build_interview_script_fallback(
+                candidate_state=candidate_state,
+                candidate_profile=candidate_profile,
+                office_context=office_context,
+                scorecard=scorecard,
+                base_flags=build_base_risk_flags(candidate_profile, hh_resume_norm, office_context),
+            )
+            payload = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "model": "local-fallback",
+                "prompt_version": prompt_version,
+                "script": InterviewScriptPayload.model_validate(
+                    build_structured_interview_script(
+                        script_payload=fallback_script,
+                        candidate_fio=(base_ctx.get("candidate") or {}).get("fio"),
+                        candidate_profile=candidate_profile,
+                        tests_context=base_ctx.get("tests") or {},
+                        scorecard=scorecard,
+                    )
+                ).model_dump(),
+            }
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=payload,
+                ttl_hours=int(getattr(self._settings, "ai_interview_script_cache_ttl_hours", 24) or 24),
+            )
+            return AIResult(payload=payload, cached=False, input_hash=input_hash)
+
         await self._ensure_quota(principal)
         started = time.monotonic()
         script_tokens = int(getattr(self._settings, "ai_interview_script_max_tokens", 1800) or 1800)
@@ -1188,17 +1979,27 @@ class AIService:
 
         try:
             generated = await generate_interview_script(
+                candidate_state=candidate_state,
                 candidate_profile=candidate_profile,
                 hh_resume=hh_resume_norm,
                 office_context=office_context,
                 rag_context=rag_context,
+                scorecard=scorecard,
                 provider=self._provider,
                 model=model,
                 timeout_seconds=timeout_seconds,
                 max_tokens=max(512, script_tokens),
                 retries=2,
             )
-            script_payload = InterviewScriptPayload.model_validate(generated.payload).model_dump()
+            script_payload = InterviewScriptPayload.model_validate(
+                build_structured_interview_script(
+                    script_payload=generated.payload,
+                    candidate_fio=(base_ctx.get("candidate") or {}).get("fio"),
+                    candidate_profile=candidate_profile,
+                    tests_context=base_ctx.get("tests") or {},
+                    scorecard=scorecard,
+                )
+            ).model_dump()
             payload = {
                 "generated_at": datetime.now(UTC).isoformat(),
                 "model": model,
@@ -1245,10 +2046,36 @@ class AIService:
                 error_code=exc.__class__.__name__,
             )
             logger.warning("ai.interview_script.failed", extra={"candidate_id": candidate_id}, exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"message": "AI provider error"},
-            ) from exc
+            fallback_script = build_interview_script_fallback(
+                candidate_state=candidate_state,
+                candidate_profile=candidate_profile,
+                office_context=office_context,
+                scorecard=scorecard,
+                base_flags=build_base_risk_flags(candidate_profile, hh_resume_norm, office_context),
+            )
+            payload = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "model": "local-fallback",
+                "prompt_version": prompt_version,
+                "script": InterviewScriptPayload.model_validate(
+                    build_structured_interview_script(
+                        script_payload=fallback_script,
+                        candidate_fio=(base_ctx.get("candidate") or {}).get("fio"),
+                        candidate_profile=candidate_profile,
+                        tests_context=base_ctx.get("tests") or {},
+                        scorecard=scorecard,
+                    )
+                ).model_dump(),
+            }
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=payload,
+                ttl_hours=cache_ttl_hours,
+            )
+            return AIResult(payload=payload, cached=False, input_hash=input_hash)
 
     async def save_interview_script_feedback(
         self,
@@ -1313,6 +2140,7 @@ class AIService:
                 "quick_reasons": list(validated.quick_reasons),
                 "outcome": validated.outcome,
                 "outcome_reason": validated.outcome_reason,
+                "scorecard": validated.scorecard.model_dump() if validated.scorecard else None,
             }
 
             row = AIInterviewScriptFeedback(

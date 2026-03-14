@@ -82,6 +82,8 @@ export type IncomingCandidate = {
   ai_relevance_score?: number | null
   ai_relevance_level?: 'high' | 'medium' | 'low' | 'unknown' | null
   ai_relevance_updated_at?: string | null
+  ai_recommendation?: 'od_recommended' | 'clarify_before_od' | 'not_recommended' | null
+  ai_risk_hint?: string | null
   requested_another_time?: boolean
   requested_another_time_at?: string | null
   requested_another_time_comment?: string | null

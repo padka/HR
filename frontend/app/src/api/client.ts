@@ -14,6 +14,30 @@ export const queryClient = new QueryClient({
 let csrfToken: string | null = null
 let csrfPromise: Promise<string> | null = null
 
+type ErrorDetails = {
+  message?: string
+}
+
+type ErrorPayload = {
+  detail?: string | ErrorDetails
+  message?: string
+  errors?: string[]
+  error?: string | ErrorDetails
+}
+
+type ApiClientError = Error & {
+  status?: number
+  data?: unknown
+}
+
+function isErrorDetails(value: unknown): value is ErrorDetails {
+  return Boolean(value) && typeof value === 'object' && typeof (value as ErrorDetails).message === 'string'
+}
+
+function isErrorPayload(value: unknown): value is ErrorPayload {
+  return Boolean(value) && typeof value === 'object'
+}
+
 async function fetchCsrfToken(): Promise<string> {
   if (csrfToken) return csrfToken
   if (!csrfPromise) {
@@ -94,7 +118,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
   if (!res.ok) {
     let message = ''
-    let data: any = null
+    let data: unknown = null
     const contentType = res.headers.get('content-type') || ''
     if (contentType.includes('application/json')) {
       try {
@@ -112,19 +136,19 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     }
     if (!message && data) {
       if (typeof data === 'string') message = data
-      else if (data.detail) {
+      else if (isErrorPayload(data) && data.detail) {
         message = typeof data.detail === 'string' ? data.detail : data.detail.message || ''
-      } else if (data.message) {
+      } else if (isErrorPayload(data) && typeof data.message === 'string') {
         message = data.message
-      } else if (Array.isArray(data.errors)) {
+      } else if (isErrorPayload(data) && Array.isArray(data.errors)) {
         message = data.errors.join(', ')
-      } else if (data.error) {
+      } else if (isErrorPayload(data) && data.error) {
         if (typeof data.error === 'string') message = data.error
-        else if (data.error.message) message = data.error.message
+        else if (isErrorDetails(data.error)) message = data.error.message || ''
         else message = JSON.stringify(data.error)
       }
     }
-    const err = new Error(message || res.statusText || `Ошибка ${res.status}`) as Error & { status?: number; data?: any }
+    const err = new Error(message || res.statusText || `Ошибка ${res.status}`) as ApiClientError
     err.status = res.status
     err.data = data
     throw err

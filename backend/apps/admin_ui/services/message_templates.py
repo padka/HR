@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Dict, List, Optional, Sequence, Tuple, Iterable, Set, Any
 
+import sqlalchemy as sa
 from sqlalchemy import Select, select, update
 from sqlalchemy.exc import IntegrityError
 
@@ -16,6 +17,7 @@ from backend.core.content_updates import (
     publish_content_update,
 )
 from backend.core.settings import get_settings
+from backend.apps.admin_ui.services.message_templates_presets import known_template_presets
 from backend.domain.models import City, MessageTemplate, MessageTemplateHistory
 from backend.utils.jinja_renderer import render_template
 
@@ -49,6 +51,13 @@ KNOWN_TEMPLATE_HINTS: Dict[str, str] = {
     "interview_remind_confirm_2h": "Напоминание за 2 часа до интервью с подтверждением/переносом и ссылкой.",
     "intro_day_invite_city": "Приглашение на ознакомительный день с адресом офиса для выбранного города.",
     "intro_day_remind_2h": "Напоминание за 2 часа до ознакомительного дня с подтверждением/переносом.",
+}
+
+STAGE_LABELS: Dict[str, str] = {
+    "intro": "Ознакомительный день",
+    "interview": "Собеседование",
+    "reminder": "Напоминания и подтверждения",
+    "other": "Служебные",
 }
 
 AVAILABLE_VARIABLES: Sequence[Dict[str, str]] = (
@@ -258,7 +267,13 @@ async def list_message_templates(
     key_query: Optional[str] = None,
     channel: Optional[str] = None,
     status: Optional[str] = None,
+    allowed_city_ids: Optional[Iterable[int]] = None,
+    allowed_keys: Optional[Iterable[str]] = None,
+    include_global: bool = True,
 ) -> Dict[str, object]:
+    has_city_scope = allowed_city_ids is not None
+    allowed_city_set = {int(item) for item in (allowed_city_ids or [])}
+    allowed_key_set = {str(item).strip() for item in (allowed_keys or []) if str(item).strip()}
     city_filter_value: Optional[int] = None
     default_only = False
     if city:
@@ -272,8 +287,11 @@ async def list_message_templates(
 
     async with async_session() as session:
         city_map: Dict[Optional[int], str] = {None: "Общий"}
+        city_stmt = select(City.id, City.name).where(City.active.is_(True)).order_by(City.name.asc())
+        if allowed_city_set:
+            city_stmt = city_stmt.where(City.id.in_(allowed_city_set))
         city_rows = await session.execute(
-            select(City.id, City.name).where(City.active.is_(True)).order_by(City.name.asc())
+            city_stmt
         )
         for cid, name in city_rows:
             city_map[cid] = name
@@ -283,6 +301,18 @@ async def list_message_templates(
             filters.append(MessageTemplate.city_id.is_(None))
         elif city_filter_value is not None:
             filters.append(MessageTemplate.city_id == city_filter_value)
+        elif has_city_scope:
+            if allowed_city_set:
+                if include_global:
+                    filters.append(
+                        MessageTemplate.city_id.is_(None) | MessageTemplate.city_id.in_(allowed_city_set)
+                    )
+                else:
+                    filters.append(MessageTemplate.city_id.in_(allowed_city_set))
+            elif include_global:
+                filters.append(MessageTemplate.city_id.is_(None))
+            else:
+                filters.append(sa.false())
         if key_query:
             filters.append(MessageTemplate.key.ilike(f"%{key_query.strip()}%"))
         if channel:
@@ -291,6 +321,10 @@ async def list_message_templates(
             filters.append(MessageTemplate.is_active.is_(True))
         elif status == "draft":
             filters.append(MessageTemplate.is_active.is_(False))
+        if allowed_key_set:
+            filters.append(MessageTemplate.key.in_(sorted(allowed_key_set)))
+        if default_only and not include_global:
+            filters.append(sa.false())
 
         base_query: Select[Tuple[MessageTemplate, Optional[str]]] = (
             select(MessageTemplate, City.name)
@@ -309,9 +343,22 @@ async def list_message_templates(
             base_query = base_query.where(*filters)
 
         rows = (await session.execute(base_query)).all()
-        active_templates = (
-            await session.scalars(select(MessageTemplate).where(MessageTemplate.is_active.is_(True)))
-        ).all()
+        active_query = select(MessageTemplate).where(MessageTemplate.is_active.is_(True))
+        if allowed_key_set:
+            active_query = active_query.where(MessageTemplate.key.in_(sorted(allowed_key_set)))
+        if has_city_scope:
+            if allowed_city_set:
+                if include_global:
+                    active_query = active_query.where(
+                        MessageTemplate.city_id.is_(None) | MessageTemplate.city_id.in_(allowed_city_set)
+                    )
+                else:
+                    active_query = active_query.where(MessageTemplate.city_id.in_(allowed_city_set))
+            elif include_global:
+                active_query = active_query.where(MessageTemplate.city_id.is_(None))
+            else:
+                active_query = active_query.where(sa.false())
+        active_templates = (await session.scalars(active_query)).all()
 
     summaries: List[MessageTemplateSummary] = []
     active_tg_keys: set[str] = set()
@@ -357,6 +404,22 @@ async def list_message_templates(
         "variables": list(AVAILABLE_VARIABLES),
         "mock_context": dict(MOCK_CONTEXT),
         "coverage": coverage,
+        "catalog": [
+            {
+                "key": item["key"],
+                "label": item["label"],
+                "default_text": item["text"],
+                "hint": KNOWN_TEMPLATE_HINTS.get(item["key"]),
+                "stage": _infer_stage(item["key"]),
+                "stage_label": STAGE_LABELS.get(_infer_stage(item["key"]), "Служебные"),
+            }
+            for item in known_template_presets()
+            if not allowed_key_set or item["key"] in allowed_key_set
+        ],
+        "stages": [
+            {"key": stage_key, "label": stage_label}
+            for stage_key, stage_label in STAGE_LABELS.items()
+        ],
     }
 
 

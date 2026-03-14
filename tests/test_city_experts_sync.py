@@ -105,3 +105,38 @@ async def test_update_city_settings_syncs_city_experts_from_items_and_archives_m
         assert city is not None
         assert city.experts == "Alice\nCharlie"
 
+
+@pytest.mark.asyncio
+async def test_update_city_settings_schedules_ai_refresh_when_criteria_changed(monkeypatch):
+    scheduled: list[int] = []
+
+    def fake_schedule(city_id: int, **_kwargs):
+        scheduled.append(city_id)
+        return None
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.cities.schedule_refresh_active_city_candidates_ai_outputs",
+        fake_schedule,
+    )
+
+    async with async_session() as session:
+        city = models.City(name="City3", tz="Europe/Moscow", active=True, criteria="старые критерии")
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+        city_id = city.id
+
+    error, _, _ = await update_city_settings(
+        city_id,
+        name="City3",
+        recruiter_ids=[],
+        responsible_id=None,
+        criteria="новые критерии",
+        experts=None,
+        plan_week=None,
+        plan_month=None,
+        tz="Europe/Moscow",
+        active=True,
+    )
+    assert error is None
+    assert scheduled == [city_id]

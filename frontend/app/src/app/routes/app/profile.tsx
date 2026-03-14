@@ -11,7 +11,6 @@ import {
   type KpiDetailRow,
   type ProfileSettingsPayload,
   type ProfileSettingsResponse,
-  type TimezoneOption,
   updateProfileSettings,
   uploadProfileAvatar,
 } from '@/api/services/profile'

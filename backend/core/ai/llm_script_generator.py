@@ -15,7 +15,7 @@ from .schemas import InterviewScriptPayload
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION_INTERVIEW_SCRIPT = "interview_script_v1"
+PROMPT_VERSION_INTERVIEW_SCRIPT = "interview_script_v2"
 
 KB_INTERVIEW_SCRIPT_CATEGORIES = (
     "product_position",
@@ -26,6 +26,136 @@ KB_INTERVIEW_SCRIPT_CATEGORIES = (
     "general",
 )
 
+SMART_SERVICE_BLOCK_ORDER = [
+    "greeting_and_frame",
+    "vacancy_interest_and_candidate_filters",
+    "company_and_product_pitch",
+    "role_and_work_format",
+    "resilience_to_rejection",
+    "onboarding_and_support",
+    "compensation",
+    "od_closing_and_confirmation",
+]
+
+SMART_SERVICE_BLOCK_DEFAULTS: dict[str, dict[str, Any]] = {
+    "greeting_and_frame": {
+        "title": "Вступление и рамка",
+        "goal": "Установить контакт и коротко объяснить цель звонка.",
+        "recruiter_text": "Здравствуйте! Проверю, как меня слышно, и за 5-7 минут пройдёмся по формату работы и следующему шагу.",
+    },
+    "vacancy_interest_and_candidate_filters": {
+        "title": "Интерес к вакансии и базовые фильтры",
+        "goal": "Понять, что важно кандидату и подходит ли ему активный формат.",
+        "recruiter_text": "Подскажите, вы успели посмотреть вакансию и что для вас сейчас самое важное при выборе работы?",
+    },
+    "company_and_product_pitch": {
+        "title": "Компания и продукт",
+        "goal": "Коротко объяснить, чем занимается Smart Service и в чём ценность продукта.",
+        "recruiter_text": "Мы помогаем бизнесу получать больше обращений через Яндекс.Карты: улучшаем карточку, визуал и техническую часть профиля.",
+    },
+    "role_and_work_format": {
+        "title": "Роль и формат работы",
+        "goal": "Объяснить полевой формат, график и реальную механику работы менеджера.",
+        "recruiter_text": "Работа начинается из офиса, дальше менеджер едет по территории, общается с предпринимателями и договаривается о встречах.",
+    },
+    "resilience_to_rejection": {
+        "title": "Устойчивость к отказам",
+        "goal": "Понять, как кандидат выдерживает темп и негативную обратную связь.",
+        "recruiter_text": "Отказы бывают у всех. Важно понять, насколько спокойно вы продолжаете диалог и держите темп.",
+    },
+    "onboarding_and_support": {
+        "title": "Обучение и поддержка",
+        "goal": "Снять тревогу по входу в роль и показать систему адаптации.",
+        "recruiter_text": "На старте есть наставник и практика в полях, обычно адаптация занимает 3-5 дней.",
+    },
+    "compensation": {
+        "title": "Доход и мотивация",
+        "goal": "Объяснить систему дохода без перегруза деталями.",
+        "recruiter_text": "Есть понятная система дохода: фиксированная часть плюс мотивация, либо высокий процентный формат для сильных кандидатов.",
+    },
+    "od_closing_and_confirmation": {
+        "title": "ОД и закрепление",
+        "goal": "Либо договориться об ознакомительном дне, либо корректно завершить разговор без предложения ОД.",
+        "recruiter_text": "Следующий шаг зависит от итоговой релевантности: либо фиксируем ознакомительный день, либо уточняем критичные моменты и возвращаемся с решением.",
+    },
+}
+
+_FRAGMENTED_LINE_RE = re.compile(r"^\s*(?:[-*•]+|\d+[\.)]|#+|>{1,3})\s*")
+_HEADERISH_LINE_RE = re.compile(
+    r"^\s*(?:\d+[\.)]\s*)?(?:вступление|цель|задача|компания|формат|деньги|возражения|блок|этап|проверить|спросить|уточнить|closing|cta)\b[:\s-]*$",
+    flags=re.IGNORECASE,
+)
+
+_SCRIPT_RISK_REASON_MAP = {
+    "AGE_BELOW_MIN": "Есть риск несоответствия возрастным требованиям офиса.",
+    "NO_RELEVANT_EXPERIENCE": "Нужно проверить реальный опыт общения с клиентами и переговоров.",
+    "INCOME_MISMATCH": "Ожидания по доходу могут быть выше стартовой вилки.",
+    "SCHEDULE_RISK": "Есть риск несовпадения по графику и доступности.",
+    "LOGISTICS_UNCLEAR": "Нужно заранее проговорить адрес, ориентиры и время выезда.",
+    "RESUME_LOW_QUALITY": "По резюме мало конкретики, часть опыта лучше уточнить голосом.",
+}
+
+_INTRO_DAY_STATUS_KEYS = {
+    "intro_day_scheduled",
+    "intro_day_confirmed_preliminary",
+    "intro_day_confirmed_day_of",
+    "intro_day_declined_invitation",
+    "intro_day_declined_day_of",
+}
+
+
+def derive_stage_strategy(
+    candidate_state: dict[str, Any] | None,
+    *,
+    recommendation: str,
+) -> dict[str, str]:
+    state = candidate_state or {}
+    status = str(state.get("status") or "").strip().lower()
+    workflow_status = str(state.get("workflow_status") or "").strip().lower()
+    slot_purpose = str(state.get("upcoming_slot_purpose") or "").strip().lower()
+
+    if recommendation == "not_recommended" or status in {"not_hired", "interview_declined", "test2_failed"}:
+        return {
+            "key": "soft_closure",
+            "stage_label": "Финальная сверка / мягкое закрытие",
+            "call_goal": "Корректно снять ожидания, зафиксировать спорные моменты и не обещать следующий этап без внутреннего решения.",
+            "guidance": "Не предлагай ознакомительный день. Говори мягко, коротко и без давления.",
+        }
+
+    if status in _INTRO_DAY_STATUS_KEYS or "intro" in workflow_status or slot_purpose == "intro_day":
+        return {
+            "key": "intro_day_confirmation",
+            "stage_label": "Подтверждение ознакомительного дня",
+            "call_goal": "Подтвердить явку, логистику, дресс-код и правила ознакомительного дня без повторного полного скрининга.",
+            "guidance": "Не возвращайся к длинной презентации компании. Сфокусируйся на логистике, правилах и закреплении явки.",
+        }
+
+    if status in {"test2_sent", "test2_completed"} or workflow_status in {"test2_sent", "test2_completed"}:
+        return {
+            "key": "post_interview_qualification",
+            "stage_label": "Квалификация после интервью",
+            "call_goal": "Уточнить оставшиеся риски после интервью и, если всё сходится, закрыть кандидата на ознакомительный день.",
+            "guidance": "Не дублируй холодный старт. Сделай короткое напоминание о роли и быстро переходи к оставшимся вопросам и следующему этапу.",
+        }
+
+    if status in {"interview_scheduled", "interview_confirmed", "slot_pending"} or workflow_status in {
+        "interview_scheduled",
+        "interview_confirmed",
+    }:
+        return {
+            "key": "interview_confirmation",
+            "stage_label": "Подтверждение собеседования",
+            "call_goal": "Подтвердить участие, снять логистические и мотивационные риски и довести кандидата до встречи без повторного полного скрининга.",
+            "guidance": "Скрипт должен быть короче первичного звонка: минимум повторов, максимум ясности по времени, формату и ожиданиям.",
+        }
+
+    return {
+        "key": "primary_screening",
+        "stage_label": "Первичный скрининг",
+        "call_goal": "Понять базовую релевантность кандидата, кратко презентовать вакансию и перевести на следующий этап воронки.",
+        "guidance": "Это первый полноценный разговор: выстрой контакт, проверь базовые критерии, презентуй компанию и мягко закрой на следующий шаг.",
+    }
+
 
 def interview_script_json_schema() -> dict[str, Any]:
     """Strict response contract for Interview Script payload."""
@@ -35,6 +165,9 @@ def interview_script_json_schema() -> dict[str, Any]:
         "type": "object",
         "additionalProperties": False,
         "required": [
+            "stage_label",
+            "call_goal",
+            "conversation_script",
             "risk_flags",
             "highlights",
             "checks",
@@ -43,6 +176,9 @@ def interview_script_json_schema() -> dict[str, Any]:
             "cta_templates",
         ],
         "properties": {
+            "stage_label": {"type": "string", "minLength": 1, "maxLength": 120},
+            "call_goal": {"type": "string", "minLength": 1, "maxLength": 240},
+            "conversation_script": {"type": "string", "minLength": 1, "maxLength": 12000},
             "risk_flags": {
                 "type": "array",
                 "maxItems": 20,
@@ -405,11 +541,493 @@ class ScriptGenerationResult:
     usage: Usage
 
 
+def _normalize_script_block(block_id: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+    base = dict(SMART_SERVICE_BLOCK_DEFAULTS[block_id])
+    src = payload if isinstance(payload, dict) else {}
+    return {
+        "id": block_id,
+        "title": str(src.get("title") or base["title"])[:120],
+        "goal": str(src.get("goal") or base["goal"])[:300],
+        "recruiter_text": str(src.get("recruiter_text") or base["recruiter_text"])[:1200],
+        "candidate_questions": [
+            str(item).strip()[:300]
+            for item in (src.get("candidate_questions") or [])
+            if str(item).strip()
+        ][:12],
+        "if_answers": [
+            {
+                "pattern": str(item.get("pattern") or "").strip()[:200],
+                "hint": str(item.get("hint") or "").strip()[:400],
+            }
+            for item in (src.get("if_answers") or [])
+            if isinstance(item, dict) and str(item.get("pattern") or "").strip() and str(item.get("hint") or "").strip()
+        ][:12],
+    }
+
+
+def _clean_sentence(text: str) -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    return value.strip(" -•*")
+
+
+def _sanitize_conversation_script(text: Any) -> str:
+    raw = str(text or "").replace("\r", "\n")
+    if not raw.strip():
+        return ""
+
+    lines = []
+    for source_line in raw.splitlines():
+        line = source_line.strip()
+        if not line:
+            lines.append("")
+            continue
+        line = _FRAGMENTED_LINE_RE.sub("", line)
+        line = re.sub(r"^\*\*(.*?)\*\*$", r"\1", line)
+        line = re.sub(r"^_{1,3}(.*?)_{1,3}$", r"\1", line)
+        line = line.strip(" -")
+        if not line or _HEADERISH_LINE_RE.match(line):
+            continue
+        lines.append(line)
+
+    paragraphs: list[str] = []
+    buffer: list[str] = []
+    for line in lines:
+        if not line:
+            if buffer:
+                paragraphs.append(_clean_sentence(" ".join(buffer)))
+                buffer = []
+            continue
+        buffer.append(line)
+    if buffer:
+        paragraphs.append(_clean_sentence(" ".join(buffer)))
+
+    cleaned: list[str] = []
+    for paragraph in paragraphs:
+        normalized = _clean_sentence(paragraph)
+        if not normalized:
+            continue
+        if cleaned and cleaned[-1] == normalized:
+            continue
+        cleaned.append(normalized)
+    return "\n\n".join(cleaned)[:12000]
+
+
+def _looks_fragmented_conversation(text: str) -> bool:
+    cleaned = _sanitize_conversation_script(text)
+    if not cleaned:
+        return True
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return True
+    bulletish = sum(1 for line in lines if _FRAGMENTED_LINE_RE.match(line) or _HEADERISH_LINE_RE.match(line))
+    short_lines = sum(1 for line in lines if len(line) < 48)
+    return (bulletish / len(lines)) >= 0.25 or (short_lines / len(lines)) >= 0.5
+
+
+def _conversation_paragraph_from_block(block: dict[str, Any]) -> str:
+    parts: list[str] = []
+    recruiter_text = _clean_sentence(str(block.get("recruiter_text") or ""))
+    if recruiter_text:
+        parts.append(recruiter_text)
+    questions = [
+        _clean_sentence(str(item))
+        for item in (block.get("candidate_questions") or [])
+        if _clean_sentence(str(item))
+    ]
+    if questions:
+        for question in questions[:2]:
+            if question.lower() in recruiter_text.lower():
+                continue
+            if not question.endswith("?"):
+                question = f"{question}?"
+            parts.append(question)
+    return " ".join(part for part in parts if part).strip()
+
+
+def _compose_conversation_script(
+    *,
+    script: dict[str, Any],
+    candidate_state: dict[str, Any],
+    office_context: dict[str, Any],
+    scorecard: dict[str, Any] | None,
+) -> str:
+    stage_strategy = derive_stage_strategy(
+        candidate_state,
+        recommendation=str((scorecard or {}).get("recommendation") or "clarify_before_od"),
+    )
+    recommendation = str((scorecard or {}).get("recommendation") or "clarify_before_od")
+    blocks = list(script.get("script_blocks") or [])
+    block_by_id = {str(item.get("id") or ""): item for item in blocks if isinstance(item, dict)}
+
+    if stage_strategy["key"] == "interview_confirmation":
+        greeting = _conversation_paragraph_from_block(block_by_id.get("greeting_and_frame") or {})
+        filters = _conversation_paragraph_from_block(block_by_id.get("vacancy_interest_and_candidate_filters") or {})
+        return _sanitize_conversation_script(
+            "\n\n".join(
+                paragraph
+                for paragraph in [
+                    greeting
+                    or "Здравствуйте. Хочу коротко подтвердить нашу встречу и проверить, что по времени и формату всё по-прежнему удобно.",
+                    filters
+                    or "Подскажите, пожалуйста, ничего не изменилось по графику, дороге и готовности созвониться или приехать в назначённое время?",
+                    "С моей стороны задача простая: снять последние бытовые и мотивационные вопросы, чтобы собеседование прошло спокойно и без сюрпризов. Если что-то поменялось по занятости, дороге или ожиданиям от вакансии, лучше проговорить это сейчас, чтобы мы сразу скорректировали план.",
+                    "Если участие подтверждаете, я закрепляю за вами встречу, ещё раз отправляю детали по времени и формату и остаюсь на связи, если понадобится перенос или короткое уточнение.",
+                ]
+                if paragraph
+            )
+        )[:12000]
+    elif stage_strategy["key"] == "post_interview_qualification":
+        selected_ids = [
+            "greeting_and_frame",
+            "company_and_product_pitch",
+            "role_and_work_format",
+            "resilience_to_rejection",
+            "compensation",
+            "od_closing_and_confirmation",
+        ]
+    elif stage_strategy["key"] == "intro_day_confirmation":
+        city = str(office_context.get("city") or "городу").strip()
+        address = str(office_context.get("address") or "").strip()
+        logistics = f" Офис: {address}." if address else ""
+        return (
+            f"Здравствуйте. Хочу коротко подтвердить ваш ознакомительный день по вакансии Smart Service в городе {city}.{logistics} "
+            "Напомню, что это практический этап примерно на полтора-два часа: вы вместе с наставником увидите, как выглядит работа вживую, и сможете задать все вопросы по формату, задачам и обучению.\n\n"
+            "Пожалуйста, подтвердите, что время вам по-прежнему подходит, как планируете добираться и во сколько нужно выехать, чтобы приехать спокойно и без опоздания. Сразу напомню про аккуратный деловой или smart-casual вид и просьбу предупредить заранее, если что-то поменяется.\n\n"
+            "Если всё в силе, я закрепляю за вами слот и прошу одним сообщением написать подтверждение, что вы будете в назначенное время. Если нужен перенос, лучше согласуем его сейчас, чтобы не терять этап."
+        )[:12000]
+    elif stage_strategy["key"] == "soft_closure":
+        return (
+            "Здравствуйте. Спасибо, что нашли время выйти на связь. Я коротко сверю несколько моментов, чтобы не дать вам неверных ожиданий по следующему этапу.\n\n"
+            "По тем данным, которые у нас уже есть, сейчас есть спорные точки, которые требуют внутренней проверки. Поэтому я не буду обещать следующий этап или быстрый переход дальше, пока не сверю их с правилами офиса и действующими критериями.\n\n"
+            "Если захотите, можете коротко добавить всё важное по опыту, готовности к формату и срокам выхода. После этого я зафиксирую информацию и вернусь к вам с итогом без лишних обещаний."
+        )[:12000]
+    else:
+        selected_ids = SMART_SERVICE_BLOCK_ORDER
+
+    paragraphs: list[str] = []
+    for block_id in selected_ids:
+        block = block_by_id.get(block_id)
+        if not isinstance(block, dict):
+            continue
+        paragraph = _conversation_paragraph_from_block(block)
+        if paragraph:
+            paragraphs.append(paragraph)
+
+    if recommendation == "clarify_before_od" and paragraphs:
+        paragraphs[-1] = (
+            f"{paragraphs[-1]} Сначала хочу подтвердить один-два критичных момента по формату и доступности, "
+            "и если всё сходится, сразу зафиксируем следующий этап."
+        )[:1500]
+    elif recommendation == "od_recommended" and paragraphs:
+        paragraphs[-1] = (
+            f"{paragraphs[-1]} Если по разговору видим, что базовые критерии совпадают, сразу предложу конкретное время следующего этапа и закреплю детали сообщением."
+        )[:1500]
+
+    return _sanitize_conversation_script("\n\n".join(paragraphs))[:12000]
+
+
+def _normalize_script_payload(
+    script: dict[str, Any],
+    *,
+    recommendation: str,
+    candidate_state: dict[str, Any] | None = None,
+    office_context: dict[str, Any] | None = None,
+    scorecard: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    blocks_by_id: dict[str, dict[str, Any]] = {}
+    for block in list(script.get("script_blocks") or []):
+        if not isinstance(block, dict):
+            continue
+        block_id = str(block.get("id") or "").strip()
+        if block_id:
+            blocks_by_id[block_id] = block
+
+    normalized_blocks = [
+        _normalize_script_block(block_id, blocks_by_id.get(block_id))
+        for block_id in SMART_SERVICE_BLOCK_ORDER
+    ]
+    script["script_blocks"] = normalized_blocks
+    stage_strategy = derive_stage_strategy(candidate_state, recommendation=recommendation)
+    script["stage_label"] = str(script.get("stage_label") or stage_strategy["stage_label"])[:120]
+    script["call_goal"] = str(script.get("call_goal") or stage_strategy["call_goal"])[:240]
+
+    if recommendation == "not_recommended":
+        script["cta_templates"] = [
+            {
+                "type": "soft_close",
+                "text": "Спасибо за разговор. Зафиксирую уточнения и вернусь с итогом после внутренней сверки по критериям.",
+            }
+        ]
+        closing = normalized_blocks[-1]
+        closing["recruiter_text"] = (
+            "Сейчас не буду обещать следующий этап. Корректно зафиксирую риски и вернусь к вам с итогом после внутренней проверки."
+        )
+        closing["candidate_questions"] = ["Есть ли что-то важное, что вы хотите добавить перед финальной сверкой?"]
+        closing["if_answers"] = [
+            {
+                "pattern": "просит решение сейчас",
+                "hint": "Спокойно объяснить, что без проверки по критериям обещать следующий этап нельзя.",
+            }
+        ]
+    elif recommendation == "clarify_before_od":
+        existing = [item for item in (script.get("cta_templates") or []) if isinstance(item, dict)]
+        existing.append(
+            {
+                "type": "conditional_od",
+                "text": "Если подтверждаем критичные моменты по формату и доступности, сразу фиксируем ознакомительный день.",
+            }
+        )
+        script["cta_templates"] = existing[:10]
+        closing = normalized_blocks[-1]
+        if "условно" not in closing["recruiter_text"].lower():
+            closing["recruiter_text"] = (
+                f"{closing['recruiter_text']} Сначала уточним 1-2 критичных момента, после этого смогу закрепить вас на ОД."
+            )[:1200]
+    else:
+        has_od = any(
+            "ознаком" in str(item.get("text") or "").lower()
+            for item in (script.get("cta_templates") or [])
+            if isinstance(item, dict)
+        )
+        if not has_od:
+            existing = [item for item in (script.get("cta_templates") or []) if isinstance(item, dict)]
+            existing.append(
+                {
+                    "type": "od_confirm",
+                    "text": "Подтверждаю ознакомительный день и сразу отправляю время, адрес, дресс-код и просьбу подтвердить явку сообщением.",
+                }
+            )
+            script["cta_templates"] = existing[:10]
+
+    raw_conversation = _sanitize_conversation_script(script.get("conversation_script"))
+    if not raw_conversation or _looks_fragmented_conversation(str(script.get("conversation_script") or "")):
+        raw_conversation = _compose_conversation_script(
+            script=script,
+            candidate_state=candidate_state or {},
+            office_context=office_context or {},
+            scorecard=scorecard,
+        )
+    script["conversation_script"] = _sanitize_conversation_script(raw_conversation)[:12000]
+    return script
+
+
+def build_interview_script_fallback(
+    *,
+    candidate_state: dict[str, Any] | None,
+    candidate_profile: dict[str, Any],
+    office_context: dict[str, Any],
+    scorecard: dict[str, Any] | None,
+    base_flags: list[tuple[str, str, str]],
+) -> dict[str, Any]:
+    recommendation = str((scorecard or {}).get("recommendation") or "clarify_before_od")
+    stage_strategy = derive_stage_strategy(candidate_state, recommendation=recommendation)
+    vacancy = str(office_context.get("vacancy") or "вакансия Smart Service").strip()
+    city = str(office_context.get("city") or "ваш город").strip()
+    address = str(office_context.get("address") or "").strip()
+    logistics_tail = f" Офис: {address}." if address else ""
+    work_experience = str(candidate_profile.get("work_experience") or "").strip()
+    motivation = str(candidate_profile.get("motivation") or "").strip()
+
+    blockers = (scorecard or {}).get("blockers") or []
+    missing_data = (scorecard or {}).get("missing_data") or []
+    metrics = (scorecard or {}).get("metrics") or []
+    met_metrics = [
+        item for item in metrics if isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "met"
+    ]
+    unknown_metrics = [
+        item for item in metrics if isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "unknown"
+    ]
+
+    risk_flags: list[dict[str, Any]] = []
+    for code, severity, reason in base_flags[:4]:
+        risk_flags.append(
+            {
+                "code": code,
+                "severity": severity,
+                "reason": _SCRIPT_RISK_REASON_MAP.get(code, reason),
+                "question": _build_clarifying_question(code),
+                "recommended_phrase": _build_recommended_phrase(code),
+            }
+        )
+    for item in blockers[:2]:
+        if not isinstance(item, dict):
+            continue
+        risk_flags.append(
+            {
+                "code": str(item.get("key") or "BLOCKER").upper()[:64],
+                "severity": "high",
+                "reason": str(item.get("label") or item.get("evidence") or "Есть критичный риск.")[:500],
+                "question": "Подтвердите, пожалуйста, этот момент простыми словами, чтобы я не делал неверных обещаний по следующему этапу.",
+                "recommended_phrase": "Сейчас корректно зафиксирую этот риск и не буду обещать следующий этап без внутренней проверки.",
+            }
+        )
+    deduped_flags: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
+    for item in risk_flags:
+        code = str(item.get("code") or "").strip()
+        if not code or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        deduped_flags.append(item)
+    risk_flags = deduped_flags[:8]
+
+    highlights: list[str] = []
+    if work_experience:
+        highlights.append(f"Опыт кандидата: {work_experience[:140]}")
+    if motivation:
+        highlights.append(f"Мотивация: {motivation[:140]}")
+    for item in met_metrics[:3]:
+        highlights.append(str(item.get("label") or item.get("evidence") or "").strip()[:180])
+    if not highlights:
+        highlights.append(f"Фокус на вакансии {vacancy} в городе {city}.")
+
+    checks: list[str] = []
+    for item in blockers[:3]:
+        if not isinstance(item, dict):
+            continue
+        checks.append(str(item.get("evidence") or item.get("label") or "").strip()[:200])
+    for item in missing_data[:3]:
+        if not isinstance(item, dict):
+            continue
+        checks.append(str(item.get("evidence") or item.get("label") or "").strip()[:200])
+    for item in unknown_metrics[:2]:
+        if not isinstance(item, dict):
+            continue
+        checks.append(f"Уточнить: {str(item.get('label') or item.get('evidence') or '').strip()[:180]}")
+    if not checks:
+        checks.append("Проверить готовность к полевому формату и ближайшему выходу.")
+
+    objections = [
+        {
+            "topic": "Доход",
+            "candidate_says": "Хочу понять, какой доход реально можно сделать на старте.",
+            "recruiter_answer": "Коротко и честно объясните стартовую систему выплат, от чего растёт доход и какой формат подойдёт именно ему.",
+        },
+        {
+            "topic": "Разъездной формат",
+            "candidate_says": "Я не до конца понимаю, насколько это выездная работа.",
+            "recruiter_answer": "Спокойно раскройте реальный ритм дня: старт из офиса, территория, встречи с предпринимателями и поддержка наставника на входе.",
+        },
+        {
+            "topic": "Без опыта",
+            "candidate_says": "У меня мало прямого опыта продаж.",
+            "recruiter_answer": "Сделайте акцент на обучении 3-5 дней, наставнике и том, что важнее коммуникация и темп, чем идеально релевантный прошлый опыт.",
+        },
+    ]
+
+    short_pitch = (
+        "Мы помогаем бизнесу получать больше обращений через Яндекс.Карты: обновляем карточку, усиливаем визуал и технически оптимизируем профиль."
+    )
+    long_pitch = (
+        "Мы берём профиль бизнеса на обслуживание под ключ: делаем профессиональную съёмку или 3D-панораму, обновляем карточку, контакты, описание и визуальную часть, "
+        "а также технически оптимизируем профиль, чтобы он выше показывался в поиске и собирал больше просмотров."
+    )
+    pitch_text = long_pitch if recommendation != "not_recommended" else short_pitch
+
+    script = {
+        "stage_label": stage_strategy["stage_label"],
+        "call_goal": stage_strategy["call_goal"],
+        "conversation_script": "",
+        "risk_flags": risk_flags,
+        "highlights": highlights[:8],
+        "checks": checks[:10],
+        "objections": objections,
+        "script_blocks": [
+            {
+                "id": "greeting_and_frame",
+                "recruiter_text": (
+                    f"Здравствуйте! Как меня слышно? Коротко пройдёмся по вакансии {vacancy}, формату работы и следующему шагу.{logistics_tail}"
+                ),
+                "candidate_questions": [
+                    "Удобно ли сейчас говорить 5-7 минут?",
+                    "Вы успели посмотреть вакансию до отклика?",
+                ],
+            },
+            {
+                "id": "vacancy_interest_and_candidate_filters",
+                "recruiter_text": (
+                    "Подскажите, что для вас сейчас важнее всего при выборе работы: доход, график, развитие, стабильность или коллектив? "
+                    "И насколько вам комфортна работа, где много живого общения и движения в течение дня?"
+                ),
+                "candidate_questions": [
+                    "Сколько времени вам добираться до офиса?",
+                    "Был ли опыт постоянного общения с людьми вживую?",
+                ],
+            },
+            {
+                "id": "company_and_product_pitch",
+                "recruiter_text": pitch_text,
+                "candidate_questions": [
+                    "Насколько вам в целом интересен продукт, связанный с продвижением бизнеса на Яндекс.Картах?",
+                    "Как бы оценили интерес к такой роли по шкале от 1 до 10?",
+                ],
+            },
+            {
+                "id": "role_and_work_format",
+                "recruiter_text": (
+                    "График у нас 5/2, с 9:00 до 18:00. День начинается в офисе, дальше менеджер работает на закреплённой территории, знакомится с предпринимателями "
+                    "и переводит интерес в полноценные переговоры."
+                ),
+                "candidate_questions": [
+                    "Насколько вам подходит полевой формат без постоянного сидения в офисе?",
+                    "Если будет нужно быстро выйти на обучение, это реалистично для вас?",
+                ],
+            },
+            {
+                "id": "resilience_to_rejection",
+                "recruiter_text": (
+                    "Отказы в такой работе бывают регулярно. Для меня важно понять, насколько спокойно вы продолжаете разговор, когда слышите «неинтересно» или «нет времени»."
+                ),
+                "candidate_questions": [
+                    "Как обычно реагируете на отказ или жёсткий ответ?",
+                ],
+            },
+            {
+                "id": "onboarding_and_support",
+                "recruiter_text": (
+                    "Опыт в продажах не обязателен: на старте есть наставник и внутренняя школа, обычно адаптация занимает 3-5 дней, всё показывают на практике."
+                ),
+                "candidate_questions": [
+                    "Насколько вам комфортен вход через обучение и разбор реальных кейсов?",
+                ],
+            },
+            {
+                "id": "compensation",
+                "recruiter_text": (
+                    "По деньгам всё прозрачно: есть фиксированная часть плюс мотивация, а для сильных кандидатов возможен формат с большей переменной частью."
+                ),
+                "candidate_questions": [
+                    "Какой формат вам ближе: больше стабильности или больше переменной части за результат?",
+                ],
+            },
+            {
+                "id": "od_closing_and_confirmation",
+                "recruiter_text": (
+                    "Если видим, что по базовым критериям всё ок, следующим шагом фиксируем ознакомительный день на 1.5-2 часа с наставником."
+                ),
+                "candidate_questions": [
+                    "Если мы подходим друг другу, готовы двигаться к следующему этапу без долгой паузы?",
+                ],
+            },
+        ],
+        "cta_templates": [],
+    }
+    return _normalize_script_payload(
+        script,
+        recommendation=recommendation,
+        candidate_state=candidate_state,
+        office_context=office_context,
+        scorecard=scorecard,
+    )
+
+
 async def generate_interview_script(
+    candidate_state: dict[str, Any],
     candidate_profile: dict[str, Any],
     hh_resume: dict[str, Any],
     office_context: dict[str, Any],
     *,
+    scorecard: dict[str, Any],
     rag_context: list[dict[str, Any]],
     provider: AIProvider,
     model: str,
@@ -424,15 +1042,22 @@ async def generate_interview_script(
         {"code": code, "severity": severity, "reason": reason}
         for code, severity, reason in base_flags
     ]
+    stage_strategy = derive_stage_strategy(
+        candidate_state,
+        recommendation=str((scorecard or {}).get("recommendation") or "clarify_before_od"),
+    )
 
     errors: list[str] = []
     attempt = 0
     while attempt <= max(0, retries):
         attempt += 1
         system_prompt, user_prompt = interview_script_prompts(
+            candidate_state=candidate_state,
+            stage_strategy=stage_strategy,
             candidate_profile=candidate_profile,
             hh_resume_normalized=hh_resume_norm,
             office_context=office_context,
+            scorecard=scorecard,
             rag_context=rag_context,
             base_risk_hints=base_risk_hints,
         )
@@ -449,10 +1074,24 @@ async def generate_interview_script(
                 timeout_seconds=int(timeout_seconds),
                 max_tokens=max(512, int(max_tokens)),
             )
-            validated = InterviewScriptPayload.model_validate(payload).model_dump()
+            normalized_payload = _normalize_script_payload(
+                dict(payload) if isinstance(payload, dict) else {},
+                recommendation=str((scorecard or {}).get("recommendation") or "clarify_before_od"),
+                candidate_state=candidate_state,
+                office_context=office_context,
+                scorecard=scorecard,
+            )
+            validated = InterviewScriptPayload.model_validate(normalized_payload).model_dump()
             validated["risk_flags"] = merge_with_llm_flags(
                 base_flags=base_flags,
                 llm_flags=list(validated.get("risk_flags") or []),
+            )
+            validated = _normalize_script_payload(
+                validated,
+                recommendation=str((scorecard or {}).get("recommendation") or "clarify_before_od"),
+                candidate_state=candidate_state,
+                office_context=office_context,
+                scorecard=scorecard,
             )
             return ScriptGenerationResult(payload=validated, usage=usage)
         except (ValidationError, AIProviderError, ValueError) as exc:

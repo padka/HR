@@ -204,3 +204,46 @@ def test_detailization_delete_removes_row():
         payload2 = client.get("/api/detailization", auth=("admin", "admin")).json()
         row2 = next((it for it in payload2["items"] if it["candidate"]["id"] == seed["user_id"]), None)
         assert row2 is None
+
+
+def test_detailization_supports_final_outcome_reason_and_export():
+    seed = _run(
+        _seed_intro_day_assignment(
+            fio="DET Candidate FinalOutcome",
+            rejection_reason=None,
+            candidate_status=CandidateStatus.NOT_HIRED,
+        )
+    )
+    app = create_app()
+    with TestClient(app) as client:
+        payload = client.get("/api/detailization", auth=("admin", "admin")).json()
+        row = next((it for it in payload["items"] if it["candidate"]["id"] == seed["user_id"]), None)
+        assert row is not None
+        entry_id = int(row["id"])
+        assert row["final_outcome"] == "not_attached"
+
+        token = client.get("/api/csrf", auth=("admin", "admin")).json()["token"]
+        patched = client.patch(
+            f"/api/detailization/{entry_id}",
+            auth=("admin", "admin"),
+            headers={"x-csrf-token": token},
+            json={
+                "final_outcome": "not_counted",
+                "final_outcome_reason": "Не подлежит оплате",
+            },
+        )
+        assert patched.status_code == 200
+        assert patched.json()["ok"] is True
+
+        payload2 = client.get("/api/detailization", auth=("admin", "admin")).json()
+        row2 = next((it for it in payload2["items"] if it["candidate"]["id"] == seed["user_id"]), None)
+        assert row2 is not None
+        assert row2["final_outcome"] == "not_counted"
+        assert row2["final_outcome_reason"] == "Не подлежит оплате"
+        assert payload2["summary"]["outcomes"]["not_counted"] >= 1
+
+        export = client.get("/api/detailization/export.csv", auth=("admin", "admin"))
+        assert export.status_code == 200
+        text = export.text
+        assert "final_outcome" in text
+        assert "DET Candidate FinalOutcome" in text

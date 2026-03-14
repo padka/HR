@@ -15,6 +15,10 @@ type TemplateDetail = {
   is_active?: boolean
 }
 
+type TemplatePreviewResponse = {
+  html: string
+}
+
 const PLACEHOLDERS = [
   '{{candidate_fio}}',
   '{{city_name}}',
@@ -172,7 +176,7 @@ export function TemplateEditPage() {
   const [serverPreview, setServerPreview] = useState<string | null>(null)
 
   const previewMutation = useMutation({
-    mutationFn: async () => apiFetch('/message-templates/preview', {
+    mutationFn: async () => apiFetch<TemplatePreviewResponse>('/message-templates/preview', {
       method: 'POST',
       body: JSON.stringify({
         text: form.text,
@@ -180,7 +184,7 @@ export function TemplateEditPage() {
         city_id: form.city_id ? Number(form.city_id) : null,
       }),
     }),
-    onSuccess: (data: any) => setServerPreview(data.html),
+    onSuccess: (data: TemplatePreviewResponse) => setServerPreview(data.html),
   })
 
   const title = templateTitle(form.key)

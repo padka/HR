@@ -2,21 +2,26 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { apiFetch } from '@/api/client'
+import type { QuestionGroup } from '@/api/services/system'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
+
+type CloneQuestionPayload = {
+  id?: number
+}
 
 export function QuestionsPage() {
   const navigate = useNavigate()
   const isMobile = useIsMobile()
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error } = useQuery<QuestionGroup[]>({
     queryKey: ['questions'],
-    queryFn: () => apiFetch<any[]>('/questions'),
+    queryFn: () => apiFetch<QuestionGroup[]>('/questions'),
   })
 
   const cloneMutation = useMutation({
     mutationFn: async (questionId: number) => {
-      return apiFetch(`/questions/${questionId}/clone`, { method: 'POST' })
+      return apiFetch<CloneQuestionPayload>(`/questions/${questionId}/clone`, { method: 'POST' })
     },
-    onSuccess: (payload: any) => {
+    onSuccess: (payload: CloneQuestionPayload) => {
       if (payload?.id) {
         navigate({ to: '/app/questions/$questionId/edit', params: { questionId: String(payload.id) } })
       }
@@ -36,12 +41,12 @@ export function QuestionsPage() {
           {isError && <p className="text-danger">Ошибка: {(error as Error).message}</p>}
           {data && (
             <div className="page-section__content">
-              {(data as any[]).map((group) => (
+              {data.map((group) => (
                 <article key={group.test_id} className="glass glass--subtle data-card">
                   <h3 className="data-card__title">{group.title}</h3>
                   {isMobile ? (
                     <div className="mobile-card-list questions-mobile-list">
-                      {group.questions.map((q: any) => (
+                      {group.questions.map((q) => (
                         <article key={q.id} className="mobile-card question-mobile-card">
                           <div className="question-mobile-card__head">
                             <strong>#{q.index}</strong>
@@ -82,7 +87,7 @@ export function QuestionsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {group.questions.map((q: any) => (
+                        {group.questions.map((q) => (
                           <tr key={q.id}>
                             <td>{q.id}</td>
                             <td>{q.index}</td>

@@ -50,6 +50,7 @@ class HHNegotiationImportResult:
     candidates_created: int
     candidates_linked: int
     resumes_upserted: int
+    candidate_ids_touched: list[int]
 
 
 def _utcnow() -> datetime:
@@ -444,6 +445,7 @@ async def import_hh_negotiations(
     candidates_created = 0
     candidates_linked = 0
     resumes_upserted = 0
+    candidate_ids_touched: set[int] = set()
 
     for collection_id, collection_url in collections:
         collection_vacancy_id = _extract_vacancy_id_from_collection_url(collection_url)
@@ -522,6 +524,8 @@ async def import_hh_negotiations(
                     candidate.hh_sync_status = HHIdentitySyncStatus.SYNCED
                     candidate.hh_sync_error = None
                     candidates_linked += 1
+                if getattr(candidate, "id", None) is not None:
+                    candidate_ids_touched.add(int(candidate.id))
 
                 identity = await _upsert_candidate_identity(
                     session,
@@ -599,6 +603,7 @@ async def import_hh_negotiations(
         candidates_created=candidates_created,
         candidates_linked=candidates_linked,
         resumes_upserted=resumes_upserted,
+        candidate_ids_touched=sorted(candidate_ids_touched),
     )
 
 

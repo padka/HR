@@ -14,9 +14,17 @@ interface Candidate {
   waiting_hours: number | null
 }
 
+type TelegramWebAppWindow = Window & {
+  Telegram?: {
+    WebApp?: {
+      initData?: string
+    }
+  }
+}
+
 function useTgInitData(): string {
   try {
-    return (window as any)?.Telegram?.WebApp?.initData || ''
+    return (window as TelegramWebAppWindow).Telegram?.WebApp?.initData || ''
   } catch {
     return ''
   }
