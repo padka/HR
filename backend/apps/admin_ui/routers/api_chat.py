@@ -1,0 +1,33 @@
+from fastapi import APIRouter
+
+from . import api_misc
+
+router = APIRouter(prefix="/api", tags=["api"])
+
+router.add_api_route('/staff/threads', api_misc.api_staff_threads, methods=['GET'])
+router.add_api_route('/candidate-chat/threads', api_misc.api_candidate_chat_threads, methods=['GET'])
+router.add_api_route('/candidate-chat/threads/updates', api_misc.api_candidate_chat_threads_updates, methods=['GET'])
+router.add_api_route('/candidate-chat/templates', api_misc.api_candidate_chat_templates, methods=['GET'])
+router.add_api_route('/candidate-chat/threads/{candidate_id}/read', api_misc.api_candidate_chat_mark_read, methods=['POST'])
+router.add_api_route('/candidate-chat/threads/{candidate_id}/archive', api_misc.api_candidate_chat_archive, methods=['POST'])
+router.add_api_route('/candidate-chat/threads/{candidate_id}/unarchive', api_misc.api_candidate_chat_unarchive, methods=['POST'])
+router.add_api_route('/candidate-chat/threads/{candidate_id}/workspace', api_misc.api_candidate_chat_workspace, methods=['GET'])
+router.add_api_route('/candidate-chat/threads/{candidate_id}/workspace', api_misc.api_candidate_chat_workspace_update, methods=['PUT'])
+router.add_api_route('/staff/threads', api_misc.api_staff_threads_create, methods=['POST'])
+router.add_api_route('/staff/threads/updates', api_misc.api_staff_threads_updates, methods=['GET'])
+router.add_api_route('/staff/threads/{thread_id}/messages', api_misc.api_staff_messages, methods=['GET'])
+router.add_api_route('/staff/threads/{thread_id}/messages', api_misc.api_staff_send_message, methods=['POST'])
+router.add_api_route('/staff/threads/{thread_id}/updates', api_misc.api_staff_messages_updates, methods=['GET'])
+router.add_api_route('/staff/threads/{thread_id}/read', api_misc.api_staff_mark_read, methods=['POST'])
+router.add_api_route('/staff/attachments/{attachment_id}', api_misc.api_staff_attachment, methods=['GET'])
+router.add_api_route('/staff/threads/{thread_id}/members', api_misc.api_staff_thread_members, methods=['GET'])
+router.add_api_route('/staff/threads/{thread_id}/members', api_misc.api_staff_thread_members_add, methods=['POST'])
+router.add_api_route('/staff/threads/{thread_id}/members/{member_type}/{member_id}', api_misc.api_staff_thread_member_remove, methods=['DELETE'])
+router.add_api_route('/staff/threads/{thread_id}/candidate', api_misc.api_staff_candidate_task, methods=['POST'])
+router.add_api_route('/staff/messages/{message_id}/candidate/accept', api_misc.api_staff_candidate_task_accept, methods=['POST'])
+router.add_api_route('/staff/messages/{message_id}/candidate/decline', api_misc.api_staff_candidate_task_decline, methods=['POST'])
+router.add_api_route('/candidates/{candidate_id}/chat', api_misc.api_chat_history, methods=['GET'])
+router.add_api_route('/candidates/{candidate_id}/chat/updates', api_misc.api_chat_history_updates, methods=['GET'])
+router.add_api_route('/candidates/{candidate_id}/chat', api_misc.api_chat_send, methods=['POST'])
+router.add_api_route('/candidates/{candidate_id}/chat/quick-action', api_misc.api_chat_quick_action, methods=['POST'])
+router.add_api_route('/candidates/{candidate_id}/chat/{message_id}/retry', api_misc.api_chat_retry, methods=['POST'])

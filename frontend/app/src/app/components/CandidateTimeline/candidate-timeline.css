@@ -1,0 +1,115 @@
+.candidate-timeline {
+  position: relative;
+  display: grid;
+  gap: 12px;
+}
+
+.candidate-timeline::before {
+  content: '';
+  position: absolute;
+  inset: 12px auto 12px 9px;
+  width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(52, 211, 153, 0.24), rgba(148, 163, 184, 0.1));
+}
+
+.candidate-timeline__item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.candidate-timeline__dot {
+  position: relative;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 3px solid rgba(11, 14, 20, 0.96);
+  background: rgba(148, 163, 184, 0.4);
+}
+
+.candidate-timeline__dot--accent {
+  background: rgba(96, 165, 250, 0.95);
+}
+
+.candidate-timeline__dot--success {
+  background: rgba(52, 211, 153, 0.95);
+}
+
+.candidate-timeline__dot--warning {
+  background: rgba(251, 191, 36, 0.95);
+}
+
+.candidate-timeline__dot--danger {
+  background: rgba(248, 113, 113, 0.95);
+}
+
+.candidate-timeline__dot--muted {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.candidate-timeline__card {
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.candidate-timeline__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.candidate-timeline__badge {
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.candidate-timeline__badge--accent {
+  background: rgba(96, 165, 250, 0.14);
+  color: rgba(191, 219, 254, 0.96);
+}
+
+.candidate-timeline__badge--success {
+  background: rgba(52, 211, 153, 0.14);
+  color: rgba(198, 248, 226, 0.96);
+}
+
+.candidate-timeline__badge--warning {
+  background: rgba(251, 191, 36, 0.14);
+  color: rgba(254, 240, 138, 0.96);
+}
+
+.candidate-timeline__badge--danger {
+  background: rgba(248, 113, 113, 0.14);
+  color: rgba(254, 202, 202, 0.96);
+}
+
+.candidate-timeline__badge--muted {
+  background: rgba(148, 163, 184, 0.14);
+  color: rgba(226, 232, 240, 0.9);
+}
+
+.candidate-timeline__time {
+  font-size: 11px;
+  color: rgba(180, 194, 214, 0.68);
+}
+
+.candidate-timeline__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(245, 247, 250, 0.96);
+}
+
+.candidate-timeline__description {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(204, 213, 227, 0.74);
+}

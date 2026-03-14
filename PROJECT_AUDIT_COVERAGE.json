@@ -1,0 +1,87 @@
+{
+  "date": "2026-03-14",
+  "covered_files": 915,
+  "total_loc": 236619,
+  "largest_files": [
+    {
+      "path": "frontend/app/src/theme/global.css",
+      "lines": 10104
+    },
+    {
+      "path": "frontend/app/package-lock.json",
+      "lines": 8553
+    },
+    {
+      "path": "backend/apps/bot/services.py",
+      "lines": 7627
+    },
+    {
+      "path": "frontend/app/openapi.json",
+      "lines": 5915
+    },
+    {
+      "path": "frontend/app/src/api/schema.ts",
+      "lines": 4828
+    },
+    {
+      "path": "backend/apps/admin_ui/services/candidates.py",
+      "lines": 3984
+    },
+    {
+      "path": "backend/apps/admin_ui/routers/api.py",
+      "lines": 3638
+    },
+    {
+      "path": "frontend/app/src/app/routes/app/candidate-detail.tsx",
+      "lines": 3458
+    },
+    {
+      "path": "backend/apps/admin_ui/static/css/liquid-glass-integration.css",
+      "lines": 2552
+    },
+    {
+      "path": "backend/core/ai/service.py",
+      "lines": 2478
+    },
+    {
+      "path": "backend/apps/admin_ui/services/dashboard.py",
+      "lines": 2292
+    },
+    {
+      "path": "backend/apps/admin_ui/services/slots.py",
+      "lines": 2041
+    },
+    {
+      "path": "docs/archive/qa/QA_COMPREHENSIVE_REPORT.md",
+      "lines": 2006
+    },
+    {
+      "path": "docs/archive/REDESIGN_STRATEGY.md",
+      "lines": 1764
+    },
+    {
+      "path": "docs/archive/features/dashboard/DASHBOARD_CHANGELOG.md",
+      "lines": 1706
+    },
+    {
+      "path": "frontend/app/src/app/routes/app/messenger.tsx",
+      "lines": 1612
+    },
+    {
+      "path": "backend/domain/repositories.py",
+      "lines": 1583
+    },
+    {
+      "path": "frontend/app/src/app/routes/app/slots.tsx",
+      "lines": 1559
+    },
+    {
+      "path": "backend/apps/admin_ui/routers/candidates.py",
+      "lines": 1422
+    },
+    {
+      "path": "tests/test_admin_candidate_schedule_slot.py",
+      "lines": 1416
+    }
+  ]
+}

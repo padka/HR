@@ -79,6 +79,7 @@ export type TestSection = {
 
 export type CandidateDetail = {
   id: number
+  created_at?: string | null
   fio?: string | null
   city?: string | null
   telegram_id?: number | null
@@ -94,8 +95,10 @@ export type CandidateDetail = {
   phone?: string | null
   is_active?: boolean
   stage?: string | null
+  workflow_status?: string | null
   workflow_status_label?: string | null
   workflow_status_color?: string | null
+  candidate_status_display?: string | null
   candidate_status_slug?: string | null
   candidate_status_color?: string | null
   telemost_url?: string | null
@@ -113,13 +116,101 @@ export type CandidateDetail = {
   allowed_next_statuses?: Array<{ slug: string; label: string; color?: string; is_terminal?: boolean }>
   pipeline_stages?: Array<{ key: string; label: string; state?: string }>
   status_is_terminal?: boolean
+  needs_intro_day?: boolean
+  can_schedule_intro_day?: boolean
   candidate_status_options?: Array<{ slug: string; label: string }>
   legacy_status_enabled?: boolean
   slots?: CandidateSlot[]
+  journey?: CandidateJourney | null
+  archive?: CandidateArchive | null
+  final_outcome?: CandidateFinalOutcome | null
+  final_outcome_reason?: string | null
+  pending_slot_request?: CandidatePendingSlotRequest | null
+  manual_mode?: boolean
   test_sections?: TestSection[]
   test_results?: Record<string, TestSection>
+  timeline?: CandidateTimelineEntry[]
   stats?: { tests_total?: number; average_score?: number | null }
   intro_day_template?: string | null
+  intro_day_template_context?: {
+    city_name?: string | null
+    intro_address?: string | null
+    address?: string | null
+    city_address?: string | null
+    intro_contact?: string | null
+    recruiter_contact?: string | null
+    contact_name?: string | null
+    contact_phone?: string | null
+  } | null
+}
+
+export type CandidateFinalOutcome = 'attached' | 'not_attached' | 'not_counted'
+
+export type CandidateArchive = {
+  state?: 'archived'
+  label?: string | null
+  stage?: string | null
+  stage_label?: string | null
+  reason?: string | null
+  archived_at?: string | null
+}
+
+export type CandidatePendingSlotRequest = {
+  requested?: boolean
+  requested_at?: string | null
+  requested_start_utc?: string | null
+  requested_end_utc?: string | null
+  requested_tz?: string | null
+  candidate_comment?: string | null
+  source?: string | null
+}
+
+export type CandidateJourneyEvent = {
+  id: number
+  event_key?: string | null
+  stage?: string | null
+  status_slug?: string | null
+  actor_type?: string | null
+  actor_id?: number | null
+  summary?: string | null
+  payload?: Record<string, unknown> | null
+  created_at?: string | null
+}
+
+export type CandidateJourney = {
+  state?: string | null
+  state_label?: string | null
+  lifecycle_state?: string | null
+  lifecycle_label?: string | null
+  archive?: CandidateArchive | null
+  final_outcome?: CandidateFinalOutcome | null
+  final_outcome_label?: string | null
+  final_outcome_reason?: string | null
+  manual_mode?: boolean
+  pending_slot_request?: CandidatePendingSlotRequest | null
+  current_owner?: { type?: string | null; id?: number | null; name?: string | null } | null
+  next_slot_at?: string | null
+  events?: CandidateJourneyEvent[]
+}
+
+export type CandidateTimelineEntry = {
+  kind?: 'journey' | 'slot' | 'test' | 'message' | 'interview_feedback'
+  dt?: string | null
+  event_key?: string | null
+  status?: string | null
+  summary?: string | null
+  rating?: string | null
+  score?: number | null
+  test_key?: string | null
+  recruiter?: string | null
+  city?: string | null
+  send_time?: string | null
+  text?: string | null
+  is_active?: boolean
+  outcome?: string | null
+  outcome_reason?: string | null
+  scorecard?: Record<string, unknown> | null
+  payload?: Record<string, unknown> | null
 }
 
 export type ChatMessage = {
@@ -135,6 +226,8 @@ export type ChatMessage = {
 export type ChatPayload = {
   messages: ChatMessage[]
   has_more: boolean
+  latest_message_at?: string | null
+  updated?: boolean
 }
 
 export type CandidateHHSummary = {
@@ -220,6 +313,31 @@ export type AICriterionChecklistItem = {
   evidence: string
 }
 
+export type AIScorecardMetricItem = {
+  key: string
+  label: string
+  score?: number | null
+  weight?: number | null
+  status: 'met' | 'not_met' | 'unknown'
+  evidence: string
+}
+
+export type AIScorecardFlagItem = {
+  key: string
+  label: string
+  evidence: string
+}
+
+export type AIScorecard = {
+  final_score?: number | null
+  objective_score?: number | null
+  semantic_score?: number | null
+  recommendation?: 'od_recommended' | 'clarify_before_od' | 'not_recommended'
+  metrics?: AIScorecardMetricItem[]
+  blockers?: AIScorecardFlagItem[]
+  missing_data?: AIScorecardFlagItem[]
+}
+
 export type AIVacancyFitEvidence = {
   factor: string
   assessment: 'positive' | 'negative' | 'neutral' | 'unknown'
@@ -245,6 +363,7 @@ export type AISummary = {
   risks?: AIRiskItem[]
   next_actions?: AINextActionItem[]
   notes?: string | null
+  scorecard?: AIScorecard | null
 }
 
 export type AISummaryResponse = {
@@ -287,6 +406,13 @@ export type AICoachResponse = {
   coach: AICoach
 }
 
+export type CandidateAiResumeUpsertResponse = {
+  ok: boolean
+  normalized_resume?: Record<string, unknown>
+  content_hash?: string
+  updated_at?: string
+}
+
 export type InterviewRiskFlag = {
   code: string
   severity: 'low' | 'medium' | 'high'
@@ -321,12 +447,36 @@ export type InterviewCtaTemplate = {
 }
 
 export type InterviewScriptPayload = {
+  stage_label: string
+  call_goal: string
+  conversation_script: string
   risk_flags: InterviewRiskFlag[]
   highlights: string[]
   checks: string[]
   objections: InterviewObjection[]
   script_blocks: InterviewScriptBlock[]
   cta_templates: InterviewCtaTemplate[]
+  briefing?: {
+    goal?: string
+    focus_areas?: string[]
+    key_flags?: string[]
+  } | null
+  opening?: {
+    greeting?: string
+    icebreakers?: string[]
+  } | null
+  questions?: Array<{
+    id: string
+    text: string
+    type: 'personalized' | 'standard'
+    source?: string | null
+    why: string
+    good_answer: string
+    red_flags: string
+    estimated_minutes: number
+  }>
+  closing_checklist?: string[]
+  closing_phrase?: string
 }
 
 export type InterviewScriptResponse = {
@@ -346,7 +496,41 @@ export type InterviewScriptFeedbackPayload = {
   final_script?: InterviewScriptPayload | null
   outcome: 'od_assigned' | 'showed_up' | 'no_show' | 'decline' | 'unknown'
   outcome_reason?: string | null
+  scorecard?: {
+    completed_questions: number
+    total_questions: number
+    average_rating?: number | null
+    overall_recommendation: 'recommend' | 'doubt' | 'not_recommend'
+    final_comment?: string | null
+    timer_elapsed_sec: number
+    items: Array<{
+      question_id: string
+      rating?: number | null
+      skipped: boolean
+      notes?: string | null
+    }>
+  } | null
   idempotency_key: string
+}
+
+export type CandidateCohortComparison = {
+  available?: boolean
+  cohort_label?: string | null
+  total_candidates?: number
+  rank?: number | null
+  test1?: {
+    candidate?: number | null
+    average?: number | null
+  } | null
+  completion_time_sec?: {
+    candidate?: number | null
+    average?: number | null
+  } | null
+  stage_distribution?: Array<{
+    key: string
+    label: string
+    count: number
+  }>
 }
 
 export function fetchCities() {
@@ -361,8 +545,26 @@ export function fetchCandidateHHSummary(candidateId: number) {
   return apiFetch<CandidateHHSummary>(`/candidates/${candidateId}/hh`)
 }
 
+export function fetchCandidateCohortComparison(candidateId: number) {
+  return apiFetch<CandidateCohortComparison>(`/candidates/${candidateId}/cohort-comparison`)
+}
+
 export function fetchCandidateChat(candidateId: number, limit = 50) {
   return apiFetch<ChatPayload>(`/candidates/${candidateId}/chat?limit=${limit}`)
+}
+
+export function waitForCandidateChat(
+  candidateId: number,
+  params?: { since?: string | null; timeout?: number; limit?: number; signal?: AbortSignal },
+) {
+  const query = new URLSearchParams()
+  if (params?.since) query.set('since', params.since)
+  if (params?.timeout) query.set('timeout', String(params.timeout))
+  if (params?.limit) query.set('limit', String(params.limit))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return apiFetch<ChatPayload>(`/candidates/${candidateId}/chat/updates${suffix}`, {
+    signal: params?.signal,
+  })
 }
 
 export function sendCandidateChatMessage(candidateId: number, text: string, clientRequestId: string) {
@@ -387,7 +589,7 @@ export function scheduleCandidateSlot(candidateId: number, slotId: number) {
 
 export function scheduleCandidateInterview(
   candidateId: number,
-  payload: { city_id?: number | null; date: string; time: string; custom_message?: string | null },
+  payload: { city_id?: number | null; date: string; time: string; custom_message?: string | null; mode?: 'bot' | 'manual_silent' },
 ) {
   return apiFetch(`/candidates/${candidateId}/schedule-slot`, {
     method: 'POST',
@@ -441,6 +643,16 @@ export function fetchCandidateAiCoach(candidateId: number) {
 
 export function refreshCandidateAiCoach(candidateId: number) {
   return apiFetch<AICoachResponse>(`/ai/candidates/${candidateId}/coach/refresh`, { method: 'POST' })
+}
+
+export function upsertCandidateAiResume(
+  candidateId: number,
+  payload: { format: 'json'; resume_json: Record<string, unknown> } | { format: 'raw_text'; resume_text: string },
+) {
+  return apiFetch<CandidateAiResumeUpsertResponse>(`/ai/candidates/${candidateId}/hh-resume`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
 }
 
 export function fetchCandidateChatDrafts(candidateId: number, mode: 'short' | 'neutral' | 'supportive') {

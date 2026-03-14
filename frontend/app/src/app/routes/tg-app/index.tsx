@@ -12,10 +12,18 @@ interface DashboardData {
   recruiter_name: string
 }
 
+type TelegramWebAppWindow = Window & {
+  Telegram?: {
+    WebApp?: {
+      initData?: string
+    }
+  }
+}
+
 function useTgInitData(): string {
   // In Telegram Mini App, window.Telegram.WebApp.initData is available
   try {
-    return (window as any)?.Telegram?.WebApp?.initData || ''
+    return (window as TelegramWebAppWindow).Telegram?.WebApp?.initData || ''
   } catch {
     return ''
   }

@@ -242,6 +242,46 @@ def _assign_principal(
     return principal
 
 
+async def _resolve_session_principal(
+    connection: Request | HTTPConnection,
+) -> Optional[Principal]:
+    principal_data = connection.session.get(SESSION_KEY) if hasattr(connection, "session") else None
+    if not principal_data or not isinstance(principal_data, dict):
+        return None
+
+    p_type = principal_data.get("type")
+    p_id = principal_data.get("id")
+    if p_type == "admin" and isinstance(p_id, int):
+        return _assign_principal(
+            connection,
+            admin_principal(p_id),
+            username=f"admin:{p_id}",
+        )
+
+    if p_type == "recruiter" and isinstance(p_id, int):
+        async with async_session() as session:
+            recruiter = await session.get(Recruiter, p_id)
+            if recruiter and getattr(recruiter, "active", True):
+                now = datetime.now(timezone.utc)
+                last_seen = getattr(recruiter, "last_seen_at", None)
+                if last_seen and last_seen.tzinfo is None:
+                    last_seen = last_seen.replace(tzinfo=timezone.utc)
+                if last_seen is None or (now - last_seen) > timedelta(minutes=5):
+                    recruiter.last_seen_at = now
+                    await session.commit()
+                session_username = connection.session.get("username") if hasattr(connection, "session") else None
+                return _assign_principal(
+                    connection,
+                    Principal(type="recruiter", id=recruiter.id),
+                    username=str(session_username or f"recruiter:{recruiter.id}"),
+                )
+
+    if hasattr(connection, "session"):
+        connection.session.pop(SESSION_KEY, None)
+        connection.session.pop("username", None)
+    return None
+
+
 async def _resolve_current_principal(
     connection: Request | HTTPConnection,
     *,
@@ -256,6 +296,17 @@ async def _resolve_current_principal(
     settings = get_settings()
 
     token_provided = bool((token or "").strip())
+    prefer_session_for_local_browser = (
+        token_provided
+        and _is_local_connection(connection)
+        and hasattr(connection, "session")
+        and bool(connection.session.get(SESSION_KEY))
+    )
+
+    if prefer_session_for_local_browser:
+        session_principal = await _resolve_session_principal(connection)
+        if session_principal is not None:
+            return session_principal
 
     # 1. JWT Token Check
     if token:
@@ -318,34 +369,9 @@ async def _resolve_current_principal(
                 ) from exc
 
     # 2. Session principal
-    principal_data = connection.session.get(SESSION_KEY) if hasattr(connection, "session") else None
-    if principal_data and isinstance(principal_data, dict):
-        p_type = principal_data.get("type")
-        p_id = principal_data.get("id")
-        if p_type == "admin" and isinstance(p_id, int):
-            return _assign_principal(
-                connection,
-                admin_principal(p_id),
-                username=f"admin:{p_id}",
-            )
-        if p_type == "recruiter" and isinstance(p_id, int):
-            async with async_session() as session:
-                recruiter = await session.get(Recruiter, p_id)
-                if recruiter and getattr(recruiter, "active", True):
-                    now = datetime.now(timezone.utc)
-                    last_seen = getattr(recruiter, "last_seen_at", None)
-                    if last_seen and last_seen.tzinfo is None:
-                        last_seen = last_seen.replace(tzinfo=timezone.utc)
-                    if last_seen is None or (now - last_seen) > timedelta(minutes=5):
-                        recruiter.last_seen_at = now
-                        await session.commit()
-                    return _assign_principal(
-                        connection,
-                        Principal(type="recruiter", id=recruiter.id),
-                        username=f"recruiter:{recruiter.id}",
-                    )
-            # stale session -> clear
-            connection.session.pop(SESSION_KEY, None)
+    session_principal = await _resolve_session_principal(connection)
+    if session_principal is not None:
+        return session_principal
 
     # Legacy Basic admin fallback (strictly local dev/test only)
     legacy_user = settings.admin_username
@@ -369,6 +395,7 @@ async def _resolve_current_principal(
             # Persist into session for subsequent requests
             if hasattr(connection, "session"):
                 connection.session[SESSION_KEY] = {"type": "admin", "id": ADMIN_PRINCIPAL_ID}
+                connection.session["username"] = candidate_user
             return _assign_principal(
                 connection,
                 admin_principal(),

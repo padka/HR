@@ -1,23 +1,21 @@
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import {
-  assignCandidateToSlot,
   deleteSlot as deleteSlotRequest,
   fetchSlots,
   rejectSlotBooking,
-  rescheduleSlot,
-  searchSlotCandidates,
   submitSlotsBulkAction,
-  type CandidateSearchItem,
 } from '@/api/services/slots'
+import { apiFetch } from '@/api/client'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 import { Link } from '@tanstack/react-router'
+import { ModalPortal } from '@/shared/components/ModalPortal'
 import {
   buildStatusCounts,
+  statusLabel,
   matchesStatusFilter,
   normalizeSlotStatus,
   slotDateForFilter,
@@ -39,269 +37,19 @@ import {
   type SlotSortDir,
   type SlotSortField,
 } from './slots.filters'
+import { BookingModal, ManualBookingModal, RescheduleModal } from './slots-modals'
 
-function statusLabel(status?: string) {
-  switch (normalizeSlotStatus(status)) {
-    case 'FREE':
-      return 'Свободен'
-    case 'PENDING':
-      return 'Ожидает'
-    case 'BOOKED':
-      return 'Согласован слот'
-    case 'CONFIRMED_BY_CANDIDATE':
-      return 'Подтверждён'
-    default:
-      return status || '—'
-  }
+type CityOption = {
+  id: number
+  name: string
+  tz?: string | null
+  active?: boolean | null
 }
 
-type BookingModalProps = {
-  slot: SlotApiItem
-  onClose: () => void
-  onSuccess: () => void
-  showToast: (msg: string) => void
-}
-
-function ModalPortal({ children }: { children: ReactNode }) {
-  if (typeof document === 'undefined') return null
-  return createPortal(children, document.body)
-}
-
-function BookingModal({ slot, onClose, onSuccess, showToast }: BookingModalProps) {
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [selectedCandidate, setSelectedCandidate] = useState<CandidateSearchItem | null>(null)
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(search), 300)
-    return () => clearTimeout(timer)
-  }, [search])
-
-  const searchQuery = useQuery<{ items: CandidateSearchItem[] }>({
-    queryKey: ['candidates-search', debouncedSearch],
-    queryFn: () => searchSlotCandidates(debouncedSearch, 10),
-    enabled: debouncedSearch.length >= 2,
-  })
-
-  const candidates = searchQuery.data?.items || []
-
-  const proposeMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedCandidate?.id) throw new Error('У кандидата нет ID')
-      return assignCandidateToSlot(selectedCandidate.id, slot.id)
-    },
-    onSuccess: () => {
-      showToast('Предложение отправлено кандидату')
-      onSuccess()
-      onClose()
-    },
-    onError: (err: Error & { data?: { error?: string; message?: string } }) => {
-      const errorCode = err?.data?.error || ''
-      const mappedMessage =
-        errorCode === 'slot_not_free'
-          ? 'Слот уже занят'
-          : errorCode === 'candidate_telegram_missing'
-            ? 'У кандидата не привязан Telegram'
-            : errorCode === 'candidate_has_active_assignment'
-              ? 'У кандидата уже есть активное назначение'
-              : errorCode === 'candidate_not_found'
-                ? 'Кандидат не найден'
-                : null
-      showToast(mappedMessage || err?.data?.message || err.message || 'Не удалось отправить предложение')
-    },
-  })
-
-  return (
-    <ModalPortal>
-      <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true" data-testid="slots-booking-modal">
-        <div className="glass glass--elevated modal modal--md" onClick={(e) => e.stopPropagation()}>
-        <div className="modal__header">
-          <div>
-            <h2 className="modal__title">Предложить слот</h2>
-            <p className="modal__subtitle">
-              {slotRecruiterTimeLabel(slot)}
-            </p>
-          </div>
-          <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
-        </div>
-
-        <div className="modal__body">
-          <div className="form-group">
-            <label className="form-group__label">Поиск кандидата (ФИО или Telegram)</label>
-            <input
-              type="text"
-              placeholder="Введите минимум 2 символа..."
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setSelectedCandidate(null) }}
-            />
-          </div>
-
-          {searchQuery.isLoading && <p className="text-muted">Поиск...</p>}
-
-          {candidates.length > 0 && !selectedCandidate && (
-            <div className="modal__list">
-              {candidates.map((c) => (
-                <div
-                  key={c.id}
-                  className={`glass glass--interactive list-item list-item--compact ${!c.telegram_id ? 'list-item--disabled' : ''}`}
-                  onClick={() => c.telegram_id && setSelectedCandidate(c)}
-                >
-                  <div className="font-semibold">{c.fio || '—'}</div>
-                  <div className="text-muted text-sm">
-                    {c.city || '—'} · tg: {c.telegram_id || 'нет'} · {c.status?.label || '—'}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {search.length >= 2 && candidates.length === 0 && !searchQuery.isLoading && (
-            <p className="text-muted">Кандидаты не найдены</p>
-          )}
-
-          {selectedCandidate && (
-            <div className="glass glass--subtle list-item list-item--selected">
-              <div className="font-semibold">{selectedCandidate.fio}</div>
-              <div className="text-muted text-sm">
-                {selectedCandidate.city} · tg: {selectedCandidate.telegram_id}
-              </div>
-              <button
-                className="ui-btn ui-btn--ghost ui-btn--sm"
-                onClick={() => setSelectedCandidate(null)}
-              >
-                Выбрать другого
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="modal__footer">
-          <button
-            className="ui-btn ui-btn--primary"
-            disabled={!selectedCandidate || proposeMutation.isPending}
-            onClick={() => proposeMutation.mutate()}
-          >
-            {proposeMutation.isPending ? 'Отправляем...' : 'Предложить'}
-          </button>
-          <button className="ui-btn ui-btn--ghost" onClick={onClose}>Отмена</button>
-        </div>
-        </div>
-      </div>
-    </ModalPortal>
-  )
-}
-
-type RescheduleModalProps = {
-  slot: SlotApiItem
-  onClose: () => void
-  onSuccess: () => void
-  showToast: (msg: string) => void
-}
-
-function getDateTimeParts(iso: string, tz?: string | null) {
-  try {
-    const d = new Date(iso)
-    const fmt = new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz || 'Europe/Moscow',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    })
-    const parts = fmt.formatToParts(d)
-    const pick = (type: string) => parts.find((p) => p.type === type)?.value || ''
-    const date = `${pick('year')}-${pick('month')}-${pick('day')}`
-    const time = `${pick('hour')}:${pick('minute')}`
-    return { date, time }
-  } catch {
-    return { date: '', time: '' }
-  }
-}
-
-function RescheduleModal({ slot, onClose, onSuccess, showToast }: RescheduleModalProps) {
-  const tzLabel = slot.recruiter_tz || slot.tz_name || 'Europe/Moscow'
-  const baseIso = slot.recruiter_local_time || slot.start_utc
-  const parts = getDateTimeParts(baseIso, tzLabel)
-  const [date, setDate] = useState(parts.date)
-  const [time, setTime] = useState(parts.time)
-  const [reason, setReason] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const rescheduleMutation = useMutation({
-    mutationFn: async () => {
-      setError(null)
-      if (!date || !time) {
-        setError('Укажите дату и время')
-        throw new Error('invalid_form')
-      }
-      if (!reason.trim()) {
-        setError('Укажите причину переноса')
-        throw new Error('invalid_form')
-      }
-      return rescheduleSlot(slot.id, { date, time, reason })
-    },
-    onSuccess: () => {
-      showToast('Слот перенесён')
-      onSuccess()
-      onClose()
-    },
-    onError: (err: Error) => {
-      if (err.message === 'invalid_form') return
-      showToast(`Ошибка: ${err.message}`)
-    },
-  })
-
-  return (
-    <ModalPortal>
-      <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true" data-testid="slots-reschedule-modal">
-        <div className="glass glass--elevated modal modal--md" onClick={(e) => e.stopPropagation()}>
-        <div className="modal__header">
-          <div>
-            <h2 className="modal__title">Перенести слот</h2>
-            <p className="modal__subtitle">
-              ID {slot.id} · {slot.candidate_fio || 'Без кандидата'}
-            </p>
-          </div>
-          <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
-        </div>
-
-        <div className="modal__body">
-          <div className="form-group">
-            <label className="form-group__label">Новая дата</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          </div>
-          <div className="form-group">
-            <label className="form-group__label">Новое время ({tzLabel})</label>
-            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
-          </div>
-          <div className="form-group">
-            <label className="form-group__label">Причина переноса</label>
-            <textarea
-              rows={3}
-              placeholder="Опишите причину переноса..."
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-          </div>
-          {error && <p className="ui-alert ui-alert--error">{error}</p>}
-        </div>
-
-        <div className="modal__footer">
-          <button
-            className="ui-btn ui-btn--primary"
-            disabled={rescheduleMutation.isPending}
-            onClick={() => rescheduleMutation.mutate()}
-          >
-            {rescheduleMutation.isPending ? 'Отправляем…' : 'Перенести'}
-          </button>
-          <button className="ui-btn ui-btn--ghost" onClick={onClose}>Отмена</button>
-        </div>
-        </div>
-      </div>
-    </ModalPortal>
-  )
+type RecruiterOption = {
+  id: number
+  name: string
+  active?: boolean | null
 }
 
 export function SlotsPage() {
@@ -330,10 +78,28 @@ export function SlotsPage() {
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState<boolean>(false)
   const [sheetSlot, setSheetSlot] = useState<SlotApiItem | null>(null)
   const [bookingSlot, setBookingSlot] = useState<SlotApiItem | null>(null)
+  const [manualBookingSlot, setManualBookingSlot] = useState<SlotApiItem | null>(null)
+  const [showStandaloneManualBooking, setShowStandaloneManualBooking] = useState(false)
   const [rescheduleTarget, setRescheduleTarget] = useState<SlotApiItem | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const modalOpen = Boolean(sheetSlot || bookingSlot || rescheduleTarget)
+  const modalOpen = Boolean(sheetSlot || bookingSlot || manualBookingSlot || showStandaloneManualBooking || rescheduleTarget)
+
+  const citiesQuery = useQuery<CityOption[]>({
+    queryKey: ['slot-booking-cities'],
+    queryFn: () => apiFetch('/cities'),
+    enabled: Boolean(canUse),
+    staleTime: 60_000,
+  })
+
+  const recruitersQuery = useQuery<RecruiterOption[]>({
+    queryKey: ['slot-booking-recruiters'],
+    queryFn: () => apiFetch('/recruiters'),
+    enabled: Boolean(canUse),
+    staleTime: 60_000,
+  })
+
+  const allowedCityIds = profile.data?.recruiter?.cities?.map((city) => city.id) || []
 
   const queryPath = useMemo(() => {
     const params = new URLSearchParams()
@@ -733,6 +499,9 @@ export function SlotsPage() {
             <button className="ui-btn ui-btn--ghost" onClick={() => refetch()}>
               {isFetching ? 'Обновляем…' : 'Обновить'}
             </button>
+            <button className="ui-btn ui-btn--secondary" onClick={() => setShowStandaloneManualBooking(true)}>
+              Записать вручную
+            </button>
             <Link to="/app/slots/create" className="ui-btn ui-btn--primary" data-testid="slots-create-btn">
               + Создать слоты
             </Link>
@@ -977,7 +746,13 @@ export function SlotsPage() {
                                 className="ui-btn ui-btn--ghost ui-btn--sm"
                                 onClick={() => setBookingSlot(row)}
                               >
-                                Назначить
+                                Через бота
+                              </button>
+                              <button
+                                className="ui-btn ui-btn--secondary ui-btn--sm"
+                                onClick={() => setManualBookingSlot(row)}
+                              >
+                                Вручную
                               </button>
                               <button
                                 className="ui-btn ui-btn--danger ui-btn--sm"
@@ -1115,7 +890,13 @@ export function SlotsPage() {
                                   className="ui-btn ui-btn--ghost ui-btn--sm"
                                   onClick={() => setBookingSlot(row)}
                                 >
-                                  Назначить
+                                  Через бота
+                                </button>
+                                <button
+                                  className="ui-btn ui-btn--secondary ui-btn--sm"
+                                  onClick={() => setManualBookingSlot(row)}
+                                >
+                                  Вручную
                                 </button>
                                 <button
                                   className="ui-btn ui-btn--danger ui-btn--sm"
@@ -1188,9 +969,14 @@ export function SlotsPage() {
                 </div>
                 <div className="modal__footer">
                   {normalizeSlotStatus(sheetSlot.status) === 'FREE' && (
-                    <button className="ui-btn ui-btn--primary" onClick={() => { closeSheet(); setBookingSlot(sheetSlot) }}>
-                      Назначить кандидата
-                    </button>
+                    <>
+                      <button className="ui-btn ui-btn--primary" onClick={() => { closeSheet(); setBookingSlot(sheetSlot) }}>
+                        Через бота
+                      </button>
+                      <button className="ui-btn ui-btn--secondary" onClick={() => { closeSheet(); setManualBookingSlot(sheetSlot) }}>
+                        Записать вручную
+                      </button>
+                    </>
                   )}
                   {normalizeSlotStatus(sheetSlot.status) !== 'FREE' && (
                     <>
@@ -1219,6 +1005,23 @@ export function SlotsPage() {
             <BookingModal
               slot={bookingSlot}
               onClose={() => setBookingSlot(null)}
+              onSuccess={() => refetch()}
+              showToast={showToast}
+            />
+          )}
+
+          {(manualBookingSlot || showStandaloneManualBooking) && (
+            <ManualBookingModal
+              slot={manualBookingSlot}
+              cities={citiesQuery.data || []}
+              recruiters={recruitersQuery.data || []}
+              isAdmin={isAdmin}
+              defaultRecruiterId={profile.data?.recruiter?.id || null}
+              allowedCityIds={allowedCityIds}
+              onClose={() => {
+                setManualBookingSlot(null)
+                setShowStandaloneManualBooking(false)
+              }}
               onSuccess={() => refetch()}
               showToast={showToast}
             />

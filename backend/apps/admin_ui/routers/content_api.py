@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from backend.apps.admin_ui.security import Principal, require_admin, require_csrf_token
+from backend.apps.admin_ui.security import Principal, require_admin, require_csrf_token, require_principal
 from backend.apps.admin_ui.services.builder_graph import apply_test_builder_graph, get_test_builder_graph
 from backend.apps.admin_ui.services.message_templates import (
     create_message_template,
@@ -32,11 +32,117 @@ from backend.apps.admin_ui.services.questions import (
 from backend.apps.admin_ui.services.test_builder_preview import preview_test_builder_graph
 from backend.core.audit import log_audit_action
 from backend.core.db import async_session
-from backend.domain.models import MessageTemplate
+from backend.domain.models import MessageTemplate, recruiter_city_association
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["content_api"])
+
+RECRUITER_EDITABLE_TEMPLATE_KEYS = {
+    "approved_msg",
+    "att_confirmed_ack",
+    "att_confirmed_link",
+    "att_declined",
+    "att_declined_reason_prompt",
+    "candidate_rejection",
+    "confirm_2h",
+    "confirm_3h",
+    "confirm_6h",
+    "interview_confirmed_candidate",
+    "interview_invite_details",
+    "interview_remind_confirm_2h",
+    "intro_day_invitation",
+    "intro_day_invite",
+    "intro_day_invite_city",
+    "intro_day_remind_2h",
+    "intro_day_reminder",
+    "manual_schedule_prompt",
+    "result_fail",
+    "slot_proposal_candidate",
+    "t1_done",
+    "t1_intro",
+    "t2_intro",
+    "t2_result",
+}
+
+
+async def _recruiter_template_city_ids(principal: Principal) -> set[int]:
+    if principal.type != "recruiter":
+        return set()
+    async with async_session() as session:
+        rows = await session.execute(
+            select(recruiter_city_association.c.city_id).where(
+                recruiter_city_association.c.recruiter_id == principal.id
+            )
+        )
+    return {int(row[0]) for row in rows if row[0] is not None}
+
+
+async def _check_template_access(
+    principal: Principal,
+    *,
+    city_id: int | None,
+    key: str | None,
+) -> None:
+    if principal.type == "admin":
+        return
+    if principal.type != "recruiter":
+        raise HTTPException(status_code=403, detail={"message": "Forbidden"})
+    if city_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"message": "Рекрутер может редактировать только шаблоны, привязанные к городу."},
+        )
+    if key and key not in RECRUITER_EDITABLE_TEMPLATE_KEYS:
+        raise HTTPException(
+            status_code=403,
+            detail={"message": "Этот шаблон доступен только администратору."},
+        )
+    allowed_city_ids = await _recruiter_template_city_ids(principal)
+    if int(city_id) not in allowed_city_ids:
+        raise HTTPException(status_code=403, detail={"message": "Город недоступен для рекрутёра."})
+
+
+async def _load_template_or_404(template_id: int) -> MessageTemplate:
+    async with async_session() as session:
+        template = await session.get(MessageTemplate, template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail={"message": "Шаблон не найден"})
+    return template
+
+
+def _template_updated_by(principal: Principal, request: Request) -> str:
+    actor = getattr(request.state, "admin_username", None)
+    if actor:
+        return str(actor)
+    return "admin" if principal.type == "admin" else f"recruiter:{principal.id}"
+
+
+def _template_permissions_payload(
+    principal: Principal,
+    *,
+    editable_city_ids: set[int],
+) -> dict[str, object]:
+    return {
+        "role": principal.type,
+        "can_manage_global": principal.type == "admin",
+        "editable_city_ids": sorted(editable_city_ids),
+        "editable_keys": sorted(RECRUITER_EDITABLE_TEMPLATE_KEYS) if principal.type == "recruiter" else [],
+    }
+
+
+def _template_can_edit(
+    principal: Principal,
+    *,
+    city_id: int | None,
+    key: str | None,
+    editable_city_ids: set[int],
+) -> bool:
+    if principal.type == "admin":
+        return True
+    if city_id is None:
+        return False
+    return int(city_id) in editable_city_ids and (key or "") in RECRUITER_EDITABLE_TEMPLATE_KEYS
 
 
 @router.get("/message-templates")
@@ -45,29 +151,68 @@ async def api_message_templates(
     key: Optional[str] = Query(default=None),
     channel: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
-    _: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_principal),
 ):
-    payload = await list_message_templates(city=city, key_query=key, channel=channel, status=status)
-    return JSONResponse(jsonable_encoder(payload))
+    editable_city_ids = await _recruiter_template_city_ids(principal)
+    payload = await list_message_templates(
+        city=city,
+        key_query=key,
+        channel=channel,
+        status=status,
+        allowed_city_ids=editable_city_ids if principal.type == "recruiter" else None,
+        allowed_keys=RECRUITER_EDITABLE_TEMPLATE_KEYS if principal.type == "recruiter" else None,
+        include_global=True,
+    )
+    encoded = jsonable_encoder(payload)
+    templates = list(encoded.get("templates") or [])
+    for item in templates:
+        if not isinstance(item, dict):
+            continue
+        city_id = item.get("city_id")
+        key_value = item.get("key")
+        item["scope"] = "global" if city_id in (None, "") else "city"
+        item["scope_label"] = "Глобальный" if city_id in (None, "") else "Городской"
+        item["can_edit"] = _template_can_edit(
+            principal,
+            city_id=int(city_id) if city_id not in (None, "") else None,
+            key=str(key_value or "") or None,
+            editable_city_ids=editable_city_ids,
+        )
+        item["can_delete"] = bool(item["can_edit"])
+    encoded["permissions"] = _template_permissions_payload(
+        principal,
+        editable_city_ids=editable_city_ids,
+    )
+    return JSONResponse(encoded)
 
 
 @router.post("/message-templates", status_code=201)
 async def api_create_message_template(
     request: Request,
-    _: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_principal),
 ):
     _ = await require_csrf_token(request)
     data = await request.json()
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    city_id = data.get("city_id")
+    try:
+        city_value = None if city_id in (None, "", "null") else int(city_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail={"message": "Некорректный город"}) from exc
+    await _check_template_access(
+        principal,
+        city_id=city_value,
+        key=str(data.get("key") or "") or None,
+    )
     ok, errors, template = await create_message_template(
         key=str(data.get("key") or ""),
         locale=str(data.get("locale") or "ru"),
         channel=str(data.get("channel") or "tg"),
         body=str(data.get("body") or ""),
         is_active=bool(data.get("is_active", True)),
-        city_id=data.get("city_id"),
-        updated_by=str(data.get("updated_by") or "admin"),
+        city_id=city_value,
+        updated_by=_template_updated_by(principal, request),
         version=data.get("version"),
     )
     if not ok:
@@ -85,12 +230,28 @@ async def api_create_message_template(
 async def api_update_message_template(
     template_id: int,
     request: Request,
-    _: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_principal),
 ):
     _ = await require_csrf_token(request)
     data = await request.json()
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail={"message": "Invalid payload"})
+    current_template = await _load_template_or_404(template_id)
+    await _check_template_access(
+        principal,
+        city_id=current_template.city_id,
+        key=current_template.key,
+    )
+    city_id = data.get("city_id")
+    try:
+        city_value = None if city_id in (None, "", "null") else int(city_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail={"message": "Некорректный город"}) from exc
+    await _check_template_access(
+        principal,
+        city_id=city_value,
+        key=str(data.get("key") or current_template.key) or None,
+    )
     ok, errors, template = await update_message_template(
         template_id=template_id,
         key=str(data.get("key") or ""),
@@ -98,8 +259,8 @@ async def api_update_message_template(
         channel=str(data.get("channel") or "tg"),
         body=str(data.get("body") or ""),
         is_active=bool(data.get("is_active", True)),
-        city_id=data.get("city_id"),
-        updated_by=str(data.get("updated_by") or "admin"),
+        city_id=city_value,
+        updated_by=_template_updated_by(principal, request),
         expected_version=data.get("version"),
     )
     if not ok:
@@ -117,9 +278,15 @@ async def api_update_message_template(
 async def api_delete_message_template(
     template_id: int,
     request: Request,
-    _: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_principal),
 ):
     _ = await require_csrf_token(request)
+    template = await _load_template_or_404(template_id)
+    await _check_template_access(
+        principal,
+        city_id=template.city_id,
+        key=template.key,
+    )
     await delete_message_template(template_id)
     await log_audit_action("template_delete", "message_template", template_id)
     return JSONResponse({"ok": True})
@@ -128,8 +295,14 @@ async def api_delete_message_template(
 @router.get("/message-templates/{template_id}/history")
 async def api_message_template_history(
     template_id: int,
-    _: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_principal),
 ):
+    template = await _load_template_or_404(template_id)
+    await _check_template_access(
+        principal,
+        city_id=template.city_id,
+        key=template.key,
+    )
     history = await get_template_history(template_id)
     payload = [
         {
@@ -550,8 +723,9 @@ async def api_template_presets():
 
 @router.get("/message-templates/context-keys")
 async def api_message_template_context_keys(
-    _: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_principal),
 ):
+    del principal
     from backend.domain.template_contexts import TEMPLATE_CONTEXTS
 
     return JSONResponse(TEMPLATE_CONTEXTS)
@@ -560,7 +734,7 @@ async def api_message_template_context_keys(
 @router.post("/message-templates/preview")
 async def api_message_template_preview(
     request: Request,
-    _: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_principal),
 ):
     _ = await require_csrf_token(request)
     data = await request.json()
@@ -573,6 +747,11 @@ async def api_message_template_preview(
             city_id = int(city_id_raw)
         except (TypeError, ValueError):
             city_id = None
+    await _check_template_access(
+        principal,
+        city_id=city_id,
+        key=key or None,
+    )
 
     from backend.apps.admin_ui.services.message_templates import render_message_template_preview
 

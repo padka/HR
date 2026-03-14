@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, List, Optional, Sequence
 
 from sqlalchemy import func, or_, select, update
 
+from backend.apps.admin_ui.security import admin_principal
 from backend.core.db import async_session
 from backend.domain import analytics
 
@@ -50,6 +51,7 @@ async def create_or_update_user(
         )
         user = result.scalar_one_or_none()
         now = datetime.now(timezone.utc)
+        created = False
         if user:
             user.fio = fio
             user.city = city
@@ -72,6 +74,7 @@ async def create_or_update_user(
             if source and not user.source:
                 user.source = source
         else:
+            created = True
             payload = {
                 "telegram_id": telegram_id,
                 "username": username,
@@ -91,7 +94,11 @@ async def create_or_update_user(
             session.add(user)
         await session.commit()
         await session.refresh(user)
-        return user
+    if created:
+        from backend.core.ai.service import schedule_warm_candidate_ai_outputs
+
+        schedule_warm_candidate_ai_outputs(int(user.id), principal=admin_principal(), refresh=True)
+    return user
 
 
 async def save_test_result(
@@ -132,7 +139,11 @@ async def save_test_result(
 
         await session.commit()
         await session.refresh(test_result)
-        return test_result
+    from backend.core.ai.service import invalidate_candidate_ai_outputs, schedule_warm_candidate_ai_outputs
+
+    await invalidate_candidate_ai_outputs(user_id)
+    schedule_warm_candidate_ai_outputs(int(user_id), principal=admin_principal(), refresh=True)
+    return test_result
 
 
 async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:

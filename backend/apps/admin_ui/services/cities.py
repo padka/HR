@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from backend.core.cache import CacheKeys, CacheTTL, get_cache
+from backend.core.ai.service import schedule_refresh_active_city_candidates_ai_outputs
 from backend.core.db import async_session
 from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.cities.models import CityExpert
@@ -309,6 +310,7 @@ async def update_city_settings(
 
             clean_criteria = (criteria or "").strip() or None
             clean_experts = (experts or "").strip() or None
+            criteria_changed = clean_criteria != (getattr(city, "criteria", None) or None)
             city.criteria = clean_criteria
             # Experts: sync structured city_experts and keep legacy text field in sync.
             if experts_items is not None:
@@ -353,6 +355,8 @@ async def update_city_settings(
         except Exception:
             await session.rollback()
             raise
+    if criteria_changed:
+        schedule_refresh_active_city_candidates_ai_outputs(city_id, principal=principal_ctx.get(), refresh=True)
     return None, city, assigned_recruiter
 
 

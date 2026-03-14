@@ -11,6 +11,7 @@ from backend.apps.admin_ui.services.dashboard import (
 from backend.apps.admin_ui.services.reschedule_intents import RescheduleIntent
 from backend.apps.admin_ui.services.slots import api_slots_payload, create_slot, list_slots
 from backend.core.db import async_session
+from backend.domain.ai.models import AIOutput
 from backend.domain import models
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
@@ -213,6 +214,114 @@ async def test_waiting_candidates_uses_bot_state_for_reschedule_intent(monkeypat
     assert row["status_color"] == "warning"
     assert row["requested_another_time_from"] is None
     assert row["requested_another_time_to"] is None
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_ignore_expired_ai_outputs(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City 4", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+        await session.refresh(city)
+
+        candidate = User(
+            fio="AI Incoming Candidate",
+            city="Incoming City 4",
+            telegram_id=920003,
+            candidate_status=CandidateStatus.WAITING_SLOT,
+            status_changed_at=now - timedelta(hours=2),
+            last_activity=now - timedelta(hours=2),
+            is_active=True,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+        session.add_all(
+            [
+                AIOutput(
+                    scope_type="candidate",
+                    scope_id=candidate.id,
+                    kind="candidate_summary_v1",
+                    input_hash="valid",
+                    payload_json={
+                        "fit": {"score": 61, "level": "medium"},
+                        "scorecard": {
+                            "final_score": 61,
+                            "recommendation": "clarify_before_od",
+                            "blockers": [],
+                            "missing_data": [
+                                {
+                                    "key": "field_format_readiness",
+                                    "label": "Готовность к полевому формату",
+                                    "evidence": "Нужно подтвердить формат работы.",
+                                }
+                            ],
+                        },
+                    },
+                    created_at=now - timedelta(minutes=10),
+                    expires_at=now + timedelta(hours=1),
+                ),
+                AIOutput(
+                    scope_type="candidate",
+                    scope_id=candidate.id,
+                    kind="candidate_summary_v1",
+                    input_hash="expired",
+                    payload_json={
+                        "fit": {"score": 95, "level": "high"},
+                        "scorecard": {
+                            "final_score": 95,
+                            "recommendation": "od_recommended",
+                            "blockers": [],
+                            "missing_data": [],
+                        },
+                    },
+                    created_at=now - timedelta(minutes=1),
+                    expires_at=now - timedelta(seconds=1),
+                ),
+            ]
+        )
+        await session.commit()
+
+    items = await get_waiting_candidates(limit=20)
+    row = next(item for item in items if item["id"] == candidate.id)
+    assert row["ai_relevance_score"] == 61
+    assert row["ai_relevance_level"] == "medium"
+    assert row["ai_recommendation"] == "clarify_before_od"
+    assert row["ai_risk_hint"] == "Готовность к полевому формату"
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_compute_live_ai_score_when_cache_missing(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City Live AI", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+
+        candidate = User(
+            fio="Live AI Candidate",
+            city="Incoming City Live AI",
+            telegram_id=930001,
+            candidate_status=CandidateStatus.WAITING_SLOT,
+            status_changed_at=now - timedelta(hours=2),
+            last_activity=now - timedelta(hours=2),
+            is_active=True,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+    items = await get_waiting_candidates(limit=20)
+    row = next(item for item in items if item["id"] == candidate.id)
+    assert isinstance(row["ai_relevance_score"], int)
+    assert row["ai_relevance_score"] >= 0
+    assert row["ai_recommendation"] in {"od_recommended", "clarify_before_od", "not_recommended"}
 
 
 @pytest.mark.asyncio

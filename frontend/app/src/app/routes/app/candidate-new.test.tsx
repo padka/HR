@@ -9,6 +9,16 @@ const useQueryMock = vi.fn()
 const useMutationMock = vi.fn()
 const navigateMock = vi.fn()
 
+type QueryOptionsLike = {
+  queryKey?: unknown
+}
+
+type MutationOptionsLike = {
+  mutationFn?: () => Promise<unknown> | unknown
+  onSuccess?: (data: unknown) => void
+  onError?: (error: unknown) => void
+}
+
 vi.mock('@/api/client', () => ({
   apiFetch: (...args: unknown[]) => apiFetchMock(...args),
 }))
@@ -37,7 +47,7 @@ describe('CandidateNewPage submit flow', () => {
     useMutationMock.mockReset()
     navigateMock.mockReset()
 
-    useQueryMock.mockImplementation((options: any) => {
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
       const key = Array.isArray(options?.queryKey) ? options.queryKey[0] : options?.queryKey
       if (key === 'cities') {
         return { data: cities, isLoading: false, isError: false }
@@ -48,11 +58,12 @@ describe('CandidateNewPage submit flow', () => {
       return { data: undefined, isLoading: false, isError: false }
     })
 
-    useMutationMock.mockImplementation((options: any) => ({
+    useMutationMock.mockImplementation((options: MutationOptionsLike) => ({
       isPending: false,
       mutate: () => {
+        if (!options.mutationFn) return
         Promise.resolve()
-          .then(async () => options.mutationFn())
+          .then(async () => options.mutationFn?.())
           .then((data) => options.onSuccess?.(data))
           .catch((err) => options.onError?.(err))
       },

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 from dataclasses import dataclass
 from datetime import UTC, datetime, timezone, date as date_type, time as time_type
 from typing import Any, Optional
@@ -10,6 +12,13 @@ from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.security import Principal
 from backend.core.db import async_session
+from backend.domain.candidates.journey import (
+    FINAL_OUTCOME_ATTACHED,
+    FINAL_OUTCOME_NOT_ATTACHED,
+    FINAL_OUTCOME_NOT_COUNTED,
+    final_outcome_for_status,
+    final_outcome_label,
+)
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.detailization.models import DetailizationEntry
@@ -49,11 +58,54 @@ def _exclude_reason(user: User) -> Optional[str]:
 
 
 def _derive_is_attached(user: User) -> Optional[bool]:
+    outcome = _derive_final_outcome(user)
+    if outcome == FINAL_OUTCOME_ATTACHED:
+        return True
+    if outcome in {FINAL_OUTCOME_NOT_ATTACHED, FINAL_OUTCOME_NOT_COUNTED}:
+        return False
     status = getattr(user, "candidate_status", None)
     slug = status.value if hasattr(status, "value") else status
     if slug == CandidateStatus.HIRED.value:
         return True
     if slug == CandidateStatus.NOT_HIRED.value:
+        return False
+    return None
+
+
+def _derive_final_outcome_reason(user: User) -> Optional[str]:
+    for value in (
+        getattr(user, "final_outcome_reason", None),
+        getattr(user, "rejection_reason", None),
+        getattr(user, "intro_decline_reason", None),
+    ):
+        cleaned = (value or "").strip()
+        if cleaned:
+            return cleaned
+    return None
+
+
+def _derive_final_outcome(user: User) -> Optional[str]:
+    existing = (getattr(user, "final_outcome", None) or "").strip().lower() or None
+    return final_outcome_for_status(
+        getattr(user, "candidate_status", None),
+        reason=_derive_final_outcome_reason(user),
+        existing=existing,
+    )
+
+
+def _outcome_from_is_attached(value: Optional[bool]) -> Optional[str]:
+    if value is True:
+        return FINAL_OUTCOME_ATTACHED
+    if value is False:
+        return FINAL_OUTCOME_NOT_ATTACHED
+    return None
+
+
+def _is_attached_from_outcome(value: Optional[str]) -> Optional[bool]:
+    normalized = str(value or "").strip().lower()
+    if normalized == FINAL_OUTCOME_ATTACHED:
+        return True
+    if normalized in {FINAL_OUTCOME_NOT_ATTACHED, FINAL_OUTCOME_NOT_COUNTED}:
         return False
     return None
 
@@ -67,9 +119,82 @@ class DetailizationItem:
     conducted_at: Optional[str]
     expert_name: str
     is_attached: Optional[bool]
+    final_outcome: Optional[str]
+    final_outcome_label: Optional[str]
+    final_outcome_reason: Optional[str]
     recruiter: Optional[dict[str, Any]]
     city: Optional[dict[str, Any]]
     candidate: dict[str, Any]
+
+
+def _summary_outcome_bucket(outcome: Optional[str]) -> str:
+    normalized = str(outcome or "").strip().lower()
+    if normalized in {
+        FINAL_OUTCOME_ATTACHED,
+        FINAL_OUTCOME_NOT_ATTACHED,
+        FINAL_OUTCOME_NOT_COUNTED,
+    }:
+        return normalized
+    return "unknown"
+
+
+def _build_summary(items: list[DetailizationItem]) -> dict[str, Any]:
+    outcome_totals = {
+        FINAL_OUTCOME_ATTACHED: 0,
+        FINAL_OUTCOME_NOT_ATTACHED: 0,
+        FINAL_OUTCOME_NOT_COUNTED: 0,
+        "unknown": 0,
+    }
+    recruiter_rows: dict[str, dict[str, Any]] = {}
+    city_rows: dict[str, dict[str, Any]] = {}
+
+    for item in items:
+        bucket = _summary_outcome_bucket(item.final_outcome)
+        outcome_totals[bucket] += 1
+
+        recruiter_key = str(item.recruiter["id"]) if item.recruiter else "none"
+        city_key = str(item.city["id"]) if item.city else "none"
+
+        recruiter_entry = recruiter_rows.setdefault(
+            recruiter_key,
+            {
+                "id": item.recruiter["id"] if item.recruiter else None,
+                "name": item.recruiter["name"] if item.recruiter else "—",
+                "total": 0,
+                "outcomes": {
+                    FINAL_OUTCOME_ATTACHED: 0,
+                    FINAL_OUTCOME_NOT_ATTACHED: 0,
+                    FINAL_OUTCOME_NOT_COUNTED: 0,
+                    "unknown": 0,
+                },
+            },
+        )
+        recruiter_entry["total"] += 1
+        recruiter_entry["outcomes"][bucket] += 1
+
+        city_entry = city_rows.setdefault(
+            city_key,
+            {
+                "id": item.city["id"] if item.city else None,
+                "name": item.city["name"] if item.city else "—",
+                "total": 0,
+                "outcomes": {
+                    FINAL_OUTCOME_ATTACHED: 0,
+                    FINAL_OUTCOME_NOT_ATTACHED: 0,
+                    FINAL_OUTCOME_NOT_COUNTED: 0,
+                    "unknown": 0,
+                },
+            },
+        )
+        city_entry["total"] += 1
+        city_entry["outcomes"][bucket] += 1
+
+    return {
+        "total": len(items),
+        "outcomes": outcome_totals,
+        "by_recruiter": sorted(recruiter_rows.values(), key=lambda row: (-row["total"], row["name"])),
+        "by_city": sorted(city_rows.values(), key=lambda row: (-row["total"], row["name"])),
+    }
 
 def _parse_datetime_utc(value: Any) -> Optional[datetime]:
     if value is None:
@@ -143,6 +268,8 @@ async def _ensure_auto_rows(principal: Principal) -> None:
                 conducted_at=conducted_at,
                 expert_name=None,
                 is_attached=_derive_is_attached(user),
+                final_outcome=_derive_final_outcome(user),
+                final_outcome_reason=_derive_final_outcome_reason(user),
                 created_by_type="system",
                 created_by_id=-1,
             )
@@ -196,6 +323,8 @@ async def _ensure_auto_rows(principal: Principal) -> None:
                 conducted_at=getattr(slot, "start_utc", None),
                 expert_name=None,
                 is_attached=_derive_is_attached(user),
+                final_outcome=_derive_final_outcome(user),
+                final_outcome_reason=_derive_final_outcome_reason(user),
                 created_by_type="system",
                 created_by_id=-1,
             )
@@ -206,7 +335,12 @@ async def _ensure_auto_rows(principal: Principal) -> None:
             await session.commit()
 
 
-async def list_detailization(principal: Principal) -> dict[str, Any]:
+async def list_detailization(
+    principal: Principal,
+    *,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+) -> dict[str, Any]:
     await _ensure_auto_rows(principal)
 
     async with async_session() as session:
@@ -220,6 +354,10 @@ async def list_detailization(principal: Principal) -> dict[str, Any]:
             .order_by(DetailizationEntry.conducted_at.desc().nullslast(), DetailizationEntry.id.desc())
         )
         q = q.where(DetailizationEntry.is_deleted.is_(False))
+        if date_from is not None:
+            q = q.where(DetailizationEntry.conducted_at >= date_from)
+        if date_to is not None:
+            q = q.where(DetailizationEntry.conducted_at <= date_to)
         if principal.type == "recruiter":
             q = q.where(DetailizationEntry.recruiter_id == principal.id)
 
@@ -252,6 +390,9 @@ async def list_detailization(principal: Principal) -> dict[str, Any]:
                     conducted_at=conducted_at,
                     expert_name=(entry.expert_name or "").strip(),
                     is_attached=entry.is_attached,
+                    final_outcome=(entry.final_outcome or "").strip().lower() or None,
+                    final_outcome_label=final_outcome_label(entry.final_outcome),
+                    final_outcome_reason=(entry.final_outcome_reason or "").strip() or None,
                     recruiter=(
                         {"id": int(recruiter.id), "name": recruiter.name}
                         if recruiter is not None
@@ -266,7 +407,61 @@ async def list_detailization(principal: Principal) -> dict[str, Any]:
                 )
             )
 
-        return {"ok": True, "items": [item.__dict__ for item in items]}
+        return {
+            "ok": True,
+            "items": [item.__dict__ for item in items],
+            "summary": _build_summary(items),
+            "range": {
+                "date_from": date_from.astimezone(UTC).isoformat() if date_from else None,
+                "date_to": date_to.astimezone(UTC).isoformat() if date_to else None,
+            },
+        }
+
+
+async def export_detailization_csv(
+    principal: Principal,
+    *,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+) -> tuple[str, str]:
+    payload = await list_detailization(principal, date_from=date_from, date_to=date_to)
+    rows = list(payload.get("items") or [])
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "candidate_id",
+            "candidate_name",
+            "recruiter",
+            "city",
+            "assigned_at",
+            "conducted_at",
+            "expert_name",
+            "final_outcome",
+            "final_outcome_label",
+            "final_outcome_reason",
+        ]
+    )
+    for row in rows:
+        candidate = row.get("candidate") or {}
+        recruiter = row.get("recruiter") or {}
+        city = row.get("city") or {}
+        writer.writerow(
+            [
+                candidate.get("id"),
+                candidate.get("name"),
+                recruiter.get("name"),
+                city.get("name"),
+                row.get("assigned_at"),
+                row.get("conducted_at"),
+                row.get("expert_name"),
+                row.get("final_outcome"),
+                row.get("final_outcome_label"),
+                row.get("final_outcome_reason"),
+            ]
+        )
+    filename = "detailization-report.csv"
+    return filename, buffer.getvalue()
 
 
 async def update_detailization_entry(
@@ -288,12 +483,29 @@ async def update_detailization_entry(
 
         if "expert_name" in payload:
             entry.expert_name = (str(payload.get("expert_name") or "").strip() or None)
+        if "final_outcome" in payload:
+            normalized = (str(payload.get("final_outcome") or "").strip().lower() or None)
+            if normalized not in {
+                None,
+                FINAL_OUTCOME_ATTACHED,
+                FINAL_OUTCOME_NOT_ATTACHED,
+                FINAL_OUTCOME_NOT_COUNTED,
+            }:
+                raise HTTPException(status_code=400, detail={"message": "Invalid final_outcome"})
+            entry.final_outcome = normalized
+            entry.is_attached = _is_attached_from_outcome(normalized)
+        if "final_outcome_reason" in payload:
+            entry.final_outcome_reason = (str(payload.get("final_outcome_reason") or "").strip() or None)
         if "is_attached" in payload:
             val = payload.get("is_attached")
             if val is None:
                 entry.is_attached = None
+                if "final_outcome" not in payload:
+                    entry.final_outcome = None
             else:
                 entry.is_attached = bool(val)
+                if "final_outcome" not in payload:
+                    entry.final_outcome = _outcome_from_is_attached(bool(val))
 
         if "assigned_at" in payload:
             entry.assigned_at = _parse_datetime_utc(payload.get("assigned_at"))
@@ -349,6 +561,12 @@ async def create_manual_detailization_entry(
             conducted_at=_parse_datetime_utc(payload.get("conducted_at")),
             expert_name=(str(payload.get("expert_name") or "").strip() or None),
             is_attached=payload.get("is_attached", None),
+            final_outcome=(
+                (str(payload.get("final_outcome") or "").strip().lower() or None)
+                if payload.get("final_outcome") not in (None, "")
+                else _outcome_from_is_attached(payload.get("is_attached", None))
+            ),
+            final_outcome_reason=(str(payload.get("final_outcome_reason") or "").strip() or None),
             created_by_type=principal.type,
             created_by_id=principal.id,
             is_deleted=False,

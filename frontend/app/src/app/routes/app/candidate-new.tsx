@@ -3,6 +3,8 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { formatTzOffset, getTomorrowDate } from '@/shared/utils/formatters'
+import { getNextWeekDate, getTodayDate } from '@/shared/utils/timezone'
 
 type City = {
   id: number
@@ -35,36 +37,6 @@ type SubmitResult = {
     | { status: 'skipped' }
     | { status: 'success'; message: string }
     | { status: 'warning'; message: string }
-}
-
-function formatTzOffset(tz: string): string {
-  try {
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      timeZoneName: 'shortOffset',
-    })
-    const parts = formatter.formatToParts(new Date())
-    const offsetPart = parts.find((p) => p.type === 'timeZoneName')
-    return offsetPart?.value || tz
-  } catch {
-    return tz
-  }
-}
-
-function getTomorrowDate(): string {
-  const d = new Date()
-  d.setDate(d.getDate() + 1)
-  return d.toISOString().slice(0, 10)
-}
-
-function getNextWeekDate(): string {
-  const d = new Date()
-  d.setDate(d.getDate() + 7)
-  return d.toISOString().slice(0, 10)
-}
-
-function getTodayDate(): string {
-  return new Date().toISOString().slice(0, 10)
 }
 
 function extractError(err: unknown): { code: string; message: string } {

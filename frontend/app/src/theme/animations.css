@@ -1,0 +1,21 @@
+/* ============================================
+ * Theme module: Animations
+ * Source: extracted from global.css
+ * ============================================ */
+
+/* === Pulse Animation (The Talent Pulse) === */
+@keyframes pulse-ring {
+  0% { transform: scale(0.33); opacity: 0.7; }
+  80%, 100% { transform: scale(1.5); opacity: 0; }
+}
+
+@keyframes pulse-dot {
+  0% { transform: scale(0.8); opacity: 0.8; }
+  50% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.8); opacity: 0.8; }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+

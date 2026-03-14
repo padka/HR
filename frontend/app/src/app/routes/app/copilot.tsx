@@ -1,16 +1,16 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from '@/api/client'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useProfile } from '@/app/hooks/useProfile'
+import { ModalPortal } from '@/shared/components/ModalPortal'
 
 type ChatMessage = {
   id: number
   role: 'user' | 'assistant'
   text: string
   created_at?: string | null
-  meta?: Record<string, any>
+  meta?: Record<string, unknown>
 }
 
 type ChatState = {
@@ -51,10 +51,14 @@ type KBDocGet = {
 }
 
 type KBReindexResponse = { ok: boolean; document_id: number; chunks_total?: number }
+type ActionMessageError = { message?: string }
 
-function ModalPortal({ children }: { children: ReactNode }) {
-  if (typeof document === 'undefined') return null
-  return createPortal(children, document.body)
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message
+  if (error && typeof error === 'object' && typeof (error as ActionMessageError).message === 'string') {
+    return (error as ActionMessageError).message || fallback
+  }
+  return fallback
 }
 
 function formatTime(value?: string | null) {
@@ -73,11 +77,14 @@ export function CopilotPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [chatText, setChatText] = useState('')
   const chatEndRef = useRef<HTMLDivElement | null>(null)
+  const toastTimeoutRef = useRef<number | null>(null)
 
   const showToast = (message: string) => {
     setToast(message)
-    window.clearTimeout((showToast as any)._t)
-    ;(showToast as any)._t = window.setTimeout(() => setToast(null), 2600)
+    if (toastTimeoutRef.current != null) {
+      window.clearTimeout(toastTimeoutRef.current)
+    }
+    toastTimeoutRef.current = window.setTimeout(() => setToast(null), 2600)
   }
 
   const chatQuery = useQuery<ChatState>({
@@ -98,8 +105,8 @@ export function CopilotPage() {
       setChatText('')
       await chatQuery.refetch()
     },
-    onError: (err: any) => {
-      showToast(err?.message || 'Не удалось отправить')
+    onError: (error: unknown) => {
+      showToast(getErrorMessage(error, 'Не удалось отправить'))
     },
   })
 
@@ -131,7 +138,7 @@ export function CopilotPage() {
       await docsQuery.refetch()
       showToast('Документ добавлен')
     },
-    onError: (err: any) => showToast(err?.message || 'Не удалось добавить документ'),
+    onError: (error: unknown) => showToast(getErrorMessage(error, 'Не удалось добавить документ')),
   })
 
   const uploadDocMutation = useMutation({
@@ -147,7 +154,7 @@ export function CopilotPage() {
       await docsQuery.refetch()
       showToast('Файл загружен')
     },
-    onError: (err: any) => showToast(err?.message || 'Не удалось загрузить файл'),
+    onError: (error: unknown) => showToast(getErrorMessage(error, 'Не удалось загрузить файл')),
   })
 
   const deleteDocMutation = useMutation({
@@ -156,7 +163,7 @@ export function CopilotPage() {
       await docsQuery.refetch()
       showToast('Документ отключён')
     },
-    onError: (err: any) => showToast(err?.message || 'Не удалось отключить документ'),
+    onError: (error: unknown) => showToast(getErrorMessage(error, 'Не удалось отключить документ')),
   })
 
   const enableDocMutation = useMutation({
@@ -166,7 +173,7 @@ export function CopilotPage() {
       await docsQuery.refetch()
       showToast('Документ включён')
     },
-    onError: (err: any) => showToast(err?.message || 'Не удалось включить документ'),
+    onError: (error: unknown) => showToast(getErrorMessage(error, 'Не удалось включить документ')),
   })
 
   const reindexDocMutation = useMutation({
@@ -176,7 +183,7 @@ export function CopilotPage() {
       if (activeDocId != null) await docQuery.refetch()
       showToast('Переиндексация выполнена')
     },
-    onError: (err: any) => showToast(err?.message || 'Не удалось переиндексировать'),
+    onError: (error: unknown) => showToast(getErrorMessage(error, 'Не удалось переиндексировать')),
   })
 
   const messages = chatQuery.data?.messages || []

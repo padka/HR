@@ -9,6 +9,18 @@ const useMutationMock = vi.fn()
 const invalidateQueriesMock = vi.fn()
 const apiFetchMock = vi.fn()
 
+type QueryOptionsLike = {
+  queryKey?: unknown
+}
+
+type MutationOptionsLike = {
+  mutationFn?: (variables: unknown) => Promise<unknown> | unknown
+  onMutate?: (variables: unknown) => unknown
+  onSuccess?: (data: unknown, variables: unknown) => void
+  onError?: (error: unknown, variables: unknown) => void
+  onSettled?: (data: unknown, error: unknown, variables: unknown, context: unknown) => void
+}
+
 vi.mock('@/api/client', () => ({
   apiFetch: (...args: unknown[]) => apiFetchMock(...args),
 }))
@@ -45,7 +57,7 @@ describe('CandidatesPage delete action', () => {
     apiFetchMock.mockReset()
     vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    useQueryMock.mockImplementation((options: any) => {
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
       const key = Array.isArray(options?.queryKey) ? options.queryKey[0] : options?.queryKey
       if (key === 'candidates') {
         return {
@@ -96,12 +108,13 @@ describe('CandidatesPage delete action', () => {
       }
     })
 
-    useMutationMock.mockImplementation((options: any) => ({
+    useMutationMock.mockImplementation((options: MutationOptionsLike) => ({
       isPending: false,
       mutate: (variables: unknown) => {
+        if (!options.mutationFn) return
         options.onMutate?.(variables)
         Promise.resolve()
-          .then(async () => options.mutationFn(variables))
+          .then(async () => options.mutationFn?.(variables))
           .then((data) => options.onSuccess?.(data, variables))
           .catch((error) => options.onError?.(error, variables))
           .finally(() => options.onSettled?.(undefined, undefined, variables, undefined))
@@ -126,7 +139,7 @@ describe('CandidatesPage delete action', () => {
   })
 
   it('moves candidate card in kanban and calls kanban-status api', async () => {
-    useQueryMock.mockImplementation((options: any) => {
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
       const key = Array.isArray(options?.queryKey) ? options.queryKey[0] : options?.queryKey
       if (key === 'candidates') {
         return {

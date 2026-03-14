@@ -66,6 +66,13 @@ async def _ensure_message_template(key: str) -> None:
 
 
 async def _create_booked_slot(*, candidate_id: int = 4321) -> models.Slot:
+    candidate_zone = ZoneInfo("Europe/Moscow")
+    start_local = (datetime.now(candidate_zone) + timedelta(days=2)).replace(
+        hour=15,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
     async with async_session() as session:
         recruiter = models.Recruiter(
             name="Reminder Recruiter",
@@ -82,9 +89,7 @@ async def _create_booked_slot(*, candidate_id: int = 4321) -> models.Slot:
         slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            # Keep the helper comfortably outside the "send immediately" threshold
-            # so reminder scheduling tests remain deterministic across wall-clock time.
-            start_utc=datetime.now(timezone.utc) + timedelta(days=1, hours=2),
+            start_utc=start_local.astimezone(timezone.utc),
             status=models.SlotStatus.BOOKED,
             candidate_tg_id=candidate_id,
             candidate_tz="Europe/Moscow",

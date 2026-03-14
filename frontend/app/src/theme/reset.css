@@ -1,0 +1,132 @@
+/* ============================================
+ * Theme module: Reset
+ * Source: extracted from global.css
+ * ============================================ */
+
+/* Base tokens are centralized in tokens.css. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--fg);
+  background:
+    radial-gradient(120% 90% at 10% 0%, rgba(123, 177, 255, 0.14), transparent 60%),
+    radial-gradient(120% 120% at 90% 10%, rgba(120, 255, 218, 0.08), transparent 55%),
+    radial-gradient(140% 120% at 50% 100%, rgba(255, 215, 160, 0.06), transparent 65%),
+    var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+.mobile-only {
+  display: none;
+}
+
+.desktop-only {
+  display: block;
+}
+
+:root[data-theme='light'] body {
+  background:
+    radial-gradient(120% 90% at 10% 0%, rgba(0, 122, 255, 0.08), transparent 60%),
+    radial-gradient(120% 120% at 90% 10%, rgba(88, 166, 255, 0.06), transparent 55%),
+    radial-gradient(120% 120% at 50% 100%, rgba(0, 122, 255, 0.05), transparent 65%),
+    var(--bg);
+}
+
+:root[data-theme='light'] .bubble__core {
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.2));
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.05), inset 0 1px 2px rgba(255, 255, 255, 0.5);
+}
+
+:root[data-theme='light'] .app-brand__mark {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-light) 100%);
+  color: #fff;
+}
+
+.glass {
+  position: relative;
+  overflow: hidden;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+}
+
+.glass::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(
+    180deg, 
+    rgba(255, 255, 255, 0.05) 0%, 
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+}
+
+.glass--elevated {
+  background: var(--glass-bg-elevated);
+  border-color: var(--glass-border-strong);
+  box-shadow: var(--glass-shadow-lg);
+}
+
+.glass--interactive:hover {
+  transform: translateY(-2px);
+  background: var(--glass-bg-elevated);
+  border-color: var(--glass-border-strong);
+  box-shadow: var(--glass-shadow-lg), var(--glass-glow-subtle);
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+.app-shell > main {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .app-shell {
+    padding: var(--space-sm);
+  }
+}
+
+@media (max-width: 480px) {
+  .app-shell {
+    padding: var(--space-xs);
+  }
+}
+

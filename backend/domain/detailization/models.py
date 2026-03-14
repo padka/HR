@@ -83,6 +83,8 @@ class DetailizationEntry(Base):
     expert_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     column_9: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_attached: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    final_outcome: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    final_outcome_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

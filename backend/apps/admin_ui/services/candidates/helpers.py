@@ -19,11 +19,17 @@ from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.bot.config import PASS_THRESHOLD, TEST2_QUESTIONS
 from backend.apps.bot.services import approve_slot_and_notify, cancel_slot_reminders
 from backend.core.audit import log_audit_action
+from backend.core.ai.service import schedule_warm_candidate_ai_outputs
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.apps.admin_ui.security import admin_principal, principal_ctx, Principal
-from backend.apps.admin_ui.services.reschedule_intents import get_candidate_reschedule_intent
+from backend.apps.admin_ui.services.reschedule_intents import (
+    get_candidate_reschedule_intent,
+    get_reschedule_intent_map,
+)
 from backend.domain import analytics
+from backend.domain.ai.models import AIInterviewScriptFeedback
+from backend.domain.candidates.journey import build_candidate_journey, derive_candidate_journey_state, journey_state_label
 from backend.domain.candidates.models import (
     AutoMessage,
     InterviewNote,
@@ -51,7 +57,8 @@ from backend.domain.candidates.workflow import (
     WorkflowStatus,
 )
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
-from backend.domain.repositories import find_city_by_plain_name
+from backend.domain.repositories import find_city_by_plain_name, get_message_template
+from backend.utils.jinja_renderer import render_template
 
 if TYPE_CHECKING:  # pragma: no cover - used only for typing
     from backend.apps.admin_ui.services.bot_service import BotService
@@ -131,6 +138,51 @@ INTERVIEW_SCRIPT_STEPS: List[Dict[str, Any]] = [
     },
 ]
 
+COHORT_STAGE_ORDER = {
+    "lead": 0,
+    "slot": 1,
+    "interview": 2,
+    "test2": 3,
+    "intro_day": 4,
+    "outcome": 5,
+}
+
+COHORT_STAGE_LABELS = {
+    "lead": "Лид",
+    "slot": "Записан на слот",
+    "interview": "Собеседование",
+    "test2": "Тест 2",
+    "intro_day": "Ознакомительный день",
+    "outcome": "Итог",
+}
+
+
+def _cohort_stage_key_for_candidate(user: User) -> str:
+    state = derive_candidate_journey_state(
+        candidate_status=getattr(user, "candidate_status", None),
+        lifecycle_state=getattr(user, "lifecycle_state", None),
+        reschedule_requested=False,
+    )
+    if state in {"lead", "contacted", "invited", "test1_completed"}:
+        return "lead"
+    if state in {"waiting_slot", "stalled_waiting_slot", "slot_pending", "slot_agreed", "time_proposed_waiting_candidate", "requested_other_slot", "interview_scheduled"}:
+        return "slot"
+    if state in {"interview_confirmed", "interview_declined"}:
+        return "interview"
+    if state in {"test2_sent", "test2_sent_waiting", "test2_completed", "test2_failed"}:
+        return "test2"
+    if state in {"intro_day_scheduled", "intro_preconfirmed", "intro_day_confirmed_day_of"}:
+        return "intro_day"
+    return "outcome"
+
+
+def _latest_test_result_by_rating(results: Sequence[TestResult], rating: str) -> TestResult | None:
+    target = rating.strip().upper()
+    for result in sorted(results, key=lambda item: (item.created_at or datetime.min, item.id), reverse=True):
+        if (result.rating or "").strip().upper() == target:
+            return result
+    return None
+
 INTRO_DAY_MESSAGE_TEMPLATE: str = (
     "Привет! Напоминаем про ознакомительный день. Приходите вовремя, "
     "возьмите документ и задайте вопросы — мы на связи 🙂"
@@ -152,7 +204,17 @@ def _intro_day_first_name(fio: str) -> str:
 
 
 def render_intro_day_invitation(
-    template: str, *, candidate_fio: str, date_str: str, time_str: str
+    template: str,
+    *,
+    candidate_fio: str,
+    date_str: str,
+    time_str: str,
+    city_name: Optional[str] = None,
+    intro_address: Optional[str] = None,
+    intro_contact: Optional[str] = None,
+    contact_name: Optional[str] = None,
+    contact_phone: Optional[str] = None,
+    **extra_context: Optional[str],
 ) -> str:
     if not template:
         return ""
@@ -164,11 +226,79 @@ def render_intro_day_invitation(
             formatted_date = f"{day}.{month}"
     except ValueError:
         pass
+    slot_datetime_local = " ".join(part for part in [formatted_date, time_str or ""] if part).strip()
+    context = {
+        "candidate_name": candidate_fio or name,
+        "candidate_fio": candidate_fio or name,
+        "candidate_first_name": name,
+        "slot_date_local": formatted_date,
+        "slot_time_local": time_str or "",
+        "slot_datetime_local": slot_datetime_local,
+        "dt_local": slot_datetime_local,
+        "interview_date_local": formatted_date,
+        "interview_time_local": time_str or "",
+        "interview_datetime_local": slot_datetime_local,
+        "city_name": city_name or "",
+        "intro_address": intro_address or city_name or "",
+        "address": intro_address or city_name or "",
+        "city_address": intro_address or city_name or "",
+        "intro_contact": intro_contact or "",
+        "recruiter_contact": intro_contact or "",
+        "contact_name": contact_name or "",
+        "contact_phone": contact_phone or "",
+    }
+    for key, value in extra_context.items():
+        context[key] = "" if value is None else str(value)
+    rendered = render_template(template, context)
     return (
-        template.replace("[Имя]", name)
+        rendered.replace("[Имя]", name)
         .replace("[Дата]", formatted_date)
         .replace("[Время]", time_str or "")
     )
+
+
+def build_intro_day_template_context(city: Optional[City]) -> Dict[str, str]:
+    city_name = getattr(city, "name_plain", None) or getattr(city, "name", None) or ""
+    intro_address = (getattr(city, "intro_address", None) or city_name or "").strip()
+    contact_name = (getattr(city, "contact_name", None) or "").strip()
+    contact_phone = (getattr(city, "contact_phone", None) or "").strip()
+    if contact_name and contact_phone:
+        intro_contact = f"{contact_name}, {contact_phone}"
+    else:
+        intro_contact = contact_name or contact_phone
+    return {
+        "city_name": city_name,
+        "intro_address": intro_address,
+        "address": intro_address,
+        "city_address": intro_address,
+        "intro_contact": intro_contact,
+        "recruiter_contact": intro_contact,
+        "contact_name": contact_name,
+        "contact_phone": contact_phone,
+    }
+
+
+async def resolve_intro_day_template_source(
+    *,
+    city: Optional[City] = None,
+    city_name: Optional[str] = None,
+) -> str:
+    city_obj = city
+    if city_obj is None and city_name:
+        city_obj = await find_city_by_plain_name(city_name)
+    template = await get_message_template(
+        "intro_day_invitation",
+        locale="ru",
+        channel="tg",
+        city_id=getattr(city_obj, "id", None),
+    )
+    body = (getattr(template, "body_md", None) or "").strip()
+    if body:
+        return body
+    legacy_body = (getattr(city_obj, "intro_day_template", None) or "").strip()
+    if legacy_body:
+        return legacy_body
+    return DEFAULT_INTRO_DAY_INVITATION_TEMPLATE
 
 
 STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
@@ -1677,6 +1807,7 @@ async def list_candidates(
 
         list_query: Select = (
             select(User, status_case, status_rank_expr, primary_event_expr, upcoming_slot_expr)
+            .options(selectinload(User.journey_events))
             .where(*conditions)
             .order_by(*order_columns)
             .offset(offset)
@@ -1825,6 +1956,11 @@ async def list_candidates(
                 for recruiter in recruiter_rows.scalars()
             }
 
+        reschedule_intent_map = await get_reschedule_intent_map(
+            session,
+            candidate_ids=[candidate_id for candidate_id in candidate_ids if candidate_id],
+        )
+
         ratings = await _distinct_ratings(session)
         cities = await _distinct_cities(session)
         analytics = await _collect_candidate_analytics(session, now)
@@ -1838,6 +1974,16 @@ async def list_candidates(
         latest_message = latest_message_map.get(user.telegram_id or 0)
         latest_slot = latest_slot_map.get(user.candidate_id)
         upcoming_slot = upcoming_slot_map.get(user.candidate_id)
+        responsible_recruiter = responsible_recruiters.get(
+            int(user.responsible_recruiter_id)
+        ) if getattr(user, "responsible_recruiter_id", None) is not None else None
+        pending_slot_request = reschedule_intent_map.get(str(user.candidate_id or ""))
+        candidate_journey = build_candidate_journey(
+            user,
+            reschedule_intent=pending_slot_request,
+            responsible_recruiter=responsible_recruiter,
+            upcoming_slot=upcoming_slot,
+        )
         status_slug = status_by_user.get(user.id, 'new')
         # Фолбэк в interview_scheduled применяем только к ранним/interview-статусам.
         if (
@@ -1916,9 +2062,6 @@ async def list_candidates(
             recruiter_name = latest_slot.recruiter.name
             recruiter_id_value = latest_slot.recruiter.id
         else:
-            responsible_recruiter = responsible_recruiters.get(
-                int(user.responsible_recruiter_id)
-            ) if getattr(user, "responsible_recruiter_id", None) is not None else None
             if responsible_recruiter is not None:
                 recruiter_name = responsible_recruiter.name
                 recruiter_id_value = responsible_recruiter.id
@@ -1940,6 +2083,12 @@ async def list_candidates(
                     'rank': status_rank_by_user.get(user.id, STATUS_ORDER.get(status_slug, 0)),
                     'tone': _status_tone(status_slug),
                 },
+                'journey': candidate_journey,
+                'archive': candidate_journey.get('archive'),
+                'final_outcome': candidate_journey.get('final_outcome'),
+                'final_outcome_reason': candidate_journey.get('final_outcome_reason'),
+                'pending_slot_request': candidate_journey.get('pending_slot_request'),
+                'manual_mode': candidate_journey.get('manual_mode'),
                 'tests': {
                     'test1': {
                         'status': t1_status,
@@ -2758,6 +2907,7 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
             select(User)
             .options(
                 selectinload(User.test_results).selectinload(TestResult.answers),
+                selectinload(User.journey_events),
             )
             .where(User.id == user_id)
         )
@@ -2841,8 +2991,28 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
             for slot in slots
         )
         test2_passed_early = _has_passed_test2(test_results)
+        interview_feedback_rows = (
+            await session.execute(
+                select(AIInterviewScriptFeedback)
+                .where(AIInterviewScriptFeedback.candidate_id == user.id)
+                .order_by(AIInterviewScriptFeedback.created_at.desc(), AIInterviewScriptFeedback.id.desc())
+                .limit(10)
+            )
+        ).scalars().all()
 
         timeline = []
+        for event in user.journey_events:
+            timeline.append(
+                {
+                    "kind": "journey",
+                    "dt": _ensure_aware(event.created_at),
+                    "event_key": event.event_key,
+                    "status": event.status_slug,
+                    "summary": event.summary,
+                    "payload": event.payload_json,
+                    "tz": None,
+                }
+            )
         for slot in slots:
             timeline.append(
                 {
@@ -2882,6 +3052,27 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
                     "send_time": msg.send_time,
                     "text": msg.message_text,
                     "is_active": msg.is_active,
+                    "tz": None,
+                }
+            )
+        for feedback in interview_feedback_rows:
+            labels = feedback.labels_json if isinstance(feedback.labels_json, dict) else {}
+            scorecard = labels.get("scorecard") if isinstance(labels.get("scorecard"), dict) else {}
+            average_rating = scorecard.get("average_rating")
+            summary = "Интервью проведено"
+            if average_rating is not None:
+                try:
+                    summary = f"Интервью проведено. Оценка: {float(average_rating):.1f}/5"
+                except Exception:
+                    summary = "Интервью проведено"
+            timeline.append(
+                {
+                    "kind": "interview_feedback",
+                    "dt": _ensure_aware(feedback.created_at),
+                    "summary": summary,
+                    "outcome": feedback.outcome,
+                    "outcome_reason": feedback.outcome_reason,
+                    "scorecard": scorecard,
                     "tz": None,
                 }
             )
@@ -3013,6 +3204,17 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
                 _status_label(candidate_status_slug) if candidate_status_slug else None
             )
 
+        candidate_journey = build_candidate_journey(
+            user,
+            reschedule_intent=reschedule_intent,
+            responsible_recruiter=responsible_recruiter,
+            upcoming_slot=upcoming_slot,
+        )
+        if candidate_status_display is None:
+            candidate_status_display = candidate_journey.get("state_label") or journey_state_label(
+                candidate_journey.get("state")
+            )
+
     # Prepare pipeline stages and allowed next statuses for Status Center UI
     pipeline_stages = _build_pipeline_stages(candidate_status)
     allowed_next = get_next_statuses(candidate_status) if candidate_status else []
@@ -3027,13 +3229,9 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
     ]
     status_is_terminal = is_terminal_status(candidate_status) if candidate_status else False
 
-    intro_day_template = None
-    if user.city:
-        city_obj = await find_city_by_plain_name(user.city)
-        if city_obj:
-            intro_day_template = getattr(city_obj, "intro_day_template", None)
-    if not intro_day_template:
-        intro_day_template = DEFAULT_INTRO_DAY_INVITATION_TEMPLATE
+    city_obj = await find_city_by_plain_name(user.city) if user.city else None
+    intro_day_template = await resolve_intro_day_template_source(city=city_obj, city_name=user.city)
+    intro_day_template_context = build_intro_day_template_context(city_obj)
 
     settings = get_settings()
 
@@ -3076,6 +3274,13 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         ],
         "legacy_status_enabled": settings.enable_legacy_status_api,
         "intro_day_template": intro_day_template,
+        "intro_day_template_context": intro_day_template_context,
+        "journey": candidate_journey,
+        "archive": candidate_journey.get("archive"),
+        "final_outcome": candidate_journey.get("final_outcome"),
+        "final_outcome_reason": candidate_journey.get("final_outcome_reason"),
+        "pending_slot_request": candidate_journey.get("pending_slot_request"),
+        "manual_mode": candidate_journey.get("manual_mode"),
     }
 
 
@@ -3180,6 +3385,7 @@ async def upsert_candidate(
 
     async with async_session() as session:
         user = None
+        created = False
         if telegram_id is not None:
             result = await session.execute(
                 select(User).where(User.telegram_id == telegram_id)
@@ -3203,6 +3409,7 @@ async def upsert_candidate(
             if manual_slot_timezone is not None:
                 user.manual_slot_timezone = manual_slot_timezone
         else:
+            created = True
             user = User(
                 telegram_id=telegram_id,
                 fio=clean_fio,
@@ -3228,7 +3435,9 @@ async def upsert_candidate(
 
         await session.commit()
         await session.refresh(user)
-        return user
+    if created:
+        schedule_warm_candidate_ai_outputs(int(user.id), principal=admin_principal(), refresh=True)
+    return user
 
 
 async def toggle_candidate_activity(user_id: int, *, active: bool, principal: Optional[Principal] = None) -> bool:
@@ -3554,6 +3763,7 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
 
     return {
         "id": user.id,
+        "created_at": _iso(getattr(user, "created_at", None)),
         "fio": user.fio,
         "city": user.city,
         "telegram_id": user.telegram_id,
@@ -3581,6 +3791,7 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         else None,
         "test_results": test_results_payload,
         "test_sections": detail.get("test_sections", []),
+        "timeline": detail.get("timeline", []),
         "stage": detail.get("stage"),
         "workflow_status": detail.get("workflow_status"),
         "workflow_status_label": detail.get("workflow_status_label"),
@@ -3588,6 +3799,12 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "candidate_status_slug": detail.get("candidate_status_slug"),
         "candidate_status_display": detail.get("candidate_status_display"),
         "candidate_status_color": detail.get("candidate_status_color"),
+        "journey": detail.get("journey"),
+        "archive": detail.get("archive"),
+        "final_outcome": detail.get("final_outcome"),
+        "final_outcome_reason": detail.get("final_outcome_reason"),
+        "pending_slot_request": detail.get("pending_slot_request"),
+        "manual_mode": detail.get("manual_mode"),
         "reschedule_request": reschedule_payload,
         "stats": detail.get("stats", {}),
         "telemost_url": detail.get("telemost_url"),
@@ -3598,10 +3815,111 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "allowed_next_statuses": detail.get("allowed_next_statuses", []),
         "pipeline_stages": detail.get("pipeline_stages", []),
         "status_is_terminal": detail.get("status_is_terminal", False),
+        "needs_intro_day": detail.get("needs_intro_day", False),
+        "can_schedule_intro_day": detail.get("can_schedule_intro_day", False),
         "candidate_status_options": detail.get("candidate_status_options", []),
         "legacy_status_enabled": detail.get("legacy_status_enabled", False),
         "intro_day_template": detail.get("intro_day_template"),
+        "intro_day_template_context": detail.get("intro_day_template_context"),
     }
+
+
+async def get_candidate_cohort_comparison(
+    candidate_id: int,
+    *,
+    principal: Optional[Principal] = None,
+) -> Optional[Dict[str, Any]]:
+    async with async_session() as session:
+        user = await session.get(
+            User,
+            candidate_id,
+            options=(selectinload(User.test_results),),
+        )
+        if user is None:
+            return None
+        if principal and principal.type == "recruiter":
+            if not await _recruiter_can_access_candidate(session, user, principal.id):
+                return None
+
+        hh_vacancy_id = str(getattr(user, "hh_vacancy_id", "") or "").strip()
+        desired_position = str(getattr(user, "desired_position", "") or "").strip()
+        city_name = str(getattr(user, "city", "") or "").strip()
+
+        if hh_vacancy_id:
+            stmt = select(User).options(selectinload(User.test_results)).where(User.hh_vacancy_id == hh_vacancy_id)
+            cohort_label = desired_position or f"HH вакансия {hh_vacancy_id}"
+        elif desired_position:
+            stmt = select(User).options(selectinload(User.test_results)).where(
+                func.lower(func.trim(User.desired_position)) == desired_position.lower()
+            )
+            if city_name:
+                stmt = stmt.where(func.lower(func.trim(User.city)) == city_name.lower())
+            cohort_label = desired_position
+        else:
+            return None
+
+        cohort_users = list((await session.execute(stmt.order_by(User.id.asc()).limit(200))).scalars().all())
+        if principal and principal.type == "recruiter":
+            visible_users: list[User] = []
+            for item in cohort_users:
+                if await _recruiter_can_access_candidate(session, item, principal.id):
+                    visible_users.append(item)
+            cohort_users = visible_users
+        if len(cohort_users) < 2:
+            return None
+
+        cohort_items: list[dict[str, Any]] = []
+        for cohort_user in cohort_users:
+            latest_test1 = _latest_test_result_by_rating(list(cohort_user.test_results or []), "TEST1")
+            stage_key = _cohort_stage_key_for_candidate(cohort_user)
+            cohort_items.append(
+                {
+                    "candidate_id": int(cohort_user.id),
+                    "stage_key": stage_key,
+                    "test1_score": float(latest_test1.final_score) if latest_test1 and latest_test1.final_score is not None else None,
+                    "test1_time_sec": int(latest_test1.total_time or 0) if latest_test1 and latest_test1.total_time is not None else None,
+                }
+            )
+
+        candidate_item = next((item for item in cohort_items if item["candidate_id"] == int(user.id)), None)
+        if candidate_item is None:
+            return None
+
+        score_values = [float(item["test1_score"]) for item in cohort_items if item["test1_score"] is not None]
+        time_values = [int(item["test1_time_sec"]) for item in cohort_items if item["test1_time_sec"] is not None]
+
+        ranked_items = sorted(
+            cohort_items,
+            key=lambda item: (
+                COHORT_STAGE_ORDER.get(str(item["stage_key"]), 0),
+                float(item["test1_score"]) if item["test1_score"] is not None else -1.0,
+            ),
+            reverse=True,
+        )
+        rank = next((index + 1 for index, item in enumerate(ranked_items) if item["candidate_id"] == int(user.id)), None)
+
+        stage_distribution = [
+            {
+                "key": key,
+                "label": COHORT_STAGE_LABELS[key],
+                "count": sum(1 for item in cohort_items if item["stage_key"] == key),
+            }
+            for key in ("lead", "slot", "interview", "test2", "intro_day", "outcome")
+        ]
+        return {
+            "cohort_label": cohort_label,
+            "total_candidates": len(cohort_items),
+            "rank": rank,
+            "test1": {
+                "candidate": candidate_item["test1_score"],
+                "average": (sum(score_values) / len(score_values)) if score_values else None,
+            },
+            "completion_time_sec": {
+                "candidate": candidate_item["test1_time_sec"],
+                "average": (sum(time_values) / len(time_values)) if time_values else None,
+            },
+            "stage_distribution": stage_distribution,
+        }
 
 
 _URL_RE = re.compile(r"https?://[^\s<>\"')\]]+", re.IGNORECASE)

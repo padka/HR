@@ -1,6 +1,5 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchCurrentKpis,
   fetchDashboardIncoming,
@@ -20,52 +19,18 @@ import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 import { browserTimeZone, buildSlotTimePreview, formatTzOffset } from '@/app/lib/timezonePreview'
+import { ModalPortal } from '@/shared/components/ModalPortal'
 import { Link } from '@tanstack/react-router'
 import { resolveIncomingDemoCount, withDemoIncomingCandidates } from './incoming-demo'
 import { IncomingPage } from './incoming'
-
-const AI_LEVEL_LABELS: Record<'high' | 'medium' | 'low' | 'unknown', string> = {
-  high: 'Высокая',
-  medium: 'Средняя',
-  low: 'Низкая',
-  unknown: 'Не определена',
-}
+import { DashboardMetric } from './DashboardMetric'
+import { formatAiRecommendation, formatAiRelevance, getDefaultRange, toIsoDate } from './dashboard.utils'
 
 type IncomingFilter = 'all' | 'new' | 'stalled' | 'pending' | 'requested_other_time'
 
 const DASHBOARD_INCOMING_FILTERS_KEY = 'dashboardIncomingFilters:v1'
 const INCOMING_FETCH_LIMIT = 100
 const INCOMING_PAGE_SIZE_OPTIONS = [25, 50, 100] as const
-
-function formatAiRelevance(candidate: IncomingCandidate): string {
-  if (typeof candidate.ai_relevance_score === 'number') {
-    const score = Math.min(100, Math.max(0, Math.round(candidate.ai_relevance_score)))
-    return `${score}/100`
-  }
-  if (candidate.ai_relevance_level && AI_LEVEL_LABELS[candidate.ai_relevance_level]) {
-    return AI_LEVEL_LABELS[candidate.ai_relevance_level]
-  }
-  return '—'
-}
-
-function toIsoDate(value: Date) {
-  return value.toISOString().slice(0, 10)
-}
-
-function getDefaultRange() {
-  const today = new Date()
-  const from = new Date(today)
-  from.setDate(from.getDate() - 6)
-  return {
-    from: toIsoDate(from),
-    to: toIsoDate(today),
-  }
-}
-
-function ModalPortal({ children }: { children: ReactNode }) {
-  if (typeof document === 'undefined') return null
-  return createPortal(children, document.body)
-}
 
 export function DashboardPage() {
   const profile = useProfile()
@@ -90,11 +55,14 @@ export function DashboardPage() {
   const [showIncomingAdvancedFilters, setShowIncomingAdvancedFilters] = useState(false)
   const [expandedIncomingCards, setExpandedIncomingCards] = useState<Record<number, boolean>>({})
   const recruiterTz = profile.data?.recruiter?.tz || browserTimeZone()
+  const toastTimeoutRef = useRef<number | null>(null)
 
   const showToast = (message: string) => {
     setToast(message)
-    window.clearTimeout((showToast as any)._t)
-    ;(showToast as any)._t = window.setTimeout(() => setToast(null), 2400)
+    if (toastTimeoutRef.current != null) {
+      window.clearTimeout(toastTimeoutRef.current)
+    }
+    toastTimeoutRef.current = window.setTimeout(() => setToast(null), 2400)
   }
 
   const summaryQuery = useQuery<SummaryPayload>({
@@ -496,7 +464,7 @@ export function DashboardPage() {
           {summaryCards.length > 0 && (
             <div className="grid-cards">
               {summaryCards.map((card) => (
-                <Metric key={card.label} title={card.label} value={card.value} />
+                <DashboardMetric key={card.label} title={card.label} value={card.value} />
               ))}
             </div>
           )}
@@ -795,7 +763,18 @@ export function DashboardPage() {
                               <span className="incoming-min-chip incoming-min-chip--ai">
                                 AI: {formatAiRelevance(candidate)}
                               </span>
+                              {formatAiRecommendation(candidate) && (
+                                <span className="incoming-min-chip incoming-min-chip--ai">
+                                  {formatAiRecommendation(candidate)}
+                                </span>
+                              )}
                             </div>
+
+                            {candidate.ai_risk_hint && (
+                              <div className="incoming-min-card__note incoming-min-card__note--block">
+                                <span>AI: {candidate.ai_risk_hint}</span>
+                              </div>
+                            )}
 
                             {candidate.requested_another_time_comment && isExpanded && (
                               <div className="incoming-min-card__note incoming-min-card__note--requested incoming-min-card__note--block">
@@ -1031,14 +1010,5 @@ export function DashboardPage() {
         </div>
       )}
     </div>
-  )
-}
-
-function Metric({ title, value }: { title: string; value: number | string }) {
-  return (
-    <article className="glass stat-card dashboard-metric">
-      <span className="stat-label">{title}</span>
-      <span className="stat-value">{value ?? '—'}</span>
-    </article>
   )
 }

@@ -25,6 +25,7 @@ PRESET_LABELS = {
     "reminder_30m": "Напоминание за 30мин",
     "confirm_6h": "Запрос подтверждения (за 6ч)",
     "confirm_2h": "Запрос подтверждения (за 2ч)",
+    "att_declined_reason_prompt": "Запрос причины отказа",
 }
 
 def list_known_template_keys() -> List[str]:

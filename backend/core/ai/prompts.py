@@ -34,6 +34,32 @@ def _pii_rule(*, allow_pii: bool) -> str:
     return "- Do NOT include any personal data (PII). Never output names, phones, Telegram IDs, links.\n"
 
 
+def _smart_service_script_excerpt() -> str:
+    return (
+        "Smart Service interview script skeleton:\n"
+        "1) greeting_and_frame — establish contact, explain call goal, mention that OD is the last practical step before training.\n"
+        "2) vacancy_interest_and_candidate_filters — ask whether candidate read the vacancy, what matters in work choice, readiness for active communication, commute, live client interaction.\n"
+        "3) company_and_product_pitch — explain that the company improves Yandex Maps profiles for business, mention photo/3D panorama, profile updates, technical optimization, 7+ years of work, and internal teams.\n"
+        "4) role_and_work_format — explain territory-based field work, meetings with entrepreneurs, office start of day, 5/2 9:00-18:00, communication-first sales without hard push.\n"
+        "5) resilience_to_rejection — ask how candidate reacts to refusals and tempo pressure.\n"
+        "6) onboarding_and_support — explain 3-5 day adaptation with mentor and practical training.\n"
+        "7) compensation — explain fixed + motivation and high-variable option in plain language, no hidden schemes.\n"
+        "8) od_closing_and_confirmation — for recommended candidates offer OD, confirm exact time, route, punctuality, dress code, and ask for a written confirmation message.\n"
+        "Tone: spoken Russian, warm but businesslike, concise, no lectures.\n"
+    )
+
+
+def _smart_service_script_exemplar_excerpt() -> str:
+    return (
+        "Quality exemplar for the final conversation_script:\n"
+        "- The recruiter speaks as one continuous live conversation, not as a checklist.\n"
+        "- Good opening sounds like: 'Здравствуйте. Рад познакомиться. Коротко объясню, как пройдёт разговор, задам несколько вопросов и, если мы подходим друг другу, предложу следующий этап.'\n"
+        "- Good transitions sound natural: 'Тогда коротко расскажу, чем мы занимаемся', 'Теперь про сам формат работы', 'По деньгам объясню коротко и честно', 'Если по базовым критериям всё ок, двигаемся дальше'.\n"
+        "- The script may use short paragraphs for readability, but must avoid bullets, numbered lists, dry headings and mechanical checklists.\n"
+        "- Regulations and office rules are the source of truth; exemplars are style guides only.\n"
+    )
+
+
 @lru_cache
 def _style_guide_excerpt() -> str:
     """Load a short excerpt of the bot style guide to align reply drafts."""
@@ -71,7 +97,8 @@ def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tupl
         '  "test_insights": "string|null",\n'
         '  "risks": [{"key":"string","severity":"low|medium|high","label":"string","explanation":"string"}],\n'
         '  "next_actions": [{"key":"string","label":"string","rationale":"string","cta":"string|null"}],\n'
-        '  "notes": "string|null"\n'
+        '  "notes": "string|null",\n'
+        '  "scorecard": {"final_score":0-100|null,"objective_score":0-100|null,"semantic_score":0-100|null,"recommendation":"od_recommended|clarify_before_od|not_recommended","metrics":[{"key":"resume_substance|answer_substance|client_communication_inference|interest_for_role","label":"string","score":0-30,"weight":0-30,"status":"met|not_met|unknown","evidence":"string"}],"blockers":[{"key":"string","label":"string","evidence":"string"}],"missing_data":[{"key":"string","label":"string","evidence":"string"}]} | null\n'
         "}\n"
     )
     user = (
@@ -89,6 +116,7 @@ def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tupl
         "- If knowledge_base.excerpts are present, treat them as internal regulations and follow them.\n"
         "- Use candidate_profile.age_years and candidate_profile.desired_income when present.\n"
         "- Use candidate_profile.work_experience / skills / motivation / expectations when present.\n"
+        "- Use resume_context when present; it contains normalized resume data.\n"
         "- Use candidate_profile.signals.* as deterministic hints derived from answers.\n"
         "- Consider customer-facing jobs (e.g. barista/office-manager) as relevant 'experience with people' if supported by test answers.\n"
         "- Communication: you MAY infer likely communication skills from customer-facing roles and signals.people_interaction.\n"
@@ -98,6 +126,11 @@ def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tupl
         "- If chat.recent is present, assess recruiter communication quality and suggest concrete improvements.\n"
         "- Criteria checklist: assess objective criteria from regulations (met/not_met/unknown) with short evidence.\n"
         "- Concrete next steps for the recruiter.\n"
+        "- scorecard: fill only the semantic source data for downstream hybrid scoring.\n"
+        "  Use exactly 4 metrics with keys: resume_substance, answer_substance, client_communication_inference, interest_for_role.\n"
+        "  score must be weighted points inside the metric weight, not percent.\n"
+        "  blockers: include only strong semantic blockers justified by context.\n"
+        "  missing_data: include facts missing for a confident recommendation.\n"
         "Notes:\n"
         "- If referencing test answers, prefer pointing to question_index (e.g. \"TEST2 Q3\") instead of quoting.\n"
         "Context (JSON):\n"
@@ -116,6 +149,7 @@ def candidate_coach_prompts(*, context: dict, allow_pii: bool = False) -> tuple[
         "- Use concise Russian.\n"
         "- Recommendations must be actionable for recruiter in current workflow stage.\n"
         "- Use city_profile.criteria and knowledge_base.excerpts as primary policy source.\n"
+        "- Use summary_scorecard as the source of truth for overall recommendation and score.\n"
         "- Never invent facts not present in context.\n"
         "JSON schema:\n"
         "{\n"
@@ -133,7 +167,7 @@ def candidate_coach_prompts(*, context: dict, allow_pii: bool = False) -> tuple[
     user = (
         "Produce a recruiter coaching payload for current candidate.\n"
         "Guidelines:\n"
-        "- Relevance score/level: evaluate against city criteria + test data + interaction history.\n"
+        "- Relevance score/level: MUST align with summary_scorecard.final_score and summary_scorecard.recommendation.\n"
         "- Strengths: include evidence from test answers/signals (e.g., customer-facing experience).\n"
         "- Risks: include no-show / stall / criteria gap risks.\n"
         "- Interview questions: 4-6 short, concrete questions aligned with interview script and current uncertainties.\n"
@@ -147,33 +181,50 @@ def candidate_coach_prompts(*, context: dict, allow_pii: bool = False) -> tuple[
 
 def interview_script_prompts(
     *,
+    candidate_state: dict[str, Any],
+    stage_strategy: dict[str, Any],
     candidate_profile: dict[str, Any],
     hh_resume_normalized: dict[str, Any],
     office_context: dict[str, Any],
+    scorecard: dict[str, Any],
     rag_context: list[dict[str, Any]],
     base_risk_hints: list[dict[str, Any]],
 ) -> tuple[str, str]:
     system = (
         "You are RecruitSmart Interview Script Generator.\n"
-        "Task kind: interview_script_v1.\n"
+        "Task kind: interview_script_v2.\n"
         "Hard rules:\n"
         "- Output MUST be a single valid JSON object.\n"
         "- Follow the exact schema keys and do not add extra keys.\n"
         "- Do not use markdown.\n"
         "- Do not invent candidate facts.\n"
         "- If data is missing, explicitly mark uncertainty in wording.\n"
+        "- conversation_script is the primary recruiter-facing result.\n"
+        "- conversation_script MUST be a cohesive spoken script in Russian that a recruiter can read almost verbatim.\n"
+        "- conversation_script MUST NOT be a checklist, bullet list, numbered list, heading set, or fragmented memo.\n"
+        "- Use only short readable paragraphs separated by blank lines when needed.\n"
         "- Keep recruiter text concise and practical.\n"
-        "- Prioritize logistics clarity, objection handling, and next-step conversion.\n"
+        "- Prioritize correct stage logic, logistics clarity, objection handling, and next-step conversion.\n"
         "- Use provided RAG excerpts as internal policy source.\n"
         "- Never include secrets.\n"
         "- PII policy: input is redacted, keep output neutral and safe.\n"
         "Quality rules:\n"
+        "- Treat regulations and retrieved policy excerpts as the highest-priority source of truth.\n"
+        "- Treat the Smart Service script skeleton and exemplars as style/flow guidance, not text to copy.\n"
+        "- Adapt the script to the candidate's current funnel stage and avoid repeating already known facts without reason.\n"
         "- Use risk_flags with actionable question + recommended_phrase.\n"
+        "- script_blocks are an internal execution plan and may stay compact, but conversation_script must sound natural.\n"
         "- script_blocks must be executable in real call flow.\n"
         "- Include dynamic branches in if_answers.\n"
         "- cta_templates must move candidate to next concrete step.\n"
+        "- Return script_blocks in this exact order and ids: greeting_and_frame, vacancy_interest_and_candidate_filters, company_and_product_pitch, role_and_work_format, resilience_to_rejection, onboarding_and_support, compensation, od_closing_and_confirmation.\n"
+        f"{_smart_service_script_excerpt()}"
+        f"{_smart_service_script_exemplar_excerpt()}"
         "JSON schema:\n"
         "{\n"
+        '  "stage_label": "string",\n'
+        '  "call_goal": "string",\n'
+        '  "conversation_script": "string",\n'
         '  "risk_flags": [{"code":"string","severity":"low|medium|high","reason":"string","question":"string","recommended_phrase":"string"}],\n'
         '  "highlights": ["string"],\n'
         '  "checks": ["string"],\n'
@@ -184,12 +235,18 @@ def interview_script_prompts(
     )
     user = (
         "Generate Interview Script JSON for this candidate.\n\n"
+        "candidate_state:\n"
+        f"{_json_block(candidate_state)}\n\n"
+        "stage_strategy:\n"
+        f"{_json_block(stage_strategy)}\n\n"
         "candidate_profile:\n"
         f"{_json_block(candidate_profile)}\n\n"
         "hh_resume_normalized:\n"
         f"{_json_block(hh_resume_normalized)}\n\n"
         "office_context:\n"
         f"{_json_block(office_context)}\n\n"
+        "scorecard:\n"
+        f"{_json_block(scorecard)}\n\n"
         "rag_context:\n"
         f"{_json_block(rag_context)}\n\n"
         "base_risk_hints:\n"
@@ -198,8 +255,15 @@ def interview_script_prompts(
         "1) Keep script aligned to office/city logistics and vacancy rules.\n"
         "2) Mention only facts present in input.\n"
         "3) Cover objections likely for this candidate profile.\n"
-        "4) Keep output compact but complete.\n"
-        "5) Return valid JSON only.\n"
+        "4) This script is for Smart Service vacancy only; keep the Yandex Maps sales context.\n"
+        "5) conversation_script must read like one live recruiter conversation from greeting to close.\n"
+        "6) Do not output bullets, numbering, dry section headers, or checklist phrasing inside conversation_script.\n"
+        "7) If scorecard.recommendation=od_recommended, close towards OD confirmation.\n"
+        "8) If scorecard.recommendation=clarify_before_od, keep OD conditional and naturally weave clarifying questions into the dialogue.\n"
+        "9) If scorecard.recommendation=not_recommended, do not offer OD and use soft closure/escalation CTA only.\n"
+        "10) If candidate_state/stage_strategy indicate a later funnel stage, do not regenerate a cold first-screening call from scratch.\n"
+        "11) Keep output compact but complete.\n"
+        "12) Return valid JSON only.\n"
     )
     return system, user
 

@@ -87,6 +87,12 @@ class User(Base):
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rejected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     rejected_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    lifecycle_state: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    archive_stage: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    archive_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    final_outcome: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    final_outcome_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     manual_slot_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     manual_slot_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -130,6 +136,16 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    chat_workspace: Mapped[Optional["CandidateChatWorkspace"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    journey_events: Mapped[List["CandidateJourneyEvent"]] = relationship(
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+        order_by="CandidateJourneyEvent.created_at.desc()",
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<User {self.id} cid={self.candidate_id} tg={self.telegram_id} status={self.candidate_status}>"
@@ -159,6 +175,38 @@ class TestResult(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<TestResult {self.id} user={self.user_id} score={self.final_score}>"
+
+
+class CandidateJourneyEvent(Base):
+    __tablename__ = "candidate_journey_events"
+    __table_args__ = (
+        Index("ix_candidate_journey_events_candidate_created", "candidate_id", "created_at"),
+        Index("ix_candidate_journey_events_event_key", "event_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_slug: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    actor_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    actor_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    candidate: Mapped["User"] = relationship(back_populates="journey_events")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<CandidateJourneyEvent {self.id} candidate={self.candidate_id} key={self.event_key}>"
 
 
 class QuestionAnswer(Base):
@@ -371,6 +419,44 @@ class CandidateChatRead(Base):
             f"<CandidateChatRead candidate={self.candidate_id} "
             f"principal={self.principal_type}:{self.principal_id}>"
         )
+
+
+class CandidateChatWorkspace(Base):
+    __tablename__ = "candidate_chat_workspaces"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", name="uq_candidate_chat_workspaces_candidate"),
+        Index("ix_candidate_chat_workspaces_updated", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    shared_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    agreements_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    follow_up_due_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    updated_by: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    user: Mapped["User"] = relationship(back_populates="chat_workspace")
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<CandidateChatWorkspace candidate={self.candidate_id}>"
 
 
 class CandidateInviteToken(Base):

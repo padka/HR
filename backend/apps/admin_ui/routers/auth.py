@@ -229,6 +229,7 @@ async def login(
             changes={"method": "form", "role": "admin"},
         )
         request.session[SESSION_KEY] = {"type": admin.type, "id": admin.id}
+        request.session["username"] = username
         target = redirect_to or "/"
         if not target.startswith("/") or target.startswith("//"):
             target = "/"
@@ -279,6 +280,7 @@ async def login(
         changes={"method": "form", "role": principal.type},
     )
     request.session[SESSION_KEY] = {"type": principal.type, "id": principal.id}
+    request.session["username"] = username
 
     # Security fix: prevent open redirects
     target = redirect_to or "/"
@@ -300,6 +302,7 @@ async def logout(request: Request):
         "logout", "auth", None, ctx=_get_audit_context(request, username)
     )
     request.session.pop(SESSION_KEY, None)
+    request.session.pop("username", None)
     return RedirectResponse(url="/auth/login?logged_out=1", status_code=303)
 
 

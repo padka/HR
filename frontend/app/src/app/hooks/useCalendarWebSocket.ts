@@ -23,6 +23,15 @@ export function useCalendarWebSocket(options: UseCalendarWebSocketOptions = {}) 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectAttempts = useRef(0)
+  const DEBUG = import.meta.env.DEV
+
+  const debugLog = useCallback(
+    (level: 'log' | 'warn' | 'error', ...args: unknown[]) => {
+      if (!DEBUG) return
+      console[level]('[CalendarWS]', ...args)
+    },
+    [DEBUG],
+  )
 
   const connect = useCallback(() => {
     if (!enabled) return
@@ -36,7 +45,7 @@ export function useCalendarWebSocket(options: UseCalendarWebSocketOptions = {}) 
       wsRef.current = ws
 
       ws.onopen = () => {
-        console.log('[CalendarWS] Connected')
+        debugLog('log', 'Connected')
         reconnectAttempts.current = 0
       }
 
@@ -45,7 +54,7 @@ export function useCalendarWebSocket(options: UseCalendarWebSocketOptions = {}) 
           const data = JSON.parse(event.data) as WebSocketMessage
 
           if (data.type === 'slot_change') {
-            console.log('[CalendarWS] Slot change:', data.change_type, data.slot_id)
+            debugLog('log', 'Slot change:', data.change_type, data.slot_id)
 
             // Invalidate calendar queries to refetch data
             queryClient.invalidateQueries({ queryKey: ['calendar-events'] })
@@ -59,27 +68,27 @@ export function useCalendarWebSocket(options: UseCalendarWebSocketOptions = {}) 
             }
           }
         } catch (err) {
-          console.error('[CalendarWS] Failed to parse message:', err)
+          debugLog('error', 'Failed to parse message:', err)
         }
       }
 
       ws.onerror = (error) => {
-        console.error('[CalendarWS] Error:', error)
+        debugLog('error', 'Error:', error)
       }
 
       ws.onclose = (event) => {
-        console.log('[CalendarWS] Disconnected:', event.code, event.reason)
+        debugLog('log', 'Disconnected:', event.code, event.reason)
         wsRef.current = null
 
         if (event.code === 1008 || event.code === 4401) {
-          console.warn('[CalendarWS] Authorization required, reconnect disabled')
+          debugLog('warn', 'Authorization required, reconnect disabled')
           return
         }
 
         // Attempt to reconnect with exponential backoff
         if (enabled && reconnectAttempts.current < 5) {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000)
-          console.log(`[CalendarWS] Reconnecting in ${delay}ms...`)
+          debugLog('log', `Reconnecting in ${delay}ms...`)
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttempts.current++
             connect()
@@ -87,9 +96,9 @@ export function useCalendarWebSocket(options: UseCalendarWebSocketOptions = {}) 
         }
       }
     } catch (err) {
-      console.error('[CalendarWS] Failed to connect:', err)
+      debugLog('error', 'Failed to connect:', err)
     }
-  }, [enabled, queryClient, onSlotChange])
+  }, [debugLog, enabled, queryClient, onSlotChange])
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {

@@ -89,6 +89,7 @@ __all__ = [
     "delete_all_slots",
     "schedule_manual_candidate_slot",
     "schedule_manual_candidate_slot_silent",
+    "assign_existing_candidate_slot_silent",
     "set_slot_outcome",
     "get_state_manager",
     "delete_past_free_slots",
@@ -952,8 +953,6 @@ async def schedule_manual_candidate_slot_silent(
     if principal and principal.type == "recruiter" and recruiter.id != principal.id:
         raise ManualSlotError("Слот не найден или недоступен.")
     candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id
-    if candidate_tg_id is None:
-        raise ManualSlotError("Для кандидата не указан Telegram ID.")
     normalized_dt = ensure_aware_utc(dt_utc)
     requested_duration = max(SLOT_MIN_DURATION_MIN, duration_min)
     overlap_end = normalized_dt + timedelta(minutes=SLOT_MIN_DURATION_MIN)
@@ -1040,6 +1039,33 @@ async def schedule_manual_candidate_slot_silent(
         await delete_slot(slot_id, force=True)
         raise ManualSlotError(_reservation_error_message(reservation.status))
 
+    return await _finalize_manual_silent_booking(
+        slot_id=slot_id,
+        candidate=candidate,
+        recruiter=recruiter,
+        city=city,
+        slot_tz=slot_tz,
+        normalized_dt=normalized_dt,
+        candidate_tg_id=candidate_tg_id,
+        admin_username=admin_username,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
+
+async def _finalize_manual_silent_booking(
+    *,
+    slot_id: int,
+    candidate: "User",
+    recruiter: Recruiter,
+    city: City,
+    slot_tz: str,
+    normalized_dt: datetime,
+    candidate_tg_id: Optional[int],
+    admin_username: str,
+    ip_address: Optional[str],
+    user_agent: Optional[str],
+) -> SlotApprovalResult:
     slot = await approve_slot(slot_id)
     if not slot:
         await delete_slot(slot_id, force=True)
@@ -1047,21 +1073,53 @@ async def schedule_manual_candidate_slot_silent(
 
     async with async_session() as session:
         user = await session.get(User, candidate.id)
-        if user and user.candidate_status != CandidateStatus.INTERVIEW_SCHEDULED:
-            await _candidate_status_service.force(
-                user,
-                CandidateStatus.INTERVIEW_SCHEDULED,
-                reason="manual slot assignment",
+        if user:
+            existing_assignment = await session.scalar(
+                select(SlotAssignment).where(
+                    SlotAssignment.slot_id == slot_id,
+                    SlotAssignment.candidate_id == user.candidate_id,
+                )
             )
+            now = datetime.now(timezone.utc)
+            if existing_assignment is None:
+                session.add(
+                    SlotAssignment(
+                        slot_id=slot_id,
+                        recruiter_id=recruiter.id,
+                        candidate_id=user.candidate_id,
+                        candidate_tg_id=candidate_tg_id,
+                        candidate_tz=slot_tz,
+                        origin="manual_silent",
+                        status=SlotAssignmentStatus.CONFIRMED,
+                        offered_at=now,
+                        confirmed_at=now,
+                    )
+                )
+            else:
+                existing_assignment.origin = "manual_silent"
+                existing_assignment.status = SlotAssignmentStatus.CONFIRMED
+                existing_assignment.candidate_tg_id = candidate_tg_id
+                existing_assignment.candidate_tz = slot_tz
+                existing_assignment.confirmed_at = existing_assignment.confirmed_at or now
+            user.responsible_recruiter_id = recruiter.id
+            if str(getattr(user, "source", "") or "").strip().lower() in {"", "manual_call"}:
+                user.source = "manual_silent"
+            if user.candidate_status != CandidateStatus.INTERVIEW_SCHEDULED:
+                await _candidate_status_service.force(
+                    user,
+                    CandidateStatus.INTERVIEW_SCHEDULED,
+                    reason="manual slot assignment",
+                    actor_type="admin_ui",
+                )
             await session.commit()
             try:
                 await analytics.log_funnel_event(
                     analytics.FunnelEvent.SLOT_BOOKED,
-                    user_id=user.telegram_id,
+                    user_id=user.telegram_id or user.telegram_user_id or user.id,
                     candidate_id=user.id,
                     metadata={
                         "status": CandidateStatus.INTERVIEW_SCHEDULED.value,
-                        "source": "manual",
+                        "source": "manual_silent",
                     },
                 )
             except Exception:
@@ -1091,6 +1149,69 @@ async def schedule_manual_candidate_slot_silent(
         status="approved",
         message="Слот согласован без уведомления кандидата.",
         slot=slot,
+    )
+
+
+async def assign_existing_candidate_slot_silent(
+    *,
+    slot_id: int,
+    candidate: "User",
+    recruiter: Recruiter,
+    city: City,
+    slot_tz: str,
+    admin_username: str = "admin",
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    principal: Optional[Principal] = None,
+) -> SlotApprovalResult:
+    principal = principal or principal_ctx.get()
+    if principal and principal.type == "recruiter" and recruiter.id != principal.id:
+        raise ManualSlotError("Слот не найден или недоступен.")
+
+    candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id
+
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if slot is None:
+            raise ManualSlotError("Слот не найден.")
+        if int(slot.recruiter_id or 0) != int(recruiter.id):
+            raise ManualSlotError("Слот привязан к другому рекрутёру.")
+        if int(slot.city_id or 0) != int(city.id):
+            raise ManualSlotError("Слот привязан к другому городу.")
+        if str(getattr(slot, "purpose", None) or "interview").strip().lower() == "intro_day":
+            raise ManualSlotError("Можно выбрать только слот собеседования.")
+        if norm_status(slot.status) != "FREE":
+            raise ManualSlotError("Слот уже занят.")
+        normalized_dt = ensure_aware_utc(slot.start_utc)
+
+    reservation = await reserve_slot(
+        slot_id,
+        candidate_tg_id,
+        candidate.fio,
+        slot_tz,
+        candidate_id=candidate.candidate_id,
+        candidate_city_id=city.id,
+        candidate_username=candidate.username,
+        purpose="interview",
+        expected_recruiter_id=recruiter.id,
+        expected_city_id=city.id,
+        allow_candidate_replace=False,
+    )
+
+    if reservation.status != "reserved":
+        raise ManualSlotError(_reservation_error_message(reservation.status))
+
+    return await _finalize_manual_silent_booking(
+        slot_id=slot_id,
+        candidate=candidate,
+        recruiter=recruiter,
+        city=city,
+        slot_tz=slot_tz,
+        normalized_dt=normalized_dt,
+        candidate_tg_id=candidate_tg_id,
+        admin_username=admin_username,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
 
 

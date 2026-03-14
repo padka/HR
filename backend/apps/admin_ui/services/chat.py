@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -12,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.services.bot_service import BotService
+from backend.apps.admin_ui.services.chat_meta import derive_chat_message_kind
 from backend.core.db import async_session
 from backend.core.redis_factory import create_redis_client
 from backend.core.settings import get_settings
@@ -203,6 +205,11 @@ def serialize_chat_message(message: ChatMessage) -> Dict[str, object]:
     return {
         "id": message.id,
         "direction": message.direction,
+        "kind": derive_chat_message_kind(
+            message.direction,
+            author_label=message.author_label,
+            payload_json=message.payload_json,
+        ),
         "channel": message.channel,
         "text": message.text or "",
         "status": message.status,
@@ -220,10 +227,52 @@ async def list_chat_history(candidate_id: int, limit: int, before: Optional[date
     messages = await domain_list_chat_messages(candidate_id, limit=fetch_limit + 1, before=before)
     has_more = len(messages) > fetch_limit
     data = messages[:fetch_limit]
+    latest_message_at = data[0].created_at.isoformat() if data else None
     return {
         "messages": [serialize_chat_message(msg) for msg in data],
         "has_more": has_more,
+        "latest_message_at": latest_message_at,
     }
+
+
+async def _latest_chat_message_at(candidate_id: int) -> Optional[datetime]:
+    async with async_session() as session:
+        row = await session.execute(
+            select(ChatMessage.created_at)
+            .where(ChatMessage.candidate_id == candidate_id)
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .limit(1)
+        )
+        created_at = row.scalar_one_or_none()
+    if created_at and created_at.tzinfo is None:
+        return created_at.replace(tzinfo=timezone.utc)
+    return created_at
+
+
+async def wait_for_chat_history_updates(
+    candidate_id: int,
+    *,
+    since: Optional[datetime],
+    timeout: int = 25,
+    limit: int = 80,
+) -> Dict[str, object]:
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=max(timeout, 5))
+    since_utc = since if since is None or since.tzinfo is not None else since.replace(tzinfo=timezone.utc)
+
+    while True:
+        latest_message_at = await _latest_chat_message_at(candidate_id)
+        if since_utc is None or (latest_message_at and latest_message_at > since_utc):
+            payload = await list_chat_history(candidate_id, limit=limit, before=None)
+            payload["updated"] = True
+            return payload
+        if datetime.now(timezone.utc) >= deadline:
+            return {
+                "messages": [],
+                "has_more": False,
+                "latest_message_at": latest_message_at.isoformat() if latest_message_at else None,
+                "updated": False,
+            }
+        await asyncio.sleep(1.0)
 
 
 async def _load_candidate(candidate_id: int) -> User:

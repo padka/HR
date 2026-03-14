@@ -169,6 +169,165 @@ async def test_recruiter_can_schedule_intro_day_via_api_without_recruiter_id(
 
 
 @pytest.mark.asyncio
+async def test_candidates_route_uses_city_intro_day_template_when_custom_message_empty(
+    recruiter_scoped_app,
+) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=990021,
+        fio="Шеншин Михаил Алексеевич",
+        city="Волгоград",
+        username="intro_city_template_web",
+        initial_status=CandidateStatus.TEST2_COMPLETED,
+    )
+
+    async with async_session() as session:
+        city = models.City(
+            name="Волгоград",
+            tz="Europe/Moscow",
+            active=True,
+            intro_address="Волгоград, пр. Ленина, 1",
+            contact_name="Ольга",
+            contact_phone="+79990000000",
+        )
+        recruiter = models.Recruiter(name="City Template Recruiter Web", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.flush()
+        now = datetime.now(timezone.utc)
+        session.add(
+            models.MessageTemplate(
+                key="intro_day_invitation",
+                locale="ru",
+                channel="tg",
+                city_id=city.id,
+                body_md="Здравствуйте, [Имя]! Ждём вас [Дата] в [Время]. Адрес: {intro_address}. Контакт: {intro_contact}.",
+                version=1,
+                is_active=True,
+                updated_at=now,
+                created_at=now,
+            )
+        )
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+
+    response = await _request_with_recruiter_principal(
+        recruiter_scoped_app,
+        recruiter_id,
+        "post",
+        f"/candidates/{candidate.id}/schedule-intro-day",
+        json={
+            "date": "2026-02-23",
+            "time": "10:00",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert response.json().get("ok") is True
+
+    async with async_session() as session:
+        slot = await session.scalar(
+            select(models.Slot)
+            .where(models.Slot.candidate_tg_id == candidate.telegram_id)
+            .where(models.Slot.purpose == "intro_day")
+            .order_by(models.Slot.id.desc())
+        )
+        assert slot is not None
+        outbox = await session.scalar(
+            select(models.OutboxNotification)
+            .where(models.OutboxNotification.booking_id == slot.id)
+            .where(models.OutboxNotification.type == "intro_day_invitation")
+            .order_by(models.OutboxNotification.id.desc())
+        )
+
+    assert outbox is not None
+    assert (outbox.payload_json or {})["custom_message"] == (
+        "Здравствуйте, Михаил! Ждём вас 23.02 в 10:00. Адрес: Волгоград, пр. Ленина, 1. "
+        "Контакт: Ольга, +79990000000."
+    )
+
+
+@pytest.mark.asyncio
+async def test_api_route_uses_city_intro_day_template_when_custom_message_empty(
+    recruiter_scoped_app,
+) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=990022,
+        fio="Шеншин Михаил Алексеевич",
+        city="Волгоград",
+        username="intro_city_template_api",
+        initial_status=CandidateStatus.TEST2_COMPLETED,
+    )
+
+    async with async_session() as session:
+        city = models.City(
+            name="Волгоград",
+            tz="Europe/Moscow",
+            active=True,
+            intro_address="Волгоград, пр. Ленина, 1",
+            contact_name="Ольга",
+            contact_phone="+79990000000",
+        )
+        recruiter = models.Recruiter(name="City Template Recruiter API", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.flush()
+        now = datetime.now(timezone.utc)
+        session.add(
+            models.MessageTemplate(
+                key="intro_day_invitation",
+                locale="ru",
+                channel="tg",
+                city_id=city.id,
+                body_md="Здравствуйте, [Имя]! Ждём вас [Дата] в [Время]. Адрес: {intro_address}. Контакт: {intro_contact}.",
+                version=1,
+                is_active=True,
+                updated_at=now,
+                created_at=now,
+            )
+        )
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+
+    response = await _request_with_recruiter_principal(
+        recruiter_scoped_app,
+        recruiter_id,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-intro-day",
+        json={
+            "date": "2026-02-23",
+            "time": "10:00",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json().get("ok") is True
+
+    async with async_session() as session:
+        slot = await session.scalar(
+            select(models.Slot)
+            .where(models.Slot.candidate_tg_id == candidate.telegram_id)
+            .where(models.Slot.purpose == "intro_day")
+            .order_by(models.Slot.id.desc())
+        )
+        assert slot is not None
+        outbox = await session.scalar(
+            select(models.OutboxNotification)
+            .where(models.OutboxNotification.booking_id == slot.id)
+            .where(models.OutboxNotification.type == "intro_day_invitation")
+            .order_by(models.OutboxNotification.id.desc())
+        )
+
+    assert outbox is not None
+    assert (outbox.payload_json or {})["custom_message"] == (
+        "Здравствуйте, Михаил! Ждём вас 23.02 в 10:00. Адрес: Волгоград, пр. Ленина, 1. "
+        "Контакт: Ольга, +79990000000."
+    )
+
+
+@pytest.mark.asyncio
 async def test_recruiter_can_schedule_intro_day_twice_same_time_via_candidates_route(
     recruiter_scoped_app,
 ) -> None:

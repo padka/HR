@@ -20,6 +20,10 @@ from backend.apps.bot.config import DEFAULT_TZ, TIME_FMT
 
 logger = logging.getLogger(__name__)
 
+GENERIC_MISSING_TEMPLATE_TEXT = (
+    "Пожалуйста, ответьте в этом чате, и мы уточним детали вручную."
+)
+
 
 @dataclass
 class TemplateRecord:
@@ -54,6 +58,17 @@ class TemplateResolutionError(RuntimeError):
             "Добавьте городской или общий шаблон в разделе «Шаблоны сообщений»."
         )
         super().__init__(message)
+
+
+def _resolve_fallback_text(key: str, *, channel: str) -> str:
+    fallback_text = DEFAULT_TEMPLATES.get(key)
+    if fallback_text:
+        return fallback_text
+    logger.error(
+        "Template missing with no default fallback",
+        extra={"key": key, "channel": channel},
+    )
+    return GENERIC_MISSING_TEMPLATE_TEXT
 
 
 class TemplateProvider:
@@ -126,7 +141,7 @@ class TemplateProvider:
             if strict:
                 raise
             logger.warning(f"Template not found: {key} (city={city_id})")
-            fallback_text = DEFAULT_TEMPLATES.get(key) or f"Шаблон '{key}' не найден."
+            fallback_text = _resolve_fallback_text(key, channel=channel)
             try:
                 text = render_template(fallback_text, context)
             except Exception:
@@ -145,13 +160,12 @@ class TemplateProvider:
             logger.exception("Failed to render template %s", key)
             text = template.body
         if not str(text or "").strip():
-            fallback_text = DEFAULT_TEMPLATES.get(key)
-            if fallback_text:
-                try:
-                    text = render_template(fallback_text, context)
-                except Exception:
-                    logger.exception("Failed to render fallback template %s", key)
-                    text = fallback_text
+            fallback_text = _resolve_fallback_text(key, channel=channel)
+            try:
+                text = render_template(fallback_text, context)
+            except Exception:
+                logger.exception("Failed to render fallback template %s", key)
+                text = fallback_text
 
         return RenderedTemplate(
             key=template.key,
@@ -228,7 +242,7 @@ class Jinja2TemplateProvider:
             logger.warning(f"Template not found: {key} (city={city_id})")
             if strict:
                 raise TemplateResolutionError(key, locale=locale, channel=channel, city_id=city_id)
-            fallback_text = DEFAULT_TEMPLATES.get(key) or f"Шаблон '{key}' не найден."
+            fallback_text = _resolve_fallback_text(key, channel=channel)
             try:
                 text = render_template(fallback_text, context)
             except Exception:
@@ -244,13 +258,12 @@ class Jinja2TemplateProvider:
         try:
             text = await template.render_async(context)
             if not str(text or "").strip():
-                fallback_text = DEFAULT_TEMPLATES.get(key)
-                if fallback_text:
-                    try:
-                        text = render_template(fallback_text, context)
-                    except Exception:
-                        logger.exception("Failed to render fallback template %s", key)
-                        text = fallback_text
+                fallback_text = _resolve_fallback_text(key, channel=channel)
+                try:
+                    text = render_template(fallback_text, context)
+                except Exception:
+                    logger.exception("Failed to render fallback template %s", key)
+                    text = fallback_text
             return RenderedTemplate(
                 key=key,
                 version=1,

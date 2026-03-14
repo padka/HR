@@ -93,6 +93,22 @@ def test_interview_script_feedback_persists_and_idempotent(ai_feedback_app):
             "final_script": script_payload,
             "outcome": "od_assigned",
             "outcome_reason": "кандидат согласовал слот",
+            "scorecard": {
+                "completed_questions": 4,
+                "total_questions": 5,
+                "average_rating": 4.25,
+                "overall_recommendation": "recommend",
+                "final_comment": "Кандидат уверенно отвечает на уточняющие вопросы.",
+                "timer_elapsed_sec": 1280,
+                "items": [
+                    {
+                        "question_id": "q1",
+                        "rating": 4,
+                        "skipped": False,
+                        "notes": "Есть конкретные примеры.",
+                    }
+                ],
+            },
             "idempotency_key": idem,
         }
 
@@ -134,6 +150,7 @@ def test_interview_script_feedback_persists_and_idempotent(ai_feedback_app):
             assert row is not None
             assert row.output_final_json is not None
             assert row.labels_json.get("outcome") == "od_assigned"
+            assert row.labels_json.get("scorecard", {}).get("average_rating") == 4.25
 
     _run(_assert_db())
 

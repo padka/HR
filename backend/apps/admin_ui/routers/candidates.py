@@ -35,8 +35,9 @@ from backend.apps.admin_ui.services.candidates import (
     upsert_candidate,
     PIPELINE_DEFINITIONS,
     DEFAULT_PIPELINE,
-    DEFAULT_INTRO_DAY_INVITATION_TEMPLATE,
+    build_intro_day_template_context,
     render_intro_day_invitation,
+    resolve_intro_day_template_source,
 )
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.security import require_principal, Principal, require_admin
@@ -1193,15 +1194,14 @@ async def candidates_schedule_intro_day_submit(
     custom_message = payload.get("custom_message")
     custom_message = str(custom_message).strip() if custom_message else ""
     if not custom_message:
-        template_source = (
-            getattr(city_record, "intro_day_template", None)
-            or DEFAULT_INTRO_DAY_INVITATION_TEMPLATE
-        )
+        template_source = await resolve_intro_day_template_source(city=city_record)
+        template_context = build_intro_day_template_context(city_record)
         custom_message = render_intro_day_invitation(
             template_source,
             candidate_fio=user.fio or "Кандидат",
             date_str=str(date),
             time_str=str(time),
+            **template_context,
         )
 
     candidate_telegram_ids = {

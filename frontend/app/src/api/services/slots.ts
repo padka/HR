@@ -19,6 +19,27 @@ export type SlotsBulkActionPayload = {
   force?: boolean
 }
 
+export type ManualSlotBookingPayload = {
+  candidate_id?: number
+  slot_id?: number
+  fio?: string
+  phone?: string | null
+  city_id: number
+  recruiter_id: number
+  date: string
+  time: string
+  comment?: string | null
+}
+
+export type ManualSlotBookingResponse = {
+  ok?: boolean
+  candidate_id?: number
+  slot_id?: number
+  status?: string | null
+  message?: string | null
+  manual_mode?: boolean
+}
+
 export function fetchSlots<T>(queryString: string) {
   return apiFetch<T>(`/slots?${queryString}`)
 }
@@ -31,6 +52,20 @@ export function assignCandidateToSlot(candidateId: number, slotId: number) {
   return apiFetch(`/candidates/${candidateId}/schedule-slot`, {
     method: 'POST',
     body: JSON.stringify({ slot_id: slotId }),
+  })
+}
+
+export function assignCandidateToSlotSilently(candidateId: number, slotId: number) {
+  return apiFetch(`/candidates/${candidateId}/schedule-slot`, {
+    method: 'POST',
+    body: JSON.stringify({ slot_id: slotId, mode: 'manual_silent' }),
+  })
+}
+
+export function createManualSlotBooking(payload: ManualSlotBookingPayload) {
+  return apiFetch<ManualSlotBookingResponse>('/slots/manual-bookings', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
 }
 

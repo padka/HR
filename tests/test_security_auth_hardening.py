@@ -5,6 +5,8 @@ import asyncio
 import pytest
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.security import ADMIN_PRINCIPAL_ID, SESSION_KEY
+from backend.core.db import async_session
+from backend.domain.models import Recruiter
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -113,5 +115,48 @@ def test_legacy_admin_session_is_normalized(monkeypatch):
         principal = asyncio.run(security_module._resolve_current_principal(request))
         assert principal.type == "admin"
         assert principal.id == ADMIN_PRINCIPAL_ID
+    finally:
+        settings_module.get_settings.cache_clear()
+
+
+def test_local_session_wins_over_conflicting_bearer(monkeypatch):
+    monkeypatch.setenv("ADMIN_USER", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123456789abcd")
+    from backend.core import settings as settings_module
+    from backend.core.auth import create_access_token
+
+    settings_module.get_settings.cache_clear()
+    try:
+        async def _seed_recruiter() -> int:
+            async with async_session() as session:
+                recruiter = Recruiter(name="Session Recruiter", tz="Europe/Moscow", active=True)
+                session.add(recruiter)
+                await session.commit()
+                await session.refresh(recruiter)
+                return recruiter.id
+
+        recruiter_id = asyncio.run(_seed_recruiter())
+        admin_token = create_access_token({"sub": "admin"})
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/api/profile",
+                "headers": [(b"authorization", f"Bearer {admin_token}".encode("utf-8"))],
+                "client": ("127.0.0.1", 12345),
+                "server": ("localhost", 80),
+                "session": {
+                    SESSION_KEY: {"type": "recruiter", "id": recruiter_id},
+                    "username": "mikhail",
+                },
+            }
+        )
+        import backend.apps.admin_ui.security as security_module
+
+        principal = asyncio.run(security_module._resolve_current_principal(request, token=admin_token))
+        assert principal.type == "recruiter"
+        assert principal.id == recruiter_id
     finally:
         settings_module.get_settings.cache_clear()
