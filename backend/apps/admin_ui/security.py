@@ -417,7 +417,6 @@ async def _resolve_current_principal(
     )
 
 
-@limiter.limit("60/minute", key_func=get_client_ip)
 async def get_current_principal(
     request: Request,
     token: str = Depends(oauth2_scheme),

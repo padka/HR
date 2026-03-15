@@ -133,27 +133,25 @@ async def test_rate_limit_enforced_after_limit_exceeded(rate_limited_app):
     """
     Test that rate limiting returns 429 after limit is exceeded.
 
-    Public endpoint has 120/minute limit.
-    We'll test with admin endpoint (60/minute) for faster testing.
+    Use the actual login endpoint limit (5/minute).
     """
 
-    # Make 60 successful requests (within limit for admin endpoints)
-    for i in range(60):
+    # Make 5 successful requests (within configured limit)
+    for i in range(5):
         response = await _async_request(
             rate_limited_app,
-            "GET",
-            "/dashboard",
-            auth=("admin", "admin"),
+            "POST",
+            "/auth/token",
+            data={"username": "admin", "password": "admin"},
         )
-        # Should succeed
-        assert response.status_code in {200, 302}, f"Request {i+1} failed with {response.status_code}"
+        assert response.status_code == 200, f"Request {i+1} failed with {response.status_code}"
 
-    # 61st request should be rate limited
+    # 6th request should be rate limited
     response = await _async_request(
         rate_limited_app,
-        "GET",
-        "/dashboard",
-        auth=("admin", "admin"),
+        "POST",
+        "/auth/token",
+        data={"username": "admin", "password": "admin"},
     )
     assert response.status_code == 429, "Expected 429 Too Many Requests"
     assert "rate limit" in response.text.lower()
@@ -168,22 +166,22 @@ async def test_different_ips_have_independent_limits(rate_limited_app):
     In production with Redis, different workers would properly isolate IPs.
     """
 
-    # Make 60 requests (hit limit for current test client IP)
-    for i in range(60):
+    # Make 5 requests (hit limit for current test client IP)
+    for i in range(5):
         response = await _async_request(
             rate_limited_app,
-            "GET",
-            "/dashboard",
-            auth=("admin", "admin"),
+            "POST",
+            "/auth/token",
+            data={"username": "admin", "password": "admin"},
         )
-        assert response.status_code in {200, 302}
+        assert response.status_code == 200
 
     # Should be rate limited
     response = await _async_request(
         rate_limited_app,
-        "GET",
-        "/dashboard",
-        auth=("admin", "admin"),
+        "POST",
+        "/auth/token",
+        data={"username": "admin", "password": "admin"},
     )
     assert response.status_code == 429
 
@@ -203,11 +201,11 @@ async def test_disabled_rate_limiting_allows_unlimited_requests(disabled_rate_li
     for i in range(100):
         response = await _async_request(
             disabled_rate_limit_app,
-            "GET",
-            "/dashboard",
-            auth=("admin", "admin"),
+            "POST",
+            "/auth/token",
+            data={"username": "admin", "password": "admin"},
         )
-        assert response.status_code in {200, 302}, f"Request {i+1} failed despite disabled rate limiting"
+        assert response.status_code == 200, f"Request {i+1} failed despite disabled rate limiting"
 
 
 @pytest.mark.asyncio
@@ -221,22 +219,22 @@ async def test_x_forwarded_for_respected_when_trust_enabled(rate_limited_app_wit
     # Make requests with X-Forwarded-For header
     client_ip = "203.0.113.42"  # Example IP from TEST-NET-3
 
-    for i in range(60):
+    for i in range(5):
         response = await _async_request(
             rate_limited_app_with_proxy_trust,
-            "GET",
-            "/dashboard",
-            auth=("admin", "admin"),
+            "POST",
+            "/auth/token",
+            data={"username": "admin", "password": "admin"},
             headers={"X-Forwarded-For": client_ip},
         )
-        assert response.status_code in {200, 302}
+        assert response.status_code == 200
 
-    # 61st request with same forwarded IP should be rate limited
+    # 6th request with same forwarded IP should be rate limited
     response = await _async_request(
         rate_limited_app_with_proxy_trust,
-        "GET",
-        "/dashboard",
-        auth=("admin", "admin"),
+        "POST",
+        "/auth/token",
+        data={"username": "admin", "password": "admin"},
         headers={"X-Forwarded-For": client_ip},
     )
     assert response.status_code == 429
@@ -245,12 +243,12 @@ async def test_x_forwarded_for_respected_when_trust_enabled(rate_limited_app_wit
     different_ip = "203.0.113.99"
     response = await _async_request(
         rate_limited_app_with_proxy_trust,
-        "GET",
-        "/dashboard",
-        auth=("admin", "admin"),
+        "POST",
+        "/auth/token",
+        data={"username": "admin", "password": "admin"},
         headers={"X-Forwarded-For": different_ip},
     )
-    assert response.status_code in {200, 302}, "Different IP should have independent limit"
+    assert response.status_code == 200, "Different IP should have independent limit"
 
 
 @pytest.mark.asyncio
@@ -264,22 +262,22 @@ async def test_x_forwarded_for_ignored_when_trust_disabled(rate_limited_app):
     # Make requests with X-Forwarded-For header
     # Should use actual client IP, not forwarded IP
 
-    for i in range(60):
+    for i in range(5):
         response = await _async_request(
             rate_limited_app,
-            "GET",
-            "/dashboard",
-            auth=("admin", "admin"),
+            "POST",
+            "/auth/token",
+            data={"username": "admin", "password": "admin"},
             headers={"X-Forwarded-For": "203.0.113.42"},
         )
-        assert response.status_code in {200, 302}
+        assert response.status_code == 200
 
     # Should be rate limited based on actual IP, not forwarded
     response = await _async_request(
         rate_limited_app,
-        "GET",
-        "/dashboard",
-        auth=("admin", "admin"),
+        "POST",
+        "/auth/token",
+        data={"username": "admin", "password": "admin"},
         headers={"X-Forwarded-For": "203.0.113.99"},  # Different forwarded IP
     )
     # Should still be rate limited because actual client IP is the same
@@ -296,22 +294,22 @@ async def test_rate_limit_resets_after_window(rate_limited_app):
     from unittest.mock import patch
     import time
 
-    # Make 60 requests to hit limit
-    for i in range(60):
+    # Make 5 requests to hit limit
+    for i in range(5):
         response = await _async_request(
             rate_limited_app,
-            "GET",
-            "/dashboard",
-            auth=("admin", "admin"),
+            "POST",
+            "/auth/token",
+            data={"username": "admin", "password": "admin"},
         )
-        assert response.status_code in {200, 302}
+        assert response.status_code == 200
 
     # Should be rate limited
     response = await _async_request(
         rate_limited_app,
-        "GET",
-        "/dashboard",
-        auth=("admin", "admin"),
+        "POST",
+        "/auth/token",
+        data={"username": "admin", "password": "admin"},
     )
     assert response.status_code == 429
 
@@ -321,11 +319,28 @@ async def test_rate_limit_resets_after_window(rate_limited_app):
         # Should be allowed again after window reset
         response = await _async_request(
             rate_limited_app,
-            "GET",
-            "/dashboard",
-            auth=("admin", "admin"),
+            "POST",
+            "/auth/token",
+            data={"username": "admin", "password": "admin"},
         )
         # Note: in-memory storage may not respect mocked time
         # This test documents expected behavior with Redis
-        assert response.status_code in {200, 302, 429}, "Rate limit should reset after window (may fail with in-memory)"
+        assert response.status_code in {200, 429}, "Rate limit should reset after window (may fail with in-memory)"
 
+
+@pytest.mark.asyncio
+async def test_authenticated_polling_endpoints_are_not_globally_rate_limited(rate_limited_app):
+    """
+    Frequent authenticated GET requests should not hit a hidden auth-level limiter.
+
+    Messenger polling and similar read-heavy screens depend on this.
+    """
+
+    for i in range(75):
+        response = await _async_request(
+            rate_limited_app,
+            "GET",
+            "/api/candidate-chat/templates",
+            auth=("admin", "admin"),
+        )
+        assert response.status_code == 200, f"Polling-like request {i+1} failed with {response.status_code}"
