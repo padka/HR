@@ -1499,6 +1499,19 @@
   min-width: 0;
 }
 
+.messenger-page .messenger-thread-view.messenger-chat,
+.messenger-page .messenger-chat-pane,
+.messenger-page .messenger-conversation,
+.messenger-page .messenger-messages {
+  min-height: 0;
+}
+
+.messenger-page .messenger-thread-view.messenger-chat {
+  flex: 1 1 auto;
+  height: 100%;
+  max-height: 100%;
+}
+
 .messenger-page .messenger-thread-list-header,
 .messenger-page .messenger-chat-pane__header {
   position: relative;
