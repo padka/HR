@@ -121,6 +121,17 @@ export function readThreadCache(
   }
 }
 
+export function removeThreadFromCache(
+  payload: CandidateChatThreadsPayload | undefined,
+  candidateId: number,
+): CandidateChatThreadsPayload | undefined {
+  if (!payload) return payload
+  return {
+    ...payload,
+    threads: (payload.threads || []).filter((thread) => thread.candidate_id !== candidateId),
+  }
+}
+
 export function scoreTone(score?: number | null, level?: string | null): ThreadTone {
   if (typeof score === 'number') {
     if (score >= 80) return 'success'

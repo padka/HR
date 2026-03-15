@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -11,10 +12,12 @@ from sqlalchemy import select
 
 from backend.core.dependencies import get_async_session
 from backend.domain.hh_integration import get_connection_for_webhook_key
+from backend.domain.hh_integration.jobs import enqueue_hh_sync_job
 from backend.domain.hh_integration.models import HHWebhookDelivery
 
 router = APIRouter(prefix="/api/hh-integration", tags=["hh-integration"])
 AsyncSessionDep = Depends(get_async_session)
+logger = logging.getLogger(__name__)
 
 
 class HHWebhookEnvelope(BaseModel):
@@ -22,6 +25,50 @@ class HHWebhookEnvelope(BaseModel):
     subscription_id: str
     action_type: str
     payload: dict[str, Any]
+
+
+def _string(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _extract_webhook_vacancy_id(payload: dict[str, Any]) -> str | None:
+    direct = _string(payload.get("vacancy_id"))
+    if direct:
+        return direct
+
+    vacancy = payload.get("vacancy")
+    if isinstance(vacancy, dict):
+        nested = _string(vacancy.get("id"))
+        if nested:
+            return nested
+
+    topic = payload.get("topic")
+    if isinstance(topic, dict):
+        topic_vacancy = _string(topic.get("vacancy_id"))
+        if topic_vacancy:
+            return topic_vacancy
+        nested_vacancy = topic.get("vacancy")
+        if isinstance(nested_vacancy, dict):
+            nested = _string(nested_vacancy.get("id"))
+            if nested:
+                return nested
+
+    return None
+
+
+def _extract_webhook_negotiation_id(payload: dict[str, Any]) -> str | None:
+    direct = _string(payload.get("negotiation_id"))
+    if direct:
+        return direct
+
+    negotiation = payload.get("negotiation")
+    if isinstance(negotiation, dict):
+        nested = _string(negotiation.get("id"))
+        if nested:
+            return nested
+
+    return None
 
 
 @router.post("/webhooks/{webhook_key}")
@@ -62,5 +109,29 @@ async def receive_hh_webhook(
         headers_json={k: v for k, v in request.headers.items()},
     )
     session.add(delivery)
+
+    vacancy_id = _extract_webhook_vacancy_id(payload.payload)
+    negotiation_id = _extract_webhook_negotiation_id(payload.payload)
+    if vacancy_id or negotiation_id:
+        if vacancy_id:
+            await enqueue_hh_sync_job(
+                session,
+                connection=connection,
+                job_type="import_negotiations",
+                entity_type="vacancy",
+                entity_external_id=vacancy_id,
+                payload_json={"fetch_resume_details": False},
+            )
+        else:
+            logger.info(
+                "hh.webhook.reimport.skipped_missing_vacancy_id",
+                extra={
+                    "connection_id": connection.id,
+                    "delivery_id": payload.id,
+                    "action_type": payload.action_type,
+                    "negotiation_id": negotiation_id,
+                },
+            )
+
     await session.commit()
     return JSONResponse({"ok": True, "duplicate": False}, status_code=status.HTTP_202_ACCEPTED)

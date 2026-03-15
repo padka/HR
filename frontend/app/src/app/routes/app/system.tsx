@@ -1,6 +1,19 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
+import {
+  fetchHHConnection,
+  getHHAuthorizeUrl,
+  importHHNegotiations,
+  importHHVacancies,
+  listHHSyncJobs,
+  listHHWebhooks,
+  refreshHHTokens,
+  registerHHWebhooks,
+  retryHHSyncJob,
+  type HHConnectionPayload,
+  type HHImportResult,
+} from '@/api/services/hh-integration'
 import {
   cancelNotification,
   fetchBotIntegration,
@@ -25,10 +38,466 @@ import {
 } from '@/api/services/system'
 import { RoleGuard } from '@/app/components/RoleGuard'
 
-type BotCenterTab = 'health' | 'tests' | 'templates' | 'reminders' | 'delivery'
+type BotCenterTab = 'health' | 'tests' | 'templates' | 'reminders' | 'delivery' | 'hh'
+type HHJobStatusFilter = '' | 'pending' | 'running' | 'completed' | 'failed'
+
+function formatSystemDateTime(value?: string | null) {
+  if (!value) return '—'
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return value
+  return dt.toLocaleString('ru-RU')
+}
+
+function getHHConnectionStatus(payload?: HHConnectionPayload | null) {
+  if (!payload?.enabled) {
+    return { label: 'Выключена', tone: 'warning' as const }
+  }
+  if (!payload.connected || !payload.connection) {
+    return { label: 'Не подключено', tone: 'info' as const }
+  }
+  if (payload.connection.status === 'error') {
+    return { label: 'Ошибка', tone: 'danger' as const }
+  }
+  if (payload.connection.status === 'revoked') {
+    return { label: 'Отозвано', tone: 'warning' as const }
+  }
+  return { label: 'Подключено', tone: 'success' as const }
+}
+
+function getHHJobStatusMeta(status?: string | null) {
+  switch (status) {
+    case 'pending':
+      return { label: 'pending', tone: 'warning' as const }
+    case 'running':
+      return { label: 'running', tone: 'info' as const }
+    case 'done':
+      return { label: 'completed', tone: 'success' as const }
+    case 'dead':
+      return { label: 'failed', tone: 'danger' as const }
+    case 'error':
+      return { label: 'error', tone: 'danger' as const }
+    default:
+      return { label: status || 'unknown', tone: 'info' as const }
+  }
+}
+
+function summarizeHHImportResult(result: HHImportResult) {
+  const totalSeen = result.total_seen ?? result.negotiations_seen ?? 0
+  const created = result.created ?? result.negotiations_created ?? 0
+  const updated = result.updated ?? result.negotiations_updated ?? 0
+  const skipped = Math.max(totalSeen - created - updated, 0)
+  return `Создано: ${created}, Обновлено: ${updated}, Пропущено: ${skipped}`
+}
+
+function mapHHStatusFilterToApi(status: HHJobStatusFilter): string | undefined {
+  if (status === 'completed') return 'done'
+  if (status === 'failed') return 'dead'
+  return status || undefined
+}
+
+function HHIntegrationSection({ active }: { active: boolean }) {
+  const queryClient = useQueryClient()
+  const [jobsStatusFilter, setJobsStatusFilter] = useState<HHJobStatusFilter>('')
+  const [connectionResult, setConnectionResult] = useState<string | null>(null)
+  const [webhookResult, setWebhookResult] = useState<string | null>(null)
+  const [vacanciesImportResult, setVacanciesImportResult] = useState<string | null>(null)
+  const [negotiationsImportResult, setNegotiationsImportResult] = useState<string | null>(null)
+  const [jobsResult, setJobsResult] = useState<string | null>(null)
+
+  const connectionQuery = useQuery<HHConnectionPayload>({
+    queryKey: ['hh-connection'],
+    queryFn: fetchHHConnection,
+    enabled: active,
+    refetchInterval: active ? 30_000 : false,
+  })
+
+  const isConnected = Boolean(connectionQuery.data?.connected && connectionQuery.data.connection)
+  const connectionStatus = getHHConnectionStatus(connectionQuery.data)
+
+  const webhooksQuery = useQuery({
+    queryKey: ['hh-webhooks'],
+    queryFn: listHHWebhooks,
+    enabled: active && isConnected,
+    refetchInterval: active && isConnected ? 30_000 : false,
+  })
+
+  const jobsQuery = useQuery({
+    queryKey: ['hh-sync-jobs', jobsStatusFilter],
+    queryFn: () => listHHSyncJobs(20, mapHHStatusFilterToApi(jobsStatusFilter)),
+    enabled: active && isConnected,
+    refetchInterval: active && isConnected ? 10_000 : false,
+  })
+
+  const invalidateHHQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['hh-connection'] }),
+      queryClient.invalidateQueries({ queryKey: ['hh-webhooks'] }),
+      queryClient.invalidateQueries({ queryKey: ['hh-sync-jobs'] }),
+    ])
+  }
+
+  const connectMutation = useMutation({
+    mutationFn: () => getHHAuthorizeUrl(typeof window !== 'undefined' ? window.location.href : undefined),
+    onSuccess: ({ authorize_url }) => {
+      setConnectionResult(null)
+      window.location.assign(authorize_url)
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Не удалось получить URL авторизации HH.'
+      setConnectionResult(message || 'Не удалось получить URL авторизации HH.')
+    },
+  })
+
+  const refreshTokensMutation = useMutation({
+    mutationFn: refreshHHTokens,
+    onSuccess: async () => {
+      setConnectionResult('Токен HH обновлён.')
+      await invalidateHHQueries()
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Ошибка обновления токена HH.'
+      setConnectionResult(message || 'Ошибка обновления токена HH.')
+    },
+  })
+
+  const registerWebhooksMutation = useMutation({
+    mutationFn: registerHHWebhooks,
+    onSuccess: async (payload) => {
+      setWebhookResult(`Вебхуки зарегистрированы: ${payload.actions.join(', ')}`)
+      await invalidateHHQueries()
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Ошибка регистрации вебхуков.'
+      setWebhookResult(message || 'Ошибка регистрации вебхуков.')
+    },
+  })
+
+  const importVacanciesMutation = useMutation({
+    mutationFn: importHHVacancies,
+    onSuccess: async (result) => {
+      setVacanciesImportResult(summarizeHHImportResult(result))
+      await invalidateHHQueries()
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Ошибка импорта вакансий.'
+      setVacanciesImportResult(message || 'Ошибка импорта вакансий.')
+    },
+  })
+
+  const importNegotiationsMutation = useMutation({
+    mutationFn: () => importHHNegotiations(),
+    onSuccess: async (result) => {
+      setNegotiationsImportResult(summarizeHHImportResult(result))
+      await invalidateHHQueries()
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Ошибка импорта откликов.'
+      setNegotiationsImportResult(message || 'Ошибка импорта откликов.')
+    },
+  })
+
+  const retryJobMutation = useMutation({
+    mutationFn: retryHHSyncJob,
+    onSuccess: async (payload) => {
+      setJobsResult(`Job #${payload.job.id} поставлен в retry.`)
+      await invalidateHHQueries()
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Ошибка retry HH job.'
+      setJobsResult(message || 'Ошибка retry HH job.')
+    },
+  })
+
+  return (
+    <>
+      <section className="glass page-section">
+        <div className="toolbar" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div>
+            <h2 className="section-title" style={{ marginTop: 0, marginBottom: 4 }}>HH интеграция</h2>
+            <p className="subtitle" style={{ margin: 0 }}>
+              OAuth-подключение, вебхуки и состояние токенов HH.
+            </p>
+          </div>
+          <div className="toolbar toolbar--compact">
+            <button
+              type="button"
+              className="ui-btn ui-btn--primary ui-btn--sm"
+              onClick={() => {
+                setConnectionResult(null)
+                connectMutation.mutate()
+              }}
+              disabled={connectMutation.isPending || !connectionQuery.data?.enabled}
+            >
+              {connectMutation.isPending ? 'Переходим…' : 'Подключить HH'}
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              onClick={() => {
+                setConnectionResult(null)
+                refreshTokensMutation.mutate()
+              }}
+              disabled={!isConnected || refreshTokensMutation.isPending}
+            >
+              {refreshTokensMutation.isPending ? 'Обновляем…' : 'Обновить токен'}
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              onClick={() => {
+                setWebhookResult(null)
+                registerWebhooksMutation.mutate()
+              }}
+              disabled={!isConnected || registerWebhooksMutation.isPending}
+            >
+              {registerWebhooksMutation.isPending ? 'Регистрируем…' : 'Зарегистрировать вебхуки'}
+            </button>
+          </div>
+        </div>
+
+        {connectionQuery.isLoading && <p className="subtitle">Загрузка HH подключения…</p>}
+        {connectionQuery.isError && (
+          <p className="text-danger">Ошибка: {(connectionQuery.error as Error).message}</p>
+        )}
+
+        {connectionQuery.data && (
+          <>
+            <div className="data-grid">
+              <article className="glass glass--interactive data-card">
+                <div className="data-card__label">Интеграция</div>
+                <div className="data-card__value">
+                  <span className={`status-badge status-badge--${connectionQuery.data.enabled ? 'success' : 'warning'}`}>
+                    {connectionQuery.data.enabled ? 'enabled' : 'disabled'}
+                  </span>
+                </div>
+              </article>
+              <article className="glass glass--interactive data-card">
+                <div className="data-card__label">Статус</div>
+                <div className="data-card__value">
+                  <span className={`status-badge status-badge--${connectionStatus.tone}`}>
+                    {connectionStatus.label}
+                  </span>
+                </div>
+              </article>
+              <article className="glass glass--interactive data-card">
+                <div className="data-card__label">Работодатель</div>
+                <div className="data-card__value">{connectionQuery.data.connection?.employer_name || '—'}</div>
+              </article>
+              <article className="glass glass--interactive data-card">
+                <div className="data-card__label">Менеджер</div>
+                <div className="data-card__value">{connectionQuery.data.connection?.manager_name || '—'}</div>
+              </article>
+              <article className="glass glass--interactive data-card">
+                <div className="data-card__label">Вебхуки HH</div>
+                <div className="data-card__value">
+                  {isConnected ? String(webhooksQuery.data?.subscriptions.length ?? 0) : '—'}
+                </div>
+              </article>
+              <article className="glass glass--interactive data-card">
+                <div className="data-card__label">Токен истекает</div>
+                <div className="data-card__value">
+                  {formatSystemDateTime(connectionQuery.data.connection?.token_expires_at)}
+                </div>
+              </article>
+            </div>
+
+            {connectionQuery.data.connection && (
+              <div className="glass panel--tight" style={{ overflowX: 'auto', marginTop: 16 }}>
+                <table className="data-table">
+                  <tbody>
+                    <tr>
+                      <th>Employer</th>
+                      <td>{connectionQuery.data.connection.employer_name || '—'}</td>
+                    </tr>
+                    <tr>
+                      <th>Manager</th>
+                      <td>{connectionQuery.data.connection.manager_name || '—'}</td>
+                    </tr>
+                    <tr>
+                      <th>Manager account ID</th>
+                      <td>{connectionQuery.data.connection.manager_account_id || '—'}</td>
+                    </tr>
+                    <tr>
+                      <th>Webhook URL</th>
+                      <td>{connectionQuery.data.connection.webhook_url || '—'}</td>
+                    </tr>
+                    <tr>
+                      <th>Connected at</th>
+                      <td>—</td>
+                    </tr>
+                    <tr>
+                      <th>Token expires</th>
+                      <td>{formatSystemDateTime(connectionQuery.data.connection.token_expires_at)}</td>
+                    </tr>
+                    <tr>
+                      <th>Last sync</th>
+                      <td>{formatSystemDateTime(connectionQuery.data.connection.last_sync_at)}</td>
+                    </tr>
+                    <tr>
+                      <th>Last error</th>
+                      <td>{connectionQuery.data.connection.last_error || '—'}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {webhooksQuery.isError && (
+              <p className="text-danger" style={{ marginTop: 12 }}>
+                Ошибка чтения вебхуков: {(webhooksQuery.error as Error).message}
+              </p>
+            )}
+          </>
+        )}
+
+        {connectionResult && <p className="subtitle" style={{ marginTop: 12 }}>{connectionResult}</p>}
+        {webhookResult && <p className="subtitle" style={{ marginTop: 8 }}>{webhookResult}</p>}
+      </section>
+
+      <section className="glass page-section">
+        <h2 className="section-title">Импорт из HH</h2>
+        <p className="subtitle">Ручной запуск прямого импорта вакансий и откликов из HH.</p>
+
+        <div className="toolbar" style={{ gap: 12, marginBottom: 12 }}>
+          <button
+            type="button"
+            className="ui-btn ui-btn--primary"
+            onClick={() => {
+              setVacanciesImportResult(null)
+              importVacanciesMutation.mutate()
+            }}
+            disabled={!isConnected || importVacanciesMutation.isPending}
+          >
+            {importVacanciesMutation.isPending ? 'Импортируем…' : 'Импорт вакансий'}
+          </button>
+          <button
+            type="button"
+            className="ui-btn ui-btn--ghost"
+            onClick={() => {
+              setNegotiationsImportResult(null)
+              importNegotiationsMutation.mutate()
+            }}
+            disabled={!isConnected || importNegotiationsMutation.isPending}
+          >
+            {importNegotiationsMutation.isPending ? 'Импортируем…' : 'Импорт откликов'}
+          </button>
+        </div>
+
+        {!isConnected && <p className="subtitle">Сначала подключите HH, чтобы запускать импорт.</p>}
+        {vacanciesImportResult && <p className="subtitle">Вакансии: {vacanciesImportResult}</p>}
+        {negotiationsImportResult && <p className="subtitle">Отклики: {negotiationsImportResult}</p>}
+      </section>
+
+      <section className="glass page-section">
+        <div className="toolbar" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div>
+            <h2 className="section-title" style={{ marginTop: 0, marginBottom: 4 }}>Лог HH sync jobs</h2>
+            <p className="subtitle" style={{ margin: 0 }}>
+              Очередь импортов обновляется каждые 10 секунд.
+            </p>
+          </div>
+          <div className="toolbar toolbar--compact">
+            <label className="form-group" style={{ minWidth: 180 }}>
+              <span className="form-group__label">Статус</span>
+              <select value={jobsStatusFilter} onChange={(e) => setJobsStatusFilter(e.target.value as HHJobStatusFilter)}>
+                <option value="">Все</option>
+                <option value="pending">pending</option>
+                <option value="running">running</option>
+                <option value="completed">completed</option>
+                <option value="failed">failed</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              onClick={() => jobsQuery.refetch()}
+              disabled={!isConnected || jobsQuery.isFetching}
+            >
+              Обновить
+            </button>
+          </div>
+        </div>
+
+        {!isConnected && <p className="subtitle">Лог jobs появится после подключения HH.</p>}
+        {jobsQuery.isLoading && isConnected && <p className="subtitle">Загрузка HH job-ов…</p>}
+        {jobsQuery.isError && (
+          <p className="text-danger">Ошибка: {(jobsQuery.error as Error).message}</p>
+        )}
+
+        {jobsQuery.data && (
+          <div className="glass panel--tight" style={{ overflowX: 'auto' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Type</th>
+                  <th>Entity</th>
+                  <th>Status</th>
+                  <th>Attempts</th>
+                  <th>Last Error</th>
+                  <th>Created</th>
+                  <th>Finished</th>
+                  <th>Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobsQuery.data.jobs.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="subtitle">Пусто</td>
+                  </tr>
+                )}
+                {jobsQuery.data.jobs.map((job) => {
+                  const statusMeta = getHHJobStatusMeta(job.status)
+                  const entityLabel = [job.entity_type, job.entity_external_id].filter(Boolean).join(': ') || '—'
+                  const canRetry = !['pending', 'running'].includes(job.status)
+                  return (
+                    <tr key={job.id}>
+                      <td>{job.id}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{job.job_type}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{entityLabel}</td>
+                      <td>
+                        <span className={`status-badge status-badge--${statusMeta.tone}`}>
+                          {statusMeta.label}
+                        </span>
+                      </td>
+                      <td>{job.attempts}</td>
+                      <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {job.last_error || '—'}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatSystemDateTime(job.created_at)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatSystemDateTime(job.finished_at)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="ui-btn ui-btn--ghost ui-btn--sm"
+                          onClick={() => {
+                            setJobsResult(null)
+                            retryJobMutation.mutate(job.id)
+                          }}
+                          disabled={!canRetry || retryJobMutation.isPending}
+                        >
+                          Retry
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {jobsResult && <p className="subtitle" style={{ marginTop: 12 }}>{jobsResult}</p>}
+      </section>
+    </>
+  )
+}
 
 export function SystemPage() {
-  const [activeTab, setActiveTab] = useState<BotCenterTab>('health')
+  const [activeTab, setActiveTab] = useState<BotCenterTab>(() => {
+    if (typeof window === 'undefined') return 'health'
+    return new URLSearchParams(window.location.search).get('hh') ? 'hh' : 'health'
+  })
 
   const healthQuery = useQuery<HealthPayload>({
     queryKey: ['system-health'],
@@ -228,6 +697,9 @@ export function SystemPage() {
           </button>
           <button type="button" className={`slot-create-tab ${activeTab === 'delivery' ? 'is-active' : ''}`} onClick={() => setActiveTab('delivery')}>
             Доставка
+          </button>
+          <button type="button" className={`slot-create-tab ${activeTab === 'hh' ? 'is-active' : ''}`} onClick={() => setActiveTab('hh')}>
+            HH
           </button>
         </div>
 
@@ -791,6 +1263,8 @@ export function SystemPage() {
             )}
           </section>
         )}
+
+        {activeTab === 'hh' && <HHIntegrationSection active={activeTab === 'hh'} />}
       </div>
     </RoleGuard>
   )

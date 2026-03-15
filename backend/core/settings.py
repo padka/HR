@@ -103,6 +103,7 @@ class Settings:
     hh_user_agent: str
     hh_oauth_state_ttl_seconds: int
     hh_webhook_base_url: str
+    hh_auto_import_interval_seconds: int
     # Messenger integration (VK Max)
     max_bot_enabled: bool
     max_bot_token: str
@@ -719,6 +720,7 @@ def get_settings() -> Settings:
     hh_user_agent = os.getenv("HH_USER_AGENT", "RecruitSmart/1.0 (engineering@recruitsmart.local)").strip() or "RecruitSmart/1.0 (engineering@recruitsmart.local)"
     hh_oauth_state_ttl_seconds = _get_int("HH_OAUTH_STATE_TTL_SECONDS", 900, minimum=60)
     hh_webhook_base_url = os.getenv("HH_WEBHOOK_BASE_URL", "").strip()
+    hh_auto_import_interval_seconds = _get_int("HH_AUTO_IMPORT_INTERVAL_SECONDS", 900, minimum=60)
 
     # VK Max messenger integration
     max_bot_enabled = _get_bool("MAX_BOT_ENABLED", default=False)
@@ -827,6 +829,7 @@ def get_settings() -> Settings:
         hh_user_agent=hh_user_agent,
         hh_oauth_state_ttl_seconds=hh_oauth_state_ttl_seconds,
         hh_webhook_base_url=hh_webhook_base_url,
+        hh_auto_import_interval_seconds=hh_auto_import_interval_seconds,
         max_bot_enabled=max_bot_enabled,
         max_bot_token=max_bot_token,
         max_webhook_url=max_webhook_url,

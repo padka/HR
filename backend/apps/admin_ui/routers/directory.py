@@ -3,7 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from backend.apps.admin_ui.security import Principal, require_admin, require_csrf_token, require_principal
+from backend.apps.admin_ui.security import (
+    Principal,
+    get_principal_identifier,
+    limiter,
+    require_admin,
+    require_csrf_token,
+    require_principal,
+)
 from backend.apps.admin_ui.services.cities import (
     city_experts_items,
     create_city,
@@ -30,6 +37,7 @@ from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.errors import CityAlreadyExistsError
 
 router = APIRouter(tags=["directory"])
+ADMIN_MUTATION_LIMIT = "10/minute"
 
 
 @router.get("/recruiters")
@@ -52,6 +60,7 @@ async def api_recruiter_detail(
 
 
 @router.post("/recruiters", status_code=201)
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def api_create_recruiter(
     request: Request,
     _: Principal = Depends(require_admin),
@@ -90,6 +99,7 @@ async def api_create_recruiter(
 
 
 @router.put("/recruiters/{recruiter_id}")
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def api_update_recruiter(
     recruiter_id: int,
     request: Request,
@@ -126,6 +136,7 @@ async def api_update_recruiter(
 
 
 @router.post("/recruiters/{recruiter_id}/reset-password")
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def api_reset_recruiter_password(
     recruiter_id: int,
     request: Request,
@@ -140,6 +151,7 @@ async def api_reset_recruiter_password(
 
 
 @router.delete("/recruiters/{recruiter_id}")
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def api_delete_recruiter(
     recruiter_id: int,
     request: Request,
@@ -224,6 +236,7 @@ async def api_city_hh_vacancies(
 
 
 @router.post("/cities", status_code=201)
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def api_create_city(
     request: Request,
     _: Principal = Depends(require_admin),
@@ -276,6 +289,7 @@ async def api_create_city(
 
 
 @router.put("/cities/{city_id}")
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def api_update_city(
     city_id: int,
     request: Request,
@@ -316,6 +330,7 @@ async def api_update_city(
 
 
 @router.delete("/cities/{city_id}")
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def api_delete_city(
     city_id: int,
     request: Request,
@@ -351,6 +366,7 @@ async def api_get_city_reminder_policy(
 
 
 @router.put("/cities/{city_id}/reminder-policy")
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def api_upsert_city_reminder_policy(
     request: Request, city_id: int
 ) -> JSONResponse:
@@ -395,6 +411,7 @@ async def api_upsert_city_reminder_policy(
 
 
 @router.delete("/cities/{city_id}/reminder-policy")
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def api_delete_city_reminder_policy(
     request: Request, city_id: int
 ) -> JSONResponse:

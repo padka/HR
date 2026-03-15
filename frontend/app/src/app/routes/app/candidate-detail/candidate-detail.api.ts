@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   applyCandidateAction,
@@ -47,6 +48,7 @@ export function useCandidateCohort(candidateId: number, enabled: boolean) {
 
 export function useCandidateChat(candidateId: number, enabled: boolean) {
   const queryClient = useQueryClient()
+  const threadQueryKey = ['candidate-chat-threads', 'inbox'] as const
   const chatQuery = useQuery({
     queryKey: ['candidate-chat', candidateId],
     queryFn: () => fetchCandidateChat(candidateId, 50),
@@ -57,24 +59,34 @@ export function useCandidateChat(candidateId: number, enabled: boolean) {
   const markReadMutation = useMutation({
     mutationFn: markCandidateChatRead,
     onSuccess: (_data, readCandidateId) => {
-      queryClient.setQueryData<{ threads?: Array<{ candidate_id: number; unread_count?: number }> }>(
-        ['candidate-chat-threads'],
-        (prev) => {
-          if (!prev?.threads) return prev
-          return {
-            ...prev,
-            threads: prev.threads.map((thread) =>
-              thread.candidate_id === readCandidateId ? { ...thread, unread_count: 0 } : thread,
-            ),
-          }
-        },
-      )
+      const applyReadState = (queryKey: readonly unknown[]) => {
+        queryClient.setQueryData<{ threads?: Array<{ candidate_id: number; unread_count?: number }> }>(
+          queryKey,
+          (prev) => {
+            if (!prev?.threads) return prev
+            return {
+              ...prev,
+              threads: prev.threads.map((thread) =>
+                thread.candidate_id === readCandidateId ? { ...thread, unread_count: 0 } : thread,
+              ),
+            }
+          },
+        )
+      }
+      applyReadState(['candidate-chat-threads'])
+      applyReadState(threadQueryKey)
     },
   })
 
   const sendMutation = useMutation({
     mutationFn: async (text: string) => sendCandidateChatMessage(candidateId, text, String(Date.now())),
   })
+
+  const waitForUpdates = useCallback(
+    (params?: { since?: string | null; timeout?: number; limit?: number; signal?: AbortSignal }) =>
+      waitForCandidateChat(candidateId, params),
+    [candidateId],
+  )
 
   return {
     query: chatQuery,
@@ -84,8 +96,7 @@ export function useCandidateChat(candidateId: number, enabled: boolean) {
     refetch: chatQuery.refetch,
     markReadMutation,
     sendMutation,
-    waitForUpdates: (params?: { since?: string | null; timeout?: number; limit?: number; signal?: AbortSignal }) =>
-      waitForCandidateChat(candidateId, params),
+    waitForUpdates,
   }
 }
 
@@ -142,6 +153,8 @@ export function useCandidateAi(candidateId: number) {
     resumeMutation,
   }
 }
+
+export type CandidateAiController = ReturnType<typeof useCandidateAi>
 
 export function useCandidateActions(candidateId: number) {
   const actionMutation = useMutation({

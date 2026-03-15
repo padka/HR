@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState, type DragEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState, type DragEvent } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { apiFetch } from '@/api/client'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
@@ -200,6 +200,10 @@ const KANBAN_WORKFLOW_COLUMNS: KanbanWorkflowColumn[] = [
   },
 ]
 
+const KANBAN_WORKFLOW_COLUMNS_BY_SLUG = new Map(
+  KANBAN_WORKFLOW_COLUMNS.map((column) => [column.slug, column]),
+)
+
 function candidateScoreTone(score?: number | null) {
   if (typeof score !== 'number') return 'neutral'
   if (score >= 70) return 'success'
@@ -232,6 +236,75 @@ function resolveCandidateDate(candidate: {
     || null
   )
 }
+
+type CandidateKanbanCardProps = {
+  card: CandidateCard
+  canDelete: boolean
+  isDeleting: boolean
+  isDragging: boolean
+  isMoving: boolean
+  shouldAnimate: boolean
+  onDeleteCandidate: (candidate: { id: number; fio?: string | null }) => void
+  onDragStart: (event: DragEvent<HTMLDivElement>) => void
+  onDragEnd: () => void
+}
+
+const CandidateKanbanCard = memo(function CandidateKanbanCard({
+  card,
+  canDelete,
+  isDeleting,
+  isDragging,
+  isMoving,
+  shouldAnimate,
+  onDeleteCandidate,
+  onDragStart,
+  onDragEnd,
+}: CandidateKanbanCardProps) {
+  const scoreTone = candidateScoreTone(card.average_score)
+  const cardDate = formatCandidateDate(resolveCandidateDate(card))
+
+  return (
+    <motion.div
+      className={`glass glass--interactive kanban__card kanban-card ${isDragging ? 'kanban__card--dragging kanban-card--dragging' : ''} ${isMoving ? 'kanban__card--moving' : ''}`}
+      draggable={!isMoving}
+      onDragStartCapture={onDragStart}
+      onDragEndCapture={onDragEnd}
+      data-candidate-id={card.id}
+      variants={shouldAnimate ? listItem : undefined}
+    >
+      <div className="kanban-card__header">
+        <div className="kanban-card__identity">
+          <div className="kanban-card__name">{card.fio || '—'}</div>
+          <div className="kanban-card__meta">{card.city || '—'}</div>
+        </div>
+        {typeof card.average_score === 'number' ? (
+          <span className={`candidate-score candidate-score--${scoreTone}`}>{Math.round(card.average_score)}%</span>
+        ) : null}
+      </div>
+      <div className="kanban-card__footer">
+        <span>{card.recruiter?.name || '—'}</span>
+        <span>{cardDate}</span>
+      </div>
+      <div className="kanban__card-footer">
+        <div className="toolbar">
+          {canDelete && (
+            <button
+              type="button"
+              className="ui-btn ui-btn--danger ui-btn--sm"
+              onClick={() => onDeleteCandidate({ id: card.id, fio: card.fio })}
+              disabled={isDeleting || isMoving}
+            >
+              {isDeleting ? 'Удаление…' : 'Удалить'}
+            </button>
+          )}
+          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(card.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
+            Открыть →
+          </Link>
+        </div>
+      </div>
+    </motion.div>
+  )
+})
 
 export function CandidatesPage() {
   const profile = useProfile()
@@ -361,6 +434,8 @@ export function CandidatesPage() {
       setMovingCandidateId(null)
     },
   })
+  const deleteCandidateMutate = deleteCandidateMutation.mutate
+  const moveKanbanCandidateMutate = moveKanbanCandidateMutation.mutate
 
   const total = data?.total ?? 0
   const pagesTotal = data?.pages_total ?? 1
@@ -430,36 +505,59 @@ export function CandidatesPage() {
     if (view === 'calendar') setView('list')
   }, [isMobile, view])
 
-  const deleteCandidate = (candidate: { id: number; fio?: string | null }) => {
+  const deleteCandidate = useCallback((candidate: { id: number; fio?: string | null }) => {
     const name = candidate.fio?.trim() || `#${candidate.id}`
     const confirmed = window.confirm(`Удалить кандидата ${name}? Действие необратимо.`)
     if (!confirmed) return
     setDeletingCandidateId(candidate.id)
-    deleteCandidateMutation.mutate(candidate.id)
-  }
+    deleteCandidateMutate(candidate.id)
+  }, [deleteCandidateMutate])
 
-  const handleKanbanDragStart = (event: DragEvent<HTMLDivElement>, candidateId: number) => {
+  const handleKanbanDragStart = useCallback((event: DragEvent<HTMLDivElement>) => {
+    const rawCandidateId = event.currentTarget.dataset.candidateId
+    const candidateId = Number(rawCandidateId)
+    if (!Number.isFinite(candidateId)) return
     event.dataTransfer.setData('text/candidate-id', String(candidateId))
     event.dataTransfer.effectAllowed = 'move'
     setDraggingCardId(candidateId)
     setKanbanMoveError(null)
-  }
+  }, [])
 
-  const handleKanbanDragEnd = () => {
+  const handleKanbanDragEnd = useCallback(() => {
     setDraggingCardId(null)
     setDragOverColumn(null)
-  }
+  }, [])
 
-  const handleKanbanDrop = (
-    event: DragEvent<HTMLDivElement>,
-    targetColumn: KanbanWorkflowColumn,
-  ) => {
+  const handleKanbanDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
+    const columnSlug = event.currentTarget.dataset.columnSlug
+    if (columnSlug) setDragOverColumn(columnSlug)
+  }, [])
+
+  const handleKanbanDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const columnSlug = event.currentTarget.dataset.columnSlug
+    if (columnSlug) setDragOverColumn(columnSlug)
+  }, [])
+
+  const handleKanbanDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    const columnSlug = event.currentTarget.dataset.columnSlug
+    if (!columnSlug) return
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setDragOverColumn((current) => (current === columnSlug ? null : current))
+    }
+  }, [])
+
+  const handleKanbanDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const targetSlug = event.currentTarget.dataset.columnSlug || ''
+    const targetColumn = KANBAN_WORKFLOW_COLUMNS_BY_SLUG.get(targetSlug)
     const rawCandidateId = event.dataTransfer.getData('text/candidate-id')
     const candidateId = Number(rawCandidateId)
     setDragOverColumn(null)
     setDraggingCardId(null)
-    if (!Number.isFinite(candidateId)) return
+    if (!targetColumn || !Number.isFinite(candidateId)) return
 
     const previousStatus = effectiveStatusById.get(candidateId) || null
     if (!previousStatus) return
@@ -478,12 +576,12 @@ export function CandidatesPage() {
       ...prev,
       [candidateId]: targetColumn.targetStatus,
     }))
-    moveKanbanCandidateMutation.mutate({
+    moveKanbanCandidateMutate({
       candidateId,
       targetStatus: targetColumn.targetStatus,
       previousStatus,
     })
-  }
+  }, [effectiveStatusById, moveKanbanCandidateMutate])
 
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
@@ -730,78 +828,33 @@ export function CandidatesPage() {
                     <motion.div
                       key={`${kanbanAnimationKey}-${col.slug}`}
                       className={`kanban__cards ${dragOverColumn === col.slug ? 'kanban__cards--drag-over' : ''}`}
+                      data-column-slug={col.slug}
                       initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
                       animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
                       variants={firstRenderAnimation ? stagger(0.03) : undefined}
                       transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
-                      onDragEnter={(event) => {
-                        event.preventDefault()
-                        setDragOverColumn(col.slug)
-                      }}
-                      onDragOver={(event) => {
-                        event.preventDefault()
-                        event.dataTransfer.dropEffect = 'move'
-                        setDragOverColumn(col.slug)
-                      }}
-                      onDragLeave={(event) => {
-                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                          setDragOverColumn((current) => (current === col.slug ? null : current))
-                        }
-                      }}
-                      onDrop={(event) => handleKanbanDrop(event, col)}
+                      onDragEnter={handleKanbanDragEnter}
+                      onDragOver={handleKanbanDragOver}
+                      onDragLeave={handleKanbanDragLeave}
+                      onDrop={handleKanbanDrop}
                     >
-                      {col.candidates.map((card) => {
-                        const canDeleteCard =
-                          isAdmin ||
-                          (principalType === 'recruiter' && card.recruiter?.id === profile.data?.principal.id)
-                        const isDeletingCard = deletingCandidateId === card.id && deleteCandidateMutation.isPending
-                        const isDraggingCard = draggingCardId === card.id
-                        const isMovingCard = movingCandidateId === card.id && moveKanbanCandidateMutation.isPending
-                        const scoreTone = candidateScoreTone(card.average_score)
-                        const cardDate = formatCandidateDate(resolveCandidateDate(card))
-                        return (
-                          <motion.div
-                            key={card.id}
-                            className={`glass glass--interactive kanban__card kanban-card ${isDraggingCard ? 'kanban__card--dragging kanban-card--dragging' : ''} ${isMovingCard ? 'kanban__card--moving' : ''}`}
-                            draggable={!isMovingCard}
-                            onDragStartCapture={(event) => handleKanbanDragStart(event, card.id)}
-                            onDragEndCapture={handleKanbanDragEnd}
-                            data-candidate-id={card.id}
-                            variants={firstRenderAnimation ? listItem : undefined}
-                          >
-                            <div className="kanban-card__header">
-                              <div className="kanban-card__identity">
-                                <div className="kanban-card__name">{card.fio || '—'}</div>
-                                <div className="kanban-card__meta">{card.city || '—'}</div>
-                              </div>
-                              {typeof card.average_score === 'number' ? (
-                                <span className={`candidate-score candidate-score--${scoreTone}`}>{Math.round(card.average_score)}%</span>
-                              ) : null}
-                            </div>
-                            <div className="kanban-card__footer">
-                              <span>{card.recruiter?.name || '—'}</span>
-                              <span>{cardDate}</span>
-                            </div>
-                            <div className="kanban__card-footer">
-                              <div className="toolbar">
-                                {canDeleteCard && (
-                                  <button
-                                    type="button"
-                                    className="ui-btn ui-btn--danger ui-btn--sm"
-                                    onClick={() => deleteCandidate({ id: card.id, fio: card.fio })}
-                                    disabled={isDeletingCard || isMovingCard}
-                                  >
-                                    {isDeletingCard ? 'Удаление…' : 'Удалить'}
-                                  </button>
-                                )}
-                                <Link to="/app/candidates/$candidateId" params={{ candidateId: String(card.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
-                                  Открыть →
-                                </Link>
-                              </div>
-                            </div>
-                          </motion.div>
-                        )
-                      })}
+                      {col.candidates.map((card) => (
+                        <CandidateKanbanCard
+                          key={card.id}
+                          card={card}
+                          canDelete={
+                            isAdmin ||
+                            (principalType === 'recruiter' && card.recruiter?.id === profile.data?.principal.id)
+                          }
+                          isDeleting={deletingCandidateId === card.id && deleteCandidateMutation.isPending}
+                          isDragging={draggingCardId === card.id}
+                          isMoving={movingCandidateId === card.id && moveKanbanCandidateMutation.isPending}
+                          shouldAnimate={firstRenderAnimation}
+                          onDeleteCandidate={deleteCandidate}
+                          onDragStart={handleKanbanDragStart}
+                          onDragEnd={handleKanbanDragEnd}
+                        />
+                      ))}
                     </motion.div>
                   </article>
                 ))}

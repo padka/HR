@@ -21,7 +21,14 @@ from backend.apps.admin_ui.perf.metrics import prometheus as perf_prometheus
 from backend.apps.admin_ui.routers import content_api
 from backend.apps.admin_ui.routers.directory import router as directory_router
 from backend.apps.admin_ui.routers.profile_api import router as profile_api_router
-from backend.apps.admin_ui.security import Principal, require_admin, require_csrf_token, require_principal
+from backend.apps.admin_ui.security import (
+    Principal,
+    get_principal_identifier,
+    limiter,
+    require_admin,
+    require_csrf_token,
+    require_principal,
+)
 from backend.apps.admin_ui.services.cities import api_city_owners_payload
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.calendar_events import (
@@ -134,6 +141,7 @@ router.include_router(directory_router)
 router.include_router(profile_api_router)
 router.include_router(content_api.router)
 logger = logging.getLogger(__name__)
+CANDIDATE_CREATE_LIMIT = "30/minute"
 
 # Backward-compatible re-exports for tests that import handlers directly.
 list_known_template_keys = content_api.list_known_template_keys
@@ -2602,6 +2610,7 @@ async def api_assign_candidate_recruiter(
 
 
 @router.post("/candidates", status_code=201)
+@limiter.limit(CANDIDATE_CREATE_LIMIT, key_func=get_principal_identifier)
 async def api_create_candidate(
     request: Request,
     _: None = Depends(require_csrf_token),

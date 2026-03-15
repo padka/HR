@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '@/theme/pages/messenger.css'
 
+import { RoleGuard } from '@/app/components/RoleGuard'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 
 import {
+  useMessengerArchiveThread,
   useMessengerMarkRead,
   useMessengerMessages,
   useMessengerSendMessage,
@@ -69,11 +71,20 @@ export function MessengerPage() {
     [activeCandidateId, allThreads],
   )
 
-  const messagesQuery = useMessengerMessages(activeCandidateId, async () => {
-    await threadsQuery.refetch()
-  })
+  const refreshThreads = useCallback(() => threadsQuery.refetch(), [threadsQuery])
+  const messagesQuery = useMessengerMessages(activeCandidateId, refreshThreads)
   const templatesQuery = useMessengerTemplates()
   const markReadMutation = useMessengerMarkRead(threadQueryKey)
+  const archiveMutation = useMessengerArchiveThread({
+    threadQueryKey,
+    onSuccess: (candidateId) => {
+      if (candidateId !== activeCandidateId) return
+      const nextThread = allThreads.find((thread) => thread.candidate_id !== candidateId) || null
+      setActiveCandidateId(isMobile ? null : nextThread?.candidate_id ?? null)
+    },
+    onError: (message) => setSendError(message),
+    refetchThreads: () => threadsQuery.refetch(),
+  })
 
   const chatMessages = useMemo(
     () => (messagesQuery.data?.messages || []).slice().reverse(),
@@ -84,10 +95,16 @@ export function MessengerPage() {
     [activeThread?.unread_count, chatMessages],
   )
 
+  const markThreadReadRef = useRef(markReadMutation.mutate)
+
+  useEffect(() => {
+    markThreadReadRef.current = markReadMutation.mutate
+  }, [markReadMutation.mutate])
+
   useEffect(() => {
     if (!activeCandidateId || !activeThread?.unread_count) return
-    markReadMutation.mutate(activeCandidateId)
-  }, [activeCandidateId, activeThread?.unread_count, markReadMutation])
+    markThreadReadRef.current(activeCandidateId)
+  }, [activeCandidateId, activeThread?.unread_count])
 
   useEffect(() => {
     shouldStickToBottomRef.current = true
@@ -110,46 +127,53 @@ export function MessengerPage() {
   }
 
   return (
-    <div className={`page app-page app-page--ops messenger-page ${isMobile && activeCandidateId ? 'is-mobile-chat-open' : ''}`}>
-      <div className="messenger-layout messenger-layout--workspace">
-        <ThreadList
-          threads={allThreads}
-          activeCandidateId={activeCandidateId}
-          isLoading={threadsQuery.isLoading}
-          isError={threadsQuery.isError}
-          onRefresh={() => {
-            void threadsQuery.refetch()
-          }}
-          onSelect={setActiveCandidateId}
-        />
+    <RoleGuard allow={['recruiter', 'admin']}>
+      <div className={`page app-page app-page--ops messenger-page ${isMobile && activeCandidateId ? 'is-mobile-chat-open' : ''}`}>
+        <div className="messenger-layout messenger-layout--workspace">
+          <ThreadList
+            threads={allThreads}
+            activeCandidateId={activeCandidateId}
+            isLoading={threadsQuery.isLoading}
+            isError={threadsQuery.isError}
+            archivePendingCandidateId={archiveMutation.isPending ? (archiveMutation.variables ?? null) : null}
+            onRefresh={() => {
+              void refreshThreads()
+            }}
+            onArchive={(candidateId) => {
+              setSendError(null)
+              archiveMutation.mutate(candidateId)
+            }}
+            onSelect={setActiveCandidateId}
+          />
 
-        <ThreadView
-          activeThread={activeThread}
-          isMobile={isMobile}
-          isLoading={messagesQuery.isLoading}
-          isError={messagesQuery.isError}
-          groupedMessages={groupedMessages}
-          messagesRef={messagesRef}
-          shouldStickToBottomRef={shouldStickToBottomRef}
-          onMessagesScroll={(gap) => {
-            shouldStickToBottomRef.current = gap < 80
-          }}
-          onBack={() => setActiveCandidateId(null)}
-          showTemplateTray={showTemplateTray}
-          selectedTemplateKey={selectedTemplateKey}
-          templates={templatesQuery.data?.items || []}
-          onToggleTemplateTray={() => setShowTemplateTray((prev) => !prev)}
-          onApplyTemplate={(template) => applyTemplateToDraft(template.key, template.text)}
-          messageText={messageText}
-          onMessageTextChange={setMessageText}
-          onSend={() => {
-            const payload = messageText.trim()
-            if (payload) sendMutation.mutate(payload)
-          }}
-          sendPending={sendMutation.isPending}
-          sendError={sendError}
-        />
+          <ThreadView
+            activeThread={activeThread}
+            isMobile={isMobile}
+            isLoading={messagesQuery.isLoading}
+            isError={messagesQuery.isError}
+            groupedMessages={groupedMessages}
+            messagesRef={messagesRef}
+            shouldStickToBottomRef={shouldStickToBottomRef}
+            onMessagesScroll={(gap) => {
+              shouldStickToBottomRef.current = gap < 80
+            }}
+            onBack={() => setActiveCandidateId(null)}
+            showTemplateTray={showTemplateTray}
+            selectedTemplateKey={selectedTemplateKey}
+            templates={templatesQuery.data?.items || []}
+            onToggleTemplateTray={() => setShowTemplateTray((prev) => !prev)}
+            onApplyTemplate={(template) => applyTemplateToDraft(template.key, template.text)}
+            messageText={messageText}
+            onMessageTextChange={setMessageText}
+            onSend={() => {
+              const payload = messageText.trim()
+              if (payload) sendMutation.mutate(payload)
+            }}
+            sendPending={sendMutation.isPending}
+            sendError={sendError}
+          />
+        </div>
       </div>
-    </div>
+    </RoleGuard>
   )
 }

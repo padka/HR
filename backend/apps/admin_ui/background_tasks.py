@@ -19,13 +19,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from backend.core.db import async_session
+from backend.core.settings import get_settings
 from backend.core.error_handler import resilient_task
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
+from backend.domain.hh_integration.contracts import HHConnectionStatus
+from backend.domain.hh_integration.jobs import enqueue_hh_sync_job, process_pending_hh_sync_jobs
+from backend.domain.hh_integration.models import HHConnection
 from backend.domain.models import City, Recruiter
 from backend.domain.repositories import get_active_recruiters_for_city
 from backend.domain.candidate_status_service import CandidateStatusService
-from backend.domain.hh_integration.jobs import process_pending_hh_sync_jobs
 from backend.apps.admin_ui.services.slots import delete_past_free_slots
 
 logger = logging.getLogger(__name__)
@@ -185,7 +188,6 @@ async def periodic_past_free_slot_cleanup(
     app: Optional[FastAPI] = None,
 ) -> None:
     """Remove FREE slots once their start time is in the past."""
-    from backend.core.settings import get_settings
     settings = get_settings()
     
     interval = settings.slots_cleanup_interval_seconds
@@ -229,6 +231,102 @@ async def periodic_past_free_slot_cleanup(
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
             logger.info("Past free slot cleanup cancelled during sleep")
+            raise
+
+
+async def enqueue_hh_auto_import_jobs() -> tuple[int, int]:
+    """Enqueue periodic HH vacancy and negotiation imports for active connections."""
+    async with async_session() as session:
+        connections = list(
+            (
+                await session.execute(
+                    select(HHConnection).where(HHConnection.status == HHConnectionStatus.ACTIVE)
+                )
+            ).scalars().all()
+        )
+        if not connections:
+            return 0, 0
+
+        created_jobs = 0
+        for connection in connections:
+            _, vacancies_created = await enqueue_hh_sync_job(
+                session,
+                connection=connection,
+                job_type="import_vacancies",
+                entity_type="employer",
+                entity_external_id=connection.employer_id,
+            )
+            _, negotiations_created = await enqueue_hh_sync_job(
+                session,
+                connection=connection,
+                job_type="import_negotiations",
+                entity_type="employer",
+                entity_external_id=connection.employer_id,
+                payload_json={"fetch_resume_details": False},
+            )
+            created_jobs += int(vacancies_created) + int(negotiations_created)
+
+        await session.commit()
+        return len(connections), created_jobs
+
+
+@resilient_task(
+    task_name="periodic_hh_auto_import",
+    retry_on_error=True,
+    retry_delay=60.0,
+    log_errors=True,
+)
+async def periodic_hh_auto_import(
+    interval_seconds: int | None = None,
+    *,
+    app: Optional[FastAPI] = None,
+) -> None:
+    settings = get_settings()
+    effective_interval = interval_seconds or settings.hh_auto_import_interval_seconds
+    logger.info("Started HH auto import scheduler (interval: %ds)", effective_interval)
+    last_db_warning = 0.0
+    warning_interval = 600.0
+
+    while True:
+        try:
+            if app is not None and not getattr(app.state, "db_available", True):
+                now = time.monotonic()
+                if now - last_db_warning >= warning_interval:
+                    logger.warning("DB unavailable, HH auto import paused")
+                    last_db_warning = now
+                await asyncio.sleep(min(warning_interval, effective_interval))
+                continue
+
+            if settings.hh_integration_enabled:
+                connections_seen, created_jobs = await enqueue_hh_auto_import_jobs()
+                if created_jobs:
+                    logger.info(
+                        "HH auto import enqueued %d job(s) for %d active connection(s)",
+                        created_jobs,
+                        connections_seen,
+                    )
+                elif connections_seen:
+                    logger.debug("HH auto import found %d active connection(s), no new jobs created", connections_seen)
+            else:
+                logger.debug("HH auto import skipped: integration disabled")
+
+            if app is not None:
+                app.state.db_available = True
+        except asyncio.CancelledError:
+            logger.info("HH auto import cancelled, shutting down")
+            raise
+        except Exception as exc:
+            if app is not None:
+                app.state.db_available = False
+            now = time.monotonic()
+            if now - last_db_warning >= warning_interval:
+                logger.warning("HH auto import skipped due to DB error: %s", exc)
+                last_db_warning = now
+
+        try:
+            await asyncio.sleep(effective_interval)
+        except asyncio.CancelledError:
+            logger.info("HH auto import cancelled during sleep")
             raise
 
 

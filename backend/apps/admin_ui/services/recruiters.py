@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 import html
 import os
 import secrets
+import string
 
 from sqlalchemy import case, func, select, delete, insert
 from sqlalchemy.inspection import inspect as sa_inspect
@@ -21,6 +23,8 @@ from backend.domain.auth_account import AuthAccount
 from backend.core.sanitizers import sanitize_plain_text
 from markupsafe import Markup
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "list_recruiters",
     "create_recruiter",
@@ -33,6 +37,12 @@ __all__ = [
     "api_get_recruiter",
     "RecruiterValidationError",
 ]
+
+
+def _generate_random_password(length: int = 16) -> str:
+    """Generate a cryptographically secure random password."""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 async def list_recruiters(order_by_name: bool = True) -> List[Dict[str, object]]:
@@ -151,7 +161,6 @@ async def create_recruiter(
 
             # Create recruiter auth account (login = recruiter.id)
             login = str(recruiter.id)
-            default_password = os.getenv("RECRUITER_DEFAULT_PASSWORD", "smart123")
             auth_created = False
             temp_password: Optional[str] = None
             existing_account = await session.scalar(
@@ -168,17 +177,26 @@ async def create_recruiter(
                     select(AuthAccount).where(AuthAccount.username == login)
                 )
                 if not username_conflict:
+                    env_password = os.getenv("RECRUITER_DEFAULT_PASSWORD", "").strip()
+                    if env_password:
+                        password = env_password
+                    else:
+                        password = _generate_random_password()
+                        logger.warning(
+                            "RECRUITER_DEFAULT_PASSWORD not set, generated random password for recruiter %s",
+                            login,
+                        )
                     session.add(
                         AuthAccount(
                             username=login,
-                            password_hash=hash_password(default_password),
+                            password_hash=hash_password(password),
                             principal_type="recruiter",
                             principal_id=recruiter.id,
                             is_active=True,
                         )
                     )
                     auth_created = True
-                    temp_password = default_password
+                    temp_password = password
 
             if selected_ids:
                 # Clear any existing associations (defensive)

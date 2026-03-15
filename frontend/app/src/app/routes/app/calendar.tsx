@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiFetch } from '../../../api/client'
+import { RoleGuard } from '@/app/components/RoleGuard'
 import {
   ScheduleCalendar,
   type SlotExtendedProps,
@@ -280,7 +281,8 @@ export function CalendarPage() {
   const taskBusy = createTaskMutation.isPending || updateTaskMutation.isPending || deleteTaskMutation.isPending
 
   return (
-    <div className="calendar-page">
+    <RoleGuard allow={['recruiter', 'admin']}>
+      <div className="calendar-page">
       <div className="page-header">
         <div>
           <h1>Календарь</h1>
@@ -955,7 +957,8 @@ export function CalendarPage() {
           }
         }
       `}</style>
-    </div>
+      </div>
+    </RoleGuard>
   )
 }
 

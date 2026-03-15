@@ -146,6 +146,7 @@ export function SlotsCreateForm() {
         city_id: Number(data.city_id),
         starts_at_local: `${cityLocal.date}T${cityLocal.time}`,
       }
+      // raw fetch: slot creation still targets the legacy /slots endpoint, not the JSON /api client base.
       const res = await fetch('/slots', {
         method: 'POST',
         credentials: 'include',

@@ -4,6 +4,9 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import select
+
+from backend.apps.admin_ui.background_tasks import enqueue_hh_auto_import_jobs
 from backend.apps.admin_ui.security import Principal, require_admin
 from backend.core.db import async_session
 from backend.domain.hh_integration.crypto import HHSecretCipher
@@ -149,6 +152,27 @@ class TestHHJobQueue:
             stored = await session.get(HHSyncJob, job.id)
             assert stored is not None
             assert stored.status == "done"
+
+    @pytest.mark.asyncio
+    async def test_enqueue_hh_auto_import_jobs_creates_deduped_jobs(self):
+        await _seed_connection_with_vacancy()
+
+        connections_seen, created_jobs = await enqueue_hh_auto_import_jobs()
+        repeated_connections_seen, repeated_created_jobs = await enqueue_hh_auto_import_jobs()
+
+        assert connections_seen == 1
+        assert created_jobs == 2
+        assert repeated_connections_seen == 1
+        assert repeated_created_jobs == 0
+
+        async with async_session() as session:
+            jobs = list((await session.execute(select(HHSyncJob).order_by(HHSyncJob.id.asc()))).scalars().all())
+
+        assert len(jobs) == 2
+        assert {job.job_type for job in jobs} == {"import_vacancies", "import_negotiations"}
+        negotiation_job = next(job for job in jobs if job.job_type == "import_negotiations")
+        assert negotiation_job.entity_type == "employer"
+        assert negotiation_job.payload_json == {"fetch_resume_details": False}
 
 
 class TestHHJobRoutes:

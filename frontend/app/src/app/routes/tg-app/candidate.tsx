@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from 'react'
 import { useParams } from '@tanstack/react-router'
+import { apiFetch } from '@/api/client'
 
 interface CandidateDetail {
   id: number
@@ -50,13 +51,9 @@ export function TgCandidatePage() {
       return
     }
 
-    fetch(`/api/webapp/recruiter/candidates/${candidateId}`, {
+    apiFetch<CandidateDetail>(`/webapp/recruiter/candidates/${candidateId}`, {
       headers: { 'X-Telegram-Init-Data': initData },
     })
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      })
       .then(setCandidate)
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
@@ -66,23 +63,17 @@ export function TgCandidatePage() {
     if (!initData || !candidateId) return
     setStatusMsg('Обновление...')
     try {
-      const res = await fetch(`/api/webapp/recruiter/candidates/${candidateId}/status`, {
+      await apiFetch(`/webapp/recruiter/candidates/${candidateId}/status`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'X-Telegram-Init-Data': initData,
         },
-        body: JSON.stringify({ status }),
+        body: { status },
       })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.detail || `HTTP ${res.status}`)
-      }
       setStatusMsg('Статус обновлён')
-      // Reload candidate data
-      const updated = await fetch(`/api/webapp/recruiter/candidates/${candidateId}`, {
+      const updated = await apiFetch<CandidateDetail>(`/webapp/recruiter/candidates/${candidateId}`, {
         headers: { 'X-Telegram-Init-Data': initData },
-      }).then(r => r.json())
+      })
       setCandidate(updated)
     } catch (error: unknown) {
       setStatusMsg(`Ошибка: ${errorMessage(error)}`)

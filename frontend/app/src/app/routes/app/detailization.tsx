@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
+import { RoleGuard } from '@/app/components/RoleGuard'
 import { useProfile } from '@/app/hooks/useProfile'
 
 type FinalOutcome = 'attached' | 'not_attached' | 'not_counted' | null
@@ -230,7 +231,8 @@ export function DetailizationPage() {
   }
 
   return (
-    <div style={{ padding: 24, maxWidth: 1320, margin: '0 auto', display: 'grid', gap: 16 }}>
+    <RoleGuard allow={['recruiter', 'admin']}>
+      <div style={{ padding: 24, maxWidth: 1320, margin: '0 auto', display: 'grid', gap: 16 }}>
       <div className="glass" style={{ padding: 18, display: 'grid', gap: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div>
@@ -582,6 +584,7 @@ export function DetailizationPage() {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </RoleGuard>
   )
 }

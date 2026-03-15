@@ -14,6 +14,10 @@ export const queryClient = new QueryClient({
 let csrfToken: string | null = null
 let csrfPromise: Promise<string> | null = null
 
+type ApiFetchInit = Omit<RequestInit, 'body'> & {
+  body?: unknown
+}
+
 type ErrorDetails = {
   message?: string
 }
@@ -28,6 +32,34 @@ type ErrorPayload = {
 type ApiClientError = Error & {
   status?: number
   data?: unknown
+}
+
+function isFormDataBody(value: unknown): value is FormData {
+  return typeof FormData !== 'undefined' && value instanceof FormData
+}
+
+function isUrlSearchParamsBody(value: unknown): value is URLSearchParams {
+  return typeof URLSearchParams !== 'undefined' && value instanceof URLSearchParams
+}
+
+function isReadableStreamBody(value: unknown): value is ReadableStream {
+  return typeof ReadableStream !== 'undefined' && value instanceof ReadableStream
+}
+
+function normalizeRequestBody(body: RequestInit['body'] | unknown): BodyInit | null | undefined {
+  if (
+    body == null
+    || typeof body === 'string'
+    || isFormDataBody(body)
+    || isUrlSearchParamsBody(body)
+    || (typeof Blob !== 'undefined' && body instanceof Blob)
+    || body instanceof ArrayBuffer
+    || ArrayBuffer.isView(body)
+    || isReadableStreamBody(body)
+  ) {
+    return body as BodyInit | null | undefined
+  }
+  return JSON.stringify(body)
 }
 
 function isErrorDetails(value: unknown): value is ErrorDetails {
@@ -55,28 +87,31 @@ async function fetchCsrfToken(): Promise<string> {
   return csrfPromise
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T> {
+  const { body: requestBody, ...requestInit } = init ?? {}
   const method = (init?.method || 'GET').toUpperCase()
   const needsCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method)
+  const normalizedBody = normalizeRequestBody(requestBody)
   
   let headerObj: Record<string, string> = {}
-  if (init?.headers) {
-    if (init.headers instanceof Headers) {
-      init.headers.forEach((value, key) => {
+  if (requestInit.headers) {
+    if (requestInit.headers instanceof Headers) {
+      requestInit.headers.forEach((value, key) => {
         headerObj[key] = value
       })
-    } else if (Array.isArray(init.headers)) {
-      init.headers.forEach(([key, value]) => {
+    } else if (Array.isArray(requestInit.headers)) {
+      requestInit.headers.forEach(([key, value]) => {
         headerObj[key] = value
       })
     } else {
-      headerObj = init.headers as Record<string, string>
+      headerObj = requestInit.headers as Record<string, string>
     }
   }
 
-  const isFormData = typeof FormData !== 'undefined' && init?.body instanceof FormData
+  const isFormData = isFormDataBody(requestBody)
+  const isUrlEncoded = isUrlSearchParamsBody(requestBody)
   let headers = new Headers({
-    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(isFormData || isUrlEncoded || requestBody == null ? {} : { 'Content-Type': 'application/json' }),
     ...(headerObj as Record<string, string>),
   })
 
@@ -86,9 +121,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   const res = await fetch(API_URL + path, {
+    ...requestInit,
     credentials: 'include',
     headers,
-    ...init,
+    body: normalizedBody,
   })
   if (res.status === 403 && needsCsrf) {
     // refresh token once and retry
@@ -97,9 +133,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     const retryHeaders = new Headers(headers)
     retryHeaders.set('x-csrf-token', token)
     const retryRes = await fetch(API_URL + path, {
+      ...requestInit,
       credentials: 'include',
       headers: retryHeaders,
-      ...init,
+      body: normalizedBody,
     })
     if (!retryRes.ok) {
       let retryMsg = ''
@@ -114,7 +151,14 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       err.status = retryRes.status
       throw err
     }
-    return retryRes.json() as Promise<T>
+    if (retryRes.status === 204) {
+      return undefined as T
+    }
+    const retryContentType = retryRes.headers.get('content-type') || ''
+    if (!retryContentType || retryContentType.includes('application/json')) {
+      return retryRes.json() as Promise<T>
+    }
+    return retryRes.text() as Promise<T>
   }
   if (!res.ok) {
     let message = ''
@@ -153,5 +197,12 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     err.data = data
     throw err
   }
-  return res.json() as Promise<T>
+  if (res.status === 204) {
+    return undefined as T
+  }
+  const contentType = res.headers.get('content-type') || ''
+  if (!contentType || contentType.includes('application/json')) {
+    return res.json() as Promise<T>
+  }
+  return res.text() as Promise<T>
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import datetime, timezone, timedelta
 
 import pytest
@@ -10,6 +11,7 @@ from sqlalchemy import func, select
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.services.slots import core as slot_core
 from backend.apps.bot.reminders import ReminderService, create_scheduler
+from backend.apps.bot.runtime_config import DEFAULT_REMINDER_POLICY, save_reminder_policy_config
 from backend.core.db import async_session
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
@@ -38,10 +40,12 @@ def admin_app(monkeypatch):
     settings_module.get_settings.cache_clear()
     monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup)
     monkeypatch.setattr("backend.apps.admin_ui.app.setup_bot_state", fake_setup)
+    asyncio.run(save_reminder_policy_config(deepcopy(DEFAULT_REMINDER_POLICY)))
     app = create_app()
     try:
         yield app
     finally:
+        asyncio.run(save_reminder_policy_config(deepcopy(DEFAULT_REMINDER_POLICY)))
         settings_module.get_settings.cache_clear()
 
 
@@ -210,7 +214,7 @@ async def test_manual_booking_with_telegram_schedules_confirmation_reminders(
                 candidate_city_id=city_id,
                 purpose="interview",
                 tz_name="Europe/Moscow",
-                start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+                start_utc=datetime(2031, 5, 21, 13, 0, tzinfo=timezone.utc),
                 duration_min=60,
                 capacity=1,
                 status=SlotStatus.FREE,

@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from backend.apps.admin_ui.security import get_principal_identifier, limiter
 from backend.apps.admin_ui.services.cities import (
     delete_city,
     get_city,
@@ -23,6 +24,7 @@ from backend.domain.template_stages import CITY_TEMPLATE_STAGES, STAGE_DEFAULTS
 router = APIRouter(prefix="/cities", tags=["cities"])
 
 PLAN_ERROR_MESSAGE = "Введите целое неотрицательное число"
+CITY_MUTATION_LIMIT = "10/minute"
 
 
 def _primary_recruiter(city) -> Optional[object]:
@@ -209,6 +211,7 @@ async def cities_create(request: Request):
 
 
 @router.post("/{city_id}/settings")
+@limiter.limit(CITY_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def update_city_settings(city_id: int, request: Request):
     payload = await request.json()
     name_raw = (payload.get("name") or "").strip()
@@ -336,6 +339,7 @@ async def update_city_settings(city_id: int, request: Request):
 
 
 @router.post("/{city_id}/owner")
+@limiter.limit(CITY_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def update_city_owner(city_id: int, request: Request):
     payload = await request.json()
     recruiter_raw = payload.get("responsible_id")
@@ -370,6 +374,7 @@ async def update_city_owner(city_id: int, request: Request):
 
 
 @router.post("/{city_id}/status")
+@limiter.limit(CITY_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def update_city_status_api(city_id: int, request: Request):
     payload = await request.json()
     try:
@@ -398,6 +403,7 @@ async def update_city_status_api(city_id: int, request: Request):
 
 
 @router.post("/{city_id}/delete")
+@limiter.limit(CITY_MUTATION_LIMIT, key_func=get_principal_identifier)
 async def cities_delete(city_id: int, request: Request):
     ok = await delete_city(city_id)
     wants_json = "application/json" in (request.headers.get("accept") or "").lower()

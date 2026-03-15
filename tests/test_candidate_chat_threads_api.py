@@ -144,6 +144,37 @@ async def test_candidate_chat_threads_count_unread_and_mark_read(admin_app) -> N
 
 
 @pytest.mark.asyncio
+async def test_candidate_chat_mark_read_is_idempotent(admin_app) -> None:
+    async with async_session() as session:
+        city = City(name="Идемпотентный город", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Idempotent Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(recruiter)
+        recruiter_id = recruiter.id
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=79990010011,
+        fio="Idempotent Candidate",
+        city="Идемпотентный город",
+        initial_status=CandidateStatus.SLOT_PENDING,
+        responsible_recruiter_id=recruiter_id,
+    )
+
+    principal = Principal(type="recruiter", id=recruiter_id)
+    path = f"/api/candidate-chat/threads/{candidate.id}/read"
+
+    first = await _async_request_with_principal(admin_app, principal, "post", path)
+    second = await _async_request_with_principal(admin_app, principal, "post", path)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["ok"] is True
+    assert second.json()["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_candidate_chat_threads_empty_payload_is_stable(admin_app) -> None:
     async with async_session() as session:
         city = City(name="Пустой город", tz="Europe/Moscow", active=True)

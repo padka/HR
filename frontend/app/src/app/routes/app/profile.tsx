@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
+import { RoleGuard } from '@/app/components/RoleGuard'
 import { useProfile, type ProfileResponse } from '@/app/hooks/useProfile'
 import {
   changeProfilePassword,
@@ -211,28 +212,33 @@ export function ProfilePage() {
 
   if (isLoading) {
     return (
-      <div className="glass panel profile-card">
-        <h1 className="title">Личный кабинет</h1>
-        <p className="subtitle">Загрузка…</p>
-      </div>
+      <RoleGuard allow={['recruiter', 'admin']}>
+        <div className="glass panel profile-card">
+          <h1 className="title">Личный кабинет</h1>
+          <p className="subtitle">Загрузка…</p>
+        </div>
+      </RoleGuard>
     )
   }
 
   if (isError) {
     return (
-      <div className="glass panel profile-card">
-        <h1 className="title">Личный кабинет</h1>
-        <ApiErrorBanner
-          error={error}
-          title="Ошибка загрузки профиля"
-          onRetry={() => refetch()}
-        />
-      </div>
+      <RoleGuard allow={['recruiter', 'admin']}>
+        <div className="glass panel profile-card">
+          <h1 className="title">Личный кабинет</h1>
+          <ApiErrorBanner
+            error={error}
+            title="Ошибка загрузки профиля"
+            onRetry={() => refetch()}
+          />
+        </div>
+      </RoleGuard>
     )
   }
 
   return (
-    <div className="page profile-page profile-cabinet">
+    <RoleGuard allow={['recruiter', 'admin']}>
+      <div className="page profile-page profile-cabinet">
       <section className="cabinet-glass cabinet-hero">
         <div className="cabinet-hero__main">
           <div className="profile-avatar">
@@ -659,7 +665,8 @@ export function ProfilePage() {
           </div>
         </section>
       )}
-    </div>
+      </div>
+    </RoleGuard>
   )
 }
 

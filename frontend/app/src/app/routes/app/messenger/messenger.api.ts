@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
+  archiveCandidateChatThread,
   fetchCandidateChatMessages,
   fetchCandidateChatTemplates,
   fetchCandidateChatThreads,
@@ -15,14 +16,16 @@ import {
 } from '@/api/services/messenger'
 
 import { MESSAGE_LIMIT, THREAD_LIMIT } from './messenger.constants'
-import { readThreadCache } from './messenger.utils'
+import { readThreadCache, removeThreadFromCache } from './messenger.utils'
+
+type MessengerThreadQueryKey = readonly ['candidate-chat-threads', 'inbox']
 
 export function useMessengerThreads() {
   const queryClient = useQueryClient()
-  const threadQueryKey = useMemo(() => ['candidate-chat-threads', 'all'] as const, [])
+  const threadQueryKey = useMemo(() => ['candidate-chat-threads', 'inbox'] as const, [])
   const query = useQuery<CandidateChatThreadsPayload>({
     queryKey: threadQueryKey,
-    queryFn: () => fetchCandidateChatThreads({ folder: 'all', limit: THREAD_LIMIT }),
+    queryFn: () => fetchCandidateChatThreads({ folder: 'inbox', limit: THREAD_LIMIT }),
     refetchOnWindowFocus: true,
   })
 
@@ -37,7 +40,7 @@ export function useMessengerThreads() {
           const payload = await waitForCandidateChatThreads({
             since,
             timeout: 25,
-            folder: 'all',
+            folder: 'inbox',
             limit: THREAD_LIMIT,
             signal: controller.signal,
           })
@@ -117,12 +120,43 @@ export function useMessengerTemplates() {
   })
 }
 
-export function useMessengerMarkRead(threadQueryKey: readonly ['candidate-chat-threads', 'all']) {
+export function useMessengerMarkRead(threadQueryKey: MessengerThreadQueryKey) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: markCandidateChatThreadRead,
     onSuccess: (_data, candidateId) => {
       queryClient.setQueryData<CandidateChatThreadsPayload>(threadQueryKey, (prev) => readThreadCache(prev, candidateId))
+    },
+  })
+}
+
+export function useMessengerArchiveThread(args: {
+  threadQueryKey: MessengerThreadQueryKey
+  onSuccess: (candidateId: number) => void
+  onError: (message: string) => void
+  refetchThreads: () => Promise<unknown>
+}) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: archiveCandidateChatThread,
+    onMutate: async (candidateId) => {
+      const previousThreads = queryClient.getQueryData<CandidateChatThreadsPayload>(args.threadQueryKey)
+      queryClient.setQueryData<CandidateChatThreadsPayload>(
+        args.threadQueryKey,
+        (prev) => removeThreadFromCache(prev, candidateId),
+      )
+      return { previousThreads, candidateId }
+    },
+    onError: (error: unknown, _candidateId, context) => {
+      if (context?.previousThreads) {
+        queryClient.setQueryData(args.threadQueryKey, context.previousThreads)
+      }
+      args.onError((error as Error).message || 'Не удалось удалить диалог')
+    },
+    onSuccess: async (_data, candidateId) => {
+      args.onSuccess(candidateId)
+      await args.refetchThreads()
     },
   })
 }

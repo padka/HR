@@ -6,6 +6,7 @@ from typing import Any, Literal, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from backend.apps.admin_ui.security import (
     Principal,
@@ -714,7 +715,22 @@ async def mark_read(candidate_id: int, principal: Principal) -> None:
             session.add(state)
         else:
             state.last_read_at = now
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # Concurrent "mark as read" requests may race on the unique constraint.
+            await session.rollback()
+            state = await session.scalar(
+                select(CandidateChatRead).where(
+                    CandidateChatRead.candidate_id == candidate_id,
+                    CandidateChatRead.principal_type == principal.type,
+                    CandidateChatRead.principal_id == principal.id,
+                )
+            )
+            if state is None:
+                raise
+            state.last_read_at = now
+            await session.commit()
 
 
 async def set_archived(candidate_id: int, principal: Principal, *, archived: bool) -> None:

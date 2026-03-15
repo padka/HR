@@ -1,17 +1,74 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { memo, useEffect, useRef, useState, type MutableRefObject } from 'react'
 
 import { normalizeTextLinks, splitMessageText, messageAuthorLabel, formatFullDateTime, threadAvatar } from './messenger.utils'
 import { URL_RE } from './messenger.constants'
 import type { CandidateChatTemplate, CandidateChatThread, GroupedMessageRow } from './messenger.types'
 
+type MessageRow = Extract<GroupedMessageRow, { type: 'message' }>
+
 function SendIcon() {
   return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4.25 10h9.5" />
-      <path d="m10.75 3.75 5.5 6.25-5.5 6.25" />
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.85" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 14.75V5.5" />
+      <path d="m5.75 9.75 4.25-4.25 4.25 4.25" />
     </svg>
   )
 }
+
+const MessengerDayDivider = memo(function MessengerDayDivider({ label }: { label: string }) {
+  return (
+    <div className="messenger-day-divider">
+      <span>{label}</span>
+    </div>
+  )
+})
+
+const MessengerEventCard = memo(function MessengerEventCard({ row }: { row: MessageRow }) {
+  return (
+    <div
+      className={`messenger-event-card is-${row.message.kind || 'system'}`}
+      data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
+    >
+      {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
+      <div className="messenger-event-card__top">
+        <div className="messenger-event-card__meta">
+          <span>{messageAuthorLabel(row.message)}</span>
+          <span>{formatFullDateTime(row.message.created_at)}</span>
+        </div>
+        {row.message.kind === 'bot' ? <span className="messenger-ai-badge">AI</span> : null}
+      </div>
+      <div className="messenger-event-card__text">{renderMessageText(row.message.text)}</div>
+    </div>
+  )
+})
+
+const MessengerMessageBubble = memo(function MessengerMessageBubble({ row }: { row: MessageRow }) {
+  const links = normalizeTextLinks(row.message.text)
+
+  return (
+    <div
+      className={`messenger-bubble message-bubble ${row.message.direction === 'outbound' ? 'is-own message-bubble--outgoing' : 'is-peer message-bubble--incoming'}`}
+      data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
+    >
+      {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
+      <div className="messenger-bubble__meta">
+        <span>{messageAuthorLabel(row.message)}</span>
+        <span>{formatFullDateTime(row.message.created_at)}</span>
+      </div>
+      <div className="messenger-bubble__text">{renderMessageText(row.message.text)}</div>
+      {links.length > 0 && (
+        <div className="messenger-message__links">
+          {links.map((link) => (
+            <a key={link} href={link} target="_blank" rel="noreferrer" className="messenger-attachment-card">
+              <strong>{link.replace(/^https?:\/\//, '')}</strong>
+              <span>Открыть ссылку</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+})
 
 function renderMessageText(text?: string | null) {
   const value = splitMessageText(text)
@@ -184,48 +241,11 @@ export function ThreadView({
 
                 {groupedMessages.map((row) =>
                   row.type === 'divider' ? (
-                    <div key={row.key} className="messenger-day-divider">
-                      <span>{row.label}</span>
-                    </div>
+                    <MessengerDayDivider key={row.key} label={row.label} />
                   ) : row.message.kind === 'bot' || row.message.kind === 'system' ? (
-                    <div
-                      key={row.message.id}
-                      className={`messenger-event-card is-${row.message.kind || 'system'}`}
-                      data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
-                    >
-                      {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
-                      <div className="messenger-event-card__top">
-                        <div className="messenger-event-card__meta">
-                          <span>{messageAuthorLabel(row.message)}</span>
-                          <span>{formatFullDateTime(row.message.created_at)}</span>
-                        </div>
-                        {row.message.kind === 'bot' ? <span className="messenger-ai-badge">AI</span> : null}
-                      </div>
-                      <div className="messenger-event-card__text">{renderMessageText(row.message.text)}</div>
-                    </div>
+                    <MessengerEventCard key={row.message.id} row={row} />
                   ) : (
-                    <div
-                      key={row.message.id}
-                      className={`messenger-bubble message-bubble ${row.message.direction === 'outbound' ? 'is-own message-bubble--outgoing' : 'is-peer message-bubble--incoming'}`}
-                      data-unread-anchor={row.unreadAnchor ? 'true' : 'false'}
-                    >
-                      {row.unreadAnchor ? <div className="messenger-unread-divider">Непрочитанные</div> : null}
-                      <div className="messenger-bubble__meta">
-                        <span>{messageAuthorLabel(row.message)}</span>
-                        <span>{formatFullDateTime(row.message.created_at)}</span>
-                      </div>
-                      <div className="messenger-bubble__text">{renderMessageText(row.message.text)}</div>
-                      {normalizeTextLinks(row.message.text).length > 0 && (
-                        <div className="messenger-message__links">
-                          {normalizeTextLinks(row.message.text).map((link) => (
-                            <a key={link} href={link} target="_blank" rel="noreferrer" className="messenger-attachment-card">
-                              <strong>{link.replace(/^https?:\/\//, '')}</strong>
-                              <span>Открыть ссылку</span>
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    <MessengerMessageBubble key={row.message.id} row={row} />
                   ),
                 )}
                 <div ref={messagesEndRef} className="messenger-messages-anchor" aria-hidden="true" />

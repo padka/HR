@@ -121,13 +121,6 @@ export function CandidateDetailPage() {
   }, [isMobile, mobileTab])
 
   useEffect(() => {
-    if (!isMobile) return
-    if (!isChatOpen && mobileTab === 'chat') {
-      setMobileTab('profile')
-    }
-  }, [isChatOpen, isMobile, mobileTab])
-
-  useEffect(() => {
     if (typeof window === 'undefined') return
     if (window.location.hash !== '#tests') return
     if (isMobile && mobileTab !== 'tests') {
@@ -253,7 +246,7 @@ export function CandidateDetailPage() {
                   <button
                     type="button"
                     className={`ui-btn ui-btn--sm ${mobileTab === 'chat' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
-                    onClick={() => setMobileTab('chat')}
+                    onClick={handleOpenChat}
                   >
                     Чат
                   </button>
@@ -392,6 +385,7 @@ export function CandidateDetailPage() {
           <CandidateDrawer
             candidateId={candidateId}
             candidate={detail}
+            ai={ai}
             statusLabel={statusLabel}
             isOpen={isInsightsOpen}
             onClose={() => setIsInsightsOpen(false)}
@@ -406,8 +400,12 @@ export function CandidateDetailPage() {
         {isChatOpen && (
           <CandidateChatDrawer
             candidateId={candidateId}
+            ai={ai}
             isOpen={isChatOpen}
-            onClose={() => setIsChatOpen(false)}
+            onClose={() => {
+              setIsChatOpen(false)
+              if (isMobile) setMobileTab('profile')
+            }}
             initialDraftText={chatDraftSeed}
           />
         )}

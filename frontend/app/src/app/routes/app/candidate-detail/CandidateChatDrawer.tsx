@@ -1,12 +1,41 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { ModalPortal } from '@/shared/components/ModalPortal'
 import { fadeIn, slideInRight } from '@/shared/motion'
-import { useCandidateChat, useCandidateAi } from './candidate-detail.api'
+import { useCandidateChat, type CandidateAiController } from './candidate-detail.api'
+
+const CandidateChatMessageCard = memo(function CandidateChatMessageCard({
+  author,
+  createdAt,
+  direction,
+  text,
+}: {
+  author?: string | null
+  createdAt: string
+  direction: string
+  text: string
+}) {
+  const isOutbound = direction === 'outbound'
+  const isBot = isOutbound && (author || '').trim().toLowerCase() === 'bot'
+  const authorLabel = isBot ? 'Бот' : isOutbound ? (author || 'Вы') : (author || 'Кандидат')
+
+  return (
+    <div
+      className={`candidate-chat-message ${isOutbound ? 'candidate-chat-message--outbound' : 'candidate-chat-message--inbound'} ${isBot ? 'candidate-chat-message--bot' : ''}`}
+    >
+      <div className="candidate-chat-message__text">{text}</div>
+      <div className="candidate-chat-message__meta">
+        <span className="candidate-chat-message__author">{authorLabel}</span>
+        <span>{new Date(createdAt).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}</span>
+      </div>
+    </div>
+  )
+})
 
 type CandidateChatDrawerProps = {
   candidateId: number
+  ai: CandidateAiController
   isOpen: boolean
   onClose: () => void
   initialDraftText?: { text: string; nonce: number } | null
@@ -14,19 +43,29 @@ type CandidateChatDrawerProps = {
 
 export function CandidateChatDrawer({
   candidateId,
+  ai,
   isOpen,
   onClose,
   initialDraftText,
 }: CandidateChatDrawerProps) {
   const { query, sendMutation, markReadMutation, waitForUpdates } = useCandidateChat(candidateId, isOpen)
-  const ai = useCandidateAi(candidateId)
   const reduceMotion = useReducedMotion()
   const [chatText, setChatText] = useState('')
   const [aiDraftsOpen, setAiDraftsOpen] = useState(false)
   const [aiDraftMode, setAiDraftMode] = useState<'short' | 'neutral' | 'supportive'>('neutral')
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const refetchChatRef = useRef(query.refetch)
+  const markReadRef = useRef(markReadMutation.mutate)
   const chatMessages = (query.data?.messages || []).slice().reverse()
+
+  useEffect(() => {
+    refetchChatRef.current = query.refetch
+  }, [query.refetch])
+
+  useEffect(() => {
+    markReadRef.current = markReadMutation.mutate
+  }, [markReadMutation.mutate])
 
   useEffect(() => {
     if (!initialDraftText) return
@@ -36,8 +75,8 @@ export function CandidateChatDrawer({
 
   useEffect(() => {
     if (!isOpen) return
-    void query.refetch()
-  }, [isOpen, query])
+    void refetchChatRef.current()
+  }, [isOpen])
 
   useEffect(() => {
     if (!isOpen) return
@@ -57,7 +96,7 @@ export function CandidateChatDrawer({
           if (!active) return
           if (payload.latest_message_at) since = payload.latest_message_at
           if (payload.updated) {
-            await query.refetch()
+            await refetchChatRef.current()
           }
         } catch (error) {
           if (!active) return
@@ -72,17 +111,12 @@ export function CandidateChatDrawer({
       active = false
       controller.abort()
     }
-  }, [isOpen, query, waitForUpdates])
+  }, [isOpen, query.data?.latest_message_at, waitForUpdates])
 
   useEffect(() => {
     if (!isOpen) return
-    markReadMutation.mutate(candidateId)
-  }, [candidateId, isOpen, markReadMutation])
-
-  useEffect(() => {
-    if (!isOpen || chatMessages.length === 0) return
-    markReadMutation.mutate(candidateId)
-  }, [candidateId, chatMessages.length, isOpen, markReadMutation])
+    markReadRef.current(candidateId)
+  }, [candidateId, chatMessages.length, isOpen])
 
   useEffect(() => {
     if (!isOpen) return
@@ -135,24 +169,15 @@ export function CandidateChatDrawer({
                 {chatMessages.length === 0 && !query.isLoading && <p className="subtitle">Сообщений пока нет.</p>}
                 {chatMessages.length > 0 && (
                   <div className="candidate-chat-drawer__messages" ref={chatMessagesRef}>
-                    {chatMessages.map((message) => {
-                      const isOutbound = message.direction === 'outbound'
-                      const isBot = isOutbound && (message.author || '').trim().toLowerCase() === 'bot'
-                      const authorLabel = isBot ? 'Бот' : isOutbound ? (message.author || 'Вы') : (message.author || 'Кандидат')
-
-                      return (
-                        <div
-                          key={message.id}
-                          className={`candidate-chat-message ${isOutbound ? 'candidate-chat-message--outbound' : 'candidate-chat-message--inbound'} ${isBot ? 'candidate-chat-message--bot' : ''}`}
-                        >
-                          <div className="candidate-chat-message__text">{message.text}</div>
-                          <div className="candidate-chat-message__meta">
-                            <span className="candidate-chat-message__author">{authorLabel}</span>
-                            <span>{new Date(message.created_at).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}</span>
-                          </div>
-                        </div>
-                      )
-                    })}
+                    {chatMessages.map((message) => (
+                      <CandidateChatMessageCard
+                        key={message.id}
+                        author={message.author}
+                        createdAt={message.created_at}
+                        direction={message.direction}
+                        text={message.text}
+                      />
+                    ))}
                   </div>
                 )}
               </div>
@@ -230,17 +255,17 @@ export function CandidateChatDrawer({
                     className="candidate-chat-drawer__input"
                     data-testid="chat-textarea"
                     onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault()
-                        const text = chatText.trim()
-                        if (!text) return
-                        sendMutation.mutate(text, {
-                          onSuccess: () => {
-                            setChatText('')
-                            void query.refetch()
-                          },
-                        })
-                      }
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault()
+                          const text = chatText.trim()
+                          if (!text) return
+                          sendMutation.mutate(text, {
+                            onSuccess: () => {
+                              setChatText('')
+                              void refetchChatRef.current()
+                            },
+                          })
+                        }
                     }}
                   />
                   <div className="candidate-chat-drawer__actions">
@@ -264,7 +289,7 @@ export function CandidateChatDrawer({
                         sendMutation.mutate(text, {
                           onSuccess: () => {
                             setChatText('')
-                            void query.refetch()
+                            void refetchChatRef.current()
                           },
                         })
                       }}

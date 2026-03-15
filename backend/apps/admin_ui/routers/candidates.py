@@ -40,7 +40,14 @@ from backend.apps.admin_ui.services.candidates import (
     resolve_intro_day_template_source,
 )
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
-from backend.apps.admin_ui.security import require_principal, Principal, require_admin
+from backend.apps.admin_ui.security import (
+    Principal,
+    get_principal_identifier,
+    limiter,
+    require_admin,
+    require_csrf_token,
+    require_principal,
+)
 from backend.apps.admin_ui.services.slots import (
     execute_bot_dispatch,
     schedule_manual_candidate_slot,
@@ -52,7 +59,6 @@ from backend.apps.admin_ui.services.slots import (
 )
 from backend.apps.bot.services import approve_slot_and_notify, cancel_slot_reminders
 from backend.core.guards import ensure_candidate_scope, ensure_slot_scope
-from backend.apps.admin_ui.security import require_csrf_token
 from backend.apps.admin_ui.utils import fmt_local
 from backend.core.db import async_session
 from backend.core.settings import get_settings
@@ -72,6 +78,7 @@ from backend.domain.repositories import find_city_by_plain_name
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 logger = logging.getLogger(__name__)
+CANDIDATE_CREATE_LIMIT = "30/minute"
 
 
 # Module-level wrapper for status service (allows monkeypatching in tests)
@@ -211,6 +218,7 @@ async def candidates_new(
 
 
 @router.post("/create")
+@limiter.limit(CANDIDATE_CREATE_LIMIT, key_func=get_principal_identifier)
 async def candidates_create(
     request: Request,
     fio: str = Form(...),

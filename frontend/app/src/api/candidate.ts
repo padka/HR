@@ -1,3 +1,5 @@
+import { apiFetch } from './client'
+
 export const CANDIDATE_API_URL = '/api/candidate'
 
 export type CandidatePortalStepStatus = 'pending' | 'in_progress' | 'completed' | 'skipped'
@@ -97,45 +99,13 @@ export async function candidateFetch<T>(path: string, init?: CandidateFetchInit)
   if (init?.json !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
+  const apiPath = `${CANDIDATE_API_URL.replace(/^\/api/, '')}${path}`
 
-  const response = await fetch(`${CANDIDATE_API_URL}${path}`, {
+  return apiFetch<T>(apiPath, {
     ...init,
-    credentials: 'include',
     headers,
-    body: init?.json !== undefined ? JSON.stringify(init.json) : init?.body,
+    body: init?.json !== undefined ? init.json : init?.body,
   })
-
-  if (!response.ok) {
-    let data: unknown = null
-    let message = ''
-    try {
-      data = await response.json()
-      const detail = (data as { detail?: any })?.detail
-      if (typeof detail === 'string') {
-        message = detail
-      } else if (detail && typeof detail.message === 'string') {
-        message = detail.message
-      } else if (typeof (data as { message?: string }).message === 'string') {
-        message = (data as { message?: string }).message || ''
-      }
-    } catch {
-      message = await response.text().catch(() => '')
-    }
-
-    const error = new Error(message || response.statusText || `Ошибка ${response.status}`) as Error & {
-      status?: number
-      data?: unknown
-    }
-    error.status = response.status
-    error.data = data
-    throw error
-  }
-
-  if (response.status === 204) {
-    return undefined as T
-  }
-
-  return response.json() as Promise<T>
 }
 
 export const exchangeCandidatePortalToken = async (token: string) =>

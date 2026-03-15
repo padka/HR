@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from sqlalchemy import select
+
 from backend.apps.admin_ui.security import Principal, require_admin
 from backend.core.db import async_session
 from backend.domain.hh_integration.client import HHOAuthTokens
 from backend.domain.hh_integration.crypto import HHSecretCipher
-from backend.domain.hh_integration.models import HHConnection, HHWebhookDelivery
+from backend.domain.hh_integration.models import HHConnection, HHSyncJob, HHWebhookDelivery
 from backend.domain.hh_integration.oauth import build_hh_authorize_url
 from backend.domain.hh_integration.service import get_connection_for_principal
 from fastapi.testclient import TestClient
@@ -406,3 +408,45 @@ class TestHHWebhookReceiver:
         response = await asyncio.to_thread(_call)
         assert response.status_code == 202
         assert response.json()["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_webhook_receiver_enqueues_targeted_negotiation_reimport(self, admin_api_app):
+        async with async_session() as session:
+            connection = HHConnection(
+                principal_type="admin",
+                principal_id=1,
+                employer_id="emp-1",
+                access_token_encrypted="enc-access",
+                refresh_token_encrypted="enc-refresh",
+                webhook_url_key="hh-webhook-reimport-key",
+                profile_payload={},
+            )
+            session.add(connection)
+            await session.commit()
+
+        payload = {
+            "id": "delivery-reimport-1",
+            "subscription_id": "sub-1",
+            "action_type": "NEGOTIATION_EMPLOYER_STATE_CHANGE",
+            "payload": {
+                "negotiation_id": "neg-1",
+                "vacancy_id": "vac-42",
+            },
+        }
+
+        def _call():
+            with TestClient(admin_api_app, raise_server_exceptions=False) as client:
+                return client.post("/api/hh-integration/webhooks/hh-webhook-reimport-key", json=payload)
+
+        response = await asyncio.to_thread(_call)
+        assert response.status_code == 202
+        assert response.json()["ok"] is True
+
+        async with async_session() as session:
+            jobs = list((await session.execute(select(HHSyncJob))).scalars().all())
+
+        assert len(jobs) == 1
+        assert jobs[0].job_type == "import_negotiations"
+        assert jobs[0].entity_type == "vacancy"
+        assert jobs[0].entity_external_id == "vac-42"
+        assert jobs[0].payload_json == {"fetch_resume_details": False}

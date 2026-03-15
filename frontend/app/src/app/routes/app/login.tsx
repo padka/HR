@@ -19,6 +19,7 @@ export function LoginPage() {
       body.set('password', form.password)
       body.set('redirect_to', '/app')
 
+      // raw fetch: legacy form login posts outside /api and expects form-encoded body.
       const response = await fetch('/auth/login', {
         method: 'POST',
         body,

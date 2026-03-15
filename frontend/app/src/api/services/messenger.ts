@@ -130,6 +130,12 @@ export function markCandidateChatThreadRead(candidateId: number) {
   })
 }
 
+export function archiveCandidateChatThread(candidateId: number) {
+  return apiFetch<{ ok: boolean; archived: boolean }>(`/candidate-chat/threads/${candidateId}/archive`, {
+    method: 'POST',
+  })
+}
+
 export function fetchCandidateChatTemplates() {
   return apiFetch<{ items: CandidateChatTemplate[] }>('/candidate-chat/templates')
 }

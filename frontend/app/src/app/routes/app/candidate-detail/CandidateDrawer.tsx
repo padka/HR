@@ -10,7 +10,7 @@ import { fadeIn, slideInRight } from '@/shared/motion'
 import { formatDateTime } from '@/shared/utils/formatters'
 import { scorecardRecommendationLabel } from '@/shared/utils/labels'
 import { normalizeTelegramUsername } from '@/shared/utils/normalizers'
-import { useCandidateAi, useCandidateCohort, useCandidateHh } from './candidate-detail.api'
+import { useCandidateCohort, useCandidateHh, type CandidateAiController } from './candidate-detail.api'
 import {
   finalOutcomeLabel,
   fitLevelFromScore,
@@ -24,6 +24,7 @@ import { buildCandidateTimeline } from './candidate-detail.utils'
 type CandidateDrawerProps = {
   candidateId: number
   candidate: CandidateDetail
+  ai: CandidateAiController
   statusLabel: string
   isOpen: boolean
   onClose: () => void
@@ -34,6 +35,7 @@ type CandidateDrawerProps = {
 export function CandidateDrawer({
   candidateId,
   candidate,
+  ai,
   statusLabel,
   isOpen,
   onClose,
@@ -44,7 +46,6 @@ export function CandidateDrawer({
   const reduceMotion = useReducedMotion()
   const hhSummaryQuery = useCandidateHh(candidateId, isOpen)
   const cohortComparisonQuery = useCandidateCohort(candidateId, isOpen)
-  const ai = useCandidateAi(candidateId)
   const [aiDraftMode, setAiDraftMode] = useState<'short' | 'neutral' | 'supportive'>('neutral')
   const [aiCoachDrafts, setAiCoachDrafts] = useState(ai.coachQuery.data?.coach?.message_drafts || null)
   const [aiResumeText, setAiResumeText] = useState('')

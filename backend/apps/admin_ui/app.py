@@ -26,6 +26,7 @@ from starlette.responses import Response, PlainTextResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from backend.apps.admin_ui.background_tasks import (
+    periodic_hh_auto_import,
     periodic_hh_sync_job_worker,
     periodic_stalled_candidate_checker,
     periodic_past_free_slot_cleanup,
@@ -563,6 +564,21 @@ async def lifespan(app: FastAPI):
             logger.error("Failed to start HH sync job worker: %s", exc, exc_info=True)
     else:
         logger.info("Test mode: skipping HH sync job worker")
+
+    hh_auto_import_task = None
+    if not is_test_mode:
+        try:
+            hh_auto_import_task = asyncio.create_task(
+                periodic_hh_auto_import(app=app),
+                name="hh_auto_import",
+            )
+            app.state.hh_auto_import_task = hh_auto_import_task
+            shutdown_manager.add_task(hh_auto_import_task)
+            logger.info("HH auto import started")
+        except Exception as exc:
+            logger.error("Failed to start HH auto import: %s", exc, exc_info=True)
+    else:
+        logger.info("Test mode: skipping HH auto import")
 
     # Initialize templates and bot integration
     try:

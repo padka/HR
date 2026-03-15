@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.apps.admin_ui.security import get_client_ip, limiter
 from backend.core.db import async_session
 from backend.domain import analytics
 from backend.domain.candidates.portal_service import (
@@ -32,6 +33,7 @@ from backend.domain.candidates.portal_service import (
 )
 
 router = APIRouter(prefix="/api/candidate", tags=["candidate-portal"])
+PUBLIC_PORTAL_MUTATION_LIMIT = "5/minute"
 
 
 class CandidatePortalExchangePayload(BaseModel):
@@ -98,6 +100,7 @@ def _portal_error(exc: CandidatePortalError) -> HTTPException:
 
 
 @router.post("/session/exchange")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def exchange_candidate_portal_session(
     request: Request,
     payload: CandidatePortalExchangePayload,
@@ -146,6 +149,7 @@ async def exchange_candidate_portal_session(
 
 
 @router.post("/session/logout", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def logout_candidate_portal_session(request: Request) -> Response:
     request.session.pop(PORTAL_SESSION_KEY, None)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -171,6 +175,7 @@ async def get_candidate_portal_journey(request: Request):
 
 
 @router.post("/profile")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def save_candidate_portal_profile(
     request: Request,
     payload: CandidatePortalProfilePayload,
@@ -205,6 +210,7 @@ async def save_candidate_portal_profile(
 
 
 @router.post("/screening/save")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def save_candidate_portal_screening_draft(
     request: Request,
     payload: CandidatePortalScreeningPayload,
@@ -233,6 +239,7 @@ async def save_candidate_portal_screening_draft(
 
 
 @router.post("/screening/complete")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def complete_candidate_portal_screening(
     request: Request,
     payload: CandidatePortalScreeningPayload,
@@ -265,6 +272,7 @@ async def complete_candidate_portal_screening(
 
 
 @router.post("/slots/reserve")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def reserve_candidate_portal_slot_route(
     request: Request,
     payload: CandidatePortalReservePayload,
@@ -312,6 +320,7 @@ async def reserve_candidate_portal_slot_route(
 
 
 @router.post("/slots/confirm")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def confirm_candidate_portal_slot_route(request: Request):
     session_payload = _candidate_session_payload(request)
     async with async_session() as session:
@@ -354,6 +363,7 @@ async def confirm_candidate_portal_slot_route(request: Request):
 
 
 @router.post("/slots/cancel")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def cancel_candidate_portal_slot_route(request: Request):
     session_payload = _candidate_session_payload(request)
     async with async_session() as session:
@@ -396,6 +406,7 @@ async def cancel_candidate_portal_slot_route(request: Request):
 
 
 @router.post("/slots/reschedule")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def reschedule_candidate_portal_slot_route(
     request: Request,
     payload: CandidatePortalReschedulePayload,
@@ -442,6 +453,7 @@ async def reschedule_candidate_portal_slot_route(
 
 
 @router.post("/messages")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def send_candidate_portal_message_route(
     request: Request,
     payload: CandidatePortalMessagePayload,

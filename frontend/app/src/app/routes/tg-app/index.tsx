@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
+import { apiFetch } from '@/api/client'
 
 interface DashboardData {
   waiting_candidates_total: number
@@ -30,11 +31,9 @@ function useTgInitData(): string {
 }
 
 async function fetchDashboard(initData: string): Promise<DashboardData> {
-  const res = await fetch('/api/webapp/recruiter/dashboard', {
+  return apiFetch<DashboardData>('/webapp/recruiter/dashboard', {
     headers: { 'X-Telegram-Init-Data': initData },
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
 }
 
 export function TgDashboardPage() {

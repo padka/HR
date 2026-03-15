@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
+import { apiFetch } from '@/api/client'
 
 interface Candidate {
   id: number
@@ -44,13 +45,9 @@ export function TgIncomingPage() {
       return
     }
 
-    fetch('/api/webapp/recruiter/incoming?limit=20', {
+    apiFetch<{ candidates?: Candidate[]; total?: number }>('/webapp/recruiter/incoming?limit=20', {
       headers: { 'X-Telegram-Init-Data': initData },
     })
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      })
       .then(data => {
         setCandidates(data.candidates || [])
         setTotal(data.total || 0)

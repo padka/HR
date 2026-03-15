@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
   fetchCurrentKpis,
@@ -17,6 +17,7 @@ import {
   type SummaryPayload,
 } from '@/api/services/dashboard'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
+import { RoleGuard } from '@/app/components/RoleGuard'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 import { browserTimeZone, buildSlotTimePreview, formatTzOffset } from '@/app/lib/timezonePreview'
@@ -41,6 +42,36 @@ type IncomingFilter = 'all' | 'new' | 'stalled' | 'pending' | 'requested_other_t
 const DASHBOARD_INCOMING_FILTERS_KEY = 'dashboardIncomingFilters:v1'
 const INCOMING_FETCH_LIMIT = 100
 const INCOMING_PAGE_SIZE_OPTIONS = [25, 50, 100] as const
+
+const LeaderboardItemCard = memo(function LeaderboardItemCard({
+  item,
+  isSelected,
+}: {
+  item: LeaderboardPayload['items'][number]
+  isSelected: boolean
+}) {
+  const rankClass = leaderboardRankClass(item.rank)
+
+  return (
+    <article className={`leaderboard-item ${isSelected ? 'is-selected' : ''}`}>
+      <span className={`leaderboard-rank ${rankClass}`}>{item.rank}</span>
+      <div className="leaderboard-item__content">
+        <div className="leaderboard-item__main">
+          <strong className="leaderboard-item__name">{item.name}</strong>
+          <span className="leaderboard-score">{item.score}</span>
+        </div>
+        <div className="leaderboard-item__stats">
+          <span>Конверсия: {item.conversion_interview}%</span>
+          <span>Подтв.: {item.confirmation_rate}%</span>
+          <span>Заполн.: {item.fill_rate}%</span>
+          <span>Кандидаты: {item.throughput}</span>
+          <span>Нанято: {item.hired_total}</span>
+          <span>Отказ: {item.declined_total}</span>
+        </div>
+      </div>
+    </article>
+  )
+})
 
 export function DashboardPage() {
   const profile = useProfile()
@@ -400,18 +431,25 @@ export function DashboardPage() {
 
   if (!profileReady) {
     return (
-      <div className="page app-page app-page--ops">
-        <p className="subtitle">Загрузка…</p>
-      </div>
+      <RoleGuard allow={['recruiter', 'admin']}>
+        <div className="page app-page app-page--ops">
+          <p className="subtitle">Загрузка…</p>
+        </div>
+      </RoleGuard>
     )
   }
 
   if (!isAdmin) {
-    return <IncomingPage />
+    return (
+      <RoleGuard allow={['recruiter', 'admin']}>
+        <IncomingPage />
+      </RoleGuard>
+    )
   }
 
   return (
-    <div className="page app-page app-page--ops dashboard-page">
+    <RoleGuard allow={['recruiter', 'admin']}>
+      <div className="page app-page app-page--ops dashboard-page">
       {isAdmin && (
         <header className="glass glass--elevated panel dashboard-header dashboard-hero ui-hero--quiet app-page__hero">
           <div className="dashboard-hero__content">
@@ -530,29 +568,10 @@ export function DashboardPage() {
               >
                 {leaderboardQuery.data.items.map((item) => {
                   const isSelected = recruiterId && Number(recruiterId) === item.recruiter_id
-                  const rankClass = leaderboardRankClass(item.rank)
                   return (
-                    <motion.article
-                      key={item.recruiter_id}
-                      className={`leaderboard-item ${isSelected ? 'is-selected' : ''}`}
-                      variants={firstRenderAnimation ? listItem : undefined}
-                    >
-                      <span className={`leaderboard-rank ${rankClass}`}>{item.rank}</span>
-                      <div className="leaderboard-item__content">
-                        <div className="leaderboard-item__main">
-                          <strong className="leaderboard-item__name">{item.name}</strong>
-                          <span className="leaderboard-score">{item.score}</span>
-                        </div>
-                        <div className="leaderboard-item__stats">
-                          <span>Конверсия: {item.conversion_interview}%</span>
-                          <span>Подтв.: {item.confirmation_rate}%</span>
-                          <span>Заполн.: {item.fill_rate}%</span>
-                          <span>Кандидаты: {item.throughput}</span>
-                          <span>Нанято: {item.hired_total}</span>
-                          <span>Отказ: {item.declined_total}</span>
-                        </div>
-                      </div>
-                    </motion.article>
+                    <motion.div key={item.recruiter_id} variants={firstRenderAnimation ? listItem : undefined}>
+                      <LeaderboardItemCard item={item} isSelected={Boolean(isSelected)} />
+                    </motion.div>
                   )
                 })}
               </motion.div>
@@ -1012,6 +1031,7 @@ export function DashboardPage() {
           )}
         </div>
       )}
-    </div>
+      </div>
+    </RoleGuard>
   )
 }

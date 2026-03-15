@@ -49,6 +49,7 @@ function ReportPreviewModal({ title, url, onClose }: ReportPreviewModalProps) {
       return null
     })
 
+    // raw fetch: report preview needs direct PDF/text/blob handling, while apiFetch is JSON-oriented.
     fetch(url, { credentials: 'include', signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) {
