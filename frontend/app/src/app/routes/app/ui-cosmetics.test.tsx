@@ -643,7 +643,7 @@ describe('UI cosmetics smoke', () => {
     expect(document.querySelector('.status-badge')).toBeTruthy()
   })
 
-  it('renders candidate header, opens recruiter details drawer and shows interview script split panel', async () => {
+  it('renders candidate header without details and interview script action buttons', async () => {
     render(<CandidateDetailPage />)
     const header = screen.getByTestId('candidate-header')
     expect(header).toBeInTheDocument()
@@ -653,39 +653,15 @@ describe('UI cosmetics smoke', () => {
     expect(within(header).getByText(/Рекомендуем|Уточнить|Не рекомендуем/)).toBeInTheDocument()
     expect(screen.queryByText('Слоты и интервью')).not.toBeInTheDocument()
     expect(screen.queryByText('AI-помощник')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('candidate-insights-trigger'))
-
-    await waitFor(() => {
-      expect(screen.getByTestId('candidate-insights-drawer')).toBeInTheDocument()
-      expect(screen.getByText('Карточка кандидата')).toBeInTheDocument()
-      expect(screen.getByText('Хронология')).toBeInTheDocument()
-      expect(screen.getByTestId('candidate-details-timeline')).toBeInTheDocument()
-      expect(screen.getByTestId('candidate-quick-notes')).toBeInTheDocument()
-      expect(screen.getByText('Сравнение с когортой')).toBeInTheDocument()
-      expect(screen.getByText('AI-помощник')).toBeInTheDocument()
-      expect(screen.getByTestId('cd-ai-section-toggle-coach')).toBeInTheDocument()
-      expect(screen.getAllByText(/Готовность к полевому формату/).length).toBeGreaterThan(0)
-    })
-
-    expect(screen.queryByText('Карточка, хронология, заметки, HH и AI-контекст для рекрутера.')).not.toBeInTheDocument()
-    expect(screen.queryByText('Краткий операционный контекст для рекрутера.')).not.toBeInTheDocument()
-    expect(screen.queryByText('Единая лента значимых событий по кандидату.')).not.toBeInTheDocument()
-    expect(screen.queryByText('Локальные заметки рекрутера по кандидату.')).not.toBeInTheDocument()
-    expect(screen.getByText('Телефон')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '8 929 001 8227' })).toHaveAttribute('href', 'tel:89290018227')
-    expect(screen.queryByText('Коммуникация')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('candidate-script-trigger'))
-
-    await waitFor(() => {
-      expect(screen.getByTestId('interview-script-panel')).toBeInTheDocument()
-      expect(screen.getByText('Скрипт интервью 2.0')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Подготовить скрипт интервью' })).toBeInTheDocument()
-    })
+    expect(screen.queryByTestId('candidate-insights-trigger')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('candidate-script-trigger')).not.toBeInTheDocument()
+    expect(screen.queryByText('Детали')).not.toBeInTheDocument()
+    expect(screen.queryByText('Скрипт интервью')).not.toBeInTheDocument()
 
     expect(screen.getByTestId('candidate-pipeline')).toBeInTheDocument()
     expect(screen.getByTestId('candidate-tests-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('candidate-insights-drawer')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('interview-script-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('interview-script-modal')).not.toBeInTheDocument()
   })
 

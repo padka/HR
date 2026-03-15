@@ -272,20 +272,9 @@ export function CandidateDetailPage() {
                       candidate={detail}
                       statusSlug={statusSlug}
                       test2Section={test2Section}
-                      isInsightsOpen={isInsightsOpen}
-                      isInterviewScriptOpen={isInterviewScriptOpen}
                       actionPending={actionMutation.isPending}
                       actionsRef={pipelineActionsRef}
-                      onOpenDetails={() => {
-                        setIsChatOpen(false)
-                        setIsInsightsOpen(true)
-                      }}
                       onOpenChat={handleOpenChat}
-                      onToggleScript={() => {
-                        setIsInsightsOpen(false)
-                        setIsChatOpen(false)
-                        setIsInterviewScriptOpen((prev) => !prev)
-                      }}
                       onScheduleSlot={() => setShowScheduleSlotModal(true)}
                       onScheduleIntroDay={() => setShowScheduleIntroDayModal(true)}
                       onActionClick={handleActionClick}

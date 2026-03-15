@@ -7,13 +7,9 @@ type CandidateActionsProps = {
   candidate: CandidateDetail
   statusSlug: string | null
   test2Section?: TestSection
-  isInsightsOpen: boolean
-  isInterviewScriptOpen: boolean
   actionPending: boolean
   actionsRef?: Ref<HTMLDivElement>
-  onOpenDetails: () => void
   onOpenChat: () => void
-  onToggleScript: () => void
   onScheduleSlot: () => void
   onScheduleIntroDay: () => void
   onActionClick: (action: CandidateAction) => void
@@ -23,13 +19,9 @@ export function CandidateActions({
   candidate,
   statusSlug,
   test2Section,
-  isInsightsOpen,
-  isInterviewScriptOpen,
   actionPending,
   actionsRef,
-  onOpenDetails,
   onOpenChat,
-  onToggleScript,
   onScheduleSlot,
   onScheduleIntroDay,
   onActionClick,
@@ -177,24 +169,6 @@ export function CandidateActions({
             disabled={!candidate.telegram_id}
           >
             Чат
-          </button>
-          <button
-            type="button"
-            className={`cd-rail-btn ${isInsightsOpen ? 'cd-rail-btn--primary' : 'cd-rail-btn--secondary'}`}
-            onClick={onOpenDetails}
-            aria-haspopup="dialog"
-            aria-expanded={isInsightsOpen}
-            data-testid="candidate-insights-trigger"
-          >
-            Детали
-          </button>
-          <button
-            type="button"
-            className={`cd-rail-btn ${isInterviewScriptOpen ? 'cd-rail-btn--primary' : 'cd-rail-btn--secondary'}`}
-            onClick={onToggleScript}
-            data-testid="candidate-script-trigger"
-          >
-            Скрипт интервью
           </button>
           {canScheduleInterview && (
             <button className="cd-rail-btn cd-rail-btn--primary" onClick={onScheduleSlot}>
