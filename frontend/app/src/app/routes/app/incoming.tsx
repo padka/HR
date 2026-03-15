@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { Link } from '@tanstack/react-router'
+import '@/theme/pages/dashboard.css'
 import { apiFetch } from '@/api/client'
 import { fetchCandidateDetail, type CandidateDetail } from '@/api/services/candidates'
 import { useProfile } from '@/app/hooks/useProfile'
