@@ -59,7 +59,6 @@ export function CandidateDetailPage() {
   const archiveInfo = detail?.archive || candidateJourney?.archive || null
   const statusSlug = detail?.candidate_status_slug || null
   const statusDisplay = detail ? getStatusDisplay(statusSlug) : null
-  const statusTone = detail?.candidate_status_color || statusDisplay?.tone || 'muted'
   const statusLabel = detail?.candidate_status_display || statusDisplay?.label || 'Нет статуса'
   const rescheduleRequest = formatRescheduleRequest(detail?.reschedule_request)
   const pendingSlotRequest = formatRescheduleRequest(detail?.pending_slot_request || candidateJourney?.pending_slot_request)
@@ -260,7 +259,6 @@ export function CandidateDetailPage() {
                       candidate={detail}
                       candidateId={candidateId}
                       statusLabel={statusLabel}
-                      statusTone={statusTone}
                       showStatus={Boolean(statusDisplay)}
                       headerAiScore={headerAiScore}
                       headerAiLevel={headerAiLevel}

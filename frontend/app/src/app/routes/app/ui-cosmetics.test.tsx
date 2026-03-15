@@ -648,6 +648,8 @@ describe('UI cosmetics smoke', () => {
     const header = screen.getByTestId('candidate-header')
     expect(header).toBeInTheDocument()
     expect(screen.getByTestId('candidate-actions')).toBeInTheDocument()
+    expect(header).toHaveTextContent('Лид · 82/100')
+    expect(header.querySelector('.status-pill')).toBeNull()
     expect(screen.getByText('Релевантность')).toBeInTheDocument()
     expect(within(header).getByText('82/100')).toBeInTheDocument()
     expect(within(header).getByText(/Рекомендуем|Уточнить|Не рекомендуем/)).toBeInTheDocument()

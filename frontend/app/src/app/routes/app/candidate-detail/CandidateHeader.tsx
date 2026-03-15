@@ -5,7 +5,6 @@ type CandidateHeaderProps = {
   candidate: CandidateDetail
   candidateId: number
   statusLabel: string
-  statusTone: string
   showStatus: boolean
   headerAiScore: number | null
   headerAiLevel: 'high' | 'medium' | 'low' | 'unknown'
@@ -18,7 +17,6 @@ export function CandidateHeader({
   candidate,
   candidateId,
   statusLabel,
-  statusTone,
   showStatus,
   headerAiScore,
   headerAiLevel,
@@ -54,14 +52,6 @@ export function CandidateHeader({
               )}
             </div>
             {subtitle && <p className="cd-header__subtitle">{subtitle}</p>}
-            <div className="cd-header__signals">
-              {showStatus && (
-                <span className={`status-pill status-pill--${statusTone}`}>
-                  <span className={`cd-status-dot cd-status-dot--${statusTone}`} />
-                  {statusLabel}
-                </span>
-              )}
-            </div>
             <div className="cd-header__meta">
               {candidate.city && <span className="cd-chip">Город: {candidate.city}</span>}
               {candidate.responsible_recruiter?.name && (
