@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Set
 
 from backend.domain.candidates.models import User
+from backend.domain.candidates.status import CandidateStatus
 
 
 class WorkflowStatus(str, Enum):
@@ -107,20 +108,31 @@ class CandidateWorkflowService:
                 actions.append(action.value)
         return actions
 
-    def describe(self, candidate: User) -> CandidateStateDTO:
-        status = self._current(candidate)
+    def describe(
+        self,
+        candidate: User,
+        *,
+        prefer_candidate_status: bool = False,
+    ) -> CandidateStateDTO:
+        status = self._current(candidate, prefer_candidate_status=prefer_candidate_status)
         return CandidateStateDTO(
             status=status,
             allowed_actions=self._allowed_actions(status),
             rejection_stage=getattr(candidate, "rejection_stage", None),
         )
 
-    def _current(self, candidate: User) -> WorkflowStatus:
-        raw = getattr(candidate, "workflow_status", None)
-        try:
-            return WorkflowStatus(raw) if raw else self.default_status
-        except Exception:
-            return self.default_status
+    def _current(self, candidate: User, *, prefer_candidate_status: bool = False) -> WorkflowStatus:
+        candidate_status = workflow_status_for_candidate_status(
+            getattr(candidate, "candidate_status", None)
+        )
+        raw_workflow = workflow_status_from_raw_value(getattr(candidate, "workflow_status", None))
+        if prefer_candidate_status and candidate_status is not None:
+            return candidate_status
+        if raw_workflow is not None:
+            return raw_workflow
+        if candidate_status is not None:
+            return candidate_status
+        return self.default_status
 
     def transition(
         self,
@@ -196,13 +208,40 @@ LEGACY_STATUS_MAPPING: Dict[str, WorkflowStatus] = {
     "test2_sent": WorkflowStatus.TEST_SENT,
     "test2_completed": WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
     "test2_failed": WorkflowStatus.REJECTED,
-    "intro_day_scheduled": WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+    "intro_day_scheduled": WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
     "intro_day_confirmed_preliminary": WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
     "intro_day_declined_invitation": WorkflowStatus.REJECTED,
     "intro_day_declined_day_of": WorkflowStatus.REJECTED,
     "hired": WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
     "not_hired": WorkflowStatus.REJECTED,
 }
+
+
+def workflow_status_for_candidate_status(
+    status: Optional[CandidateStatus | str],
+) -> Optional[WorkflowStatus]:
+    if status is None:
+        return None
+    raw = status.value if isinstance(status, CandidateStatus) else str(status).strip().lower()
+    if not raw:
+        return None
+    mapped = LEGACY_STATUS_MAPPING.get(raw)
+    return mapped
+
+
+def workflow_status_from_raw_value(value: Optional[str]) -> Optional[WorkflowStatus]:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return WorkflowStatus(raw)
+    except Exception:
+        try:
+            return WorkflowStatus(raw.upper())
+        except Exception:
+            return None
 
 
 def unified_status(candidate: User) -> UnifiedStatus:
@@ -257,4 +296,6 @@ __all__ = [
     "WorkflowStatus",
     "WORKFLOW_STATUS_BADGES",
     "WORKFLOW_STATUS_LABELS",
+    "workflow_status_for_candidate_status",
+    "workflow_status_from_raw_value",
 ]

@@ -10,7 +10,7 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TypeVar, cast
 
 import redis.asyncio as aioredis
 from redis.exceptions import WatchError
@@ -61,6 +61,20 @@ class StateStore(abc.ABC):
     @abc.abstractmethod
     async def get(self, user_id: int) -> Optional[State]:
         """Fetch state for user identifier."""
+
+    async def get_many(self, user_ids: Iterable[int]) -> Dict[int, State]:
+        """Fetch multiple states at once, omitting missing entries."""
+
+        result: Dict[int, State] = {}
+        for raw_user_id in user_ids:
+            try:
+                user_id = int(raw_user_id)
+            except (TypeError, ValueError):
+                continue
+            state = await self.get(user_id)
+            if state is not None:
+                result[user_id] = state
+        return result
 
     @abc.abstractmethod
     async def set(self, user_id: int, state: State) -> None:
@@ -160,6 +174,18 @@ class InMemoryStateStore(StateStore):
         self._record_hit()
         return cast(State, copy.deepcopy(entry.value))
 
+    async def get_many(self, user_ids: Iterable[int]) -> Dict[int, State]:
+        result: Dict[int, State] = {}
+        for raw_user_id in user_ids:
+            try:
+                user_id = int(raw_user_id)
+            except (TypeError, ValueError):
+                continue
+            state = await self.get(user_id)
+            if state is not None:
+                result[user_id] = state
+        return result
+
     async def set(self, user_id: int, state: State) -> None:
         snapshot = cast(State, copy.deepcopy(state))
         self._data[user_id] = InMemoryStateStore._Entry(snapshot, self._deadline())
@@ -251,6 +277,53 @@ class RedisStateStore(StateStore):
         self._record_hit()
         return self._deserialize(payload)
 
+    async def get_many(self, user_ids: Iterable[int]) -> Dict[int, State]:
+        normalized_ids: List[int] = []
+        seen: set[int] = set()
+        for raw_user_id in user_ids:
+            try:
+                user_id = int(raw_user_id)
+            except (TypeError, ValueError):
+                continue
+            if user_id in seen:
+                continue
+            seen.add(user_id)
+            normalized_ids.append(user_id)
+
+        if not normalized_ids:
+            return {}
+
+        keys = [self._key(user_id) for user_id in normalized_ids]
+        payloads = await self._redis.mget(keys)
+
+        result: Dict[int, State] = {}
+        missing_ids: List[int] = []
+        for user_id, payload in zip(normalized_ids, payloads, strict=False):
+            if payload is None:
+                missing_ids.append(user_id)
+                continue
+            self._record_hit()
+            result[user_id] = self._deserialize(payload)
+
+        if missing_ids:
+            known_results: List[bool] = [False] * len(missing_ids)
+            try:
+                async with self._redis.pipeline(transaction=False) as pipe:
+                    for user_id in missing_ids:
+                        pipe.sismember(self._index_key, user_id)
+                    raw_known = await pipe.execute()
+                known_results = [bool(value) for value in raw_known]
+            except Exception:
+                known_results = [False] * len(missing_ids)
+
+            for user_id, known in zip(missing_ids, known_results, strict=False):
+                if known:
+                    self._record_eviction(user_id)
+                else:
+                    self._record_miss()
+
+        return result
+
     async def set(self, user_id: int, state: State) -> None:
         key = self._key(user_id)
         payload = self._serialize(state)
@@ -339,6 +412,9 @@ class StateManager:
         if state is None:
             return default
         return state
+
+    async def get_many(self, user_ids: Iterable[int]) -> Dict[int, State]:
+        return await self._store.get_many(user_ids)
 
     async def set(self, user_id: int, state: State) -> None:
         await self._store.set(user_id, state)

@@ -18,6 +18,8 @@ _SERVICE_EXPORTS = {
     "update_candidate_reports",
     "link_telegram_identity",
     "create_candidate_invite_token",
+    "get_latest_candidate_invite_token",
+    "ensure_candidate_invite_token",
     "bind_telegram_to_candidate",
     "update_chat_message_status",
     "log_inbound_chat_message",

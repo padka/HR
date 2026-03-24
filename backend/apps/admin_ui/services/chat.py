@@ -15,6 +15,8 @@ from sqlalchemy.orm import selectinload
 from backend.apps.admin_ui.services.bot_service import BotService
 from backend.apps.admin_ui.services.chat_meta import derive_chat_message_kind
 from backend.core.db import async_session
+from backend.core.messenger.registry import get_registry
+from backend.core.messenger.protocol import MessengerPlatform
 from backend.core.redis_factory import create_redis_client
 from backend.core.settings import get_settings
 from backend.domain.candidates.models import ChatMessage, ChatMessageStatus, ChatMessageDirection, User
@@ -305,6 +307,102 @@ async def _existing_message(candidate_id: int, client_request_id: Optional[str])
         return message
 
 
+def _resolve_delivery_channel(
+    candidate: User,
+    *,
+    preferred_channel: Optional[str] = None,
+) -> tuple[str, Optional[int]]:
+    requested = str(preferred_channel or "").strip().lower()
+    telegram_user_id = candidate.telegram_user_id or candidate.telegram_id
+    max_user_id = str(candidate.max_user_id or "").strip()
+    default_channel = str(getattr(candidate, "messenger_platform", "") or "").strip().lower()
+
+    channel = requested or default_channel
+    if channel == "max":
+        if max_user_id:
+            return "max", None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Для кандидата не найден MAX ID"},
+        )
+
+    if channel == "telegram":
+        if telegram_user_id:
+            return "telegram", telegram_user_id
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Для кандидата не найден Telegram ID"},
+        )
+
+    if telegram_user_id:
+        return "telegram", telegram_user_id
+    if max_user_id:
+        return "max", None
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"message": "Для кандидата не найден канал связи"},
+    )
+
+
+async def _dispatch_chat_message(
+    candidate: User,
+    *,
+    text: str,
+    bot_service: BotService,
+    reply_markup: Optional[object] = None,
+    preferred_channel: Optional[str] = None,
+):
+    channel, telegram_user_id = _resolve_delivery_channel(
+        candidate,
+        preferred_channel=preferred_channel,
+    )
+
+    if channel == "telegram":
+        send_result = await bot_service.send_chat_message(
+            telegram_user_id,
+            text,
+            reply_markup=reply_markup,
+        )
+        return channel, send_result
+
+    adapter = get_registry().get(MessengerPlatform.MAX)
+    if adapter is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": "MAX bot не настроен"},
+        )
+    if reply_markup is not None:
+        logger.info(
+            "chat.max.reply_markup_ignored",
+            extra={"candidate_id": candidate.id},
+        )
+    send_result = await adapter.send_message(
+        str(candidate.max_user_id),
+        text,
+        correlation_id=f"candidate-chat:{candidate.id}",
+    )
+    return channel, send_result
+
+
+def _send_result_ok(send_result: object) -> bool:
+    return bool(getattr(send_result, "ok", False) or getattr(send_result, "success", False))
+
+
+def _send_result_status(send_result: object) -> str:
+    status_value = getattr(send_result, "status", None)
+    if isinstance(status_value, str) and status_value:
+        return status_value
+    return "sent" if _send_result_ok(send_result) else "failed"
+
+
+def _send_result_error(send_result: object) -> str:
+    return str(
+        getattr(send_result, "error", None)
+        or getattr(send_result, "message", None)
+        or "Не удалось отправить сообщение"
+    )
+
+
 async def send_chat_message(
     candidate_id: int,
     *,
@@ -315,11 +413,7 @@ async def send_chat_message(
     reply_markup: Optional[object] = None,
 ) -> Dict[str, object]:
     candidate = await _load_candidate(candidate_id)
-    if not candidate.telegram_user_id and not candidate.telegram_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": "Для кандидата не найден Telegram ID"},
-        )
+    channel, telegram_user_id = _resolve_delivery_channel(candidate)
 
     duplicate = await _existing_message(candidate_id, client_request_id)
     if duplicate:
@@ -344,9 +438,9 @@ async def send_chat_message(
     async with async_session() as session:
         message = ChatMessage(
             candidate_id=candidate.id,
-            telegram_user_id=candidate.telegram_user_id or candidate.telegram_id,
+            telegram_user_id=telegram_user_id if channel == "telegram" else None,
             direction=ChatMessageDirection.OUTBOUND.value,
-            channel="telegram",
+            channel=channel,
             text=text,
             status=ChatMessageStatus.QUEUED.value,
             author_label=author_label,
@@ -357,39 +451,45 @@ async def send_chat_message(
         await session.refresh(message)
         message_id = message.id
 
-    send_result = await bot_service.send_chat_message(
-        candidate.telegram_user_id or candidate.telegram_id,
-        text,
+    delivery_channel, send_result = await _dispatch_chat_message(
+        candidate,
+        text=text,
+        bot_service=bot_service,
         reply_markup=reply_markup,
     )
-    if send_result.ok:
+    if _send_result_ok(send_result):
         await _record_message_sent_async(candidate_id)
 
         await update_chat_message_status(
             message_id,
             status=ChatMessageStatus.SENT,
-            telegram_message_id=getattr(send_result, "telegram_message_id", None),
+            telegram_message_id=(
+                getattr(send_result, "telegram_message_id", None)
+                if delivery_channel == "telegram"
+                else None
+            ),
             error=None,
         )
-        try:
-            await set_conversation_mode(
-                candidate.telegram_user_id or candidate.telegram_id,
-                mode="chat",
-                ttl_minutes=CHAT_MODE_TTL_MINUTES,
-            )
-        except Exception:  # pragma: no cover - non-critical
-            pass
+        if delivery_channel == "telegram":
+            try:
+                await set_conversation_mode(
+                    candidate.telegram_user_id or candidate.telegram_id,
+                    mode="chat",
+                    ttl_minutes=CHAT_MODE_TTL_MINUTES,
+                )
+            except Exception:  # pragma: no cover - non-critical
+                pass
     else:
         await update_chat_message_status(
             message_id,
             status=ChatMessageStatus.FAILED,
-            error=send_result.error or send_result.message or "Не удалось отправить сообщение",
+            error=_send_result_error(send_result),
         )
 
     updated = await _existing_message(candidate_id, client_request_id) or await _fetch_message_by_id(message_id)
     return {
         "message": serialize_chat_message(updated),
-        "status": send_result.status if send_result.ok else "failed",
+        "status": _send_result_status(send_result) if _send_result_ok(send_result) else "failed",
     }
 
 
@@ -458,13 +558,14 @@ async def retry_chat_message(
         message.error = None
         await session.commit()
         await session.refresh(message)
-        telegram_user_id = message.telegram_user_id
         text = message.text or ""
+        channel = message.channel or "telegram"
+        candidate = await session.get(User, candidate_id)
 
-    if not telegram_user_id:
+    if candidate is None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": "Нет Telegram ID для повторной отправки"},
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "Кандидат не найден"},
         )
     is_allowed, remaining = await _check_rate_limit_async(candidate_id)
     if not is_allowed:
@@ -476,24 +577,33 @@ async def retry_chat_message(
                 "remaining": remaining,
             },
         )
-    send_result = await bot_service.send_chat_message(telegram_user_id, text)
-    if send_result.ok:
+    delivery_channel, send_result = await _dispatch_chat_message(
+        candidate,
+        text=text,
+        bot_service=bot_service,
+        preferred_channel=channel,
+    )
+    if _send_result_ok(send_result):
         await _record_message_sent_async(candidate_id)
         await update_chat_message_status(
             message_id,
             status=ChatMessageStatus.SENT,
-            telegram_message_id=getattr(send_result, "telegram_message_id", None),
+            telegram_message_id=(
+                getattr(send_result, "telegram_message_id", None)
+                if delivery_channel == "telegram"
+                else None
+            ),
             error=None,
         )
     else:
         await update_chat_message_status(
             message_id,
             status=ChatMessageStatus.FAILED,
-            error=send_result.error or send_result.message or "Не удалось отправить сообщение",
+            error=_send_result_error(send_result),
         )
 
     refreshed = await _fetch_message_by_id(message_id)
     return {
         "message": serialize_chat_message(refreshed),
-        "status": send_result.status if send_result.ok else "failed",
+        "status": _send_result_status(send_result) if _send_result_ok(send_result) else "failed",
     }

@@ -7,6 +7,7 @@ export const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000, // Data is fresh for 30s
       refetchOnWindowFocus: false, // Don't spam server on tab switch
+      refetchOnReconnect: false, // Avoid reconnect storms on flaky networks
     },
   },
 })
@@ -16,6 +17,7 @@ let csrfPromise: Promise<string> | null = null
 
 type ApiFetchInit = Omit<RequestInit, 'body'> & {
   body?: unknown
+  skipCsrf?: boolean
 }
 
 type ErrorDetails = {
@@ -88,7 +90,7 @@ async function fetchCsrfToken(): Promise<string> {
 }
 
 export async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T> {
-  const { body: requestBody, ...requestInit } = init ?? {}
+  const { body: requestBody, skipCsrf = false, ...requestInit } = init ?? {}
   const method = (init?.method || 'GET').toUpperCase()
   const needsCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method)
   const normalizedBody = normalizeRequestBody(requestBody)
@@ -115,7 +117,7 @@ export async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T>
     ...(headerObj as Record<string, string>),
   })
 
-  if (needsCsrf) {
+  if (needsCsrf && !skipCsrf) {
     const token = await fetchCsrfToken()
     if (token) headers.set('x-csrf-token', token)
   }
@@ -126,7 +128,7 @@ export async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T>
     headers,
     body: normalizedBody,
   })
-  if (res.status === 403 && needsCsrf) {
+  if (res.status === 403 && needsCsrf && !skipCsrf) {
     // refresh token once and retry
     csrfToken = null
     const token = await fetchCsrfToken()

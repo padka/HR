@@ -32,6 +32,8 @@ async def test_inmemory_broker_forbidden_in_production():
     prod_settings.bot_webhook_url = ""
     prod_settings.bot_failfast = False
     prod_settings.bot_autostart = False
+    prod_settings.bot_polling_runtime_enabled = False
+    prod_settings.bot_notification_runtime_enabled = False
     prod_settings.bot_enabled = False
     prod_settings.test2_required = False
     prod_settings.session_secret = "secret"
@@ -85,6 +87,9 @@ async def test_inmemory_broker_allowed_in_development():
     dev_settings.session_cookie_secure = False
     dev_settings.notification_broker = "memory"
     dev_settings.state_ttl_seconds = 60
+    dev_settings.bot_autostart = False
+    dev_settings.bot_polling_runtime_enabled = False
+    dev_settings.bot_notification_runtime_enabled = False
 
     with patch("backend.apps.admin_ui.state.get_settings", return_value=dev_settings):
         with patch("backend.apps.admin_ui.state.Redis", None):
@@ -128,6 +133,8 @@ async def test_redis_required_message_in_production():
     prod_settings.bot_webhook_url = ""
     prod_settings.bot_failfast = False
     prod_settings.bot_autostart = False
+    prod_settings.bot_polling_runtime_enabled = False
+    prod_settings.bot_notification_runtime_enabled = False
     prod_settings.bot_enabled = False
     prod_settings.test2_required = False
     prod_settings.session_secret = "secret"

@@ -18,6 +18,14 @@ class _DummyReminderService:
         return {"scheduled": 0, "failed": 0}
 
 
+def _csrf(client: TestClient) -> str:
+    resp = client.get("/api/csrf", auth=("admin", "admin"))
+    assert resp.status_code == 200
+    token = (resp.json() or {}).get("token") or ""
+    assert token
+    return str(token)
+
+
 @pytest.fixture
 def reminder_jobs_app(monkeypatch):
     async def fake_setup(app) -> _DummyIntegration:
@@ -120,10 +128,11 @@ def test_bot_reminder_jobs_lists_upcoming_jobs(reminder_jobs_app):
 
 def test_bot_reminder_jobs_resync_endpoint(reminder_jobs_app):
     with TestClient(reminder_jobs_app) as client:
+        token = _csrf(client)
         response = client.post(
             "/api/bot/reminders/resync",
             auth=("admin", "admin"),
-            headers={"Accept": "application/json"},
+            headers={"Accept": "application/json", "x-csrf-token": token},
         )
 
     assert response.status_code == 200
@@ -131,4 +140,3 @@ def test_bot_reminder_jobs_resync_endpoint(reminder_jobs_app):
     assert payload["ok"] is True
     assert payload["scheduled"] == 0
     assert payload["failed"] == 0
-

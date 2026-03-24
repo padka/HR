@@ -64,6 +64,14 @@ async def _seed_recruiter_city(*, city_name: str, recruiter_name: str) -> tuple[
 def _request(app, method: str, path: str, **kwargs):
     with TestClient(app) as client:
         client.auth = ("admin", "admin")
+        headers = dict(kwargs.pop("headers", {}) or {})
+        if method.upper() not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+            header_keys = {key.lower() for key in headers}
+            if "x-csrf-token" not in header_keys:
+                csrf = client.get("/api/csrf").json()["token"]
+                headers["x-csrf-token"] = csrf
+        if headers:
+            kwargs["headers"] = headers
         return client.request(method, path, **kwargs)
 
 

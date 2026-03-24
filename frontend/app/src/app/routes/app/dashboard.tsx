@@ -112,20 +112,29 @@ export function DashboardPage() {
     queryKey: ['dashboard-summary'],
     queryFn: fetchDashboardSummary,
     enabled: profileReady && Boolean(isAdmin),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const recruitersQuery = useQuery<RecruiterOption[]>({
     queryKey: ['dashboard-recruiters'],
     queryFn: fetchDashboardRecruiters,
     enabled: profileReady && Boolean(isAdmin),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const incomingQuery = useQuery<IncomingPayload>({
     queryKey: ['dashboard-incoming'],
     queryFn: () => fetchDashboardIncoming(INCOMING_FETCH_LIMIT),
     enabled: false,
-    refetchInterval: 20000,
+    staleTime: 120_000,
+    refetchInterval: 120_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const kpiParams = useMemo(() => {
@@ -139,6 +148,9 @@ export function DashboardPage() {
     queryKey: ['dashboard-kpis', kpiParams],
     queryFn: () => fetchCurrentKpis(kpiParams),
     enabled: profileReady && Boolean(isAdmin),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const leaderboardParams = useMemo(() => {
@@ -152,6 +164,9 @@ export function DashboardPage() {
     queryKey: ['dashboard-leaderboard', leaderboardParams],
     queryFn: () => fetchRecruiterPerformance(leaderboardParams),
     enabled: profileReady && Boolean(isAdmin),
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const rejectCandidate = useMutation({

@@ -87,7 +87,11 @@ export function IncomingPage() {
   const incomingQuery = useQuery<IncomingPayload>({
     queryKey: ['dashboard-incoming'],
     queryFn: () => apiFetch('/dashboard/incoming?limit=100'),
-    refetchInterval: 20_000,
+    staleTime: 120_000,
+    refetchInterval: 120_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const availableSlotsQuery = useQuery<AvailableSlotsPayload>({
@@ -95,6 +99,8 @@ export function IncomingPage() {
     queryFn: () => apiFetch(`/candidates/${incomingTarget?.id}/available-slots?limit=60`),
     enabled: Boolean(incomingTarget?.id && !isAdmin),
     staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const recruitersQuery = useQuery<{ id: number; name: string }[]>({
@@ -102,6 +108,8 @@ export function IncomingPage() {
     queryFn: () => apiFetch('/recruiters'),
     enabled: Boolean(isAdmin),
     staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const testPreviewQuery = useQuery<CandidateDetail>({
@@ -109,6 +117,8 @@ export function IncomingPage() {
     queryFn: () => fetchCandidateDetail(Number(testPreviewTarget?.id)),
     enabled: Boolean(testPreviewTarget?.id),
     staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const [assignTargets, setAssignTargets] = useState<Record<number, string>>({})

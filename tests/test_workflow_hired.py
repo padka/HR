@@ -39,7 +39,14 @@ async def test_mark_hired_from_intro_day_confirmed():
         base_url="http://testserver",
         auth=("admin", "admin"),
     ) as client:
-        resp = await client.post(f"/api/candidates/{user_id}/actions/mark_hired")
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        resp = await client.post(
+            f"/api/candidates/{user_id}/actions/mark_hired",
+            headers={"x-csrf-token": str(token)},
+        )
         assert resp.status_code == 200
         payload = resp.json()
         assert payload["ok"] is True
@@ -73,7 +80,14 @@ async def test_mark_not_hired_from_intro_day_confirmed():
         base_url="http://testserver",
         auth=("admin", "admin"),
     ) as client:
-        resp = await client.post(f"/api/candidates/{user_id}/actions/mark_not_hired")
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        resp = await client.post(
+            f"/api/candidates/{user_id}/actions/mark_not_hired",
+            headers={"x-csrf-token": str(token)},
+        )
         assert resp.status_code == 200
         payload = resp.json()
         assert payload["ok"] is True
@@ -107,7 +121,14 @@ async def test_mark_hired_from_preliminary_confirmed():
         base_url="http://testserver",
         auth=("admin", "admin"),
     ) as client:
-        resp = await client.post(f"/api/candidates/{user_id}/actions/mark_hired")
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        resp = await client.post(
+            f"/api/candidates/{user_id}/actions/mark_hired",
+            headers={"x-csrf-token": str(token)},
+        )
         assert resp.status_code == 200
         payload = resp.json()
         assert payload["ok"] is True
@@ -136,7 +157,14 @@ async def test_mark_hired_invalid_status_returns_error():
         base_url="http://testserver",
         auth=("admin", "admin"),
     ) as client:
-        resp = await client.post(f"/api/candidates/{user_id}/actions/mark_hired")
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        resp = await client.post(
+            f"/api/candidates/{user_id}/actions/mark_hired",
+            headers={"x-csrf-token": str(token)},
+        )
         # Should return error because WAITING_SLOT -> HIRED is not a valid transition
         assert resp.status_code in (400, 409)
 
@@ -164,11 +192,25 @@ async def test_hired_is_terminal_state():
         auth=("admin", "admin"),
     ) as client:
         # Try to apply mark_hired again - should fail
-        resp = await client.post(f"/api/candidates/{user_id}/actions/mark_hired")
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        resp = await client.post(
+            f"/api/candidates/{user_id}/actions/mark_hired",
+            headers={"x-csrf-token": str(token)},
+        )
         assert resp.status_code in (400, 409)
 
         # Try to apply mark_not_hired - should fail
-        resp = await client.post(f"/api/candidates/{user_id}/actions/mark_not_hired")
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        resp = await client.post(
+            f"/api/candidates/{user_id}/actions/mark_not_hired",
+            headers={"x-csrf-token": str(token)},
+        )
         assert resp.status_code in (400, 409)
 
 
@@ -195,7 +237,14 @@ async def test_not_hired_is_terminal_state():
         auth=("admin", "admin"),
     ) as client:
         # Try to apply mark_hired - should fail
-        resp = await client.post(f"/api/candidates/{user_id}/actions/mark_hired")
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        resp = await client.post(
+            f"/api/candidates/{user_id}/actions/mark_hired",
+            headers={"x-csrf-token": str(token)},
+        )
         assert resp.status_code in (400, 409)
 
 
@@ -208,7 +257,14 @@ async def test_candidate_not_found_returns_404():
         base_url="http://testserver",
         auth=("admin", "admin"),
     ) as client:
-        resp = await client.post("/api/candidates/999999/actions/mark_hired")
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        resp = await client.post(
+            "/api/candidates/999999/actions/mark_hired",
+            headers={"x-csrf-token": str(token)},
+        )
         assert resp.status_code == 404
 
 
@@ -237,7 +293,14 @@ async def test_full_funnel_to_hired():
         auth=("admin", "admin"),
     ) as client:
         # Mark as hired
-        resp = await client.post(f"/api/candidates/{user_id}/actions/mark_hired")
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        resp = await client.post(
+            f"/api/candidates/{user_id}/actions/mark_hired",
+            headers={"x-csrf-token": str(token)},
+        )
         assert resp.status_code == 200
         assert resp.json()["status"] == CandidateStatus.HIRED.value
 

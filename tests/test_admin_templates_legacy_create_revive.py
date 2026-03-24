@@ -45,6 +45,10 @@ async def test_legacy_templates_create_revives_inactive_template(monkeypatch):
         base_url="http://testserver",
         auth=(settings.admin_username or "admin", settings.admin_password or "admin"),
     ) as client:
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
         response = await client.post(
             "/api/templates",
             json={
@@ -56,6 +60,7 @@ async def test_legacy_templates_create_revives_inactive_template(monkeypatch):
                 "version": 1,
                 "is_active": True,
             },
+            headers={"x-csrf-token": str(token)},
         )
 
     assert response.status_code == 201
@@ -69,4 +74,3 @@ async def test_legacy_templates_create_revives_inactive_template(monkeypatch):
         assert revived is not None
         assert revived.is_active is True
         assert revived.body_md == "new body"
-

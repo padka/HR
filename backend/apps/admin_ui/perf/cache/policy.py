@@ -22,6 +22,5 @@ class CachePolicy:
     stale_seconds: float = 0.0
 
 
-# Default policies used across admin_ui hot reads.
-HOT_READ_POLICY = CachePolicy(ttl_seconds=2.0, stale_seconds=10.0)
-
+# Default policy for generic hot reads.
+HOT_READ_POLICY = CachePolicy(ttl_seconds=15.0, stale_seconds=60.0)

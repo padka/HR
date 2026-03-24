@@ -38,7 +38,6 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.portal_service import build_candidate_portal_url
-from backend.domain.candidates.workflow import WorkflowStatus
 from backend.domain.candidates.status import (
     CandidateStatus,
     STATUS_TRANSITIONS,
@@ -55,6 +54,8 @@ from backend.domain.candidates.actions import get_candidate_actions
 from backend.domain.candidates.workflow import (
     CandidateWorkflowService,
     WorkflowStatus,
+    workflow_status_for_candidate_status,
+    workflow_status_from_raw_value,
 )
 from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
 from backend.domain.repositories import find_city_by_plain_name, get_message_template
@@ -756,25 +757,6 @@ STATUSES_ARCHIVE_ON_DECLINE: Set[CandidateStatus] = {
     CandidateStatus.NOT_HIRED,
 }
 
-# Mapping legacy candidate_status to new workflow statuses
-LEGACY_TO_WORKFLOW: Dict[str, WorkflowStatus] = {
-    CandidateStatus.WAITING_SLOT.value: WorkflowStatus.WAITING_FOR_SLOT,
-    CandidateStatus.STALLED_WAITING_SLOT.value: WorkflowStatus.WAITING_FOR_SLOT,
-    CandidateStatus.SLOT_PENDING.value: WorkflowStatus.INTERVIEW_SCHEDULED,
-    CandidateStatus.INTERVIEW_SCHEDULED.value: WorkflowStatus.INTERVIEW_SCHEDULED,
-    CandidateStatus.INTERVIEW_CONFIRMED.value: WorkflowStatus.INTERVIEW_CONFIRMED,
-    CandidateStatus.INTERVIEW_DECLINED.value: WorkflowStatus.REJECTED,
-    CandidateStatus.TEST2_SENT.value: WorkflowStatus.TEST_SENT,
-    CandidateStatus.TEST2_COMPLETED.value: WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
-    CandidateStatus.TEST2_FAILED.value: WorkflowStatus.REJECTED,
-    CandidateStatus.INTRO_DAY_SCHEDULED.value: WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
-    CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY.value: WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
-    CandidateStatus.INTRO_DAY_DECLINED_INVITATION.value: WorkflowStatus.REJECTED,
-    CandidateStatus.INTRO_DAY_DECLINED_DAY_OF.value: WorkflowStatus.REJECTED,
-    CandidateStatus.HIRED.value: WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
-    CandidateStatus.NOT_HIRED.value: WorkflowStatus.REJECTED,
-}
-
 logger = logging.getLogger(__name__)
 
 INTERVIEW_RECOMMENDATION_CHOICES = [
@@ -1099,25 +1081,15 @@ def _build_pipeline_stages(
 
 
 def _map_to_workflow_status(user: User) -> WorkflowStatus:
-    """Derive workflow status with legacy candidate_status as source of truth when present."""
-    legacy = getattr(user, "candidate_status", None)
-    if isinstance(legacy, CandidateStatus):
-        mapped = LEGACY_TO_WORKFLOW.get(legacy.value)
-        if mapped:
-            return mapped
-    elif isinstance(legacy, str) and legacy:
-        mapped = LEGACY_TO_WORKFLOW.get(legacy.lower())
-        if mapped:
-            return mapped
-    raw_workflow = getattr(user, "workflow_status", None)
-    if raw_workflow:
-        try:
-            return WorkflowStatus(raw_workflow)
-        except Exception:
-            logging.warning(
-                "candidates.invalid_workflow_status",
-                extra={"user_id": getattr(user, "id", None), "raw_value": raw_workflow},
-            )
+    """Derive workflow status for UI display without mutating the underlying model."""
+    candidate_status = workflow_status_for_candidate_status(
+        getattr(user, "candidate_status", None)
+    )
+    if candidate_status is not None:
+        return candidate_status
+    raw_workflow = workflow_status_from_raw_value(getattr(user, "workflow_status", None))
+    if raw_workflow is not None:
+        return raw_workflow
     return WorkflowStatus.WAITING_FOR_SLOT
 
 
@@ -3171,9 +3143,7 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
             has_intro_day_slot=has_intro_day_slot,
         )
 
-        effective_workflow_status = _map_to_workflow_status(user)
-        user.workflow_status = effective_workflow_status.value
-        workflow_state = _workflow_service.describe(user)
+        workflow_state = _workflow_service.describe(user, prefer_candidate_status=True)
         workflow_actions = _workflow_actions_ui(user.id, workflow_state.allowed_actions)
         workflow_status_label = WORKFLOW_STATUS_LABELS.get(
             workflow_state.status, workflow_state.status.value
@@ -3181,7 +3151,7 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         workflow_status_color = WORKFLOW_STATUS_COLORS.get(
             workflow_state.status, "muted"
         )
-        # Для отображения статуса в UI используем workflow (единственный источник правды)
+        # Для UI используем workflow-read model, но приоритет отдаём canonical candidate_status.
         stage = workflow_status_label
 
         reschedule_intent = await get_candidate_reschedule_intent(

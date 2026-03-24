@@ -9,16 +9,19 @@ const useMutationMock = vi.fn()
 const invalidateQueriesMock = vi.fn()
 const apiFetchMock = vi.fn()
 
-type QueryOptionsLike = {
-  queryKey?: unknown
-}
-
 type MutationOptionsLike = {
   mutationFn?: (variables: unknown) => Promise<unknown> | unknown
   onMutate?: (variables: unknown) => unknown
   onSuccess?: (data: unknown, variables: unknown) => void
   onError?: (error: unknown, variables: unknown) => void
   onSettled?: (data: unknown, error: unknown, variables: unknown, context: unknown) => void
+}
+
+type QueryOptionsLike = {
+  queryKey?: unknown
+  staleTime?: number
+  refetchOnWindowFocus?: boolean
+  refetchOnReconnect?: boolean
 }
 
 vi.mock('@/api/client', () => ({
@@ -136,6 +139,26 @@ describe('CandidatesPage delete action', () => {
       )
     })
     expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['candidates'] })
+  })
+
+  it('uses a bounded cache policy for candidate list and cities queries', () => {
+    render(<CandidatesPage />)
+
+    const candidatesQuery = useQueryMock.mock.calls.find(([options]) => {
+      const rawKey = (options as QueryOptionsLike | undefined)?.queryKey
+      return Array.isArray(rawKey) && rawKey[0] === 'candidates'
+    })?.[0] as QueryOptionsLike | undefined
+    expect(candidatesQuery?.staleTime).toBe(60_000)
+    expect(candidatesQuery?.refetchOnWindowFocus).toBe(false)
+    expect(candidatesQuery?.refetchOnReconnect).toBe(false)
+
+    const citiesQuery = useQueryMock.mock.calls.find(([options]) => {
+      const rawKey = (options as QueryOptionsLike | undefined)?.queryKey
+      return Array.isArray(rawKey) && rawKey[0] === 'cities'
+    })?.[0] as QueryOptionsLike | undefined
+    expect(citiesQuery?.staleTime).toBe(60_000)
+    expect(citiesQuery?.refetchOnWindowFocus).toBe(false)
+    expect(citiesQuery?.refetchOnReconnect).toBe(false)
   })
 
   it('moves candidate card in kanban and calls kanban-status api', async () => {

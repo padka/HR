@@ -17,6 +17,8 @@ import {
   type CandidatePortalQuestion,
   type CandidatePortalSlot,
 } from '@/api/candidate'
+import { clearCandidatePortalAccessToken } from '@/shared/candidate-portal-session'
+import { markCandidateWebAppReady } from './webapp'
 import '../candidate-portal.css'
 
 const JOURNEY_QUERY_KEY = ['candidate-portal-journey']
@@ -140,6 +142,9 @@ export function CandidateJourneyPage() {
   const journeyQuery = useQuery({
     queryKey: JOURNEY_QUERY_KEY,
     queryFn: fetchCandidatePortalJourney,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const payload = journeyQuery.data
@@ -166,6 +171,10 @@ export function CandidateJourneyPage() {
     })
     setScreeningAnswers(payload.journey.screening.draft_answers || {})
   }, [payload])
+
+  useEffect(() => {
+    markCandidateWebAppReady()
+  }, [])
 
   const setMutationError = (error: unknown) => {
     setLocalError(error instanceof Error ? error.message : 'Не удалось выполнить действие.')
@@ -255,6 +264,7 @@ export function CandidateJourneyPage() {
   const logoutMutation = useMutation({
     mutationFn: logoutCandidatePortalSession,
     onSuccess: async () => {
+      clearCandidatePortalAccessToken()
       queryClient.removeQueries({ queryKey: JOURNEY_QUERY_KEY })
       window.location.reload()
     },
@@ -263,6 +273,18 @@ export function CandidateJourneyPage() {
   const screeningQuestions = payload?.journey.screening.questions || []
   const screeningCompleted = Boolean(payload?.journey.screening.completed)
   const messages = payload?.journey.messages || []
+  const companyName = payload?.company?.name || 'SMART SERVICE'
+  const companySummary =
+    payload?.company?.summary
+    || `Вы проходите отбор в ${companyName}. В кабинете доступны анкета, текущий этап и запись на следующий шаг.`
+  const companyHighlights =
+    payload?.company?.highlights?.length
+      ? payload.company.highlights
+      : [
+          'Анкета и прогресс сохраняются автоматически',
+          'Статус и следующий шаг видны в одном месте',
+          'Запись на собеседование доступна из кабинета',
+        ]
 
   const canReschedule = Boolean(activeSlot) && availableSlots.length > 0
   const canConfirm = isSlotConfirmable(activeSlot)
@@ -275,6 +297,16 @@ export function CandidateJourneyPage() {
     if (payload.candidate.status_label) return payload.candidate.status_label
     return 'В обработке'
   }, [activeSlot, payload])
+
+  const vacancyLabel = payload?.candidate.vacancy_label || 'Вакансия уточняется'
+  const vacancyMeta =
+    payload?.candidate.vacancy_position || payload?.candidate.vacancy_reference || 'Информация о вакансии подтянется из CRM'
+  const nextStepLabel = payload?.journey.next_step_at
+    ? formatDateTime(payload.journey.next_step_at, payload.journey.next_step_timezone)
+    : 'Следующий шаг пока не назначен'
+  const nextStepMeta = payload?.journey.next_step_timezone
+    ? `Часовой пояс: ${payload.journey.next_step_timezone}`
+    : 'Данные обновляются автоматически'
 
   if (journeyQuery.isLoading) {
     return (
@@ -323,10 +355,41 @@ export function CandidateJourneyPage() {
           </h1>
           <p className="candidate-portal__subtitle">{payload.journey.next_action}</p>
           <div className="candidate-portal__status-meta">
+            {payload.journey.current_step_label ? <span className="candidate-portal__chip">Этап: {payload.journey.current_step_label}</span> : null}
             {payload.candidate.status_label ? <span className="candidate-portal__chip">{payload.candidate.status_label}</span> : null}
             {payload.journey.entry_channel ? <span className="candidate-portal__chip">Вход: {payload.journey.entry_channel}</span> : null}
             {statusSummary ? <span className="candidate-portal__chip">{statusSummary}</span> : null}
           </div>
+        </section>
+
+        <section className="candidate-portal__summary-grid" aria-label="Краткая сводка">
+          <article className="glass candidate-portal__summary-card">
+            <div className="candidate-portal__summary-label">Вакансия</div>
+            <div className="candidate-portal__summary-value">{vacancyLabel}</div>
+            <div className="candidate-portal__summary-meta">{vacancyMeta}</div>
+          </article>
+          <article className="glass candidate-portal__summary-card candidate-portal__summary-card--company">
+            <div className="candidate-portal__summary-label">Компания</div>
+            <div className="candidate-portal__summary-value">{companyName}</div>
+            <div className="candidate-portal__summary-meta">{companySummary}</div>
+            <div className="candidate-portal__summary-tags" aria-label="Преимущества кабинета">
+              {companyHighlights.map((highlight) => (
+                <span key={highlight} className="candidate-portal__summary-tag">
+                  {highlight}
+                </span>
+              ))}
+            </div>
+          </article>
+          <article className="glass candidate-portal__summary-card">
+            <div className="candidate-portal__summary-label">Текущий этап</div>
+            <div className="candidate-portal__summary-value">{payload.journey.current_step_label}</div>
+            <div className="candidate-portal__summary-meta">{payload.journey.next_action}</div>
+          </article>
+          <article className="glass candidate-portal__summary-card">
+            <div className="candidate-portal__summary-label">Следующий шаг</div>
+            <div className="candidate-portal__summary-value">{nextStepLabel}</div>
+            <div className="candidate-portal__summary-meta">{nextStepMeta}</div>
+          </article>
         </section>
 
         <div className="candidate-portal__grid">
@@ -636,4 +699,3 @@ export function CandidateJourneyPage() {
     </div>
   )
 }
-

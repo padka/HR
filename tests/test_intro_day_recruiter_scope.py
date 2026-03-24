@@ -55,6 +55,17 @@ async def _request_with_recruiter_principal(
         app.dependency_overrides[require_principal] = lambda: Principal(type="recruiter", id=recruiter_id)
         try:
             with TestClient(app) as client:
+                headers = dict(kwargs.pop("headers", {}) or {})
+                if method.upper() not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+                    header_keys = {key.lower() for key in headers}
+                    if "x-csrf-token" not in header_keys:
+                        csrf = client.get("/api/csrf")
+                        assert csrf.status_code == 200
+                        token = (csrf.json() or {}).get("token") or ""
+                        assert token
+                        headers["x-csrf-token"] = str(token)
+                if headers:
+                    kwargs["headers"] = headers
                 return client.request(method, path, **kwargs)
         finally:
             app.dependency_overrides.pop(require_principal, None)

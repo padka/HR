@@ -16,6 +16,14 @@ class _DummyIntegration:
         return None
 
 
+def _csrf(client: TestClient) -> str:
+    resp = client.get("/api/csrf", auth=("admin", "admin"))
+    assert resp.status_code == 200
+    token = (resp.json() or {}).get("token") or ""
+    assert token
+    return str(token)
+
+
 @pytest.fixture
 def admin_app(monkeypatch) -> Any:
     async def fake_setup(app) -> _DummyIntegration:
@@ -59,9 +67,11 @@ async def test_api_list_vacancies_empty(admin_app):
 async def test_api_create_and_delete_vacancy(admin_app):
     def _create():
         with TestClient(admin_app) as client:
+            token = _csrf(client)
             return client.post(
                 "/api/vacancies",
                 json={"title": "API Test Vacancy", "slug": "api-test-vac-001"},
+                headers={"x-csrf-token": token},
             )
 
     resp = await asyncio.to_thread(_create)
@@ -73,7 +83,11 @@ async def test_api_create_and_delete_vacancy(admin_app):
     try:
         def _delete():
             with TestClient(admin_app) as client:
-                return client.delete(f"/api/vacancies/{vacancy_id}")
+                token = _csrf(client)
+                return client.delete(
+                    f"/api/vacancies/{vacancy_id}",
+                    headers={"x-csrf-token": token},
+                )
 
         del_resp = await asyncio.to_thread(_delete)
         assert del_resp.status_code == 200
@@ -86,9 +100,11 @@ async def test_api_create_and_delete_vacancy(admin_app):
 async def test_api_create_vacancy_invalid_slug(admin_app):
     def _call():
         with TestClient(admin_app) as client:
+            token = _csrf(client)
             return client.post(
                 "/api/vacancies",
                 json={"title": "Bad slug", "slug": "INVALID SLUG!"},
+                headers={"x-csrf-token": token},
             )
 
     resp = await asyncio.to_thread(_call)

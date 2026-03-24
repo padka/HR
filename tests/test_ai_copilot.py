@@ -800,13 +800,8 @@ def test_ai_candidate_coach_drafts_modes_and_invalid(ai_app):
     candidate_id = _run(_seed())
 
     with TestClient(ai_app) as client:
-        csrf = client.get("/api/csrf", auth=("admin", "admin"))
-        assert csrf.status_code == 200
-        token = csrf.json().get("token")
-        assert token
-        headers = {"x-csrf-token": token}
-
         for mode in ("short", "neutral", "supportive"):
+            headers = {"x-csrf-token": _csrf(client)}
             resp = client.post(
                 f"/api/ai/candidates/{candidate_id}/coach/drafts",
                 auth=("admin", "admin"),
@@ -821,7 +816,7 @@ def test_ai_candidate_coach_drafts_modes_and_invalid(ai_app):
         bad = client.post(
             f"/api/ai/candidates/{candidate_id}/coach/drafts",
             auth=("admin", "admin"),
-            headers=headers,
+            headers={"x-csrf-token": _csrf(client)},
             json={"mode": "invalid"},
         )
         assert bad.status_code == 400

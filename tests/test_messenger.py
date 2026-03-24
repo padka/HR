@@ -331,12 +331,37 @@ class TestMaxAdapter:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"success": True, "message": {"mid": "msg_1"}}
-        mock_client.post.return_value = mock_resp
+        mock_client.request.return_value = mock_resp
         adapter._client = mock_client
 
         result = await adapter.send_message("user_123", "Hello from Max!")
         assert result.success is True
         assert result.message_id == "msg_1"
+        mock_client.request.assert_awaited_once_with(
+            "POST",
+            "/messages",
+            params={"user_id": "user_123"},
+            json={"text": "Hello from Max!"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_2xx_without_message_id_is_success(self):
+        from backend.core.messenger.max_adapter import MaxAdapter
+
+        adapter = MaxAdapter()
+        adapter._token = "test_token"
+
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"description": "accepted"}
+        mock_client.request.return_value = mock_resp
+        adapter._client = mock_client
+
+        result = await adapter.send_message("user_123", "Hello from Max!")
+        assert result.success is True
+        assert result.message_id is None
+        mock_client.request.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_send_with_buttons(self):
@@ -349,15 +374,17 @@ class TestMaxAdapter:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"success": True, "message": {"mid": "msg_2"}}
-        mock_client.post.return_value = mock_resp
+        mock_client.request.return_value = mock_resp
         adapter._client = mock_client
 
         buttons = [[InlineButton(text="OK", callback_data="ok:1")]]
         result = await adapter.send_message("user_123", "Choose:", buttons=buttons)
         assert result.success is True
 
-        call_args = mock_client.post.call_args
+        call_args = mock_client.request.call_args
         payload = call_args[1]["json"]
+        params = call_args[1]["params"]
+        assert params == {"user_id": "user_123"}
         assert "attachments" in payload
         assert payload["attachments"][0]["type"] == "inline_keyboard"
 
@@ -372,14 +399,14 @@ class TestMaxAdapter:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"message": {"mid": "msg_link"}}
-        mock_client.post.return_value = mock_resp
+        mock_client.request.return_value = mock_resp
         adapter._client = mock_client
 
         buttons = [[InlineButton(text="Open portal", url="https://example.com/portal")]]
         result = await adapter.send_message("user_123", "Open:", buttons=buttons, parse_mode="HTML")
         assert result.success is True
 
-        payload = mock_client.post.call_args[1]["json"]
+        payload = mock_client.request.call_args[1]["json"]
         assert payload["format"] == "html"
         button = payload["attachments"][0]["payload"]["buttons"][0][0]
         assert button["type"] == "link"
@@ -396,7 +423,7 @@ class TestMaxAdapter:
         mock_resp = MagicMock()
         mock_resp.status_code = 400
         mock_resp.json.return_value = {"error": "bad_request", "description": "Invalid chat_id"}
-        mock_client.post.return_value = mock_resp
+        mock_client.request.return_value = mock_resp
         adapter._client = mock_client
 
         result = await adapter.send_message("bad_user", "Test")
@@ -421,12 +448,35 @@ class TestMaxAdapter:
         ok_resp.status_code = 200
         ok_resp.json.return_value = {"success": True, "message": {"mid": "msg_3"}}
 
-        mock_client.post.side_effect = [fail_resp, ok_resp]
+        mock_client.request.side_effect = [fail_resp, ok_resp]
         adapter._client = mock_client
 
         result = await adapter.send_message("user_123", "Retry test")
         assert result.success is True
-        assert mock_client.post.call_count == 2
+        assert mock_client.request.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_answer_callback_sends_notification(self):
+        from backend.core.messenger.max_adapter import MaxAdapter
+
+        adapter = MaxAdapter()
+        adapter._token = "test_token"
+
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"success": True}
+        mock_client.request.return_value = mock_resp
+        adapter._client = mock_client
+
+        result = await adapter.answer_callback("cb_1", notification="Принято")
+        assert result.success is True
+        mock_client.request.assert_awaited_once_with(
+            "POST",
+            "/answers",
+            params={"callback_id": "cb_1"},
+            json={"notification": "Принято"},
+        )
 
     @pytest.mark.asyncio
     async def test_not_configured_raises(self):

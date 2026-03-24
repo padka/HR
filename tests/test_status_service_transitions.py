@@ -15,6 +15,7 @@ from backend.domain.candidates.status_service import (
     set_status_test2_sent,
     update_candidate_status,
 )
+from backend.domain.candidates.workflow import WorkflowStatus
 
 _tg_counter = count(1_000_000)
 
@@ -68,6 +69,7 @@ async def test_force_allows_jump_to_hired():
         result = await session.execute(select(User).where(User.telegram_id == tg_id))
         user = result.scalar_one()
     assert user.candidate_status == CandidateStatus.HIRED
+    assert user.workflow_status == WorkflowStatus.ONBOARDING_DAY_CONFIRMED.value
 
 
 @pytest.mark.asyncio
@@ -81,6 +83,7 @@ async def test_forward_pipeline_allows_test2_completion():
         result = await session.execute(select(User).where(User.telegram_id == tg_id))
         user = result.scalar_one()
     assert user.candidate_status == CandidateStatus.TEST2_COMPLETED
+    assert user.workflow_status == WorkflowStatus.ONBOARDING_DAY_SCHEDULED.value
 
 
 @pytest.mark.asyncio
@@ -112,6 +115,7 @@ async def test_update_status_falls_back_to_telegram_user_id():
         user = await session.scalar(select(User).where(User.telegram_id == tg_id))
     assert user is not None
     assert user.candidate_status == CandidateStatus.INTRO_DAY_SCHEDULED
+    assert user.workflow_status == WorkflowStatus.ONBOARDING_DAY_SCHEDULED.value
 
 
 @pytest.mark.asyncio

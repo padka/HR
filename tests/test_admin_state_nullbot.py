@@ -20,6 +20,8 @@ class DummySettings:
     bot_webhook_url: str = ""
     bot_failfast: bool = False
     bot_autostart: bool = False
+    bot_polling_runtime_enabled: bool = False
+    bot_notification_runtime_enabled: bool = True
     test2_required: bool = False
     bot_integration_enabled: bool = True
     bot_callback_secret: str = "dev-secret"
@@ -67,6 +69,58 @@ async def test_setup_bot_state_with_custom_api_base(monkeypatch):
         assert integration.bot is not None
         api = integration.bot.session.api
         assert getattr(api, "api_base", base_url).startswith(base_url)
+    finally:
+        await integration.shutdown()
+
+
+class StartTrackingNotificationService:
+    def __init__(self):
+        self.start_calls: list[bool] = []
+        self.disable_runtime_calls = 0
+
+    def start(self, *, allow_poll_loop: bool = False) -> None:
+        self.start_calls.append(bool(allow_poll_loop))
+
+    async def shutdown(self) -> None:
+        return None
+
+    async def disable_runtime(self) -> None:
+        self.disable_runtime_calls += 1
+
+    async def broker_ping(self):
+        return True
+
+
+@pytest.mark.asyncio
+async def test_setup_bot_state_disables_notification_runtime_in_admin(monkeypatch):
+    app = FastAPI()
+    notification_service = StartTrackingNotificationService()
+
+    monkeypatch.setattr(
+        state_module,
+        "get_settings",
+        lambda: DummySettings(
+            bot_token="123:ABC",
+            environment="development",
+            bot_autostart=True,
+            bot_polling_runtime_enabled=False,
+            bot_notification_runtime_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(
+        state_module,
+        "bootstrap_notification_service",
+        lambda **_: notification_service,
+    )
+
+    integration = await state_module.setup_bot_state(app)
+
+    try:
+        assert app.state.bot_polling_runtime_enabled is False
+        assert app.state.notification_runtime_enabled is False
+        assert integration.bot_runner_task is None
+        assert notification_service.start_calls == []
+        assert notification_service.disable_runtime_calls == 1
     finally:
         await integration.shutdown()
 
@@ -171,6 +225,31 @@ def test_notifications_health_endpoint_missing_service(monkeypatch):
     assert resp.status_code == 503
     data = resp.json()
     assert data["notifications"]["status"] == "missing"
+
+
+def test_notifications_health_endpoint_runtime_disabled(monkeypatch):
+    class EnabledSettings:
+        bot_enabled = True
+        bot_integration_enabled = True
+        bot_notification_runtime_enabled = False
+        bot_autostart = False
+
+    monkeypatch.setattr(system_router, "get_settings", lambda: EnabledSettings())
+
+    app = FastAPI()
+    app.include_router(system_router.router)
+    app.state.notification_service = StubNotificationService()
+    app.state.reminder_service = StubReminderService()
+    app.state.bot_service = StubBotService()
+    app.state.notification_runtime_enabled = False
+
+    client = TestClient(app)
+    resp = client.get("/health/notifications")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "disabled"
+    assert data["notifications"]["status"] == "disabled"
+    assert data["runtime"]["notification_runtime_enabled"] is False
 
 
 def test_notifications_metrics_endpoint_prometheus():

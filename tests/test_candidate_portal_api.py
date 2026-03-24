@@ -15,6 +15,7 @@ from backend.domain.candidates.portal_service import (
     get_candidate_portal_questions,
     sign_candidate_portal_token,
 )
+from backend.domain.candidates.services import create_candidate_invite_token
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
 
@@ -66,6 +67,8 @@ async def _seed_candidate_portal_flow() -> dict[str, int | str]:
             telegram_user_id=700101,
             city=None,
             phone=None,
+            desired_position="Менеджер по работе с клиентами",
+            hh_vacancy_id="12345",
             source="telegram",
         )
         session.add(candidate)
@@ -145,7 +148,118 @@ def test_candidate_portal_exchange_creates_session_from_telegram_token(monkeypat
     payload = response.json()
     assert payload["journey"]["current_step"] == "profile"
     assert payload["candidate"]["fio"] == "TG 79990001122"
+    assert payload["journey"]["current_step_label"] == "Профиль"
     assert payload["journey"]["entry_channel"] == "telegram"
+    assert payload["candidate"]["vacancy_label"] == "Вакансия уточняется"
+
+
+def test_candidate_portal_exchange_accepts_signed_portal_token(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+
+    async def _seed_candidate() -> tuple[str, int]:
+        async with async_session() as session:
+            candidate = User(
+                fio="MAX Invite Tester",
+                telegram_id=700201,
+                telegram_user_id=700201,
+                city="Москва",
+                phone="+79990000000",
+                source="max_bot",
+                messenger_platform="max",
+            )
+            session.add(candidate)
+            await session.flush()
+            candidate_pk = int(candidate.id)
+            candidate_uuid = str(candidate.candidate_id)
+            await session.commit()
+        return candidate_uuid, candidate_pk
+
+    candidate_uuid, candidate_id = asyncio.run(_seed_candidate())
+    portal_token = sign_candidate_portal_token(
+        candidate_uuid=candidate_uuid,
+        entry_channel="max",
+        source_channel="max_app",
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/candidate/session/exchange", json={"token": portal_token})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate"]["id"] == candidate_id
+    assert payload["company"]["name"] == "SMART SERVICE"
+    assert "анкет" in payload["company"]["summary"].lower()
+    assert payload["journey"]["entry_channel"] == "max"
+    assert payload["candidate"]["fio"] == "MAX Invite Tester"
+
+
+def test_candidate_portal_exchange_rejects_raw_invite_token(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+
+    async def _seed_invite() -> str:
+        async with async_session() as session:
+            candidate = User(
+                fio="Legacy Invite Tester",
+                telegram_id=700202,
+                telegram_user_id=700202,
+                city="Москва",
+                phone="+79990000001",
+                source="max_bot",
+                messenger_platform="max",
+            )
+            session.add(candidate)
+            await session.flush()
+            candidate_uuid = candidate.candidate_id
+            await session.commit()
+        invite = await create_candidate_invite_token(candidate_uuid)
+        return invite.token
+
+    invite_token = asyncio.run(_seed_invite())
+
+    with TestClient(app) as client:
+        response = client.post("/api/candidate/session/exchange", json={"token": invite_token})
+
+    assert response.status_code == 401
+    assert "недейств" in response.json()["detail"]["message"].lower()
+
+
+def test_candidate_portal_journey_can_be_restored_from_header_token(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+    seeded: dict[str, int | str] = {}
+
+    with TestClient(app) as client:
+        seeded = asyncio.run(_seed_candidate_portal_flow())
+        token = sign_candidate_portal_token(
+            candidate_uuid=str(seeded["candidate_uuid"]),
+            entry_channel="web",
+            source_channel="portal",
+        )
+        client.cookies.clear()
+
+        response = client.get(
+            "/api/candidate/journey",
+            headers={"x-candidate-portal-token": token},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate"]["id"] == seeded["candidate_id"]
+    assert payload["journey"]["current_step"] == "profile"
 
 
 def test_candidate_portal_end_to_end_flow(monkeypatch):
@@ -166,7 +280,10 @@ def test_candidate_portal_end_to_end_flow(monkeypatch):
         )
         exchange = client.post("/api/candidate/session/exchange", json={"token": token})
         assert exchange.status_code == 200
-        assert exchange.json()["journey"]["current_step"] == "profile"
+        exchange_payload = exchange.json()
+        assert exchange_payload["journey"]["current_step"] == "profile"
+        assert exchange_payload["journey"]["current_step_label"] == "Профиль"
+        assert exchange_payload["candidate"]["vacancy_label"] == "Менеджер по работе с клиентами"
 
         profile = client.post(
             "/api/candidate/profile",
@@ -191,7 +308,10 @@ def test_candidate_portal_end_to_end_flow(monkeypatch):
             json={"slot_id": seeded["slot_id"]},
         )
         assert reserve.status_code == 200
-        assert reserve.json()["journey"]["slots"]["active"]["status"] == SlotStatus.PENDING
+        reserve_payload = reserve.json()
+        assert reserve_payload["journey"]["slots"]["active"]["status"] == SlotStatus.PENDING
+        assert reserve_payload["journey"]["next_step_at"] == reserve_payload["journey"]["slots"]["active"]["start_utc"]
+        assert reserve_payload["journey"]["next_step_timezone"] == "Europe/Moscow"
 
         confirm = client.post("/api/candidate/slots/confirm")
         assert confirm.status_code == 200

@@ -35,6 +35,7 @@ const CandidateChatMessageCard = memo(function CandidateChatMessageCard({
 
 type CandidateChatDrawerProps = {
   candidateId: number
+  channelLabel: string
   ai: CandidateAiController
   isOpen: boolean
   onClose: () => void
@@ -43,6 +44,7 @@ type CandidateChatDrawerProps = {
 
 export function CandidateChatDrawer({
   candidateId,
+  channelLabel,
   ai,
   isOpen,
   onClose,
@@ -151,7 +153,7 @@ export function CandidateChatDrawer({
               <header className="candidate-chat-drawer__header">
                 <div>
                   <h3 className="candidate-chat-drawer__title">Чат с кандидатом</h3>
-                  <p className="subtitle">Ответ будет отправлен через Telegram</p>
+                  <p className="subtitle">Ответ будет отправлен через {channelLabel}</p>
                 </div>
                 <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
               </header>

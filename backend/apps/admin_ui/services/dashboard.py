@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import date, datetime, timedelta, timezone
+import logging
 import math
+import time
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import (
@@ -48,13 +49,17 @@ from backend.core.scoping import scope_candidates, scope_slots, scope_cities
 from backend.apps.admin_ui.security import Principal
 from backend.core.cache import CacheTTL, get_cache
 from backend.apps.admin_ui.perf.cache import keys as cache_keys
+from backend.apps.admin_ui.perf.cache.policy import HOT_READ_POLICY
 from backend.apps.admin_ui.perf.cache.readthrough import get_or_compute
+from backend.apps.admin_ui.perf.metrics.cache import summarize_cache
+from backend.apps.admin_ui.perf.metrics.context import get_context
 from backend.apps.admin_ui.services.reschedule_intents import (
+    BotStateRescheduleLookup,
     RescheduleIntent,
-    get_bot_state_reschedule_intent,
+    get_bot_state_reschedule_intent_map,
     get_reschedule_intent_map,
 )
-from backend.core.ai.service import build_candidate_live_score_snapshot
+from backend.core.ai.service import schedule_warm_candidates_ai_outputs
 
 __all__ = [
     "dashboard_counts",
@@ -78,6 +83,7 @@ __all__ = [
 ]
 
 _candidate_status_service = CandidateStatusService()
+logger = logging.getLogger(__name__)
 
 STATUS_COLOR_TO_CLASS = {
     "success": "new",
@@ -137,7 +143,12 @@ FUNNEL_STEP_DEFS: List[Dict[str, object]] = [
 ]
 
 FUNNEL_DROP_TTL_HOURS = 24
-_DASHBOARD_CACHE_TTL = timedelta(seconds=2)
+DASHBOARD_COUNTS_CACHE_TTL_SECONDS = HOT_READ_POLICY.ttl_seconds
+DASHBOARD_COUNTS_CACHE_STALE_SECONDS = HOT_READ_POLICY.stale_seconds
+DASHBOARD_INCOMING_CACHE_TTL_SECONDS = 60.0
+DASHBOARD_INCOMING_CACHE_STALE_SECONDS = 180.0
+INCOMING_AI_WARM_BUDGET = 10
+INCOMING_SLOW_WARNING_MS = 1500.0
 WAITING_CANDIDATES_MAX_LIMIT = 100
 WAITING_CANDIDATES_DEFAULT_LIMIT = WAITING_CANDIDATES_MAX_LIMIT
 
@@ -261,8 +272,8 @@ async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, o
     return await get_or_compute(
         cache_key,
         expected_type=dict,
-        ttl_seconds=_DASHBOARD_CACHE_TTL.total_seconds(),
-        stale_seconds=10.0,
+        ttl_seconds=DASHBOARD_COUNTS_CACHE_TTL_SECONDS,
+        stale_seconds=DASHBOARD_COUNTS_CACHE_STALE_SECONDS,
         compute=_compute,
     )
 
@@ -292,11 +303,24 @@ async def get_waiting_candidates(
     """Return candidates waiting for manual slot assignment (prioritized)."""
     normalized_limit = normalize_waiting_candidates_limit(limit)
     cache_key = cache_keys.dashboard_incoming(principal=principal, limit=normalized_limit).value
+    total_started = time.perf_counter()
+    perf_snapshot: dict[str, object] | None = None
+
     async def _compute() -> List[Dict[str, object]]:
+        nonlocal perf_snapshot
         last_message_map: Dict[int, dict] = {}
         recruiter_map: Dict[int, str] = {}
         reschedule_intent_map: Dict[str, RescheduleIntent] = {}
         ai_fit_map: Dict[int, Dict[str, Optional[object]]] = {}
+        bot_state_reschedule_map: Dict[int, RescheduleIntent] = {}
+        query_users_count = 0
+        ai_cached_count = 0
+        ai_missing_count = 0
+        ai_warm_scheduled_count = 0
+        bot_state_candidate_count = 0
+        base_sql_started = time.perf_counter()
+        ai_cache_ms = 0.0
+        bot_state_ms = 0.0
         async with async_session() as session:
             recruiter_city_ids: set[int] = set()
             query_limit = normalized_limit
@@ -341,6 +365,7 @@ async def get_waiting_candidates(
                 stmt = scope_candidates(stmt, principal)
             result = await session.execute(stmt)
             users = result.all()
+            query_users_count = len(users)
 
             user_ids = [int(row.id) for row in users]
             candidate_ids = [str(row.candidate_id) for row in users if row.candidate_id]
@@ -373,6 +398,7 @@ async def get_waiting_candidates(
                         "created_at": created_at,
                     }
 
+                ai_cache_started = time.perf_counter()
                 ai_sq = (
                     select(
                         AIOutput.scope_id.label("candidate_id"),
@@ -432,6 +458,7 @@ async def get_waiting_candidates(
                         "recommendation": recommendation,
                         "risk_hint": risk_hint,
                     }
+                ai_cache_ms = (time.perf_counter() - ai_cache_started) * 1000
 
             if candidate_ids:
                 reschedule_intent_map = await get_reschedule_intent_map(
@@ -446,32 +473,29 @@ async def get_waiting_candidates(
                 ).scalars().all()
                 recruiter_map = {rec.id: rec.name for rec in recruiters}
 
+            pending_bot_state_candidates = [
+                BotStateRescheduleLookup(
+                    user_id=int(row.id),
+                    candidate_id=str(row.candidate_id) if row.candidate_id else None,
+                    candidate_tg_id=row.telegram_user_id or row.telegram_id,
+                )
+                for row in users
+                if row.candidate_status == CandidateStatus.SLOT_PENDING
+                and (row.telegram_user_id or row.telegram_id)
+            ]
+            bot_state_candidate_count = len(pending_bot_state_candidates)
+            if pending_bot_state_candidates:
+                bot_state_started = time.perf_counter()
+                bot_state_reschedule_map = await get_bot_state_reschedule_intent_map(
+                    session,
+                    candidates=pending_bot_state_candidates,
+                )
+                bot_state_ms = (time.perf_counter() - bot_state_started) * 1000
+
+        base_sql_ms = (time.perf_counter() - base_sql_started) * 1000
+
         now = datetime.now(timezone.utc)
         tz_cache: Dict[str, str] = {}
-
-        missing_ai_candidate_ids = [
-            int(row.id)
-            for row in users
-            if int(row.id) not in ai_fit_map
-        ]
-        if missing_ai_candidate_ids:
-            live_snapshots = await asyncio.gather(
-                *[
-                    build_candidate_live_score_snapshot(int(candidate_id), principal=principal)
-                    for candidate_id in missing_ai_candidate_ids
-                ],
-                return_exceptions=True,
-            )
-            for candidate_id, snapshot in zip(missing_ai_candidate_ids, live_snapshots, strict=False):
-                if isinstance(snapshot, Exception):
-                    continue
-                ai_fit_map[int(candidate_id)] = {
-                    "score": snapshot.get("score"),
-                    "level": snapshot.get("level"),
-                    "updated_at": None,
-                    "recommendation": snapshot.get("recommendation"),
-                    "risk_hint": snapshot.get("risk_hint"),
-                }
 
         async def _resolve_city(city_label: Optional[str]) -> tuple[str, Optional[int]]:
             key = (city_label or "").strip().lower()
@@ -484,6 +508,7 @@ async def get_waiting_candidates(
             tz_cache[key] = (tz_value, city_id)
             return tz_cache[key]
 
+        serialization_started = time.perf_counter()
         waiting_rows: List[Dict[str, object]] = []
         for (
             user_id,
@@ -534,11 +559,7 @@ async def get_waiting_candidates(
                 and status_slug == CandidateStatus.SLOT_PENDING.value
                 and (user_telegram_user_id or user_telegram_id)
             ):
-                reschedule_intent = await get_bot_state_reschedule_intent(
-                    session,
-                    candidate_id=str(user_candidate_id) if user_candidate_id else None,
-                    candidate_tg_id=user_telegram_user_id or user_telegram_id,
-                )
+                reschedule_intent = bot_state_reschedule_map.get(int(user_id))
             requested_another_time = bool(reschedule_intent and reschedule_intent.requested)
             if requested_another_time:
                 incoming_substatus = "requested_other_time"
@@ -630,15 +651,65 @@ async def get_waiting_candidates(
             row["priority_score"] = idx
             row.pop("waiting_since_dt", None)
 
-        return prioritized[:normalized_limit]
+        final_rows = prioritized[:normalized_limit]
+        ai_cached_count = sum(1 for row in final_rows if row.get("ai_relevance_score") is not None or row.get("ai_relevance_level"))
+        ai_missing_candidate_ids = [
+            int(row["id"])
+            for row in final_rows
+            if row.get("ai_relevance_score") is None
+            and not row.get("ai_relevance_level")
+        ]
+        ai_missing_count = len(ai_missing_candidate_ids)
+        ai_warm_candidate_ids = ai_missing_candidate_ids[:INCOMING_AI_WARM_BUDGET]
+        if ai_warm_candidate_ids:
+            schedule_warm_candidates_ai_outputs(ai_warm_candidate_ids, principal=principal, refresh=False)
+            ai_warm_scheduled_count = len(ai_warm_candidate_ids)
 
-    return await get_or_compute(
+        serialization_ms = (time.perf_counter() - serialization_started) * 1000
+        perf_snapshot = {
+            "candidate_count": len(final_rows),
+            "query_users_count": query_users_count,
+            "ai_cached_count": ai_cached_count,
+            "ai_missing_count": ai_missing_count,
+            "ai_warm_scheduled_count": ai_warm_scheduled_count,
+            "reschedule_batch_count": bot_state_candidate_count,
+            "base_sql_ms": round(base_sql_ms, 1),
+            "ai_cache_ms": round(ai_cache_ms, 1),
+            "bot_state_batch_ms": round(bot_state_ms, 1),
+            "serialization_ms": round(serialization_ms, 1),
+        }
+        return final_rows
+
+    payload = await get_or_compute(
         cache_key,
         expected_type=list,
-        ttl_seconds=_DASHBOARD_CACHE_TTL.total_seconds(),
-        stale_seconds=10.0,
+        ttl_seconds=DASHBOARD_INCOMING_CACHE_TTL_SECONDS,
+        stale_seconds=DASHBOARD_INCOMING_CACHE_STALE_SECONDS,
         compute=_compute,
     )
+    total_duration_ms = (time.perf_counter() - total_started) * 1000
+    cache_status = summarize_cache(get_context())
+    ai_missing_count = int(perf_snapshot.get("ai_missing_count", 0)) if perf_snapshot else 0
+    should_log = (
+        perf_snapshot is not None
+        or cache_status == "stale"
+        or total_duration_ms >= INCOMING_SLOW_WARNING_MS
+    )
+    if should_log:
+        level = logging.WARNING if (
+            total_duration_ms >= INCOMING_SLOW_WARNING_MS
+            or ai_missing_count > INCOMING_AI_WARM_BUDGET
+        ) else logging.INFO
+        logger.log(
+            level,
+            "dashboard.incoming.profile",
+            extra={
+                "cache_status": cache_status,
+                "duration_ms": round(total_duration_ms, 1),
+                **(perf_snapshot or {"candidate_count": len(payload)}),
+            },
+        )
+    return payload
 
 
 def _format_delta(delta: timedelta) -> str:

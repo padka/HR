@@ -40,7 +40,13 @@ async def _async_post(app, path: str, data: dict):
         base_url="http://testserver",
         auth=("admin", "admin"),
     ) as client:
-        return await client.post(path, data=data, follow_redirects=False)
+        csrf = await client.get("/api/csrf")
+        assert csrf.status_code == 200
+        token = (csrf.json() or {}).get("token") or ""
+        assert token
+        payload = dict(data)
+        payload["csrf_token"] = str(token)
+        return await client.post(path, data=payload, follow_redirects=False)
 
 
 @pytest.mark.asyncio

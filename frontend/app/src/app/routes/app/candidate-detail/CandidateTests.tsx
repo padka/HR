@@ -43,17 +43,17 @@ export function CandidateTests({
     <div
       id="tests"
       ref={sectionRef}
-      className="glass panel app-page__section"
+      className="cd-profile__section"
       data-testid="candidate-tests-section"
     >
-      <div className="cd-section-header app-page__section-head">
+      <div className="cd-section-header">
         <h2 className="cd-section-title">Тесты</h2>
       </div>
       {testSections.length === 0 && <p className="subtitle">Данные по тестам отсутствуют.</p>}
       {testSections.length > 0 && (
         <div className="cd-tests-grid">
           {testSections.map((section) => (
-            <div key={section.key} className="cd-test-card glass">
+            <div key={section.key} className="cd-test-card">
               <div className="cd-test-card__header">
                 <div className="cd-test-card__heading">
                   <span className="cd-test-card__title">{section.title}</span>

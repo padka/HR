@@ -41,6 +41,7 @@ async def test_main_closes_bot_session_on_startup_failure(monkeypatch, tmp_path:
         redis_url = ""
         environment = "development"
         data_dir = tmp_path
+        bot_notification_runtime_enabled = True
 
     class DummySession:
         def __init__(self) -> None:
@@ -96,3 +97,51 @@ async def test_main_closes_bot_session_on_startup_failure(monkeypatch, tmp_path:
     assert reminder.stopped is True
     assert notification.stopped is True
     assert bot.session.closed is True
+
+
+@pytest.mark.asyncio
+async def test_main_skips_notification_runtime_when_disabled(monkeypatch, tmp_path: Path):
+    class DummySettings:
+        redis_url = ""
+        environment = "development"
+        data_dir = tmp_path
+        bot_notification_runtime_enabled = False
+
+    class DummySession:
+        async def close(self) -> None:
+            return None
+
+    class DummyBot:
+        def __init__(self) -> None:
+            self.session = DummySession()
+
+        async def delete_webhook(self, *args, **kwargs):
+            raise RuntimeError("stop-after-start")
+
+    class DummyReminder:
+        async def shutdown(self) -> None:
+            return None
+
+    class DummyNotification:
+        def __init__(self) -> None:
+            self.started = False
+
+        def start(self) -> None:
+            self.started = True
+
+        async def shutdown(self) -> None:
+            return None
+
+    notification = DummyNotification()
+
+    async def fake_create_application():
+        return DummyBot(), SimpleNamespace(start_polling=lambda _bot: None), None, DummyReminder(), notification
+
+    monkeypatch.setattr(bot_app, "get_settings", lambda: DummySettings())
+    monkeypatch.setattr(bot_app, "create_application", fake_create_application)
+    monkeypatch.setattr(bot_app, "reset_bootstrap_notification_service", lambda: None)
+
+    with pytest.raises(RuntimeError, match="stop-after-start"):
+        await bot_app.main()
+
+    assert notification.started is False

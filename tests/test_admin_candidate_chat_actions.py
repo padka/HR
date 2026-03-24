@@ -91,6 +91,7 @@ def admin_app(monkeypatch) -> Any:
     monkeypatch.setenv("ADMIN_PASSWORD", "admin")
     monkeypatch.setenv("ALLOW_LEGACY_BASIC", "1")
     monkeypatch.setenv("LOG_FILE", "data/logs/test_app.log")
+    monkeypatch.setenv("MAX_BOT_LINK_BASE", "https://max.ru/recruitsmartbot")
 
     from backend.core import settings as settings_module
 
@@ -114,6 +115,14 @@ async def _async_request(app, method: str, path: str, **kwargs) -> Any:
     def _call() -> Any:
         with TestClient(app) as client:
             client.auth = ("admin", "admin")
+            headers = dict(kwargs.pop("headers", {}) or {})
+            if method.upper() not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+                header_keys = {key.lower() for key in headers}
+                if "x-csrf-token" not in header_keys:
+                    csrf = client.get("/api/csrf").json()["token"]
+                    headers["x-csrf-token"] = csrf
+            if headers:
+                kwargs["headers"] = headers
             return client.request(method, path, **kwargs)
 
     return await asyncio.to_thread(_call)
@@ -133,6 +142,14 @@ async def _async_request_with_principal(
         try:
             with TestClient(app) as client:
                 client.auth = ("admin", "admin")
+                headers = dict(kwargs.pop("headers", {}) or {})
+                if method.upper() not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+                    header_keys = {key.lower() for key in headers}
+                    if "x-csrf-token" not in header_keys:
+                        csrf = client.get("/api/csrf").json()["token"]
+                        headers["x-csrf-token"] = csrf
+                if headers:
+                    kwargs["headers"] = headers
                 return client.request(method, path, **kwargs)
         finally:
             app.dependency_overrides.pop(require_principal, None)
@@ -231,6 +248,32 @@ async def test_chat_retry_marks_as_sent(admin_app) -> None:
     assert retry_response.status_code == 200
     result = retry_response.json()
     assert result["message"]["status"] == ChatMessageStatus.SENT.value
+
+
+@pytest.mark.asyncio
+async def test_generate_max_link(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90122,
+        fio="MAX Link Tester",
+        city="Москва",
+        username="max_link_tester",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/channels/max-link",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["public_link"] == "https://max.ru/recruitsmartbot"
+    assert payload["invite_token"]
+    assert payload["deep_link"].startswith("https://max.ru/recruitsmartbot?start=")
+    assert payload["invite_token"] in payload["deep_link"]
+    assert payload["mini_app_link"].startswith("https://max.ru/recruitsmartbot?startapp=")
+    assert payload["invite_token"] not in payload["mini_app_link"]
 
 
 @pytest.mark.asyncio

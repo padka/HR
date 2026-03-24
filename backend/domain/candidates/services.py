@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, List, Optional, Sequence
 
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.apps.admin_ui.security import admin_principal
 from backend.core.db import async_session
@@ -392,6 +393,49 @@ async def create_candidate_invite_token(candidate_id: str) -> CandidateInviteTok
             session.add(invite)
         await session.refresh(invite)
         return invite
+
+
+async def get_latest_candidate_invite_token(
+    session: AsyncSession,
+    candidate_id: str,
+) -> Optional[CandidateInviteToken]:
+    if not candidate_id:
+        return None
+    return await session.scalar(
+        select(CandidateInviteToken)
+        .where(CandidateInviteToken.candidate_id == candidate_id)
+        .order_by(CandidateInviteToken.created_at.desc(), CandidateInviteToken.id.desc())
+        .limit(1)
+    )
+
+
+async def ensure_candidate_invite_token(
+    session: AsyncSession,
+    candidate_id: str,
+) -> CandidateInviteToken:
+    existing = await get_latest_candidate_invite_token(session, candidate_id)
+    if existing is not None:
+        return existing
+
+    token_value = _generate_invite_token()
+    for _ in range(5):
+        exists = await session.scalar(
+            select(func.count()).where(
+                CandidateInviteToken.token == token_value
+            )
+        )
+        if not exists:
+            break
+        token_value = _generate_invite_token()
+
+    invite = CandidateInviteToken(
+        candidate_id=candidate_id,
+        token=token_value,
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(invite)
+    await session.flush()
+    return invite
 
 
 async def bind_telegram_to_candidate(

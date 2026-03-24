@@ -21,7 +21,7 @@ from backend.domain.candidates.portal_service import (
     get_candidate_portal_user,
     get_latest_test1_result,
     is_candidate_portal_session_valid,
-    parse_candidate_portal_token,
+    resolve_candidate_portal_access_token,
     reserve_candidate_portal_slot,
     reschedule_candidate_portal_slot,
     resolve_candidate_portal_user,
@@ -34,6 +34,11 @@ from backend.domain.candidates.portal_service import (
 
 router = APIRouter(prefix="/api/candidate", tags=["candidate-portal"])
 PUBLIC_PORTAL_MUTATION_LIMIT = "5/minute"
+PORTAL_TOKEN_HEADERS = (
+    "x-candidate-portal-token",
+    "x-candidate-portal-access-token",
+    "x-candidate-portal-session-token",
+)
 
 
 class CandidatePortalExchangePayload(BaseModel):
@@ -66,21 +71,59 @@ class CandidatePortalMessagePayload(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
 
-def _candidate_session_payload(request: Request) -> dict[str, Any]:
+def _request_portal_token(request: Request) -> str:
+    for header in PORTAL_TOKEN_HEADERS:
+        value = (request.headers.get(header) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+async def _candidate_session_payload(request: Request) -> dict[str, Any]:
     payload = request.session.get(PORTAL_SESSION_KEY)
     if not is_candidate_portal_session_valid(payload):
         request.session.pop(PORTAL_SESSION_KEY, None)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"message": "Сессия портала истекла. Откройте ссылку заново."},
-        )
+        portal_token = _request_portal_token(request)
+        if not portal_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"message": "Сессия портала истекла. Откройте ссылку заново."},
+            )
+
+        async with async_session() as session:
+            async with session.begin():
+                try:
+                    access = await resolve_candidate_portal_access_token(session, portal_token)
+                except CandidatePortalAuthError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={"message": str(exc)},
+                    ) from exc
+                candidate = await resolve_candidate_portal_user(session, access)
+                if candidate is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={"message": "Кандидатская сессия не найдена."},
+                    )
+                await ensure_candidate_portal_session(
+                    session,
+                    candidate,
+                    entry_channel=access.entry_channel,
+                )
+                next_payload = {
+                    "candidate_id": candidate.id,
+                    "entry_channel": access.entry_channel,
+                    "last_seen_at": candidate.last_activity.timestamp() if candidate.last_activity else 0,
+                }
+        request.session[PORTAL_SESSION_KEY] = next_payload
+        return next_payload
     next_payload = touch_candidate_portal_session(dict(payload))
     request.session[PORTAL_SESSION_KEY] = next_payload
     return next_payload
 
 
 async def _load_candidate(request: Request):
-    payload = _candidate_session_payload(request)
+    payload = await _candidate_session_payload(request)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(payload["candidate_id"]))
         if candidate is None:
@@ -105,16 +148,15 @@ async def exchange_candidate_portal_session(
     request: Request,
     payload: CandidatePortalExchangePayload,
 ):
-    try:
-        access = parse_candidate_portal_token(payload.token)
-    except CandidatePortalAuthError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"message": str(exc)},
-        ) from exc
-
     async with async_session() as session:
         async with session.begin():
+            try:
+                access = await resolve_candidate_portal_access_token(session, payload.token)
+            except CandidatePortalAuthError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={"message": str(exc)},
+                ) from exc
             candidate = await resolve_candidate_portal_user(session, access)
             journey = await ensure_candidate_portal_session(
                 session,
@@ -157,7 +199,7 @@ async def logout_candidate_portal_session(request: Request) -> Response:
 
 @router.get("/journey")
 async def get_candidate_portal_journey(request: Request):
-    payload = _candidate_session_payload(request)
+    payload = await _candidate_session_payload(request)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(payload["candidate_id"]))
@@ -180,7 +222,7 @@ async def save_candidate_portal_profile(
     request: Request,
     payload: CandidatePortalProfilePayload,
 ):
-    session_payload = _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
@@ -215,7 +257,7 @@ async def save_candidate_portal_screening_draft(
     request: Request,
     payload: CandidatePortalScreeningPayload,
 ):
-    session_payload = _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
@@ -244,7 +286,7 @@ async def complete_candidate_portal_screening(
     request: Request,
     payload: CandidatePortalScreeningPayload,
 ):
-    session_payload = _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
@@ -277,7 +319,7 @@ async def reserve_candidate_portal_slot_route(
     request: Request,
     payload: CandidatePortalReservePayload,
 ):
-    session_payload = _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
@@ -322,7 +364,7 @@ async def reserve_candidate_portal_slot_route(
 @router.post("/slots/confirm")
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def confirm_candidate_portal_slot_route(request: Request):
-    session_payload = _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
@@ -365,7 +407,7 @@ async def confirm_candidate_portal_slot_route(request: Request):
 @router.post("/slots/cancel")
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def cancel_candidate_portal_slot_route(request: Request):
-    session_payload = _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
@@ -411,7 +453,7 @@ async def reschedule_candidate_portal_slot_route(
     request: Request,
     payload: CandidatePortalReschedulePayload,
 ):
-    session_payload = _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
@@ -458,7 +500,7 @@ async def send_candidate_portal_message_route(
     request: Request,
     payload: CandidatePortalMessagePayload,
 ):
-    session_payload = _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))

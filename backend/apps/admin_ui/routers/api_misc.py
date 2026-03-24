@@ -3,10 +3,11 @@ import secrets
 from datetime import date as date_type, datetime, time, timezone, timedelta
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi.encoders import jsonable_encoder
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select, or_
@@ -43,6 +44,7 @@ from backend.apps.admin_ui.services.candidates import (
     api_candidate_detail_payload,
     assign_candidate_recruiter,
     delete_candidate,
+    generate_candidate_invite_token,
     get_candidate_cohort_comparison,
     get_candidate_detail,
     list_candidates,
@@ -65,6 +67,10 @@ from backend.apps.admin_ui.services.candidate_chat_threads import (
     wait_for_thread_updates as wait_candidate_chat_updates,
 )
 from backend.apps.admin_ui.services.dashboard import (
+    DASHBOARD_COUNTS_CACHE_STALE_SECONDS,
+    DASHBOARD_COUNTS_CACHE_TTL_SECONDS,
+    DASHBOARD_INCOMING_CACHE_STALE_SECONDS,
+    DASHBOARD_INCOMING_CACHE_TTL_SECONDS,
     WAITING_CANDIDATES_DEFAULT_LIMIT,
     dashboard_counts,
     get_bot_funnel_stats,
@@ -83,6 +89,10 @@ from backend.apps.admin_ui.services.recruiter_plan import (
     add_recruiter_plan_entry,
     delete_recruiter_plan_entry,
     get_recruiter_plan,
+)
+from backend.domain.candidates.portal_service import (
+    build_candidate_max_mini_app_url,
+    sign_candidate_portal_token,
 )
 from backend.apps.admin_ui.services.slots import (
     assign_existing_candidate_slot_silent,
@@ -298,8 +308,8 @@ async def api_dashboard_summary(
         cached_payload = await get_cached(
             cache_key,
             expected_type=dict,
-            ttl_seconds=2.0,
-            stale_seconds=10.0,
+            ttl_seconds=DASHBOARD_COUNTS_CACHE_TTL_SECONDS,
+            stale_seconds=DASHBOARD_COUNTS_CACHE_STALE_SECONDS,
         )
         if cached_payload is not None and isinstance(cached_payload[0], dict):
             return JSONResponse(cached_payload[0])
@@ -321,8 +331,8 @@ async def api_dashboard_incoming(
         cached_payload = await get_cached(
             cache_key,
             expected_type=list,
-            ttl_seconds=2.0,
-            stale_seconds=10.0,
+            ttl_seconds=DASHBOARD_INCOMING_CACHE_TTL_SECONDS,
+            stale_seconds=DASHBOARD_INCOMING_CACHE_STALE_SECONDS,
         )
         if cached_payload is not None and isinstance(cached_payload[0], list):
             return JSONResponse({"items": cached_payload[0]})
@@ -2297,6 +2307,47 @@ async def api_chat_retry(
     await _get_accessible_candidate(candidate_id, principal)
     result = await retry_chat_message(candidate_id, message_id, bot_service=bot_service)
     return JSONResponse(result)
+
+
+@router.post("/candidates/{candidate_id}/channels/max-link")
+async def api_candidate_max_link(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+    _: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    candidate = await _get_accessible_candidate(candidate_id, principal)
+    settings = get_settings()
+    link_base = str(getattr(settings, "max_bot_link_base", "") or "").strip()
+    if not link_base:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": "MAX_BOT_LINK_BASE не настроен"},
+        )
+
+    invite_token = await generate_candidate_invite_token(candidate_id, principal=principal)
+    if not invite_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Не удалось выпустить MAX-ссылку"},
+        )
+
+    separator = "&" if "?" in link_base else "?"
+    deep_link = f"{link_base}{separator}start={quote(invite_token, safe='')}"
+    mini_app_token = sign_candidate_portal_token(
+        candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
+        telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
+        entry_channel="max",
+        source_channel="max_app",
+    )
+    mini_app_link = build_candidate_max_mini_app_url(start_param=mini_app_token)
+    return JSONResponse(
+        {
+            "public_link": link_base,
+            "invite_token": invite_token,
+            "deep_link": deep_link,
+            "mini_app_link": mini_app_link,
+        }
+    )
 
 
 @router.get("/candidates/{candidate_id}")

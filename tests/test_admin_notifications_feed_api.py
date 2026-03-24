@@ -12,6 +12,14 @@ class _DummyIntegration:
         return None
 
 
+def _csrf(client: TestClient) -> str:
+    resp = client.get("/api/csrf", auth=("admin", "admin"))
+    assert resp.status_code == 200
+    token = (resp.json() or {}).get("token") or ""
+    assert token
+    return str(token)
+
+
 @pytest.fixture
 def notifications_feed_app(monkeypatch):
     async def fake_setup(app) -> _DummyIntegration:
@@ -213,10 +221,11 @@ def test_notifications_retry_and_cancel_endpoints(notifications_feed_app):
     failed_id, pending_id = _run(_seed())
 
     with TestClient(notifications_feed_app) as client:
+        token = _csrf(client)
         retry_resp = client.post(
             f"/api/notifications/{failed_id}/retry",
             auth=("admin", "admin"),
-            headers={"Accept": "application/json"},
+            headers={"Accept": "application/json", "x-csrf-token": token},
         )
         assert retry_resp.status_code == 200
         assert retry_resp.json()["ok"] is True
@@ -224,7 +233,7 @@ def test_notifications_retry_and_cancel_endpoints(notifications_feed_app):
         cancel_resp = client.post(
             f"/api/notifications/{pending_id}/cancel",
             auth=("admin", "admin"),
-            headers={"Accept": "application/json"},
+            headers={"Accept": "application/json", "x-csrf-token": token},
         )
         assert cancel_resp.status_code == 200
         assert cancel_resp.json()["ok"] is True

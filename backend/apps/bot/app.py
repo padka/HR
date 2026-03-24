@@ -183,9 +183,13 @@ async def main() -> None:
 
     try:
         bot, dispatcher, _, reminder_service, notification_service = await create_application()
-        # Start notification service to process outbox queue
-        notification_service.start()
-        logging.info("✓ Notification service started")
+        # Start notification service to process outbox queue only in runtimes
+        # that explicitly own delivery responsibilities.
+        if settings.bot_notification_runtime_enabled:
+            notification_service.start()
+            logging.info("✓ Notification service started")
+        else:
+            logging.info("Notification service disabled in bot runtime by flag")
 
         async def _handle_content_update(event: ContentUpdateEvent) -> None:
             if event.kind == KIND_QUESTIONS_CHANGED:

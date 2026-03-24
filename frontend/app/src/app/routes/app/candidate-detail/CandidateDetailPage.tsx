@@ -6,6 +6,7 @@ import type { CandidateAction } from '@/api/services/candidates'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import CandidatePipeline from '@/app/components/CandidatePipeline/CandidatePipeline'
 import InterviewScript from '@/app/components/InterviewScript/InterviewScript'
+import { RecruitmentScript, ScriptFab } from '@/app/components/RecruitmentScript/RecruitmentScript'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 import { useCandidateAi, useCandidateActions, useCandidateDetail } from './candidate-detail.api'
@@ -42,12 +43,13 @@ export function CandidateDetailPage() {
   const [isInsightsOpen, setIsInsightsOpen] = useState(false)
   const [isInterviewScriptOpen, setIsInterviewScriptOpen] = useState(false)
   const [chatDraftSeed, setChatDraftSeed] = useState<{ text: string; nonce: number } | null>(null)
+  const [isRecruitmentScriptOpen, setIsRecruitmentScriptOpen] = useState(false)
 
   const pipelineActionsRef = useRef<HTMLDivElement | null>(null)
   const testsSectionRef = useRef<HTMLDivElement | null>(null)
 
   const detailQuery = useCandidateDetail(candidateId)
-  const { actionMutation } = useCandidateActions(candidateId)
+  const { actionMutation, createMaxLinkMutation } = useCandidateActions(candidateId)
   const ai = useCandidateAi(candidateId)
 
   const detail = detailQuery.data
@@ -64,6 +66,7 @@ export function CandidateDetailPage() {
   const pendingSlotRequest = formatRescheduleRequest(detail?.pending_slot_request || candidateJourney?.pending_slot_request)
   const finalOutcomeDisplay = resolveFinalOutcomeDisplay(candidateJourney, detail?.final_outcome)
   const finalOutcomeReason = detail?.final_outcome_reason || candidateJourney?.final_outcome_reason || null
+  const chatChannelLabel = detail?.messenger_platform === 'max' && detail?.max_user_id ? 'MAX' : 'Telegram'
 
   const pipelineData = useMemo(() => {
     if (!detail) return null
@@ -203,6 +206,31 @@ export function CandidateDetailPage() {
     setIsChatOpen(true)
   }
 
+  const handleCopyMaxLink = () => {
+    createMaxLinkMutation.mutate(undefined, {
+      onSuccess: async (payload) => {
+        const maxLink = String(payload?.mini_app_link || payload?.deep_link || payload?.public_link || '').trim()
+        if (!maxLink) {
+          setActionMessage('MAX-ссылка не была получена')
+          return
+        }
+        try {
+          if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(maxLink)
+            setActionMessage('MAX-бот ссылка скопирована')
+            return
+          }
+        } catch {
+          // Fall through to inline fallback.
+        }
+        setActionMessage(`MAX-ссылка: ${maxLink}`)
+      },
+      onError: (error) => {
+        setActionMessage((error as Error).message)
+      },
+    })
+  }
+
   const showProfileSection = !isMobile || mobileTab === 'profile'
   const showTestsSection = !isMobile || mobileTab === 'tests'
 
@@ -253,8 +281,8 @@ export function CandidateDetailPage() {
               )}
 
               {showProfileSection && (
-                <>
-                  <div className="glass panel cd-header app-page__hero" data-testid="candidate-header">
+                <div className="cd-profile glass panel" data-testid="candidate-profile">
+                  <div className="cd-profile__header" data-testid="candidate-header">
                     <CandidateHeader
                       candidate={detail}
                       candidateId={candidateId}
@@ -266,39 +294,52 @@ export function CandidateDetailPage() {
                       isAiFetching={ai.summaryQuery.isFetching}
                       onBack={() => navigate({ to: '/app/candidates' })}
                     />
-                    <CandidateActions
-                      candidate={detail}
-                      statusSlug={statusSlug}
-                      test2Section={test2Section}
-                      actionPending={actionMutation.isPending}
-                      actionsRef={pipelineActionsRef}
-                      onOpenChat={handleOpenChat}
-                      onScheduleSlot={() => setShowScheduleSlotModal(true)}
-                      onScheduleIntroDay={() => setShowScheduleIntroDayModal(true)}
-                      onActionClick={handleActionClick}
-                    />
                   </div>
+
+                  <CandidateActions
+                    candidate={detail}
+                    statusSlug={statusSlug}
+                    test2Section={test2Section}
+                    actionPending={actionMutation.isPending}
+                    maxLinkPending={createMaxLinkMutation.isPending}
+                    actionsRef={pipelineActionsRef}
+                    onOpenChat={handleOpenChat}
+                    onCopyMaxLink={handleCopyMaxLink}
+                    onScheduleSlot={() => setShowScheduleSlotModal(true)}
+                    onScheduleIntroDay={() => setShowScheduleIntroDayModal(true)}
+                    onActionClick={handleActionClick}
+                  />
 
                   {pipelineData && (
                     <CandidatePipeline
                       currentStateLabel={candidateJourney?.state_label || statusLabel}
                       stages={pipelineData.stages}
-                      initialStageId={pipelineData.currentStage}
                       isMobile={isMobile}
                     />
                   )}
 
                   {actionMessage && <p className="subtitle subtitle--center cd-action-message">{actionMessage}</p>}
-                </>
+
+                  {showTestsSection && testSections.length > 0 && (
+                    <CandidateTests
+                      testSections={testSections}
+                      sectionRef={testsSectionRef}
+                      onOpenReportPreview={(title, url) => setReportPreview({ title, url })}
+                      onOpenAttemptPreview={(testTitle, attempt) => setAttemptPreview({ testTitle, attempt })}
+                    />
+                  )}
+                </div>
               )}
 
-              {showTestsSection && (
-                <CandidateTests
-                  testSections={testSections}
-                  sectionRef={testsSectionRef}
-                  onOpenReportPreview={(title, url) => setReportPreview({ title, url })}
-                  onOpenAttemptPreview={(testTitle, attempt) => setAttemptPreview({ testTitle, attempt })}
-                />
+              {isMobile && showTestsSection && !showProfileSection && (
+                <div className="cd-profile glass panel">
+                  <CandidateTests
+                    testSections={testSections}
+                    sectionRef={testsSectionRef}
+                    onOpenReportPreview={(title, url) => setReportPreview({ title, url })}
+                    onOpenAttemptPreview={(testTitle, attempt) => setAttemptPreview({ testTitle, attempt })}
+                  />
+                </div>
               )}
             </div>
 
@@ -387,6 +428,7 @@ export function CandidateDetailPage() {
         {isChatOpen && (
           <CandidateChatDrawer
             candidateId={candidateId}
+            channelLabel={chatChannelLabel}
             ai={ai}
             isOpen={isChatOpen}
             onClose={() => {
@@ -395,6 +437,24 @@ export function CandidateDetailPage() {
             }}
             initialDraftText={chatDraftSeed}
           />
+        )}
+
+        {detail && (
+          <>
+            <RecruitmentScript
+              isOpen={isRecruitmentScriptOpen}
+              candidateName={detail.fio || `Кандидат #${candidateId}`}
+              aiData={{
+                test1Section: test1Section || null,
+                aiSummary: ai.summaryQuery.data?.summary || null,
+              }}
+              onClose={() => setIsRecruitmentScriptOpen(false)}
+            />
+            <ScriptFab
+              isOpen={isRecruitmentScriptOpen}
+              onClick={() => setIsRecruitmentScriptOpen((v) => !v)}
+            />
+          </>
         )}
       </div>
     </RoleGuard>

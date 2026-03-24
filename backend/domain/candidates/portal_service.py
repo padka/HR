@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from typing import Any, Optional
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -79,6 +80,53 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _portal_vacancy_label(candidate: User) -> str:
+    desired_position = str(candidate.desired_position or "").strip()
+    if desired_position:
+        return desired_position
+    vacancy_id = str(candidate.hh_vacancy_id or "").strip()
+    if vacancy_id:
+        return f"HH вакансия {vacancy_id}"
+    return "Вакансия уточняется"
+
+
+def _portal_company_name() -> str:
+    settings = get_settings()
+    company_name = str(getattr(settings, "default_company_name", "") or "").strip()
+    return company_name or "Компания"
+
+
+def _portal_company_summary(candidate: User) -> str:
+    company_name = _portal_company_name()
+    vacancy_label = _portal_vacancy_label(candidate)
+    return (
+        f"Вы проходите отбор в {company_name} по вакансии «{vacancy_label}». "
+        "Здесь можно пройти анкету, увидеть текущий этап и время следующего шага, "
+        "а после screening выбрать удобный слот без потери прогресса."
+    )
+
+
+def _portal_company_highlights() -> list[str]:
+    return [
+        "Анкета и прогресс сохраняются автоматически",
+        "Статус и следующий шаг видны в одном месте",
+        "Запись на собеседование доступна из кабинета",
+    ]
+
+
+def _next_step_slot(
+    *,
+    current_step: str,
+    active_slot: Slot | None,
+    available_slots: list[Slot],
+) -> Slot | None:
+    if active_slot is not None and active_slot.start_utc is not None:
+        return active_slot
+    if current_step == "slot_selection" and available_slots:
+        return available_slots[0]
+    return None
+
+
 def sign_candidate_portal_token(
     *,
     candidate_uuid: str | None = None,
@@ -138,12 +186,29 @@ def build_candidate_portal_url(
         entry_channel=entry_channel,
         source_channel=source_channel,
     )
+    encoded_token = quote(str(token).strip(), safe="")
     base = (settings.candidate_portal_public_url or settings.crm_public_url or settings.bot_backend_url or "").rstrip("/")
     if not base:
-        return f"/candidate/start/{token}"
+        return f"/candidate/start?start={encoded_token}"
     if base.endswith("/candidate"):
-        return f"{base}/start/{token}"
-    return f"{base}/candidate/start/{token}"
+        return f"{base}/start?start={encoded_token}"
+    return f"{base}/candidate/start?start={encoded_token}"
+
+
+def build_candidate_max_mini_app_url(
+    *,
+    start_param: str | None = None,
+    invite_token: str | None = None,
+) -> str:
+    settings = get_settings()
+    base = (settings.max_bot_link_base or "").rstrip("/")
+    if not base:
+        return ""
+    token = (start_param or invite_token or "").strip()
+    if not token:
+        return ""
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}startapp={quote(token, safe='')}"
 
 
 def is_candidate_portal_session_valid(payload: object) -> bool:
@@ -218,6 +283,20 @@ async def resolve_candidate_portal_user(
         user.source = access.source_channel
     await session.flush()
     return user
+
+
+async def resolve_candidate_portal_access_token(
+    session: AsyncSession,
+    token: str,
+) -> CandidatePortalAccess:
+    raw_token = (token or "").strip()
+    if not raw_token:
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+
+    try:
+        return parse_candidate_portal_token(raw_token)
+    except CandidatePortalAuthError as signed_exc:
+        raise signed_exc
 
 
 async def get_candidate_portal_user(
@@ -526,6 +605,7 @@ async def build_candidate_portal_journey(
         if current_city is not None
         else []
     )
+    company_name = _portal_company_name()
 
     profile_complete = (
         not _is_placeholder_fio(candidate.fio)
@@ -543,6 +623,16 @@ async def build_candidate_portal_journey(
         current_step = "slot_selection"
     else:
         current_step = "status"
+
+    next_step_slot = _next_step_slot(
+        current_step=current_step,
+        active_slot=active_slot,
+        available_slots=available_slots,
+    )
+    next_step_at = next_step_slot.start_utc.isoformat() if next_step_slot and next_step_slot.start_utc else None
+    next_step_timezone = None
+    if next_step_slot is not None:
+        next_step_timezone = next_step_slot.tz_name or next_step_slot.candidate_tz or DEFAULT_TZ
 
     journey.current_step_key = current_step
     journey.last_activity_at = _utcnow()
@@ -632,6 +722,9 @@ async def build_candidate_portal_journey(
             "phone": candidate.phone,
             "city": candidate.city,
             "city_id": current_city.id if current_city else None,
+            "vacancy_label": _portal_vacancy_label(candidate),
+            "vacancy_reference": str(candidate.hh_vacancy_id or "").strip() or None,
+            "vacancy_position": str(candidate.desired_position or "").strip() or None,
             "status": candidate.candidate_status.value if candidate.candidate_status else None,
             "status_label": STATUS_LABELS.get(candidate.candidate_status) if candidate.candidate_status else None,
             "source": candidate.source,
@@ -641,17 +734,25 @@ async def build_candidate_portal_journey(
                 source_channel="portal",
             ),
         },
+        "company": {
+            "name": company_name,
+            "summary": _portal_company_summary(candidate),
+            "highlights": _portal_company_highlights(),
+        },
         "journey": {
             "session_id": journey.id,
             "journey_key": journey.journey_key,
             "journey_version": journey.journey_version,
             "entry_channel": journey.entry_channel,
             "current_step": current_step,
+            "current_step_label": PORTAL_STEP_LABELS.get(current_step, current_step.title() if current_step else "Статус"),
             "next_action": _next_action_text(
                 current_step=current_step,
                 has_available_slots=has_available_slots,
                 active_slot=active_slot,
             ),
+            "next_step_at": next_step_at,
+            "next_step_timezone": next_step_timezone,
             "steps": [
                 {
                     "key": key,

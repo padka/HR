@@ -36,6 +36,13 @@ class RescheduleIntent:
     source: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class BotStateRescheduleLookup:
+    user_id: int
+    candidate_id: Optional[str]
+    candidate_tg_id: Optional[int]
+
+
 async def get_reschedule_intent_map(
     session: AsyncSession,
     *,
@@ -132,64 +139,130 @@ async def get_bot_state_reschedule_intent(
     if candidate_tg_id is None:
         return None
 
+    results = await get_bot_state_reschedule_intent_map(
+        session,
+        candidates=[
+            BotStateRescheduleLookup(
+                user_id=int(candidate_tg_id),
+                candidate_id=candidate_id,
+                candidate_tg_id=candidate_tg_id,
+            )
+        ],
+    )
+    return results.get(int(candidate_tg_id))
+
+
+async def get_bot_state_reschedule_intent_map(
+    session: AsyncSession,
+    *,
+    candidates: Sequence[BotStateRescheduleLookup],
+) -> dict[int, RescheduleIntent]:
+    normalized: list[BotStateRescheduleLookup] = []
+    seen_user_ids: set[int] = set()
+    tg_ids: list[int] = []
+    for entry in candidates:
+        try:
+            user_id = int(entry.user_id)
+        except (TypeError, ValueError):
+            continue
+        if user_id in seen_user_ids:
+            continue
+        candidate_tg_id = entry.candidate_tg_id
+        if candidate_tg_id is None:
+            continue
+        try:
+            normalized_tg_id = int(candidate_tg_id)
+        except (TypeError, ValueError):
+            continue
+        normalized.append(
+            BotStateRescheduleLookup(
+                user_id=user_id,
+                candidate_id=str(entry.candidate_id) if entry.candidate_id else None,
+                candidate_tg_id=normalized_tg_id,
+            )
+        )
+        seen_user_ids.add(user_id)
+        tg_ids.append(normalized_tg_id)
+
+    if not normalized:
+        return {}
+
     try:
         from backend.apps.bot.services import get_state_manager
     except Exception:
         logger.debug("reschedule_intent.bot_state_import_unavailable", exc_info=True)
-        return None
+        return {}
 
     try:
         state_manager = get_state_manager()
     except Exception:
         logger.debug("reschedule_intent.bot_state_manager_unavailable", exc_info=True)
-        return None
+        return {}
 
     if state_manager is None:
-        return None
+        return {}
 
     try:
-        state = await state_manager.get(int(candidate_tg_id))
+        state_map = await state_manager.get_many(tg_ids)
     except Exception:
         logger.warning(
-            "reschedule_intent.bot_state_lookup_failed",
-            extra={"candidate_tg_id": candidate_tg_id},
+            "reschedule_intent.bot_state_batch_lookup_failed",
+            extra={"candidate_tg_ids": tg_ids[:20], "candidate_count": len(tg_ids)},
             exc_info=True,
         )
-        return None
+        return {}
 
-    if not isinstance(state, dict):
-        return None
-    if state.get("slot_assignment_state") != _STATE_WAITING_DATETIME:
-        return None
+    assignment_refs: dict[int, list[BotStateRescheduleLookup]] = {}
+    for entry in normalized:
+        state = state_map.get(int(entry.candidate_tg_id)) if entry.candidate_tg_id is not None else None
+        if not isinstance(state, dict):
+            continue
+        if state.get("slot_assignment_state") != _STATE_WAITING_DATETIME:
+            continue
+        assignment_id_raw = state.get("slot_assignment_id")
+        try:
+            assignment_id = int(assignment_id_raw)
+        except (TypeError, ValueError):
+            continue
+        assignment_refs.setdefault(assignment_id, []).append(entry)
 
-    assignment_id_raw = state.get("slot_assignment_id")
-    try:
-        assignment_id = int(assignment_id_raw)
-    except (TypeError, ValueError):
-        return None
+    if not assignment_refs:
+        return {}
 
-    assignment = await session.scalar(
-        select(SlotAssignment).where(SlotAssignment.id == assignment_id)
-    )
-    if assignment is None:
-        return None
-    if assignment.status not in _ACTIVE_RESCHEDULE_ASSIGNMENT_STATUSES:
-        return None
-    if candidate_id and assignment.candidate_id not in (None, candidate_id):
-        return None
-    if candidate_tg_id and assignment.candidate_tg_id not in (None, candidate_tg_id):
-        return None
+    assignments = (
+        await session.execute(
+            select(SlotAssignment).where(SlotAssignment.id.in_(tuple(assignment_refs.keys())))
+        )
+    ).scalars().all()
+    assignment_map = {int(assignment.id): assignment for assignment in assignments}
 
-    created_at = assignment.reschedule_requested_at or assignment.offered_at
-    return RescheduleIntent(
-        requested=True,
-        created_at=created_at.isoformat() if created_at else None,
-        requested_start_utc=None,
-        requested_end_utc=None,
-        requested_tz=None,
-        candidate_comment=None,
-        source="bot_state",
-    )
+    result: dict[int, RescheduleIntent] = {}
+    for assignment_id, entries in assignment_refs.items():
+        assignment = assignment_map.get(int(assignment_id))
+        if assignment is None:
+            continue
+        if assignment.status not in _ACTIVE_RESCHEDULE_ASSIGNMENT_STATUSES:
+            continue
+
+        created_at = assignment.reschedule_requested_at or assignment.offered_at
+        intent = RescheduleIntent(
+            requested=True,
+            created_at=created_at.isoformat() if created_at else None,
+            requested_start_utc=None,
+            requested_end_utc=None,
+            requested_tz=None,
+            candidate_comment=None,
+            source="bot_state",
+        )
+
+        for entry in entries:
+            if entry.candidate_id and assignment.candidate_id not in (None, entry.candidate_id):
+                continue
+            if entry.candidate_tg_id and assignment.candidate_tg_id not in (None, entry.candidate_tg_id):
+                continue
+            result[int(entry.user_id)] = intent
+
+    return result
 
 
 async def get_candidate_reschedule_intent(
@@ -211,8 +284,10 @@ async def get_candidate_reschedule_intent(
 
 
 __all__ = [
+    "BotStateRescheduleLookup",
     "RescheduleIntent",
     "get_bot_state_reschedule_intent",
+    "get_bot_state_reschedule_intent_map",
     "get_candidate_reschedule_intent",
     "get_reschedule_intent_map",
 ]

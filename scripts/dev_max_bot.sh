@@ -69,6 +69,7 @@ print(f"  MAX_BOT_ENABLED   : {os.getenv('MAX_BOT_ENABLED', '')}")
 print(f"  MAX_BOT_TOKEN set : {'yes' if os.getenv('MAX_BOT_TOKEN') else 'no'}")
 print(f"  MAX_WEBHOOK_URL   : {os.getenv('MAX_WEBHOOK_URL', '') or 'missing'}")
 print(f"  MAX secret set    : {'yes' if os.getenv('MAX_WEBHOOK_SECRET') else 'no'}")
+print(f"  MAX link base     : {os.getenv('MAX_BOT_LINK_BASE', '') or 'missing'}")
 PY
 
 echo ""

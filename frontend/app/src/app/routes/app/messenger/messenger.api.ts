@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
@@ -23,29 +23,35 @@ type MessengerThreadQueryKey = readonly ['candidate-chat-threads', 'inbox']
 export function useMessengerThreads() {
   const queryClient = useQueryClient()
   const threadQueryKey = useMemo(() => ['candidate-chat-threads', 'inbox'] as const, [])
+  const sinceRef = useRef<string | null>(null)
   const query = useQuery<CandidateChatThreadsPayload>({
     queryKey: threadQueryKey,
     queryFn: () => fetchCandidateChatThreads({ folder: 'inbox', limit: THREAD_LIMIT }),
-    refetchOnWindowFocus: true,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
+
+  useEffect(() => {
+    sinceRef.current = query.data?.latest_event_at || null
+  }, [query.data?.latest_event_at])
 
   useEffect(() => {
     let active = true
     const controller = new AbortController()
-    let since = query.data?.latest_event_at || null
 
     const loop = async () => {
       while (active) {
         try {
           const payload = await waitForCandidateChatThreads({
-            since,
+            since: sinceRef.current,
             timeout: 25,
             folder: 'inbox',
             limit: THREAD_LIMIT,
             signal: controller.signal,
           })
           if (!active) return
-          if (payload.latest_event_at) since = payload.latest_event_at
+          if (payload.latest_event_at) sinceRef.current = payload.latest_event_at
           if (payload.updated) {
             queryClient.setQueryData<CandidateChatThreadsPayload>(threadQueryKey, payload)
           }
@@ -61,40 +67,51 @@ export function useMessengerThreads() {
       active = false
       controller.abort()
     }
-  }, [query.data?.latest_event_at, queryClient, threadQueryKey])
+  }, [queryClient, threadQueryKey])
 
   return { query, threadQueryKey }
 }
 
 export function useMessengerMessages(activeCandidateId: number | null, onThreadsRefresh: () => Promise<unknown>) {
   const queryClient = useQueryClient()
+  const sinceRef = useRef<string | null>(null)
+  const onThreadsRefreshRef = useRef(onThreadsRefresh)
   const query = useQuery<CandidateChatPayload>({
     queryKey: ['candidate-chat', activeCandidateId],
     queryFn: () => fetchCandidateChatMessages(activeCandidateId as number, MESSAGE_LIMIT),
     enabled: Boolean(activeCandidateId),
-    refetchOnWindowFocus: Boolean(activeCandidateId),
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
+
+  useEffect(() => {
+    sinceRef.current = query.data?.latest_message_at || null
+  }, [query.data?.latest_message_at])
+
+  useEffect(() => {
+    onThreadsRefreshRef.current = onThreadsRefresh
+  }, [onThreadsRefresh])
 
   useEffect(() => {
     if (!activeCandidateId) return
     let active = true
     const controller = new AbortController()
-    let since = query.data?.latest_message_at || null
 
     const loop = async () => {
       while (active) {
         try {
           const payload = await waitForCandidateChatMessages(activeCandidateId, {
-            since,
+            since: sinceRef.current,
             timeout: 25,
             limit: MESSAGE_LIMIT,
             signal: controller.signal,
           })
           if (!active) return
-          if (payload.latest_message_at) since = payload.latest_message_at
+          if (payload.latest_message_at) sinceRef.current = payload.latest_message_at
           if (payload.updated) {
             queryClient.setQueryData(['candidate-chat', activeCandidateId], payload)
-            await onThreadsRefresh()
+            await onThreadsRefreshRef.current()
           }
         } catch (error) {
           if (!active || (error as Error).name === 'AbortError') return
@@ -108,7 +125,7 @@ export function useMessengerMessages(activeCandidateId: number | null, onThreads
       active = false
       controller.abort()
     }
-  }, [activeCandidateId, onThreadsRefresh, query.data?.latest_message_at, queryClient])
+  }, [activeCandidateId, queryClient])
 
   return query
 }
@@ -117,6 +134,9 @@ export function useMessengerTemplates() {
   return useQuery<{ items: CandidateChatTemplate[] }>({
     queryKey: ['candidate-chat-templates'],
     queryFn: fetchCandidateChatTemplates,
+    staleTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 }
 

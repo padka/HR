@@ -12,6 +12,8 @@ from typing import Optional, Union
 from backend.domain.candidates.models import User
 from backend.domain.candidates.journey import append_journey_event, stage_for_status, sync_candidate_lifecycle
 from backend.domain.candidates.status import CandidateStatus, can_transition
+from backend.domain.candidates.workflow import WorkflowStatus
+from backend.domain.candidates.workflow import workflow_status_for_candidate_status
 
 
 class CandidateStatusTransitionError(Exception):
@@ -60,6 +62,10 @@ class CandidateStatusService:
 
         candidate.candidate_status = target
         candidate.status_changed_at = self._now()
+        workflow_status = workflow_status_for_candidate_status(target)
+        if workflow_status is None and target is not None:
+            workflow_status = WorkflowStatus.WAITING_FOR_SLOT
+        candidate.workflow_status = workflow_status.value if workflow_status is not None else None
         sync_candidate_lifecycle(
             candidate,
             status=target,

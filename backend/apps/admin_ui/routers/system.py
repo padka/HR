@@ -201,6 +201,16 @@ async def bot_health(request: Request) -> JSONResponse:
         "config": {
             "bot_enabled": enabled,
             "integration_enabled": settings.bot_integration_enabled,
+            "polling_runtime_enabled": getattr(
+                request.app.state,
+                "bot_polling_runtime_enabled",
+                getattr(settings, "bot_polling_runtime_enabled", settings.bot_autostart),
+            ),
+            "notification_runtime_enabled": getattr(
+                request.app.state,
+                "notification_runtime_enabled",
+                getattr(settings, "bot_notification_runtime_enabled", True),
+            ),
         },
         "runtime": {
             "switch_enabled": runtime_enabled,
@@ -229,6 +239,13 @@ async def notifications_health(request: Request) -> JSONResponse:
     bot_runner_task = getattr(request.app.state, "bot_runner_task", None)
     notification_service = getattr(request.app.state, "notification_service", None)
     reminder_service = getattr(request.app.state, "reminder_service", None)
+    notification_runtime_enabled = bool(
+        getattr(
+            request.app.state,
+            "notification_runtime_enabled",
+            getattr(settings, "bot_notification_runtime_enabled", True),
+        )
+    )
     runtime_enabled = (
         switch.is_enabled() if switch else settings.bot_integration_enabled
     )
@@ -239,6 +256,8 @@ async def notifications_health(request: Request) -> JSONResponse:
         disabled_by = "config"
     elif not runtime_enabled:
         disabled_by = "runtime" if switch_source == "runtime" else "operator"
+    elif not notification_runtime_enabled:
+        disabled_by = "runtime_role"
 
     bot_info = {
         "health": bot_service.health_status if bot_service else "missing",
@@ -290,7 +309,7 @@ async def notifications_health(request: Request) -> JSONResponse:
             "fatal_error_at": fatal_error_at,
             "delivery_state": delivery_state,
         }
-        if disabled_by in {"config", "operator"}:
+        if disabled_by in {"config", "operator", "runtime_role"}:
             notification_info["status"] = "disabled"
             notification_info["delivery_state"] = "disabled"
             status_code = 200
@@ -302,12 +321,12 @@ async def notifications_health(request: Request) -> JSONResponse:
             )
             notification_info["status"] = "ok" if is_ok else "error"
             status_code = 200 if is_ok else 503
-    elif disabled_by in {"config", "operator"}:
+    elif disabled_by in {"config", "operator", "runtime_role"}:
         notification_info["status"] = "disabled"
         notification_info["delivery_state"] = "disabled"
         status_code = 200
 
-    if disabled_by in {"config", "operator"}:
+    if disabled_by in {"config", "operator", "runtime_role"}:
         overall_status = "disabled"
     else:
         overall_status = "ok" if status_code == 200 else "error"
@@ -317,6 +336,9 @@ async def notifications_health(request: Request) -> JSONResponse:
         "bot": bot_info,
         "notifications": notification_info,
         "reminders": reminder_info,
+        "runtime": {
+            "notification_runtime_enabled": notification_runtime_enabled,
+        },
     }
     return JSONResponse(payload, status_code=status_code)
 

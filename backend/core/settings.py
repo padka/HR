@@ -35,6 +35,8 @@ class Settings:
     bot_failfast: bool
     bot_integration_enabled: bool
     bot_autostart: bool
+    bot_polling_runtime_enabled: bool
+    bot_notification_runtime_enabled: bool
     log_level: str
     log_json: bool
     log_file: str
@@ -109,6 +111,7 @@ class Settings:
     max_bot_token: str
     max_webhook_url: str
     max_webhook_secret: str
+    max_bot_link_base: str
     candidate_portal_public_url: str
     candidate_portal_token_ttl_seconds: int
     candidate_portal_session_ttl_seconds: int
@@ -540,6 +543,14 @@ def get_settings() -> Settings:
     test2_required = _get_bool("TEST2_REQUIRED", default=False)
     bot_failfast = _get_bool("BOT_FAILFAST", default=False)
     bot_autostart = _get_bool("BOT_AUTOSTART", default=environment != "production")
+    bot_polling_runtime_enabled = _get_bool(
+        "BOT_POLLING_RUNTIME_ENABLED",
+        default=bot_autostart,
+    )
+    bot_notification_runtime_enabled = _get_bool(
+        "BOT_NOTIFICATION_RUNTIME_ENABLED",
+        default=True,
+    )
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
     default_company_name = os.getenv("DEFAULT_COMPANY_NAME", "SMART SERVICE").strip() or "SMART SERVICE"
@@ -727,6 +738,7 @@ def get_settings() -> Settings:
     max_bot_token = os.getenv("MAX_BOT_TOKEN", "").strip()
     max_webhook_url = os.getenv("MAX_WEBHOOK_URL", "").strip()
     max_webhook_secret = os.getenv("MAX_WEBHOOK_SECRET", "").strip()
+    max_bot_link_base = os.getenv("MAX_BOT_LINK_BASE", "").strip()
     candidate_portal_public_url = os.getenv("CANDIDATE_PORTAL_PUBLIC_URL", "").strip()
     if not candidate_portal_public_url:
         candidate_portal_public_url = crm_public_url or bot_backend_url
@@ -762,6 +774,8 @@ def get_settings() -> Settings:
         test2_required=test2_required,
         bot_failfast=bot_failfast,
         bot_autostart=bot_autostart,
+        bot_polling_runtime_enabled=bot_polling_runtime_enabled,
+        bot_notification_runtime_enabled=bot_notification_runtime_enabled,
         log_level=log_level,
         log_json=log_json,
         log_file=log_file,
@@ -834,6 +848,7 @@ def get_settings() -> Settings:
         max_bot_token=max_bot_token,
         max_webhook_url=max_webhook_url,
         max_webhook_secret=max_webhook_secret,
+        max_bot_link_base=max_bot_link_base,
         candidate_portal_public_url=candidate_portal_public_url,
         candidate_portal_token_ttl_seconds=candidate_portal_token_ttl_seconds,
         candidate_portal_session_ttl_seconds=candidate_portal_session_ttl_seconds,

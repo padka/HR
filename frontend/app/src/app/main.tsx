@@ -319,6 +319,12 @@ const candidateStartRoute = createRoute({
   component: withSuspense(CandidateStartPage),
 })
 
+const candidateStartNoTokenRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/candidate/start',
+  component: withSuspense(CandidateStartPage),
+})
+
 const candidateJourneyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/candidate/journey',
@@ -358,6 +364,7 @@ const routeTree = rootRoute.addChildren([
   candidateNewRoute,
   candidateDetailRoute,
   candidateStartRoute,
+  candidateStartNoTokenRoute,
   candidateJourneyRoute,
   tgAppLayoutRoute.addChildren([
     tgDashboardRoute,

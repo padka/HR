@@ -46,6 +46,15 @@ async def _request_with_principal(app, principal: Principal, method: str, path: 
         try:
             with TestClient(app) as client:
                 client.auth = ("admin", "admin")
+                headers = dict(kwargs.pop("headers", {}) or {})
+                if method.upper() not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+                    csrf = client.get("/api/csrf")
+                    assert csrf.status_code == 200
+                    token = (csrf.json() or {}).get("token") or ""
+                    assert token
+                    headers["x-csrf-token"] = str(token)
+                if headers:
+                    kwargs["headers"] = headers
                 return client.request(method, path, **kwargs)
         finally:
             app.dependency_overrides.pop(require_principal, None)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -9,6 +10,7 @@ from typing import Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import Select
 
 from backend.core.db import async_session
@@ -31,6 +33,7 @@ __all__ = [
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from backend.apps.admin_ui.security import Principal
 
+logger = logging.getLogger(__name__)
 
 DEFAULT_COMPANY_TZ = "Europe/Moscow"
 BOOKING_STATES = {
@@ -105,11 +108,36 @@ _METRIC_META: Tuple[Dict[str, str], ...] = (
 
 _CACHE_LOCK = asyncio.Lock()
 _WTD_CACHE: Optional[Dict[str, object]] = None
+_OPTIONAL_STORAGE_WARNED_ACTIONS: set[str] = set()
 
 
 def _ensure_kpi_model() -> None:
     if KPIWeekly is None:  # pragma: no cover - defensive guard
         raise RuntimeError("KPIWeekly model is not available in this build")
+
+
+def _is_optional_kpi_storage_error(exc: Exception) -> bool:
+    current: Exception | None = exc
+    while current is not None:
+        message = str(current).lower()
+        if "kpi_weekly" in message and (
+            "does not exist" in message
+            or "undefinedtable" in message
+            or "no such table" in message
+        ):
+            return True
+        current = current.__cause__ if isinstance(current.__cause__, Exception) else None
+    return False
+
+
+def _warn_optional_storage_skip(action: str, exc: Exception) -> None:
+    if action in _OPTIONAL_STORAGE_WARNED_ACTIONS:
+        return
+    _OPTIONAL_STORAGE_WARNED_ACTIONS.add(action)
+    logger.warning(
+        "kpis.storage_optional_skip",
+        extra={"action": action, "error": str(exc)},
+    )
 
 
 def _normalize_timezone_name(tz_name: Optional[str]) -> str:
@@ -516,20 +544,31 @@ async def _load_previous_metrics(
             metrics = await _query_metrics(session, start_utc, end_utc)
             return metrics, None
 
-    async with async_session() as session:
-        stored = await session.get(KPIWeekly, week_start)
-        if stored is not None:
-            return (
-                {
-                    "tested": stored.tested,
-                    "completed_test": stored.completed_test,
-                    "booked": stored.booked,
-                    "confirmed": stored.confirmed,
-                    "interview_passed": stored.interview_passed,
-                    "intro_day": stored.intro_day,
-                },
-                _ensure_aware(stored.computed_at).astimezone(timezone.utc).isoformat(),
-            )
+    try:
+        async with async_session() as session:
+            stored = await session.get(KPIWeekly, week_start)
+            if stored is not None:
+                return (
+                    {
+                        "tested": stored.tested,
+                        "completed_test": stored.completed_test,
+                        "booked": stored.booked,
+                        "confirmed": stored.confirmed,
+                        "interview_passed": stored.interview_passed,
+                        "intro_day": stored.intro_day,
+                    },
+                    _ensure_aware(stored.computed_at).astimezone(timezone.utc).isoformat(),
+                )
+    except SQLAlchemyError as exc:
+        if _is_optional_kpi_storage_error(exc):
+            _warn_optional_storage_skip("load_previous_metrics", exc)
+        else:
+            raise
+    except Exception as exc:
+        if _is_optional_kpi_storage_error(exc):
+            _warn_optional_storage_skip("load_previous_metrics", exc)
+        else:
+            raise
 
     async with async_session() as fresh_session:
         metrics = await _query_metrics(fresh_session, start_utc, end_utc)
@@ -664,30 +703,41 @@ def _set_cache(
 async def list_weekly_history(limit: int = 12, offset: int = 0) -> List[Dict[str, object]]:
     if KPIWeekly is None:
         return []
-    async with async_session() as session:
-        rows = await session.execute(
-            select(KPIWeekly)
-                .order_by(KPIWeekly.week_start.desc())
-                .offset(max(0, offset))
-                .limit(max(0, limit))
-        )
-        history: List[Dict[str, object]] = []
-        for row in rows.scalars():
-            history.append(
-                {
-                    "week_start": row.week_start.isoformat(),
-                    "computed_at": _ensure_aware(row.computed_at)
-                    .astimezone(timezone.utc)
-                    .isoformat(),
-                    "tested": row.tested,
-                    "completed_test": row.completed_test,
-                    "booked": row.booked,
-                    "confirmed": row.confirmed,
-                    "interview_passed": row.interview_passed,
-                    "intro_day": row.intro_day,
-                }
+    try:
+        async with async_session() as session:
+            rows = await session.execute(
+                select(KPIWeekly)
+                    .order_by(KPIWeekly.week_start.desc())
+                    .offset(max(0, offset))
+                    .limit(max(0, limit))
             )
-        return history
+            history: List[Dict[str, object]] = []
+            for row in rows.scalars():
+                history.append(
+                    {
+                        "week_start": row.week_start.isoformat(),
+                        "computed_at": _ensure_aware(row.computed_at)
+                        .astimezone(timezone.utc)
+                        .isoformat(),
+                        "tested": row.tested,
+                        "completed_test": row.completed_test,
+                        "booked": row.booked,
+                        "confirmed": row.confirmed,
+                        "interview_passed": row.interview_passed,
+                        "intro_day": row.intro_day,
+                    }
+                )
+            return history
+    except SQLAlchemyError as exc:
+        if _is_optional_kpi_storage_error(exc):
+            _warn_optional_storage_skip("list_weekly_history", exc)
+            return []
+        raise
+    except Exception as exc:
+        if _is_optional_kpi_storage_error(exc):
+            _warn_optional_storage_skip("list_weekly_history", exc)
+            return []
+        raise
 
 
 async def compute_weekly_snapshot(
@@ -708,31 +758,43 @@ async def compute_weekly_snapshot(
 
 async def store_weekly_snapshot(snapshot: WeeklySnapshot) -> None:
     _ensure_kpi_model()
-    async with async_session() as session:
-        async with session.begin():
-            existing = await session.get(KPIWeekly, snapshot.week_start, with_for_update=True)
-            if existing is None:
-                entry = KPIWeekly(
-                    week_start=snapshot.week_start,
-                    tested=snapshot.metrics.get("tested", 0),
-                    completed_test=snapshot.metrics.get("completed_test", 0),
-                    booked=snapshot.metrics.get("booked", 0),
-                    confirmed=snapshot.metrics.get("confirmed", 0),
-                    interview_passed=snapshot.metrics.get("interview_passed", 0),
-                    intro_day=snapshot.metrics.get("intro_day", 0),
-                    computed_at=snapshot.computed_at,
-                )
-                session.add(entry)
-            else:
-                existing.tested = snapshot.metrics.get("tested", 0)
-                existing.completed_test = snapshot.metrics.get("completed_test", 0)
-                existing.booked = snapshot.metrics.get("booked", 0)
-                existing.confirmed = snapshot.metrics.get("confirmed", 0)
-                existing.interview_passed = snapshot.metrics.get("interview_passed", 0)
-                existing.intro_day = snapshot.metrics.get("intro_day", 0)
-                existing.computed_at = snapshot.computed_at
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                existing = await session.get(KPIWeekly, snapshot.week_start, with_for_update=True)
+                if existing is None:
+                    entry = KPIWeekly(
+                        week_start=snapshot.week_start,
+                        tested=snapshot.metrics.get("tested", 0),
+                        completed_test=snapshot.metrics.get("completed_test", 0),
+                        booked=snapshot.metrics.get("booked", 0),
+                        confirmed=snapshot.metrics.get("confirmed", 0),
+                        interview_passed=snapshot.metrics.get("interview_passed", 0),
+                        intro_day=snapshot.metrics.get("intro_day", 0),
+                        computed_at=snapshot.computed_at,
+                    )
+                    session.add(entry)
+                else:
+                    existing.tested = snapshot.metrics.get("tested", 0)
+                    existing.completed_test = snapshot.metrics.get("completed_test", 0)
+                    existing.booked = snapshot.metrics.get("booked", 0)
+                    existing.confirmed = snapshot.metrics.get("confirmed", 0)
+                    existing.interview_passed = snapshot.metrics.get("interview_passed", 0)
+                    existing.intro_day = snapshot.metrics.get("intro_day", 0)
+                    existing.computed_at = snapshot.computed_at
+    except SQLAlchemyError as exc:
+        if _is_optional_kpi_storage_error(exc):
+            _warn_optional_storage_skip("store_weekly_snapshot", exc)
+            return
+        raise
+    except Exception as exc:
+        if _is_optional_kpi_storage_error(exc):
+            _warn_optional_storage_skip("store_weekly_snapshot", exc)
+            return
+        raise
 
 
 async def reset_weekly_cache() -> None:
     global _WTD_CACHE
     _WTD_CACHE = None
+    _OPTIONAL_STORAGE_WARNED_ACTIONS.clear()

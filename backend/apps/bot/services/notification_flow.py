@@ -324,6 +324,39 @@ class NotificationService:
         self._last_poll_ts = 0.0
         self._shutting_down = False
 
+    async def disable_runtime(self) -> None:
+        """Stop local worker activity while keeping enqueue capabilities alive."""
+
+        self._started = False
+        self._loop_enabled = False
+        self._use_scheduler_job = False
+        self._fatal_error_code = None
+        self._fatal_error_at = None
+        self._last_delivery_error = None
+        await self._stop_watchdog()
+        if self._scheduler is not None:
+            try:
+                self._scheduler.remove_job(self._job_id)
+            except Exception:
+                pass
+        await self._await_scheduler_jobs()
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        for task in list(self._poll_tasks):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._poll_tasks.clear()
+        self._skipped_runs = 0
+        self._last_poll_ts = 0.0
+
     def _ensure_scheduler_job(self) -> None:
         if self._scheduler is None:
             return

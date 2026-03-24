@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
 _LOCAL_ONLY_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 _TRUTHY = {"1", "true", "yes", "on"}
+_CSRF_DEV_ALLOWLIST_ENV = "CSRF_DEV_ALLOWLIST"
 
 
 def get_admin_identifier(request: Request) -> str:
@@ -196,6 +197,24 @@ def _is_local_connection(connection: Request | HTTPConnection) -> bool:
     host = (connection.url.hostname or "").strip().lower() if connection and getattr(connection, "url", None) else ""
     client_host = _connection_client_host(connection)
     return host in _LOCAL_ONLY_HOSTS or client_host in _LOCAL_ONLY_HOSTS
+
+
+def _csrf_dev_allowlist_hosts() -> set[str]:
+    raw = os.getenv(_CSRF_DEV_ALLOWLIST_ENV, "")
+    hosts = {
+        item.strip().lower()
+        for chunk in raw.split(",")
+        for item in chunk.split()
+        if item.strip()
+    }
+    return hosts | _LOCAL_ONLY_HOSTS
+
+
+def _is_csrf_dev_bypass_allowed(connection: Request | HTTPConnection, settings) -> bool:
+    if settings.environment not in {"development", "test"}:
+        return False
+    host = (connection.url.hostname or "").strip().lower() if connection and getattr(connection, "url", None) else ""
+    return bool(host and host in _csrf_dev_allowlist_hosts())
 
 
 def _extract_bearer_token(connection: Request | HTTPConnection) -> str:
@@ -500,21 +519,13 @@ async def require_csrf_token(request: Request) -> None:
 
     tokens_match = expected and provided and secrets.compare_digest(str(provided), str(expected))
     if not tokens_match:
-        host = (request.url.hostname or "").lower()
-        client_host = request.client.host if request and request.client else ""
-        is_local = host in {"localhost", "127.0.0.1"} or client_host in {"127.0.0.1", "::1", "localhost"}
-        is_http = request.url.scheme == "http"
-
-        if settings.environment != "production" or is_local or is_http:
+        if _is_csrf_dev_bypass_allowed(request, settings):
             logger.warning(
-                "CSRF token check relaxed (dev/local/http)",
+                "CSRF token check relaxed (local/allowlisted dev host)",
                 extra={
                     "provided": bool(provided),
                     "expected": bool(expected),
-                    "host": host,
-                    "client_host": client_host,
                     "env": settings.environment,
-                    "scheme": request.url.scheme,
                 },
             )
             return

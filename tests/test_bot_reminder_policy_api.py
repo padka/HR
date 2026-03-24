@@ -16,6 +16,14 @@ def _configure_auth(client: TestClient) -> None:
     )
 
 
+def _csrf(client: TestClient) -> str:
+    resp = client.get("/api/csrf", auth=("admin", "admin"))
+    assert resp.status_code == 200
+    token = (resp.json() or {}).get("token") or ""
+    assert token
+    return str(token)
+
+
 def test_bot_reminder_policy_api_roundtrip(monkeypatch) -> None:
     published: list[tuple[str, object]] = []
 
@@ -35,6 +43,7 @@ def test_bot_reminder_policy_api_roundtrip(monkeypatch) -> None:
     app = create_app()
     with TestClient(app) as client:
         _configure_auth(client)
+        token = _csrf(client)
 
         get_resp = client.get("/api/bot/reminder-policy")
         assert get_resp.status_code == 200
@@ -58,6 +67,7 @@ def test_bot_reminder_policy_api_roundtrip(monkeypatch) -> None:
                     "min_time_before_immediate_hours": 1.0,
                 }
             },
+            headers={"x-csrf-token": token},
         )
         assert update_resp.status_code == 200
         updated = update_resp.json()

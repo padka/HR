@@ -1,4 +1,5 @@
 import { apiFetch } from './client'
+import { readCandidatePortalAccessToken } from '@/shared/candidate-portal-session'
 
 export const CANDIDATE_API_URL = '/api/candidate'
 
@@ -48,10 +49,18 @@ export type CandidatePortalJourneyResponse = {
     phone?: string | null
     city?: string | null
     city_id?: number | null
+    vacancy_label?: string | null
+    vacancy_reference?: string | null
+    vacancy_position?: string | null
     status?: string | null
     status_label?: string | null
     source?: string | null
     portal_url?: string | null
+  }
+  company?: {
+    name?: string | null
+    summary?: string | null
+    highlights?: string[]
   }
   journey: {
     session_id: number
@@ -59,7 +68,10 @@ export type CandidatePortalJourneyResponse = {
     journey_version: string
     entry_channel: string
     current_step: 'profile' | 'screening' | 'slot_selection' | 'status'
+    current_step_label: string
     next_action: string
+    next_step_at?: string | null
+    next_step_timezone?: string | null
     steps: Array<{
       key: string
       label: string
@@ -99,10 +111,15 @@ export async function candidateFetch<T>(path: string, init?: CandidateFetchInit)
   if (init?.json !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
+  const portalToken = readCandidatePortalAccessToken()
+  if (portalToken && !headers.has('x-candidate-portal-token')) {
+    headers.set('x-candidate-portal-token', portalToken)
+  }
   const apiPath = `${CANDIDATE_API_URL.replace(/^\/api/, '')}${path}`
 
   return apiFetch<T>(apiPath, {
     ...init,
+    skipCsrf: true,
     headers,
     body: init?.json !== undefined ? init.json : init?.body,
   })

@@ -4,12 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CandidateStartPage } from './start'
 
 const exchangeCandidatePortalTokenMock = vi.fn()
+const fetchCandidatePortalJourneyMock = vi.fn()
 const navigateMock = vi.fn()
 const setQueryDataMock = vi.fn()
 const useParamsMock = vi.fn()
 
 vi.mock('@/api/candidate', () => ({
   exchangeCandidatePortalToken: (...args: unknown[]) => exchangeCandidatePortalTokenMock(...args),
+  fetchCandidatePortalJourney: (...args: unknown[]) => fetchCandidatePortalJourneyMock(...args),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -26,9 +28,14 @@ vi.mock('@tanstack/react-router', () => ({
 describe('CandidateStartPage', () => {
   beforeEach(() => {
     exchangeCandidatePortalTokenMock.mockReset()
+    fetchCandidatePortalJourneyMock.mockReset()
     navigateMock.mockReset()
     setQueryDataMock.mockReset()
     useParamsMock.mockReturnValue({ token: 'signed-token' })
+    window.history.pushState({}, '', '/candidate/start')
+    window.sessionStorage.clear()
+    ;(window as typeof window & { WebApp?: unknown }).WebApp = undefined
+    ;(window as typeof window & { Telegram?: unknown }).Telegram = undefined
   })
 
   it('exchanges token and redirects into journey', async () => {
@@ -60,5 +67,60 @@ describe('CandidateStartPage', () => {
       expect(screen.getByText('Ссылка устарела')).toBeInTheDocument()
     })
   })
-})
 
+  it('opens existing portal session when token is missing but cookie session exists', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.sessionStorage.clear()
+    fetchCandidatePortalJourneyMock.mockResolvedValue({
+      candidate: { id: 1, candidate_id: 'cid' },
+      journey: { current_step: 'profile' },
+    })
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(fetchCandidatePortalJourneyMock).toHaveBeenCalled()
+      expect(navigateMock).toHaveBeenCalledWith({ to: '/candidate/journey' })
+    })
+  })
+
+  it('uses MAX start_param from bridge when direct token is missing', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.sessionStorage.clear()
+    window.history.pushState({}, '', '/candidate/start')
+    const readyMock = vi.fn()
+    ;(window as typeof window & { WebApp?: { initDataUnsafe?: { start_param?: string }; ready?: () => void } }).WebApp = {
+      initDataUnsafe: { start_param: 'max-invite-token' },
+      ready: readyMock,
+    }
+    exchangeCandidatePortalTokenMock.mockResolvedValue({
+      candidate: { id: 1, candidate_id: 'cid' },
+      journey: { current_step: 'profile' },
+    })
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(readyMock).toHaveBeenCalled()
+      expect(exchangeCandidatePortalTokenMock).toHaveBeenCalledWith('max-invite-token')
+      expect(navigateMock).toHaveBeenCalledWith({ to: '/candidate/journey' })
+    })
+  })
+
+  it('supports startapp query parameter fallback', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.sessionStorage.clear()
+    window.history.pushState({}, '', '/candidate/start?startapp=query-token')
+    exchangeCandidatePortalTokenMock.mockResolvedValue({
+      candidate: { id: 1, candidate_id: 'cid' },
+      journey: { current_step: 'profile' },
+    })
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(exchangeCandidatePortalTokenMock).toHaveBeenCalledWith('query-token')
+      expect(navigateMock).toHaveBeenCalledWith({ to: '/candidate/journey' })
+    })
+  })
+})

@@ -2,7 +2,10 @@ import pytest
 from types import SimpleNamespace
 from sqlalchemy import select
 
+import backend.core.messenger.registry as registry_mod
 from backend.core.db import async_session
+from backend.core.messenger.protocol import MessengerPlatform, MessengerProtocol, SendResult
+from backend.core.messenger.registry import MessengerRegistry
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.models import ChatMessage
 from backend.apps.admin_ui.services import chat as chat_service
@@ -30,6 +33,20 @@ class _DummyBotService:
             message=None,
             telegram_message_id=None,
         )
+
+
+class _DummyMaxAdapter(MessengerProtocol):
+    platform = MessengerPlatform.MAX
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def configure(self, **kwargs):
+        return None
+
+    async def send_message(self, chat_id, text, *, buttons=None, parse_mode=None, correlation_id=None) -> SendResult:
+        self.calls.append((chat_id, text, correlation_id))
+        return SendResult(success=True, message_id="mx-1")
 
 
 @pytest.fixture(autouse=True)
@@ -194,3 +211,46 @@ async def test_retry_chat_message_success_counts_against_rate_limit():
     after_allowed, after_remaining = chat_service._check_rate_limit(candidate.id)
     assert after_allowed is True
     assert after_remaining == chat_service.CHAT_RATE_LIMIT_PER_HOUR - 1
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_routes_to_max_candidate():
+    old_registry = registry_mod._registry
+    registry = MessengerRegistry()
+    max_adapter = _DummyMaxAdapter()
+    registry.register(max_adapter)
+    registry_mod._registry = registry
+    try:
+        candidate = await candidate_services.create_or_update_user(
+            telegram_id=None,
+            fio="MAX Candidate",
+            city="Москва",
+        )
+        async with async_session() as session:
+            stored = await session.get(type(candidate), candidate.id)
+            stored.max_user_id = "mx-user-1"
+            stored.messenger_platform = "max"
+            await session.commit()
+
+        bot = _DummyBotService(ok=True)
+        result = await chat_service.send_chat_message(
+            candidate.id,
+            text="Сообщение через MAX",
+            client_request_id="req-max-1",
+            author_label="admin",
+            bot_service=bot,
+        )
+
+        assert bot.calls == []
+        assert max_adapter.calls == [("mx-user-1", "Сообщение через MAX", f"candidate-chat:{candidate.id}")]
+        assert result["status"] == "sent"
+        assert result["message"]["channel"] == "max"
+
+        async with async_session() as session:
+            stored_message = await session.get(ChatMessage, result["message"]["id"])
+            assert stored_message is not None
+            assert stored_message.channel == "max"
+            assert stored_message.status == "sent"
+            assert stored_message.telegram_user_id is None
+    finally:
+        registry_mod._registry = old_registry

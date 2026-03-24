@@ -235,6 +235,32 @@ async def test_candidate_detail_includes_test_sections_and_telemost():
 
 
 @pytest.mark.asyncio
+async def test_candidate_detail_prefers_candidate_status_without_mutating_workflow_status():
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999004,
+        fio="Workflow Detail",
+        city="Москва",
+    )
+
+    async with async_session() as session:
+        user = await session.get(candidate_models.User, candidate.id)
+        assert user is not None
+        user.candidate_status = CandidateStatus.INTRO_DAY_SCHEDULED
+        user.workflow_status = WorkflowStatus.INTERVIEW_CONFIRMED.value
+        await session.commit()
+
+    detail = await get_candidate_detail(candidate.id)
+    assert detail is not None
+    assert detail["workflow_status"] == WorkflowStatus.ONBOARDING_DAY_SCHEDULED.value
+    assert detail["workflow_status_label"] == "Назначен ознакомительный день"
+
+    async with async_session() as session:
+        refreshed = await session.get(candidate_models.User, candidate.id)
+        assert refreshed is not None
+        assert refreshed.workflow_status == WorkflowStatus.INTERVIEW_CONFIRMED.value
+
+
+@pytest.mark.asyncio
 async def test_candidate_cohort_comparison_groups_similar_candidates():
     lead = await candidate_services.create_or_update_user(
         telegram_id=999201,

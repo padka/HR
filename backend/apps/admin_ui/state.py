@@ -338,6 +338,8 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
 
     settings = get_settings()
     app.state.bot_enabled = settings.bot_enabled
+    app.state.bot_polling_runtime_enabled = settings.bot_polling_runtime_enabled
+    app.state.notification_runtime_enabled = settings.bot_notification_runtime_enabled
     redis_url = getattr(settings, "redis_url", None) or ""
     broker_choice = (getattr(settings, "notification_broker", "memory") or "memory").strip().lower()
     # Allow degraded mode in production when Redis is missing - removed RuntimeError
@@ -484,6 +486,7 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     supervise_bot = (
         bot is not None
         and configured
+        and settings.bot_polling_runtime_enabled
         and _should_autostart_bot(settings)
     )
 
@@ -495,7 +498,7 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
 
     if settings.environment == "test" and settings.database_url_sync.startswith("sqlite"):
         logger.info("Notification service not started in test sqlite mode")
-    elif settings.bot_enabled:
+    elif settings.bot_enabled and settings.bot_notification_runtime_enabled:
         # Start notification service (independent of bot supervision)
         # Use continuous poll loop (preferred): avoids latency gaps for time-sensitive
         # transactional messages (slot approvals) and makes reminders more timely.
@@ -505,8 +508,23 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
             "Notification service started",
             extra={"allow_poll_loop": allow_poll_loop, "has_scheduler": scheduler is not None},
         )
+    elif settings.bot_enabled:
+        await notification_service.disable_runtime()
+        logger.info(
+            "Notification service disabled in admin_ui runtime",
+            extra={"reason": "runtime_flag"},
+        )
     else:
         logger.info("Notification service not started; bot disabled")
+
+    logger.info(
+        "Bot runtime policy applied",
+        extra={
+            "polling_runtime_enabled": settings.bot_polling_runtime_enabled,
+            "notification_runtime_enabled": settings.bot_notification_runtime_enabled,
+            "supervise_bot": supervise_bot,
+        },
+    )
 
     if supervise_bot and dispatcher is not None:
         bot_runner_stop = asyncio.Event()

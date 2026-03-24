@@ -26,10 +26,6 @@ export function CandidateHeader({
 }: CandidateHeaderProps) {
   const candidateName = candidate.fio || `Кандидат #${candidateId}`
   const recommendationLabel = headerAiRecommendation ? scorecardRecommendationShortLabel(headerAiRecommendation) : null
-  const subtitle = [
-    showStatus ? statusLabel : null,
-    headerAiScore != null ? `${Math.round(headerAiScore)}/100` : isAiFetching ? 'Релевантность...' : null,
-  ].filter(Boolean).join(' · ')
 
   return (
     <>
@@ -40,29 +36,18 @@ export function CandidateHeader({
         </button>
       </div>
       <div className="cd-header__hero">
-        <div className="cd-header__avatar">
-          {candidateName.charAt(0).toUpperCase()}
-        </div>
         <div className="cd-header__main">
           <div className="cd-header__info">
-            <div className="cd-header__name-row">
-              <h1 className="cd-header__name">{candidateName}</h1>
-              {candidate.status_is_terminal && (
-                <span className="cd-badge cd-badge--terminal">Финальный этап</span>
-              )}
-            </div>
-            {subtitle && <p className="cd-header__subtitle">{subtitle}</p>}
-            <div className="cd-header__meta">
-              {candidate.city && <span className="cd-chip">Город: {candidate.city}</span>}
+            <h1 className="cd-header__name">{candidateName}</h1>
+            <div className="cd-header__subtitle-row">
+              {showStatus && <span className="cd-header__status">{statusLabel}</span>}
+              {candidate.city && <span className="cd-header__detail">{candidate.city}</span>}
               {candidate.responsible_recruiter?.name && (
-                <span className="cd-chip cd-chip--accent">Рекрутер: {candidate.responsible_recruiter.name}</span>
+                <span className="cd-header__detail">{candidate.responsible_recruiter.name}</span>
               )}
-              {candidate.manual_mode && (
-                <span className="cd-chip cd-chip--warning">Ручное назначение</span>
+              {candidate.is_active === false && (
+                <span className="cd-header__detail cd-header__detail--inactive">Неактивен</span>
               )}
-              <span className={`cd-chip ${candidate.is_active === false ? 'cd-chip--danger' : 'cd-chip--success'}`}>
-                {candidate.is_active === false ? 'Неактивен' : 'Активен'}
-              </span>
             </div>
           </div>
           {(headerAiScore != null || isAiFetching) && (
@@ -70,9 +55,8 @@ export function CandidateHeader({
               className={`cd-header-score cd-header-score--${headerAiLevel || 'unknown'}`}
               aria-label={`Релевантность ${headerAiScore != null ? Math.round(headerAiScore) : 'не рассчитана'}`}
             >
-              <span className="cd-header-score__label">Релевантность</span>
               <span className="cd-header-score__value">
-                {headerAiScore != null ? `${Math.round(headerAiScore)}/100` : '...'}
+                {headerAiScore != null ? Math.round(headerAiScore) : '…'}
               </span>
               {recommendationLabel && (
                 <span className="cd-header-score__meta">{recommendationLabel}</span>

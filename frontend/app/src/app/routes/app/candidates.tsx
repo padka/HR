@@ -364,12 +364,17 @@ export function CandidatesPage() {
   const { data, isLoading, isError, error } = useQuery<CandidateListPayload>({
     queryKey: ['candidates', { search, status, page, perPage, pipeline: pipelineForRequest, view, calendarFrom, calendarTo }],
     queryFn: () => apiFetch(`/candidates?${params.toString()}`),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const citiesQuery = useQuery<CityOption[]>({
     queryKey: ['cities'],
     queryFn: () => apiFetch('/cities'),
     staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const aiRecoQuery = useQuery<AICityRecommendationsResponse>({

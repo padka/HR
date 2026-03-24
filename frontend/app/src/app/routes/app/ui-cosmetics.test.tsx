@@ -4,6 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CandidatePipeline from '@/app/components/CandidatePipeline/CandidatePipeline'
 import { CandidateDetailPage } from './candidate-detail'
+import {
+  useCandidateAi,
+  useCandidateChat,
+  useCandidateCohort,
+  useCandidateDetail,
+  useCandidateHh,
+  useCitiesOptions,
+} from './candidate-detail/candidate-detail.api'
 import { DashboardPage } from './dashboard'
 import { IncomingPage } from './incoming'
 import { MessengerPage } from './messenger'
@@ -17,6 +25,18 @@ const navigateMock = vi.fn()
 
 type QueryOptionsLike = {
   queryKey?: unknown
+  staleTime?: number
+  refetchInterval?: number | false
+  refetchIntervalInBackground?: boolean
+  refetchOnWindowFocus?: boolean
+  refetchOnReconnect?: boolean
+  enabled?: boolean
+}
+
+function getQueryOptionsByKey(key: string) {
+  return useQueryMock.mock.calls
+    .map(([options]) => options as QueryOptionsLike & Record<string, unknown>)
+    .filter((options) => Array.isArray(options.queryKey) && options.queryKey[0] === key)
 }
 
 vi.mock('@/app/components/RoleGuard', () => ({
@@ -595,16 +615,193 @@ describe('UI cosmetics smoke', () => {
     expect(screen.getByText(/AI: Нужно отдельно подтвердить готовность к разъездному формату/)).toBeInTheDocument()
   })
 
+  it('renders incoming cards when AI enrichment is missing', () => {
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
+      const rawKey = options?.queryKey
+      const key = Array.isArray(rawKey) ? rawKey[0] : rawKey
+      if (key === 'dashboard-incoming') {
+        return {
+          ...baseQueryResult,
+          data: {
+            items: [
+              {
+                ...incomingData.items[0],
+                ai_relevance_score: null,
+                ai_relevance_level: null,
+                ai_recommendation: null,
+                ai_risk_hint: null,
+              },
+            ],
+          },
+        }
+      }
+      return { ...baseQueryResult }
+    })
+
+    render(<IncomingPage />)
+
+    const card = screen.getByTestId('incoming-card')
+    expect(card).toBeInTheDocument()
+    expect(within(card).queryByText(/^AI\b/)).not.toBeInTheDocument()
+    expect(within(card).queryByText(/AI: /)).not.toBeInTheDocument()
+  })
+
+  it('uses conservative polling for incoming queries', () => {
+    render(<IncomingPage />)
+    render(<DashboardPage />)
+
+    const incomingCalls = getQueryOptionsByKey('dashboard-incoming')
+
+    expect(incomingCalls.length).toBeGreaterThanOrEqual(2)
+    for (const options of incomingCalls) {
+      expect(options.staleTime).toBe(120_000)
+      expect(options.refetchInterval).toBe(120_000)
+      expect(options.refetchIntervalInBackground).toBe(false)
+      expect(options.refetchOnWindowFocus).toBe(false)
+      expect(options.refetchOnReconnect).toBe(false)
+    }
+  })
+
+  it('uses bounded cache policies for candidate detail and messenger queries', () => {
+    const CandidateDetailQueryHarness = () => {
+      useCandidateDetail(101)
+      useCandidateHh(101, true)
+      useCandidateCohort(101, true)
+      useCandidateChat(101, true)
+      useCandidateAi(101)
+      useCitiesOptions()
+      return null
+    }
+
+    render(<CandidateDetailQueryHarness />)
+    render(<MessengerPage />)
+
+    const expectPolicy = (key: string, expected: Pick<QueryOptionsLike, 'staleTime' | 'refetchOnWindowFocus' | 'refetchOnReconnect'>) => {
+      const calls = getQueryOptionsByKey(key)
+      expect(calls.length).toBeGreaterThan(0)
+      for (const options of calls) {
+        expect(options.staleTime).toBe(expected.staleTime)
+        expect(options.refetchOnWindowFocus).toBe(expected.refetchOnWindowFocus)
+        expect(options.refetchOnReconnect).toBe(expected.refetchOnReconnect)
+      }
+    }
+
+    expectPolicy('candidate-detail', {
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('candidate-hh-summary', {
+      staleTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('candidate-cohort-comparison', {
+      staleTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('candidate-chat', {
+      staleTime: 15_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('ai-summary', {
+      staleTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('candidate-chat-templates', {
+      staleTime: 10 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('candidate-chat-threads', {
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('cities', {
+      staleTime: 10 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+  })
+
+  it('uses bounded cache policies for dashboard summary and leaderboard queries', () => {
+    useProfileMock.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        principal: { type: 'admin', id: 1 },
+        profile: {
+          city_options: [{ id: 1, name: 'Москва', tz: 'Europe/Moscow' }],
+        },
+        recruiter: { id: 1, tz: 'Europe/Moscow', cities: [{ id: 1, name: 'Москва' }] },
+      },
+    })
+
+    render(<DashboardPage />)
+
+    const expectPolicy = (key: string, expected: Pick<QueryOptionsLike, 'staleTime' | 'refetchOnWindowFocus' | 'refetchOnReconnect'>) => {
+      const calls = getQueryOptionsByKey(key)
+      expect(calls.length).toBeGreaterThan(0)
+      for (const options of calls) {
+        expect(options.staleTime).toBe(expected.staleTime)
+        expect(options.refetchOnWindowFocus).toBe(expected.refetchOnWindowFocus)
+        expect(options.refetchOnReconnect).toBe(expected.refetchOnReconnect)
+      }
+    }
+
+    expectPolicy('dashboard-summary', {
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('dashboard-recruiters', {
+      staleTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('dashboard-kpis', {
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('dashboard-leaderboard', {
+      staleTime: 120_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    const incomingCalls = getQueryOptionsByKey('dashboard-incoming')
+    expect(incomingCalls.length).toBeGreaterThan(0)
+    for (const options of incomingCalls) {
+      expect(options.staleTime).toBe(120_000)
+      expect(options.refetchInterval).toBe(120_000)
+      expect(options.refetchIntervalInBackground).toBe(false)
+      expect(options.refetchOnWindowFocus).toBe(false)
+      expect(options.refetchOnReconnect).toBe(false)
+    }
+  })
+
   it('opens test preview modal from incoming card actions and removes telegram shortcut', () => {
     render(<IncomingPage />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Тест' }))
 
-    expect(screen.getByTestId('incoming-test-preview-modal')).toBeInTheDocument()
+    const modal = screen.getByTestId('incoming-test-preview-modal')
+    expect(modal).toBeInTheDocument()
     expect(screen.getByText('Результат Теста 1')).toBeInTheDocument()
     expect(screen.getByText('Анкета заполнена (3 ответа)')).toBeInTheDocument()
     expect(screen.getByText('Опыт в подборе?')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Telegram' })).not.toBeInTheDocument()
+    expect(modal.querySelector('.cd-test-preview')).toBeTruthy()
+    expect(modal.querySelector('.cd-question-list')).toBeTruthy()
+
+    const questionCards = modal.querySelectorAll('.cd-question-card')
+    expect(questionCards).toHaveLength(3)
+    expect(questionCards[0]?.querySelector('.cd-question-card__head strong')?.textContent).toContain('Опыт в подборе?')
+    expect(questionCards[0]?.querySelectorAll('.cd-question-card__answer')).toHaveLength(2)
 
     fireEvent.click(screen.getByTestId('incoming-test-preview-schedule'))
     expect(screen.queryByTestId('incoming-test-preview-modal')).not.toBeInTheDocument()
@@ -648,10 +845,10 @@ describe('UI cosmetics smoke', () => {
     const header = screen.getByTestId('candidate-header')
     expect(header).toBeInTheDocument()
     expect(screen.getByTestId('candidate-actions')).toBeInTheDocument()
-    expect(header).toHaveTextContent('Лид · 82/100')
+    expect(header).toHaveTextContent('Лид')
     expect(header.querySelector('.status-pill')).toBeNull()
-    expect(screen.getByText('Релевантность')).toBeInTheDocument()
-    expect(within(header).getByText('82/100')).toBeInTheDocument()
+    expect(screen.getByLabelText('Релевантность 82')).toBeInTheDocument()
+    expect(within(header).getByText('82')).toBeInTheDocument()
     expect(within(header).getByText(/Рекомендуем|Уточнить|Не рекомендуем/)).toBeInTheDocument()
     expect(screen.queryByText('Слоты и интервью')).not.toBeInTheDocument()
     expect(screen.queryByText('AI-помощник')).not.toBeInTheDocument()
@@ -667,11 +864,49 @@ describe('UI cosmetics smoke', () => {
     expect(screen.queryByTestId('interview-script-modal')).not.toBeInTheDocument()
   })
 
+  it('routes candidate chat through MAX when candidate is linked there', async () => {
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
+      const rawKey = options?.queryKey
+      const key = Array.isArray(rawKey) ? rawKey[0] : rawKey
+      if (key === 'candidate-detail') {
+        return {
+          ...baseQueryResult,
+          data: {
+            ...candidateDetailData,
+            telegram_id: null,
+            messenger_platform: 'max',
+            max_user_id: 'mx-user-1',
+          },
+        }
+      }
+      if (key === 'candidate-chat') {
+        return {
+          ...baseQueryResult,
+          data: {
+            messages: [],
+            has_more: false,
+            latest_message_at: null,
+          },
+        }
+      }
+      return { ...baseQueryResult }
+    })
+
+    render(<CandidateDetailPage />)
+
+    expect(screen.getByText('MAX')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Чат/ }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Ответ будет отправлен через MAX')).toBeInTheDocument()
+    })
+  })
+
   it('keeps candidate journey inside funnel stages and removes standalone journey block', async () => {
     render(<CandidateDetailPage />)
     const pipeline = screen.getByTestId('candidate-pipeline')
     const stageTitles = Array.from(
-      pipeline.querySelectorAll('.candidate-pipeline-stage__title'),
+      pipeline.querySelectorAll('.candidate-pipeline-stage__label'),
     ).map((node) => node.textContent)
 
     expect(screen.queryByText('Интерактивный путь кандидата')).not.toBeInTheDocument()
@@ -683,26 +918,8 @@ describe('UI cosmetics smoke', () => {
       'Ознакомительный день',
       'Итог',
     ])
-    expect(screen.getByText('Текущее состояние')).toBeInTheDocument()
-    expect(screen.getByTestId('candidate-funnel-detail')).toBeInTheDocument()
-    expect(within(screen.getByTestId('candidate-funnel-detail')).getAllByText('Предварительно подтвердился').length).toBeGreaterThan(0)
-    expect(pipeline.querySelector('.candidate-pipeline-stage__preview')).toBeNull()
     expect(pipeline.querySelector('.candidate-pipeline-stage--current')).toBeTruthy()
     expect(pipeline.querySelector('.candidate-pipeline-stage--upcoming')).toBeTruthy()
-    expect(pipeline.querySelector('.candidate-pipeline-badge--upcoming')?.textContent).toContain('Ожидает')
-
-    const stageButtons = Array.from(
-      pipeline.querySelectorAll<HTMLButtonElement>('.candidate-pipeline-stage'),
-    )
-    fireEvent.click(stageButtons[2])
-
-    await waitFor(() => {
-      const funnelDetail = screen.getByTestId('candidate-funnel-detail')
-      expect(within(funnelDetail).getByText('Этап воронки')).toBeInTheDocument()
-      expect(within(funnelDetail).getByText('Собеседование')).toBeInTheDocument()
-      expect(within(funnelDetail).getAllByText('Запросил другой слот').length).toBeGreaterThan(0)
-      expect(within(funnelDetail).getByText('Подтверждение, перенос или отказ по собеседованию.')).toBeInTheDocument()
-    })
   })
 
   it('translates english pipeline system copy to russian', () => {
@@ -735,13 +952,8 @@ describe('UI cosmetics smoke', () => {
     )
 
     expect(screen.getAllByText('Начальный статус при добавлении в воронку').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Ручное обновление статуса').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('система').length).toBeGreaterThan(0)
-    expect(screen.getByText('Обновление статуса')).toBeInTheDocument()
-    expect(screen.getByText('Завершено')).toBeInTheDocument()
     expect(screen.getByText('Одобрено')).toBeInTheDocument()
     expect(screen.queryByText('Initial backfill from current candidate status')).not.toBeInTheDocument()
-    expect(screen.queryByText('admin manual status update')).not.toBeInTheDocument()
   })
 
   it('opens candidate tests section from hash on mobile', async () => {

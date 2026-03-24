@@ -8,7 +8,7 @@ from backend.apps.admin_ui.services.dashboard import (
     get_recruiter_leaderboard,
     get_waiting_candidates,
 )
-from backend.apps.admin_ui.services.reschedule_intents import RescheduleIntent
+from backend.apps.admin_ui.services.reschedule_intents import get_candidate_reschedule_intent
 from backend.apps.admin_ui.services.slots import api_slots_payload, create_slot, list_slots
 from backend.core.db import async_session
 from backend.domain.ai.models import AIOutput
@@ -193,17 +193,22 @@ async def test_waiting_candidates_uses_bot_state_for_reschedule_intent(monkeypat
         session.add(assignment)
         await session.commit()
 
-    async def fake_bot_state_intent(*_args, **_kwargs):
-        return RescheduleIntent(
-            requested=True,
-            created_at=(now - timedelta(hours=1)).isoformat(),
-            candidate_comment=None,
-            source="bot_state",
-        )
+    class FakeStateManager:
+        async def get(self, *_args, **_kwargs):
+            raise AssertionError("dashboard/incoming should batch bot-state lookup")
+
+        async def get_many(self, user_ids):
+            assert list(user_ids) == [candidate.telegram_user_id]
+            return {
+                int(candidate.telegram_user_id): {
+                    "slot_assignment_state": "waiting_candidate_datetime_input",
+                    "slot_assignment_id": assignment.id,
+                }
+            }
 
     monkeypatch.setattr(
-        "backend.apps.admin_ui.services.dashboard.get_bot_state_reschedule_intent",
-        fake_bot_state_intent,
+        "backend.apps.bot.services.get_state_manager",
+        lambda: FakeStateManager(),
     )
 
     items = await get_waiting_candidates(limit=20)
@@ -214,6 +219,98 @@ async def test_waiting_candidates_uses_bot_state_for_reschedule_intent(monkeypat
     assert row["status_color"] == "warning"
     assert row["requested_another_time_from"] is None
     assert row["requested_another_time_to"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_candidate_reschedule_intent_prefers_db_over_bot_state(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City DB First", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Incoming Recruiter DB First", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        candidate = User(
+            fio="DB First Candidate",
+            city="Incoming City DB First",
+            telegram_id=930001,
+            telegram_user_id=930001,
+            candidate_id="db-first-candidate",
+            candidate_status=CandidateStatus.SLOT_PENDING,
+            status_changed_at=now - timedelta(hours=3),
+            last_activity=now - timedelta(hours=3),
+            is_active=True,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=now + timedelta(days=1),
+            duration_min=60,
+            status=models.SlotStatus.PENDING,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz="Europe/Moscow",
+            status=models.SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+            offered_at=now - timedelta(hours=4),
+            reschedule_requested_at=now - timedelta(hours=2),
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+
+        session.add(
+            models.RescheduleRequest(
+                slot_assignment_id=assignment.id,
+                requested_start_utc=now + timedelta(days=1, hours=2),
+                requested_end_utc=now + timedelta(days=1, hours=4),
+                requested_tz="Europe/Moscow",
+                candidate_comment="DB intent wins",
+                status=models.RescheduleRequestStatus.PENDING,
+            )
+        )
+        await session.commit()
+
+    class FailingStateManager:
+        async def get(self, *_args, **_kwargs):
+            raise AssertionError("bot-state fallback should not be used when DB intent exists")
+
+        async def get_many(self, *_args, **_kwargs):
+            raise AssertionError("bot-state fallback should not be used when DB intent exists")
+
+    monkeypatch.setattr("backend.apps.bot.services.get_state_manager", lambda: FailingStateManager())
+
+    async with async_session() as session:
+        intent = await get_candidate_reschedule_intent(
+            session,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+        )
+
+    assert intent is not None
+    assert intent.requested is True
+    assert intent.source == "pending_request"
+    assert intent.candidate_comment == "DB intent wins"
 
 
 @pytest.mark.asyncio
@@ -295,8 +392,18 @@ async def test_waiting_candidates_ignore_expired_ai_outputs(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_waiting_candidates_compute_live_ai_score_when_cache_missing(monkeypatch):
+async def test_waiting_candidates_returns_null_ai_and_schedules_background_warm_when_cache_missing(monkeypatch):
     monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+    scheduled_candidate_ids: list[int] = []
+
+    def fake_schedule(candidate_ids, *, principal=None, refresh=True):
+        scheduled_candidate_ids.extend(int(candidate_id) for candidate_id in candidate_ids)
+        return None
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.dashboard.schedule_warm_candidates_ai_outputs",
+        fake_schedule,
+    )
 
     now = datetime.now(timezone.utc)
     async with async_session() as session:
@@ -319,9 +426,52 @@ async def test_waiting_candidates_compute_live_ai_score_when_cache_missing(monke
 
     items = await get_waiting_candidates(limit=20)
     row = next(item for item in items if item["id"] == candidate.id)
-    assert isinstance(row["ai_relevance_score"], int)
-    assert row["ai_relevance_score"] >= 0
-    assert row["ai_recommendation"] in {"od_recommended", "clarify_before_od", "not_recommended"}
+    assert row["ai_relevance_score"] is None
+    assert row["ai_relevance_level"] is None
+    assert row["ai_recommendation"] is None
+    assert row["ai_risk_hint"] is None
+    assert scheduled_candidate_ids == [candidate.id]
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_limits_background_ai_warm_budget(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+    scheduled_candidate_ids: list[int] = []
+
+    def fake_schedule(candidate_ids, *, principal=None, refresh=True):
+        scheduled_candidate_ids.extend(int(candidate_id) for candidate_id in candidate_ids)
+        return None
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.dashboard.schedule_warm_candidates_ai_outputs",
+        fake_schedule,
+    )
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City Warm Budget", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+
+        users = []
+        for idx in range(12):
+            users.append(
+                User(
+                    fio=f"Warm Budget Candidate {idx}",
+                    city="Incoming City Warm Budget",
+                    telegram_id=940000 + idx,
+                    candidate_status=CandidateStatus.WAITING_SLOT,
+                    status_changed_at=now - timedelta(minutes=idx),
+                    last_activity=now - timedelta(minutes=idx),
+                    is_active=True,
+                )
+            )
+        session.add_all(users)
+        await session.commit()
+
+    items = await get_waiting_candidates(limit=20)
+    assert len(items) == 12
+    assert len(scheduled_candidate_ids) == 10
 
 
 @pytest.mark.asyncio

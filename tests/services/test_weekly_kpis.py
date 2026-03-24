@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession as SQLAlchemyAsyncSession
 
 from backend.apps.admin_ui.services.kpis import (
     compute_weekly_snapshot,
@@ -262,3 +263,26 @@ async def test_weekly_kpis_respects_performance_budget(monkeypatch):
     await get_weekly_kpis()
     elapsed_ms = (time.perf_counter() - start) * 1000
     assert elapsed_ms < 500, f"Expected <500ms, got {elapsed_ms:.2f}ms"
+
+
+@pytest.mark.asyncio
+async def test_weekly_kpis_falls_back_when_kpi_storage_table_missing(monkeypatch, caplog):
+    await reset_weekly_cache()
+    now = datetime(2024, 4, 2, 8, tzinfo=timezone.utc)
+    original_get = SQLAlchemyAsyncSession.get
+
+    async def fake_get(self, entity, ident, *args, **kwargs):
+        if entity is KPIWeekly:
+            raise RuntimeError('relation "kpi_weekly" does not exist')
+        return await original_get(self, entity, ident, *args, **kwargs)
+
+    monkeypatch.setattr(SQLAlchemyAsyncSession, "get", fake_get)
+
+    with caplog.at_level("WARNING"):
+        payload_first = await get_weekly_kpis(now=now)
+        payload_second = await get_weekly_kpis(now=now)
+
+    assert payload_first["current"]["metrics"]
+    assert payload_second["current"]["metrics"]
+    warnings = [record for record in caplog.records if record.message == "kpis.storage_optional_skip"]
+    assert len(warnings) == 1

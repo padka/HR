@@ -1,6 +1,5 @@
 import type { Ref } from 'react'
 import type { CandidateAction, CandidateDetail, TestSection } from '@/api/services/candidates'
-import { getHhSyncBadge } from './candidate-detail.constants'
 import { normalizeConferenceUrl, normalizeTelegramUsername } from '@/shared/utils/normalizers'
 
 type CandidateActionsProps = {
@@ -8,8 +7,10 @@ type CandidateActionsProps = {
   statusSlug: string | null
   test2Section?: TestSection
   actionPending: boolean
+  maxLinkPending: boolean
   actionsRef?: Ref<HTMLDivElement>
   onOpenChat: () => void
+  onCopyMaxLink: () => void
   onScheduleSlot: () => void
   onScheduleIntroDay: () => void
   onActionClick: (action: CandidateAction) => void
@@ -20,8 +21,10 @@ export function CandidateActions({
   statusSlug,
   test2Section,
   actionPending,
+  maxLinkPending,
   actionsRef,
   onOpenChat,
+  onCopyMaxLink,
   onScheduleSlot,
   onScheduleIntroDay,
   onActionClick,
@@ -34,14 +37,9 @@ export function CandidateActions({
       ? `tg://user?id=${candidate.telegram_id}`
       : null
   const hhLink = candidate.hh_profile_url || null
-  const hhBadge = getHhSyncBadge(candidate.hh_sync_status)
   const conferenceLink = normalizeConferenceUrl(candidate.telemost_url)
-  const conferenceSourceLabel =
-    candidate.telemost_source === 'upcoming'
-      ? 'Источник: ближайший слот'
-      : candidate.telemost_source === 'recent'
-        ? 'Источник: последний слот'
-        : null
+  const isMaxLinked = Boolean(candidate.max_user_id)
+  const canOpenChat = Boolean(candidate.telegram_id || candidate.max_user_id)
 
   const hasUpcomingSlot = slots.some((slot) => {
     const status = String(slot.status || '').toUpperCase()
@@ -77,99 +75,93 @@ export function CandidateActions({
   })
   const inlineActions = filteredActions.slice(0, 2)
   const overflowActions = filteredActions.slice(2)
-  const resolveRailTone = (variant?: CandidateAction['variant']) => {
-    if (variant === 'primary') return 'cd-rail-btn--primary'
-    if (variant === 'danger') return 'cd-rail-btn--danger'
-    return 'cd-rail-btn--secondary'
-  }
 
   return (
-    <div className="cd-actions">
-      <div className="cd-actions__meta">
-        {hhBadge && (
-          <span
-            className={`cd-chip ${
-              hhBadge.tone === 'success' ? 'cd-chip--success'
-              : hhBadge.tone === 'danger' ? 'cd-chip--danger'
-              : hhBadge.tone === 'warning' ? 'cd-chip--warning'
-              : ''
-            }`}
-            title={candidate.hh_sync_error || hhBadge.label}
+    <div className="cd-actions" ref={actionsRef}>
+      {/* Communication channels - branded */}
+      <div className="cd-channels" data-testid="candidate-channels">
+        {telegramLink ? (
+          <a
+            href={telegramLink}
+            className="cd-channel cd-channel--telegram"
+            target="_blank"
+            rel="noopener"
+            title={telegramUsername ? `Telegram @${telegramUsername}` : 'Telegram'}
           >
-            {hhBadge.label}
+            <span className="cd-channel__icon">TG</span>
+            <span className="cd-channel__label">Telegram</span>
+          </a>
+        ) : (
+          <span className="cd-channel cd-channel--disabled" title="Telegram не привязан">
+            <span className="cd-channel__icon">TG</span>
+            <span className="cd-channel__label">Telegram</span>
           </span>
         )}
-        {candidate.messenger_platform && candidate.messenger_platform !== 'telegram' && (
-          <span
-            className="cd-chip"
-            title={`Мессенджер: ${candidate.messenger_platform}${candidate.max_user_id ? ` (ID: ${candidate.max_user_id})` : ''}`}
+        {hhLink ? (
+          <a
+            href={hhLink}
+            className="cd-channel cd-channel--hh"
+            target="_blank"
+            rel="noopener"
+            title="HeadHunter"
           >
-            {candidate.messenger_platform === 'max' ? 'Max' : candidate.messenger_platform}
+            <span className="cd-channel__icon">hh</span>
+            <span className="cd-channel__label">HeadHunter</span>
+          </a>
+        ) : (
+          <span className="cd-channel cd-channel--disabled" title="HH не привязан">
+            <span className="cd-channel__icon">hh</span>
+            <span className="cd-channel__label">HeadHunter</span>
           </span>
         )}
-        {conferenceSourceLabel && (
-          <span className="cd-chip cd-chip--small">{conferenceSourceLabel}</span>
+        {conferenceLink ? (
+          <a
+            href={conferenceLink}
+            className="cd-channel cd-channel--conference"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Видеоконференция"
+          >
+            <span className="cd-channel__icon">▶</span>
+            <span className="cd-channel__label">Конференция</span>
+          </a>
+        ) : (
+          <span className="cd-channel cd-channel--disabled" title="Конференция не настроена">
+            <span className="cd-channel__icon">▶</span>
+            <span className="cd-channel__label">Конференция</span>
+          </span>
+        )}
+        <button
+          type="button"
+          className="cd-channel cd-channel--chat"
+          onClick={onOpenChat}
+          disabled={!canOpenChat}
+        >
+          <span className="cd-channel__icon">💬</span>
+          <span className="cd-channel__label">Чат</span>
+        </button>
+        {isMaxLinked ? (
+          <span className="cd-channel cd-channel--max" title="MAX привязан">
+            <span className="cd-channel__icon">MX</span>
+            <span className="cd-channel__label">MAX</span>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="cd-channel cd-channel--max"
+            onClick={onCopyMaxLink}
+            disabled={maxLinkPending}
+            title="Скопировать MAX-бота"
+          >
+            <span className="cd-channel__icon">MX</span>
+            <span className="cd-channel__label">{maxLinkPending ? 'Готовим…' : 'MAX bot'}</span>
+          </button>
         )}
       </div>
 
-      <div className="cd-action-rail" data-testid="candidate-actions" ref={actionsRef}>
+      {/* Action buttons */}
+      <div className="cd-action-rail" data-testid="candidate-actions">
         <div className="cd-action-rail__scroll">
-          {telegramLink ? (
-            <a
-              href={telegramLink}
-              className="cd-rail-btn cd-rail-btn--icon cd-rail-btn--secondary"
-              target="_blank"
-              rel="noopener"
-              title={telegramUsername ? `Открыть Telegram @${telegramUsername}` : 'Открыть Telegram'}
-              aria-label={telegramUsername ? `Открыть Telegram @${telegramUsername}` : 'Открыть Telegram'}
-            >
-              <span className="cd-rail-btn__icon">TG</span>
-            </a>
-          ) : (
-            <span className="cd-rail-btn cd-rail-btn--icon cd-rail-btn--disabled" title="Telegram не привязан">
-              <span className="cd-rail-btn__icon">TG</span>
-            </span>
-          )}
-          {hhLink ? (
-            <a
-              href={hhLink}
-              className="cd-rail-btn cd-rail-btn--icon cd-rail-btn--secondary"
-              target="_blank"
-              rel="noopener"
-              title="Открыть HH-профиль"
-              aria-label="Открыть HH-профиль"
-            >
-              <span className="cd-rail-btn__icon">HH</span>
-            </a>
-          ) : (
-            <span className="cd-rail-btn cd-rail-btn--icon cd-rail-btn--disabled" title="HH-профиль не привязан">
-              <span className="cd-rail-btn__icon">HH</span>
-            </span>
-          )}
-          {conferenceLink ? (
-            <a
-              href={conferenceLink}
-              className="cd-rail-btn cd-rail-btn--icon cd-rail-btn--secondary"
-              target="_blank"
-              rel="noopener noreferrer"
-              title={conferenceSourceLabel || 'Ссылка на конференцию'}
-              aria-label="Открыть конференцию"
-            >
-              <span className="cd-rail-btn__icon">VC</span>
-            </a>
-          ) : (
-            <span className="cd-rail-btn cd-rail-btn--icon cd-rail-btn--disabled" title="У рекрутера не заполнена ссылка на конференцию">
-              <span className="cd-rail-btn__icon">VC</span>
-            </span>
-          )}
-          <button
-            type="button"
-            className="cd-rail-btn cd-rail-btn--secondary"
-            onClick={onOpenChat}
-            disabled={!candidate.telegram_id}
-          >
-            Чат
-          </button>
           {canScheduleInterview && (
             <button className="cd-rail-btn cd-rail-btn--primary" onClick={onScheduleSlot}>
               {scheduleLabel}
@@ -192,7 +184,7 @@ export function CandidateActions({
           {inlineActions.map((action) => (
             <button
               key={action.key}
-              className={`cd-rail-btn ${resolveRailTone(action.variant)}`}
+              className={`cd-rail-btn ${action.variant === 'primary' ? 'cd-rail-btn--primary' : 'cd-rail-btn--secondary'}`}
               onClick={() => onActionClick(action)}
               disabled={actionPending}
             >
@@ -206,7 +198,7 @@ export function CandidateActions({
                 {overflowActions.map((action) => (
                   <button
                     key={action.key}
-                    className={`cd-rail-btn ${resolveRailTone(action.variant)}`}
+                    className={`cd-rail-btn ${action.variant === 'primary' ? 'cd-rail-btn--primary' : 'cd-rail-btn--secondary'}`}
                     onClick={() => onActionClick(action)}
                     disabled={actionPending}
                   >

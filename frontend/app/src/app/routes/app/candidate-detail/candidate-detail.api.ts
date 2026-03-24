@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   applyCandidateAction,
+  createCandidateMaxLink,
   fetchCandidateAiCoach,
   fetchCandidateAiSummary,
   fetchCandidateChat,
@@ -25,6 +26,9 @@ export function useCandidateDetail(candidateId: number) {
   return useQuery({
     queryKey: ['candidate-detail', candidateId],
     queryFn: () => fetchCandidateDetail(candidateId),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 }
 
@@ -34,6 +38,9 @@ export function useCandidateHh(candidateId: number, enabled: boolean) {
     queryFn: () => fetchCandidateHHSummary(candidateId),
     enabled,
     retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 }
 
@@ -43,6 +50,9 @@ export function useCandidateCohort(candidateId: number, enabled: boolean) {
     queryFn: () => fetchCandidateCohortComparison(candidateId),
     enabled,
     retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 }
 
@@ -53,7 +63,9 @@ export function useCandidateChat(candidateId: number, enabled: boolean) {
     queryKey: ['candidate-chat', candidateId],
     queryFn: () => fetchCandidateChat(candidateId, 50),
     enabled,
-    refetchOnWindowFocus: enabled,
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const markReadMutation = useMutation({
@@ -108,6 +120,9 @@ export function useCandidateAi(candidateId: number) {
     queryFn: () => fetchCandidateAiSummary(candidateId),
     enabled: Boolean(candidateId),
     retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const coachQuery = useQuery({
@@ -115,6 +130,9 @@ export function useCandidateAi(candidateId: number) {
     queryFn: () => fetchCandidateAiCoach(candidateId),
     enabled: false,
     retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const refreshSummaryMutation = useMutation({
@@ -172,10 +190,15 @@ export function useCandidateActions(candidateId: number) {
       scheduleCandidateIntroDay(candidateId, payload),
   })
 
+  const createMaxLinkMutation = useMutation({
+    mutationFn: () => createCandidateMaxLink(candidateId),
+  })
+
   return {
     actionMutation,
     scheduleInterviewMutation,
     scheduleIntroDayMutation,
+    createMaxLinkMutation,
   }
 }
 
@@ -183,5 +206,8 @@ export function useCitiesOptions() {
   return useQuery({
     queryKey: ['cities'],
     queryFn: fetchCities,
+    staleTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 }

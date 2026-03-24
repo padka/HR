@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from backend.domain.candidates.models import User
+from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.workflow import (
     CandidateWorkflowService,
     WorkflowAction,
@@ -50,3 +51,29 @@ def test_invalid_transition_raises_conflict():
 
     assert exc.value.current == WorkflowStatus.WAITING_FOR_SLOT
     assert WorkflowAction.ASSIGN_SLOT.value in exc.value.allowed
+
+
+def test_describe_prefers_candidate_status_when_requested():
+    svc = CandidateWorkflowService()
+    user = User(
+        fio="Test",
+        city="Москва",
+        candidate_status=CandidateStatus.INTRO_DAY_SCHEDULED,
+        workflow_status=WorkflowStatus.INTERVIEW_CONFIRMED.value,
+        status_changed_at=datetime.now(timezone.utc),
+    )
+
+    state = svc.describe(user, prefer_candidate_status=True)
+
+    assert state.status == WorkflowStatus.ONBOARDING_DAY_SCHEDULED
+    assert WorkflowAction.CONFIRM_ONBOARDING.value in state.allowed_actions
+
+
+def test_describe_accepts_legacy_lowercase_workflow_status():
+    svc = CandidateWorkflowService()
+    user = _candidate(WorkflowStatus.WAITING_FOR_SLOT)
+    user.workflow_status = "waiting_for_slot"
+
+    state = svc.describe(user)
+
+    assert state.status == WorkflowStatus.WAITING_FOR_SLOT

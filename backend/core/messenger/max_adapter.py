@@ -82,6 +82,33 @@ class MaxAdapter(MessengerProtocol):
                 "MaxAdapter is not configured. Call configure(token=...) first."
             )
 
+    @property
+    def is_ready(self) -> bool:
+        return self._client is not None and bool(self._token)
+
+    async def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
+    ) -> tuple[Any, Dict[str, Any]]:
+        self._ensure_ready()
+        response = await self._client.request(  # type: ignore[union-attr]
+            method,
+            path,
+            params=params,
+            json=json_body,
+        )
+        try:
+            data = response.json()
+        except Exception:
+            data = {"raw_text": getattr(response, "text", "")}
+        if not isinstance(data, dict):
+            data = {"data": data}
+        return response, data
+
     async def send_message(
         self,
         chat_id: int | str,
@@ -91,16 +118,13 @@ class MaxAdapter(MessengerProtocol):
         parse_mode: Optional[str] = None,
         correlation_id: Optional[str] = None,
     ) -> SendResult:
-        """Send a message via VK Max Bot API.
-
-        Max Bot API endpoint: POST /messages
-        Auth: Authorization header with bot token.
-        Body: {"chat_id": ..., "text": ..., "attachments": [...]}
-        """
+        """Send a message via VK MAX Bot API."""
         self._ensure_ready()
 
+        params: Dict[str, Any] = {
+            "user_id": int(chat_id) if isinstance(chat_id, str) and chat_id.isdigit() else chat_id,
+        }
         payload: Dict[str, Any] = {
-            "chat_id": int(chat_id) if isinstance(chat_id, str) and chat_id.isdigit() else chat_id,
             "text": text,
         }
         if parse_mode:
@@ -145,15 +169,12 @@ class MaxAdapter(MessengerProtocol):
         while attempt < self._max_retries:
             attempt += 1
             try:
-                resp = await self._client.post(  # type: ignore[union-attr]
+                resp, data = await self._request_json(
+                    "POST",
                     "/messages",
-                    json=payload,
+                    params=params,
+                    json_body=payload,
                 )
-                try:
-                    data = resp.json()
-                except Exception:
-                    data = {"raw_text": getattr(resp, "text", "")}
-
                 msg = data.get("message", {}) if isinstance(data, dict) else {}
                 message_id = str(
                     msg.get("mid")
@@ -162,16 +183,17 @@ class MaxAdapter(MessengerProtocol):
                     or data.get("message_id")
                     or ""
                 )
-                success = (
-                    resp.status_code == 200
-                    and (
-                        bool(message_id)
-                        or bool(data.get("success"))
-                        or bool(data.get("ok"))
-                    )
-                )
+                success = 200 <= resp.status_code < 300
 
                 if success:
+                    if not message_id and isinstance(data, dict):
+                        if any(key in data for key in ("error", "description")) and not (
+                            bool(data.get("success")) or bool(data.get("ok"))
+                        ):
+                            logger.warning(
+                                "max_adapter.send_unexpected_success_body",
+                                extra={"chat_id": chat_id, "response": data},
+                            )
                     return SendResult(
                         success=True,
                         message_id=message_id or None,
@@ -212,6 +234,72 @@ class MaxAdapter(MessengerProtocol):
             extra={"chat_id": chat_id, "attempts": attempt, "error": last_error},
         )
         return SendResult(success=False, error=last_error)
+
+    async def answer_callback(
+        self,
+        callback_id: str,
+        *,
+        notification: Optional[str] = None,
+        message: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Acknowledge a MAX callback button click."""
+        body: Dict[str, Any] = {}
+        if message is not None:
+            body["message"] = message
+        if notification:
+            body["notification"] = notification
+
+        response, data = await self._request_json(
+            "POST",
+            "/answers",
+            params={"callback_id": callback_id},
+            json_body=body,
+        )
+        success = response.status_code == 200 and bool(data.get("success", True))
+        if success:
+            return SendResult(success=True, raw_response=data)
+        error_text = data.get("message") or data.get("error") or str(data)
+        return SendResult(success=False, error=f"HTTP {response.status_code}: {error_text}", raw_response=data)
+
+    async def list_subscriptions(self) -> List[Dict[str, Any]]:
+        """Return current webhook subscriptions."""
+        response, data = await self._request_json("GET", "/subscriptions")
+        if response.status_code != 200:
+            raise RuntimeError(f"MAX list_subscriptions failed: HTTP {response.status_code}")
+        subscriptions = data.get("subscriptions") or []
+        return [item for item in subscriptions if isinstance(item, dict)]
+
+    async def create_subscription(
+        self,
+        *,
+        url: str,
+        update_types: List[str],
+        secret: Optional[str] = None,
+    ) -> SendResult:
+        body: Dict[str, Any] = {
+            "url": url,
+            "update_types": update_types,
+        }
+        if secret:
+            body["secret"] = secret
+        response, data = await self._request_json("POST", "/subscriptions", json_body=body)
+        success = response.status_code == 200 and bool(data.get("success", True))
+        if success:
+            return SendResult(success=True, raw_response=data)
+        error_text = data.get("message") or data.get("error") or str(data)
+        return SendResult(success=False, error=f"HTTP {response.status_code}: {error_text}", raw_response=data)
+
+    async def delete_subscription(self, *, url: str) -> SendResult:
+        response, data = await self._request_json(
+            "DELETE",
+            "/subscriptions",
+            params={"url": url},
+        )
+        success = response.status_code == 200 and bool(data.get("success", True))
+        if success:
+            return SendResult(success=True, raw_response=data)
+        error_text = data.get("message") or data.get("error") or str(data)
+        return SendResult(success=False, error=f"HTTP {response.status_code}: {error_text}", raw_response=data)
 
     async def close(self) -> None:
         """Close the HTTP client."""

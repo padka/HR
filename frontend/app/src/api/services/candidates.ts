@@ -29,6 +29,13 @@ export type CandidateSlot = {
   candidate_tz?: string | null
 }
 
+export type CandidateMaxLinkPayload = {
+  public_link: string
+  invite_token: string
+  deep_link: string
+  mini_app_link?: string | null
+}
+
 export type TestQuestionAnswer = {
   question_index?: number
   question_text?: string | null
@@ -576,6 +583,12 @@ export function sendCandidateChatMessage(candidateId: number, text: string, clie
 
 export function markCandidateChatRead(candidateId: number) {
   return apiFetch(`/candidate-chat/threads/${candidateId}/read`, {
+    method: 'POST',
+  })
+}
+
+export function createCandidateMaxLink(candidateId: number) {
+  return apiFetch<CandidateMaxLinkPayload>(`/candidates/${candidateId}/channels/max-link`, {
     method: 'POST',
   })
 }

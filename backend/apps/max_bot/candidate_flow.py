@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import html
 import logging
 import re
@@ -15,12 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.apps.bot.city_registry import find_candidate_city_by_name, list_candidate_cities
 from backend.apps.bot.test1_validation import apply_partial_validation
 from backend.core.db import async_session
+from backend.core.settings import get_settings
 import backend.core.messenger.registry as messenger_registry
 from backend.core.messenger.protocol import InlineButton, MessengerPlatform
 from backend.domain import analytics
 from backend.domain.candidate_status_service import CandidateStatusService
 from backend.domain.candidates.models import (
     CandidateChatRead,
+    CandidateInviteToken,
     CandidateJourneySession,
     CandidateJourneyStepState,
     CandidateJourneyStepStatus,
@@ -34,11 +36,15 @@ from backend.domain.candidates.models import (
 from backend.domain.candidates.portal_service import (
     CandidatePortalError,
     build_candidate_portal_journey,
+    build_candidate_max_mini_app_url,
     complete_screening,
     ensure_candidate_portal_session,
     get_candidate_portal_questions,
     save_candidate_profile,
     save_screening_draft,
+    resolve_candidate_portal_access_token,
+    resolve_candidate_portal_user,
+    sign_candidate_portal_token,
     upsert_step_state,
 )
 from backend.domain.candidates.status import CandidateStatus
@@ -74,21 +80,20 @@ class OutboundMessage:
     parse_mode: str | None = "HTML"
 
 
+@dataclass(frozen=True)
+class CandidateResolution:
+    candidate: User | None
+    status: str
+    payload_linked: bool = False
+    candidate_created: bool = False
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
 def _max_numeric_id(value: str) -> int | None:
     return int(value) if value.isdigit() else None
-
-
-def _candidate_uuid_from_payload(payload: str | None) -> str | None:
-    clean = str(payload or "").strip()
-    if not clean:
-        return None
-    if clean.startswith("candidate:"):
-        clean = clean.split(":", 1)[1].strip()
-    return clean if UUID_RE.fullmatch(clean) else None
 
 
 def _question_buttons(question: dict[str, Any]) -> list[list[InlineButton]] | None:
@@ -179,13 +184,47 @@ async def _merge_candidate_records(
     await session.delete(source)
 
 
-async def _ensure_max_candidate(
+def _invite_required_message(status: str) -> OutboundMessage:
+    if status == "invalid_invite":
+        return OutboundMessage(
+            text=(
+                "Ссылка для входа в MAX недействительна или устарела.\n"
+                "Попросите рекрутера отправить новую персональную ссылку."
+            )
+        )
+    if status == "invite_conflict":
+        return OutboundMessage(
+            text=(
+                "Эта ссылка уже привязана к другому аккаунту MAX.\n"
+                "Попросите рекрутера выпустить новую персональную ссылку."
+            )
+        )
+    return OutboundMessage(
+        text=(
+            "Чтобы продолжить в MAX, нужна персональная ссылка от рекрутера.\n"
+            "Без неё бот не может открыть вашу анкету."
+        )
+        )
+
+
+def _new_max_candidate(*, max_user_id: str, now: datetime) -> User:
+    return User(
+        fio=f"MAX {max_user_id}",
+        last_activity=now,
+        source="max_bot",
+        messenger_platform="max",
+        max_user_id=max_user_id,
+        is_active=True,
+    )
+
+
+async def _resolve_max_candidate(
     session: AsyncSession,
     *,
     max_user_id: str,
     display_name: str | None = None,
     start_payload: str | None = None,
-) -> User:
+) -> CandidateResolution:
     now = _utcnow()
     existing_by_max = await session.scalar(
         select(User)
@@ -193,40 +232,91 @@ async def _ensure_max_candidate(
         .order_by(User.id.asc())
         .limit(1)
     )
-    candidate_uuid = _candidate_uuid_from_payload(start_payload)
-    candidate_from_payload = None
-    if candidate_uuid:
-        candidate_from_payload = await session.scalar(
-            select(User).where(User.candidate_id == candidate_uuid)
-        )
+    raw_payload = str(start_payload or "").strip()
 
-    candidate = candidate_from_payload or existing_by_max
-    created = False
-
-    if candidate_from_payload is not None and existing_by_max is not None and existing_by_max.id != candidate_from_payload.id:
-        await _merge_candidate_records(session, source=existing_by_max, target=candidate_from_payload)
+    candidate = existing_by_max
+    payload_linked = False
+    linked_now = False
+    candidate_created = False
 
     if candidate is None:
-        created = True
-        candidate = User(
-            fio=f"MAX {max_user_id}",
-            last_activity=now,
-            source="max_bot",
-            messenger_platform="max",
-            max_user_id=max_user_id,
-            candidate_status=CandidateStatus.LEAD,
-            status_changed_at=now,
-            workflow_status="lead",
-        )
-        session.add(candidate)
-        await session.flush()
-        await analytics.log_funnel_event(
-            analytics.FunnelEvent.BOT_ENTERED,
-            user_id=_max_numeric_id(max_user_id),
-            candidate_id=candidate.id,
-            metadata={"channel": "max", "max_user_id": max_user_id},
-            session=session,
-        )
+        if raw_payload:
+            try:
+                access = await resolve_candidate_portal_access_token(session, raw_payload)
+            except CandidatePortalError:
+                access = None
+
+            if access is not None:
+                try:
+                    candidate = await resolve_candidate_portal_user(session, access)
+                except CandidatePortalError:
+                    return CandidateResolution(candidate=None, status="invalid_invite")
+                existing_link = await session.scalar(
+                    select(User)
+                    .where(User.max_user_id == max_user_id)
+                    .where(User.id != candidate.id)
+                    .limit(1)
+                )
+                if existing_link is not None:
+                    return CandidateResolution(candidate=None, status="invite_conflict")
+
+                if candidate.max_user_id and candidate.max_user_id != max_user_id:
+                    return CandidateResolution(candidate=None, status="invite_conflict")
+
+                linked_now = candidate.max_user_id in {None, "", max_user_id}
+                candidate.max_user_id = max_user_id
+                payload_linked = True
+            else:
+                invite = await session.scalar(
+                    select(CandidateInviteToken)
+                    .where(CandidateInviteToken.token == raw_payload)
+                    .limit(1)
+                )
+                if invite is None:
+                    return CandidateResolution(candidate=None, status="invalid_invite")
+
+                settings = get_settings()
+                invite_ttl = timedelta(seconds=settings.candidate_portal_token_ttl_seconds)
+                created_at = invite.created_at
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                if now - created_at > invite_ttl:
+                    return CandidateResolution(candidate=None, status="invalid_invite")
+
+                candidate = await session.scalar(
+                    select(User).where(User.candidate_id == invite.candidate_id).limit(1)
+                )
+                if candidate is None:
+                    return CandidateResolution(candidate=None, status="invalid_invite")
+
+                existing_link = await session.scalar(
+                    select(User)
+                    .where(User.max_user_id == max_user_id)
+                    .where(User.id != candidate.id)
+                    .limit(1)
+                )
+                if existing_link is not None:
+                    return CandidateResolution(candidate=None, status="invite_conflict")
+
+                if candidate.max_user_id and candidate.max_user_id != max_user_id:
+                    return CandidateResolution(candidate=None, status="invite_conflict")
+
+                if invite.used_at is not None and candidate.max_user_id != max_user_id:
+                    return CandidateResolution(candidate=None, status="invite_conflict")
+
+                linked_now = invite.used_at is None and candidate.max_user_id in {None, "", max_user_id}
+                if invite.used_at is None:
+                    invite.used_at = now
+                candidate.max_user_id = max_user_id
+                payload_linked = True
+        else:
+            candidate = _new_max_candidate(max_user_id=max_user_id, now=now)
+            session.add(candidate)
+            await session.flush()
+            linked_now = True
+            candidate_created = True
+
+    assert candidate is not None
 
     candidate.max_user_id = max_user_id
     candidate.messenger_platform = "max"
@@ -235,6 +325,15 @@ async def _ensure_max_candidate(
         candidate.source = "max_bot"
     if candidate.candidate_status is None:
         await _status_service.force(candidate, CandidateStatus.LEAD, reason="max bot entry")
+
+    if linked_now:
+        await analytics.log_funnel_event(
+            analytics.FunnelEvent.BOT_ENTERED,
+            user_id=_max_numeric_id(max_user_id),
+            candidate_id=candidate.id,
+            metadata={"channel": "max", "max_user_id": max_user_id},
+            session=session,
+        )
 
     await analytics.log_funnel_event(
         analytics.FunnelEvent.BOT_START,
@@ -245,16 +344,13 @@ async def _ensure_max_candidate(
     )
 
     await session.flush()
-    logger.info(
-        "max_bot.candidate_resolved",
-        extra={
-            "candidate_id": candidate.id,
-            "max_user_id": max_user_id,
-            "candidate_created": created,
-            "payload_linked": bool(candidate_uuid),
-        },
+    logger.info("max_bot.candidate_resolved")
+    return CandidateResolution(
+        candidate=candidate,
+        status="created" if candidate_created else ("linked" if payload_linked else "existing"),
+        payload_linked=payload_linked,
+        candidate_created=candidate_created,
     )
-    return candidate
 
 
 async def _render_status_message(
@@ -263,6 +359,15 @@ async def _render_status_message(
 ) -> OutboundMessage:
     payload = await build_candidate_portal_journey(session, candidate, entry_channel="max")
     portal_url = payload["candidate"].get("portal_url")
+    mini_app_url = ""
+    if candidate.candidate_id or candidate.telegram_id:
+        portal_token = sign_candidate_portal_token(
+            candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
+            telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
+            entry_channel="max",
+            source_channel="max_app",
+        )
+        mini_app_url = build_candidate_max_mini_app_url(start_param=portal_token)
     next_action = payload["journey"].get("next_action") or "Следующий шаг уже сохранён в вашем профиле."
     status_label = payload["candidate"].get("status_label") or "В обработке"
     active_slot = payload["journey"]["slots"].get("active")
@@ -273,16 +378,20 @@ async def _render_status_message(
     ]
     if active_slot and active_slot.get("start_utc"):
         lines.append(f"Назначенный слот: <code>{html.escape(str(active_slot['start_utc']))}</code>")
-    if portal_url:
+    if mini_app_url:
+        lines.append("")
+        lines.append("Личный кабинет открыт в MAX.")
+    elif portal_url:
         lines.append("")
         lines.append(f"Продолжить: {portal_url}")
 
-    buttons = (
-        [[InlineButton(text="Открыть кабинет кандидата", url=str(portal_url))]]
-        if portal_url
-        else None
-    )
-    return OutboundMessage(text="\n".join(lines), buttons=buttons)
+    buttons: list[list[InlineButton]] = []
+    if mini_app_url:
+        buttons.append([InlineButton(text="Личный кабинет", url=str(mini_app_url))])
+    if portal_url:
+        buttons.append([InlineButton(text="Открыть в браузере", url=str(portal_url))])
+    buttons_value = buttons or None
+    return OutboundMessage(text="\n".join(lines), buttons=buttons_value)
 
 
 async def _render_profile_prompt(
@@ -403,7 +512,8 @@ async def send_outbound(
     try:
         await _send_outbound(max_user_id=max_user_id, messages=messages)
     except Exception:
-        logger.exception("max_bot.send_failed", extra={"max_user_id": max_user_id})
+        logger.exception("max_bot.send_failed")
+        raise
 
 
 async def _log_inbound_max_chat(
@@ -565,30 +675,29 @@ async def process_bot_started(
 ) -> list[OutboundMessage]:
     async with async_session() as session:
         async with session.begin():
-            candidate = await _ensure_max_candidate(
+            resolution = await _resolve_max_candidate(
                 session,
                 max_user_id=max_user_id,
                 display_name=display_name,
                 start_payload=start_payload,
             )
+            if resolution.candidate is None:
+                return [_invite_required_message(resolution.status)]
+            candidate = resolution.candidate
             journey = await ensure_candidate_portal_session(session, candidate, entry_channel="max")
-            payload = await build_candidate_portal_journey(session, candidate, entry_channel="max")
+            next_messages = await _render_next_step(session, candidate, journey)
+            intro = OutboundMessage(
+                text=(
+                    "Здравствуйте! Здесь можно пройти первичную анкету прямо в MAX.\n"
+                    "После этого мы дадим ссылку на выбор времени собеседования."
+                ),
+            )
+            if resolution.candidate_created or resolution.payload_linked:
+                return [intro, *next_messages]
+            if next_messages and "кабинете кандидата" not in str(next_messages[0].text).lower():
+                return [intro, *next_messages]
 
-            current_step = str(payload["journey"].get("current_step") or "")
-            if current_step in {"profile", "screening"}:
-                started = current_step == "screening" or bool((payload["journey"].get("profile") or {}).get("fio"))
-                cta = "Продолжить анкету" if started else "Начать анкету"
-                return [
-                    OutboundMessage(
-                        text=(
-                            "Здравствуйте! Здесь можно пройти первичную анкету прямо в MAX.\n"
-                            "После этого мы дадим ссылку на выбор времени собеседования."
-                        ),
-                        buttons=[[InlineButton(text=cta, callback_data=WELCOME_CALLBACK)]],
-                    )
-                ]
-
-            return [await _render_status_message(session, candidate)]
+            return next_messages
 
 
 async def process_start_or_resume(
@@ -597,7 +706,10 @@ async def process_start_or_resume(
 ) -> list[OutboundMessage]:
     async with async_session() as session:
         async with session.begin():
-            candidate = await _ensure_max_candidate(session, max_user_id=max_user_id)
+            resolution = await _resolve_max_candidate(session, max_user_id=max_user_id)
+            if resolution.candidate is None:
+                return [_invite_required_message(resolution.status)]
+            candidate = resolution.candidate
             journey = await ensure_candidate_portal_session(session, candidate, entry_channel="max")
             return await _render_next_step(session, candidate, journey)
 
@@ -616,12 +728,15 @@ async def process_text_message(
 
     async with async_session() as session:
         async with session.begin():
-            candidate = await _ensure_max_candidate(
+            resolution = await _resolve_max_candidate(
                 session,
                 max_user_id=max_user_id,
                 display_name=display_name,
                 start_payload=start_payload,
             )
+            if resolution.candidate is None:
+                return [_invite_required_message(resolution.status)]
+            candidate = resolution.candidate
             journey = await ensure_candidate_portal_session(session, candidate, entry_channel="max")
             payload = await build_candidate_portal_journey(session, candidate, entry_channel="max")
             current_step = str(payload["journey"].get("current_step") or "")
@@ -670,7 +785,10 @@ async def process_callback(
 
     async with async_session() as session:
         async with session.begin():
-            candidate = await _ensure_max_candidate(session, max_user_id=max_user_id)
+            resolution = await _resolve_max_candidate(session, max_user_id=max_user_id)
+            if resolution.candidate is None:
+                return [_invite_required_message(resolution.status)]
+            candidate = resolution.candidate
             journey = await ensure_candidate_portal_session(session, candidate, entry_channel="max")
             journey_payload = await build_candidate_portal_journey(session, candidate, entry_channel="max")
             if str(journey_payload["journey"].get("current_step") or "") != "screening":

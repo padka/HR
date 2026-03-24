@@ -55,6 +55,14 @@ async def _async_request(app, method: str, path: str, **kwargs) -> Any:
     def _call() -> Any:
         with TestClient(app) as client:
             client.auth = ("admin", "admin")
+            headers = dict(kwargs.pop("headers", {}) or {})
+            if method.upper() not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+                header_keys = {key.lower() for key in headers}
+                if "x-csrf-token" not in header_keys:
+                    csrf = client.get("/api/csrf").json()["token"]
+                    headers["x-csrf-token"] = csrf
+            if headers:
+                kwargs["headers"] = headers
             return client.request(method, path, **kwargs)
 
     return await asyncio.to_thread(_call)
@@ -72,6 +80,14 @@ async def _async_request_with_principal(
         try:
             with TestClient(app) as client:
                 client.auth = ("admin", "admin")
+                headers = dict(kwargs.pop("headers", {}) or {})
+                if method.upper() not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+                    header_keys = {key.lower() for key in headers}
+                    if "x-csrf-token" not in header_keys:
+                        csrf = client.get("/api/csrf").json()["token"]
+                        headers["x-csrf-token"] = csrf
+                if headers:
+                    kwargs["headers"] = headers
                 return client.request(method, path, **kwargs)
         finally:
             app.dependency_overrides.pop(require_principal, None)
