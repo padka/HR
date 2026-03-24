@@ -840,7 +840,7 @@ describe('UI cosmetics smoke', () => {
     expect(document.querySelector('.status-badge')).toBeTruthy()
   })
 
-  it('renders candidate header without details and interview script action buttons', async () => {
+  it('renders candidate header with insights entrypoint and without inline interview script action button', async () => {
     render(<CandidateDetailPage />)
     const header = screen.getByTestId('candidate-header')
     expect(header).toBeInTheDocument()
@@ -852,7 +852,7 @@ describe('UI cosmetics smoke', () => {
     expect(within(header).getByText(/Рекомендуем|Уточнить|Не рекомендуем/)).toBeInTheDocument()
     expect(screen.queryByText('Слоты и интервью')).not.toBeInTheDocument()
     expect(screen.queryByText('AI-помощник')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('candidate-insights-trigger')).not.toBeInTheDocument()
+    expect(screen.getByTestId('candidate-insights-trigger')).toBeInTheDocument()
     expect(screen.queryByTestId('candidate-script-trigger')).not.toBeInTheDocument()
     expect(screen.queryByText('Детали')).not.toBeInTheDocument()
     expect(screen.queryByText('Скрипт интервью')).not.toBeInTheDocument()

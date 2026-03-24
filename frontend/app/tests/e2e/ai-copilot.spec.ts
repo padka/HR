@@ -13,15 +13,24 @@ test.describe('AI Copilot', () => {
     await page.waitForURL(/\/app\/candidates\/\d+/)
     await page.waitForLoadState('domcontentloaded')
 
-    const copilotHeading = page.getByRole('heading', { name: 'AI Copilot', exact: false }).first()
+    await page.getByTestId('candidate-insights-trigger').click()
+    const insightsDrawer = page.getByTestId('candidate-insights-drawer')
+    await expect(insightsDrawer).toBeVisible({ timeout: 10000 })
+
+    const copilotHeading = insightsDrawer.getByRole('heading', { name: 'AI-помощник', exact: false }).first()
     await expect(copilotHeading).toBeVisible({ timeout: 10000 })
 
-    const generateButton = page.getByRole('button', { name: /Сгенерировать/i }).first()
-    await generateButton.click()
+    const newButton = insightsDrawer.getByRole('button', { name: 'Новый', exact: true })
+    if (await newButton.count()) {
+      await newButton.click()
+    } else {
+      await insightsDrawer.getByRole('button', { name: 'Обновить', exact: true }).click()
+    }
 
     await expect(
-      page.getByText('Кандидат в процессе. Следующий шаг: назначить/подтвердить время.', { exact: false }).first(),
+      insightsDrawer.getByText('Кандидат в процессе. Следующий шаг: назначить/подтвердить время.', { exact: false }).first(),
     ).toBeVisible({ timeout: 10000 })
+    await insightsDrawer.getByRole('button', { name: 'Закрыть', exact: true }).click()
 
     const chatButton = page.getByRole('button', { name: /Чат/i }).first()
     await expect(chatButton).toBeEnabled({ timeout: 10000 })

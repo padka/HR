@@ -302,8 +302,13 @@ export function CandidateDetailPage() {
                     test2Section={test2Section}
                     actionPending={actionMutation.isPending}
                     maxLinkPending={createMaxLinkMutation.isPending}
+                    showInsightsAction={!isMobile}
                     actionsRef={pipelineActionsRef}
                     onOpenChat={handleOpenChat}
+                    onOpenInsights={() => {
+                      setIsChatOpen(false)
+                      setIsInsightsOpen(true)
+                    }}
                     onCopyMaxLink={handleCopyMaxLink}
                     onScheduleSlot={() => setShowScheduleSlotModal(true)}
                     onScheduleIntroDay={() => setShowScheduleIntroDayModal(true)}
@@ -376,6 +381,7 @@ export function CandidateDetailPage() {
             <button
               type="button"
               className="ui-btn ui-btn--ghost ui-btn--sm"
+              data-testid="candidate-insights-trigger"
               onClick={() => {
                 setIsChatOpen(false)
                 setIsInsightsOpen(true)

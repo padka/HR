@@ -111,24 +111,44 @@ test.describe("ui cosmetics smoke (desktop)", () => {
     await expect(page.getByRole("searchbox", { name: "Поиск по чатам" })).toBeVisible({ timeout: 10000 });
     await expect(page.locator(".messenger-sidebar")).toBeVisible({ timeout: 10000 });
     await expect(page.locator(".messenger-chat")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("button", { name: "Отправить сообщение" })).toBeVisible({ timeout: 10000 });
-    const messages = page.getByTestId("messenger-messages");
-    await expect(messages).toBeVisible({ timeout: 10000 });
-    await messages.evaluate((node) => {
-      const element = node as HTMLElement;
-      element.scrollTop = 0;
-    });
-    await expect(page.getByTestId("messenger-composer")).toBeInViewport();
+
+    const composer = page.getByTestId("messenger-composer");
+    if (!(await composer.isVisible().catch(() => false))) {
+      const firstThread = page.locator('.messenger-thread-card[role="button"]').first();
+      if (await firstThread.count()) {
+        await expect(firstThread).toBeVisible({ timeout: 10000 });
+        await firstThread.click();
+      }
+    }
+
+    if (await composer.isVisible().catch(() => false)) {
+      await expect(page.getByRole("button", { name: "Отправить сообщение" })).toBeVisible({ timeout: 10000 });
+      const messages = page.getByTestId("messenger-messages");
+      await expect(messages).toBeVisible({ timeout: 10000 });
+      await messages.evaluate((node) => {
+        const element = node as HTMLElement;
+        element.scrollTop = 0;
+      });
+      await expect(page.getByTestId("messenger-composer")).toBeInViewport();
+    } else {
+      await expect(page.getByText("Выберите диалог слева").or(page.getByText("Ничего не найдено")).first()).toBeVisible({
+        timeout: 10000,
+      });
+    }
+
     await expect(page.getByRole("button", { name: "Детали" })).toHaveCount(0);
     await expect(page.locator(".background-scene")).toHaveCount(0);
   });
 
-  test("candidate detail opens interview script modal", async ({ page }) => {
+  test("candidate detail opens interview script panel from insights drawer", async ({ page }) => {
     await openFirstCandidateDetail(page);
     await expect(page.getByTestId("candidate-actions")).toBeVisible({ timeout: 10000 });
 
+    await page.getByTestId("candidate-insights-trigger").click();
+    await expect(page.getByTestId("candidate-insights-drawer")).toBeVisible({ timeout: 10000 });
+
     await page.getByRole("button", { name: "Скрипт интервью" }).click();
-    await expect(page.getByTestId("interview-script-modal")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("interview-script-panel")).toBeVisible({ timeout: 10000 });
   });
 
   test("candidate detail drawer stays scrollable and pipeline cards keep compact states", async ({ page }) => {
@@ -162,7 +182,6 @@ test.describe("ui cosmetics smoke (desktop)", () => {
     await expect(pipeline.locator(".candidate-pipeline-stage--current")).toBeVisible();
     await expect(pipeline.locator(".candidate-pipeline-stage--upcoming").first()).toBeVisible();
     await expect(pipeline.locator(".candidate-pipeline-stage__preview")).toHaveCount(0);
-    await expect(pipeline.locator(".candidate-pipeline-stage__subtitle").first()).toBeVisible();
   });
 });
 

@@ -109,6 +109,17 @@ def configure_backend(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def reset_settings_cache():
+    from backend.core import settings as settings_module
+
+    # Tests frequently mutate env vars before create_app(); clear the cached
+    # settings object around every test so app/session/CSRF config cannot leak.
+    settings_module.get_settings.cache_clear()
+    yield
+    settings_module.get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def clean_database():
     from backend.domain.base import Base
     from backend.core.db import async_engine, sync_engine

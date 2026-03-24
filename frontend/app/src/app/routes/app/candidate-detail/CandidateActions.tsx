@@ -8,8 +8,10 @@ type CandidateActionsProps = {
   test2Section?: TestSection
   actionPending: boolean
   maxLinkPending: boolean
+  showInsightsAction?: boolean
   actionsRef?: Ref<HTMLDivElement>
   onOpenChat: () => void
+  onOpenInsights: () => void
   onCopyMaxLink: () => void
   onScheduleSlot: () => void
   onScheduleIntroDay: () => void
@@ -22,8 +24,10 @@ export function CandidateActions({
   test2Section,
   actionPending,
   maxLinkPending,
+  showInsightsAction = false,
   actionsRef,
   onOpenChat,
+  onOpenInsights,
   onCopyMaxLink,
   onScheduleSlot,
   onScheduleIntroDay,
@@ -162,6 +166,17 @@ export function CandidateActions({
       {/* Action buttons */}
       <div className="cd-action-rail" data-testid="candidate-actions">
         <div className="cd-action-rail__scroll">
+          {showInsightsAction && (
+            <button
+              type="button"
+              className="cd-rail-btn cd-rail-btn--secondary"
+              data-testid="candidate-insights-trigger"
+              aria-label="Открыть инсайты кандидата"
+              onClick={onOpenInsights}
+            >
+              Инсайты
+            </button>
+          )}
           {canScheduleInterview && (
             <button className="cd-rail-btn cd-rail-btn--primary" onClick={onScheduleSlot}>
               {scheduleLabel}
