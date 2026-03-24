@@ -1,49 +1,52 @@
 # Project Context Index
 
-## What This Repository Is
+Compact navigation for current RecruitSmart Admin work.
 
-RecruitSmart Admin is a production CRM/ATS monorepo with:
-- FastAPI backend in [backend](/Users/mikhail/Projects/recruitsmart_admin/backend)
-- React SPA in [frontend/app](/Users/mikhail/Projects/recruitsmart_admin/frontend/app)
-- built frontend bundle in [frontend/dist](/Users/mikhail/Projects/recruitsmart_admin/frontend/dist)
-- supporting bot/integration modules in [backend/apps](/Users/mikhail/Projects/recruitsmart_admin/backend/apps)
+## Canonical docs
 
-## Primary Docs To Read First
+Read in this order:
 
 1. [README.md](/Users/mikhail/Projects/recruitsmart_admin/README.md)
 2. [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md)
 3. [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
 4. [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
 5. [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md)
-6. [REPOSITORY_WORKFLOW_GUIDE.md](/Users/mikhail/Projects/recruitsmart_admin/REPOSITORY_WORKFLOW_GUIDE.md)
+6. [`.codex/config.toml`](/Users/mikhail/Projects/recruitsmart_admin/.codex/config.toml)
+7. [`.agents/skills/`](/Users/mikhail/Projects/recruitsmart_admin/.agents/skills/)
 
-## Canonical Permanent Root Docs
+## Current system map
 
-- [README.md](/Users/mikhail/Projects/recruitsmart_admin/README.md)
-- [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md)
-- [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
-- [PROJECT_CONTEXT_INDEX.md](/Users/mikhail/Projects/recruitsmart_admin/PROJECT_CONTEXT_INDEX.md)
-- [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
-- [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md)
-- [REPOSITORY_WORKFLOW_GUIDE.md](/Users/mikhail/Projects/recruitsmart_admin/REPOSITORY_WORKFLOW_GUIDE.md)
+- Backend admin app: `backend/apps/admin_ui/app.py`
+- Admin API: `backend/apps/admin_api/main.py`
+- Telegram bot: `backend/apps/bot/app.py`
+- MAX bot: `backend/apps/max_bot/app.py`
+- Candidate domain: `backend/domain/candidates/*`
+- Slot/schedule domain: `backend/domain/slot_service.py`, `backend/domain/slot_assignment_service.py`
+- Frontend SPA: `frontend/app/src/app/main.tsx`
+- Candidate portal: `frontend/app/src/app/routes/candidate/*`
+- Recruiter dashboard/chat: `frontend/app/src/app/routes/app/*`
 
-## What Was Intentionally Removed
+## Business-critical flows
 
-- Closed task-specific markdown packages that had accumulated in repo root:
-  - redesign planning bundles
-  - Codex execution handoff bundles
-  - temporary task/session/verification files
-  - one-off readiness, roadmap, checklist, audit, and feature-spec files
+- candidate lifecycle and status transitions
+- slot booking, reschedule, and confirmation
+- recruiter chat and dashboard actions
+- candidate portal and MAX mini app
+- bot/webhook delivery and idempotency
+- analytics and KPI reporting
 
-If one of those old files is needed again, recover it from git history instead of recreating root clutter.
+## High-risk surfaces
 
-## Where Subsystem Docs Live
+- auth/session handling
+- candidate portal token exchange
+- webhooks and retries
+- scheduling and slot assignment
+- migrations
+- analytics calculations
+- PII in logs and traces
 
-- Backend/domain/runbooks: [docs](/Users/mikhail/Projects/recruitsmart_admin/docs)
-- Historical or non-canonical material: [docs/archive](/Users/mikhail/Projects/recruitsmart_admin/docs/archive), [codex](/Users/mikhail/Projects/recruitsmart_admin/codex)
+## Local Codex layer
 
-## Active Working Boundaries
-
-- Work locally by default.
-- Do not touch VPS or production unless the user explicitly asks in that task.
-- Keep temporary markdown notes out of repo root after task completion.
+- `.codex/config.toml` holds project defaults for safe agent operation.
+- `.agents/skills/` holds reusable workflow gates for recurring tasks.
+- `.codexrc` remains only as a compatibility shim until runtime precedence is confirmed.

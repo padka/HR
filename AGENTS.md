@@ -1,156 +1,208 @@
 # AGENTS.md
 
-## Project Overview
+Project-level operating rules for Codex in RecruitSmart Admin.
+
+## 1. Canonical Docs And Precedence
+
+Use this order when docs conflict:
+
+1. [README.md](/Users/mikhail/Projects/recruitsmart_admin/README.md)
+2. [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md)
+3. [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
+4. [PROJECT_CONTEXT_INDEX.md](/Users/mikhail/Projects/recruitsmart_admin/PROJECT_CONTEXT_INDEX.md)
+5. [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
+6. [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md)
+7. [REPOSITORY_WORKFLOW_GUIDE.md](/Users/mikhail/Projects/recruitsmart_admin/REPOSITORY_WORKFLOW_GUIDE.md)
+8. subsystem docs in [docs](/Users/mikhail/Projects/recruitsmart_admin/docs)
+9. historical/reference material in [codex](/Users/mikhail/Projects/recruitsmart_admin/codex)
+
+Current Codex workspace layer:
+
+- project-scoped config: [`.codex/config.toml`](/Users/mikhail/Projects/recruitsmart_admin/.codex/config.toml)
+- compatibility shim: [`.codexrc`](/Users/mikhail/Projects/recruitsmart_admin/.codexrc)
+- reusable skills: [`.agents/skills/`](/Users/mikhail/Projects/recruitsmart_admin/.agents/skills/)
+
+If a workflow or command is described in older docs but conflicts with the current root docs or live code, treat the older material as historical unless the codebase proves otherwise.
+
+## 2. Repository Shape
 
 RecruitSmart Admin is a production CRM/ATS monorepo with:
+
 - FastAPI backend in [backend](/Users/mikhail/Projects/recruitsmart_admin/backend)
 - React 18 SPA in [frontend/app](/Users/mikhail/Projects/recruitsmart_admin/frontend/app)
-- Vite-built frontend bundle served by backend from [frontend/dist](/Users/mikhail/Projects/recruitsmart_admin/frontend/dist)
-- supporting bot/integration modules in [backend/apps/bot](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/bot) and [backend/apps/max_bot](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/max_bot)
+- Vite-built bundle served from [frontend/dist](/Users/mikhail/Projects/recruitsmart_admin/frontend/dist)
+- PostgreSQL/Alembic persistence
+- Redis-backed notifications/cache flows
+- Telegram bot and MAX bot runtimes
+- candidate portal, recruiter dashboard, slot scheduling, messaging, analytics, and automation flows
 
-This repository has already gone through multiple planning and implementation passes. Future Codex runs should reuse durable docs and live code, not recreate closed-task markdown packages.
+Key boundaries:
 
-## Architecture Summary
-
-- Backend entrypoint: [backend/apps/admin_ui/app.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_ui/app.py)
+- backend entrypoint: [backend/apps/admin_ui/app.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_ui/app.py)
+- admin API: [backend/apps/admin_api/main.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_api/main.py)
+- Telegram bot: [backend/apps/bot/app.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/bot/app.py)
+- MAX bot: [backend/apps/max_bot/app.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/max_bot/app.py)
 - SPA route map: [frontend/app/src/app/main.tsx](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/app/main.tsx)
-- frontend shell and mobile navigation: [frontend/app/src/app/routes/__root.tsx](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/app/routes/__root.tsx)
-- frontend theme system:
-  - [frontend/app/src/theme/tokens.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/tokens.css)
-  - [frontend/app/src/theme/global.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/global.css)
-  - [frontend/app/src/theme/components.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/components.css)
-  - [frontend/app/src/theme/pages.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/pages.css)
-  - [frontend/app/src/theme/mobile.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/mobile.css)
-  - [frontend/app/src/theme/motion.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/motion.css)
-  - [frontend/app/src/theme/material.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/material.css)
+- shell / navigation: [frontend/app/src/app/routes/__root.tsx](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/app/routes/__root.tsx)
 
-## Directory Guide
+## 3. Mandatory Workflow
 
-- [backend](/Users/mikhail/Projects/recruitsmart_admin/backend): apps, domain logic, migrations, shared infra
-- [frontend/app](/Users/mikhail/Projects/recruitsmart_admin/frontend/app): SPA source, tests, build config
-- [docs](/Users/mikhail/Projects/recruitsmart_admin/docs): subsystem docs and runbooks
-- [codex](/Users/mikhail/Projects/recruitsmart_admin/codex): older Codex notes/tasks/reports; useful for history, not always canonical
-- [scripts](/Users/mikhail/Projects/recruitsmart_admin/scripts): migration/dev/perf/smoke helpers
-- [tests](/Users/mikhail/Projects/recruitsmart_admin/tests): backend tests
-- [artifacts](/Users/mikhail/Projects/recruitsmart_admin/artifacts): generated outputs, screenshots, reports
+When a request is clear enough to act on:
 
-## Canonical Docs And Precedence
+1. Read the relevant canonical docs first.
+2. Inspect the exact files you plan to touch.
+3. Identify side effects, callers, data flow, and rollback surface.
+4. Choose the smallest safe implementation path.
+5. Check security, scalability, and domain integrity before editing medium/high-risk paths.
+6. Verify version-sensitive behavior against official docs and MCP-backed sources, not memory.
+7. Make the change in a small, reviewable batch.
+8. Run the relevant validation commands.
+9. Report what changed, why, verification performed, and residual risk.
 
-Use this precedence order when documents conflict:
+Ask questions only if a wrong assumption could break production, corrupt data, or produce an unsafe architecture.
 
-1. Root durable repo-operating docs:
-   - [README.md](/Users/mikhail/Projects/recruitsmart_admin/README.md)
-   - [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
-   - [PROJECT_CONTEXT_INDEX.md](/Users/mikhail/Projects/recruitsmart_admin/PROJECT_CONTEXT_INDEX.md)
-   - [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
-   - [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md)
-   - [REPOSITORY_WORKFLOW_GUIDE.md](/Users/mikhail/Projects/recruitsmart_admin/REPOSITORY_WORKFLOW_GUIDE.md)
-2. Current subsystem docs in [docs](/Users/mikhail/Projects/recruitsmart_admin/docs)
-3. Historical/reference material in [codex](/Users/mikhail/Projects/recruitsmart_admin/codex) and [docs/archive](/Users/mikhail/Projects/recruitsmart_admin/docs/archive)
+## 4. Risk Tiers
 
-Important: several older files under `codex/`, `docs/project/`, and `docs/LOCAL_DEV.md` still reference pre-SPA or migrated workflows. Treat them as historical context unless confirmed against the current codebase.
+### Low risk
 
-## Read This First
+- docs
+- copy
+- styling
+- harmless UI polish
+- workflow shims
 
-Before touching code:
+### Medium risk
 
-1. Read [README.md](/Users/mikhail/Projects/recruitsmart_admin/README.md)
-2. Read [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
-3. Read [PROJECT_CONTEXT_INDEX.md](/Users/mikhail/Projects/recruitsmart_admin/PROJECT_CONTEXT_INDEX.md)
-4. Read [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
-5. Open [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md)
-6. Check `git status --short`
-7. Inspect the exact files you plan to touch
-8. Only then make a plan
+- business logic
+- queries
+- integrations
+- internal workflow changes
+- recruiter-facing UI behavior
 
-## Run / Test / Build
+### High risk
 
-Primary commands:
+- auth / permissions
+- candidate portal token exchange
+- scheduling / slot assignment
+- status transitions
+- migrations
+- queueing / retries
+- webhooks
+- external side effects
+- AI-generated outputs that affect business actions
 
-```bash
-make install
-npm --prefix frontend/app install
-make dev-migrate
-make dev-admin
-make dev-bot
-make test
-npm --prefix frontend/app run lint
-npm --prefix frontend/app run typecheck
-npm --prefix frontend/app run test
-npm --prefix frontend/app run build:verify
-npm --prefix frontend/app run test:e2e:smoke
-```
+### Required gates for high risk
 
-Use [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md) for when each command is required and what it validates.
+- architecture review first
+- security review
+- scalability review
+- rollback plan
+- validation plan with explicit commands
+- no silent fallbacks
+- no duplicate side effects on retries
 
-## Working Rules For Agents
+## 5. Security, Scalability, And Data Integrity Rules
 
-- Inspect before changing code. Do not trust stale documentation over live code.
-- Keep tasks narrow. One logical change set per batch.
-- Do not keep closed-task markdown files in repo root.
-- If you create a temporary prompt/TODO/spec/checklist markdown file, delete it before closing the task unless the user explicitly asked for a durable artifact.
-- Do not make backend API or route-path changes during frontend setup/refactor tasks unless explicitly required.
-- Do not revert unrelated user changes in a dirty worktree.
-- Prefer shared classes/utilities over new inline styles.
-- Update canonical docs when repo operating policy, active scope, or verification workflow changes.
+- Preserve candidate, recruiter, slot, office, city, interview, and analytics data integrity.
+- Treat client-side state as untrusted unless the server validates it.
+- Keep side effects idempotent where practical.
+- Retries must not duplicate external actions.
+- Critical business actions must be observable via logs, statuses, or events.
+- Do not weaken auth/session/CSRF/webhook checks to make a flow “work”.
+- Do not log secrets, tokens, or unnecessary PII.
+- Prefer explicit contracts and typed interfaces.
+- Prefer deterministic scheduling and auditable state transitions.
 
-## Planning-First Expectations
+## 6. Documentation And Version-Sensitive Decisions
 
-- For non-trivial tasks, identify touched files, dependencies, and verification steps before editing.
-- For redesign or UX tasks, start from live code plus relevant subsystem docs in [docs](/Users/mikhail/Projects/recruitsmart_admin/docs).
-- For repo/workflow tasks, start from:
-  - [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
-  - [PROJECT_CONTEXT_INDEX.md](/Users/mikhail/Projects/recruitsmart_admin/PROJECT_CONTEXT_INDEX.md)
-  - [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
-  - [REPOSITORY_WORKFLOW_GUIDE.md](/Users/mikhail/Projects/recruitsmart_admin/REPOSITORY_WORKFLOW_GUIDE.md)
+For OpenAI/Codex/MCP/Agents SDK/API usage and any version-sensitive dependency behavior:
 
-## Verification Expectations
+- verify against current official documentation or MCP-backed docs first
+- do not rely on memory for current APIs or recommended production practice
+- if docs/MCP are unavailable, say so explicitly and use the safest documented fallback
 
-- Docs-only changes: verify any commands you changed or referenced; for repo-wide workflow changes, run the standard frontend gate unless the task explicitly forbids it.
-- Frontend changes: run `lint`, `typecheck`, `test`, and `build:verify`; add Playwright smoke when UI, shell, or routing behavior changes.
-- Backend changes: run `make test`; add targeted commands for migrations, integrations, or async workflows if touched.
-- Do not mark work done without reporting exact commands and outcomes.
+Use current docs-backed sources for:
 
-## Regression-Minimization Rules
+- Codex CLI/config behavior
+- MCP server configuration
+- OpenAI API / Agents SDK changes
+- framework/library upgrades
+- security-sensitive defaults
 
-- Treat these as merge-risk zones:
-  - [frontend/app/src/app/routes/__root.tsx](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/app/routes/__root.tsx)
-  - [frontend/app/src/theme/global.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/global.css)
-  - [frontend/app/src/theme/mobile.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/mobile.css)
-  - [frontend/app/src/theme/pages.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/pages.css)
-  - [backend/apps/admin_ui/app.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_ui/app.py)
-  - [backend/core/settings.py](/Users/mikhail/Projects/recruitsmart_admin/backend/core/settings.py)
-  - [backend/core/db.py](/Users/mikhail/Projects/recruitsmart_admin/backend/core/db.py)
-  - [backend/migrations](/Users/mikhail/Projects/recruitsmart_admin/backend/migrations)
-- Do not parallelize edits to those areas without explicit coordination.
+## 7. Repo-Local Skills
 
-## Scope Discipline
+Use skills from [`.agents/skills/`](/Users/mikhail/Projects/recruitsmart_admin/.agents/skills/) for repeated work:
 
-- This repo currently has active redesign planning for `31` mounted SPA routes.
-- Dormant route files `vacancies.tsx` and `reminder-ops.tsx` are backlog, not first-wave scope.
-- If the task is repo setup, documentation, or workflow normalization, do not drift into product redesign or feature implementation.
+- `architecture-review`
+- `security-gate`
+- `scalability-review`
+- `dependency-upgrade-check`
+- `release-readiness`
+- `recruiter-crm-domain-check`
 
-## Multi-Agent Guidance
+When a skill matches the task, use it before editing. Do not use a skill for trivial docs-only or copy-only work.
 
-- Safe parallel work: route-level audits, docs-only tasks, isolated tests, post-foundation screen work, integration-specific docs.
-- Single-threaded work: theme foundations, app shell, migrations, root canonical docs, auth/security core.
-- If parallel agents are used, assign ownership by area and log boundaries in the task brief or session log.
-- If a task needs temporary coordination notes, keep them local to the task and delete them before closing.
+## 8. Multi-Agent Workflow
 
-## Long-Session Workflow
+Recommended subagents:
 
-- For long work, keep progress in the conversation and fold durable outcomes back into:
-  - [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
-  - [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
-- Do not accumulate closed `CURRENT_TASK` / `SESSION_LOG` style markdown files in repo root.
-- Update [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md) if the active scope or implementation state materially changes.
+- Architect: map code boundaries, side effects, and minimal safe plan
+- Implementer: apply the approved diff with minimal scope
+- Security Reviewer: challenge auth, secrets, CSRF, webhooks, trust boundaries, and retries
+- Scalability Reviewer: inspect hot paths, query count, caching, concurrency, and burst behavior
+- UI/UX Reviewer: review recruiter/admin and candidate-facing clarity, next actions, and hierarchy
+- Docs / Version Verifier: confirm version-sensitive decisions against current docs/MCP
+- QA / Browser Flow Reviewer: validate critical browser or portal flows
 
-## Done Criteria
+Use parallel agents only when file ownership is disjoint. Do not parallelize edits in merge-risk zones without coordination.
+
+## 9. Validation Expectations
+
+- Docs-only changes: verify any commands or workflows you changed or referenced; for repo-wide workflow changes, run the standard frontend gate unless the task explicitly forbids it.
+- Frontend changes: run `lint`, `typecheck`, `test`, and `build:verify`; add Playwright smoke when shell, routing, portal, or critical UI flows change.
+- Backend changes: run `make test`; add targeted commands when touching migrations, integrations, async workflows, or external side effects.
+- High-risk changes: add tighter targeted tests before broad validation.
+- Do not mark work complete without reporting the exact commands and outcomes.
+
+## 10. Git Discipline
+
+- Expect a dirty worktree; do not revert unrelated user changes.
+- Work in small logical batches.
+- Prefer isolated worktrees or clearly bounded file ownership for concurrent work.
+- Use Conventional Commits when creating commits.
+- Do not leave temporary task/spec/checklist markdown in repo root after the task is closed.
+
+## 11. Final Response Shape
+
+For implementation tasks, keep the final response short and structured:
+
+1. what changed
+2. why this approach
+3. security review
+4. scalability review
+5. validation performed
+6. remaining risks
+7. follow-up suggestions
+
+## 12. Merge-Risk Zones
+
+Treat these as coordination-sensitive:
+
+- [frontend/app/src/app/routes/__root.tsx](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/app/routes/__root.tsx)
+- [frontend/app/src/theme/global.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/global.css)
+- [frontend/app/src/theme/mobile.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/mobile.css)
+- [frontend/app/src/theme/pages.css](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/theme/pages.css)
+- [backend/apps/admin_ui/app.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_ui/app.py)
+- [backend/core/settings.py](/Users/mikhail/Projects/recruitsmart_admin/backend/core/settings.py)
+- [backend/core/db.py](/Users/mikhail/Projects/recruitsmart_admin/backend/core/db.py)
+- [backend/migrations](/Users/mikhail/Projects/recruitsmart_admin/backend/migrations)
+
+## 13. Done Criteria
 
 Work is done only when:
 
-1. The change set stays within scope
-2. Verification commands were run and reported
-3. Relevant docs were updated if behavior or process changed
-4. Risks and leftovers were called out explicitly
-5. The next agent can resume without re-discovery
+1. the change set stays within scope
+2. relevant validation commands were run and reported
+3. durable docs were updated if behavior or process changed
+4. risks and leftovers were called out explicitly
+5. the next agent can resume without rediscovery

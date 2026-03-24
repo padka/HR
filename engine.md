@@ -40,6 +40,12 @@ Keep only durable, repeatedly useful root markdown files:
 
 Everything else at repo root must justify its existence.
 
+## Codex Workspace Layer
+
+- Project-scoped Codex defaults live in [`.codex/config.toml`](/Users/mikhail/Projects/recruitsmart_admin/.codex/config.toml).
+- Reusable task skills live in [`.agents/skills/`](/Users/mikhail/Projects/recruitsmart_admin/.agents/skills/).
+- [`.codexrc`](/Users/mikhail/Projects/recruitsmart_admin/.codexrc) remains a compatibility shim until config precedence is fully settled.
+
 ## Markdown Retention Policy
 
 - Temporary markdown files are allowed only for:

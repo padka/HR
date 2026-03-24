@@ -1,0 +1,40 @@
+# Project-scoped Codex defaults for RecruitSmart Admin.
+# Keep this file conservative: safe defaults, explicit profiles, docs-backed verification.
+
+profile = "default"
+web_search = "cached"
+
+[profiles.default]
+model = "gpt-5.4"
+model_provider = "openai"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+allow_login_shell = true
+model_reasoning_effort = "medium"
+plan_mode_reasoning_effort = "high"
+model_verbosity = "medium"
+personality = "pragmatic"
+tools_view_image = true
+
+[agents]
+max_threads = 4
+max_depth = 1
+job_max_runtime_seconds = 1800
+
+[mcp_servers.openai_developer_docs]
+enabled = true
+required = true
+url = "https://developers.openai.com/mcp"
+
+[sandbox_workspace_write]
+writable_roots = []
+network_access = false
+exclude_tmpdir_env_var = false
+exclude_slash_tmp = false
+
+[shell_environment_policy]
+inherit = "core"
+ignore_default_excludes = false
+exclude = ["AWS_*", "AZURE_*", "GCP_*", "*_PASSWORD", "*_SECRET", "*_TOKEN"]
+set = {}
+include_only = []

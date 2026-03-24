@@ -1,44 +1,30 @@
 # Repository Workflow Guide
 
-## Start Sequence
+This is a compatibility guide. The working rules live in [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md) and [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md).
 
-1. Read [README.md](/Users/mikhail/Projects/recruitsmart_admin/README.md)
-2. Read [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md)
-3. Read [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
-4. Read [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
-5. Read [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md)
-6. Run `git status --short`
-7. Inspect the exact files you plan to touch
+## Standard workflow
 
-## Working Rules
+1. Read the canonical docs first.
+2. Check `git status --short`.
+3. Inspect the exact files you plan to touch.
+4. Pick the smallest safe change set.
+5. Use a matching skill from [`.agents/skills/`](/Users/mikhail/Projects/recruitsmart_admin/.agents/skills/) when the task is medium/high risk or domain-specific.
+6. Make the change.
+7. Run the relevant validation commands from [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md).
+8. Update durable docs if repo policy, workflow, or active scope changed.
+9. Delete temporary notes before closing the task.
 
-- Keep tasks narrow.
-- Inspect before editing.
-- Prefer updating code and permanent docs over creating new root markdown packages.
-- If temporary markdown notes are needed during a task, delete them before closing the task.
-- Keep subsystem docs under [docs](/Users/mikhail/Projects/recruitsmart_admin/docs), not in repo root.
+## Multi-agent workflow
 
-## Verification Rule
+- Use Architect first for non-trivial work.
+- Then use Implementer for the approved diff.
+- Add Security Reviewer, Scalability Reviewer, UI/UX Reviewer, Docs / Version Verifier, or QA / Browser Flow Reviewer as needed.
+- Keep file ownership explicit when running multiple agents.
 
-- Backend changes: run `make test`
-- Frontend changes: run:
-  - `npm --prefix frontend/app run lint`
-  - `npm --prefix frontend/app run typecheck`
-  - `npm --prefix frontend/app run test`
-  - `npm --prefix frontend/app run build:verify`
-- Add `npm --prefix frontend/app run test:e2e:smoke` when UI, routing, mobile, overlays, or shell behavior changes
+## Output expectations
 
-## Reporting Rule
-
-Every finished task should report:
-- what was done
-- files changed
-- commands run
-- outcomes
-- remaining risks
-
-## Cleanup Rule
-
-- Closed task markdown files do not stay in repo root.
-- If a prompt/TODO/spec/checklist file is no longer active, delete it.
-- If a note must be preserved, merge it into a durable doc instead of keeping a one-off file.
+- small diff
+- explicit verification commands
+- risks called out
+- no silent assumptions
+- no closed-task clutter at repo root

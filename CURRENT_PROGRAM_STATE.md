@@ -14,7 +14,8 @@
 - recruiter/incoming/test-preview/light-theme work has already been implemented in code
 - backend reschedule/status fixes have already been implemented in code
 - candidate portal web flow is available as a Telegram-independent fallback path
-- MAX webhook bot can now collect candidate profile + screening answers and hand off scheduling to the candidate portal
+- candidate portal journey now surfaces vacancy summary, company context, current step, and next-step time; the start screen also tolerates missing/stale tokens by reusing an active portal session when one exists, public candidate bootstrap no longer depends on a CSRF preflight before session exchange, and candidate API requests can recover via a signed portal-token header when browser cookies are unavailable
+- MAX webhook bot now supports public candidate onboarding plus CRM linking: candidates can start profile + screening in MAX from the bot link directly, admin can still issue a MAX deep link to bind an existing CRM candidate, recruiter chat can route through MAX, and the candidate portal now also opens as a MAX mini app with a `startapp` invite link for the personal cabinet
 - candidate messenger now runs as a focused two-pane recruiter workspace: compact inbox rail on the left, chat workspace on the right, sticky composer, quick templates, local unread/read notifications, and direct link-out to the candidate card without inline candidate-details rail
 - candidate messenger second-pass redesign is landed locally: hero block removed, left rail simplified for faster triage, chat header/composer rebuilt for operational clarity, and the previous inline candidate-details drawer has been removed from the route
 - interview reminder flow now includes a candidate-facing readiness message 10 minutes before the meeting, delivered through the existing reminder scheduler/outbox pipeline
