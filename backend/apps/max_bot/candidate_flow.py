@@ -39,6 +39,7 @@ from backend.domain.candidates.portal_service import (
     CandidatePortalError,
     build_candidate_portal_journey,
     build_candidate_max_mini_app_url,
+    build_candidate_portal_url,
     bump_candidate_portal_session_version,
     complete_screening,
     ensure_candidate_portal_session,
@@ -182,6 +183,60 @@ def _screening_question(answers: dict[str, Any]) -> dict[str, Any] | None:
         if not str(answers.get(qid) or "").strip():
             return question
     return None
+
+
+def _portal_mini_app_url(
+    candidate: User,
+    *,
+    journey_session_id: int,
+    session_version: int,
+) -> str:
+    if not (candidate.candidate_id or candidate.telegram_id):
+        return ""
+    portal_token = sign_candidate_portal_token(
+        candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
+        telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
+        entry_channel="max",
+        source_channel="max_app",
+        journey_session_id=journey_session_id,
+        session_version=session_version,
+    )
+    return build_candidate_max_mini_app_url(start_param=portal_token)
+
+
+def _portal_entry_urls(
+    candidate: User,
+    *,
+    journey_session_id: int,
+    session_version: int,
+) -> tuple[str | None, str | None]:
+    portal_url = build_candidate_portal_url(
+        candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
+        telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
+        entry_channel="max",
+        source_channel="max_bot",
+        journey_session_id=journey_session_id,
+        session_version=session_version,
+    )
+    mini_app_url = _portal_mini_app_url(
+        candidate,
+        journey_session_id=journey_session_id,
+        session_version=session_version,
+    )
+    return portal_url, mini_app_url
+
+
+def _portal_entry_buttons_from_urls(
+    *,
+    portal_url: str | None,
+    mini_app_url: str | None,
+) -> list[list[InlineButton]] | None:
+    buttons: list[list[InlineButton]] = []
+    if mini_app_url:
+        buttons.append([InlineButton(text="Открыть кабинет", url=mini_app_url, kind="web_app")])
+    if portal_url:
+        buttons.append([InlineButton(text="Открыть в браузере", url=portal_url, kind="link")])
+    return buttons or None
 
 
 async def _merge_candidate_records(
@@ -490,26 +545,31 @@ async def _emit_audit_events(events: tuple[AuditEvent, ...]) -> None:
 async def _render_status_message(
     session: AsyncSession,
     candidate: User,
+    journey: CandidateJourneySession,
 ) -> OutboundMessage:
     payload = await build_candidate_portal_journey(session, candidate, entry_channel="max")
     portal_url = payload["candidate"].get("portal_url")
-    mini_app_url = ""
-    if candidate.candidate_id or candidate.telegram_id:
-        portal_token = sign_candidate_portal_token(
-            candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
-            telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
-            entry_channel="max",
-            source_channel="max_app",
-        )
-        mini_app_url = build_candidate_max_mini_app_url(start_param=portal_token)
+    company_summary = str(payload.get("company", {}).get("summary") or "").strip()
     next_action = payload["journey"].get("next_action") or "Следующий шаг уже сохранён в вашем профиле."
     status_label = payload["candidate"].get("status_label") or "В обработке"
     active_slot = payload["journey"]["slots"].get("active")
+    mini_app_url = _portal_mini_app_url(
+        candidate,
+        journey_session_id=int(journey.id),
+        session_version=int(journey.session_version or 1),
+    )
+    buttons = _portal_entry_buttons_from_urls(
+        portal_url=portal_url,
+        mini_app_url=mini_app_url,
+    )
 
     lines = [
         f"Ваш статус: <b>{html.escape(str(status_label))}</b>",
         html.escape(str(next_action)),
     ]
+    if company_summary:
+        lines.append("")
+        lines.append(html.escape(company_summary))
     if active_slot and active_slot.get("start_utc"):
         lines.append(f"Назначенный слот: <code>{html.escape(str(active_slot['start_utc']))}</code>")
     if mini_app_url:
@@ -518,14 +578,11 @@ async def _render_status_message(
     elif portal_url:
         lines.append("")
         lines.append(f"Продолжить: {portal_url}")
+    if portal_url and not buttons:
+        lines.append("")
+        lines.append(f"Продолжить: {portal_url}")
 
-    buttons: list[list[InlineButton]] = []
-    if mini_app_url:
-        buttons.append([InlineButton(text="Личный кабинет", url=str(mini_app_url))])
-    if portal_url:
-        buttons.append([InlineButton(text="Открыть в браузере", url=str(portal_url))])
-    buttons_value = buttons or None
-    return OutboundMessage(text="\n".join(lines), buttons=buttons_value)
+    return OutboundMessage(text="\n".join(lines), buttons=buttons)
 
 
 async def _render_profile_prompt(
@@ -536,7 +593,7 @@ async def _render_profile_prompt(
     profile_state = next((item for item in journey.step_states if item.step_key == "profile"), None)
     field = _next_profile_field(candidate, profile_state)
     if field is None:
-        return await _render_status_message(session, candidate)
+        return await _render_status_message(session, candidate, journey)
 
     prompt = PROFILE_PROMPTS[field]
     if field == "city":
@@ -544,7 +601,15 @@ async def _render_profile_prompt(
         preview = ", ".join(city.display_name for city in cities[:8])
         if preview:
             prompt = f"{prompt}\n\nСейчас доступны города: <i>{html.escape(preview)}</i>"
-    return OutboundMessage(text=prompt)
+    portal_url, mini_app_url = _portal_entry_urls(
+        candidate,
+        journey_session_id=int(journey.id),
+        session_version=int(journey.session_version or 1),
+    )
+    return OutboundMessage(
+        text=prompt,
+        buttons=_portal_entry_buttons_from_urls(portal_url=portal_url, mini_app_url=mini_app_url),
+    )
 
 
 async def _ensure_screening_started(
@@ -577,7 +642,7 @@ async def _render_screening_prompt(
     answers = dict(screening_state.payload_json or {}) if screening_state and screening_state.payload_json else {}
     question = _screening_question(answers)
     if question is None:
-        return await _render_status_message(session, candidate)
+        return await _render_status_message(session, candidate, journey)
 
     await _ensure_screening_started(session, candidate=candidate, journey=journey)
     prompt = str(question.get("prompt") or "")
@@ -588,7 +653,18 @@ async def _render_screening_prompt(
     text = f"<b>{title}</b>\n\n{prompt}"
     if helper:
         text += f"\n\n<i>{helper}</i>"
-    return OutboundMessage(text=text, buttons=_question_buttons(question))
+    buttons = _question_buttons(question)
+    portal_url, mini_app_url = _portal_entry_urls(
+        candidate,
+        journey_session_id=int(journey.id),
+        session_version=int(journey.session_version or 1),
+    )
+    portal_buttons = _portal_entry_buttons_from_urls(portal_url=portal_url, mini_app_url=mini_app_url)
+    if buttons and portal_buttons:
+        buttons = [*buttons, *portal_buttons]
+    elif portal_buttons:
+        buttons = portal_buttons
+    return OutboundMessage(text=text, buttons=buttons)
 
 
 async def _render_next_step(
@@ -616,9 +692,9 @@ async def _render_next_step(
             OutboundMessage(
                 text="Анкета сохранена. Следующий шаг доступен в кабинете кандидата.",
             ),
-            await _render_status_message(session, candidate),
+            await _render_status_message(session, candidate, journey),
         ]
-    return [await _render_status_message(session, candidate)]
+    return [await _render_status_message(session, candidate, journey)]
 
 
 async def _send_outbound(
@@ -916,7 +992,7 @@ async def process_text_message(
                     )
                     messages = [
                         OutboundMessage(text="Сообщение передано рекрутеру."),
-                        await _render_status_message(session, candidate),
+                        await _render_status_message(session, candidate, journey),
                     ]
     await _emit_audit_events(audit_events)
     return messages

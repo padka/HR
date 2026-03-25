@@ -65,6 +65,10 @@ sequenceDiagram
     DOM-->>UIAPI: updated journey state
 ```
 
+### Entry Surfaces
+- Candidate portal can be opened from signed browser links, MAX `startapp` payloads and Telegram `web_app` buttons.
+- The portal token remains the source of truth for journey recovery; native app entry only changes the launch surface, not the auth contract.
+
 ### State
 ```mermaid
 stateDiagram-v2
@@ -197,6 +201,10 @@ sequenceDiagram
     DOM-->>FLOW: linked candidate + portal journey
     FLOW-->>C: Start MAX onboarding / continue portal
 ```
+
+### Launch Contract
+- Candidate-facing MAX messages may include `open_app` and browser link buttons that point to the same signed portal journey.
+- Telegram and MAX adapters normalize button metadata so the same portal flow can be launched as a native web app or as a browser fallback without changing journey/session semantics.
 
 ### State
 ```mermaid

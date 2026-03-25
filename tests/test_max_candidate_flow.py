@@ -255,6 +255,7 @@ def test_max_flow_completes_profile_and_screening(client: TestClient, _isolated_
     buttons = last_call["buttons"] or []
     assert buttons
     assert buttons[0][0].url
+    assert buttons[0][0].kind == "web_app"
     assert "startapp=" in str(buttons[0][0].url)
     if len(buttons) > 1:
         assert buttons[1][0].url

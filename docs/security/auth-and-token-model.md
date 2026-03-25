@@ -102,6 +102,7 @@ sequenceDiagram
 - Portal token is a signed, time-limited token built with `itsdangerous.URLSafeTimedSerializer`.
 - Portal token payload contains `candidate_id`, `entry_channel`, `journey_session_id` and `session_version`.
 - Portal session is server-managed and lives under `candidate_portal` session key.
+- Native entry from MAX `startapp` and Telegram `web_app` buttons is only a launch surface; the same signed portal token still gates session recovery and browser fallback.
 - Requests can recover from missing browser cookies by sending the portal token in one of:
   `x-candidate-portal-token`, `x-candidate-portal-access-token`, `x-candidate-portal-session-token`.
 - Header-token recovery is valid only when the referenced journey session still exists, remains `active`, and `session_version` matches the current DB value.

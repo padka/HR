@@ -1093,8 +1093,36 @@ class NotificationService:
                 for row in buttons:
                     adapter_row = []
                     for btn in row:
-                        if hasattr(btn, "text") and hasattr(btn, "callback_data"):
-                            adapter_row.append(InlineButton(text=btn.text, callback_data=btn.callback_data))
+                        if not hasattr(btn, "text"):
+                            continue
+                        web_app = getattr(btn, "web_app", None)
+                        kind = getattr(btn, "kind", None)
+                        if web_app is not None and getattr(web_app, "url", None):
+                            adapter_row.append(
+                                InlineButton(
+                                    text=btn.text,
+                                    url=web_app.url,
+                                    kind=kind or "web_app",
+                                )
+                            )
+                            continue
+                        if getattr(btn, "url", None):
+                            adapter_row.append(
+                                InlineButton(
+                                    text=btn.text,
+                                    url=getattr(btn, "url", None),
+                                    kind=kind or "link",
+                                )
+                            )
+                            continue
+                        if hasattr(btn, "callback_data"):
+                            adapter_row.append(
+                                InlineButton(
+                                    text=btn.text,
+                                    callback_data=btn.callback_data,
+                                    kind=kind or "callback",
+                                )
+                            )
                     if adapter_row:
                         adapter_buttons.append(adapter_row)
 

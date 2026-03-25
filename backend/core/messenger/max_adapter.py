@@ -138,22 +138,46 @@ class MaxAdapter(MessengerProtocol):
             for row in buttons:
                 keyboard_row = []
                 for btn in row:
-                    if btn.url:
+                    kind = str(getattr(btn, "kind", "") or "").strip().lower()
+                    button_url = getattr(btn, "url", None)
+                    callback_data = getattr(btn, "callback_data", None)
+
+                    if kind in {"open_app", "web_app"}:
+                        keyboard_row.append(
+                            {
+                                "type": "open_app",
+                                "text": btn.text,
+                                "web_app": button_url or "",
+                            }
+                        )
+                        continue
+
+                    if kind == "message":
+                        keyboard_row.append(
+                            {
+                                "type": "message",
+                                "text": btn.text,
+                            }
+                        )
+                        continue
+
+                    if button_url:
                         keyboard_row.append(
                             {
                                 "type": "link",
                                 "text": btn.text,
-                                "url": btn.url,
+                                "url": button_url,
                             }
                         )
-                    else:
-                        keyboard_row.append(
-                            {
-                                "type": "callback",
-                                "text": btn.text,
-                                "payload": btn.callback_data or "",
-                            }
-                        )
+                        continue
+
+                    keyboard_row.append(
+                        {
+                            "type": "callback",
+                            "text": btn.text,
+                            "payload": callback_data or "",
+                        }
+                    )
                 keyboard_buttons.append(keyboard_row)
 
             payload["attachments"] = [

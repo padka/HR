@@ -60,6 +60,7 @@ class TelegramAdapter(MessengerProtocol):
         """Send a message via Telegram Bot API with retry logic."""
         from aiogram.types import InlineKeyboardButton as TgButton
         from aiogram.types import InlineKeyboardMarkup
+        from aiogram.types import WebAppInfo
 
         bot = self._get_bot()
 
@@ -68,14 +69,28 @@ class TelegramAdapter(MessengerProtocol):
         if buttons:
             keyboard_rows = []
             for row in buttons:
-                keyboard_rows.append(
-                    [
-                        TgButton(text=btn.text, url=btn.url)
-                        if btn.url
-                        else TgButton(text=btn.text, callback_data=btn.callback_data or "")
-                        for btn in row
-                    ]
-                )
+                keyboard_row = []
+                for btn in row:
+                    kind = str(getattr(btn, "kind", "") or "").strip().lower()
+                    button_url = getattr(btn, "url", None)
+                    callback_data = getattr(btn, "callback_data", None)
+
+                    if kind in {"open_app", "web_app"} and button_url:
+                        keyboard_row.append(
+                            TgButton(text=btn.text, web_app=WebAppInfo(url=button_url))
+                        )
+                        continue
+
+                    if button_url:
+                        keyboard_row.append(TgButton(text=btn.text, url=button_url))
+                        continue
+
+                    if callback_data is not None:
+                        keyboard_row.append(TgButton(text=btn.text, callback_data=callback_data or ""))
+                        continue
+
+                    keyboard_row.append(TgButton(text=btn.text, callback_data=""))
+                keyboard_rows.append(keyboard_row)
             reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
         attempt = 0

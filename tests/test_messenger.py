@@ -95,6 +95,10 @@ class TestInlineButton:
         assert btn.text == "Open"
         assert btn.url == "https://example.com"
 
+    def test_creation_with_kind(self):
+        btn = InlineButton(text="Open app", url="https://example.com/app", kind="web_app")
+        assert btn.kind == "web_app"
+
 
 # ── MessengerRegistry ────────────────────────────────────────────────────
 
@@ -272,6 +276,28 @@ class TestTelegramAdapter:
         assert call_kwargs[1]["reply_markup"] is not None
 
     @pytest.mark.asyncio
+    async def test_send_with_web_app_button(self):
+        from backend.core.messenger.telegram_adapter import TelegramAdapter
+
+        mock_bot = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.message_id = 45
+        mock_bot.send_message.return_value = mock_result
+
+        adapter = TelegramAdapter()
+        await adapter.configure(bot=mock_bot)
+
+        buttons = [[InlineButton(text="Open portal", url="https://example.com/portal", kind="web_app")]]
+        result = await adapter.send_message(12345, "Choose:", buttons=buttons)
+        assert result.success is True
+
+        call_kwargs = mock_bot.send_message.call_args
+        reply_markup = call_kwargs[1]["reply_markup"]
+        assert reply_markup is not None
+        assert reply_markup.inline_keyboard[0][0].web_app is not None
+        assert reply_markup.inline_keyboard[0][0].web_app.url == "https://example.com/portal"
+
+    @pytest.mark.asyncio
     async def test_send_blocked_no_retry(self):
         from backend.core.messenger.telegram_adapter import TelegramAdapter
 
@@ -411,6 +437,29 @@ class TestMaxAdapter:
         button = payload["attachments"][0]["payload"]["buttons"][0][0]
         assert button["type"] == "link"
         assert button["url"] == "https://example.com/portal"
+
+    @pytest.mark.asyncio
+    async def test_send_with_open_app_button(self):
+        from backend.core.messenger.max_adapter import MaxAdapter
+
+        adapter = MaxAdapter()
+        adapter._token = "test_token"
+
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {"mid": "msg_app"}}
+        mock_client.request.return_value = mock_resp
+        adapter._client = mock_client
+
+        buttons = [[InlineButton(text="Open portal", url="https://example.com/portal", kind="web_app")]]
+        result = await adapter.send_message("user_123", "Open:", buttons=buttons)
+        assert result.success is True
+
+        payload = mock_client.request.call_args[1]["json"]
+        button = payload["attachments"][0]["payload"]["buttons"][0][0]
+        assert button["type"] == "open_app"
+        assert button["web_app"] == "https://example.com/portal"
 
     @pytest.mark.asyncio
     async def test_send_api_error_400(self):

@@ -38,6 +38,7 @@ class InlineButton:
     text: str
     callback_data: Optional[str] = None
     url: Optional[str] = None
+    kind: Optional[str] = None
 
 
 @dataclass(frozen=True)
