@@ -4,8 +4,8 @@
  * ============================================ */
 
 .ui-btn {
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
   color: var(--text-primary);
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-sm);
@@ -29,8 +29,8 @@
 }
 
 .ui-btn:hover {
-  border-color: var(--border-default);
-  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
   box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
 }
@@ -52,16 +52,16 @@
 }
 
 .ui-btn--primary {
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent-hover) 88%, black) 100%);
   color: #fff;
   border-color: transparent;
   font-weight: var(--font-medium);
-  box-shadow: var(--shadow-sm), var(--glow-accent);
+  box-shadow: var(--shadow-sm), 0 0 0 1px color-mix(in srgb, var(--accent) 58%, transparent);
 }
 
 .ui-btn--primary:hover {
-  background: var(--accent-hover);
-  box-shadow: var(--shadow-md), var(--glow-accent);
+  background: linear-gradient(135deg, var(--accent-hover) 0%, color-mix(in srgb, var(--accent-hover) 96%, black) 100%);
+  box-shadow: var(--shadow-md), 0 0 0 1px color-mix(in srgb, var(--accent-hover) 68%, transparent);
 }
 
 .ui-btn--ghost {
@@ -77,13 +77,13 @@
 }
 
 .ui-btn--secondary {
-  background: var(--bg-elevated);
-  border-color: var(--border-default);
+  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
+  border-color: var(--border-strong);
   color: var(--text-primary);
 }
 
 .ui-btn--secondary:hover {
-  background: var(--bg-spotlight);
+  background: color-mix(in srgb, var(--bg-spotlight) 94%, transparent);
 }
 
 .ui-btn--danger {

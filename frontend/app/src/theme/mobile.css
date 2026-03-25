@@ -121,7 +121,10 @@
     grid-template-columns: 40px 1fr 40px;
     align-items: center;
     gap: 8px;
-    background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+    background: color-mix(in srgb, var(--bg-overlay) 78%, transparent);
+    border-bottom: 1px solid var(--glass-border);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
   }
 
   .mobile-header__back {
@@ -169,20 +172,21 @@
     bottom: 8px;
     z-index: var(--z-mobile-nav);
     border-radius: 20px;
-    border: 1px solid var(--glass-border);
-    background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+    border: 1px solid var(--glass-border-strong);
+    background: color-mix(in srgb, var(--bg-overlay) 80%, transparent);
     padding: 8px 8px calc(8px + var(--mobile-safe-bottom));
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 4px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
 
   .mobile-tab-item {
     min-height: 48px;
     border: 0;
-    border-radius: 14px;
+    border-radius: 13px;
     background: transparent;
-    color: var(--subtle);
+    color: var(--text-secondary);
     text-decoration: none;
     position: relative;
     display: grid;
@@ -190,7 +194,7 @@
     grid-template-rows: 22px auto;
     gap: 2px;
     padding: 4px 2px;
-    transition: transform 160ms var(--ease-emphasized), color 160ms var(--ease-standard), background 160ms var(--ease-standard);
+    transition: transform 160ms var(--ease-standard), color 160ms var(--ease-standard), background 160ms var(--ease-standard), box-shadow 160ms var(--ease-standard);
     cursor: pointer;
     text-align: center;
   }
@@ -227,8 +231,9 @@
   }
 
   .mobile-tab-item.is-active {
-    color: var(--accent-light);
-    background: color-mix(in srgb, var(--accent-soft) 58%, transparent);
+    color: var(--fg);
+    background: color-mix(in srgb, var(--accent-soft) 46%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
 
   .mobile-tab-item.is-active .mobile-tab-item__dot {
@@ -252,8 +257,8 @@
 
   .mobile-tab-item.has-alert {
     box-shadow:
-      0 10px 26px rgba(255, 91, 96, 0.2),
-      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      0 8px 22px rgba(255, 91, 96, 0.16),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   .mobile-tab-item__signal {
